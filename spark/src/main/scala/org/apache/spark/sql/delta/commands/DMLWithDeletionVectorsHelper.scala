@@ -47,11 +47,11 @@ import org.apache.spark.util.{SerializableConfiguration, Utils => SparkUtils}
 
 
 /**
- * Contains utility classes and method to delete rows in a table using the Deletion Vectors.
+ * Contains utility classes and method for performing DML operations with Deletion Vectors.
  */
-object DeleteWithDeletionVectorsHelper extends DeltaCommand {
+object DMLWithDeletionVectorsHelper extends DeltaCommand {
   /**
-   * Creates a DataFrame that can be used to scan for rows matching DELETE condition in given
+   * Creates a DataFrame that can be used to scan for rows matching condition in given
    * files. Generally the given file list is a pruned file list using the stats based pruning.
    */
   def createTargetDfForScanningForMatches(
@@ -114,8 +114,13 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
       deltaLog: DeltaLog,
       targetDf: DataFrame,
       fileIndex: TahoeFileIndex,
-      condition: Expression): Seq[TouchedFileWithDV] = {
-    recordDeltaOperation(deltaLog, opType = "DELETE.findTouchedFiles") {
+      condition: Expression,
+      opName: String): Seq[TouchedFileWithDV] = {
+    require(
+      Set("DELETE", "UPDATE").contains(opName),
+      s"Expecting 'DELETE' or 'UPDATE', but got '$opName'.")
+
+    recordDeltaOperation(deltaLog, opType = s"$opName.findTouchedFiles") {
       val candidateFiles = fileIndex match {
         case f: TahoeBatchFileIndex => f.addFiles
         case _ => throw new IllegalArgumentException("Unexpected file index found!")
@@ -165,7 +170,7 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
       spark: SparkSession,
       touchedFiles: Seq[TouchedFileWithDV],
       snapshot: Snapshot): (Seq[FileAction], Map[String, Long]) = {
-    val numDeletedRows: Long = touchedFiles.map(_.numberOfModifiedRows).sum
+    val numModifiedRows: Long = touchedFiles.map(_.numberOfModifiedRows).sum
     val numRemovedFiles: Long = touchedFiles.count(_.isFullyReplaced())
 
     val (fullyRemovedFiles, notFullyRemovedFiles) = touchedFiles.partition(_.isFullyReplaced())
@@ -182,7 +187,7 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
     val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot)
 
     // TODO: gather more metrics
-    val metricMap = Map("numDeletedRows" -> numDeletedRows, "numRemovedFiles" -> numRemovedFiles)
+    val metricMap = Map("numModifiedRows" -> numModifiedRows, "numRemovedFiles" -> numRemovedFiles)
     (fullyRemoved ++ dvAddFilesWithStats ++ dvRemoveFiles, metricMap)
   }
 
@@ -471,7 +476,7 @@ object DeletionVectorData {
 }
 
 /** Final output for each file containing the file path, DeletionVectorDescriptor and how many
- * rows are marked as deleted in this file as part of the this DELETE (doesn't include already
+ * rows are marked as deleted in this file as part of the this OP (doesn't include already
  * rows marked as deleted)
  *
  * @param filePath        Absolute path of the data file this DV result is generated for.
@@ -629,7 +634,7 @@ object DeletionVectorWriter extends DeltaLogging {
   }
 
   /**
-   * Prepares a mapper function that can be used by DELETE command to store the Deletion Vectors
+   * Prepares a mapper function that can be used by DML command to store the Deletion Vectors
    * that are in described in [[DeletionVectorData]] and return their descriptors
    * [[DeletionVectorResult]].
    */

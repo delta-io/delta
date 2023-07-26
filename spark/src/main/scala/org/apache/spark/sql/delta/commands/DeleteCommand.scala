@@ -243,7 +243,7 @@ case class DeleteCommand(
           val fileIndex = new TahoeBatchFileIndex(
             sparkSession, "delete", candidateFiles, deltaLog, deltaLog.dataPath, txn.snapshot)
           if (shouldWriteDVs) {
-            val targetDf = DeleteWithDeletionVectorsHelper.createTargetDfForScanningForMatches(
+            val targetDf = DMLWithDeletionVectorsHelper.createTargetDfForScanningForMatches(
               sparkSession,
               target,
               fileIndex)
@@ -252,21 +252,22 @@ case class DeleteCommand(
             // with deletion vectors.
             val mustReadDeletionVectors = DeletionVectorUtils.deletionVectorsReadable(txn.snapshot)
 
-            val touchedFiles = DeleteWithDeletionVectorsHelper.findTouchedFiles(
+            val touchedFiles = DMLWithDeletionVectorsHelper.findTouchedFiles(
               sparkSession,
               txn,
               mustReadDeletionVectors,
               deltaLog,
               targetDf,
               fileIndex,
-              cond)
+              cond,
+              opName = "DELETE")
 
             if (touchedFiles.nonEmpty) {
-              val (actions, metricMap) = DeleteWithDeletionVectorsHelper.processUnmodifiedData(
+              val (actions, metricMap) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
                 sparkSession,
                 touchedFiles,
                 txn.snapshot)
-              metrics("numDeletedRows").set(metricMap("numDeletedRows"))
+              metrics("numDeletedRows").set(metricMap("numModifiedRows"))
               numRemovedFiles = metricMap("numRemovedFiles")
               actions
             } else {

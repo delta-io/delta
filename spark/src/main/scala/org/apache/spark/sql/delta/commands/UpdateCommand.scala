@@ -170,7 +170,7 @@ case class UpdateCommand(
 
       if (shouldWriteDeletionVectors) {
         // Case 3.1: Update with persistent deletion vectors
-        val targetDf = DeleteWithDeletionVectorsHelper.createTargetDfForScanningForMatches(
+        val targetDf = DMLWithDeletionVectorsHelper.createTargetDfForScanningForMatches(
           sparkSession,
           target,
           fileIndex)
@@ -179,22 +179,22 @@ case class UpdateCommand(
         // with deletion vectors
         val mustReadDeletionVectors = DeletionVectorUtils.deletionVectorsReadable(txn.snapshot)
 
-        val touchedFiles = DeleteWithDeletionVectorsHelper.findTouchedFiles(
+        val touchedFiles = DMLWithDeletionVectorsHelper.findTouchedFiles(
           sparkSession,
           txn,
           mustReadDeletionVectors,
           deltaLog,
           targetDf,
           fileIndex,
-          updateCondition)
+          updateCondition,
+          opName = "UPDATE")
 
         if (touchedFiles.nonEmpty) {
-          val (dvActions, metricMap) = DeleteWithDeletionVectorsHelper.processUnmodifiedData(
+          val (dvActions, metricMap) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
             sparkSession,
             touchedFiles,
             txn.snapshot)
-          // Number of updated rows is equal to the number of rows deleted by DV.
-          metrics("numUpdatedRows").set(metricMap("numDeletedRows"))
+          metrics("numUpdatedRows").set(metricMap("numModifiedRows"))
           numTouchedFiles = metricMap("numRemovedFiles")
           val dvRewriteStartMs = System.nanoTime()
           val newFiles = rewriteFiles(
