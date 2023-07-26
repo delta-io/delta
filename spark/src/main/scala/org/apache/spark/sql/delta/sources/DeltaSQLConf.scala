@@ -1183,7 +1183,7 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("Enable persistent Deletion Vectors in the Update command.")
       .booleanConf
-      .createWithDefault(true)
+      .createWithDefault(false)
 
   val DELETION_VECTOR_PACKING_TARGET_SIZE =
     buildConf("deletionVectors.packing.targetSize")
