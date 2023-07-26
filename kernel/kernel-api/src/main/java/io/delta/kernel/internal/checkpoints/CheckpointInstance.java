@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.Optional;
 
 import io.delta.kernel.internal.fs.Path;
-
 import io.delta.kernel.internal.util.FileNames;
 
 /**

@@ -20,8 +20,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import static org.junit.Assert.assertEquals;
+
 import org.junit.Test;
+import static org.junit.Assert.assertEquals;
 
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.BasePrimitiveType;
@@ -35,9 +36,6 @@ import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
-
-import io.delta.kernel.internal.types.JsonHandlerTestImpl;
-import io.delta.kernel.internal.types.TableSchemaSerDe;
 
 public class TestTableSchemaSerDe
 {

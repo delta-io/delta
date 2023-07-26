@@ -19,9 +19,9 @@ package io.delta.kernel.internal.deletionvectors;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.UUID;
+import static java.nio.charset.StandardCharsets.US_ASCII;
 
 import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
-import static java.nio.charset.StandardCharsets.US_ASCII;
 
 /**
  * This implements Base85 using the 4 byte block aligned encoding and character set from Z85.

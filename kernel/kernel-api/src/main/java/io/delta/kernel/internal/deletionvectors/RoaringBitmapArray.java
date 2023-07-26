@@ -16,13 +16,14 @@
 
 package io.delta.kernel.internal.deletionvectors;
 
-import io.delta.kernel.utils.Tuple2;
-import org.roaringbitmap.RoaringBitmap;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
+
+import org.roaringbitmap.RoaringBitmap;
+
+import io.delta.kernel.utils.Tuple2;
 
 import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
@@ -49,7 +50,7 @@ import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
  *
  * Taken from https://github.com/delta-io/delta/blob/master/spark/src/main/scala/org/apache/spark/sql/delta/deletionvectors/RoaringBitmapArray.scala
  */
-final public class RoaringBitmapArray {
+public final class RoaringBitmapArray {
 
     ////////////////////////////////////////////////////////////////////////////////
     // Static Fields / Methods
@@ -200,14 +201,16 @@ final public class RoaringBitmapArray {
             long numberOfBitmaps = buffer.getLong();
             if (numberOfBitmaps < 0) {
                 throw new IOException(String.format(
-                        "Invalid RoaringBitmapArray length (%s < 0)", numberOfBitmaps));
+                    "Invalid RoaringBitmapArray length (%s < 0)", numberOfBitmaps));
             }
             if (numberOfBitmaps > Integer.MAX_VALUE) {
                 throw new IOException(String.format(
-                        "Invalid RoaringBitmapArray length (%s > %s)", numberOfBitmaps, Integer.MAX_VALUE));
+                    "Invalid RoaringBitmapArray length (%s > %s)",
+                    numberOfBitmaps,
+                    Integer.MAX_VALUE));
             }
-            // This format is designed for sparse bitmaps, so numberOfBitmaps is only a lower bound for the
-            // actual size of the array.
+            // This format is designed for sparse bitmaps, so numberOfBitmaps is only a lower bound
+            // for the actual size of the array.
             int minimumArraySize = (int) numberOfBitmaps;
             ArrayList<RoaringBitmap> bitmaps = new ArrayList(minimumArraySize);
             int lastIndex = 0;

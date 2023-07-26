@@ -15,17 +15,17 @@
  */
 package io.delta.kernel.client;
 
-import static io.delta.kernel.DefaultKernelUtils.daysSinceEpoch;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+
+import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import org.junit.Test;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -38,6 +38,7 @@ import io.delta.kernel.expressions.EqualTo;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.*;
+import static io.delta.kernel.DefaultKernelUtils.daysSinceEpoch;
 
 public class TestDefaultExpressionHandler
 {

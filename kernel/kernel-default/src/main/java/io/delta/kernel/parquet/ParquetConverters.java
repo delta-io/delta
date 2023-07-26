@@ -15,10 +15,10 @@
  */
 package io.delta.kernel.parquet;
 
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
+
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.io.api.Converter;
 import org.apache.parquet.io.api.PrimitiveConverter;
@@ -49,6 +49,7 @@ import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.ShortType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 class ParquetConverters
 {
@@ -101,12 +102,10 @@ class ParquetConverters
         else if (typeFromClient instanceof DoubleType) {
             return new DoubleColumnConverter(initialBatchSize);
         }
-//        else if (typeFromClient instanceof DecimalType) {
-//
-//        }
-//        else if (typeFromClient instanceof TimestampType) {
-//
-//        }
+        // else if (typeFromClient instanceof DecimalType) {
+        // }
+        // else if (typeFromClient instanceof TimestampType) {
+        // }
 
         throw new UnsupportedOperationException(typeFromClient + " is not supported");
     }
@@ -133,7 +132,7 @@ class ParquetConverters
     {
         private final DataType dataType;
 
-        public NonExistentColumnConverter(DataType dataType)
+        NonExistentColumnConverter(DataType dataType)
         {
             this.dataType = Objects.requireNonNull(dataType, "dataType is null");
         }
@@ -534,7 +533,7 @@ class ParquetConverters
     public static class FileRowIndexColumnConverter
             extends LongColumnConverter {
 
-        public FileRowIndexColumnConverter(int initialBatchSize) {
+        FileRowIndexColumnConverter(int initialBatchSize) {
             super(initialBatchSize);
         }
 

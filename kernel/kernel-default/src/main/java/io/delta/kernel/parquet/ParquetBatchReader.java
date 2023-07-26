@@ -15,12 +15,12 @@
  */
 package io.delta.kernel.parquet;
 
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import java.io.IOException;
 import java.net.URI;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import static java.util.Objects.requireNonNull;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -38,6 +38,7 @@ import io.delta.kernel.DefaultKernelUtils;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 public class ParquetBatchReader
 {

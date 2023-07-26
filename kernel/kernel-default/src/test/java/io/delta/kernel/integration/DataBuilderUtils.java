@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.integration;
 
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -26,6 +25,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.DefaultRowBasedColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 public class DataBuilderUtils
 {

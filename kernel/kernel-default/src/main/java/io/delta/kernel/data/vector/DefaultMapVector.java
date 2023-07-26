@@ -15,14 +15,14 @@
  */
 package io.delta.kernel.data.vector;
 
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import java.util.HashMap;
 import java.util.Map;
-import static java.util.Objects.requireNonNull;
 import java.util.Optional;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.DataType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for map type data.
