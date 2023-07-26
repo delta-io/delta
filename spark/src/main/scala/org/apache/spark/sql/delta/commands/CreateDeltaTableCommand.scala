@@ -120,9 +120,8 @@ case class CreateDeltaTableCommand(
     val hadoopConf = deltaLog.newDeltaHadoopConf()
     val tableLocation = new Path(tableWithLocation.location)
     val fs = tableLocation.getFileSystem(hadoopConf)
-    val txn = startTxnForTableCreation(sparkSession, deltaLog, tableWithLocation)
 
-    def checkPathEmpty(): Unit = {
+    def checkPathEmpty(txn: OptimisticTransaction): Unit = {
       // Verify the table does not exist.
       if (mode == SaveMode.Ignore || mode == SaveMode.ErrorIfExists) {
         // We should have returned earlier in Ignore and ErrorIfExists mode if the table
@@ -136,17 +135,20 @@ case class CreateDeltaTableCommand(
         }
       }
     }
+
+    val txn = startTxnForTableCreation(sparkSession, deltaLog, tableWithLocation)
+
     val result = query match {
       // CLONE handled separately from other CREATE TABLE syntax
       case Some(cmd: CloneTableCommand) =>
-        checkPathEmpty()
+        checkPathEmpty(txn)
         cmd.handleClone(sparkSession, txn, targetDeltaLog = deltaLog)
       case Some(deltaWriter: WriteIntoDelta) =>
-        checkPathEmpty()
+        checkPathEmpty(txn)
         handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
         Nil
       case Some(query) =>
-        checkPathEmpty()
+        checkPathEmpty(txn)
         require(!query.isInstanceOf[RunnableCommand])
         // When using V1 APIs, the `query` plan is not yet optimized, therefore, it is safe
         // to once again go through analysis
@@ -597,8 +599,9 @@ case class CreateDeltaTableCommand(
   private def startTxnForTableCreation(
       sparkSession: SparkSession,
       deltaLog: DeltaLog,
-      tableWithLocation: CatalogTable): OptimisticTransaction = {
-    val txn = deltaLog.startTransaction()
+      tableWithLocation: CatalogTable,
+      snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
+    val txn = deltaLog.startTransaction(snapshotOpt)
 
     // During CREATE/REPLACE, we synchronously run conversion (if Uniform is enabled) so
     // we always remove the post commit hook here.

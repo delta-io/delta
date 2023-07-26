@@ -161,6 +161,9 @@ abstract class CloneTableBase(
   import CloneTableBase._
   def dataChangeInFileAction: Boolean = true
 
+  /** Returns whether the table exists at the given snapshot version. */
+  def tableExists(snapshot: SnapshotDescriptor): Boolean = snapshot.version >= 0
+
   /**
    * Handles the transaction logic for the CLONE command.
    *
@@ -287,7 +290,7 @@ abstract class CloneTableBase(
       // the source, just without row tracking. If it's an existing table, we take whatever
       // setting is currently on the target, as the setting should be independent between
       // target and source.
-      if (targetSnapshot.version == -1) {
+      if (!tableExists(targetSnapshot)) {
         clonedMetadata = RowTracking.removeRowTrackingProperty(clonedMetadata)
       } else {
         clonedMetadata = RowTracking.takeRowTrackingPropertyFromTarget(
@@ -312,7 +315,7 @@ abstract class CloneTableBase(
     // 2. Check for column mapping mode conflict with the source metadata w/ tablePropertyOverrides
     checkColumnMappingMode(sourceTable.metadata, updatedMetadataWithOverrides)
     // 3. Checks for column mapping mode conflicts with existing metadata if there's any
-    if (targetSnapshot.version >= 0) {
+    if (tableExists(targetSnapshot)) {
       checkColumnMappingMode(targetSnapshot.metadata, updatedMetadataWithOverrides)
     }
   }
@@ -359,7 +362,7 @@ abstract class CloneTableBase(
     val protocolDowngradeAllowed =
     conf.getConf(DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED) ||
       // It's not a real downgrade if the table doesn't exist before the CLONE.
-      txn.snapshot.version == -1
+      !tableExists(txn.snapshot)
     val sourceProtocolWithoutRowTracking = RowTracking.removeRowTrackingTableFeature(sourceProtocol)
 
     if (protocolDowngradeAllowed) {
