@@ -21,10 +21,13 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.SQLConfHelper
+import org.apache.spark.sql.catalyst.{InternalRow, SQLConfHelper}
 import org.apache.spark.sql.catalyst.analysis.Resolver
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodeGenerator, ExprCode}
+import org.apache.spark.sql.catalyst.expressions.codegen.Block._
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 /**
@@ -405,7 +408,109 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper {
     }
   }
 
+  /**
+   * Replaces 'CastSupport.cast'. Selects a cast based on 'spark.sql.storeAssignmentPolicy' if
+   * 'spark.databricks.delta.updateAndMergeCastingFollowsAnsiEnabledFlag. is false, and based on
+   * 'spark.sql.ansi.enabled' otherwise.
+   */
   private def cast(child: Expression, dataType: DataType, columnName: String): Expression = {
-      Cast(child, dataType, Option(conf.sessionLocalTimeZone))
+    if (conf.getConf(DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG)) {
+      return Cast(child, dataType, Option(conf.sessionLocalTimeZone))
+    }
+
+    conf.storeAssignmentPolicy match {
+      case SQLConf.StoreAssignmentPolicy.LEGACY =>
+        Cast(child, dataType, Some(conf.sessionLocalTimeZone), ansiEnabled = false)
+      case SQLConf.StoreAssignmentPolicy.ANSI =>
+        val cast = Cast(child, dataType, Some(conf.sessionLocalTimeZone), ansiEnabled = true)
+        if (canCauseCastOverflow(cast)) {
+          CheckOverflowInTableWrite(cast, columnName)
+        } else {
+          cast
+        }
+      case SQLConf.StoreAssignmentPolicy.STRICT =>
+        UpCast(child, dataType)
+    }
   }
+
+  private def containsIntegralOrDecimalType(dt: DataType): Boolean = dt match {
+    case _: IntegralType | _: DecimalType => true
+    case a: ArrayType => containsIntegralOrDecimalType(a.elementType)
+    case m: MapType =>
+      containsIntegralOrDecimalType(m.keyType) || containsIntegralOrDecimalType(m.valueType)
+    case s: StructType =>
+      s.fields.exists(sf => containsIntegralOrDecimalType(sf.dataType))
+    case _ => false
+  }
+
+  private def canCauseCastOverflow(cast: Cast): Boolean = {
+    containsIntegralOrDecimalType(cast.dataType) &&
+      !Cast.canUpCast(cast.child.dataType, cast.dataType)
+  }
+}
+
+case class CheckOverflowInTableWrite(child: Expression, columnName: String)
+  extends UnaryExpression {
+  override protected def withNewChildInternal(newChild: Expression): Expression = {
+    copy(child = newChild)
+  }
+
+  private def getCast: Option[Cast] = child match {
+    case c: Cast => Some(c)
+    case ExpressionProxy(c: Cast, _, _) => Some(c)
+    case _ => None
+  }
+
+  override def eval(input: InternalRow): Any = try {
+    child.eval(input)
+  } catch {
+    case e: ArithmeticException =>
+      getCast match {
+        case Some(cast) =>
+          throw DeltaErrors.castingCauseOverflowErrorInTableWrite(
+            cast.child.dataType,
+            cast.dataType,
+            columnName)
+        case None => throw e
+      }
+  }
+
+  override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
+    getCast match {
+      case Some(child) => doGenCodeWithBetterErrorMsg(ctx, ev, child)
+      case None => child.genCode(ctx)
+    }
+  }
+
+  def doGenCodeWithBetterErrorMsg(ctx: CodegenContext, ev: ExprCode, child: Cast): ExprCode = {
+    val childGen = child.genCode(ctx)
+    val exceptionClass = classOf[ArithmeticException].getCanonicalName
+    assert(child.isInstanceOf[Cast])
+    val cast = child.asInstanceOf[Cast]
+    val fromDt =
+      ctx.addReferenceObj("from", cast.child.dataType, cast.child.dataType.getClass.getName)
+    val toDt = ctx.addReferenceObj("to", child.dataType, child.dataType.getClass.getName)
+    val col = ctx.addReferenceObj("colName", columnName, "java.lang.String")
+    // scalastyle:off line.size.limit
+    ev.copy(code =
+      code"""
+      boolean ${ev.isNull} = true;
+      ${CodeGenerator.javaType(dataType)} ${ev.value} = ${CodeGenerator.defaultValue(dataType)};
+      try {
+        ${childGen.code}
+        ${ev.isNull} = ${childGen.isNull};
+        ${ev.value} = ${childGen.value};
+      } catch ($exceptionClass e) {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .castingCauseOverflowErrorInTableWrite($fromDt, $toDt, $col);
+      }"""
+    )
+    // scalastyle:on line.size.limit
+  }
+
+  override def dataType: DataType = child.dataType
+
+  override def sql: String = child.sql
+
+  override def toString: String = child.toString
 }

@@ -81,3 +81,11 @@ class DeltaParseException(
       ParserUtils.position(ctx.getStop)
     ) with DeltaThrowable
 
+class DeltaArithmeticException(
+    errorClass: String,
+    messageParameters: Map[String, String]) extends ArithmeticException with DeltaThrowable {
+  override def getErrorClass: String = errorClass
+
+  override def getMessageParameters: java.util.Map[String, String] = messageParameters.asJava
+}
+
