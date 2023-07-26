@@ -46,9 +46,9 @@ jobs:
           export PATH="~/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
           eval "$(pyenv virtualenv-init -)"
-          pyenv install 3.8.18
-          pyenv global system 3.8.18
-          pipenv --python 3.8 install
+          pyenv install 3.9.17
+          pyenv global system 3.9.17
+          pipenv --python 3.9 install
           pipenv run pip install pyspark==3.5.0
           pipenv run pip install flake8==3.5.0 pypandoc==1.3.3
           pipenv run pip install importlib_metadata==3.10.0
