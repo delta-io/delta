@@ -300,6 +300,11 @@ trait DeltaErrorsSuiteBase
       assert(e.getMessageParameters.get("sourceType") == toSQLType(sourceType))
       assert(e.getMessageParameters.get("targetType") == toSQLType(targetType))
       assert(e.getMessageParameters.get("columnName") == toSQLId(columnName))
+      assert(e.getMessageParameters.get("storeAssignmentPolicyFlag")
+        == SQLConf.STORE_ASSIGNMENT_POLICY.key)
+      assert(e.getMessageParameters.get("updateAndMergeCastingFollowsAnsiEnabledFlag")
+        == DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key)
+      assert(e.getMessageParameters.get("ansiEnabledFlag") == SQLConf.ANSI_ENABLED.key)
     }
     {
       val e = intercept[DeltaAnalysisException] {

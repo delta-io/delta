@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 
-// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -46,13 +45,13 @@ class ImplicitDMLCastingSuite extends QueryTest
   private case class SqlConfiguration(
       followAnsiEnabled: Boolean,
       ansiEnabled: Boolean,
-      storeAssignmentPolicy: String) {
+      storeAssignmentPolicy: SQLConf.StoreAssignmentPolicy.Value) {
 
     def withSqlSettings(f: => Unit): Unit =
       withSQLConf(
         DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key
           -> followAnsiEnabled.toString,
-        SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy,
+        SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
         SQLConf.ANSI_ENABLED.key -> ansiEnabled.toString)(f)
 
     override def toString: String =
@@ -94,8 +93,10 @@ class ImplicitDMLCastingSuite extends QueryTest
     }
   }
 
-  /** Validate that a custom error is throws in case ansi.enabled is false, or a different
-   * overflow error is case ansi.enabled is true. */
+  /**
+   * Validate that a custom error is throws in case ansi.enabled is false, or a different
+   * overflow error is case ansi.enabled is true.
+   */
   private def validateException(
       exception: Throwable, sqlConfig: SqlConfiguration, testConfig: TestConfiguration): Unit = {
     arithmeticCause(exception) match {
@@ -105,10 +106,10 @@ class ImplicitDMLCastingSuite extends QueryTest
           Map("sourceType" -> ("\"" + testConfig.sourceTypeInErrorMessage + "\""),
               "targetType" -> ("\"" + testConfig.targetTypeInErrorMessage + "\""),
               "columnName" -> "`value`",
-              "storeAssignmentPolicyFlag" -> "spark.sql.storeAssignmentPolicy",
+            "storeAssignmentPolicyFlag" -> SQLConf.STORE_ASSIGNMENT_POLICY.key,
               "updateAndMergeCastingFollowsAnsiEnabledFlag" ->
-                "spark.databricks.delta.updateAndMergeCastingFollowsAnsiEnabledFlag",
-              "ansiEnabledFlag" -> "spark.sql.ansi.enabled").asJava)
+                DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
+            "ansiEnabledFlag" -> SQLConf.ANSI_ENABLED.key).asJava)
       case Some(exception: SparkThrowable) if sqlConfig.ansiEnabled =>
         // With ANSI enabled the overflows are caught before the write operation.
         assert(Seq("CAST_OVERFLOW", "NUMERIC_VALUE_OUT_OF_RANGE")
@@ -121,7 +122,8 @@ class ImplicitDMLCastingSuite extends QueryTest
 
   Seq(true, false).foreach { followAnsiEnabled =>
     Seq(true, false).foreach { ansiEnabled =>
-      Seq("ANSI", "LEGACY").foreach { storeAssignmentPolicy =>
+      Seq(SQLConf.StoreAssignmentPolicy.LEGACY, SQLConf.StoreAssignmentPolicy.ANSI)
+          .foreach { storeAssignmentPolicy =>
         val sqlConfiguration =
           SqlConfiguration(followAnsiEnabled, ansiEnabled, storeAssignmentPolicy)
         testConfigurations.foreach { testConfiguration =>
@@ -147,7 +149,8 @@ class ImplicitDMLCastingSuite extends QueryTest
           val updateCommand = s"UPDATE $tableName SET value = ${testConfig.overflowValue}"
 
           val legacyCasts = (sqlConfig.followAnsiEnabled && !sqlConfig.ansiEnabled) ||
-            (!sqlConfig.followAnsiEnabled && sqlConfig.storeAssignmentPolicy == "LEGACY")
+            (!sqlConfig.followAnsiEnabled &&
+              sqlConfig.storeAssignmentPolicy == SQLConf.StoreAssignmentPolicy.LEGACY)
 
           if (legacyCasts) {
             sql(updateCommand)
@@ -207,7 +210,8 @@ class ImplicitDMLCastingSuite extends QueryTest
                                   |$matchedCondition
                                   |""".stripMargin
             val legacyCasts = (sqlConfig.followAnsiEnabled && !sqlConfig.ansiEnabled) ||
-              (!sqlConfig.followAnsiEnabled && sqlConfig.storeAssignmentPolicy == "LEGACY")
+              (!sqlConfig.followAnsiEnabled &&
+                sqlConfig.storeAssignmentPolicy == SQLConf.StoreAssignmentPolicy.LEGACY)
 
             if (legacyCasts) {
               sql(mergeCommand)
@@ -260,7 +264,8 @@ class ImplicitDMLCastingSuite extends QueryTest
           sql(s"INSERT INTO $sourceTableName(key, value) VALUES(0, ${testConfig.overflowValue})")
 
           val legacyCasts = (sqlConfig.followAnsiEnabled && !sqlConfig.ansiEnabled) ||
-            (!sqlConfig.followAnsiEnabled && sqlConfig.storeAssignmentPolicy == "LEGACY")
+            (!sqlConfig.followAnsiEnabled &&
+              sqlConfig.storeAssignmentPolicy == SQLConf.StoreAssignmentPolicy.LEGACY)
 
           if (legacyCasts) {
             streamWriter.processAllAvailable()
