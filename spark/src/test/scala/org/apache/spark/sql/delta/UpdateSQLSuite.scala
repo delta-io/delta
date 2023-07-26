@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.delta.actions.AddFile
 
 class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
 
@@ -123,4 +124,67 @@ class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
       "schema pruning on finding files to update",
       "nested schema pruning on finding files to update"
     )
+
+  test("repeated UPDATE produces deletion vectors") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      val log = DeltaLog.forTable(spark, path)
+      spark.range(0, 10, 1, numPartitions = 2).write.format("delta").save(path)
+
+      def updateAndCheckLog(
+          where: String,
+          expectedAnswer: Seq[Row],
+          numAddFiles: Int,
+          numAddFilesWithDVs: Int,
+          numRowsInExistingFile: Int,
+          numRowsInNewFile: Int,
+          dvCardinality: Long): Unit = {
+        executeUpdate(s"delta.`$path`", "id = -1", where)
+        checkAnswer(sql(s"SELECT * FROM delta.`$path`"), expectedAnswer)
+
+        val allFiles =
+          log.getChanges(log.update().version).flatMap(_._2).collect { case f: AddFile => f }.toSeq
+        assert(allFiles.length === numAddFiles)
+        assert(allFiles.count(_.deletionVector != null) === numAddFilesWithDVs)
+        for (add <- allFiles) {
+          if (add.deletionVector == null) {
+            assert(add.numPhysicalRecords === Some(numRowsInNewFile))
+          } else {
+            assert(add.numPhysicalRecords === Some(numRowsInExistingFile))
+            assert(add.deletionVector.cardinality === dvCardinality)
+          }
+        }
+      }
+
+      // DV created.
+      updateAndCheckLog(
+        "id % 3 = 0",
+        Seq(-1, 1, 2, -1, 4, 5, -1, 7, 8, -1).map(Row(_)),
+        numAddFiles = 4,
+        numAddFilesWithDVs = 2,
+        numRowsInExistingFile = 5,
+        numRowsInNewFile = 2,
+        dvCardinality = 2)
+
+      // DV updated.
+      updateAndCheckLog(
+        "id % 4 = 0",
+        Seq(-1, 1, 2, -1, -1, 5, -1, 7, -1, -1).map(Row(_)),
+        numAddFiles = 4,
+        numAddFilesWithDVs = 2,
+        numRowsInExistingFile = 5,
+        numRowsInNewFile = 1,
+        dvCardinality = 3)
+
+      // File with DV removed, because all rows in the second file are deleted.
+      updateAndCheckLog(
+        "id IN (5, 7)",
+        Seq(-1, 1, 2, -1, -1, -1, -1, -1, -1, -1).map(Row(_)),
+        numAddFiles = 1,
+        numAddFilesWithDVs = 0,
+        numRowsInExistingFile = -1, // doesn't matter
+        numRowsInNewFile = 2,
+        dvCardinality = -1) // doesn't matter
+    }
+  }
 }

@@ -118,7 +118,13 @@ case class UpdateCommand(
     val (metadataPredicates, dataPredicates) =
       DeltaTableUtils.splitMetadataAndDataPredicates(
         updateCondition, txn.metadata.partitionColumns, sparkSession)
-    val candidateFiles = txn.filterFiles(metadataPredicates ++ dataPredicates)
+
+    // Should we write the DVs to represent updated rows?
+    val shouldWriteDeletionVectors = shouldWritePersistentDeletionVectors(sparkSession, txn)
+    val candidateFiles = txn.filterFiles(
+      metadataPredicates ++ dataPredicates,
+      keepNumRecords = shouldWriteDeletionVectors)
+
     val nameToAddFile = generateCandidateFileMap(deltaLog.dataPath, candidateFiles)
 
     scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
@@ -151,12 +157,13 @@ case class UpdateCommand(
         }
 
       rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs
+      val (addActions, removeActions) = addAndRemoveActions.partition(_.isInstanceOf[AddFile])
+      numRewrittenFiles = addActions.size
+      numAddedBytes = addActions.map(_.getFileSize).sum
+      numRemovedBytes = removeActions.map(_.getFileSize).sum
       addAndRemoveActions
     } else {
       // Case 3: Find all the affected files using the user-specified condition
-
-      // Should we write the DVs to represent the deleted rows?
-      val shouldWriteDeletionVectors = shouldWritePersistentDeletionVectors(sparkSession, txn)
 
       val fileIndex = new TahoeBatchFileIndex(
         sparkSession, "update", candidateFiles, deltaLog, tahoeFileIndex.path, txn.snapshot)
@@ -186,8 +193,9 @@ case class UpdateCommand(
             sparkSession,
             touchedFiles,
             txn.snapshot)
-          // metrics("numDeletedRows").set(metricMap("numDeletedRows"))
-          // numTouchedFiles = metricMap("numRemovedFiles")
+          // Number of updated rows is equal to the number of rows deleted by DV.
+          metrics("numUpdatedRows").set(metricMap("numDeletedRows"))
+          numTouchedFiles = metricMap("numRemovedFiles")
           val dvRewriteStartMs = System.nanoTime()
           val newFiles = rewriteFiles(
             sparkSession,
@@ -227,7 +235,7 @@ case class UpdateCommand(
           pathsToRewrite.map(getTouchedFile(deltaLog.dataPath, _, nameToAddFile)).toSeq
 
         // Rewrite all touchedFiles
-        val andRemoveActions =
+        val addAndRemoveActions =
           withStatusCode("DELTA", UpdateCommand.rewritingFilesMsg(touchedFiles.size)) {
             if (touchedFiles.nonEmpty) {
               rewriteFiles(
@@ -244,17 +252,18 @@ case class UpdateCommand(
             }
           }
         rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs
-        andRemoveActions
+
+        val (addActions, removeActions) = addAndRemoveActions.partition(_.isInstanceOf[AddFile])
+        numRewrittenFiles = addActions.size
+        numAddedBytes = addActions.map(_.getFileSize).sum
+        numRemovedBytes = removeActions.map(_.getFileSize).sum
+        addAndRemoveActions
       }
     }
 
-    val (changeActions, addAndRemoveActions) = allActions.partition(_.isInstanceOf[AddCDCFile])
-    val (addActions, removeActions) = addAndRemoveActions.partition(_.isInstanceOf[AddFile])
-    numRewrittenFiles = addActions.size
-    numAddedBytes = addActions.map(_.getFileSize).sum // incorrect with DV
+    val (changeActions, _) = allActions.partition(_.isInstanceOf[AddCDCFile])
     numAddedChangeFiles = changeActions.size
     changeFileBytes = changeActions.collect { case f: AddCDCFile => f.size }.sum
-    numRemovedBytes = removeActions.map(_.getFileSize).sum // incorrect with DV
 
     metrics("numAddedFiles").set(numRewrittenFiles)
     metrics("numAddedBytes").set(numAddedBytes)

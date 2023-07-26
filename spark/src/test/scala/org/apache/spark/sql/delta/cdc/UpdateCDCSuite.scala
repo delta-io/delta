@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.cdc
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.SparkConf
@@ -182,5 +183,25 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
           Row(4, null, 4, "update_postimage", 2)  :: Nil)
     }
   }
+}
+
+class UpdateCDCWithDeletionVectorsSuite extends UpdateCDCSuite
+  with DeltaExcludedTestMixin
+  with DeletionVectorsTestUtils {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    enableDeletionVectors(spark, update = true)
+  }
+
+  override def excluded: Seq[String] = super.excluded ++
+    Seq(
+      // The following two tests must fail when DV is used. Covered by another test case:
+      // "throw error when non-pinned TahoeFileIndex snapshot is used".
+      "data and partition predicates - Partition=true Skipping=false",
+      "data and partition predicates - Partition=false Skipping=false",
+      // The scan schema contains additional row index filter columns.
+      "schema pruning on finding files to update",
+      "nested schema pruning on finding files to update"
+    )
 }
 
