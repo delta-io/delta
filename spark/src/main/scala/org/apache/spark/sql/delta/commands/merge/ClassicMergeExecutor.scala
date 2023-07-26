@@ -101,7 +101,7 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
     val matchedPredicate =
       if (isMatchedOnly) {
         matchedClauses
-          .map(clause => clause.condition.getOrElse(Literal(true)))
+          .flatMap(_.condition)
           .reduce((a, b) => Or(a, b))
       } else Literal(true)
 
