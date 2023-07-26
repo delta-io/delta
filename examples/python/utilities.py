@@ -50,7 +50,7 @@ print("######## Describe history for the table ######")
 deltaTable.history().show()
 
 print("######## Describe details for the table ######")
-deltaTable.details().show()
+deltaTable.detail().show()
 
 # Generate manifest
 print("######## Generating manifest ######")

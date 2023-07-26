@@ -1,0 +1,111 @@
+@startuml
+'https://plantuml.com/class-diagram
+set separator none
+package "org.apache.flink" #DDDDDD {
+  interface CatalogBaseTable
+  interface CatalogFunction
+  interface CatalogDatabase
+  interface CatalogPartition
+  interface Factory
+  abstract class AbstractCatalog implements Catalog
+  class ObjectPath
+  class CatalogPartitionSpec
+  class CatalogColumnStatistics
+  class CatalogTableStatistics
+}
+/' start layout for org.apache.flink '/
+ CatalogBaseTable -[hidden]right- CatalogPartition
+ ObjectPath -[hidden]left- CatalogTableStatistics
+ ObjectPath -[hidden]up- CatalogBaseTable
+/' end layout for org.apache.flink '/
+
+/' ------------------------------- '/
+package "io.delta.flink" {
+  abstract class BaseCatalog extends AbstractCatalog {
+    # decoratedCatalog : Catalog
+
+    + open() : void
+    + close() : void
+    + dropTable(ObjectPath, boolean) : void
+    + listDatabases() : List<String>
+    + getDatabase() : CatalogDatabase
+    + databaseExists(String) : boolean
+    + createDatabase(String, CatalogDatabase, boolean) : void
+    + dropDatabase(String, boolean, boolean) : void
+    + alterDatabase(String, CatalogDatabase, boolean) : void
+    + listTables(String) : List<String>
+    + renameTable(ObjectPath, String, boolean) : void
+    + listViews(String) : List<String>
+    + listFunctions(String) : List<String>
+    + getFunction(ObjectPath) : CatalogFunction
+    + functionExists(ObjectPath) : boolean
+    + createFunction(ObjectPath, CatalogFunction, boolean) : void
+    + alterFunction(ObjectPath, CatalogFunction, boolean) : void
+    + dropFunction(ObjectPath, boolean) : void
+    + getFactory() : Optional<Factory>
+   }
+  note left of BaseCatalog: Methods without context for Delta Table ever\n except `getFactory()` method that creates\n a new instance of DeltaDynamicTableFactory.
+
+  class CatalogProxy extends BaseCatalog {
+    - deltaCatalog : DeltaCatalog
+
+    various listPartition methods
+    various alter Table and partition methods
+    various get table and column statistics methods
+
+    + getTable(ObjectPath) CatalogBaseTable
+    + tableExists(ObjectPath) boolean
+    + createTable(ObjectPath, CatalogBaseTable, boolean) void
+    + alterTable(ObjectPath, CatalogBaseTable, boolean) void
+    + getPartition(ObjectPath, CatalogPartitionSpec) CatalogPartition
+    + partitionExists(ObjectPath, CatalogPartitionSpec) boolean
+    + createPartition(ObjectPath, CatalogPartitionSpec, CatalogPartition, boolean) void
+    + dropPartition(ObjectPath, CatalogPartitionSpec, boolean) void
+    + alterPartition(ObjectPath, CatalogPartitionSpec, CatalogPartition, boolean) void
+    + getTableStatistics(ObjectPath) CatalogTableStatistics
+  }
+  note left of CatalogProxy: Methods that may have Delta table context\n.
+
+  class DeltaCatalog {
+    - catalogName : String
+    - decoratedCatalog : Catalog
+
+    + getTable(DeltaCatalogBaseTable) : CatalogBaseTable
+    + tableExists(DeltaCatalogBaseTable) : boolean
+    + createTable(DeltaCatalogBaseTable, boolean) : void
+    + alterTable(DeltaCatalogBaseTable) : void
+  }
+  note right of DeltaCatalog: Methods that will interact with _delta_log.
+
+  class DeltaCatalogBaseTable {
+    - tableCatalogPath : ObjectPath
+    - catalogTable : CatalogBaseTable
+    - isDeltaTable : boolean
+
+    + getTableCatalogPath() : ObjectPath
+    + getCatalogTable() : CatalogBaseTable
+    + isDeltaTable() : boolean
+    + getOptions() : Map<String, String>
+    + getDatabaseName() : String
+  }
+}
+
+CatalogProxy o-right- DeltaCatalog
+
+ /' layout '/
+BaseCatalog -[hidden]down- AbstractCatalog
+BaseCatalog -[hidden]right- DeltaCatalogBaseTable
+
+/' legend '/
+skinparam legendBackgroundColor #ffffff
+legend
+
+|= field |= method |=  |
+|  <img:http://s.plantuml.com/private-field.png>     |   <img:http://s.plantuml.com/private-method.png>     | private |
+|  <img:http://s.plantuml.com/protected-field.png>   |   <img:http://s.plantuml.com/protected-method.png>   | protected |
+|  <img:http://s.plantuml.com/package-private-field.png>     |   <img:http://s.plantuml.com/package-private-method.png>    | package private |
+|  <img:http://s.plantuml.com/public-field.png>     |   <img:http://s.plantuml.com/public-method.png>     | public |
+
+endlegend
+
+@enduml

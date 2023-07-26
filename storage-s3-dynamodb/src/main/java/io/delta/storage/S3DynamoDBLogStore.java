@@ -20,6 +20,7 @@ import io.delta.storage.utils.ReflectionUtils;
 import org.apache.hadoop.fs.Path;
 
 import java.io.InterruptedIOException;
+import java.io.UncheckedIOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -80,11 +81,15 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
      */
     public static final String SPARK_CONF_PREFIX = "spark.io.delta.storage.S3DynamoDBLogStore";
     public static final String BASE_CONF_PREFIX = "io.delta.storage.S3DynamoDBLogStore";
+    public static final String READ_RETRIES = "read.retries";
     public static final String DDB_CLIENT_TABLE = "ddb.tableName";
     public static final String DDB_CLIENT_REGION = "ddb.region";
     public static final String DDB_CLIENT_CREDENTIALS_PROVIDER = "credentials.provider";
     public static final String DDB_CREATE_TABLE_RCU = "provisionedThroughput.rcu";
     public static final String DDB_CREATE_TABLE_WCU = "provisionedThroughput.wcu";
+
+    // WARNING: setting this value too low can cause data loss. Defaults to a duration of 1 day.
+    public static final String TTL_SECONDS = "ddb.ttl";
 
     /**
      * DynamoDB table attribute keys
@@ -93,7 +98,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     private static final String ATTR_FILE_NAME = "fileName";
     private static final String ATTR_TEMP_PATH = "tempPath";
     private static final String ATTR_COMPLETE = "complete";
-    private static final String ATTR_COMMIT_TIME = "commitTime";
+    private static final String ATTR_EXPIRE_TIME = "expireTime";
 
     /**
      * Member fields
@@ -102,6 +107,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     private final String tableName;
     private final String credentialsProviderName;
     private final String regionName;
+    private final long expirationDelaySeconds;
 
     public S3DynamoDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
@@ -113,12 +119,47 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
             "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
         );
         regionName = getParam(hadoopConf, DDB_CLIENT_REGION, "us-east-1");
+
+        final String ttl = getParam(hadoopConf, TTL_SECONDS, null);
+        expirationDelaySeconds = ttl == null ?
+            BaseExternalLogStore.DEFAULT_EXTERNAL_ENTRY_EXPIRATION_DELAY_SECONDS :
+            Long.parseLong(ttl);
+        if (expirationDelaySeconds < 0) {
+            throw new IllegalArgumentException(
+                String.format(
+                    "Can't use negative `%s` value of %s", TTL_SECONDS, expirationDelaySeconds));
+        }
+
         LOG.info("using tableName {}", tableName);
         LOG.info("using credentialsProviderName {}", credentialsProviderName);
         LOG.info("using regionName {}", regionName);
+        LOG.info("using ttl (seconds) {}", expirationDelaySeconds);
 
         client = getClient();
         tryEnsureTableExists(hadoopConf);
+    }
+
+    @Override
+    public CloseableIterator<String> read(Path path, Configuration hadoopConf) throws IOException {
+        // With many concurrent readers/writers, there's a chance that concurrent 'recovery'
+        // operations occur on the same file, i.e. the same temp file T(N) is copied into the target
+        // N.json file more than once. Though data loss will *NOT* occur, readers of N.json may
+        // receive a RemoteFileChangedException from S3 as the ETag of N.json was changed. This is
+        // safe to retry, so we do so here.
+        final int maxRetries = Integer.parseInt(
+            getParam(
+                hadoopConf,
+                READ_RETRIES,
+                Integer.toString(RetryableCloseableIterator.DEFAULT_MAX_RETRIES)
+            )
+        );
+
+        return new RetryableCloseableIterator(() -> super.read(path, hadoopConf), maxRetries);
+    }
+
+    @Override
+    protected long getExpirationDelaySeconds() {
+        return expirationDelaySeconds;
     }
 
     @Override
@@ -180,13 +221,13 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
      * Map a DBB query result item to an {@link ExternalCommitEntry}.
      */
     private ExternalCommitEntry dbResultToCommitEntry(Map<String, AttributeValue> item) {
-        final AttributeValue commitTimeAttr = item.get(ATTR_COMMIT_TIME);
+        final AttributeValue expireTimeAttr = item.get(ATTR_EXPIRE_TIME);
         return new ExternalCommitEntry(
             new Path(item.get(ATTR_TABLE_PATH).getS()),
             item.get(ATTR_FILE_NAME).getS(),
             item.get(ATTR_TEMP_PATH).getS(),
             item.get(ATTR_COMPLETE).getS().equals("true"),
-            commitTimeAttr != null ? Long.parseLong(commitTimeAttr.getN()) : null
+            expireTimeAttr != null ? Long.parseLong(expireTimeAttr.getN()) : null
         );
     }
 
@@ -200,10 +241,10 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
             new AttributeValue().withS(Boolean.toString(entry.complete))
         );
 
-        if (entry.complete) {
+        if (entry.expireTime != null) {
             attributes.put(
-                ATTR_COMMIT_TIME,
-                new AttributeValue().withN(entry.commitTime.toString())
+                ATTR_EXPIRE_TIME,
+                new AttributeValue().withN(entry.expireTime.toString())
             );
         }
 

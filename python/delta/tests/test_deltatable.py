@@ -30,17 +30,26 @@ from delta.tables import DeltaTable, DeltaTableBuilder, DeltaOptimizeBuilder
 from delta.testing.utils import DeltaTestCase
 
 
-class DeltaTableTests(DeltaTestCase):
+class DeltaTableTestsMixin:
 
     def test_forPath(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         dt = DeltaTable.forPath(self.spark, self.tempFile).toDF()
         self.__checkAnswer(dt, [('a', 1), ('b', 2), ('c', 3)])
 
+    def test_forPathWithOptions(self) -> None:
+        path = self.tempFile
+        fsOptions = {"fs.fake.impl": "org.apache.spark.sql.delta.FakeFileSystem",
+                     "fs.fake.impl.disable.cache": "true"}
+        self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
+        dt = DeltaTable.forPath(self.spark, path, fsOptions).toDF()
+        self.__checkAnswer(dt, [('a', 1), ('b', 2), ('c', 3)])
+
     def test_forName(self) -> None:
-        self.__writeAsTable([('a', 1), ('b', 2), ('c', 3)], "test")
-        df = DeltaTable.forName(self.spark, "test").toDF()
-        self.__checkAnswer(df, [('a', 1), ('b', 2), ('c', 3)])
+        with self.table("test"):
+            self.__writeAsTable([('a', 1), ('b', 2), ('c', 3)], "test")
+            df = DeltaTable.forName(self.spark, "test").toDF()
+            self.__checkAnswer(df, [('a', 1), ('b', 2), ('c', 3)])
 
     def test_alias_and_toDF(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
@@ -87,7 +96,7 @@ class DeltaTableTests(DeltaTestCase):
             files = f.readlines()
 
         # the number of files we write should equal the number of lines in the manifest
-        assert(len(files) == numFiles)
+        self.assertEqual(len(files), numFiles)
 
     def test_update(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
@@ -143,6 +152,7 @@ class DeltaTableTests(DeltaTestCase):
         dt.merge(source, "key = k") \
             .whenMatchedUpdate(set={"value": "v + 0"}) \
             .whenNotMatchedInsert(values={"key": "k", "value": "v + 0"}) \
+            .whenNotMatchedBySourceUpdate(set={"value": "value + 0"}) \
             .execute()
         self.__checkAnswer(dt.toDF(),
                            ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
@@ -152,9 +162,104 @@ class DeltaTableTests(DeltaTestCase):
         dt.merge(source, expr("key = k")) \
             .whenMatchedUpdate(set={"value": col("v") + 0}) \
             .whenNotMatchedInsert(values={"key": "k", "value": col("v") + 0}) \
+            .whenNotMatchedBySourceUpdate(set={"value": col("value") + 0}) \
             .execute()
         self.__checkAnswer(dt.toDF(),
                            ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
+
+        # Multiple matched update clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedUpdate(condition="key = 'a'", set={"value": "5"}) \
+            .whenMatchedUpdate(set={"value": "0"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 5), ('b', 0), ('c', 3), ('d', 4)]))
+
+        # Multiple matched delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedDelete(condition="key = 'a'") \
+            .whenMatchedDelete() \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('c', 3), ('d', 4)]))
+
+        # Redundant matched update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedUpdate(condition="key = 'a'", set={"value": "5"}) \
+            .whenMatchedUpdate(condition="key = 'a'", set={"value": "0"}) \
+            .whenMatchedUpdate(condition="key = 'b'", set={"value": "6"}) \
+            .whenMatchedDelete(condition="key = 'b'") \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 5), ('b', 6), ('c', 3), ('d', 4)]))
+
+        # Interleaved matched update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenMatchedDelete(condition="key = 'a'") \
+            .whenMatchedUpdate(condition="key = 'a'", set={"value": "5"}) \
+            .whenMatchedDelete(condition="key = 'b'") \
+            .whenMatchedUpdate(set={"value": "6"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('c', 3), ('d', 4)]))
+
+        # Multiple not matched insert clauses
+        reset_table()
+        dt.alias("t")\
+            .merge(source.toDF("key", "value").alias("s"), expr("t.key = s.key")) \
+            .whenNotMatchedInsert(condition="s.key = 'e'",
+                                  values={"t.key": "s.key", "t.value": "5"}) \
+            .whenNotMatchedInsertAll() \
+            .execute()
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', 1), ('b', 2), ('c', 3), ('d', 4), ('e', 5), ('f', -6)]))
+
+        # Redundant not matched update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedInsert(condition="k = 'e'", values={"key": "k", "value": "5"}) \
+            .whenNotMatchedInsert(condition="k = 'e'", values={"key": "k", "value": "6"}) \
+            .whenNotMatchedInsert(condition="k = 'f'", values={"key": "k", "value": "7"}) \
+            .whenNotMatchedInsert(condition="k = 'f'", values={"key": "k", "value": "8"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', 1), ('b', 2), ('c', 3), ('d', 4), ('e', 5), ('f', 7)]))
+
+        # Multiple not matched by source update clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": "5"}) \
+            .whenNotMatchedBySourceUpdate(set={"value": "0"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 1), ('b', 2), ('c', 5), ('d', 0)]))
+
+        # Multiple not matched by source delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedBySourceDelete(condition="key = 'c'") \
+            .whenNotMatchedBySourceDelete() \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 1), ('b', 2)]))
+
+        # Redundant not matched by source update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": "5"}) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": "0"}) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'd'", set={"value": "6"}) \
+            .whenNotMatchedBySourceDelete(condition="key = 'd'") \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 1), ('b', 2), ('c', 5), ('d', 6)]))
+
+        # Interleaved update and delete clauses
+        reset_table()
+        dt.merge(source, expr("key = k")) \
+            .whenNotMatchedBySourceDelete(condition="key = 'c'") \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": "5"}) \
+            .whenNotMatchedBySourceDelete(condition="key = 'd'") \
+            .whenNotMatchedBySourceUpdate(set={"value": "6"}) \
+            .execute()
+        self.__checkAnswer(dt.toDF(), ([('a', 1), ('b', 2)]))
 
         # ============== Test clause conditions ==============
 
@@ -164,8 +269,10 @@ class DeltaTableTests(DeltaTestCase):
             .whenMatchedUpdate(condition="k = 'a'", set={"value": "v + 0"}) \
             .whenMatchedDelete(condition="k = 'b'") \
             .whenNotMatchedInsert(condition="k = 'e'", values={"key": "k", "value": "v + 0"}) \
+            .whenNotMatchedBySourceUpdate(condition="key = 'c'", set={"value": col("value") + 0}) \
+            .whenNotMatchedBySourceDelete(condition="key = 'd'") \
             .execute()
-        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('e', -5)]))
 
         # Column expressions in all conditions and dicts
         reset_table()
@@ -177,8 +284,12 @@ class DeltaTableTests(DeltaTestCase):
             .whenNotMatchedInsert(
                 condition=expr("k = 'e'"),
                 values={"key": "k", "value": col("v") + 0}) \
+            .whenNotMatchedBySourceUpdate(
+                condition=expr("key = 'c'"),
+                set={"value": col("value") + 0}) \
+            .whenNotMatchedBySourceDelete(condition=expr("key = 'd'")) \
             .execute()
-        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('e', -5)]))
 
         # Positional arguments
         reset_table()
@@ -186,8 +297,10 @@ class DeltaTableTests(DeltaTestCase):
             .whenMatchedUpdate("k = 'a'", {"value": "v + 0"}) \
             .whenMatchedDelete("k = 'b'") \
             .whenNotMatchedInsert("k = 'e'", {"key": "k", "value": "v + 0"}) \
+            .whenNotMatchedBySourceUpdate("key = 'c'", {"value": "value + 0"}) \
+            .whenNotMatchedBySourceDelete("key = 'd'") \
             .execute()
-        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('d', 4), ('e', -5)]))
+        self.__checkAnswer(dt.toDF(), ([('a', -1), ('c', 3), ('e', -5)]))
 
         # ============== Test updateAll/insertAll ==============
 
@@ -311,6 +424,51 @@ class DeltaTableTests(DeltaTestCase):
                 .merge(source, "key = k")
                 .whenNotMatchedInsert(values="k = 'a'", condition={"value": 1}))
 
+        # ---- bad args in whenNotMatchedBySourceUpdate()
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate({"value": "value"}))
+
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(1))
+
+        with self.assertRaisesRegex(ValueError, "cannot be None"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(condition="key = 'a'"))
+
+        with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(1, {"value": "value"}))
+
+        with self.assertRaisesRegex(TypeError, "must be a dict"):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate("key = 'a'", 1))
+
+        with self.assertRaisesRegex(TypeError, "Values of dict in .* must contain only"):
+            (dt
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(set={"value": 1}))  # type: ignore[dict-item]
+
+        with self.assertRaisesRegex(TypeError, "Keys of dict in .* must contain only"):
+            (dt
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(set={1: ""}))  # type: ignore[dict-item]
+
+        with self.assertRaises(TypeError):
+            (dt  # type: ignore[call-overload]
+                .merge(source, "key = k")
+                .whenNotMatchedBySourceUpdate(set="key = 'a'", condition={"value": 1}))
+
+        # bad args in whenNotMatchedBySourceDelete()
+        with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
+            dt.merge(source, "key = k").whenNotMatchedBySourceDelete(1)  # type: ignore[arg-type]
+
     def test_history(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         self.__overwriteDeltaTable([('a', 3), ('b', 2), ('c', 1)])
@@ -327,10 +485,10 @@ class DeltaTableTests(DeltaTestCase):
             [Row("Overwrite")],
             StructType([StructField("operationParameters.mode", StringType(), True)]))
 
-    def test_details(self) -> None:
+    def test_detail(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         dt = DeltaTable.forPath(self.spark, self.tempFile)
-        details = dt.details()
+        details = dt.detail()
         self.__checkAnswer(
             details.select('format'),
             [Row('delta')],
@@ -374,7 +532,7 @@ class DeltaTableTests(DeltaTestCase):
         self.__checkAnswer(
             self.spark.read.format("delta").load(tempFile2),
             [('a', 1), ('b', 2), ('c', 3)])
-        self.assertEqual(type(dt), DeltaTable)
+        self.assertEqual(type(dt), type(DeltaTable.forPath(self.spark, tempFile2)))
 
         # convert to delta with partition column provided as a string
         tempFile3 = self.tempFile + "_3"
@@ -386,7 +544,7 @@ class DeltaTableTests(DeltaTestCase):
         self.__checkAnswer(
             self.spark.read.format("delta").load(tempFile3),
             [('a', 1), ('b', 2), ('c', 3)])
-        self.assertEqual(type(dt), DeltaTable)
+        self.assertEqual(type(dt), type(DeltaTable.forPath(self.spark, tempFile3)))
 
     def test_isDeltaTable(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
@@ -410,23 +568,24 @@ class DeltaTableTests(DeltaTestCase):
             if col in comments:
                 metadata["comment"] = comments[col]
             fields.append(StructField(col, dataType, col in nullables, metadata))
-        assert (StructType(fields) == schema)
+        self.assertEqual(StructType(fields), schema)
         if len(properties) > 0:
-            tablePropertyMap: Dict[str, str] = (
+            result = (
                 self.spark.sql(  # type: ignore[assignment, misc]
                     "SHOW TBLPROPERTIES {}".format(tableName)
                 )
-                .rdd.collectAsMap())
+                .collect())
+            tablePropertyMap = {row.key: row.value for row in result}
             for key in properties:
-                assert (key in tablePropertyMap)
-                assert (tablePropertyMap[key] == properties[key])
+                self.assertIn(key, tablePropertyMap)
+                self.assertEqual(tablePropertyMap[key], properties[key])
         tableDetails = self.spark.sql("DESCRIBE DETAIL {}".format(tableName))\
             .collect()[0]
-        assert(tableDetails.format == "delta")
+        self.assertEqual(tableDetails.format, "delta")
         actualComment = tableDetails.description
-        assert(actualComment == tblComment)
+        self.assertEqual(actualComment, tblComment)
         partitionCols = tableDetails.partitionColumns
-        assert(sorted(partitionCols) == sorted((partitioningColumns)))
+        self.assertEqual(sorted(partitionCols), sorted((partitioningColumns)))
 
     def __verify_generated_column(self, tableName: str, deltaTable: DeltaTable) -> None:
         cmd = "INSERT INTO {table} (col1, col2) VALUES (1, 11)".format(table=tableName)
@@ -466,86 +625,89 @@ class DeltaTableTests(DeltaTestCase):
 
     def test_create_table_with_existing_schema(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
-        deltaTable = DeltaTable.create(self.spark).tableName("test") \
-            .addColumns(df.schema) \
-            .addColumn("value2", dataType="int")\
-            .partitionedBy(["value2", "value"])\
-            .execute()
-        self.__verify_table_schema("test",
-                                   deltaTable.toDF().schema,
-                                   ["key", "value", "value2"],
-                                   [StringType(), LongType(), IntegerType()],
-                                   nullables={"key", "value", "value2"},
-                                   partitioningColumns=["value", "value2"])
+        with self.table("test"):
+            deltaTable = DeltaTable.create(self.spark).tableName("test") \
+                .addColumns(df.schema) \
+                .addColumn("value2", dataType="int")\
+                .partitionedBy(["value2", "value"])\
+                .execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=["value", "value2"])
 
-        # verify creating table with list of structFields
-        deltaTable2 = DeltaTable.create(self.spark).tableName("test2").addColumns(
-            df.schema.fields) \
-            .addColumn("value2", dataType="int") \
-            .partitionedBy("value2", "value")\
-            .execute()
-        self.__verify_table_schema("test2",
-                                   deltaTable2.toDF().schema,
-                                   ["key", "value", "value2"],
-                                   [StringType(), LongType(), IntegerType()],
-                                   nullables={"key", "value", "value2"},
-                                   partitioningColumns=["value", "value2"])
+        with self.table("test2"):
+            # verify creating table with list of structFields
+            deltaTable2 = DeltaTable.create(self.spark).tableName("test2").addColumns(
+                df.schema.fields) \
+                .addColumn("value2", dataType="int") \
+                .partitionedBy("value2", "value")\
+                .execute()
+            self.__verify_table_schema("test2",
+                                       deltaTable2.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=["value", "value2"])
 
     def test_create_replace_table_with_no_spark_session_passed(self) -> None:
-        # create table.
-        deltaTable = DeltaTable.create().tableName("test")\
-            .addColumn("value", dataType="int").execute()
-        self.__verify_table_schema("test",
-                                   deltaTable.toDF().schema,
-                                   ["value"],
-                                   [IntegerType()],
-                                   nullables={"value"})
+        with self.table("test"):
+            # create table.
+            deltaTable = DeltaTable.create().tableName("test")\
+                .addColumn("value", dataType="int").execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["value"],
+                                       [IntegerType()],
+                                       nullables={"value"})
 
-        # ignore existence with createIfNotExists
-        deltaTable = DeltaTable.createIfNotExists().tableName("test") \
-            .addColumn("value2", dataType="int").execute()
-        self.__verify_table_schema("test",
-                                   deltaTable.toDF().schema,
-                                   ["value"],
-                                   [IntegerType()],
-                                   nullables={"value"})
+            # ignore existence with createIfNotExists
+            deltaTable = DeltaTable.createIfNotExists().tableName("test") \
+                .addColumn("value2", dataType="int").execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["value"],
+                                       [IntegerType()],
+                                       nullables={"value"})
 
-        # replace table with replace
-        deltaTable = DeltaTable.replace().tableName("test") \
-            .addColumn("key", dataType="int").execute()
-        self.__verify_table_schema("test",
-                                   deltaTable.toDF().schema,
-                                   ["key"],
-                                   [IntegerType()],
-                                   nullables={"key"})
+            # replace table with replace
+            deltaTable = DeltaTable.replace().tableName("test") \
+                .addColumn("key", dataType="int").execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["key"],
+                                       [IntegerType()],
+                                       nullables={"key"})
 
-        # replace with a new column again
-        deltaTable = DeltaTable.createOrReplace().tableName("test") \
-            .addColumn("col1", dataType="int").execute()
+            # replace with a new column again
+            deltaTable = DeltaTable.createOrReplace().tableName("test") \
+                .addColumn("col1", dataType="int").execute()
 
-        self.__verify_table_schema("test",
-                                   deltaTable.toDF().schema,
-                                   ["col1"],
-                                   [IntegerType()],
-                                   nullables={"col1"})
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["col1"],
+                                       [IntegerType()],
+                                       nullables={"col1"})
 
     def test_create_table_with_name_only(self) -> None:
         for ifNotExists in (False, True):
             tableName = "testTable{}".format(ifNotExists)
-            deltaTable = self.__create_table(ifNotExists, tableName=tableName)
+            with self.table(tableName):
+                deltaTable = self.__create_table(ifNotExists, tableName=tableName)
 
-            self.__verify_table_schema(tableName,
-                                       deltaTable.toDF().schema,
-                                       ["col1", "col2"],
-                                       [IntegerType(), IntegerType()],
-                                       nullables={"col2"},
-                                       comments={"col1": "foo"},
-                                       properties={"foo": "bar"},
-                                       partitioningColumns=["col1"],
-                                       tblComment="comment")
-            # verify generated columns.
-            self.__verify_generated_column(tableName, deltaTable)
-            self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
+                self.__verify_table_schema(tableName,
+                                           deltaTable.toDF().schema,
+                                           ["col1", "col2"],
+                                           [IntegerType(), IntegerType()],
+                                           nullables={"col2"},
+                                           comments={"col1": "foo"},
+                                           properties={"foo": "bar"},
+                                           partitioningColumns=["col1"],
+                                           tblComment="comment")
+                # verify generated columns.
+                self.__verify_generated_column(tableName, deltaTable)
 
     def test_create_table_with_location_only(self) -> None:
         for ifNotExists in (False, True):
@@ -567,59 +729,59 @@ class DeltaTableTests(DeltaTestCase):
         for ifNotExists in (False, True):
             path = self.tempFile + str(ifNotExists)
             tableName = "testTable{}".format(ifNotExists)
-            deltaTable = self.__create_table(
-                ifNotExists, tableName=tableName, location=path)
+            with self.table(tableName):
+                deltaTable = self.__create_table(
+                    ifNotExists, tableName=tableName, location=path)
 
-            self.__verify_table_schema(tableName,
-                                       deltaTable.toDF().schema,
-                                       ["col1", "col2"],
-                                       [IntegerType(), IntegerType()],
-                                       nullables={"col2"},
-                                       comments={"col1": "foo"},
-                                       properties={"foo": "bar"},
-                                       partitioningColumns=["col1"],
-                                       tblComment="comment")
-            # verify generated columns.
-            self.__verify_generated_column(tableName, deltaTable)
-            self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
+                self.__verify_table_schema(tableName,
+                                           deltaTable.toDF().schema,
+                                           ["col1", "col2"],
+                                           [IntegerType(), IntegerType()],
+                                           nullables={"col2"},
+                                           comments={"col1": "foo"},
+                                           properties={"foo": "bar"},
+                                           partitioningColumns=["col1"],
+                                           tblComment="comment")
+                # verify generated columns.
+                self.__verify_generated_column(tableName, deltaTable)
 
     def test_create_table_behavior(self) -> None:
-        self.spark.sql("CREATE TABLE testTable (c1 int) USING DELTA")
+        with self.table("testTable"):
+            self.spark.sql("CREATE TABLE testTable (c1 int) USING DELTA")
 
-        # Errors out if doesn't ignore.
-        try:
-            self.__create_table(False, tableName="testTable")
-        except AnalysisException as e:
-            msg = e.desc
-        assert (msg == "Table default.testTable already exists")
+            # Errors out if doesn't ignore.
+            with self.assertRaises(AnalysisException) as error_ctx:
+                self.__create_table(False, tableName="testTable")
+            msg = str(error_ctx.exception)
+            assert ("testTable" in msg and "already exists" in msg)
 
-        # ignore table creation.
-        self.__create_table(True, tableName="testTable")
-        schema = self.spark.read.format("delta").table("testTable").schema
-        self.__verify_table_schema("testTable",
-                                   schema,
-                                   ["c1"],
-                                   [IntegerType()],
-                                   nullables={"c1"})
+            # ignore table creation.
+            self.__create_table(True, tableName="testTable")
+            schema = self.spark.read.format("delta").table("testTable").schema
+            self.__verify_table_schema("testTable",
+                                       schema,
+                                       ["c1"],
+                                       [IntegerType()],
+                                       nullables={"c1"})
 
     def test_replace_table_with_name_only(self) -> None:
         for orCreate in (False, True):
             tableName = "testTable{}".format(orCreate)
-            self.spark.sql("CREATE TABLE {} (c1 int) USING DELTA".format(tableName))
-            deltaTable = self.__replace_table(orCreate, tableName=tableName)
+            with self.table(tableName):
+                self.spark.sql("CREATE TABLE {} (c1 int) USING DELTA".format(tableName))
+                deltaTable = self.__replace_table(orCreate, tableName=tableName)
 
-            self.__verify_table_schema(tableName,
-                                       deltaTable.toDF().schema,
-                                       ["col1", "col2"],
-                                       [IntegerType(), IntegerType()],
-                                       nullables={"col2"},
-                                       comments={"col1": "foo"},
-                                       properties={"foo": "bar"},
-                                       partitioningColumns=["col1"],
-                                       tblComment="comment")
-            # verify generated columns.
-            self.__verify_generated_column(tableName, deltaTable)
-            self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
+                self.__verify_table_schema(tableName,
+                                           deltaTable.toDF().schema,
+                                           ["col1", "col2"],
+                                           [IntegerType(), IntegerType()],
+                                           nullables={"col2"},
+                                           comments={"col1": "foo"},
+                                           properties={"foo": "bar"},
+                                           partitioningColumns=["col1"],
+                                           tblComment="comment")
+                # verify generated columns.
+                self.__verify_generated_column(tableName, deltaTable)
 
     def test_replace_table_with_location_only(self) -> None:
         for orCreate in (False, True):
@@ -643,12 +805,33 @@ class DeltaTableTests(DeltaTestCase):
         for orCreate in (False, True):
             path = self.tempFile + str(orCreate)
             tableName = "testTable{}".format(orCreate)
-            self.spark.sql("CREATE TABLE {} (col int) USING DELTA LOCATION '{}'"
-                           .format(tableName, path))
-            deltaTable = self.__replace_table(
-                orCreate, tableName=tableName, location=path)
+            with self.table(tableName):
+                self.spark.sql("CREATE TABLE {} (col int) USING DELTA LOCATION '{}'"
+                               .format(tableName, path))
+                deltaTable = self.__replace_table(
+                    orCreate, tableName=tableName, location=path)
 
-            self.__verify_table_schema(tableName,
+                self.__verify_table_schema(tableName,
+                                           deltaTable.toDF().schema,
+                                           ["col1", "col2"],
+                                           [IntegerType(), IntegerType()],
+                                           nullables={"col2"},
+                                           comments={"col1": "foo"},
+                                           properties={"foo": "bar"},
+                                           partitioningColumns=["col1"],
+                                           tblComment="comment")
+                # verify generated columns.
+                self.__verify_generated_column(tableName, deltaTable)
+
+    def test_replace_table_behavior(self) -> None:
+        with self.table("testTable"):
+            with self.assertRaises(AnalysisException) as error_ctx:
+                self.__replace_table(False, tableName="testTable")
+            msg = str(error_ctx.exception)
+            self.assertIn("testTable", msg)
+            self.assertTrue("did not exist" in msg or "cannot be found" in msg)
+            deltaTable = self.__replace_table(True, tableName="testTable")
+            self.__verify_table_schema("testTable",
                                        deltaTable.toDF().schema,
                                        ["col1", "col2"],
                                        [IntegerType(), IntegerType()],
@@ -657,52 +840,30 @@ class DeltaTableTests(DeltaTestCase):
                                        properties={"foo": "bar"},
                                        partitioningColumns=["col1"],
                                        tblComment="comment")
-            # verify generated columns.
-            self.__verify_generated_column(tableName, deltaTable)
-            self.spark.sql("DROP TABLE IF EXISTS {}".format(tableName))
-
-    def test_replace_table_behavior(self) -> None:
-        msg = None
-        try:
-            self.__replace_table(False, tableName="testTable")
-        except AnalysisException as e:
-            msg = e.desc
-        assert msg is not None
-        assert (msg.startswith(
-            "Table default.testTable cannot be replaced as it did not exist."))
-        deltaTable = self.__replace_table(True, tableName="testTable")
-        self.__verify_table_schema("testTable",
-                                   deltaTable.toDF().schema,
-                                   ["col1", "col2"],
-                                   [IntegerType(), IntegerType()],
-                                   nullables={"col2"},
-                                   comments={"col1": "foo"},
-                                   properties={"foo": "bar"},
-                                   partitioningColumns=["col1"],
-                                   tblComment="comment")
 
     def test_verify_paritionedBy_compatibility(self) -> None:
-        tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
-            .addColumn("col1", "int", comment="foo", nullable=False) \
-            .addColumn("col2", IntegerType(), generatedAlwaysAs="col1 + 10") \
-            .property("foo", "bar") \
-            .comment("comment")
-        tableBuilder._jbuilder = tableBuilder._jbuilder.partitionedBy(
-            _to_seq(self.spark._sc, ["col1"])  # type: ignore[attr-defined]
-        )
-        deltaTable = tableBuilder.execute()
-        self.__verify_table_schema("testTable",
-                                   deltaTable.toDF().schema,
-                                   ["col1", "col2"],
-                                   [IntegerType(), IntegerType()],
-                                   nullables={"col2"},
-                                   comments={"col1": "foo"},
-                                   properties={"foo": "bar"},
-                                   partitioningColumns=["col1"],
-                                   tblComment="comment")
+        with self.table("testTable"):
+            tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
+                .addColumn("col1", "int", comment="foo", nullable=False) \
+                .addColumn("col2", IntegerType(), generatedAlwaysAs="col1 + 10") \
+                .property("foo", "bar") \
+                .comment("comment")
+            tableBuilder._jbuilder = tableBuilder._jbuilder.partitionedBy(
+                _to_seq(self.spark._sc, ["col1"])  # type: ignore[attr-defined]
+            )
+            deltaTable = tableBuilder.execute()
+            self.__verify_table_schema("testTable",
+                                       deltaTable.toDF().schema,
+                                       ["col1", "col2"],
+                                       [IntegerType(), IntegerType()],
+                                       nullables={"col2"},
+                                       comments={"col1": "foo"},
+                                       properties={"foo": "bar"},
+                                       partitioningColumns=["col1"],
+                                       tblComment="comment")
 
     def test_delta_table_builder_with_bad_args(self) -> None:
-        builder = DeltaTable.create(self.spark)
+        builder = DeltaTable.create(self.spark).location(self.tempFile)
 
         # bad table name
         with self.assertRaises(TypeError):
@@ -727,6 +888,7 @@ class DeltaTableTests(DeltaTestCase):
         # bad column datatype - can't be pared
         with self.assertRaises(ParseException):
             builder.addColumn("a", "1")
+            builder.execute()
 
         # bad comment
         with self.assertRaises(TypeError):
@@ -880,8 +1042,6 @@ class DeltaTableTests(DeltaTestCase):
         op_params = dt.history().first().operationParameters
 
         # assertions
-        self.assertTrue(isinstance(optimizer, DeltaOptimizeBuilder))
-        self.assertTrue(isinstance(res, DataFrame))
         self.assertEqual(1, res.first().metrics.numFilesAdded)
         self.assertEqual(3, res.first().metrics.numFilesRemoved)
         self.assertEqual('[]', op_params['predicate'])
@@ -911,11 +1071,9 @@ class DeltaTableTests(DeltaTestCase):
         op_params = dt.history().first().operationParameters
 
         # assertions
-        self.assertTrue(isinstance(optimizer, DeltaOptimizeBuilder))
-        self.assertTrue(isinstance(res, DataFrame))
         self.assertEqual(1, res.first().metrics.numFilesAdded)
         self.assertEqual(2, res.first().metrics.numFilesRemoved)
-        self.assertEqual('["(key = \'a\')"]', op_params['predicate'])
+        self.assertEqual('''["('key = a)"]''', op_params['predicate'])
 
         # test non-partition column
         def optimize() -> None:
@@ -932,6 +1090,10 @@ class DeltaTableTests(DeltaTestCase):
             .withColumn("p", floor(col("value") % 10)) \
             .repartition(4).write.partitionBy("p").format("delta").save(self.tempFile)
 
+        # get the number of data files in the current version
+        numDataFilesPreZOrder = self.spark.read.format("delta").load(self.tempFile) \
+            .select("_metadata.file_path").distinct().count()
+
         # create DeltaTable
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
@@ -940,12 +1102,17 @@ class DeltaTableTests(DeltaTestCase):
         result = optimizer.executeZOrderBy(["col1", "col2"])
         metrics = result.select("metrics.*").head()
 
-        self.assertTrue(metrics.numFilesAdded == 10)
-        self.assertTrue(metrics.numFilesRemoved == 37)
-        self.assertTrue(metrics.totalFilesSkipped == 0)
-        self.assertTrue(metrics.totalConsideredFiles == 37)
-        self.assertTrue(metrics.zOrderStats.strategyName == 'all')
-        self.assertTrue(metrics.zOrderStats.numOutputCubes == 10)
+        # expect there is only one file after the Z-Order as Z-Order also
+        # does the compaction implicitly and all small files are written to one file
+        # for each partition. Ther are 10 partitions in the table, so expect 10 final files
+        numDataFilesPostZOrder = 10
+
+        self.assertEqual(numDataFilesPostZOrder, metrics.numFilesAdded)
+        self.assertEqual(numDataFilesPreZOrder, metrics.numFilesRemoved)
+        self.assertEqual(0, metrics.totalFilesSkipped)
+        self.assertEqual(numDataFilesPreZOrder, metrics.totalConsideredFiles)
+        self.assertEqual('all', metrics.zOrderStats.strategyName)
+        self.assertEqual(10, metrics.zOrderStats.numOutputCubes)  # one for each partition
 
         # negative test: Z-Order on partition column
         def optimize() -> None:
@@ -964,6 +1131,10 @@ class DeltaTableTests(DeltaTestCase):
 
         df.format("delta").save(self.tempFile)
 
+        # get the number of data files in the current version in partition p = 2
+        numDataFilesPreZOrder = self.spark.read.format("delta").load(self.tempFile) \
+            .filter("p=2").select("_metadata.file_path").distinct().count()
+
         # create DeltaTable
         dt = DeltaTable.forPath(self.spark, self.tempFile)
 
@@ -972,13 +1143,17 @@ class DeltaTableTests(DeltaTestCase):
         result = optimizer.executeZOrderBy(["col1", "col2"])
         metrics = result.select("metrics.*").head()
 
-        # assertions (partition 'p = 2' has four files)
-        self.assertTrue(metrics.numFilesAdded == 1)
-        self.assertTrue(metrics.numFilesRemoved == 4)
-        self.assertTrue(metrics.totalFilesSkipped == 0)
-        self.assertTrue(metrics.totalConsideredFiles == 4)
-        self.assertTrue(metrics.zOrderStats.strategyName == 'all')
-        self.assertTrue(metrics.zOrderStats.numOutputCubes == 1)
+        # expect there is only one file after the Z-Order as Z-Order also
+        # does the compaction implicitly and all small files are written to one file
+        numDataFilesPostZOrder = 1
+
+        self.assertEqual(numDataFilesPostZOrder, metrics.numFilesAdded)
+        self.assertEqual(numDataFilesPreZOrder, metrics.numFilesRemoved)
+        self.assertEqual(0, metrics.totalFilesSkipped)
+        # expected to consider all input files for Z-Order
+        self.assertEqual(numDataFilesPreZOrder, metrics.totalConsideredFiles)
+        self.assertEqual('all', metrics.zOrderStats.strategyName)
+        self.assertEqual(1, metrics.zOrderStats.numOutputCubes)  # one per each affected partition
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
@@ -1031,6 +1206,10 @@ class DeltaTableTests(DeltaTestCase):
             if exceptionMsg in str(e):
                 seenTheRightException = True
         assert seenTheRightException, ("Did not catch expected Exception:" + exceptionMsg)
+
+
+class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
+    pass
 
 
 if __name__ == "__main__":

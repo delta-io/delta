@@ -3,6 +3,7 @@
 [![Test](https://github.com/delta-io/delta/actions/workflows/test.yaml/badge.svg)](https://github.com/delta-io/delta/actions/workflows/test.yaml)
 [![License](https://img.shields.io/badge/license-Apache%202-brightgreen.svg)](https://github.com/delta-io/delta/blob/master/LICENSE.txt)
 [![PyPI](https://img.shields.io/pypi/v/delta-spark.svg)](https://pypi.org/project/delta-spark/)
+[![PyPI - Downloads](https://img.shields.io/pypi/dm/delta-spark)](https://pypistats.org/packages/delta-spark)
 
 Delta Lake is an open-source storage framework that enables building a [Lakehouse architecture](http://cidrdb.org/cidr2021/papers/cidr2021_paper17.pdf) with compute engines including Spark, PrestoDB, Flink, Trino, and Hive and APIs for Scala, Java, Rust, Ruby, and Python. 
 * See the [Delta Lake Documentation](https://docs.delta.io) for details.
@@ -164,7 +165,7 @@ Error:(91, 22) not found: type DeltaSqlBaseParser
 
 then follow these steps:
 1. Compile using the SBT CLI: `build/sbt compile`.
-2. Go to `File` > `Project Structure...` > `Modules` > `delta-core`.
+2. Go to `File` > `Project Structure...` > `Modules` > `delta-spark`.
 3. In the right panel under `Source Folders` remove any `target` folders, e.g. `target/scala-2.12/src_managed/main [generated]`
 4. Click `Apply` and then re-run your test.
 

@@ -1,0 +1,19 @@
+name: Add new and updated issues to Needs Review
+
+on:
+  issues:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+
+
+jobs:
+  automate-new-updated-issues:
+    if: ${{ !github.event.issue.pull_request && !contains('allisonport-db dennyglee scottsand-db tdas zsxwing', github.event.sender.login) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: alex-page/github-project-automation-plus@v0.8.1
+        with:
+          project: oss-delta-issues
+          column: Needs Review
+          repo-token: ${{ secrets.PROJECT_BOARD_AUTOMATION_TOKEN }}

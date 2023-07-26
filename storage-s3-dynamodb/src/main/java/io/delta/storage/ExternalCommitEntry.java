@@ -46,33 +46,34 @@ public final class ExternalCommitEntry {
     public final boolean complete;
 
     /**
-     * epoch seconds of time of commit if complete=true, else null
+     * If complete = true, epoch seconds at which this external commit entry is safe to be deleted.
+     * Else, null.
      */
-    public final Long commitTime;
+    public final Long expireTime;
 
     public ExternalCommitEntry(
             Path tablePath,
             String fileName,
             String tempPath,
             boolean complete,
-            Long commitTime) {
+            Long expireTime) {
         this.tablePath = tablePath;
         this.fileName = fileName;
         this.tempPath = tempPath;
         this.complete = complete;
-        this.commitTime = commitTime;
+        this.expireTime = expireTime;
     }
 
     /**
-     * @return this entry with `complete=true`
+     * @return this entry with `complete=true` and a valid `expireTime`
      */
-    public ExternalCommitEntry asComplete() {
+    public ExternalCommitEntry asComplete(long expirationDelaySeconds) {
         return new ExternalCommitEntry(
             this.tablePath,
             this.fileName,
             this.tempPath,
             true,
-            System.currentTimeMillis() / 1000L
+            System.currentTimeMillis() / 1000L + expirationDelaySeconds
         );
     }
 

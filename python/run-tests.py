@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 #
 # Copyright (2021) The Delta Lake Project Authors.
@@ -54,6 +54,7 @@ def delete_if_exists(path):
 
 
 def prepare(root_dir):
+    print("##### Preparing python tests & building packages #####")
     # Build package with python files in it
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
@@ -64,7 +65,7 @@ def prepare(root_dir):
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
-    package = "io.delta:delta-core_2.12:" + version
+    package = "io.delta:delta-spark_2.12:" + version
     return package
 
 
@@ -99,6 +100,7 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, print_cmd=T
 
 
 def run_python_style_checks(root_dir):
+    print("##### Running python style tests #####")
     run_cmd([os.path.join(root_dir, "dev", "lint-python")], stream_output=True)
 
 
@@ -115,13 +117,13 @@ def run_mypy_tests(root_dir):
 
 def run_pypi_packaging_tests(root_dir):
     """
-    We want to test that the PyPi artifact for this delta version can be generated,
+    We want to test that the delta-spark PyPi artifact for this delta version can be generated,
     locally installed, and used in python tests.
 
-    We will uninstall any existing local delta PyPi artifact.
-    We will generate a new local delta PyPi artifact.
+    We will uninstall any existing local delta-spark PyPi artifact.
+    We will generate a new local delta-spark PyPi artifact.
     We will install it into the local PyPi repository.
-    And then we will run relevant python tests to ensure everything works as exepcted.
+    And then we will run relevant python tests to ensure everything works as expected.
     """
     print("##### Running PyPi Packaging tests #####")
 
@@ -130,10 +132,7 @@ def run_pypi_packaging_tests(root_dir):
         version = fd.readline().split('"')[1]
 
     # uninstall packages if they exist
-    run_cmd(["pip3", "uninstall", "--yes", "delta-spark", "pyspark"], stream_output=True)
-
-    # install helper pip packages
-    run_cmd(["pip3", "install", "wheel", "twine", "setuptools", "--upgrade"], stream_output=True)
+    run_cmd(["pip3", "uninstall", "--yes", "delta-spark"], stream_output=True)
 
     wheel_dist_dir = path.join(root_dir, "dist")
 
@@ -152,7 +151,7 @@ def run_pypi_packaging_tests(root_dir):
     version_formatted = version.replace("-", "_")
     delta_whl_name = "delta_spark-" + version_formatted + "-py3-none-any.whl"
 
-    # this will install delta-spark-$version and pyspark
+    # this will install delta-spark-$version
     install_whl_cmd = ["pip3", "install", path.join(wheel_dist_dir, delta_whl_name)]
     run_cmd(install_whl_cmd, stream_output=True)
 
@@ -168,6 +167,7 @@ def run_pypi_packaging_tests(root_dir):
 
 
 if __name__ == "__main__":
+    print("##### Running python tests #####")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     package = prepare(root_dir)
 

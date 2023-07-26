@@ -19,7 +19,7 @@
 import argparse
 from scripts.benchmarks import *
 
-delta_version = "2.0.0"
+delta_version = "2.1.0"
 
 # Benchmark name to their specifications. See the imported benchmarks.py for details of benchmark.
 

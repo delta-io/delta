@@ -32,6 +32,7 @@ import com.fasterxml.jackson.module.scala.{DefaultScalaModule, ScalaObjectMapper
 
 import org.apache.spark.SparkUtils
 import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.functions.{col}
 
 trait BenchmarkConf extends Product {
   /** Cloud path where benchmark data is going to be written. */

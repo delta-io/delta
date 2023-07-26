@@ -1,5 +1,5 @@
 #
-# Copyright (2021) The Delta Lake Project Authors.
+# Copyright (2023) The Delta Lake Project Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,38 +20,34 @@ import sys
 import tempfile
 import unittest
 
-from pyspark.sql import SparkSession
+from pyspark import SparkConf
+from pyspark.testing.sqlutils import ReusedSQLTestCase  # type: ignore[import]
 
 
-class DeltaTestCase(unittest.TestCase):
+class DeltaTestCase(ReusedSQLTestCase):
     """Test class base that sets up a correctly configured SparkSession for querying Delta tables.
     """
 
+    @classmethod
+    def conf(cls) -> SparkConf:
+        _conf = super(DeltaTestCase, cls).conf()
+        _conf.set("spark.app.name", cls.__name__)
+        _conf.set("spark.master", "local[4]")
+        _conf.set("spark.ui.enabled", "false")
+        _conf.set("spark.databricks.delta.snapshotPartitions", "2")
+        _conf.set("spark.sql.shuffle.partitions", "5")
+        _conf.set("delta.log.cacheSize", "3")
+        _conf.set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "5")
+        _conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+        _conf.set("spark.sql.catalog.spark_catalog",
+                  "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+        return _conf
+
     def setUp(self) -> None:
-        self._old_sys_path = list(sys.path)
-        class_name = self.__class__.__name__
-        self.warehouse_dir = tempfile.mkdtemp()
-        # Configurations to speed up tests and reduce memory footprint
-        self.spark = SparkSession.builder \
-            .appName(class_name) \
-            .master('local[4]') \
-            .config("spark.ui.enabled", "false") \
-            .config("spark.databricks.delta.snapshotPartitions", "2") \
-            .config("spark.sql.shuffle.partitions", "5") \
-            .config("delta.log.cacheSize", "3") \
-            .config("spark.sql.sources.parallelPartitionDiscovery.parallelism", "5") \
-            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-            .config("spark.sql.catalog.spark_catalog",
-                    "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-            .config("spark.sql.warehouse.dir", self.warehouse_dir) \
-            .getOrCreate()
-        self.sc = self.spark.sparkContext
+        super(DeltaTestCase, self).setUp()
         self.tempPath = tempfile.mkdtemp()
         self.tempFile = os.path.join(self.tempPath, "tempFile")
 
     def tearDown(self) -> None:
-        self.sc.stop()
+        super(DeltaTestCase, self).tearDown()
         shutil.rmtree(self.tempPath)
-        if os.path.exists(self.warehouse_dir) and os.path.isdir(self.warehouse_dir):
-            shutil.rmtree(self.warehouse_dir)
-        sys.path = self._old_sys_path
