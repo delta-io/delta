@@ -17,16 +17,14 @@
 package org.apache.spark.sql.delta.commands.merge
 
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC}
 import org.apache.spark.sql.delta.commands.merge.MergeOutputGeneration.{SOURCE_ROW_INDEX_COL, TARGET_ROW_INDEX_COL}
 import org.apache.spark.sql.delta.util.SetAccumulator
-
 import org.apache.spark.sql.{Column, Dataset, SparkSession}
-import org.apache.spark.sql.catalyst.expressions.{Literal, Or}
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, Or}
 import org.apache.spark.sql.functions.{coalesce, col, count, input_file_name, lit, monotonically_increasing_id, sum}
 
 /**
@@ -102,8 +100,8 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
       if (isMatchedOnly) {
         matchedClauses
           .flatMap(_.condition)
-          .reduce((a, b) => Or(a, b))
-      } else Literal(true)
+          .foldLeft[Expression](Literal.TrueLiteral)(Or.apply)
+      } else Literal.TrueLiteral
 
     // Compute the columns needed for the inner join.
     val targetColsNeeded = {
