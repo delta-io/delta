@@ -92,6 +92,12 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   /** Whether this merge statement includes inserts statements. */
   protected def includesInserts: Boolean = notMatchedClauses.nonEmpty
 
+  /** Whether this merge statement includes delete statements. */
+  protected def includesDeletes: Boolean = {
+    matchedClauses.exists(_.isInstanceOf[DeltaMergeIntoMatchedDeleteClause]) ||
+      notMatchedBySourceClauses.exists(_.isInstanceOf[DeltaMergeIntoNotMatchedBySourceDeleteClause])
+  }
+
   protected def isCdcEnabled(deltaTxn: OptimisticTransaction): Boolean =
     DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(deltaTxn.metadata)
 

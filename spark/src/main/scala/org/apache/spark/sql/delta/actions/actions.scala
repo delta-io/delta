@@ -695,7 +695,7 @@ case class AddFile(
     ): RemoveFile = {
     var newTags = tags
     // scalastyle:off
-    val removedFile = RemoveFile(
+    RemoveFile(
       path, Some(timestamp), dataChange,
       extendedFileMetadata = Some(true), partitionValues, Some(size), newTags,
       deletionVector = deletionVector,
@@ -704,7 +704,6 @@ case class AddFile(
       stats = stats
     )
     // scalastyle:on
-    removedFile
   }
 
   /**
