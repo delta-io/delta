@@ -252,7 +252,7 @@ case class UpdateCommand(
             }
           }
         rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs
-
+        numTouchedFiles = touchedFiles.length
         val (addActions, removeActions) = addAndRemoveActions.partition(_.isInstanceOf[AddFile])
         numRewrittenFiles = addActions.size
         numAddedBytes = addActions.map(_.getFileSize).sum
