@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableUnsetPropertiesDeltaCommand
+import org.apache.spark.sql.delta.metering.DeltaLogging
 
 /**
  * A base class for implementing a preparation command for removing table features.
@@ -33,9 +34,11 @@ sealed abstract class PreDowngradeTableFeatureCommand {
 }
 
 case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
-  extends PreDowngradeTableFeatureCommand {
+  extends PreDowngradeTableFeatureCommand
+  with DeltaLogging {
   // To remove the feature we only need to remove the table property.
   override def run(): Unit = {
+    recordDeltaEvent(table.deltaLog, "delta.test.TestWriterFeaturePreDowngradeCommand")
     val properties = Seq(TestRemovableWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
   }

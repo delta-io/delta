@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.{SparkConf, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
@@ -2004,7 +2005,14 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     protocolWithFeatures(writerFeatures = Seq(writerFeature))
   }
 
-  def emptyProtocolWithTableFeatures: Protocol =
+  def emptyProtocolWithWriterFeatures: Protocol =
+    Protocol(
+      minReaderVersion = 1,
+      minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
+      readerFeatures = None,
+      writerFeatures = Some(Set.empty))
+
+  def emptyProtocolWithReaderFeatures: Protocol =
     Protocol(
       minReaderVersion = TABLE_FEATURES_MIN_READER_VERSION,
       minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
@@ -2067,7 +2075,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // Writer feature is removed from the writer features set.
       val snapshot = deltaLog.update()
-      assert(snapshot.protocol === emptyProtocolWithTableFeatures)
+      assert(snapshot.protocol === emptyProtocolWithReaderFeatures)
       assert(!snapshot.metadata.configuration.contains(TestRemovableWriterFeature.TABLE_PROP_KEY))
       assertPropertiesAndShowTblProperties(deltaLog)
     }
@@ -2208,13 +2216,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableWriterFeature.name)
         command.run(spark)
       }
-
-      val expectedProtocol = Protocol(
-        minReaderVersion = 1,
-        minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
-        readerFeatures = None,
-        writerFeatures = Some(Set.empty))
-      assert(deltaLog.update().protocol === expectedProtocol)
+      assert(deltaLog.update().protocol === emptyProtocolWithWriterFeatures)
 
       sql(s"""ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES (
              |delta.feature.${TestRemovableWriterFeature.name} = 'supported'
@@ -2223,6 +2225,50 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val expectedProtocolAfterReintroduction =
         protocolWithFeatures(writerFeatures = Seq(TestRemovableWriterFeature))
       assert(deltaLog.update().protocol === expectedProtocolAfterReintroduction)
+    }
+  }
+
+  for {
+    withCatalog <- BOOLEAN_DOMAIN
+    quoteWith <- if (withCatalog) Seq ("none", "single", "backtick") else Seq("none")
+  } test(s"Drop feature DDL - withCatalog=$withCatalog, quoteWith=$quoteWith") {
+    withTempDir { dir =>
+      val table = if (withCatalog) "table" else s"delta.`${dir.getCanonicalPath}`"
+      if (withCatalog) sql(s"DROP TABLE IF EXISTS $table")
+      sql(
+        s"""CREATE TABLE $table (id bigint) USING delta
+           |TBLPROPERTIES (
+           |delta.feature.${TestRemovableWriterFeature.name} = 'supported'
+           |)""".stripMargin)
+
+      val deltaLog = if (withCatalog) {
+        DeltaLog.forTable(spark, TableIdentifier(table))
+      } else {
+        DeltaLog.forTable(spark, dir)
+      }
+
+      val protocol = deltaLog.update().protocol
+      assert(protocol === protocolWithWriterFeature(TestRemovableWriterFeature))
+
+      val logs = Log4jUsageLogger.track {
+        withSQLConf(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED.key -> true.toString) {
+          val featureName = quoteWith match {
+            case "none" => s"${TestRemovableWriterFeature.name}"
+            case "single" => s"'${TestRemovableWriterFeature.name}'"
+            case "backtick" => s"`${TestRemovableWriterFeature.name}`"
+          }
+          sql(s"ALTER TABLE $table DROP FEATURE $featureName")
+        }
+
+        assert(deltaLog.update().protocol === emptyProtocolWithWriterFeatures)
+      }
+      // Test that the write downgrade command was invoked.
+      val expectedOpType = "delta.test.TestWriterFeaturePreDowngradeCommand"
+      val blob = logs.collectFirst {
+        case r if r.metric == MetricDefinitions.EVENT_TAHOE.name &&
+          r.tags.get("opType").contains(expectedOpType) => r.blob
+      }
+      assert(blob.nonEmpty, s"Expecting an '$expectedOpType' event but didn't see any.")
     }
   }
 

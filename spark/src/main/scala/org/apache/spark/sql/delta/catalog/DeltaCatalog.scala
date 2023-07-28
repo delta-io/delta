@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
+import org.apache.spark.sql.delta.tablefeatures.DropFeature
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
@@ -664,6 +665,11 @@ class DeltaCatalog extends DelegatingCatalogExtension
           val c = constraint.asInstanceOf[DropConstraint]
           AlterTableDropConstraintDeltaCommand(table, c.constraintName, c.ifExists).run(spark)
         }
+
+      case (t, dropFeature) if t == classOf[DropFeature] =>
+        // Only single feature removal is supported.
+        val featureName = dropFeature.head.asInstanceOf[DropFeature].featureName
+        AlterTableDropFeatureDeltaCommand(table, featureName).run(spark)
 
     }
 
