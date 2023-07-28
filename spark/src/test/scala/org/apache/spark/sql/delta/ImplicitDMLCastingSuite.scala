@@ -40,7 +40,9 @@ class ImplicitDMLCastingSuite extends QueryTest
       targetType: String,
       targetTypeInErrorMessage: String,
       validValue: String,
-      overflowValue: String)
+      overflowValue: String) {
+    override def toString: String = s"sourceType: $sourceType, targetType: $targetType"
+  }
 
   private case class SqlConfiguration(
       followAnsiEnabled: Boolean,
@@ -59,6 +61,8 @@ class ImplicitDMLCastingSuite extends QueryTest
         s" storeAssignmentPolicy: $storeAssignmentPolicy"
   }
 
+  // Note that DATE to TIMESTAMP casts are not in this list as they always throw an error on
+  // overflow no matter if ANSI is enabled or not.
   private val testConfigurations = Seq(
     TestConfiguration(sourceType = "INT", sourceTypeInErrorMessage = "INT",
       targetType = "TINYINT", targetTypeInErrorMessage = "TINYINT",
@@ -81,14 +85,22 @@ class ImplicitDMLCastingSuite extends QueryTest
       overflowValue = s"named_struct('value', ${Long.MaxValue.toString})"),
     TestConfiguration(sourceType = "ARRAY<BIGINT>", sourceTypeInErrorMessage = "ARRAY<BIGINT>",
       targetType = "ARRAY<INT>", targetTypeInErrorMessage = "ARRAY<INT>",
-      validValue = "ARRAY(1)", overflowValue = s"ARRAY(${Long.MaxValue.toString})")
+      validValue = "ARRAY(1)", overflowValue = s"ARRAY(${Long.MaxValue.toString})"),
+    TestConfiguration(sourceType = "STRING", sourceTypeInErrorMessage = "STRING",
+      targetType = "INT", targetTypeInErrorMessage = "INT",
+      validValue = "'1'", overflowValue = s"'${Long.MaxValue.toString}'"),
+    TestConfiguration(sourceType = "MAP<STRING, BIGINT>",
+      sourceTypeInErrorMessage = "MAP<STRING, BIGINT>", targetType = "MAP<STRING, INT>",
+      targetTypeInErrorMessage = "MAP<STRING, INT>", validValue = "map('abc', 1)",
+      overflowValue = s"map('abc', ${Long.MaxValue.toString})")
   )
 
   @tailrec
-  private def arithmeticCause(exception: Throwable): Option[ArithmeticException] = {
+  private def castFailureCause(exception: Throwable): Option[Throwable] = {
     exception match {
       case arithmeticException: ArithmeticException => Some(arithmeticException)
-      case _ if exception.getCause != null => arithmeticCause(exception.getCause)
+      case numberFormatException: NumberFormatException => Some(numberFormatException)
+      case _ if exception.getCause != null => castFailureCause(exception.getCause)
       case _ => None
     }
   }
@@ -99,7 +111,7 @@ class ImplicitDMLCastingSuite extends QueryTest
    */
   private def validateException(
       exception: Throwable, sqlConfig: SqlConfiguration, testConfig: TestConfiguration): Unit = {
-    arithmeticCause(exception) match {
+    castFailureCause(exception) match {
       case Some(exception: DeltaArithmeticException) =>
         assert(exception.getErrorClass == "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE")
         assert(exception.getMessageParameters ==
@@ -110,11 +122,15 @@ class ImplicitDMLCastingSuite extends QueryTest
               "updateAndMergeCastingFollowsAnsiEnabledFlag" ->
                 DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
               "ansiEnabledFlag" -> SQLConf.ANSI_ENABLED.key).asJava)
-      case Some(exception: SparkThrowable) if sqlConfig.ansiEnabled =>
-        // With ANSI enabled the overflows are caught before the write operation.
+      case Some(exception: NumberFormatException) =>
+        val sparkThrowable = exception.asInstanceOf[SparkThrowable]
+        assert(sparkThrowable.getErrorClass == "CAST_INVALID_INPUT")
+        assert(sparkThrowable.getMessageParameters.get("sourceType") == "\"STRING\"")
+      case Some(exception: ArithmeticException) if sqlConfig.ansiEnabled =>
+        val sparkThrowable = exception.asInstanceOf[SparkThrowable]
         assert(Seq("CAST_OVERFLOW", "NUMERIC_VALUE_OUT_OF_RANGE")
-          .contains(exception.getErrorClass))
-      case None => assert(false, "No arithmetic exception thrown.")
+          .contains(sparkThrowable.getErrorClass))
+      case None => assert(false, s"No arithmetic exception thrown: $exception")
       case Some(exception) =>
         assert(false, s"Unexpected exception type: $exception")
     }
@@ -138,7 +154,7 @@ class ImplicitDMLCastingSuite extends QueryTest
   /** Test an UPDATE that requires to cast the update value that is part of the SET clause. */
   private def updateTest(
       sqlConfig: SqlConfiguration, testConfig: TestConfiguration): Unit = {
-    val testName = s"UPDATE overflow targetType: ${testConfig.targetType} $sqlConfig"
+    val testName = s"UPDATE overflow $testConfig $sqlConfig"
     test(testName) {
       sqlConfig.withSqlSettings {
         val tableName = "overflowTable"
@@ -185,12 +201,11 @@ class ImplicitDMLCastingSuite extends QueryTest
       sqlConfig: SqlConfiguration,
       testConfig: TestConfiguration
   ): Unit = {
-    val testName =
-      s"MERGE overflow in $matchedCondition targetType: ${testConfig.targetType} $sqlConfig"
+    val testName = s"MERGE overflow in $matchedCondition $testConfig $sqlConfig"
     test(testName) {
       sqlConfig.withSqlSettings {
         val targetTableName = "target_table"
-        val sourceViewName = "source_vice"
+        val sourceViewName = "source_view"
         withTable(targetTableName) {
           withTempView(sourceViewName) {
             val numRows = 10
@@ -231,7 +246,7 @@ class ImplicitDMLCastingSuite extends QueryTest
   /** A merge that is executed for each batch of a stream and has to cast values before insert. */
   private def streamingMergeTest(
       sqlConfig: SqlConfiguration, testConfig: TestConfiguration): Unit = {
-    val testName = s"Streaming MERGE overflow targetType: ${testConfig.targetType} $sqlConfig"
+    val testName = s"Streaming MERGE overflow $testConfig $sqlConfig"
     test(testName) {
       sqlConfig.withSqlSettings {
         val targetTableName = "target_table"
