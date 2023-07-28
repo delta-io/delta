@@ -100,7 +100,7 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
       if (isMatchedOnly) {
         matchedClauses
           .flatMap(_.condition)
-          .foldLeft[Expression](Literal.TrueLiteral)(Or.apply)
+          .foldLeft[Expression](Literal.FalseLiteral)(Or.apply)
       } else Literal.TrueLiteral
 
     // Compute the columns needed for the inner join.
