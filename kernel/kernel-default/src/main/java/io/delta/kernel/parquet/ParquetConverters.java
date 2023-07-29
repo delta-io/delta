@@ -457,6 +457,7 @@ class ParquetConverters
         @Override
         public void addBinary(Binary value) {
             long julianMicros = binaryToSQLTimestamp(value);
+            // we do not rebase timestamps
             long gregorianMicros = julianMicros;
             super.addLong(gregorianMicros);
         }
