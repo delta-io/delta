@@ -16,19 +16,22 @@
 
 package io.delta.kernel
 
-import java.util.Optional
+import java.util.{Optional, TimeZone}
+
+import collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
-import scala.reflect.ClassTag
 
 import org.apache.hadoop.conf.Configuration
-
-import io.delta.kernel.client.DefaultTableClient
+import io.delta.kernel.client.{DefaultTableClient, TableClient}
 import io.delta.kernel.data.Row
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterator
 
 trait TestUtils {
-  implicit class CloseableIteratorOps[T: ClassTag](private val iter: CloseableIterator[T]) {
+
+  lazy val defaultTableClient = DefaultTableClient.create(new Configuration())
+
+  implicit class CloseableIteratorOps[T](private val iter: CloseableIterator[T]) {
 
     def forEach(f: T => Unit): Unit = {
       try {
@@ -41,23 +44,33 @@ trait TestUtils {
     }
   }
 
-  def readTable[T](path: String, conf: Configuration, schema: StructType = null)
-                  (getValue: Row => T): Seq[T] = {
-    val result = ArrayBuffer[T]()
+  implicit class StructTypeOps(schema: StructType) {
 
-    val tableClient = DefaultTableClient.create(conf)
-    val table = Table.forPath(path)
-    val snapshot = table.getLatestSnapshot(tableClient)
+    def withoutField(name: String): StructType = {
+      val newFields = schema.fields().asScala
+        .filter(_.getName != name).asJava
+      new StructType(newFields)
+    }
+  }
 
-    val readSchema = if (schema == null) {
-      snapshot.getSchema(tableClient)
-    } else {
-      schema
+  def latestSnapshot(tablePath: String, tableClient: TableClient = defaultTableClient): Snapshot = {
+    Table.forPath(tablePath).getLatestSnapshot(tableClient)
+  }
+
+  def readSnapshot(
+    snapshot: Snapshot,
+    readSchema: StructType = null,
+    tableClient: TableClient = defaultTableClient): Seq[Row] = {
+
+    val result = ArrayBuffer[Row]()
+
+    var scanBuilder = snapshot.getScanBuilder(tableClient)
+
+    if (readSchema != null) {
+      scanBuilder = scanBuilder.withReadSchema(tableClient, readSchema)
     }
 
-    val scan = snapshot.getScanBuilder(tableClient)
-      .withReadSchema(tableClient, readSchema)
-      .build()
+    val scan = scanBuilder.build()
 
     val scanState = scan.getScanState(tableClient);
     val fileIter = scan.getScanFiles(tableClient)
@@ -82,7 +95,7 @@ trait TestUtils {
           while (rowIter.hasNext) {
             val row = rowIter.next()
             if (!selectionVector.isPresent || selectionVector.get.getBoolean(i)) { // row is valid
-              result.append(getValue(row))
+              result.append(row)
             }
             i += 1
           }
@@ -92,5 +105,15 @@ trait TestUtils {
       }
     }
     result
+  }
+
+  def withTimeZone(zoneId: String)(f: => Unit): Unit = {
+    val currentDefault = TimeZone.getDefault
+    try {
+      TimeZone.setDefault(TimeZone.getTimeZone(zoneId))
+      f
+    } finally {
+      TimeZone.setDefault(currentDefault)
+    }
   }
 }

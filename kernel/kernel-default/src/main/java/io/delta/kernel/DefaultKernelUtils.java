@@ -16,13 +16,10 @@
 package io.delta.kernel;
 
 import java.sql.Date;
-import java.sql.Timestamp;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
-import java.util.TimeZone;
 import java.util.stream.Collectors;
 import org.apache.parquet.schema.GroupType;
 import org.apache.parquet.schema.MessageType;
@@ -174,20 +171,6 @@ public class DefaultKernelUtils
     {
         LocalDate localDate = date.toLocalDate();
         return (int) ChronoUnit.DAYS.between(EPOCH, localDate);
-    }
-
-    /**
-     * Utility method to get the number of microseconds since epoch this given timestamp is
-     * w.r.t. to the system default timezone
-     */
-    public static long microsSinceEpoch(Timestamp timestamp) {
-        LocalDateTime localTimestamp = timestamp.toLocalDateTime();
-        LocalDateTime epoch = LocalDateTime.ofEpochSecond(
-            0, 0,
-            TimeZone.getDefault().toZoneId().getRules().getOffset(localTimestamp)
-        );
-        return ChronoUnit.MICROS.between(epoch, localTimestamp);
-
     }
 
     //////////////////////////////////////////////////////////////////////////////////
