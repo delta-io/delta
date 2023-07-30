@@ -411,7 +411,7 @@ private[internal] class OptimisticTransactionImpl(
    * next.
    *
    * @throws DeltaConcurrentModificationException if the next commit version cannot be resolved
-   *                                              due to the concurrent modifications in the
+   *                                              due to the concurrent modification in the
    *                                              commit log.
    */
   private def getNextCommitVersionOrFailIfConflictsDetected(
