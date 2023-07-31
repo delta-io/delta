@@ -29,7 +29,7 @@ import org.apache.spark.util.Utils
 
 /**
  * General interface for all critical file system operations required to read and write the
- * [[DeltaLog]]. The correctness of the [[DeltaLog]] is predicated on the atomicity and
+ * Delta log. The correctness of the Delta log is predicated on the atomicity and
  * durability guarantees of the implementation of this interface. Specifically,
  *
  * 1. Atomic visibility of files: Any file written through this store must

@@ -17,6 +17,7 @@
 // scalastyle:off line.size.limit
 
 import java.nio.file.Files
+import Unidoc._
 
 // Scala versions
 val scala212 = "2.12.15"
@@ -73,13 +74,12 @@ lazy val commonSettings = Seq(
 
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
-  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin, Antlr4Plugin)
+  .enablePlugins(Antlr4Plugin)
   .settings (
     name := "delta-spark",
     commonSettings,
     scalaStyleSettings,
     mimaSettings,
-    unidocSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
@@ -156,6 +156,13 @@ lazy val spark = (project in file("spark"))
       Seq(file)
     },
     TestParallelization.settings,
+  )
+  .configureUnidoc(
+    docTitle = "Delta Spark",
+    projectSrcDirToFilePatternsToKeep = Map(
+      "spark" -> Seq("io/delta/tables/", "io/delta/exceptions/"),
+      "storage" -> Seq("/LogStore.java", "/CloseableIterator.java")
+    )
   )
 
 lazy val contribs = (project in file("contribs"))
@@ -832,6 +839,7 @@ def flinkScalaVersion(scalaBinaryVersion: String): String = {
 
 lazy val flink = (project in file("connectors/flink"))
   .dependsOn(standaloneCosmetic % "provided")
+  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin)
   .settings (
     name := "delta-flink",
     commonSettings,
@@ -910,6 +918,7 @@ lazy val flink = (project in file("connectors/flink"))
         ExclusionRule("org.apache.logging.log4j"),
         ExclusionRule("com.google.protobuf", "protobuf-java"),
       ),
+      compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
     ),
     // generating source java class with version number to be passed during commit to the DeltaLog as engine info
     // (part of transaction's metadata)
@@ -925,16 +934,36 @@ lazy val flink = (project in file("connectors/flink"))
            |""".stripMargin)
       Seq(file)
     },
-
-    // Javadoc settings needed for successful doc generation needed for publishing.
-    Compile / doc / javacOptions ++= Seq(
+    /**
+     * Unidoc settings
+     * Generate javadoc with `unidoc` command, outputs to `flink/target/javaunidoc`
+     * e.g. build/sbt flink/unidoc
+     */
+    JavaUnidoc / unidoc / javacOptions := Seq(
       "-public",
+      "-windowtitle", "Flink/Delta Connector " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
       "-noqualifier", "java.lang",
       "-tag", "implNote:a:Implementation Note:",
       "-tag", "apiNote:a:API Note:",
-      "-Xdoclint:all")
+      "-exclude", "io.delta.flink.internal",
+      "-Xdoclint:none"
+    ),
+    Compile / doc / javacOptions := (JavaUnidoc / unidoc / javacOptions).value,
+    JavaUnidoc / unidoc /  unidocAllSources := {
+      (JavaUnidoc / unidoc / unidocAllSources).value
+        // include only relevant delta-flink classes
+        .map(_.filter(_.getCanonicalPath.contains("/flink/")))
+        // exclude internal classes
+        .map(_.filterNot(_.getCanonicalPath.contains("/internal/")))
+        // exclude flink package
+        .map(_.filterNot(_.getCanonicalPath.contains("org/apache/flink/")))
+    },
   )
 
+  /* .configureUnidoc(
+    docTitle = "Delta Flink",
+    projectSrcDirToFilePatternsToKeep = Map("flink" -> Seq("io/delta/flink/"))
+  ) */
 
 /**
  * Get list of python files and return the mapping between source files and target paths
@@ -1055,62 +1084,6 @@ lazy val mimaSettings = Seq(
   mimaPreviousArtifacts :=
     Set("io.delta" %% getPrevName(version.value) %  getPrevVersion(version.value)),
   mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
-)
-
-/*
- *******************
- * Unidoc settings *
- *******************
- */
-
-// Explicitly remove source files by package because these docs are not formatted well for Javadocs
-def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.io.File]] = {
-  packages
-    .map(_.filterNot(_.getName.contains("$")))
-    .map(_.filterNot(_.getCanonicalPath.contains("kernel")))
-    .map(_.filterNot(_.getCanonicalPath.contains("connectors")))
-    .map { _.filterNot { f =>
-        // Remove all files in the spark module except those in package io.delta
-        f.getCanonicalPath.contains("spark") && !f.getCanonicalPath.contains("io/delta/tables/")
-      }
-    }
-    // Remove files in internal packages inside io.delta.tables
-    .map(_.filterNot(_.getCanonicalPath.contains("io/delta/tables/execution")))
-    .map { _.filterNot { f =>
-        // LogStore.java and CloseableIterator.java are the only public io.delta.storage APIs
-        f.getCanonicalPath.contains("io/delta/storage") &&
-          f.getName != "LogStore.java" &&
-          f.getName != "CloseableIterator.java"
-      }
-    }
-}
-
-lazy val unidocSettings = Seq(
-
-  // Configure Scala unidoc
-  ScalaUnidoc / unidoc / scalacOptions ++= Seq(
-    "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
-    "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
-  ),
-
-  ScalaUnidoc / unidoc / unidocAllSources := {
-    ignoreUndocumentedPackages((ScalaUnidoc / unidoc / unidocAllSources).value)
-  },
-
-  // Configure Java unidoc
-  JavaUnidoc / unidoc / javacOptions := Seq(
-    "-public",
-    "-exclude", "org:com:io.delta.sql:io.delta.tables.execution",
-    "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
-    "-noqualifier", "java.lang",
-    "-tag", "return:X",
-    // `doclint` is disabled on Circle CI. Need to enable it manually to test our javadoc.
-    "-Xdoclint:all"
-  ),
-
-  JavaUnidoc / unidoc / unidocAllSources := {
-    ignoreUndocumentedPackages((JavaUnidoc / unidoc / unidocAllSources).value)
-  },
 )
 
 /*
