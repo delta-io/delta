@@ -2,35 +2,27 @@
 
 ## What is Delta Kernel?
 
-Delta Kernel is a library for operating on Delta tables. Specifically, it provides simple, narrow APIs for reading and writing to Delta tables without you having to understand the Delta protocol details. You can use this library to do the following:
-
-
+Delta Kernel is a library for operating on Delta tables. Specifically, it provides simple and narrow APIs for reading and writing to Delta tables without the need to understand the [Delta protocol](https://github.com/delta-io/delta/blob/master/PROTOCOL.md) details. You can use this library to do the following:
 
 * Read Delta tables from your apps.
 
-* Build a connector for a distributed engine like Apache Spark, Apache Flink or Presto/Trino for reading massive Delta tables.
+* Build a connector for a distributed engine like [Apache Spark](https://github.com/apache/spark), [Apache Flink](https://github.com/apache/flink) or [Trino](https://github.com/trinodb/trino) for reading massive Delta tables.
 
 In this user guide, we are going to walk through the following: 
-
-
-
-* [How to set up Delta Kernel with your project and read Delta tables using the default helper](#bookmark=id.1fob9te).
-* [How to build a Delta connector for distributed engines with custom helpers](#bookmark=id.1t3h5sf).
-* How to migrate existing Delta connectors to use Delta Kernel.
-* Compatibility and other guarantees provided by Delta Kernel.
+* [How to set up Delta Kernel with your project and read Delta tables using the default table client](#bookmark=id.1fob9te).
+* [How to build a Delta connector for distributed engines with custom table client](#bookmark=id.1t3h5sf).
+* How to migrate existing Delta connectors to use Delta Kernel (coming soon).
+* Compatibility and other guarantees provided by Delta Kernel (coming soon).
 
 
 ## Read a Delta table in a single process
+In this section, we will walk through how to build a very simple single-process Delta connector that can read a Delta table using the default [`TableClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/client/TableClient.html) implementation provided by Delta Kernel.
 
-In this section, we will walk through how to build a very simple single-process Delta connector that can read a Delta table using the default `TableClient` implementation provided by Delta Kernel.
-
-You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/kernel/examples) present in the Delta Kernel Github repository.
+You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/kernel/examples) present in the Delta code repository.
 
 
 ### Step 1: Set up Delta Kernel for your project
-
 You need to `io.delta:delta-kernel.api` and `io.delta:delta-kernel-default` dependencies. Following is example Maven `pom` file dependency list.
-
 
 ```
     <dependencies>
@@ -47,33 +39,28 @@ You need to `io.delta:delta-kernel.api` and `io.delta:delta-kernel-default` depe
         </dependency>
 ```
 
-
 ### Step 2: Full scan on a Delta table
-
-The main entry point is [io.delta.kernel.Table](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/Table.html) which is a programmatic representation of a Delta table. Say you have a Delta table at the directory `myTablePath`. You can create a ``Table`` object as follows:
-
+The main entry point is [`io.delta.kernel.Table`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/Table.html) which is a programmatic representation of a Delta table. Say you have a Delta table at the directory `myTablePath`. You can create a `Table` object as follows:
 
 ```java
 import io.delta.kernel.*;
 import io.delta.kernel.defaults.*';
 import org.apache.hadoop.conf.Configuration;
 
-String myTablePath = <my-table-path> ;
-Configuration hadoopConf = new Configuration()
+String myTablePath = <my-table-path>; // fully qualified table path. Ex: file:/user/tables/myTable
+Configuration hadoopConf = new Configuration();
 TableClient myTableClient = DefaultTableClient.create(hadoopConf);
 Table myTable = Table.forPath(myTablePath);
 ```
 
 
-Note the default <code>[TableClient](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/client/TableClient.html)</code> we are creating to bootstrap the <code>myTable</code> object. This object allows you to plugin your own libraries for computationally intensive operations like Parquet file reading, JSON parsing, etc. You can ignore it for now. We will discuss more about this later when we will discuss how to build more complex connectors for distributed processing engines. 
+Note the default [`TableClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/client/TableClient.html) we are creating to bootstrap the `myTable` object. This object allows you to plugin your own libraries for computationally intensive operations like Parquet file reading, JSON parsing, etc. You can ignore it for now. We will discuss more about this later when we discuss how to build more complex connectors for distributed processing engines. 
 
-From this `myTable` object you can create a <code>[Snapshot](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/Snapshot.html)</code> object which represents the consistent state (aka a snapshot consistency) in a specific version of the table.  
-
+From this `myTable` object you can create a [`Snapshot`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/Snapshot.html) object which represents the consistent state (aka a snapshot consistency) in a specific version of the table.  
 
 ```java
 Snapshot mySnapshot = myTable.getLatestSnapshot(myTableClient);
 ```
-
 
 Now that we have a consistent snapshot view of the table, we can query more details about the table. For example, you can get the version and schema of this snapshot.
 
@@ -83,9 +70,7 @@ long version = mySnapshot.getVersion(myTableClient);
 StructType tableSchema = mySnapshot.getSchema(myTableClient);
 ```
 
-
-Next, to read the table data, we have to "build" a [Scan](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/Scan.html) object. 
-
+Next, to read the table data, we have to *build* a [`Scan`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/Scan.html) object. In order to builde a `Scan` object, create a [`ScanBuilder`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/ScanBuilder.html) object which allows optional selection of subset of columns to read and/or set the query filter.
 
 ```java
 Scan myScan = mySnapshot.getScanBuilder(myTableClient).build()
@@ -97,16 +82,12 @@ Row scanState = myScan.getScanState(myTableClient)
 CloseableIterator<ColumnarBatch> scanFiles = myScan.getScanFiles(myTableClient)
 ```
 
-
-This [Scan](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/Scan.html) object has all the necessary metadata to start reading the table. There are two crucial pieces of information needed for reading data from one file in the table. 
-
-
+This [Scan](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/Scan.html) object has all the necessary metadata to start reading the table. There are two crucial pieces of information needed for reading data from one file in the table. 
 
 * `myScan.getScanFiles(TableClient)`:  Returns a set of rows (represented as an iterator of `ColumnarBatche`s, more on than later) where each row has information about a single file containing the table data.
-* `myScan.getScanState(TableClient)`: Returns the snapshot-level information needed for reading any file. Note that this is a single row.
+* `myScan.getScanState(TableClient)`: Returns the snapshot-level information needed for reading any file. Note that this is a single row and common to all scan files.
 
-To read the data, you have to call <code>[ScanFile.readData()](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/Scan.html#readData-io.delta.kernel.client.TableClient-io.delta.kernel.data.Row-io.delta.kernel.utils.CloseableIterator-java.util.Optional-)</code> with the scan state and each of the scan files (that is, each row returned by <code>myScan.getScanFiles()</code>). Here is an example of reading all the table data in a single thread. 
-
+To read the data, you have to call[`ScanFile.readData()`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/Scan.html#readData-io.delta.kernel.client.TableClient-io.delta.kernel.data.Row-io.delta.kernel.utils.CloseableIterator-java.util.Optional-) with the scan state and each of the scan files (that is, each row returned by `myScan.getScanFiles()`). Here is an example of reading all the table data in a single thread. 
 
 ```java
 CloserableIterator<ColumnarBatch> fileIter = scanObject.getScanFiles(myTableClient)
@@ -146,8 +127,9 @@ while(fileIter.hasNext()) {
 ```
 #### Important Note
 
-All the Delta protocol-level details are encoded in the rows but you do not have to understand them in order to read the table data correctly. You can mostly treat these rows as opaque objects and pass them correctly to the Scan.readData() method. In future, there will be more information (that is, more columns) added to these rows, but your code will not have to change to accommodate those changes. This is the major advantage of the abstractions provided by Delta Kernel.
+* All the Delta protocol-level details are encoded in the rows but you do not have to understand them in order to read the table data correctly. You can mostly treat these rows as opaque objects and pass them correctly to the Scan.readData() method. In future, there will be more information (that is, more columns) added to these rows, but your code will not have to change to accommodate those changes. This is the major advantage of the abstractions provided by Delta Kernel.
 
+* Observe that same `TableClient` instance `myTableClient` is passed multiple times whenever a call to Delta Kernel API is made. The reason for passing this instance for every call is because it is the connector or Delta Kernel client context, it should maintained outside of the Delta Kernel APIs to give the connector developer or Delta Kernel client control over the `TableClient`.
 
 ### Step 2: Improve scan performance with file skipping
 
