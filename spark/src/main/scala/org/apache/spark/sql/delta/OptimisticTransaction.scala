@@ -1125,6 +1125,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     op: DeltaOperations.Operation,
     context: Map[String, String],
     metrics: Map[String, String]): (Long, Snapshot) = {
+    assert(!committed, "Transaction already committed.")
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
     try {

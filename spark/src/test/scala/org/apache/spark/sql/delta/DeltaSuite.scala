@@ -707,73 +707,6 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED = false: defaults to static overwrites") {
-    withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "false") {
-      // This checks that when dynamic partition overwrite mode is disabled, we return to our
-      // previous behavior: setting `partitionOverwriteMode` to `dynamic` is a no-op, and we
-      // statically overwrite data
-
-      // DataFrame write, dynamic partition overwrite enabled in DataFrameWriter option
-      withTempDir { tempDir =>
-        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
-
-        Seq(1, 2, 3).toDF
-          .withColumn("part", $"value" % 2)
-          .write
-          .format("delta")
-          .partitionBy("part")
-          .mode("append")
-          .save(tempDir.getCanonicalPath)
-
-        Seq(1, 5).toDF
-          .withColumn("part", $"value" % 2)
-          .write
-          .format("delta")
-          .partitionBy("part")
-          .mode("overwrite")
-          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
-          .save(tempDir.getCanonicalPath)
-        checkDatasetUnorderly(data.select("value").as[Int], 1, 5)
-      }
-
-      // DataFrame write, dynamic partition overwrite enabled in sparkConf
-      withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
-        withTempDir { tempDir =>
-          def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
-
-          Seq(1, 2, 3).toDF
-            .withColumn("part", $"value" % 2)
-            .write
-            .format("delta")
-            .partitionBy("part")
-            .mode("append")
-            .save(tempDir.getCanonicalPath)
-
-          Seq(1, 5).toDF
-            .withColumn("part", $"value" % 2)
-            .write
-            .format("delta")
-            .partitionBy("part")
-            .mode("overwrite")
-            .save(tempDir.getCanonicalPath)
-          checkDatasetUnorderly(data.select("value").as[Int], 1, 5)
-        }
-      }
-
-      // SQL write
-      withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key ->  "dynamic") {
-        val table_name = "test_table"
-        withTable(table_name) {
-          spark.sql(
-            s"CREATE TABLE $table_name (value int, part int) USING DELTA PARTITIONED BY (part)")
-          spark.sql(s"INSERT INTO $table_name VALUES (1, 1), (2, 0), (3, 1)")
-          spark.sql(s"INSERT OVERWRITE $table_name VALUES (1, 1), (5, 1)")
-          checkDatasetUnorderly(spark.sql(s"SELECT value FROM $table_name").as[Int], 1, 5)
-        }
-      }
-    }
-  }
-
   test("batch write: append, dynamic partition overwrite integer partition column") {
     withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
       withTempDir { tempDir =>
@@ -1669,69 +1602,70 @@ class DeltaSuite extends QueryTest
 
   test("all operations with special characters in path") {
     withTempDir { dir =>
-      val directory = new File(dir, "test with space")
-      val df = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
-      val writer = df.write.format("delta").mode("append")
-      writer.save(directory.getCanonicalPath)
+        val directory = new File(dir, "test with space")
+        val df = Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value")
+        val writer = df.write.format("delta").mode("append")
+        writer.save(directory.getCanonicalPath)
 
-      // UPDATE and DELETE
-      spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = 99")
-      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 4")
-      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 3")
-      checkAnswer(
-        spark.read.format("delta").load(directory.getCanonicalPath),
-        Seq((1, 99), (2, 99)).toDF("key", "value")
-      )
-
-      // INSERT
-      spark.sql(s"INSERT INTO delta.`${directory.getCanonicalPath}` VALUES (5, 50)")
-      spark.sql(s"INSERT INTO delta.`${directory.getCanonicalPath}` VALUES (5, 50)")
-      checkAnswer(
-        spark.read.format("delta").load(directory.getCanonicalPath),
-        Seq((1, 99), (2, 99), (5, 50), (5, 50)).toDF("key", "value")
-      )
-
-      // MERGE
-      Seq((1, 1), (3, 88), (5, 88)).toDF("key", "value").createOrReplaceTempView("inbound")
-      spark.sql(s"""|MERGE INTO delta.`${directory.getCanonicalPath}` AS base
-                    |USING inbound
-                    |ON base.key = inbound.key
-                    |WHEN MATCHED THEN DELETE
-                    |WHEN NOT MATCHED THEN INSERT *
-                    |""".stripMargin)
-      checkAnswer(
-        spark.read.format("delta").load(directory.getCanonicalPath),
-        Seq((2, 99), (3, 88)).toDF("key", "value")
-      )
-
-      // DELETE and INSERT again
-      spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 3")
-      spark.sql(s"INSERT INTO delta.`${directory.getCanonicalPath}` VALUES (5, 99)")
-      checkAnswer(
-        spark.read.format("delta").load(directory.getCanonicalPath),
-        Seq((2, 99), (5, 99)).toDF("key", "value")
-      )
-
-      // VACUUM
-      withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
-        spark.sql(s"VACUUM delta.`${directory.getCanonicalPath}` RETAIN 0 HOURS")
-      }
-      checkAnswer(
-        spark.sql(s"SELECT * FROM delta.`${directory.getCanonicalPath}@v8`"),
-        Seq((2, 99), (5, 99)).toDF("key", "value")
-      )
-      // Version 0 should be lost, as version 1 rewrites the whole file
-      val ex = intercept[Exception] {
+        // UPDATE and DELETE
+        spark.sql(s"UPDATE delta.`${directory.getCanonicalPath}` SET value = 99")
+        spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 4")
+        spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 3")
         checkAnswer(
-          spark.sql(s"SELECT * FROM delta.`${directory.getCanonicalPath}@v0`"),
-          spark.emptyDataFrame
+          spark.read.format("delta").load(directory.getCanonicalPath),
+          Seq((1, 99), (2, 99)).toDF("key", "value")
         )
-      }
-      var cause = ex.getCause
-      while (cause.getCause != null) {
-        cause = cause.getCause
-      }
-      assert(cause.getMessage.contains(".parquet does not exist"))
+
+        // INSERT
+        spark.sql(s"INSERT INTO delta.`${directory.getCanonicalPath}` VALUES (5, 50)")
+        spark.sql(s"INSERT INTO delta.`${directory.getCanonicalPath}` VALUES (5, 50)")
+        checkAnswer(
+          spark.read.format("delta").load(directory.getCanonicalPath),
+          Seq((1, 99), (2, 99), (5, 50), (5, 50)).toDF("key", "value")
+        )
+
+        // MERGE
+        Seq((1, 1), (3, 88), (5, 88)).toDF("key", "value").createOrReplaceTempView("inbound")
+        spark.sql(
+          s"""|MERGE INTO delta.`${directory.getCanonicalPath}` AS base
+              |USING inbound
+              |ON base.key = inbound.key
+              |WHEN MATCHED THEN DELETE
+              |WHEN NOT MATCHED THEN INSERT *
+              |""".stripMargin)
+        checkAnswer(
+          spark.read.format("delta").load(directory.getCanonicalPath),
+          Seq((2, 99), (3, 88)).toDF("key", "value")
+        )
+
+        // DELETE and INSERT again
+        spark.sql(s"DELETE FROM delta.`${directory.getCanonicalPath}` WHERE key = 3")
+        spark.sql(s"INSERT INTO delta.`${directory.getCanonicalPath}` VALUES (5, 99)")
+        checkAnswer(
+          spark.read.format("delta").load(directory.getCanonicalPath),
+          Seq((2, 99), (5, 99)).toDF("key", "value")
+        )
+
+        // VACUUM
+        withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+          spark.sql(s"VACUUM delta.`${directory.getCanonicalPath}` RETAIN 0 HOURS")
+        }
+        checkAnswer(
+          spark.sql(s"SELECT * FROM delta.`${directory.getCanonicalPath}@v8`"),
+          Seq((2, 99), (5, 99)).toDF("key", "value")
+        )
+        // Version 0 should be lost, as version 1 rewrites the whole file
+        val ex = intercept[Exception] {
+          checkAnswer(
+            spark.sql(s"SELECT * FROM delta.`${directory.getCanonicalPath}@v0`"),
+            spark.emptyDataFrame
+          )
+        }
+        var cause = ex.getCause
+        while (cause.getCause != null) {
+          cause = cause.getCause
+        }
+        assert(cause.getMessage.contains(".parquet does not exist"))
     }
   }
 

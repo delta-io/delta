@@ -15,17 +15,17 @@
  */
 package io.delta.kernel.client;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import static io.delta.kernel.utils.DefaultKernelTestUtils.getTestResourceFilePath;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.hadoop.conf.Configuration;
-import static org.junit.Assert.assertEquals;
 import org.junit.Test;
+import static org.junit.Assert.assertEquals;
 
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.DefaultJsonRow;
@@ -40,13 +40,16 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
+import static io.delta.kernel.utils.DefaultKernelTestUtils.getTestResourceFilePath;
 
 public class TestDefaultJsonHandler
 {
     private static final JsonHandler JSON_HANDLER = new DefaultJsonHandler(new Configuration()
-    {{
-        set("delta.kernel.default.json.reader.batch-size", "1");
-    }});
+    {
+        {
+            set("delta.kernel.default.json.reader.batch-size", "1");
+        }
+    });
     private static final FileSystemClient FS_CLIENT =
         new DefaultFileSystemClient(new Configuration());
 
@@ -120,7 +123,8 @@ public class TestDefaultJsonHandler
     {
         String input =
             "{" +
-                "   \"path\":\"part-00000-d83dafd8-c344-49f0-ab1c-acd944e32493-c000.snappy.parquet\", " +
+                "   \"path\":" +
+                "\"part-00000-d83dafd8-c344-49f0-ab1c-acd944e32493-c000.snappy.parquet\", " +
                 "   \"partitionValues\":{\"p1\" : \"0\", \"p2\" : \"str\"}," +
                 "   \"size\":348," +
                 "   \"modificationTime\":1603723974000, " +
@@ -145,10 +149,12 @@ public class TestDefaultJsonHandler
             );
 
             Map<String, String> expPartitionValues = new HashMap<String, String>()
-            {{
-                put("p1", "0");
-                put("p2", "str");
-            }};
+            {
+                {
+                    put("p1", "0");
+                    put("p2", "str");
+                }
+            };
             assertEquals(expPartitionValues, row.getMap(1));
             assertEquals(348L, row.getLong(2));
             assertEquals(true, row.getBoolean(3));
@@ -171,7 +177,7 @@ public class TestDefaultJsonHandler
         );
     }
 
-    private static final ObjectNode addFileJsonFromPath(String path)
+    private static ObjectNode addFileJsonFromPath(String path)
     {
         ObjectMapper objectMapper = new ObjectMapper();
         ObjectNode object = objectMapper.createObjectNode();

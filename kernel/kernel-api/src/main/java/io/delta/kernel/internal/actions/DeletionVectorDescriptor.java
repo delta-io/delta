@@ -26,15 +26,16 @@ import java.util.UUID;
 import java.util.function.Function;
 
 import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.data.PojoRow;
-import io.delta.kernel.internal.deletionvectors.Base85Codec;
-import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 import static io.delta.kernel.utils.Utils.requireNonNull;
+
+import io.delta.kernel.internal.data.PojoRow;
+import io.delta.kernel.internal.deletionvectors.Base85Codec;
+import io.delta.kernel.internal.fs.Path;
+import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
 /** Information about a deletion vector attached to a file action. */
 public class DeletionVectorDescriptor {
@@ -239,7 +240,8 @@ public class DeletionVectorDescriptor {
     // Static fields to create PojoRows
     ////////////////////////////////////////////////////////////////////////////////
 
-    private static final Map<Integer, Function<DeletionVectorDescriptor, Object>> ordinalToAccessor = new HashMap<>();
+    private static final Map<Integer, Function<DeletionVectorDescriptor, Object>>
+        ordinalToAccessor = new HashMap<>();
 
     static {
         ordinalToAccessor.put(0, (a) -> a.getStorageType());

@@ -208,7 +208,14 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.11" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
-    )
+    ),
+    // Can be run explicitly via: build/sbt $module/checkstyle
+    // Will automatically be run during compilation (e.g. build/sbt compile)
+    // and during tests (e.g. build/sbt test)
+    checkstyleConfigLocation := CheckstyleConfigLocation.File("kernel/dev/checkstyle.xml"),
+    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
+    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
+    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
   )
 
 lazy val kernelDefault = (project in file("kernel/kernel-default"))
@@ -228,7 +235,14 @@ lazy val kernelDefault = (project in file("kernel/kernel-default"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.11" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
-    )
+    ),
+    // Can be run explicitly via: build/sbt $module/checkstyle
+    // Will automatically be run during compilation (e.g. build/sbt compile)
+    // and during tests (e.g. build/sbt test)
+    checkstyleConfigLocation := CheckstyleConfigLocation.File("kernel/dev/checkstyle.xml"),
+    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
+    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
+    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
   )
 
 // TODO javastyle tests
@@ -272,10 +286,6 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException
     )
   )
-
-/*
-// TODO: Investigate a smarter way to pull the Iceberg github.
-//       Make sure to add `iceberg` back to `sparkGroup` below.
 
 val icebergSparkRuntimeArtifactName = {
  val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
@@ -338,7 +348,6 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assemblyPackageScala / assembleArtifact := false,
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
   )
-*/
 
 lazy val hive = (project in file("connectors/hive"))
   .dependsOn(standaloneCosmetic)
@@ -964,7 +973,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB) /* iceberg */
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

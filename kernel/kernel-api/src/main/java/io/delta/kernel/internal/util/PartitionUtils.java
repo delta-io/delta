@@ -16,28 +16,19 @@
 package io.delta.kernel.internal.util;
 
 import java.sql.Date;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.util.stream.Stream;
 
 import io.delta.kernel.client.ExpressionHandler;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.expressions.And;
-import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.Tuple2;
-
-import io.delta.kernel.internal.lang.ListUtils;
 
 public class PartitionUtils
 {
@@ -62,11 +53,13 @@ public class PartitionUtils
 
         // Partition columns are top-level only
         Map<String, String> physicalToLogical = new HashMap<String, String>()
-        {{
-            IntStream.range(0, logicalSchema.length())
-                .mapToObj(i -> new Tuple2<>(logicalSchema.at(i), physicalSchema.at(i)))
-                .forEach(tuple2 -> put(tuple2._2.getName(), tuple2._1.getName()));
-        }};
+        {
+            {
+                IntStream.range(0, logicalSchema.length())
+                    .mapToObj(i -> new Tuple2<>(logicalSchema.at(i), physicalSchema.at(i)))
+                    .forEach(tuple2 -> put(tuple2._2.getName(), tuple2._1.getName()));
+            }
+        };
 
         return new StructType(
             physicalSchema.fields().stream()

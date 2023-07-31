@@ -16,8 +16,8 @@
 
 package io.delta.kernel.client;
 
-import java.io.FileNotFoundException;
 import java.io.ByteArrayInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 
 import io.delta.kernel.fs.FileStatus;

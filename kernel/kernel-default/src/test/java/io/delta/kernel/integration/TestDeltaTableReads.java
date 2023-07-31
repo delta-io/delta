@@ -15,17 +15,15 @@
  */
 package io.delta.kernel.integration;
 
-import static io.delta.kernel.DefaultKernelUtils.daysSinceEpoch;
-import static io.delta.kernel.integration.DataBuilderUtils.row;
-import static io.delta.kernel.utils.DefaultKernelTestUtils.getTestResourceFilePath;
-import static io.delta.golden.GoldenTableUtils.goldenTablePath;
 import java.sql.Date;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
+import static io.delta.golden.GoldenTableUtils.goldenTablePath;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.client.DefaultTableClient;
@@ -33,6 +31,9 @@ import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.integration.DataBuilderUtils.TestColumnBatchBuilder;
 import io.delta.kernel.types.*;
+import static io.delta.kernel.DefaultKernelUtils.daysSinceEpoch;
+import static io.delta.kernel.integration.DataBuilderUtils.row;
+import static io.delta.kernel.utils.DefaultKernelTestUtils.getTestResourceFilePath;
 
 /**
  * Test reading Delta lake tables end to end using the Kernel APIs and default {@link TableClient}
@@ -205,13 +206,17 @@ public class TestDeltaTableReads
                 ),
                 Arrays.asList(
                     new HashMap()
-                    {{
-                        put(String.valueOf(index), (long) index);
-                    }},
+                    {
+                        {
+                            put(String.valueOf(index), (long) index);
+                        }
+                    },
                     new HashMap()
-                    {{
-                        put(String.valueOf(index), (long) index);
-                    }}
+                    {
+                        {
+                            put(String.valueOf(index), (long) index);
+                        }
+                    }
                 ),
                 Arrays.asList(
                     row(arrayElemStructTypeOf(readSchema, "list_of_records"), i),
@@ -252,33 +257,43 @@ public class TestDeltaTableReads
             builder.addRow(
                 i,
                 new HashMap()
-                {{
-                    put(index, index);
-                }},
+                {
+                    {
+                        put(index, index);
+                    }
+                },
                 new HashMap()
-                {{
-                    put((long) index, (byte) index);
-                }},
+                {
+                    {
+                        put((long) index, (byte) index);
+                    }
+                },
                 new HashMap()
-                {{
-                    put((short) index, index % 2 == 0);
-                }},
+                {
+                    {
+                        put((short) index, index % 2 == 0);
+                    }
+                },
                 new HashMap()
-                {{
-                    put((float) index, (double) index);
-                }},
+                {
+                    {
+                        put((float) index, (double) index);
+                    }
+                },
                 new HashMap()
-                {{
-                    StructType elemType = new StructType().add("val", IntegerType.INSTANCE);
-                    put(
-                        index,
-                        Arrays.asList(
-                            row(elemType, index),
-                            row(elemType, index),
-                            row(elemType, index)
-                        )
-                    );
-                }}
+                {
+                    {
+                        StructType elemType = new StructType().add("val", IntegerType.INSTANCE);
+                        put(
+                            index,
+                            Arrays.asList(
+                                row(elemType, index),
+                                row(elemType, index),
+                                row(elemType, index)
+                            )
+                        );
+                    }
+                }
             );
         }
 

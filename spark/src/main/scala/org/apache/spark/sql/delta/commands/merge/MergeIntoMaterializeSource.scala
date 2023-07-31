@@ -20,7 +20,6 @@ import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
-import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
@@ -62,7 +61,6 @@ import org.apache.spark.storage.StorageLevel
  * We record such failures for tracking purpuses.
  */
 trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
-  self: MergeIntoCommandBase =>
 
   import MergeIntoMaterializeSource._
 
@@ -135,26 +133,6 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     type Result = Value
 
     val Retry, RethrowException, ExhaustedRetries = Value
-  }
-
-  /**
-   * Throws an exception if merge metrics indicate that the source table changed between the first
-   * and the second source table scans.
-   */
-  protected def checkNonDeterministicSource(spark: SparkSession): Unit = {
-    // We only detect changes in the number of source rows. This is a best-effort detection; a
-    // more comprehensive solution would be to checksum the values for the columns that we read
-    // in both jobs.
-    // If numSourceRowsInSecondScan is < 0 then it hasn't run, e.g. for insert-only merges.
-    // In that case we have only read the source table once.
-    if (metrics("numSourceRowsInSecondScan").value >= 0 &&
-        metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
-      log.warn(s"Merge source has ${metrics("numSourceRows")} rows in initial scan but " +
-        s"${metrics("numSourceRowsInSecondScan")} rows in second scan")
-      if (conf.getConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED)) {
-        throw DeltaErrors.sourceNotDeterministicInMergeException(spark)
-      }
-    }
   }
 
   /**

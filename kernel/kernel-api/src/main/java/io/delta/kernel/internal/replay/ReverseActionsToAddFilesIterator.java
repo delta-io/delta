@@ -20,13 +20,13 @@ import java.net.URI;
 import java.util.HashMap;
 import java.util.Optional;
 
-import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 
 import io.delta.kernel.internal.actions.Action;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.FilteredCloseableIterator;
 
 public class ReverseActionsToAddFilesIterator

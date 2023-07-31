@@ -1,15 +1,12 @@
 package io.delta.kernel.parquet;
 
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
-import static io.delta.kernel.DefaultKernelUtils.findSubFieldType;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import static java.util.Objects.requireNonNull;
 import java.util.Optional;
+import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.types.LongType;
 import org.apache.parquet.io.api.Converter;
 import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.schema.GroupType;
@@ -20,8 +17,11 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.DefaultColumnarBatch;
 import io.delta.kernel.data.vector.DefaultStructVector;
 import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.DefaultKernelUtils.findSubFieldType;
 
 class RowConverter
     extends GroupConverter
@@ -71,7 +71,8 @@ class RowConverter
                     converters[i] =
                             new ParquetConverters.FileRowIndexColumnConverter(initialBatchSize);
                 } else {
-                    converters[i] = new ParquetConverters.NonExistentColumnConverter(typeFromClient);
+                    converters[i] = new ParquetConverters.NonExistentColumnConverter(
+                        typeFromClient);
                 }
             }
             else {

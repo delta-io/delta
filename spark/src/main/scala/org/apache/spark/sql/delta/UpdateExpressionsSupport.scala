@@ -21,17 +21,20 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.SQLConfHelper
-import org.apache.spark.sql.catalyst.analysis.{CastSupport, Resolver}
+import org.apache.spark.sql.catalyst.{InternalRow, SQLConfHelper}
+import org.apache.spark.sql.catalyst.analysis.Resolver
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodeGenerator, ExprCode}
+import org.apache.spark.sql.catalyst.expressions.codegen.Block._
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 /**
  * Trait with helper functions to generate expressions to update target columns, even if they are
  * nested fields.
  */
-trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with AnalysisHelper {
+trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper {
   /**
    * Specifies an operation that updates a target column with the given expression.
    * The target column may or may not be a nested field and it is specified as a full quoted name
@@ -49,11 +52,13 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
    *                             struct casting will throw an error if there's any mismatch between
    *                             column names. For example, (b, c, a) -> (a, b, c) is always a valid
    *                             cast, but (a, b) -> (a, b, c) is valid only with this flag set.
+   * @param columnName The name of the column written to. It is used for the error message.
    */
   protected def castIfNeeded(
       fromExpression: Expression,
       dataType: DataType,
-      allowStructEvolution: Boolean = false): Expression = {
+      allowStructEvolution: Boolean,
+      columnName: String): Expression = {
 
     fromExpression match {
       // Need to deal with NullType here, as some types cannot be casted from NullType, e.g.,
@@ -69,36 +74,46 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
               // If fromExpression is an array function returning an array, cast the
               // underlying array first and then perform the function on the transformed array.
               case ArrayUnion(leftExpression, rightExpression) =>
-                val castedLeft = castIfNeeded(leftExpression, dataType, allowStructEvolution)
-                val castedRight = castIfNeeded(rightExpression, dataType, allowStructEvolution)
+                val castedLeft =
+                  castIfNeeded(leftExpression, dataType, allowStructEvolution, columnName)
+                val castedRight =
+                  castIfNeeded(rightExpression, dataType, allowStructEvolution, columnName)
                 ArrayUnion(castedLeft, castedRight)
 
               case ArrayIntersect(leftExpression, rightExpression) =>
-                val castedLeft = castIfNeeded(leftExpression, dataType, allowStructEvolution)
-                val castedRight = castIfNeeded(rightExpression, dataType, allowStructEvolution)
+                val castedLeft =
+                  castIfNeeded(leftExpression, dataType, allowStructEvolution, columnName)
+                val castedRight =
+                  castIfNeeded(rightExpression, dataType, allowStructEvolution, columnName)
                 ArrayIntersect(castedLeft, castedRight)
 
               case ArrayExcept(leftExpression, rightExpression) =>
-                val castedLeft = castIfNeeded(leftExpression, dataType, allowStructEvolution)
-                val castedRight = castIfNeeded(rightExpression, dataType, allowStructEvolution)
+                val castedLeft =
+                  castIfNeeded(leftExpression, dataType, allowStructEvolution, columnName)
+                val castedRight =
+                  castIfNeeded(rightExpression, dataType, allowStructEvolution, columnName)
                 ArrayExcept(castedLeft, castedRight)
 
               case ArrayRemove(leftExpression, rightExpression) =>
-                val castedLeft = castIfNeeded(leftExpression, dataType, allowStructEvolution)
+                val castedLeft =
+                  castIfNeeded(leftExpression, dataType, allowStructEvolution, columnName)
                 // ArrayRemove removes all elements that equal to element from the given array.
                 // In this case, the element to be removed also needs to be casted into the target
                 // array's element type.
-                val castedRight = castIfNeeded(rightExpression, toEt, allowStructEvolution)
+                val castedRight =
+                  castIfNeeded(rightExpression, toEt, allowStructEvolution, columnName)
                 ArrayRemove(castedLeft, castedRight)
 
               case ArrayDistinct(expression) =>
-                val castedExpr = castIfNeeded(expression, dataType, allowStructEvolution)
+                val castedExpr =
+                  castIfNeeded(expression, dataType, allowStructEvolution, columnName)
                 ArrayDistinct(castedExpr)
 
               case _ =>
                 // generate a lambda function to cast each array item into to element struct type.
                 val structConverter: (Expression, Expression) => Expression = (_, i) =>
-                  castIfNeeded(GetArrayItem(fromExpression, i), toEt, allowStructEvolution)
+                  castIfNeeded(
+                  GetArrayItem(fromExpression, i), toEt, allowStructEvolution, columnName)
                 val transformLambdaFunc = {
                   val elementVar = NamedLambdaVariable("elementVar", toEt, toContainsNull)
                   val indexVar = NamedLambdaVariable("indexVar", IntegerType, false)
@@ -111,7 +126,8 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
                 // containsNull as true to avoid casting failures.
                 cast(
                   ArrayTransform(fromExpression, transformLambdaFunc),
-                  ArrayType(toEt, containsNull = true)
+                  ArrayType(toEt, containsNull = true),
+                  columnName
                 )
             }
           case (from: MapType, to: MapType) if !Cast.canCast(from, to) =>
@@ -128,17 +144,17 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
             if (from.keyType != to.keyType) {
               transformedKeysAndValues =
                 TransformKeys(transformedKeysAndValues, createMapConverter {
-                  (key, _) => castIfNeeded(key, to.keyType, allowStructEvolution)
+                  (key, _) => castIfNeeded(key, to.keyType, allowStructEvolution, columnName)
                 })
             }
 
             if (from.valueType != to.valueType) {
               transformedKeysAndValues =
                 TransformValues(transformedKeysAndValues, createMapConverter {
-                  (_, value) => castIfNeeded(value, to.valueType, allowStructEvolution)
+                  (_, value) => castIfNeeded(value, to.valueType, allowStructEvolution, columnName)
                 })
             }
-            cast(transformedKeysAndValues, to)
+            cast(transformedKeysAndValues, to, columnName)
           case (from: StructType, to: StructType)
             if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
             // All from fields must be present in the final schema, or we'll silently lose data.
@@ -167,12 +183,13 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
                   }
                   Literal(null)
                 }
-              Seq(fieldNameLit, castIfNeeded(extractedField, field.dataType, allowStructEvolution))
+              Seq(fieldNameLit,
+                castIfNeeded(extractedField, field.dataType, allowStructEvolution, field.name))
             })
 
-            cast(nameMappedStruct, to.asNullable)
+            cast(nameMappedStruct, to.asNullable, columnName)
 
-          case (from, to) if (from != to) => cast(fromExpression, dataType)
+          case (from, to) if (from != to) => cast(fromExpression, dataType, columnName)
           case _ => fromExpression
         }
     }
@@ -267,8 +284,11 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
               prefixMatchedOps.map(op => (pathPrefix ++ op.targetColNameParts).mkString(".")))
           }
           // For an exact match, return the updateExpr from the update operation.
-          Some(
-            castIfNeeded(fullyMatchedOp.get.updateExpr, targetCol.dataType, allowStructEvolution))
+          Some(castIfNeeded(
+            fullyMatchedOp.get.updateExpr,
+            targetCol.dataType,
+            allowStructEvolution,
+            targetCol.name))
         } else {
           // So there are prefix-matched update operations, but none of them is a full match. Then
           // that means targetCol is a complex data type, so we recursively pass along the update
@@ -387,4 +407,110 @@ trait UpdateExpressionsSupport extends CastSupport with SQLConfHelper with Analy
         }
     }
   }
+
+  /**
+   * Replaces 'CastSupport.cast'. Selects a cast based on 'spark.sql.storeAssignmentPolicy' if
+   * 'spark.databricks.delta.updateAndMergeCastingFollowsAnsiEnabledFlag. is false, and based on
+   * 'spark.sql.ansi.enabled' otherwise.
+   */
+  private def cast(child: Expression, dataType: DataType, columnName: String): Expression = {
+    if (conf.getConf(DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG)) {
+      return Cast(child, dataType, Option(conf.sessionLocalTimeZone))
+    }
+
+    conf.storeAssignmentPolicy match {
+      case SQLConf.StoreAssignmentPolicy.LEGACY =>
+        Cast(child, dataType, Some(conf.sessionLocalTimeZone), ansiEnabled = false)
+      case SQLConf.StoreAssignmentPolicy.ANSI =>
+        val cast = Cast(child, dataType, Some(conf.sessionLocalTimeZone), ansiEnabled = true)
+        if (canCauseCastOverflow(cast)) {
+          CheckOverflowInTableWrite(cast, columnName)
+        } else {
+          cast
+        }
+      case SQLConf.StoreAssignmentPolicy.STRICT =>
+        UpCast(child, dataType)
+    }
+  }
+
+  private def containsIntegralOrDecimalType(dt: DataType): Boolean = dt match {
+    case _: IntegralType | _: DecimalType => true
+    case a: ArrayType => containsIntegralOrDecimalType(a.elementType)
+    case m: MapType =>
+      containsIntegralOrDecimalType(m.keyType) || containsIntegralOrDecimalType(m.valueType)
+    case s: StructType =>
+      s.fields.exists(sf => containsIntegralOrDecimalType(sf.dataType))
+    case _ => false
+  }
+
+  private def canCauseCastOverflow(cast: Cast): Boolean = {
+    containsIntegralOrDecimalType(cast.dataType) &&
+      !Cast.canUpCast(cast.child.dataType, cast.dataType)
+  }
+}
+
+case class CheckOverflowInTableWrite(child: Expression, columnName: String)
+  extends UnaryExpression {
+  override protected def withNewChildInternal(newChild: Expression): Expression = {
+    copy(child = newChild)
+  }
+
+  private def getCast: Option[Cast] = child match {
+    case c: Cast => Some(c)
+    case ExpressionProxy(c: Cast, _, _) => Some(c)
+    case _ => None
+  }
+
+  override def eval(input: InternalRow): Any = try {
+    child.eval(input)
+  } catch {
+    case e: ArithmeticException =>
+      getCast match {
+        case Some(cast) =>
+          throw DeltaErrors.castingCauseOverflowErrorInTableWrite(
+            cast.child.dataType,
+            cast.dataType,
+            columnName)
+        case None => throw e
+      }
+  }
+
+  override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
+    getCast match {
+      case Some(child) => doGenCodeWithBetterErrorMsg(ctx, ev, child)
+      case None => child.genCode(ctx)
+    }
+  }
+
+  def doGenCodeWithBetterErrorMsg(ctx: CodegenContext, ev: ExprCode, child: Cast): ExprCode = {
+    val childGen = child.genCode(ctx)
+    val exceptionClass = classOf[ArithmeticException].getCanonicalName
+    assert(child.isInstanceOf[Cast])
+    val cast = child.asInstanceOf[Cast]
+    val fromDt =
+      ctx.addReferenceObj("from", cast.child.dataType, cast.child.dataType.getClass.getName)
+    val toDt = ctx.addReferenceObj("to", child.dataType, child.dataType.getClass.getName)
+    val col = ctx.addReferenceObj("colName", columnName, "java.lang.String")
+    // scalastyle:off line.size.limit
+    ev.copy(code =
+      code"""
+      boolean ${ev.isNull} = true;
+      ${CodeGenerator.javaType(dataType)} ${ev.value} = ${CodeGenerator.defaultValue(dataType)};
+      try {
+        ${childGen.code}
+        ${ev.isNull} = ${childGen.isNull};
+        ${ev.value} = ${childGen.value};
+      } catch ($exceptionClass e) {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .castingCauseOverflowErrorInTableWrite($fromDt, $toDt, $col);
+      }"""
+    )
+    // scalastyle:on line.size.limit
+  }
+
+  override def dataType: DataType = child.dataType
+
+  override def sql: String = child.sql
+
+  override def toString: String = child.toString
 }

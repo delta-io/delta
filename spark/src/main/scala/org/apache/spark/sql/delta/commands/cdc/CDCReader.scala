@@ -22,9 +22,8 @@ import scala.collection.mutable.{ListBuffer, Map => MutableMap}
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
-import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
+import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQLConf}
@@ -34,7 +33,7 @@ import org.apache.spark.sql.util.ScalaExtensions.OptionExt
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
@@ -68,6 +67,14 @@ object CDCReader extends CDCReaderImpl
   val CDC_TYPE_INSERT = "insert"
   val CDC_TYPE_UPDATE_PREIMAGE = "update_preimage"
   val CDC_TYPE_UPDATE_POSTIMAGE = "update_postimage"
+
+  /**
+   * Append CDC metadata columns to the provided schema.
+   */
+  def cdcAttributes: Seq[Attribute] = Seq(
+    AttributeReference(CDC_TYPE_COLUMN_NAME, StringType)(),
+    AttributeReference(CDC_COMMIT_VERSION, LongType)(),
+    AttributeReference(CDC_COMMIT_TIMESTAMP, TimestampType)())
 
   // A special sentinel value indicating rows which are part of the main table rather than change
   // data. Delta writers will partition rows with this value away from the CDC data and

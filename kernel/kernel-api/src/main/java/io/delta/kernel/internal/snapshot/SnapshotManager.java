@@ -16,7 +16,6 @@
 
 package io.delta.kernel.internal.snapshot;
 
-import static io.delta.kernel.internal.fs.Path.getName;
 import java.io.FileNotFoundException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -33,9 +32,6 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableNotFoundException;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.fs.FileStatus;
-
-import io.delta.kernel.internal.fs.Path;
-
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 
@@ -43,9 +39,11 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.checkpoints.CheckpointMetaData;
 import io.delta.kernel.internal.checkpoints.Checkpointer;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Logging;
+import static io.delta.kernel.internal.fs.Path.getName;
 
 public class SnapshotManager
     implements Logging
@@ -145,37 +143,37 @@ public class SnapshotManager
             logPath,
             tableClient,
             startVersion).map(fileStatusesIter -> {
-            final List<FileStatus> output = new ArrayList<>();
+                final List<FileStatus> output = new ArrayList<>();
 
-            while (fileStatusesIter.hasNext()) {
-                final FileStatus fileStatus = fileStatusesIter.next();
+                while (fileStatusesIter.hasNext()) {
+                    final FileStatus fileStatus = fileStatusesIter.next();
 
-                // Pick up all checkpoint and delta files
-                if (!isDeltaCommitOrCheckpointFile(getName(fileStatus.getPath()))) {
-                    continue;
+                    // Pick up all checkpoint and delta files
+                    if (!isDeltaCommitOrCheckpointFile(getName(fileStatus.getPath()))) {
+                        continue;
+                    }
+
+                    // Checkpoint files of 0 size are invalid but may be ignored silently when read,
+                    // hence we drop them so that we never pick up such checkpoints.
+                    if (FileNames.isCheckpointFile(getName(fileStatus.getPath())) &&
+                        fileStatus.getSize() == 0) {
+                        continue;
+                    }
+
+                    // Take files until the version we want to load
+                    final boolean versionWithinRange = versionToLoad
+                        .map(v -> FileNames.getFileVersion(new Path(fileStatus.getPath())) <= v)
+                        .orElse(true);
+
+                    if (!versionWithinRange) {
+                        break;
+                    }
+
+                    output.add(fileStatus);
                 }
 
-                // Checkpoint files of 0 size are invalid but may be ignored silently when read,
-                // hence we drop them so that we never pick up such checkpoints.
-                if (FileNames.isCheckpointFile(getName(fileStatus.getPath())) &&
-                    fileStatus.getSize() == 0) {
-                    continue;
-                }
-
-                // Take files until the version we want to load
-                final boolean versionWithinRange = versionToLoad
-                    .map(v -> FileNames.getFileVersion(new Path(fileStatus.getPath())) <= v)
-                    .orElse(true);
-
-                if (!versionWithinRange) {
-                    break;
-                }
-
-                output.add(fileStatus);
-            }
-
-            return output;
-        });
+                return output;
+            });
     }
 
     /**

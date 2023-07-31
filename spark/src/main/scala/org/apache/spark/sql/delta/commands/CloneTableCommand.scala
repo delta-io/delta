@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.FileNotFoundException
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaTimeTravelSpec, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTimeTravelSpec, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.Clone
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.Protocol.extractAutomaticallyEnabledFeatures
@@ -73,7 +73,16 @@ case class CloneTableCommand(
     ))
   }
 
-  override def run(sparkSession: SparkSession): Seq[Row] = {
+  /**
+   * Handles the transaction logic for the CLONE command.
+   * @param txn [[OptimisticTransaction]] to use for the commit to the target table.
+   * @param targetDeltaLog [[DeltaLog]] of the target table.
+   * @return
+   */
+  def handleClone(
+      sparkSession: SparkSession,
+      txn: OptimisticTransaction,
+      targetDeltaLog: DeltaLog): Seq[Row] = {
     if (!targetPath.isAbsolute) {
       throw DeltaErrors.cloneOnRelativePath(targetIdent.toString)
     }
@@ -97,14 +106,15 @@ case class CloneTableCommand(
       }
     }
 
-    runInternal(
+    handleClone(
       sparkSession,
+      txn,
+      targetDeltaLog,
       opName = CloneTableCommand.OP_NAME,
       hdpConf = hdpConf,
       deltaOperation = Clone(
         sourceTable.name, sourceTable.snapshot.map(_.version).getOrElse(-1)
-      ),
-      Map.empty)
+      ))
   }
 }
 

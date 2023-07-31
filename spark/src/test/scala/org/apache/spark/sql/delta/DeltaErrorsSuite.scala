@@ -35,6 +35,7 @@ import org.apache.spark.sql.delta.constraints.Constraints.NotNull
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 import org.json4s.JString
@@ -51,6 +52,7 @@ import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, StringType, StructField, StructType, TimestampNTZType}
@@ -58,7 +60,9 @@ import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, In
 trait DeltaErrorsSuiteBase
     extends QueryTest
     with SharedSparkSession    with GivenWhenThen
-    with SQLTestUtils {
+    with DeltaSQLCommandTest
+    with SQLTestUtils
+    with QueryErrorsBase {
 
   val MAX_URL_ACCESS_RETRIES = 3
   val path = "/sample/path"
@@ -285,6 +289,24 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "0A000")
       assert(
         e.getMessage == s"$table is a view. Writes to a view are not supported.")
+    }
+    {
+      val sourceType = IntegerType
+      val targetType = DateType
+      val columnName = "column_name"
+      val e = intercept[DeltaArithmeticException] {
+        throw DeltaErrors.castingCauseOverflowErrorInTableWrite(sourceType, targetType, columnName)
+      }
+      assert(e.getErrorClass == "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE")
+      assert(e.getSqlState == "22003")
+      assert(e.getMessageParameters.get("sourceType") == toSQLType(sourceType))
+      assert(e.getMessageParameters.get("targetType") == toSQLType(targetType))
+      assert(e.getMessageParameters.get("columnName") == toSQLId(columnName))
+      assert(e.getMessageParameters.get("storeAssignmentPolicyFlag")
+        == SQLConf.STORE_ASSIGNMENT_POLICY.key)
+      assert(e.getMessageParameters.get("updateAndMergeCastingFollowsAnsiEnabledFlag")
+        ==  DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key)
+      assert(e.getMessageParameters.get("ansiEnabledFlag") == SQLConf.ANSI_ENABLED.key)
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2814,22 +2836,26 @@ trait DeltaErrorsSuiteBase
            |`table1`.""".stripMargin)
     }
     {
-      val e = intercept[AnalysisException] {
-        DeltaTableValueFunctions.resolveChangesTableValueFunctions(
-          spark, fnName = "dummy", args = Seq.empty)
+      DeltaTableValueFunctions.supportedFnNames.foreach { fnName =>
+        {
+          val e = intercept[AnalysisException] {
+            sql(s"SELECT * FROM ${fnName}()").collect()
+          }
+          assert(e.getErrorClass == "INCORRECT_NUMBER_OF_ARGUMENTS")
+          assert(e.getMessage.contains(
+            s"not enough args, $fnName requires at least 2 arguments " +
+              "and at most 3 arguments."))
+        }
+        {
+          val e = intercept[AnalysisException] {
+            sql(s"SELECT * FROM ${fnName}(1, 2, 3, 4, 5)").collect()
+          }
+          assert(e.getErrorClass == "INCORRECT_NUMBER_OF_ARGUMENTS")
+          assert(e.getMessage.contains(
+            s"too many args, $fnName requires at least 2 arguments " +
+              "and at most 3 arguments."))
+        }
       }
-      assert(e.getErrorClass == "INCORRECT_NUMBER_OF_ARGUMENTS")
-      assert(e.getMessage.contains(
-        "not enough args, dummy requires at least 2 arguments and at most 3 arguments."))
-    }
-    {
-      val e = intercept[AnalysisException] {
-        DeltaTableValueFunctions.resolveChangesTableValueFunctions(
-          spark, fnName = "dummy", args = Seq("1".expr, "2".expr, "3".expr, "4".expr, "5".expr))
-      }
-      assert(e.getErrorClass == "INCORRECT_NUMBER_OF_ARGUMENTS")
-      assert(e.getMessage.contains(
-        "too many args, dummy requires at least 2 arguments and at most 3 arguments."))
     }
     {
       val e = intercept[DeltaAnalysisException] {

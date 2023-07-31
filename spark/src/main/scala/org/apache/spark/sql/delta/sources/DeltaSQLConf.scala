@@ -23,7 +23,6 @@ import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.util.Utils
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -1260,6 +1259,15 @@ trait DeltaSQLConfBase {
         |""".stripMargin)
     .intConf
     .createWithDefault(100 * 1000)
+
+  val UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG =
+    buildConf("updateAndMergeCastingFollowsAnsiEnabledFlag")
+      .internal()
+      .doc("""If false, casting behaviour in implicit casts in UPDATE and MERGE follows
+             |'spark.sql.storeAssignmentPolicy'. If true, these casts follow 'ansi.enabled'. This
+             |was the default before Delta 3.5.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 
 }
 

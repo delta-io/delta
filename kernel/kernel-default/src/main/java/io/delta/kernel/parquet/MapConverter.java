@@ -16,10 +16,9 @@
 
 package io.delta.kernel.parquet;
 
-import static io.delta.kernel.parquet.ParquetConverters.initNullabilityVector;
-import static io.delta.kernel.parquet.ParquetConverters.setNullabilityToTrue;
 import java.util.Arrays;
 import java.util.Optional;
+
 import org.apache.parquet.io.api.Converter;
 import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.schema.GroupType;
@@ -27,6 +26,8 @@ import org.apache.parquet.schema.GroupType;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.vector.DefaultMapVector;
 import io.delta.kernel.types.MapType;
+import static io.delta.kernel.parquet.ParquetConverters.initNullabilityVector;
+import static io.delta.kernel.parquet.ParquetConverters.setNullabilityToTrue;
 
 class MapConverter
     extends GroupConverter
@@ -41,7 +42,7 @@ class MapConverter
     private int[] offsets;
     private int collectorIndexAtStart;
 
-    public MapConverter(
+    MapConverter(
         int initialBatchSize,
         MapType typeFromClient,
         GroupType typeFromFile)
@@ -138,7 +139,7 @@ class MapConverter
         // working state
         private int currentEntryIndex;
 
-        public MapCollector(
+        MapCollector(
             int maxBatchSize,
             MapType typeFromClient,
             GroupType innerMapType)

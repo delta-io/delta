@@ -15,11 +15,11 @@
  */
 package io.delta.kernel.data.vector;
 
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
-import static java.util.Objects.requireNonNull;
 import java.util.Optional;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.types.ShortType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for short type data.

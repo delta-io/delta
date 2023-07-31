@@ -15,11 +15,11 @@
  */
 package io.delta.kernel.data.vector;
 
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
-import static java.util.Objects.requireNonNull;
 import java.util.Optional;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.types.BooleanType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for boolean type data.

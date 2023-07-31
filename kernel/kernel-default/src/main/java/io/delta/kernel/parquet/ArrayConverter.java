@@ -16,10 +16,9 @@
 
 package io.delta.kernel.parquet;
 
-import static io.delta.kernel.parquet.ParquetConverters.initNullabilityVector;
-import static io.delta.kernel.parquet.ParquetConverters.setNullabilityToTrue;
 import java.util.Arrays;
 import java.util.Optional;
+
 import org.apache.parquet.io.api.Converter;
 import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.schema.GroupType;
@@ -27,6 +26,8 @@ import org.apache.parquet.schema.GroupType;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.vector.DefaultArrayVector;
 import io.delta.kernel.types.ArrayType;
+import static io.delta.kernel.parquet.ParquetConverters.initNullabilityVector;
+import static io.delta.kernel.parquet.ParquetConverters.setNullabilityToTrue;
 
 class ArrayConverter
     extends GroupConverter
@@ -41,7 +42,7 @@ class ArrayConverter
     private int[] offsets;
     private int collectorIndexAtStart;
 
-    public ArrayConverter(
+    ArrayConverter(
         int initialBatchSize,
         ArrayType typeFromClient,
         GroupType typeFromFile)
@@ -136,7 +137,7 @@ class ArrayConverter
         // working state
         private int currentEntryIndex;
 
-        public ArrayCollector(int maxBatchSize, ArrayType typeFromClient, GroupType innerArrayType)
+        ArrayCollector(int maxBatchSize, ArrayType typeFromClient, GroupType innerArrayType)
         {
             this.converter = ParquetConverters.createConverter(
                 maxBatchSize,

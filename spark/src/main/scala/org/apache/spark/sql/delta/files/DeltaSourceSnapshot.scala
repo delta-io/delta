@@ -16,9 +16,12 @@
 
 package org.apache.spark.sql.delta.files
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.{DeltaLog, DeltaTableUtils, Snapshot}
 import org.apache.spark.sql.delta.actions.SingleAction
 import org.apache.spark.sql.delta.sources.IndexedFile
+import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.util.StateCache
 
 import org.apache.spark.sql.{Dataset, SparkSession}
@@ -37,8 +40,7 @@ class DeltaSourceSnapshot(
     val spark: SparkSession,
     val snapshot: Snapshot,
     val filters: Seq[Expression])
-  extends SnapshotIterator
-  with StateCache {
+  extends StateCache {
 
   protected val version = snapshot.version
   protected val path = snapshot.path
@@ -52,51 +54,45 @@ class DeltaSourceSnapshot(
     (part, data)
   }
 
-  protected def initialFiles: Dataset[IndexedFile] = {
+  private[delta] def filteredFiles: Dataset[IndexedFile] = {
     import spark.implicits.rddToDatasetHolder
     import org.apache.spark.sql.delta.implicits._
 
-    cacheDS(
-      snapshot.allFiles.sort("modificationTime", "path")
+    val initialFiles = snapshot.allFiles
+        // This allows us to control the number of partitions created from the sort instead of
+        // using the shufflePartitions setting
+        .repartitionByRange(snapshot.getNumPartitions, col("modificationTime"), col("path"))
+        .sort("modificationTime", "path")
         .rdd.zipWithIndex()
         .toDF("add", "index")
+        // Stats aren't used for streaming reads right now, so decrease
+        // the size of the files by nulling out the stats if they exist
+        .withColumn("add", col("add").withField("stats", DataSkippingReader.nullStringLiteral))
         .withColumn("remove", SingleAction.nullLitForRemoveFile)
         .withColumn("cdc", SingleAction.nullLitForAddCDCFile)
         .withColumn("version", lit(version))
         .withColumn("isLast", lit(false))
         .withColumn("shouldSkip", lit(false))
-        .as[IndexedFile],
-      s"Delta Source Snapshot #$version - ${snapshot.redactedPath}").getDS
+
+    DeltaLog.filterFileList(
+      snapshot.metadata.partitionSchema,
+      initialFiles,
+      partitionFilters,
+      Seq("add")).as[IndexedFile]
   }
 
-  override def close(unpersistSnapshot: Boolean): Unit = {
-    super.close(unpersistSnapshot)
+  private lazy val cachedState = {
+    cacheDS(filteredFiles, s"Delta Source Snapshot #$version - ${snapshot.redactedPath}")
+  }
 
+  def iterator(): Iterator[IndexedFile] = {
+    cachedState.getDS.toLocalIterator.asScala
+  }
+
+  def close(unpersistSnapshot: Boolean): Unit = {
+    uncache()
     if (unpersistSnapshot) {
       snapshot.uncache()
     }
   }
-}
-
-trait SnapshotIterator {
-  self: DeltaSourceSnapshot =>
-
-  private var result: Iterable[IndexedFile] = _
-
-  def iterator(): Iterator[IndexedFile] = {
-    import org.apache.spark.sql.delta.implicits._
-    if (result == null) {
-      result = DeltaLog.filterFileList(
-        snapshot.metadata.partitionSchema,
-        initialFiles.toDF(),
-        partitionFilters,
-        Seq("add")).as[IndexedFile].collect().toIterable
-    }
-    // This will always start from the beginning and re-use resources. If any exceptions were to
-    // be thrown, the stream would stop, we would call stop on the source, and that will make
-    // sure that we clean up resources.
-    result.toIterator
-  }
-
-  def close(unpersistSnapshot: Boolean): Unit = { }
 }

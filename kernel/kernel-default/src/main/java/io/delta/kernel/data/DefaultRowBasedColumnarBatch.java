@@ -15,13 +15,13 @@
  */
 package io.delta.kernel.data;
 
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import java.util.List;
 import java.util.Map;
 
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 /**
  * {@link ColumnarBatch} wrapper around list of {@link Row} objects.

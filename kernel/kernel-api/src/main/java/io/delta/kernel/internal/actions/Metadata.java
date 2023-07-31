@@ -19,6 +19,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.Row;
@@ -27,11 +28,9 @@ import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import static io.delta.kernel.utils.Utils.requireNonNull;
 
 import io.delta.kernel.internal.types.TableSchemaSerDe;
-
-import static io.delta.kernel.utils.Utils.requireNonNull;
-import static java.util.Objects.requireNonNull;
 
 public class Metadata implements Action
 {

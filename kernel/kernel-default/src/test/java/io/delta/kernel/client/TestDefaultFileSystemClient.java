@@ -15,16 +15,17 @@
  */
 package io.delta.kernel.client;
 
-import static io.delta.kernel.utils.DefaultKernelTestUtils.getTestResourceFilePath;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+
 import org.apache.hadoop.conf.Configuration;
-import static org.junit.Assert.assertEquals;
 import org.junit.Test;
+import static org.junit.Assert.assertEquals;
 
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
+import static io.delta.kernel.utils.DefaultKernelTestUtils.getTestResourceFilePath;
 
 public class TestDefaultFileSystemClient
 {

@@ -23,6 +23,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+
 import org.apache.hadoop.conf.Configuration;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -55,11 +56,13 @@ import io.delta.kernel.utils.DefaultKernelTestUtils;
 public abstract class BaseIntegration
 {
     protected TableClient tableClient = DefaultTableClient.create(
-        new Configuration() {{
-            // Set the batch sizes to small so that we get to test the multiple batch scenarios.
-            set("delta.kernel.default.parquet.reader.batch-size", "2");
-            set("delta.kernel.default.json.reader.batch-size", "2");
-        }});
+        new Configuration() {
+            {
+                // Set the batch sizes to small so that we get to test the multiple batch scenarios.
+                set("delta.kernel.default.parquet.reader.batch-size", "2");
+                set("delta.kernel.default.json.reader.batch-size", "2");
+            }
+        });
 
     protected Table table(String path) throws Exception
     {
