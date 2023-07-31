@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, 
 import org.apache.spark.sql.delta.commands.merge.MergeOutputGeneration.{SOURCE_ROW_INDEX_COL, TARGET_ROW_INDEX_COL}
 import org.apache.spark.sql.delta.util.SetAccumulator
 import org.apache.spark.sql.{Column, Dataset, SparkSession}
-import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, Or}
+import org.apache.spark.sql.catalyst.expressions.{Literal, Or}
 import org.apache.spark.sql.functions.{coalesce, col, count, input_file_name, lit, monotonically_increasing_id, sum}
 
 /**
@@ -99,9 +99,9 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
     val matchedPredicate =
       if (isMatchedOnly) {
         matchedClauses
-          .flatMap(_.condition)
-          .reduceOption((a, b) => Or(a, b))
-          .getOrElse(Literal.TrueLiteral)
+          // An undefined condition (None) is implicitly true
+          .map(_.condition.getOrElse(Literal.TrueLiteral))
+          .reduce((a, b) => Or(a, b))
       } else Literal.TrueLiteral
 
     // Compute the columns needed for the inner join.
