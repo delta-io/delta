@@ -193,6 +193,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val parallelDeletePartitions =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PARALLEL_DELETE_PARALLELISM)
         .getOrElse(spark.sessionState.conf.numShufflePartitions)
+      val timezone = spark.sessionState.conf.sessionLocalTimeZone
       val startTimeToIdentifyEligibleFiles = System.currentTimeMillis()
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
@@ -233,7 +234,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
                 val partitionRows = PartitionUtils.parsePartitions(
                   Seq(new Path(p.path)), true,
                   Set(new Path(basePath)), Option(snapshot.metadata.partitionSchema),
-                  true, false, "UTC")
+                  true, false, timezone)
                 val colsFromPartSpec = partitionRows.partitions.head.values
                   .toSeq(snapshot.metadata.partitionSchema).toArray
                 val colsFromDirStatus = (UTF8String.fromString(p.path),
