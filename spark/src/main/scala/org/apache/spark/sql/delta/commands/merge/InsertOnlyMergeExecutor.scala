@@ -74,8 +74,14 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       var sourceDF = getSourceDF().filter(new Column(incrSourceRowCountExpr))
       // If there is only one insert clause, then filter out the source rows that do not
       // satisfy the clause condition because those rows will not be written out.
-      if (notMatchedClauses.size == 1 && notMatchedClauses.head.condition.isDefined) {
-        sourceDF = sourceDF.filter(Column(notMatchedClauses.head.condition.get))
+      if (notMatchedClauses.size == 1) {
+        notMatchedClauses
+          .head
+          .condition
+          .map(Column.apply)
+          .foreach { conditionCol =>
+            sourceDF = sourceDF.filter(conditionCol)
+          }
       }
 
       var dataSkippedFiles: Option[Seq[AddFile]] = None
