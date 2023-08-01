@@ -35,7 +35,7 @@ object Unidoc {
         .enablePlugins(GenJavadocPlugin, PublishJavadocPlugin, JavaUnidocPlugin)
         .settings(
           libraryDependencies ++= Seq(
-            // Ensure genJavaDoc plugin is of the right version
+            // Ensure genJavaDoc plugin is of the right version that works with Scala 2.12
             compilerPlugin(
               "com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
           ),

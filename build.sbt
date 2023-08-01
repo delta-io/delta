@@ -100,11 +100,6 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
-
-      // Compiler plugins
-      // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12
-      compilerPlugin(
-        "com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
     ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
@@ -934,7 +929,6 @@ lazy val flink = (project in file("connectors/flink"))
         ExclusionRule("org.apache.logging.log4j"),
         ExclusionRule("com.google.protobuf", "protobuf-java"),
       ),
-      compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
     ),
     // generating source java class with version number to be passed during commit to the DeltaLog as engine info
     // (part of transaction's metadata)
