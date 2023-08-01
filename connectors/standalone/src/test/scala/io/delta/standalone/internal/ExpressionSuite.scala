@@ -594,4 +594,15 @@ class ExpressionSuite extends FunSuite {
     val lit52 = Literal.of(dec52)
     assert(lit52.dataType().equals(new DecimalType(5, 2)))
   }
+
+  test("like predicate") {
+    //not like tests
+    testPredicate(new Not(new Like(Literal.of("aabbcc"), Literal.of("aa%"))), false)
+    testPredicate(new Not(new Like(Literal.of("aabbcc"), Literal.of("%aa"))), true)
+    testPredicate(new Not(new Like(Literal.of("aabbcc"), Literal.of("%aa%"))), false)
+    //like tests
+    testPredicate(new Like(Literal.of("aabbcc"), Literal.of("bb%")), false)
+    testPredicate(new Like(Literal.of("aabbcc"), Literal.of("%bb")), false)
+    testPredicate(new Like(Literal.of("aabbcc"), Literal.of("%bb%")), true)
+  }
 }
