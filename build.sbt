@@ -70,6 +70,9 @@ lazy val commonSettings = Seq(
   ),
 
   testOptions += Tests.Argument("-oF"),
+
+  // Unidoc settings: by default dont document any source file
+  Compile / unidoc / sourceFilePatternsToDocument := Nil,
 )
 
 lazy val spark = (project in file("spark"))
@@ -156,14 +159,13 @@ lazy val spark = (project in file("spark"))
       Seq(file)
     },
     TestParallelization.settings,
+
+    // Unidoc settings
+    Compile / unidoc / sourceFilePatternsToDocument := Seq(
+      SourceFilePattern(Seq("io/delta/tables/", "io/delta/exceptions/"))
+    ),
   )
-  .configureUnidoc(
-    docTitle = "Delta Spark",
-    projectSrcDirToFilePatternsToKeep = Map(
-      "spark" -> Seq("io/delta/tables/", "io/delta/exceptions/"),
-      "storage" -> Seq("/LogStore.java", "/CloseableIterator.java")
-    )
-  )
+  .configureUnidoc(generateScalaDoc = true)
 
 lazy val contribs = (project in file("contribs"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
@@ -200,7 +202,7 @@ lazy val contribs = (project in file("contribs"))
       Files.createDirectories(dir.toPath)
     },
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
-  )
+  ).configureUnidoc()
 
 lazy val kernelApi = (project in file("kernel/kernel-api"))
   .settings(
@@ -215,8 +217,11 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.11" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
-    )
-  )
+    ),
+
+    // Unidoc settings
+    Compile / unidoc / sourceFilePatternsToDocument := Seq(SourceFilePattern("io/delta/kernel/")),
+  ).configureUnidoc(docTitle = "Delta Kernel")
 
 lazy val kernelDefault = (project in file("kernel/kernel-default"))
   .dependsOn(kernelApi)
@@ -235,8 +240,11 @@ lazy val kernelDefault = (project in file("kernel/kernel-default"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.11" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
-    )
-  )
+    ),
+
+    // Unidoc settings
+    Compile / unidoc / sourceFilePatternsToDocument := Seq(SourceFilePattern("io/delta/kernel/")),
+  ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
 // TODO javastyle tests
 // TODO unidoc
@@ -257,8 +265,13 @@ lazy val storage = (project in file("storage"))
 
       // Test Deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-    )
-  )
+    ),
+
+    // Unidoc settings
+    Compile / unidoc / sourceFilePatternsToDocument := Seq(
+      SourceFilePattern("/LogStore.java", "/CloseableIterator.java")
+    ),
+  ).configureUnidoc()
 
 lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
   .dependsOn(storage % "compile->compile;test->test;provided->provided")
@@ -278,7 +291,7 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
       // Test Deps
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException
     )
-  )
+  ).configureUnidoc()
 
 /*
 // TODO: Investigate a smarter way to pull the Iceberg github.
@@ -756,7 +769,11 @@ lazy val standalone = (project in file("connectors/standalone"))
       art.withClassifier(Some("assembly"))
     },
     addArtifact(assembly / artifact, assembly),
-  )
+
+    // Unidoc setting
+    Compile / unidoc / sourceFilePatternsToDocument := Seq(
+      SourceFilePattern("io/delta/standalone/")),
+  ).configureUnidoc()
 
 
 /*
@@ -839,7 +856,6 @@ def flinkScalaVersion(scalaBinaryVersion: String): String = {
 
 lazy val flink = (project in file("connectors/flink"))
   .dependsOn(standaloneCosmetic % "provided")
-  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin)
   .settings (
     name := "delta-flink",
     commonSettings,
@@ -923,7 +939,7 @@ lazy val flink = (project in file("connectors/flink"))
     // generating source java class with version number to be passed during commit to the DeltaLog as engine info
     // (part of transaction's metadata)
     Compile / sourceGenerators += Def.task {
-      val file = (Compile / sourceManaged).value / "meta" / "Meta.java"
+      val file = (Compile / sourceManaged).value / "io" / "delta" / "flink" / "internal" / "Meta.java"
       IO.write(file,
         s"""package io.delta.flink.internal;
            |
@@ -934,36 +950,10 @@ lazy val flink = (project in file("connectors/flink"))
            |""".stripMargin)
       Seq(file)
     },
-    /**
-     * Unidoc settings
-     * Generate javadoc with `unidoc` command, outputs to `flink/target/javaunidoc`
-     * e.g. build/sbt flink/unidoc
-     */
-    JavaUnidoc / unidoc / javacOptions := Seq(
-      "-public",
-      "-windowtitle", "Flink/Delta Connector " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
-      "-noqualifier", "java.lang",
-      "-tag", "implNote:a:Implementation Note:",
-      "-tag", "apiNote:a:API Note:",
-      "-exclude", "io.delta.flink.internal",
-      "-Xdoclint:none"
-    ),
-    Compile / doc / javacOptions := (JavaUnidoc / unidoc / javacOptions).value,
-    JavaUnidoc / unidoc /  unidocAllSources := {
-      (JavaUnidoc / unidoc / unidocAllSources).value
-        // include only relevant delta-flink classes
-        .map(_.filter(_.getCanonicalPath.contains("/flink/")))
-        // exclude internal classes
-        .map(_.filterNot(_.getCanonicalPath.contains("/internal/")))
-        // exclude flink package
-        .map(_.filterNot(_.getCanonicalPath.contains("org/apache/flink/")))
-    },
-  )
 
-  /* .configureUnidoc(
-    docTitle = "Delta Flink",
-    projectSrcDirToFilePatternsToKeep = Map("flink" -> Seq("io/delta/flink/"))
-  ) */
+    // Unidoc settings
+    Compile / unidoc / sourceFilePatternsToDocument := Seq(SourceFilePattern("io/delta/flink/")),
+  ).configureUnidoc()
 
 /**
  * Get list of python files and return the mapping between source files and target paths
