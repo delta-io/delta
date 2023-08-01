@@ -78,7 +78,7 @@ lazy val spark = (project in file("spark"))
     name := "delta-spark",
     commonSettings,
     scalaStyleSettings,
-    mimaSettings,
+    sparkMimaSettings,
     unidocSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
@@ -674,7 +674,7 @@ lazy val standalone = (project in file("connectors/standalone"))
     name := "delta-standalone-original",
     commonSettings,
     skipReleaseSettings,
-    // mimaSettings, // TODO(TD): re-enable this
+    standaloneMimaSettings,
     // When updating any dependency here, we should also review `pomPostProcess` in project
     // `standaloneCosmetic` and update it accordingly.
     libraryDependencies ++= scalaCollectionPar(scalaVersion.value) ++ Seq(
@@ -1034,13 +1034,13 @@ def getMajorMinorPatch(versionStr: String): (Int, Int, Int) = {
   }
 }
 
-def getPrevName(currentVersion: String): String = {
+def getPrevSparkName(currentVersion: String): String = {
   val (major, minor, patch) = getMajorMinorPatch(currentVersion)
   // name change in version 3.0.0, so versions > 3.0.0 should have delta-spark are prev version.
   if (major >= 3 && (minor > 0 || patch > 0)) "delta-spark" else "delta-core"
 }
 
-def getPrevVersion(currentVersion: String): String = {
+def getPrevSparkVersion(currentVersion: String): String = {
   val (major, minor, patch) = getMajorMinorPatch(currentVersion)
 
   val lastVersionInMajorVersion = Map(
@@ -1059,11 +1059,39 @@ def getPrevVersion(currentVersion: String): String = {
   }
 }
 
-lazy val mimaSettings = Seq(
+def getPrevStandaloneVersion(currentVersion: String): String = {
+  val (major, minor, patch) = getMajorMinorPatch(currentVersion)
+
+  val majorToLastMinorVersions: Map[Int, String] = Map(
+    // We skip from 0.6.0 to 3.0.0 when migrating connectors to the main delta repo
+    0 -> "0.6.0",
+    1 -> "0.6.0",
+    2 -> "0.6.0"
+  )
+  if (minor == 0) {  // 1.0.0
+    majorToLastMinorVersions.getOrElse(major - 1, {
+      throw new Exception(s"Last minor version of ${major - 1}.x.x not configured.")
+    })
+  } else if (patch == 0) {
+    s"$major.${minor - 1}.0"      // 1.1.0 -> 1.0.0
+  } else {
+    s"$major.$minor.${patch - 1}" // 1.1.1 -> 1.1.0
+  }
+}
+
+lazy val sparkMimaSettings = Seq(
   Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
   mimaPreviousArtifacts :=
-    Set("io.delta" %% getPrevName(version.value) %  getPrevVersion(version.value)),
-  mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
+    Set("io.delta" %% getPrevSparkName(version.value) %  getPrevSparkVersion(version.value)),
+  mimaBinaryIssueFilters ++= SparkMimaExcludes.ignoredABIProblems
+)
+
+lazy val standaloneMimaSettings = Seq(
+  Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
+  mimaPreviousArtifacts := {
+    Set("io.delta" %% "delta-standalone" % getPrevStandaloneVersion(version.value))
+  },
+  mimaBinaryIssueFilters ++= StandaloneMimaExcludes.ignoredABIProblems
 )
 
 /*

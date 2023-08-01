@@ -20,7 +20,7 @@ import com.typesafe.tools.mima.core.ProblemFilters._
 /**
  * The list of Mima errors to exclude.
  */
-object MimaExcludes {
+object SparkMimaExcludes {
   val ignoredABIProblems = Seq(
       // scalastyle:off line.size.limit
       ProblemFilters.exclude[Problem]("org.*"),
