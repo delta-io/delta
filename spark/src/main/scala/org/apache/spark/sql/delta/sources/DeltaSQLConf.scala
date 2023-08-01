@@ -274,6 +274,14 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "maxSnapshotLineageLength must be positive.")
       .createWithDefault(50)
 
+  val DELTA_REPLACE_COLUMNS_SAFE =
+    buildConf("alter.replaceColumns.safe.enabled")
+      .internal()
+      .doc("Prevents an ALTER TABLE REPLACE COLUMNS method from dropping all columns, which " +
+        "leads to losing all data. It will only allow safe, unambiguous column changes.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_HISTORY_PAR_SEARCH_THRESHOLD =
     buildConf("history.maxKeysPerList")
       .internal()

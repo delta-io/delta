@@ -41,6 +41,9 @@ private[delta] class DeltaEncoder[T: TypeTag] {
  * `import org.apache.spark.sql.delta.implicits._` to use these `Encoder`s.
  */
 private[delta] trait DeltaEncoders {
+  private lazy val _BooleanEncoder = new DeltaEncoder[Boolean]
+  implicit def booleanEncoder: Encoder[Boolean] = _BooleanEncoder.get
+
   private lazy val _IntEncoder = new DeltaEncoder[Int]
   implicit def intEncoder: Encoder[Int] = _IntEncoder.get
 

@@ -1393,10 +1393,11 @@ trait DeltaErrorsBase
       messageParameters = Array(s"$tableId"))
   }
 
-  def nonExistentDeltaTableStreaming(table: String): Throwable = {
+  def differentDeltaTableReadByStreamingSource(
+      newTableId: String, oldTableId: String): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_TABLE_NOT_FOUND_STREAMING",
-      messageParameters = Array(table))
+      errorClass = "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE",
+      messageParameters = Array(newTableId, oldTableId))
   }
 
   def nonExistentColumnInSchema(column: String, schema: String): Throwable = {
@@ -1732,6 +1733,13 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_CHANGE_DATA_TYPE",
       messageParameters = Array(msg)
+    )
+  }
+
+  def ambiguousDataTypeChange(column: String, from: StructType, to: StructType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_AMBIGUOUS_DATA_TYPE_CHANGE",
+      messageParameters = Array(column, from.toDDL, to.toDDL)
     )
   }
 
@@ -2196,6 +2204,29 @@ trait DeltaErrorsBase
       messageParameters = Array(
         unsupportedFeatures.map(_.name).toSeq.sorted.mkString(", "),
         supportedFeatures.map(_.name).toSeq.sorted.mkString(", ")))
+  }
+
+  private def logRetentionPeriodKeyValuePair(metadata: Metadata): (String, String) = {
+    val logRetention = DeltaConfigs.LOG_RETENTION
+    (logRetention.key, logRetention.fromMetaData(metadata).toString)
+  }
+
+  def dropTableFeatureHistoricalVersionsExist(
+      feature: String,
+      metadata: Metadata): DeltaTableFeatureException = {
+    val (logRetentionPeriodKey, logRetentionPeriod) = logRetentionPeriodKeyValuePair(metadata)
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+      messageParameters = Array(feature, logRetentionPeriodKey, logRetentionPeriod))
+  }
+
+  def dropTableFeatureWaitForRetentionPeriod(
+      feature: String,
+      metadata: Metadata): DeltaTableFeatureException = {
+    val (logRetentionPeriodKey, logRetentionPeriod) = logRetentionPeriodKeyValuePair(metadata)
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+      messageParameters = Array(feature, logRetentionPeriodKey, logRetentionPeriod))
   }
 
   def dropTableFeatureNonRemovableFeature(feature: String): DeltaTableFeatureException = {
