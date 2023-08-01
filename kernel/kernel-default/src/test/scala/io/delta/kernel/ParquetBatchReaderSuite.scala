@@ -92,9 +92,9 @@ class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
 
     val readSchema = new StructType()
       .add("id", IntegerType.INSTANCE)
-      .add("col1", new DecimalType(5, 1))
-      .add("col2", new DecimalType(10, 5))
-      .add("col3", new DecimalType(20, 5))
+      .add("col1", new DecimalType(5, 1)) // INT32
+      .add("col2", new DecimalType(10, 5)) // INT64
+      .add("col3", new DecimalType(20, 5)) // FIXED_LEN_BYTE_ARRAY
 
     val batchReader = new ParquetBatchReader(new Configuration())
     val batches = batchReader.read(LARGE_SCALE_DECIMAL_TYPES_FILE, readSchema)

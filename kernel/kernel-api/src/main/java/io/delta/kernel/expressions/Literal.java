@@ -139,13 +139,15 @@ public final class Literal extends LeafExpression
     /**
      * @return a {@link Literal} with data type {@link DecimalType}
      */
+    // TODO: reconsider behavior here w.r.t. precision/scale for instantiation & evaluation
     public static Literal of(BigDecimal value, DecimalType dataType)
     {
-        checkArgument(value.precision() <= dataType.getPrecision(), String.format(
-                "Decimal precision %s exceeds max precision for data type %s",
-                value.precision(), dataType));
         // throws an error if rounding is required to set the specified scale
-        return new Literal(value.setScale(dataType.getScale()), dataType);
+        BigDecimal valueToStore = value.setScale(dataType.getScale());
+        checkArgument(valueToStore.precision() <= dataType.getPrecision(), String.format(
+                "Decimal precision=%s for decimal %s exceeds max precision for data type %s",
+                valueToStore.precision(), valueToStore, dataType));
+        return new Literal(valueToStore, dataType);
     }
 
     /**
