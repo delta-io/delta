@@ -308,8 +308,9 @@ object DeltaOperations {
     override def changesData: Boolean = true
   }
   /** Recorded when the table properties are set. */
+  val OP_SET_TBLPROPERTIES = "SET TBLPROPERTIES"
   case class SetTableProperties(
-      properties: Map[String, String]) extends Operation("SET TBLPROPERTIES") {
+      properties: Map[String, String]) extends Operation(OP_SET_TBLPROPERTIES) {
     override val parameters: Map[String, Any] = Map("properties" -> JsonUtils.toJson(properties))
   }
   /** Recorded when the table properties are unset. */
@@ -427,9 +428,10 @@ object DeltaOperations {
       extends OperationWithPredicates("COMPUTE STATS", predicate)
 
   /** Recorded when restoring a Delta table to an older version. */
+  val OP_RESTORE = "RESTORE"
   case class Restore(
       version: Option[Long],
-      timestamp: Option[String]) extends Operation("RESTORE") {
+      timestamp: Option[String]) extends Operation(OP_RESTORE) {
     override val parameters: Map[String, Any] = Map(
       "version" -> version,
       "timestamp" -> timestamp)
@@ -461,10 +463,11 @@ object DeltaOperations {
   }
 
   /** Recorded when cloning a Delta table into a new location. */
+  val OP_CLONE = "CLONE"
   case class Clone(
       source: String,
       sourceVersion: Long
-  ) extends Operation("CLONE") {
+  ) extends Operation(OP_CLONE) {
     override val parameters: Map[String, Any] = Map(
       "source" -> source,
       "sourceVersion" -> sourceVersion
