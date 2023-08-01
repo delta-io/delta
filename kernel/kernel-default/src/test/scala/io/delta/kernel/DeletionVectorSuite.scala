@@ -15,93 +15,20 @@
  */
 package io.delta.kernel
 
-import java.util.Optional
-
-import scala.collection.mutable.ArrayBuffer
-import scala.reflect.ClassTag
-
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.client.DefaultTableClient
-import io.delta.kernel.data.Row
-import io.delta.kernel.types.{IntegerType, LongType, StringType, StructType}
-import io.delta.kernel.utils.{CloseableIterator, DefaultKernelTestUtils}
+import io.delta.kernel.utils.DefaultKernelTestUtils
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
-class DeletionVectorSuite extends AnyFunSuite {
-
-  implicit class CloseableIteratorOps[T: ClassTag](private val iter: CloseableIterator[T]) {
-
-    def forEach(f: T => Unit): Unit = {
-      try {
-        while (iter.hasNext) {
-          f(iter.next())
-        }
-      } finally {
-        iter.close()
-      }
-    }
-  }
-
-  def readTable[T](path: String, conf: Configuration, schema: StructType = null)
-      (getValue: Row => T): Seq[T] = {
-    val result = ArrayBuffer[T]()
-
-    val tableClient = DefaultTableClient.create(conf)
-    val table = Table.forPath(path)
-    val snapshot = table.getLatestSnapshot(tableClient)
-
-    val readSchema = if (schema == null) {
-       snapshot.getSchema(tableClient)
-    } else {
-      schema
-    }
-
-    val scan = snapshot.getScanBuilder(tableClient)
-      .withReadSchema(tableClient, readSchema)
-      .build()
-
-    val scanState = scan.getScanState(tableClient);
-    val fileIter = scan.getScanFiles(tableClient)
-    // TODO serialize scan state and scan rows
-
-    fileIter.forEach { fileColumnarBatch =>
-      // TODO deserialize scan state and scan rows
-      val dataBatches = Scan.readData(
-        tableClient,
-        scanState,
-        fileColumnarBatch.getRows(),
-        Optional.empty()
-      )
-
-      dataBatches.forEach { batch =>
-        val selectionVector = batch.getSelectionVector()
-        val data = batch.getData()
-
-        var i = 0
-        val rowIter = data.getRows()
-        try {
-          while (rowIter.hasNext) {
-            val row = rowIter.next()
-            if (!selectionVector.isPresent || selectionVector.get.getBoolean(i)) { // row is valid
-              result.append(getValue(row))
-            }
-            i += 1
-          }
-        } finally {
-            rowIter.close()
-        }
-      }
-    }
-    result
-  }
+class DeletionVectorSuite extends AnyFunSuite with TestUtils {
 
   test("end-to-end usage: reading a table with dv") {
     val path = DefaultKernelTestUtils.getTestResourceFilePath("basic-dv-no-checkpoint")
     val expectedResult = Seq.range(start = 2, end = 10).toSet
 
-    val readSchema = new StructType().add("id", LongType.INSTANCE)
-    val result = readTable(path, new Configuration(), readSchema) { row =>
+    val snapshot = latestSnapshot(path)
+    val result = readSnapshot(snapshot).map { row =>
       row.getLong(0)
     }
 
@@ -112,8 +39,8 @@ class DeletionVectorSuite extends AnyFunSuite {
     val path = DefaultKernelTestUtils.getTestResourceFilePath("basic-dv-with-checkpoint")
     val expectedResult = Seq.range(start = 0, end = 500).filter(_ % 11 != 0).toSet
 
-    val readSchema = new StructType().add("id", LongType.INSTANCE)
-    val result = readTable(path, new Configuration(), readSchema) { row =>
+    val snapshot = latestSnapshot(path)
+    val result = readSnapshot(snapshot).map  { row =>
       row.getLong(0)
     }
 
@@ -130,8 +57,11 @@ class DeletionVectorSuite extends AnyFunSuite {
 
     val conf = new Configuration()
     // Set the batch size small enough so there will be multiple batches
-    conf.setInt("delta.kernel.default.parquet.reader.batch-size", 2);
-    val result = readTable(path, conf) { row =>
+    conf.setInt("delta.kernel.default.parquet.reader.batch-size", 2)
+    val tableClient = DefaultTableClient.create(conf)
+
+    val snapshot = latestSnapshot(path, tableClient = tableClient)
+    val result = readSnapshot(snapshot, tableClient = tableClient).map { row =>
       (row.getInt(0), row.getInt(1), row.getString(2))
     }
 
@@ -147,7 +77,8 @@ class DeletionVectorSuite extends AnyFunSuite {
         !(col1 % 2 == 0 && col1 < 30)
       }.toSet
 
-    val result = readTable(path, new Configuration()) { row =>
+    val snapshot = latestSnapshot(path)
+    val result = readSnapshot(snapshot).map { row =>
       (row.getInt(0), row.getInt(1), row.getString(2))
     }
 

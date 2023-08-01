@@ -17,6 +17,8 @@ package io.delta.kernel.parquet;
 
 import java.io.File;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.sql.Date;
 import java.time.LocalDate;
@@ -35,20 +37,7 @@ import static org.junit.Assert.assertTrue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.BinaryType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.ByteType;
-import io.delta.kernel.types.DateType;
-import io.delta.kernel.types.DoubleType;
-import io.delta.kernel.types.FloatType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.ShortType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.DefaultKernelTestUtils;
 import io.delta.kernel.utils.Tuple2;
@@ -71,7 +60,7 @@ public class TestParquetBatchReader
         .add("longType", LongType.INSTANCE)
         .add("floatType", FloatType.INSTANCE)
         .add("doubleType", DoubleType.INSTANCE)
-        // .add("decimal", new DecimalType(10, 2)) // TODO
+        .add("decimal", new DecimalType(10, 2))
         .add("booleanType", BooleanType.INSTANCE)
         .add("stringType", StringType.INSTANCE)
         .add("binaryType", BinaryType.INSTANCE)
@@ -296,7 +285,15 @@ public class TestParquetBatchReader
                     throw new UnsupportedOperationException("not yet implemented: " + name);
                 }
                 case "decimal": {
-                    throw new UnsupportedOperationException("not yet implemented: " + name);
+                    BigDecimal expValue = (rowId % 67 != 0) ?
+                            // Value is rounded to scale=2 when written
+                            new BigDecimal(rowId * 123.52).setScale(2, RoundingMode.HALF_UP) : null;
+                    if (expValue == null) {
+                        assertTrue(vector.isNullAt(batchWithIdx._2));
+                    } else {
+                        assertEquals(expValue, vector.getDecimal(batchWithIdx._2));
+                    }
+                    break;
                 }
                 case "nested_struct": {
                     Row struct = vector.getStruct(batchWithIdx._2);

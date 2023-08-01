@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.data;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -111,6 +112,11 @@ public class DefaultJsonRow implements Row
     public String getString(int ordinal)
     {
         return (String) parsedValues[ordinal];
+    }
+
+    @Override
+    public BigDecimal getDecimal(int ordinal) {
+        throw new UnsupportedOperationException("not yet implemented");
     }
 
     @Override

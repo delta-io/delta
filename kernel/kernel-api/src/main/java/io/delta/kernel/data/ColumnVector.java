@@ -16,6 +16,7 @@
 
 package io.delta.kernel.data;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -133,6 +134,16 @@ public interface ColumnVector extends AutoCloseable {
      * @return String value at the given row id
      */
     default String getString(int rowId) {
+        throw new UnsupportedOperationException("Invalid value request for data type");
+    }
+
+    /**
+     * Returns the decimal type value for {@code rowId}. The return value is undefined and can be
+     * anything, if the slot for {@code rowId} is null.
+     * @param rowId
+     * @return Decimal value at the given row id
+     */
+    default BigDecimal getDecimal(int rowId) {
         throw new UnsupportedOperationException("Invalid value request for data type");
     }
 

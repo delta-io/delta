@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.integration;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -157,6 +158,11 @@ public class DataBuilderUtils
         public String getString(int ordinal)
         {
             return (String) values.get(ordinal);
+        }
+
+        @Override
+        public BigDecimal getDecimal(int ordinal) {
+            return (BigDecimal) values.get(ordinal);
         }
 
         @Override

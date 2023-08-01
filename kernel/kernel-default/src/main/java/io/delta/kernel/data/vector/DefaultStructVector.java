@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.data.vector;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -144,6 +145,11 @@ public class DefaultStructVector
         public String getString(int ordinal)
         {
             return structVector.memberVectors[ordinal].getString(rowId);
+        }
+
+        @Override
+        public BigDecimal getDecimal(int ordinal) {
+            return structVector.memberVectors[ordinal].getDecimal(rowId);
         }
 
         @Override
