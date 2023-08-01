@@ -1,5 +1,6 @@
 package io.delta.kernel.internal.types;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -271,6 +272,11 @@ public class JsonHandlerTestImpl
         public String getString(int ordinal)
         {
             return (String) parsedValues[ordinal];
+        }
+
+        @Override
+        public BigDecimal getDecimal(int ordinal) {
+            throw new UnsupportedOperationException("not yet implemented - test only");
         }
 
         @Override

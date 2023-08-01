@@ -874,10 +874,10 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     ).map(_.map(new JBigDecimal(_))).map(Row(_: _*))
 
     val schema = new StructType()
-      .add("part", new DecimalType(12, 5))
-      .add("col1", new DecimalType(5, 2))
-      .add("col2", new DecimalType(10, 5))
-      .add("col3", new DecimalType(20, 10))
+      .add("part", new DecimalType(12, 5)) // serialized to a string
+      .add("col1", new DecimalType(5, 2)) // INT32: 1 <= precision <= 9
+      .add("col2", new DecimalType(10, 5)) // INT64: 10 <= precision <= 18
+      .add("col3", new DecimalType(20, 10)) // FIXED_LEN_BYTE_ARRAY
 
     spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
       .repartition(1)
@@ -905,9 +905,9 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
     val schema = new StructType()
       .add("id", IntegerType)
-      .add("col1", new DecimalType(9, 0))
-      .add("col2", new DecimalType(12, 0))
-      .add("col3", new DecimalType(25, 0))
+      .add("col1", new DecimalType(9, 0)) // INT32: 1 <= precision <= 9
+      .add("col2", new DecimalType(12, 0)) // INT64: 10 <= precision <= 18
+      .add("col3", new DecimalType(25, 0)) // FIXED_LEN_BYTE_ARRAY
 
     spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
       .repartition(1)
@@ -945,9 +945,9 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
     val schema = new StructType()
       .add("id", IntegerType)
-      .add("col1", new DecimalType(5, 1))
-      .add("col2", new DecimalType(10, 5))
-      .add("col3", new DecimalType(20, 5))
+      .add("col1", new DecimalType(5, 1)) // INT32: 1 <= precision <= 9
+      .add("col2", new DecimalType(10, 5)) // INT64: 10 <= precision <= 18
+      .add("col3", new DecimalType(20, 5)) // FIXED_LEN_BYTE_ARRAY
 
     spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
       .repartition(1)
