@@ -18,21 +18,20 @@ package io.delta.kernel
 import java.math.BigDecimal
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
-
   for (tablePath <- Seq("basic-decimal-table", "basic-decimal-table-legacy")) {
     test(s"end to end: reading $tablePath") {
       val expectedResult = Seq(
-        ("1.00", "2.00000", "3.0000000000"),
-        ("111.11", "22222.22222", "3333333333.3333333333"),
-        ("0.00", "0.00000", "0E-10"),
-        ("-999.99", "-99999.99999", "-9999999999.9999999999")
+        ("234.00000", "1.00", "2.00000", "3.0000000000"),
+        ("2342222.23454", "111.11", "22222.22222", "3333333333.3333333333"),
+        ("0.00004", "0.00", "0.00000", "0E-10"),
+        ("-2342342.23423", "-999.99", "-99999.99999", "-9999999999.9999999999")
       ).map { tup =>
-        (new BigDecimal(tup._1), new BigDecimal(tup._2), new BigDecimal(tup._3))
+        (new BigDecimal(tup._1), new BigDecimal(tup._2), new BigDecimal(tup._3),
+          new BigDecimal(tup._4))
       }.toSet
 
       // kernel expects a fully qualified path
@@ -40,7 +39,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       val snapshot = latestSnapshot(path)
 
       val result = readSnapshot(snapshot).map { row =>
-        (row.getDecimal(0), row.getDecimal(1), row.getDecimal(2))
+        (row.getDecimal(0), row.getDecimal(1), row.getDecimal(2), row.getDecimal(3))
       }
 
       assert(expectedResult == result.toSet)

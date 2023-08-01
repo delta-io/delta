@@ -112,7 +112,8 @@ public class DefaultExpressionHandler
             dataType instanceof FloatType ||
             dataType instanceof DoubleType ||
             dataType instanceof StringType ||
-            dataType instanceof BinaryType) {
+            dataType instanceof BinaryType ||
+            dataType instanceof DecimalType) {
             return new DefaultConstantVector(dataType, size, result);
         }
         else if (dataType instanceof DateType) {
