@@ -845,6 +845,7 @@ lazy val flink = (project in file("connectors/flink"))
     name := "delta-flink",
     commonSettings,
     releaseSettings,
+    flinkMimaSettings,
     publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
     Test / publishArtifact := false,
@@ -1059,7 +1060,7 @@ def getPrevSparkVersion(currentVersion: String): String = {
   }
 }
 
-def getPrevStandaloneVersion(currentVersion: String): String = {
+def getPrevConnectorVersion(currentVersion: String): String = {
   val (major, minor, patch) = getMajorMinorPatch(currentVersion)
 
   val majorToLastMinorVersions: Map[Int, String] = Map(
@@ -1089,9 +1090,16 @@ lazy val sparkMimaSettings = Seq(
 lazy val standaloneMimaSettings = Seq(
   Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
   mimaPreviousArtifacts := {
-    Set("io.delta" %% "delta-standalone" % getPrevStandaloneVersion(version.value))
+    Set("io.delta" %% "delta-standalone" % getPrevConnectorVersion(version.value))
   },
   mimaBinaryIssueFilters ++= StandaloneMimaExcludes.ignoredABIProblems
+)
+
+lazy val flinkMimaSettings = Seq(
+  Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
+  mimaPreviousArtifacts := {
+    Set("io.delta" % "delta-flink" % getPrevConnectorVersion(version.value))
+  }
 )
 
 /*
