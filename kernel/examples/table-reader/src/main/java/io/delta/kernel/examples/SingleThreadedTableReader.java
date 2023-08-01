@@ -73,7 +73,7 @@ public class SingleThreadedTableReader
         Snapshot snapshot = table.getLatestSnapshot(tableClient);
         StructType readSchema = pruneSchema(snapshot.getSchema(tableClient), columnsOpt);
 
-        readSnapshot(readSchema, snapshot, limit);
+        readData(readSchema, snapshot, limit);
     }
 
     /**
@@ -86,7 +86,7 @@ public class SingleThreadedTableReader
      * @return
      * @throws Exception
      */
-    private void readSnapshot(
+    private void readData(
         StructType readSchema,
         Snapshot snapshot,
         int maxRowCount) throws IOException

@@ -104,7 +104,7 @@ public class MultiThreadedTableReader
         Snapshot snapshot = table.getLatestSnapshot(tableClient);
         StructType readSchema = pruneSchema(snapshot.getSchema(tableClient), columnsOpt);
 
-        new Reader(limit).readSnapshot(readSchema, snapshot);
+        new Reader(limit).readData(readSchema, snapshot);
     }
 
     private class Reader
@@ -129,7 +129,7 @@ public class MultiThreadedTableReader
          * @param readSchema Subset of columns to read from the snapshot.
          * @param snapshot Table snapshot object
          */
-        void readSnapshot(StructType readSchema, Snapshot snapshot)
+        void readData(StructType readSchema, Snapshot snapshot)
         {
             Scan scan = snapshot.getScanBuilder(tableClient)
                 .withReadSchema(tableClient, readSchema)
