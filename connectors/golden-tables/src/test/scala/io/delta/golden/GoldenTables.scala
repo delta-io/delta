@@ -864,6 +864,97 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
   */
+
+  def writeBasicDecimalTable(tablePath: String): Unit = {
+    val data = Seq(
+      Seq("234", "1", "2", "3"),
+      Seq("2342222.23454", "111.11", "22222.22222", "3333333333.3333333333"),
+      Seq("0.00004", "0.001", "0.000002", "0.00000000003"),
+      Seq("-2342342.23423", "-999.99", "-99999.99999", "-9999999999.9999999999")
+    ).map(_.map(new JBigDecimal(_))).map(Row(_: _*))
+
+    val schema = new StructType()
+      .add("part", new DecimalType(12, 5))
+      .add("col1", new DecimalType(5, 2))
+      .add("col2", new DecimalType(10, 5))
+      .add("col3", new DecimalType(20, 10))
+
+    spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+      .repartition(1)
+      .write
+      .format("delta")
+      .partitionBy("part")
+      .save(tablePath)
+  }
+
+  generateGoldenTable("basic-decimal-table") { tablePath =>
+    writeBasicDecimalTable(tablePath)
+  }
+
+  generateGoldenTable("basic-decimal-table-legacy") { tablePath =>
+    withSQLConf(("spark.sql.parquet.writeLegacyFormat", "true")) {
+      writeBasicDecimalTable(tablePath)
+    }
+  }
+
+  // todo: how to have dictionary encoding for fixed_len_byte_array?
+  generateGoldenTable("parquet-decimal-dictionaries") { tablePath =>
+    val data = (0 until 1000000).map { i =>
+      Row(i, JBigDecimal.valueOf(i%5), JBigDecimal.valueOf(i%6), JBigDecimal.valueOf(i%2))
+    }
+
+    val schema = new StructType()
+      .add("id", IntegerType)
+      .add("col1", new DecimalType(9, 0))
+      .add("col2", new DecimalType(12, 0))
+      .add("col3", new DecimalType(25, 0))
+
+    spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+      .repartition(1)
+      .write
+      .format("delta")
+      .save(tablePath)
+  }
+
+  generateGoldenTable("parquet-decimal-type") { tablePath =>
+
+    def expand(n: JBigDecimal): JBigDecimal = {
+      n.scaleByPowerOfTen(5).add(n)
+    }
+
+    val data = (0 until 99998).map { i =>
+      if (i % 85 == 0) {
+        val n = JBigDecimal.valueOf(i)
+        Row(i, n.movePointLeft(1), n, n)
+      } else {
+        val negation = if (i % 33 == 0) {
+          -1
+        } else {
+          1
+        }
+        val n = JBigDecimal.valueOf(i*negation)
+
+        Row(
+          i,
+          n.movePointLeft(1),
+          expand(n).movePointLeft(5),
+          expand(expand(expand(n))).movePointLeft(5)
+        )
+      }
+    }
+
+    val schema = new StructType()
+      .add("id", IntegerType)
+      .add("col1", new DecimalType(5, 1))
+      .add("col2", new DecimalType(10, 5))
+      .add("col3", new DecimalType(20, 5))
+
+    spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+      .repartition(1)
+      .write
+      .format("delta")
+      .save(tablePath)
+  }
 }
 
 case class TestStruct(f1: String, f2: Long)
