@@ -110,7 +110,6 @@ case class CloneTableCommand(
       sparkSession,
       txn,
       targetDeltaLog,
-      opName = CloneTableCommand.OP_NAME,
       hdpConf = hdpConf,
       deltaOperation = Clone(
         sourceTable.name, sourceTable.snapshot.map(_.version).getOrElse(-1)
@@ -126,9 +125,6 @@ object CloneTableCommand {
   val NUM_COPIED_FILES = "numCopiedFiles"
   val REMOVED_FILES_SIZE = "removedFilesSize"
   val COPIED_FILES_SIZE = "copiedFilesSize"
-
-  // Op name used by Clone command
-  val OP_NAME = "CLONE"
 
   // SQL way column names for metrics in command execution output
   private val COLUMN_SOURCE_TABLE_SIZE = "source_table_size"
