@@ -198,7 +198,8 @@
         <module name="ImportOrder">
             <property name="separated" value="true"/>
             <property name="ordered" value="true"/>
-            <property name="groups" value="java.,javax.,scala,*,io.delta.kernel,io.delta.kernel.internal"/>
+            <property name="groups" value="java,javax,scala,*,io.delta.kernel,io.delta.kernel.internal"/>
+            <property name="option" value="under"/>
         </module>
 
         <!--
