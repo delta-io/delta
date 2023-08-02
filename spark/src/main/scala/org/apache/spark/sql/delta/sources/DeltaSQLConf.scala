@@ -1226,7 +1226,7 @@ trait DeltaSQLConfBase {
              |Table feature removal is currently a feature in development.
              |This is a dev only config.""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE =
     buildConf("columnMapping.reuseColumnMetadataDuringOverwrite")
