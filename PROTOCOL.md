@@ -185,7 +185,7 @@ For performance reasons, readers should prefer to use the newest complete checkp
 For time travel, the checkpoint used must not be newer than the time travel version.
 
 A checkpoint contains the complete replay of all actions, up to and including the checkpointed table version, with invalid actions removed.
-Invalid actions are those that have been canceled out by a subsequent ones (for example removing a file that has been added), using the [rules for reconciliation](#Action-Reconciliation).
+Invalid actions are those that have been canceled out by subsequent ones (for example removing a file that has been added), using the [rules for reconciliation](#Action-Reconciliation).
 In addition to above, checkpoint also contains the [_remove tombstones_](#add-file-and-remove-file) until they are expired.
 Checkpoints allow readers to short-cut the cost of reading the log up-to a given point in order to reconstruct a snapshot, and they also allow [Metadata cleanup](#metadata-cleanup) to delete expired JSON Delta log entries.
 
@@ -199,7 +199,7 @@ Delta supports three kinds of checkpoints:
 
 1. UUID-named Checkpoints: These follow [V2 spec](#v2-spec) which uses the following file name: `n.checkpoint.u.{json/parquet}`, where `u` is a UUID and `n` is the
 snapshot version that this checkpoint represents. The UUID-named V2 Checkpoint may be in json or parquet format, and references zero or more checkpoint sidecars
-in the `_delta_log/_sidecars` directory. A checkpoint sidecar is a uniquely-named parquet file: {unique}.parquet" where unique is some unique
+in the `_delta_log/_sidecars` directory. A checkpoint sidecar is a uniquely-named parquet file: `{unique}.parquet` where `unique` is some unique
 string such as a UUID.
 
 For example:
@@ -221,7 +221,7 @@ For example:
 
 
 3. A [multi-part checkpoint](#multi-part-checkpoint) for version `n` consists of `p` "part" files (`p > 1`), where
-part `o` of `p` is named `n.checkpoint.o.p.parquet`. These could only be [V1 checkpoints](#v1-spec).
+part `o` of `p` is named `n.checkpoint.o.p.parquet`. These are always [V1 checkpoints](#v1-spec).
 For example:
 
 ```
@@ -273,7 +273,7 @@ parts | The number of fragments if the last checkpoint was written in multiple p
 sizeInBytes | The number of bytes of the checkpoint. This field is optional.
 numOfAddFiles | The number of AddFile actions in the checkpoint. This field is optional.
 checkpointSchema | The schema of the checkpoint file. This field is optional.
-tags | Map containing any additional metadata about the last checkpoint. This field is optional.
+tags | String-string map containing any additional metadata about the last checkpoint. This field is optional.
 checksum | The checksum of the last checkpoint JSON. This field is optional.
 
 The checksum field is an optional field which contains the MD5 checksum for fields of the last checkpoint json file.
@@ -613,9 +613,9 @@ The following is an example `domainMetadata` action:
 ```
 
 ### Sidecar File Information
-The sidecar file action references a [SidecarFile](#sidecar-files) which provides some of the checkpoint's file actions.
+The `sidecar` action references a [sidecar file](#sidecar-files) which provides some of the checkpoint's file actions.
 This action is only allowed in checkpoints following [V2 spec](#v2-spec).
-The schema of `sidecarFile` action is as follows:
+The schema of `sidecar` action is as follows:
 
 Field Name | Data Type | Description | optional/required
 -|-|-|-
@@ -625,10 +625,10 @@ modificationTime | Long | The time this logical file was created, as millisecond
 type | String | Type of sidecar. Valid values are: "fileaction". This could be extended in future to allow different kinds of sidecars. | required
 tags|`Map[String, String]`|Map containing any additional metadata about the checkpoint sidecar file. | optional
 
-The following is an example `sidecarFile` action:
+The following is an example `sidecar` action:
 ```json
 {
-  "sidecarFile":{
+  "sidecar":{
     "fileName": "016ae953-37a9-438e-8683-9a9a4a79a395.parquet",
     "sizeInBytes": 2304522,
     "modificationTime": 1512909768000,
@@ -676,6 +676,7 @@ To achieve the requirements above, related actions from different delta files ne
  - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file.
  - To replay the log, scan all file actions and keep only the newest reference for each logical file.
  - `add` actions in the result identify logical files currently present in the table (for queries). `remove` actions in the result identify tombstones of logical files no longer present in the table (for VACUUM).
+ - [v2 checkpoint spec](#v2-spec) actions are not allowed in normal commit files, and do not participate in log replay.
 
 # Table Features
 Table features must only exist on tables that have a supported protocol version. When the table's Reader Version is 3, `readerFeatures` must exist in the `protocol` action, and when the Writer Version is 7, `writerFeatures` must exist in the `protocol` action. `readerFeatures` and `writerFeatures` define the features that readers and writers must implement in order to read and write this table.
@@ -873,6 +874,7 @@ Enablement:
 When enabled:
 - A table could use [uuid-named](#uuid-named-checkpoint) [V2 spec Checkpoints](#v2-spec) which must have [checkpoint metadata](#checkpoint-metadata) and may have [sidecar files](#sidecar-files) OR
 - A table could use [classic](#classic-checkpoint) checkpoints which can be follow [V1](#v1-spec) or [V2](#v2-spec) spec.
+- A table must not use [multi-part checkpoints](#multi-part-checkpoint)
 
 # Row Tracking
 
@@ -1075,13 +1077,13 @@ This checkpoint spec allows putting [add and remove file](#Add-File-and-Remove-F
 [sidecar files](#sidecar-files). This spec can be used only when [v2 checkpoint table feature](#v2-checkpoint-table-feature) is enabled.
 Checkpoints following V2 spec have the following structure:
 - Each v2 spec checkpoint includes exactly one [Checkpoint Metadata](#checkpoint-metadata) action.
-- Remaining rows in the V2 spec checkpoint refers the other actions mentioned [here](#checkpoints-1)
+- Remaining rows in the V2 spec checkpoint refer to the other actions mentioned [here](#checkpoints-1)
 - All the non-file actions i.e. all actions except [add and remove file](#Add-File-and-Remove-File)
 must be part of the v2 spec checkpoint itself.
 - A writer could choose to include the [add and remove file](#Add-File-and-Remove-File) action in the
 V2 spec Checkpoint or they could write the [add and remove file](#Add-File-and-Remove-File) actions in
 separate [sidecar files](#sidecar-files). These sidecar files will then be referenced in the V2 spec checkpoint.
-The sidecar files reside in the `_delta_log/_sidecars` directory.
+All sidecar files reside in the `_delta_log/_sidecars` directory.
 - A V2 spec Checkpoint could reference zero or more [sidecar file actions](#sidecar-file-information).
 
 Note: A V2 spec Checkpoint can either have all the [add and remove file](#Add-File-and-Remove-File) actions
@@ -1098,8 +1100,8 @@ E.g. showing the content of V2 spec checkpoint:
 {"protocol":{...}}
 {"txn":{"appId":"3ba13872-2d47-4e17-86a0-21afd2a22395","version":364475}}
 {"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4389}}
-{"sidecarFile":{"path":"3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet","sizeInBytes":2341330,"modificationTime":1512909768000,"type":"fileaction","tags":{}}
-{"sidecarFile":{"path":"016ae953-37a9-438e-8683-9a9a4a79a395.parquet","sizeInBytes":8468120,"modificationTime":1512909848000,"type":"fileaction","tags":{}}
+{"sidecar":{"path":"3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet","sizeInBytes":2341330,"modificationTime":1512909768000,"type":"fileaction","tags":{}}
+{"sidecar":{"path":"016ae953-37a9-438e-8683-9a9a4a79a395.parquet","sizeInBytes":8468120,"modificationTime":1512909848000,"type":"fileaction","tags":{}}
 ```
 
 Another example of a v2 spec checkpoint without sidecars:
@@ -1115,24 +1117,24 @@ Another example of a v2 spec checkpoint without sidecars:
 
 #### V1 Spec
 
-V1 Spec do not support [sidecar files](#sidecar-files) and [checkpoint metadata](#checkpoint-metadata).
+The V1 Spec does not support [sidecar files](#sidecar-files) and [checkpoint metadata](#checkpoint-metadata).
 These are flat checkpoints which contains all actions mentioned [here](#checkpoints-1).
 
 ### Checkpoint Naming Scheme
-Delta supports following three checkpoint naming scheme:
+Delta supports three checkpoint naming schemes: UUID-named, classic, and multi-part.
 
 #### UUID-named checkpoint
 This naming scheme represents a [V2 spec checkpoint](#v2-spec) with following file name: `n.checkpoint.u.{json/parquet}`,
 where `u` is a UUID and `n` is the snapshot version that this checkpoint represents.
-The UUID-named checkpoints may be in JSON or parquet format. Since these are following [V2 spec](#v2-spec), so they must
+The UUID-named checkpoints may be in JSON or parquet format. Since these are following [V2 spec](#v2-spec), they must
 have a [checkpoint metadata](#checkpoint-metadata) action and may reference zero or more checkpoint [sidecar files](#sidecar-files).
 
 Example-1: Json UUID-named checkpoint with sidecars
 
 ```
 00000000000000000010.checkpoint.80a083e8-7026-4e79-81be-64bd76c43a11.json
-_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet
 _sidecars/016ae953-37a9-438e-8683-9a9a4a79a395.parquet
+_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet
 _sidecars/7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.parquet
 ```
 
@@ -1140,8 +1142,8 @@ Example-2: Parquet UUID-named checkpoint with sidecars
 
 ```
 00000000000000000020.checkpoint.80a083e8-7026-4e79-81be-64bd76c43a11.parquet
-_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet
 _sidecars/016ae953-37a9-438e-8683-9a9a4a79a395.parquet
+_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet
 ```
 
 Example-3: Json UUID-named checkpoint without sidecars
@@ -1196,9 +1198,9 @@ Because they cannot be written atomically, multi-part checkpoints have several w
 
 3. Not amenable to performance and scalability optimizations. For example, there is no way to store skipping stats for checkpoint parts, nor to reuse checkpoint part files across multiple checkpoints.
 
-4. Multi-part checkpoints also bloat the _delta_log dir and slow down LIST.
+4. Multi-part checkpoints also bloat the _delta_log dir and slow down LIST operations.
 
-[UUID-named](#uuid-named-checkpoint) checkpoint (which follow [V2 spec](#v2-spec)) solves all
+The [UUID-named](#uuid-named-checkpoint) checkpoint (which follows [V2 spec](#v2-spec)) solves all
 of these problems and should be preferred over multi-part checkpoints. For this reason, Multi-part
 checkpoints are forbidden when [V2 Checkpoints table feature](#v2-checkpoint-table-feature) is enabled.
 
@@ -1206,10 +1208,10 @@ checkpoints are forbidden when [V2 Checkpoints table feature](#v2-checkpoint-tab
 
 A UUID-named v2 Checkpoint should only be created by clients if the [v2 checkpoint table feature](#v2-checkpoint-table-feature) is enabled.
 When UUID-named v2 checkpoints are enabled, Writers should occasionally create a v2 [Classic Checkpoint](#classic-checkpoint)
-for maintaining compatibility with older clients. These classic checkpoints have the same content as the UUID-named v2 checkpoint
-file name, but older clients (those which do not support [v2 checkpoint table feature](#v2-checkpoint-table-feature)) will recognize the classic
-file name, allowing them to extract [Protocol](#protocol-evolution) and fail gracefully with an invalid protocol
-version error on v2-checkpoint enabled tables. Writers should create classic checkpoints often enough to allow older
+to maintain compatibility with older clients which do not support [v2 checkpoint table feature](#v2-checkpoint-table-feature) and
+so do not recognize UUID-named checkpoints. These classic checkpoints have the same content as the UUID-named v2 checkpoint, but older
+clients will recognize the classic file name, allowing them to extract [Protocol](#protocol-evolution) and fail gracefully with an
+invalid protocol version error on v2-checkpoint enabled tables. Writers should create classic checkpoints often enough to allow older
 clients to discover them and fail gracefully.
 
 ### Allowed combinations for `checkpoint spec` <-> `checkpoint file naming`
@@ -1221,21 +1223,21 @@ Checkpoint Spec | [UUID-named](#uuid-named-checkpoint) | [classic](#classic-chec
 
 ### Metadata Cleanup
 
-The _deltaLog directory could increase in size as more and more commits and checkpoints are accumulated.
-Implementations are recommended to do regular cleanup of old deltaLog to cleanup unneeded files and reduce the directory size.
+The _delta_log directory grows over time as more and more commits and checkpoints are accumulated.
+Implementations are recommended to delete expired commits and checkpoints in order to reduce the directory size.
 The following steps could be used to do cleanup of the DeltaLog directory:
 1. Identify a threshold (in days) uptil which we want to preserve the deltaLog. Let's refer to
 midnight UTC of that day as `cutOffTimestamp`. The newest commit not newer than the `cutOffTimestamp` is
 the `cutoffCommit`, because a commit exactly at midnight is an acceptable cutoff. We want to retain everything including and after the `cutoffCommit`.
-2. Identify the most recent checkpoint before the `cutOffCommit`. Lets call it `cutOffCheckpoint`.
-We need to preserve the `cutOffCheckpoint` to enable time travel for commits between `cutOffCheckpoint`
-and the next available checkpoint.
-3. Delete all the [delta log entries](#delta-log-entries) before the `cutOffCheckpoint` checkpoint.
-4. Delete all the [checkpoint files](#checkpoints) before the `cutOffCheckpoint` checkpoint.
-5. Now read all the available [checkpoints](#checkpoints-1) in the _delta_log directory and identify
-the corresponding [sidecar files](#sidecar-files). These sidecar files needs to be protected.
-6. List all the files in `_delta_log/_sidecars` directory, preserve files that are less than a day
-old (as of midnight UTC) or files that are protected by Step-5 above. Delete everything else.
+2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`.
+We need to preserve the `cutOffCheckpoint` and all commits after it, because we need them to enable
+time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
+3. Delete all [delta log entries](#delta-log-entries) and [checkpoint files](#checkpoints) before the `cutOffCheckpoint` checkpoint.
+4. Now read all the available [checkpoints](#checkpoints-1) in the _delta_log directory and identify
+the corresponding [sidecar files](#sidecar-files). These sidecar files need to be protected.
+5. List all the files in `_delta_log/_sidecars` directory, preserve files that are less than a day
+old (as of midnight UTC), to not break in-progress checkpoints. Also preserve the referenced sidecar files
+identified in Step-4 above. Delete everything else.
 
 ## Data Files
  - Data files MUST be uniquely named and MUST NOT be overwritten. The reference implementation uses a GUID in the name to ensure this property.
@@ -1708,7 +1710,7 @@ The following examples uses a table with two partition columns: "date" and "regi
 |-- checkpointMetadata: struct
 |    |-- version: long
 |    |-- tags: map<string,string>
-|-- sidecarFile: struct
+|-- sidecar: struct
 |    |-- path: string
 |    |-- sizeInBytes: long
 |    |-- modificationTime: long
