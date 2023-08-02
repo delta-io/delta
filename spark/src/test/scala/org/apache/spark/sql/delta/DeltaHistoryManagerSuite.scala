@@ -235,7 +235,8 @@ trait DeltaTimeTravelTests extends QueryTest
       val e = intercept[Exception] {
         spark.sql("SELECT * FROM t1 VERSION AS OF 0")
       }.getMessage
-      assert(e.contains("does not support time travel"))
+      assert(e.contains("does not support time travel") ||
+        e.contains("The feature is not supported: Time travel on the relation"))
     }
   }
 
@@ -503,9 +504,11 @@ trait DeltaTimeTravelTests extends QueryTest
         val e = intercept[Exception] {
           sql(s"select * from ${versionAsOf(tblName, 0)}").collect()
         }
-        var catalogPrefix = ""
+        var catalogName = ""
+        val catalogPrefix = if (catalogName == "") "" else catalogName + "."
         assert(e.getMessage.contains(
-          s"Table ${catalogPrefix}default.parq_table does not support time travel"))
+          s"Table ${catalogPrefix}default.parq_table does not support time travel") ||
+          e.getMessage.contains(s"Time travel on the relation: `$catalogName`.`default`.`parq_table`"))
       }
 
       val viewName = "parq_view"

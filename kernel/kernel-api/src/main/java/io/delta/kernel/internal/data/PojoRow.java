@@ -16,14 +16,13 @@
 
 package io.delta.kernel.internal.data;
 
-import io.delta.kernel.data.Row;
-import io.delta.kernel.types.StructType;
-
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
-
 import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.data.Row;
+import io.delta.kernel.types.StructType;
 
 // TODO: check for unsafe access
 /**

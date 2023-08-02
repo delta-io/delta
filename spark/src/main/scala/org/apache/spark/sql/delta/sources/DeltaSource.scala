@@ -838,35 +838,26 @@ case class DeltaSource(
       shouldSkipCommit: Boolean,
       metadataOpt: Option[Metadata],
       protocolOpt: Option[Protocol]): Iterator[IndexedFile] = {
-    // Used to identify whether we reached the end of the iterator. We cannot just call hasNext to
-    // identify whether the given AddFile is the last in the iterator as it is unsafe to reuse
-    // the iterator.
-    val sentinelFile = AddFile(
-      path = "sentinel",
-      partitionValues = Map.empty,
-      size = 0L,
-      modificationTime = 0L,
-      dataChange = false)
     val filteredIterator =
       if (shouldSkipCommit) {
-        Iterator.empty.toClosable
-      } else iterator.filter {
-        case a: AddFile if a.dataChange => true
-        case _ => false
-      } ++ Iterator.single(sentinelFile)
+        Iterator.empty
+      } else {
+        iterator.collect { case a: AddFile if a.dataChange => a }
+      }
+
+    var index = -1L
+    val indexedFiles = new Iterator[IndexedFile] {
+      override def hasNext: Boolean = filteredIterator.hasNext
+      override def next(): IndexedFile = {
+        index += 1 // pre-increment the index (so it starts from 0)
+        val add = filteredIterator.next().copy(stats = null)
+        IndexedFile(version, index, add, isLast = !filteredIterator.hasNext)
+      }
+    }
 
     Iterator.single(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, null)) ++
     getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
-    filteredIterator
-      .map(_.asInstanceOf[AddFile])
-      .zipWithIndex
-      .sliding(size = 2)
-      .flatMap {
-        case Seq((action, index), (secondAction, _)) =>
-          Some(IndexedFile(version, index.toLong, action, isLast = secondAction.eq(sentinelFile)))
-        // Only sentinel left in iterator, do not return it.
-        case Seq(_) => None
-      }
+    indexedFiles
   }
 
   /**

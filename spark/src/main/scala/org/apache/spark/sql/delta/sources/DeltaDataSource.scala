@@ -66,7 +66,7 @@ class DeltaDataSource
     val options = new CaseInsensitiveStringMap(properties)
     val path = options.get("path")
     if (path == null) throw DeltaErrors.pathNotSpecifiedException
-    DeltaTableV2(SparkSession.active, new Path(path))
+    DeltaTableV2(SparkSession.active, new Path(path), options = options.asScala.toMap)
   }
 
   override def sourceSchema(
@@ -232,16 +232,15 @@ class DeltaDataSource
       val dfOptions: Map[String, String] =
         if (sqlContext.sparkSession.sessionState.conf.getConf(
             DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
-          parameters
+          parameters ++ cdcOptions
         } else {
-          Map.empty
+          cdcOptions.toMap
         }
       DeltaTableV2(
         sqlContext.sparkSession,
         new Path(maybePath),
         timeTravelOpt = timeTravelByParams,
-        options = dfOptions,
-        cdcOptions = new CaseInsensitiveStringMap(cdcOptions.asJava)
+        options = dfOptions
       ).toBaseRelation
     }
   }

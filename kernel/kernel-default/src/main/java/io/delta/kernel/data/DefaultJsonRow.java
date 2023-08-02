@@ -15,14 +15,15 @@
  */
 package io.delta.kernel.data;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.BooleanType;
@@ -178,7 +179,10 @@ public class DefaultJsonRow implements Row
 
         if (dataType instanceof StringType) {
             // TODO: sometimes the Delta Log contains config as String -> String or String -> Int
-            throwIfTypeMismatch("string", jsonValue.isTextual() | jsonValue.isIntegralNumber(), jsonValue);
+            throwIfTypeMismatch(
+                "string",
+                jsonValue.isTextual() | jsonValue.isIntegralNumber(),
+                jsonValue);
             return jsonValue.asText();
         }
 

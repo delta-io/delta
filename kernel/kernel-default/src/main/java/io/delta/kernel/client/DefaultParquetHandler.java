@@ -16,6 +16,7 @@
 package io.delta.kernel.client;
 
 import java.io.IOException;
+
 import org.apache.hadoop.conf.Configuration;
 
 import io.delta.kernel.data.ColumnarBatch;

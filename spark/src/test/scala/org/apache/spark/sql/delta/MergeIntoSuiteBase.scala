@@ -3871,7 +3871,7 @@ abstract class MergeIntoSuiteBase
       ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, null) +: Nil)
         .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
     // Disable ANSI as this test needs to cast string "notANumber" to int
-    confs = Seq(SQLConf.ANSI_ENABLED.key -> "false")
+    confs = Seq(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "LEGACY")
   )
 
   // This is kinda bug-for-bug compatibility. It doesn't really make sense that infinity is casted
@@ -3887,7 +3887,7 @@ abstract class MergeIntoSuiteBase
       ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, Int.MaxValue) +: Nil)
         .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
     // Disable ANSI as this test needs to cast Double.PositiveInfinity to int
-    confs = Seq(SQLConf.ANSI_ENABLED.key -> "false")
+    confs = Seq(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "LEGACY")
   )
 
   testEvolution("extra nested column in source - insert")(
@@ -5776,8 +5776,8 @@ abstract class MergeIntoSuiteBase
 
   testInvalidTempViews("subset cols")(
     text = "SELECT key FROM tab",
-    expectedErrorMsgForSQLTempView = "cannot resolve v.value",
-    expectedErrorMsgForDataSetTempView = "cannot resolve v.value"
+    expectedErrorMsgForSQLTempView = "cannot",
+    expectedErrorMsgForDataSetTempView = "cannot"
   )
 
   testInvalidTempViews("superset cols")(

@@ -15,8 +15,6 @@
  */
 package io.delta.kernel.utils;
 
-import java.io.File;
-
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 

@@ -20,14 +20,9 @@ import java.io.IOException;
 import java.util.Optional;
 
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.DataReadResult;
-import io.delta.kernel.types.StructField;
 import io.delta.kernel.utils.Tuple2;
 
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
-import io.delta.kernel.internal.data.SelectionColumnVector;
 
 /**
  * Utility methods regarding deletion vectors.

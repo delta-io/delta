@@ -16,8 +16,6 @@
 
 package io.delta.kernel.client;
 
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
-import static io.delta.kernel.DefaultKernelUtils.daysSinceEpoch;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.Optional;
@@ -32,6 +30,8 @@ import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
+import static io.delta.kernel.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.DefaultKernelUtils.daysSinceEpoch;
 
 public class DefaultExpressionHandler
     implements ExpressionHandler

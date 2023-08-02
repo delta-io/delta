@@ -33,10 +33,12 @@ import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
 import org.apache.spark.sql.catalyst.planning.NodeWithOnlyDeterministicProjectAndFilter
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LeafNode, LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.util.CharVarcharCodegenUtils
+import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * Extractor Object for pulling out the table scan of a Delta table. It could be a full scan
@@ -544,17 +546,24 @@ object DeltaTableUtils extends PredicateHelper
   }
 }
 
-/**
- * Holds the path of a Delta table that has yet to be verified as a valid path to a valid
- * Delta table. It will be resolved to [[ResolvedTable]] during analysis.
- */
-case class UnresolvedPathBasedDeltaTable(
-    path: String,
-    commandName: String) extends LeafNode {
+// TODO: Use `UnresolvedNode` in Spark 3.5 once it is released.
+sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends LeafNode {
+  def identifier: Identifier = Identifier.of(Array(DeltaSourceUtils.ALT_NAME), path)
+  def deltaTableIdentifier: DeltaTableIdentifier = DeltaTableIdentifier(Some(path), None)
 
   override lazy val resolved: Boolean = false
   override val output: Seq[Attribute] = Nil
 }
+
+/** Resolves to a [[ResolvedTable]] if the DeltaTable exists */
+case class UnresolvedPathBasedDeltaTable(
+    path: String,
+    commandName: String) extends UnresolvedPathBasedDeltaTableBase(path)
+
+/** Resolves to a [[DataSourceV2Relation]] if the DeltaTable exists */
+case class UnresolvedPathBasedDeltaTableRelation(
+    path: String,
+    options: CaseInsensitiveStringMap) extends UnresolvedPathBasedDeltaTableBase(path)
 
 /**
  * A helper object with an apply method to transform a path or table identifier to a LogicalPlan.

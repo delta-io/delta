@@ -32,13 +32,13 @@ import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.fs.FileStatus;
-import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.utils.Utils;
 
 import io.delta.kernel.internal.actions.Action;
 import io.delta.kernel.internal.actions.SingleAction;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.CloseableIterable;
 import io.delta.kernel.internal.util.InternalUtils;
 

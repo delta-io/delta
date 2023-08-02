@@ -20,15 +20,14 @@ import java.util.Map;
 import java.util.Optional;
 
 import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.Utils;
-
 import static io.delta.kernel.utils.Utils.requireNonNull;
+
+import io.delta.kernel.internal.fs.Path;
 
 public class RemoveFile extends FileAction
 {

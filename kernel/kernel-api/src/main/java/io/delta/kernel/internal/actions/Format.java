@@ -19,7 +19,6 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-
 import static io.delta.kernel.utils.Utils.requireNonNull;
 
 public class Format

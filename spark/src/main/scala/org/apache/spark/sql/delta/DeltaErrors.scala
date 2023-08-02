@@ -44,6 +44,7 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference,
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
@@ -118,7 +119,8 @@ trait DocsPath {
  */
 trait DeltaErrorsBase
     extends DocsPath
-    with DeltaLogging {
+    with DeltaLogging
+    with QueryErrorsBase {
 
   def baseDocsPath(spark: SparkSession): String = baseDocsPath(spark.sparkContext.getConf)
 
@@ -499,9 +501,13 @@ trait DeltaErrorsBase
 
   def notADeltaTableException(
       operation: String, deltaTableIdentifier: DeltaTableIdentifier): Throwable = {
+    notADeltaTableException(operation, deltaTableIdentifier.toString)
+  }
+
+  def notADeltaTableException(operation: String, tableName: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_TABLE_ONLY_OPERATION",
-      messageParameters = Array(s"$deltaTableIdentifier", s"$operation"))
+      messageParameters = Array(tableName, operation))
   }
 
   def notADeltaTableException(operation: String): Throwable = {
@@ -612,6 +618,22 @@ trait DeltaErrorsBase
       errorClass = "DELTA_CANNOT_WRITE_INTO_VIEW",
       messageParameters = Array(s"$table")
     )
+  }
+
+  def castingCauseOverflowErrorInTableWrite(
+      from: DataType,
+      to: DataType,
+      columnName: String): ArithmeticException = {
+    new DeltaArithmeticException(
+      errorClass = "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE",
+      messageParameters = Map(
+        "sourceType" -> toSQLType(from),
+        "targetType" -> toSQLType(to),
+        "columnName" -> toSQLId(columnName),
+        "storeAssignmentPolicyFlag" -> SQLConf.STORE_ASSIGNMENT_POLICY.key,
+        "updateAndMergeCastingFollowsAnsiEnabledFlag" ->
+          DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
+        "ansiEnabledFlag" -> SQLConf.ANSI_ENABLED.key))
   }
 
   def notADeltaTable(table: String): Throwable = {
@@ -2455,9 +2477,21 @@ trait DeltaErrorsBase
     )
   }
 
+  def overwriteSchemaUsedWithDynamicPartitionOverwrite(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE"
+    )
+  }
+
   def replaceWhereUsedInOverwrite(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_REPLACE_WHERE_IN_OVERWRITE", messageParameters = Array.empty
+    )
+  }
+
+  def deltaDynamicPartitionOverwriteDisabled(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED"
     )
   }
 
