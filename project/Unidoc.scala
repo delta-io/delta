@@ -32,12 +32,17 @@ object Unidoc {
     def apply(patterns: String*): SourceFilePattern = SourceFilePattern(patterns.toSeq, None)
   }
 
-  val sourceFilePatternsToDocument = settingKey[Seq[SourceFilePattern]](
+  val unidocSourceFilePatterns = settingKey[Seq[SourceFilePattern]](
       "Patterns to match (simple substring match) against full source file paths. " +
         "Matched files will be selected for generating API docs.")
 
-  implicit class UnidocHelpers(val projectToUpdate: Project) {
+  implicit class PatternsHelper(patterns: Seq[SourceFilePattern]) {
+    def scopeToProject(projectToAdd: Project): Seq[SourceFilePattern] = {
+      patterns.map(_.copy(project = Some(projectToAdd)))
+    }
+  }
 
+  implicit class UnidocHelper(val projectToUpdate: Project) {
     def configureUnidoc(
       docTitle: String = null,
       generateScalaDoc: Boolean = false
@@ -110,7 +115,7 @@ object Unidoc {
         JavaUnidoc / unidoc / javacOptions := Seq(
           "-public",
           "-windowtitle",
-          fullDocTitle(projectToUpdate / name value, version.value, isScalaDoc = false),
+          fullDocTitle((projectToUpdate / name).value, version.value, isScalaDoc = false),
           "-noqualifier", "java.lang",
           "-tag", "implNote:a:Implementation Note:",
           "-tag", "apiNote:a:API Note:",
@@ -121,7 +126,7 @@ object Unidoc {
         JavaUnidoc / unidoc / unidocAllSources := {
           ignoreUndocumentedSources(
             allSourceFiles = (JavaUnidoc / unidoc / unidocAllSources).value,
-            sourceFilePatternsToKeep = (Compile / unidoc / sourceFilePatternsToDocument).value)
+            sourceFilePatternsToKeep = unidocSourceFilePatterns.value)
         },
       )
 
@@ -129,13 +134,13 @@ object Unidoc {
         // Configure Scala unidoc
         ScalaUnidoc / unidoc / scalacOptions ++= Seq(
           "-doc-title",
-          fullDocTitle(projectToUpdate / name value, version.value, isScalaDoc = true),
+          fullDocTitle((projectToUpdate / name).value, version.value, isScalaDoc = true),
         ),
 
         ScalaUnidoc / unidoc / unidocAllSources := {
           ignoreUndocumentedSources(
             allSourceFiles = (ScalaUnidoc / unidoc / unidocAllSources).value,
-            sourceFilePatternsToKeep = (Compile / unidoc / sourceFilePatternsToDocument).value
+            sourceFilePatternsToKeep = unidocSourceFilePatterns.value
           )
         },
       ) else Nil

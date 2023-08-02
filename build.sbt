@@ -72,7 +72,7 @@ lazy val commonSettings = Seq(
   testOptions += Tests.Argument("-oF"),
 
   // Unidoc settings: by default dont document any source file
-  Compile / unidoc / sourceFilePatternsToDocument := Nil,
+  unidocSourceFilePatterns := Nil,
 )
 
 lazy val spark = (project in file("spark"))
@@ -156,9 +156,7 @@ lazy val spark = (project in file("spark"))
     TestParallelization.settings,
 
     // Unidoc settings
-    Compile / unidoc / sourceFilePatternsToDocument := Seq(
-      SourceFilePattern(Seq("io/delta/tables/", "io/delta/exceptions/"))
-    ),
+    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/")),
   )
   .configureUnidoc(generateScalaDoc = true)
 
@@ -215,7 +213,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     ),
 
     // Unidoc settings
-    Compile / unidoc / sourceFilePatternsToDocument := Seq(SourceFilePattern("io/delta/kernel/")),
+    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kernel/")),
   ).configureUnidoc(docTitle = "Delta Kernel")
 
 lazy val kernelDefault = (project in file("kernel/kernel-default"))
@@ -238,7 +236,7 @@ lazy val kernelDefault = (project in file("kernel/kernel-default"))
     ),
 
     // Unidoc settings
-    Compile / unidoc / sourceFilePatternsToDocument := Seq(SourceFilePattern("io/delta/kernel/")),
+    unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
 // TODO javastyle tests
@@ -263,9 +261,7 @@ lazy val storage = (project in file("storage"))
     ),
 
     // Unidoc settings
-    Compile / unidoc / sourceFilePatternsToDocument := Seq(
-      SourceFilePattern("/LogStore.java", "/CloseableIterator.java")
-    ),
+    unidocSourceFilePatterns += SourceFilePattern("/LogStore.java", "/CloseableIterator.java"),
   ).configureUnidoc()
 
 lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
@@ -766,8 +762,7 @@ lazy val standalone = (project in file("connectors/standalone"))
     addArtifact(assembly / artifact, assembly),
 
     // Unidoc setting
-    Compile / unidoc / sourceFilePatternsToDocument := Seq(
-      SourceFilePattern("io/delta/standalone/")),
+    unidocSourceFilePatterns += SourceFilePattern("io/delta/standalone/"),
   ).configureUnidoc()
 
 
@@ -946,7 +941,7 @@ lazy val flink = (project in file("connectors/flink"))
     },
 
     // Unidoc settings
-    Compile / unidoc / sourceFilePatternsToDocument := Seq(SourceFilePattern("io/delta/flink/")),
+    unidocSourceFilePatterns += SourceFilePattern("io/delta/flink/"),
   ).configureUnidoc()
 
 /**
@@ -991,8 +986,12 @@ lazy val kernelGroup = project
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
     publishArtifact := false,
-    publish / skip := false
-  )
+    publish / skip := false,
+    unidocSourceFilePatterns := {
+      (kernelApi / unidocSourceFilePatterns).value.scopeToProject(kernelApi) ++
+      (kernelDefault / unidocSourceFilePatterns).value.scopeToProject(kernelDefault)
+    }
+  ).configureUnidoc(docTitle = "Delta Kernel")
 
 /*
  ***********************
