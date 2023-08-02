@@ -48,9 +48,14 @@ import io.delta.kernel.utils.Utils;
  * how to use the scan files rows received from the Delta Kernel in distributed engine.
  * <p>
  * For this example serialization and deserialization is not needed as the work generator and
- * work executors share the same memory, but illustrates an example way to serialize and deserialize
- * scan file row and scan state row in order to send it to a remote thread and deserialize in a
- * worker thread and read data from.
+ * work executors share the same memory, but it illustrates an example of how Delta Kernel can
+ * work in a distributed query engine. High level steps are:
+ * - The query engine asks the Delta Kernel APIs for scan file and scan state rows at the driver
+ *   (or equivalent) node
+ * - The query engine serializes the scan file and scan state at the driver node
+ * - The driver sends the serialized bytes to remote worker node(s)
+ * - Worker nodes deserialize the scan file and scan state rows from the serialized bytes
+ * - Worker nodes read the data from given scan file(s) and scan state using the Delta Kernel APIs.
  *
  * <p>
  * Usage:

@@ -31,7 +31,7 @@ def run_single_threaded_examples(version, maven_repo, examples_root_dir, golden_
     ]
     project_dir = path.join(examples_root_dir, "table-reader")
 
-    run_examples(version, maven_repo, project_dir, main_class, test_cases)
+    run_example(version, maven_repo, project_dir, main_class, test_cases)
 
 
 def run_multi_threaded_examples(version, maven_repo, examples_root_dir, golden_tables_dir):
@@ -43,10 +43,10 @@ def run_multi_threaded_examples(version, maven_repo, examples_root_dir, golden_t
     ]
     project_dir = path.join(examples_root_dir, "table-reader")
 
-    run_examples(version, maven_repo, project_dir, main_class, test_cases)
+    run_example(version, maven_repo, project_dir, main_class, test_cases)
 
 
-def run_examples(version, maven_repo, project_dir, main_class, test_cases):
+def run_example(version, maven_repo, project_dir, main_class, test_cases):
     with WorkingDirectory(project_dir):
         for test in test_cases:
             cmd = ["mvn", "package", "exec:java", f"-Dexec.mainClass={main_class}",
@@ -150,7 +150,9 @@ if __name__ == "__main__":
     clear_artifact_cache()
 
     if args.use_local:
-        run_cmd(["build/sbt", "kernelApi/publishM2", "kernelDefault/publishM2"])
+        project_root = path.join(examples_root_dir, "../../")
+        with WorkingDirectory(project_root):
+            run_cmd([f"{project_root}/build/sbt", "kernelGroup/publishM2"], stream_output=True)
 
     golden_file_dir = path.join(
         examples_root_dir,
