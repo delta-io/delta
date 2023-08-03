@@ -98,6 +98,20 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     }
   }
 
+  private def getValidPhysicalPartitionSchema(
+      partSpec: StructType,
+      colMappingMode: DeltaColumnMappingMode): StructType = {
+    colMappingMode match {
+      case NoMapping => partSpec
+      case NameMapping => DeltaColumnMapping.renameColumns(
+        DeltaColumnMapping.assignPhysicalNames(partSpec)
+      )
+      case IdMapping => DeltaColumnMapping.renameColumns(
+        DeltaColumnMapping.assignPhysicalNames(partSpec)
+      )
+    }
+  }
+
   /**
    * Helper to compute all valid files based on basePath and Snapshot provided.
    */
@@ -225,15 +239,17 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         }
         if (filters.nonEmpty) {
           // Create a dataframe combining FileListingStatus and Partition Spec
+          val physicalPartitionSchema = getValidPhysicalPartitionSchema(
+            snapshot.metadata.partitionSchema, snapshot.metadata.columnMappingMode)
           val partitionDirectoryDF = spark.internalCreateDataFrame(
             spark.sparkContext.parallelize(
             dirsInFs
-            .filter(_.path.contains(s"/${partitionColumns.head}="))
+            .filter(_.path.contains(s"/${physicalPartitionSchema.fields.head.name}="))
             .map {
               p =>
                 val partitionRows = PartitionUtils.parsePartitions(
                   Seq(new Path(p.path)), true,
-                  Set(new Path(basePath)), Option(snapshot.metadata.partitionSchema),
+                  Set(new Path(basePath)), Option(physicalPartitionSchema),
                   true, false, timezone)
                 val colsFromPartSpec = partitionRows.partitions.head.values
                   .toSeq(snapshot.metadata.partitionSchema).toArray

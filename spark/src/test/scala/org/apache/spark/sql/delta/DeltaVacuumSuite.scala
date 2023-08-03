@@ -669,6 +669,71 @@ class DeltaVacuumSuite
     }
   }
 
+  test("vacuum using partition filter on a partitioned table with column mapping") {
+    withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+      withEnvironment { (tempDir, clock) =>
+        import testImplicits._
+        val data1 = Seq(
+          (10, 1, "a"),
+          (10, 2, "a"),
+          (10, 3, "a"),
+          (10, 4, "a"),
+          (10, 5, "a")
+        )
+        val data2 = Seq(
+          (20, 1, "b"),
+          (20, 2, "b"),
+          (20, 3, "b"),
+          (20, 4, "b"),
+          (20, 5, "b")
+        )
+        val path = tempDir.getCanonicalPath
+        data2.toDF("v1", "v2", "v3")
+          .write
+          .partitionBy("v1", "v2")
+          .format("delta")
+          .save(path)
+        sql(s"delete from delta.`$path` where v1=20 and v2 =5")
+        sql(s"""alter table delta.`$path` SET TBLPROPERTIES (
+        'delta.minReaderVersion' = '2',
+        'delta.minWriterVersion' = '5',
+        'delta.columnMapping.mode' = 'name'
+        )""")
+        sql(s"""alter table delta.`$path` rename column v1 to new_col_1""")
+        data1.toDF("new_col_1", "v2", "v3")
+          .write
+          .mode("append")
+          .partitionBy("new_col_1", "v2")
+          .format("delta")
+          .save(path)
+        sql(s"delete from delta.`$path` where new_col_1=20")
+        sql(s"vacuum delta.`$path` where new_col_1=20 and v2>=3 retain 0 hours")
+        // As we are checking at directory level in the assertion,
+        // need to trigger twice for removing empty dirs as they are removed only in second pass
+        sql(s"vacuum delta.`$path` where new_col_1=20 and v2>=3 retain 0 hours")
+        val dirsGCed = data2.filter(p => p._1==20 && p._2>=3)
+          .map(p => s"v1=${p._1}/v2=${p._2}")
+        val dirsNotGCed = data2.filter(p => p._1==20 && p._2<3)
+          .map(p => s"v1=${p._1}/v2=${p._2}")
+        val dirWithActiveReference = data1.filter(p => p._1==10)
+          .map(p => s"v1=${p._1}/v2=${p._2}")
+        val deltaLog = DeltaLog.forTable(spark, path)
+        gcTest(deltaLog, clock)(
+          CheckFiles(dirsNotGCed, true),
+          CheckFiles(dirWithActiveReference),
+          CheckFiles(dirsGCed, false)
+        )
+        // vacuum everything now
+        sql(s"vacuum delta.`$path` retain 0 hours")
+        sql(s"vacuum delta.`$path` retain 0 hours")
+        gcTest(deltaLog, clock)(
+          CheckFiles(dirsNotGCed ++ dirsGCed, false),
+          CheckFiles(dirWithActiveReference)
+        )
+      }
+    }
+  }
+
   test("GC by partition predicate filter") {
     withEnvironment { (tempDir, clock) =>
       val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
