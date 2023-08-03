@@ -17,6 +17,7 @@
 // scalastyle:off line.size.limit
 
 import java.nio.file.Files
+import Mima._
 
 // Scala versions
 val scala212 = "2.12.15"
@@ -1009,97 +1010,6 @@ lazy val scalaStyleSettings = Seq(
   testScalastyle := (Test / scalastyle).toTask("").value,
 
   Test / test := ((Test / test) dependsOn testScalastyle).value
-)
-
-/*
- ********************
- *  MIMA settings   *
- ********************
- */
-
-/**
- * @return tuple of (major, minor, patch) versions extracted from a version string.
- *         e.g. "1.2.3" would return (1, 2, 3)
- */
-def getMajorMinorPatch(versionStr: String): (Int, Int, Int) = {
-  implicit def extractInt(str: String): Int = {
-    """\d+""".r.findFirstIn(str).map(java.lang.Integer.parseInt).getOrElse {
-      throw new Exception(s"Could not extract version number from $str in $version")
-    }
-  }
-
-  versionStr.split("\\.").toList match {
-    case majorStr :: minorStr :: patchStr :: _ =>
-      (majorStr, minorStr, patchStr)
-    case _ => throw new Exception(s"Could not parse version for $version.")
-  }
-}
-
-def getPrevSparkName(currentVersion: String): String = {
-  val (major, minor, patch) = getMajorMinorPatch(currentVersion)
-  // name change in version 3.0.0, so versions > 3.0.0 should have delta-spark are prev version.
-  if (major >= 3 && (minor > 0 || patch > 0)) "delta-spark" else "delta-core"
-}
-
-def getPrevSparkVersion(currentVersion: String): String = {
-  val (major, minor, patch) = getMajorMinorPatch(currentVersion)
-
-  val lastVersionInMajorVersion = Map(
-    0 -> "0.8.0",
-    1 -> "1.2.1",
-    2 -> "2.4.0"
-  )
-  if (minor == 0) {  // 1.0.0 or 2.0.0 or 3.0.0
-    lastVersionInMajorVersion.getOrElse(major - 1, {
-      throw new Exception(s"Last version of ${major - 1}.x.x not configured.")
-    })
-  } else if (patch == 0) {
-    s"$major.${minor - 1}.0"      // 1.1.0 -> 1.0.0
-  } else {
-    s"$major.$minor.${patch - 1}" // 1.1.1 -> 1.1.0
-  }
-}
-
-def getPrevConnectorVersion(currentVersion: String): String = {
-  val (major, minor, patch) = getMajorMinorPatch(currentVersion)
-
-  val majorToLastMinorVersions: Map[Int, String] = Map(
-    // We skip from 0.6.0 to 3.0.0 when migrating connectors to the main delta repo
-    0 -> "0.6.0",
-    1 -> "0.6.0",
-    2 -> "0.6.0"
-  )
-  if (minor == 0) {  // 1.0.0
-    majorToLastMinorVersions.getOrElse(major - 1, {
-      throw new Exception(s"Last minor version of ${major - 1}.x.x not configured.")
-    })
-  } else if (patch == 0) {
-    s"$major.${minor - 1}.0"      // 1.1.0 -> 1.0.0
-  } else {
-    s"$major.$minor.${patch - 1}" // 1.1.1 -> 1.1.0
-  }
-}
-
-lazy val sparkMimaSettings = Seq(
-  Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
-  mimaPreviousArtifacts :=
-    Set("io.delta" %% getPrevSparkName(version.value) %  getPrevSparkVersion(version.value)),
-  mimaBinaryIssueFilters ++= SparkMimaExcludes.ignoredABIProblems
-)
-
-lazy val standaloneMimaSettings = Seq(
-  Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
-  mimaPreviousArtifacts := {
-    Set("io.delta" %% "delta-standalone" % getPrevConnectorVersion(version.value))
-  },
-  mimaBinaryIssueFilters ++= StandaloneMimaExcludes.ignoredABIProblems
-)
-
-lazy val flinkMimaSettings = Seq(
-  Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
-  mimaPreviousArtifacts := {
-    Set("io.delta" % "delta-flink" % getPrevConnectorVersion(version.value))
-  }
 )
 
 /*
