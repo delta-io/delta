@@ -324,7 +324,7 @@ public abstract class DeltaSourceITBase extends TestLogger {
                     equalTo(Timestamp.valueOf("2022-06-14 18:54:24.547557")
                         .toLocalDateTime().toInstant(ZoneOffset.UTC))
                 );
-                assertThat(row.getString(8).toString(), equalTo(String.valueOf(i)));
+                assertThat(row.getString(8).toString(), equalTo("test-" + i));
 
                 // same value for all columns
                 assertThat(row.getBoolean(9), equalTo(true));
