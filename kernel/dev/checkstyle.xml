@@ -183,6 +183,8 @@
             <property name="arrayInitIndent" value="4"/>
         </module>
 
+        <module name="LeftCurly"/>
+
         <!--
         We use the following import order:
         import java.*
