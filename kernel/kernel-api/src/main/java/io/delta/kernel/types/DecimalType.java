@@ -26,15 +26,13 @@ import java.util.Objects;
  * <p>
  * The default precision and scale is (10, 0).
  */
-public final class DecimalType extends DataType
-{
+public final class DecimalType extends DataType {
     public static final DecimalType USER_DEFAULT = new DecimalType(10, 0);
 
     private final int precision;
     private final int scale;
 
-    public DecimalType(int precision, int scale)
-    {
+    public DecimalType(int precision, int scale) {
         if (precision < 0 || precision > 38 || scale < 0 || scale > 38 || scale > precision) {
             throw new IllegalArgumentException(String.format(
                 "Invalid precision and scale combo (%d, %d). They should be in the range [0, 38] " +
@@ -47,34 +45,29 @@ public final class DecimalType extends DataType
     /**
      * @return the maximum number of digits of the decimal
      */
-    public int getPrecision()
-    {
+    public int getPrecision() {
         return precision;
     }
 
     /**
      * @return the number of digits on the right side of the decimal point (dot)
      */
-    public int getScale()
-    {
+    public int getScale() {
         return scale;
     }
 
     @Override
-    public String toJson()
-    {
+    public String toJson() {
         return String.format("\"decimal(%d, %d)\"", precision, scale);
     }
 
     @Override
-    public String toString()
-    {
+    public String toString() {
         return String.format("Decimal(%d, %d)", precision, scale);
     }
 
     @Override
-    public boolean equals(Object o)
-    {
+    public boolean equals(Object o) {
         if (this == o) {
             return true;
         }
@@ -86,8 +79,7 @@ public final class DecimalType extends DataType
     }
 
     @Override
-    public int hashCode()
-    {
+    public int hashCode() {
         return Objects.hash(precision, scale);
     }
 }

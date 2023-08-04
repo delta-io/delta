@@ -19,12 +19,10 @@ package io.delta.kernel.types;
  * A date type, supporting "0001-01-01" through "9999-12-31".
  * Internally, this is represented as the number of days from 1970-01-01.
  */
-public class TimestampType extends BasePrimitiveType
-{
+public class TimestampType extends BasePrimitiveType {
     public static final TimestampType INSTANCE = new TimestampType();
 
-    private TimestampType()
-    {
+    private TimestampType() {
         super("timestamp");
     }
 }

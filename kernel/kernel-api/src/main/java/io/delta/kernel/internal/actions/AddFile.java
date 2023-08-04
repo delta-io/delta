@@ -33,10 +33,8 @@ import io.delta.kernel.internal.fs.Path;
 /**
  * Delta log action representing an `AddFile`
  */
-public class AddFile extends FileAction
-{
-    public static AddFile fromRow(Row row)
-    {
+public class AddFile extends FileAction {
+    public static AddFile fromRow(Row row) {
         if (row == null) {
             return null;
         }
@@ -76,8 +74,7 @@ public class AddFile extends FileAction
         long size,
         long modificationTime,
         boolean dataChange,
-        DeletionVectorDescriptor deletionVector)
-    {
+        DeletionVectorDescriptor deletionVector) {
 
         super(path, dataChange);
         this.partitionValues = partitionValues == null ? Collections.emptyMap() : partitionValues;
@@ -87,8 +84,7 @@ public class AddFile extends FileAction
     }
 
     @Override
-    public AddFile copyWithDataChange(boolean dataChange)
-    {
+    public AddFile copyWithDataChange(boolean dataChange) {
         if (this.dataChange == dataChange) {
             return this;
         }
@@ -102,8 +98,7 @@ public class AddFile extends FileAction
         );
     }
 
-    public AddFile withAbsolutePath(Path dataPath)
-    {
+    public AddFile withAbsolutePath(Path dataPath) {
         Path filePath = new Path(path);
         if (filePath.isAbsolute()) {
             return this;
@@ -119,41 +114,36 @@ public class AddFile extends FileAction
         );
     }
 
-    public Map<String, String> getPartitionValues()
-    {
+    public Map<String, String> getPartitionValues() {
         return Collections.unmodifiableMap(partitionValues);
     }
 
-    public long getSize()
-    {
+    public long getSize() {
         return size;
     }
 
-    public long getModificationTime()
-    {
+    public long getModificationTime() {
         return modificationTime;
     }
 
-    public DeletionVectorDescriptor getDeletionVector() {return deletionVector;}
+    public DeletionVectorDescriptor getDeletionVector() {
+        return deletionVector;
+    }
 
-    public Optional<String> getDeletionVectorUniqueId()
-    {
+    public Optional<String> getDeletionVectorUniqueId() {
         return Optional.ofNullable(deletionVector).map(dv -> dv.getUniqueId());
     }
 
-    public Row getDeletionVectorAsRow()
-    {
+    public Row getDeletionVectorAsRow() {
         if (deletionVector == null) {
             return null;
-        }
-        else {
+        } else {
             return deletionVector.toRow();
         }
     }
 
     @Override
-    public String toString()
-    {
+    public String toString() {
         return "AddFile{" +
             "path='" + path + '\'' +
             ", partitionValues=" + partitionValues +
