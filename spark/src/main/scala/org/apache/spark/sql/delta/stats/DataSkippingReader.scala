@@ -963,43 +963,6 @@ trait DataSkippingReaderBase
   }
 
   /**
-   * Gathers files that should be included in a scan based on the limit clause, when there is
-   * no filter or projection present. Statistics about the amount of data that will be read
-   * are gathered and returned.
-   */
-  override def filesForScan(limit: Long): DeltaScan =
-    recordDeltaOperation(deltaLog, "delta.skipping.limit") {
-      val startTime = System.currentTimeMillis()
-      val scan = pruneFilesByLimit(withStats, limit)
-
-      val totalDataSize = new DataSize(
-        sizeInBytesIfKnown,
-        None,
-        numOfFilesIfKnown
-      )
-
-      val scannedDataSize = new DataSize(
-        scan.byteSize,
-        scan.numPhysicalRecords,
-        Some(scan.files.size)
-      )
-
-      DeltaScan(
-        version = version,
-        files = scan.files,
-        total = totalDataSize,
-        partition = null,
-        scanned = scannedDataSize)(
-        scannedSnapshot = snapshotToScan,
-        partitionFilters = ExpressionSet(Nil),
-        dataFilters = ExpressionSet(Nil),
-        unusedFilters = ExpressionSet(Nil),
-        scanDurationMs = System.currentTimeMillis() - startTime,
-        dataSkippingType = DeltaDataSkippingType.limit
-      )
-    }
-
-  /**
    * Gathers files that should be included in a scan based on the given predicates and limit.
    * This will be called only when all predicates are on partitioning columns.
    * Statistics about the amount of data that will be read are gathered and returned.
