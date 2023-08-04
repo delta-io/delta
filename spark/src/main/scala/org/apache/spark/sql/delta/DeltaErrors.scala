@@ -2959,7 +2959,8 @@ trait DeltaErrorsBase
       messageParameters = Array(
         UniversalFormat.ICEBERG_FORMAT,
         "Requires IcebergCompatV1 to be manually enabled in order for Universal Format (Iceberg) " +
-        "to be enabled on an existing table."
+        "to be enabled on an existing table. To enable IcebergCompatV1, set the table property " +
+        "'delta.enableIcebergCompatV1' = 'true'."
       )
     )
   }
