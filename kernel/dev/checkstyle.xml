@@ -184,6 +184,7 @@
         </module>
 
         <module name="LeftCurly"/>
+        <module name="RightCurly"/>
 
         <!--
         We use the following import order:
