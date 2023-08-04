@@ -897,23 +897,37 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
-  // todo: how to have dictionary encoding for fixed_len_byte_array?
-  generateGoldenTable("parquet-decimal-dictionaries") { tablePath =>
-    val data = (0 until 1000000).map { i =>
-      Row(i, JBigDecimal.valueOf(i%5), JBigDecimal.valueOf(i%6), JBigDecimal.valueOf(i%2))
+  for (parquetFormat <- Seq("v1", "v2")) {
+    // PARQUET_1_0 doesn't support dictionary encoding for FIXED_LEN_BYTE_ARRAY (only PARQUET_2_0)
+    generateGoldenTable(s"parquet-decimal-dictionaries-$parquetFormat") { tablePath =>
+
+      def withHadoopConf(key: String, value: String)(f: => Unit): Unit = {
+        try {
+          spark.sparkContext.hadoopConfiguration.set(key, value)
+          f
+        } finally {
+          spark.sparkContext.hadoopConfiguration.unset(key)
+        }
+      }
+
+      withHadoopConf("parquet.writer.version", parquetFormat) {
+        val data = (0 until 1000000).map { i =>
+          Row(i, JBigDecimal.valueOf(i % 5), JBigDecimal.valueOf(i % 6), JBigDecimal.valueOf(i % 2))
+        }
+
+        val schema = new StructType()
+          .add("id", IntegerType)
+          .add("col1", new DecimalType(9, 0)) // INT32: 1 <= precision <= 9
+          .add("col2", new DecimalType(12, 0)) // INT64: 10 <= precision <= 18
+          .add("col3", new DecimalType(25, 0)) // FIXED_LEN_BYTE_ARRAY
+
+        spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+          .repartition(1)
+          .write
+          .format("delta")
+          .save(tablePath)
+      }
     }
-
-    val schema = new StructType()
-      .add("id", IntegerType)
-      .add("col1", new DecimalType(9, 0)) // INT32: 1 <= precision <= 9
-      .add("col2", new DecimalType(12, 0)) // INT64: 10 <= precision <= 18
-      .add("col3", new DecimalType(25, 0)) // FIXED_LEN_BYTE_ARRAY
-
-    spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
-      .repartition(1)
-      .write
-      .format("delta")
-      .save(tablePath)
   }
 
   generateGoldenTable("parquet-decimal-type") { tablePath =>

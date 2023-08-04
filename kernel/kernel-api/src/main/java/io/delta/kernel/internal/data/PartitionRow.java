@@ -112,7 +112,6 @@ public class PartitionRow
         return ordinalToValue.get(ordinal);
     }
 
-
     @Override
     public BigDecimal getDecimal(int ordinal) {
         throw new UnsupportedOperationException("not yet implemented");

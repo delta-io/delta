@@ -140,7 +140,9 @@ public class PartitionUtils
             return Literal.of(Date.valueOf(partitionValue));
         }
         if (dataType instanceof DecimalType) {
-            return Literal.of(new BigDecimal(partitionValue), (DecimalType) dataType);
+            DecimalType decimalType = (DecimalType) dataType;
+            return Literal.of(
+                new BigDecimal(partitionValue), decimalType.getPrecision(), decimalType.getScale());
         }
 
         throw new UnsupportedOperationException("Unsupported partition column: " + dataType);

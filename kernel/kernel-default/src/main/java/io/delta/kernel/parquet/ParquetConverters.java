@@ -15,21 +15,15 @@
  */
 package io.delta.kernel.parquet;
 
-import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 
-import org.apache.parquet.column.Dictionary;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.io.api.Converter;
 import org.apache.parquet.io.api.PrimitiveConverter;
 import org.apache.parquet.schema.GroupType;
-import org.apache.parquet.schema.LogicalTypeAnnotation;
-import org.apache.parquet.schema.PrimitiveType;
 import org.apache.parquet.schema.Type;
-import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.*;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.vector.*;
@@ -88,59 +82,8 @@ class ParquetConverters
             return new DoubleColumnConverter(initialBatchSize);
         }
         else if (typeFromClient instanceof DecimalType) {
-            PrimitiveType primType = typeFromFile.asPrimitiveType();
-            LogicalTypeAnnotation typeAnnotation = primType.getLogicalTypeAnnotation();
-
-            if (primType.getPrimitiveTypeName() == INT32) {
-                // For INT32 backed decimals
-                if (typeAnnotation instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) {
-                    LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimalType =
-                            (LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) typeAnnotation;
-                    return new IntDictionaryAwareDecimalConverter(typeFromClient,
-                            decimalType.getPrecision(), decimalType.getScale(), initialBatchSize);
-                } else {
-                    // If the column is a plain INT32, we should pick the precision that can host
-                    // the largest INT32 value.
-                    return new IntDictionaryAwareDecimalConverter(typeFromClient,
-                            10, 0, initialBatchSize);
-                }
-
-            } else if (primType.getPrimitiveTypeName() == INT64) {
-                // For INT64 backed decimals
-                if (typeAnnotation instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) {
-                    LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimalType =
-                            (LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) typeAnnotation;
-                    return new LongDictionaryAwareDecimalConverter(typeFromClient,
-                            decimalType.getPrecision(), decimalType.getScale(), initialBatchSize);
-                } else {
-                    // If the column is a plain INT64, we should pick the precision that can host
-                    // the largest INT64 value.
-                    return new LongDictionaryAwareDecimalConverter(typeFromClient,
-                            20, 0, initialBatchSize);
-                }
-
-            } else if (primType.getPrimitiveTypeName() == FIXED_LEN_BYTE_ARRAY ||
-                    primType.getPrimitiveTypeName() == BINARY) {
-                // For BINARY and FIXED_LEN_BYTE_ARRAY backed decimals
-                if (typeAnnotation instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) {
-                    LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimalType =
-                            (LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) typeAnnotation;
-                    return new BinaryDictionaryAwareDecimalConverter(typeFromClient,
-                            decimalType.getPrecision(), decimalType.getScale(), initialBatchSize);
-                } else {
-                    throw new RuntimeException(String.format(
-                            "Unable to create Parquet converter for DecimalType whose parquet " +
-                                    "type is %s without decimal metadata.",
-                            typeFromFile));
-                }
-
-            } else {
-                throw new RuntimeException(String.format(
-                        "Unable to create Parquet converter for DecimalType whose Parquet type " +
-                                "is %s. Parquet DECIMAL type can only be backed by INT32, INT64, " +
-                                "FIXED_LEN_BYTE_ARRAY, or BINARY",
-                        typeFromFile));
-            }
+            return DecimalConverters.createDecimalConverter(
+                initialBatchSize, (DecimalType) typeFromClient, typeFromFile);
         }
         // else if (typeFromClient instanceof TimestampType) {
         // }
@@ -565,142 +508,6 @@ class ParquetConverters
                 this.nullability = Arrays.copyOf(this.nullability, newSize);
                 setNullabilityToTrue(this.nullability, newSize / 2, newSize);
             }
-        }
-    }
-
-    public abstract static class BaseDecimalConverter extends BasePrimitiveColumnConverter {
-
-        // working state
-        private BigDecimal[] values;
-
-        private final DataType dataType;
-        private final int scale;
-        protected BigDecimal[] expandedDictionary;
-
-        BaseDecimalConverter(DataType dataType, int precision, int scale, int initialBatchSize) {
-            super(initialBatchSize);
-            DecimalType decimalType = (DecimalType) dataType;
-            checkArgument(
-                    decimalType.getPrecision() == precision && decimalType.getScale() == scale,
-                    String.format(
-                            "Found Delta type %s but Parquet type has precision=%s and scale=%s",
-                            decimalType, precision, scale));
-            this.scale = scale;
-            this.dataType = dataType;
-            this.values = new BigDecimal[initialBatchSize];
-        }
-
-        @Override
-        public boolean hasDictionarySupport() {
-            return true;
-        }
-
-        protected void addDecimal(BigDecimal value) {
-            resizeIfNeeded();
-            this.nullability[currentRowIndex] = false;
-            this.values[currentRowIndex] = value;
-        }
-
-        @Override
-        public void addValueFromDictionary(int dictionaryId) {
-            addDecimal(expandedDictionary[dictionaryId]);
-        }
-
-        @Override
-        public ColumnVector getDataColumnVector(int batchSize)
-        {
-            ColumnVector vector = new DefaultDecimalVector(dataType, batchSize,
-                    Optional.of(nullability),  values);
-            // re-initialize the working space
-            this.nullability = initNullabilityVector(nullability.length);
-            this.values = new BigDecimal[values.length];
-            this.currentRowIndex = 0;
-            return vector;
-        }
-
-        @Override
-        public void resizeIfNeeded()
-        {
-            if (values.length == currentRowIndex) {
-                int newSize = values.length * 2;
-                this.values = Arrays.copyOf(this.values, newSize);
-                this.nullability = Arrays.copyOf(this.nullability, newSize);
-                setNullabilityToTrue(this.nullability, newSize / 2, newSize);
-            }
-        }
-
-        protected BigDecimal decimalFromLong(long value) {
-            return BigDecimal.valueOf(value, scale);
-        }
-
-        protected BigDecimal decimalFromBinary(Binary value) {
-            return new BigDecimal(new BigInteger(value.getBytes()), scale);
-        }
-    }
-
-    public static class IntDictionaryAwareDecimalConverter extends BaseDecimalConverter {
-
-        IntDictionaryAwareDecimalConverter(
-                DataType dataType, int precision, int scale, int initialBatchSize) {
-            super(dataType, precision, scale, initialBatchSize);
-        }
-
-        @Override
-        public void setDictionary(Dictionary dictionary) {
-            this.expandedDictionary = new BigDecimal[dictionary.getMaxId() + 1];
-            for (int id = 0; id < dictionary.getMaxId() + 1; id ++) {
-                this.expandedDictionary[id] = decimalFromLong(dictionary.decodeToInt(id));
-            }
-        }
-
-        @Override
-        // Converts decimals stored as INT32
-        public void addInt(int value) {
-            addDecimal(decimalFromLong(value));
-        }
-    }
-
-    public static class LongDictionaryAwareDecimalConverter extends BaseDecimalConverter {
-
-        LongDictionaryAwareDecimalConverter(
-                DataType dataType, int precision, int scale, int initialBatchSize) {
-            super(dataType, precision, scale, initialBatchSize);
-        }
-
-        @Override
-        public void setDictionary(Dictionary dictionary) {
-            this.expandedDictionary = new BigDecimal[dictionary.getMaxId() + 1];
-            for (int id = 0; id < dictionary.getMaxId() + 1; id ++) {
-                this.expandedDictionary[id] = decimalFromLong(dictionary.decodeToLong(id));
-            }
-        }
-
-        @Override
-        // Converts decimals stored as INT64
-        public void addLong(long value) {
-            addDecimal(decimalFromLong(value));
-        }
-    }
-
-    public static class BinaryDictionaryAwareDecimalConverter extends BaseDecimalConverter {
-
-        BinaryDictionaryAwareDecimalConverter(
-                DataType dataType, int precision, int scale, int initialBatchSize) {
-            super(dataType, precision, scale, initialBatchSize);
-        }
-
-        @Override
-        public void setDictionary(Dictionary dictionary) {
-            this.expandedDictionary = new BigDecimal[dictionary.getMaxId() + 1];
-            for (int id = 0; id < dictionary.getMaxId() + 1; id ++) {
-                this.expandedDictionary[id] = decimalFromBinary(dictionary.decodeToBinary(id));
-            }
-        }
-
-        @Override
-        // Converts decimals stored as either FIXED_LENGTH_BYTE_ARRAY or BINARY
-        public void addBinary(Binary value) {
-            addDecimal(decimalFromBinary(value));
         }
     }
 

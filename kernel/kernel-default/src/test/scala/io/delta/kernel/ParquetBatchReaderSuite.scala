@@ -37,8 +37,11 @@ class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
   // Decimal type tests
   //////////////////////////////////////////////////////////////////////////////////
 
-  private val DECIMAL_TYPES_DICT_FILE = getSingleParquetFile(
-    goldenTableFile("parquet-decimal-dictionaries"))
+  private val DECIMAL_TYPES_DICT_FILE_V1 = getSingleParquetFile(
+    goldenTableFile("parquet-decimal-dictionaries-v1"))
+
+  private val DECIMAL_TYPES_DICT_FILE_V2 = getSingleParquetFile(
+    goldenTableFile("parquet-decimal-dictionaries-v2"))
 
   test("decimals encoded using dictionary encoding ") {
     val expectedResult = (0 until 1000000).map { i =>
@@ -52,13 +55,15 @@ class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
       .add("col3", new DecimalType(25, 0)) // FIXED_LEN_BYTE_ARRAY
 
     val batchReader = new ParquetBatchReader(new Configuration())
-    val batches = batchReader.read(DECIMAL_TYPES_DICT_FILE, readSchema)
+    for (file <- Seq(DECIMAL_TYPES_DICT_FILE_V1, DECIMAL_TYPES_DICT_FILE_V2)) {
+      val batches = batchReader.read(file, readSchema)
 
-    val result = batches.toSeq.flatMap(_.getRows.toSeq).map { row =>
-      (row.getInt(0), row.getDecimal(1), row.getDecimal(2), row.getDecimal(3))
+      val result = batches.toSeq.flatMap(_.getRows.toSeq).map { row =>
+        (row.getInt(0), row.getDecimal(1), row.getDecimal(2), row.getDecimal(3))
+      }
+
+      assert(expectedResult == result.toSet)
     }
-
-    assert(expectedResult == result.toSet)
   }
 
   private val LARGE_SCALE_DECIMAL_TYPES_FILE = getSingleParquetFile(

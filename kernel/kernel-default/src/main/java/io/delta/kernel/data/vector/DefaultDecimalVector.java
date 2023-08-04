@@ -34,21 +34,26 @@ public class DefaultDecimalVector extends AbstractColumnVector {
      * Create an instance of {@link io.delta.kernel.data.ColumnVector} for decimal type.
      *
      * @param size number of elements in the vector.
-     * @param nullability Optional array of nullability value for each element in the vector.
-     * All values in the vector are considered non-null when parameter is empty.
      * @param values column vector values.
      */
     public DefaultDecimalVector(
             DataType dataType,
-            int size, Optional<boolean[]> nullability,
+            int size,
             BigDecimal[] values) {
 
-        super(size, dataType, nullability);
+        super(size, dataType, Optional.empty());
         checkArgument(dataType instanceof DecimalType,
                 "invalid type for decimal vector: " + dataType);
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
                 "invalid number of values (%s) for given size (%s)", values.length, size);
+    }
+
+    @Override
+    public boolean isNullAt(int rowId)
+    {
+        checkValidRowId(rowId);
+        return values[rowId] == null;
     }
 
     @Override
