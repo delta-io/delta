@@ -1265,8 +1265,8 @@ trait DeltaSQLConfBase {
     buildConf("updateAndMergeCastingFollowsAnsiEnabledFlag")
       .internal()
       .doc("""If false, casting behaviour in implicit casts in UPDATE and MERGE follows
-             |'spark.sql.storeAssignmentPolicy'. If true, these casts follow 'ansi.enabled'. This
-             |was the default before Delta 3.5.""".stripMargin)
+             |'spark.sql.storeAssignmentPolicy'. If true, these casts follow 'ansi.enabled'.
+             |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
 
