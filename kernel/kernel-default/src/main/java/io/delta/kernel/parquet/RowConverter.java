@@ -88,16 +88,20 @@ class RowConverter
 
     @Override
     public void start() {
-        Arrays.stream(converters)
-            .filter(conv -> !conv.isPrimitive())
-            .forEach(conv -> ((GroupConverter) conv).start());
+        for (int i = 0; i < converters.length; i++) {
+            if (!converters[i].isPrimitive()) {
+                ((GroupConverter) converters[i]).start();
+            }
+        }
     }
 
     @Override
     public void end() {
-        Arrays.stream(converters)
-            .filter(conv -> !conv.isPrimitive())
-            .forEach(conv -> ((GroupConverter) conv).end());
+        for (int i = 0; i < converters.length; i++) {
+            if (!converters[i].isPrimitive()) {
+                ((GroupConverter) converters[i]).end();
+            }
+        }
     }
 
     public ColumnarBatch getDataAsColumnarBatch(int batchSize) {
@@ -111,19 +115,24 @@ class RowConverter
      * @return true if all members were null
      */
     private boolean moveConvertersToNextRow(Optional<Long> fileRowIndex) {
-        long memberNullCount = Arrays.stream(converters)
-            .map(converter -> (ParquetConverters.BaseConverter) converter)
-            .map(converter -> {
-                if (fileRowIndex.isPresent() &&
-                    converter instanceof ParquetConverters.FileRowIndexColumnConverter) {
-                    return ((ParquetConverters.FileRowIndexColumnConverter) converter)
-                        .moveToNextRow(fileRowIndex.get());
-                } else {
-                    return converter.moveToNextRow();
+        long memberNullCount = 0;
+
+        for (int i = 0; i < converters.length; i++) {
+            final ParquetConverters.BaseConverter baseConverter =
+                (ParquetConverters.BaseConverter) converters[i];
+
+            if (fileRowIndex.isPresent() &&
+                    baseConverter instanceof ParquetConverters.FileRowIndexColumnConverter) {
+                final ParquetConverters.FileRowIndexColumnConverter fileRowIndexColumnConverter =
+                    (ParquetConverters.FileRowIndexColumnConverter) baseConverter;
+                if (fileRowIndexColumnConverter.moveToNextRow(fileRowIndex.get())) {
+                    memberNullCount++;
                 }
-            })
-            .filter(result -> result)
-            .count();
+            } else if (baseConverter.moveToNextRow()) {
+                memberNullCount++;
+            }
+        }
+
         return memberNullCount == converters.length;
     }
 
@@ -166,10 +175,14 @@ class RowConverter
     }
 
     private ColumnVector[] collectMemberVectors(int batchSize) {
-        return Arrays.stream(converters)
-            .map(converter -> ((ParquetConverters.BaseConverter) converter).getDataColumnVector(
-                batchSize))
-            .toArray(ColumnVector[]::new);
+        final ColumnVector[] output = new ColumnVector[converters.length];
+
+        for (int i = 0; i < converters.length; i++) {
+            output[i] = ((ParquetConverters.BaseConverter) converters[i])
+                .getDataColumnVector(batchSize);
+        }
+
+        return output;
     }
 
     @Override

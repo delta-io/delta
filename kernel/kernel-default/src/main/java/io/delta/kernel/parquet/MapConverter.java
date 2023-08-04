@@ -158,21 +158,23 @@ class MapConverter
 
         @Override
         public void start() {
-            Arrays.stream(converters)
-                .filter(conv -> !conv.isPrimitive())
-                .forEach(conv -> ((GroupConverter) conv).start());
+            for (int i = 0; i < converters.length; i++) {
+                if (!converters[i].isPrimitive()) {
+                    ((GroupConverter) converters[i]).start();
+                }
+            }
         }
 
         @Override
         public void end() {
-            Arrays.stream(converters)
-                .filter(conv -> !conv.isPrimitive())
-                .forEach(conv -> ((GroupConverter) conv).end());
-
-            Arrays.stream(converters)
-                .map(converter -> (ParquetConverters.BaseConverter) converter)
-                .forEach(converter -> converter.moveToNextRow());
-
+            for (int i = 0; i < converters.length; i++) {
+                if (!converters[i].isPrimitive()) {
+                    ((GroupConverter) converters[i]).end();
+                }
+            }
+            for (int i = 0; i < converters.length; i++) {
+                ((ParquetConverters.BaseConverter) converters[i]).moveToNextRow();
+            }
             currentEntryIndex++;
         }
 
