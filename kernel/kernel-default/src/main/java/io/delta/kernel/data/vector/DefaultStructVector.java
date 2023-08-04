@@ -30,25 +30,24 @@ import static io.delta.kernel.DefaultKernelUtils.checkArgument;
  * {@link io.delta.kernel.data.ColumnVector} implementation for struct type data.
  */
 public class DefaultStructVector
-    extends AbstractColumnVector
-{
+    extends AbstractColumnVector {
     private final ColumnVector[] memberVectors;
 
     /**
      * Create an instance of {@link ColumnVector} for {@code struct} type.
      *
-     * @param size number of elements in the vector.
-     * @param dataType {@code struct} datatype definition.
-     * @param nullability Optional array of nullability value for each element in the vector.
-     * All values in the vector are considered non-null when parameter is empty.
+     * @param size          number of elements in the vector.
+     * @param dataType      {@code struct} datatype definition.
+     * @param nullability   Optional array of nullability value for each element in the vector.
+     *                      All values in the vector are considered non-null when parameter is
+     *                      empty.
      * @param memberVectors column vectors for each member of the struct.
      */
     public DefaultStructVector(
         int size,
         DataType dataType,
         Optional<boolean[]> nullability,
-        ColumnVector[] memberVectors)
-    {
+        ColumnVector[] memberVectors) {
         super(size, dataType, nullability);
         checkArgument(dataType instanceof StructType, "not a struct type");
         StructType structType = (StructType) dataType;
@@ -59,8 +58,7 @@ public class DefaultStructVector
     }
 
     @Override
-    public Row getStruct(int rowId)
-    {
+    public Row getStruct(int rowId) {
         checkValidRowId(rowId);
         if (isNullAt(rowId)) {
             return null;
@@ -72,13 +70,11 @@ public class DefaultStructVector
      * Wrapper class to expose one member as a {@link Row}
      */
     private static class StructRow
-        implements Row
-    {
+        implements Row {
         private final DefaultStructVector structVector;
         private final int rowId;
 
-        StructRow(DefaultStructVector structVector, int rowId)
-        {
+        StructRow(DefaultStructVector structVector, int rowId) {
             this.structVector = requireNonNull(structVector, "structVector is null");
             checkArgument(
                 rowId >= 0 && rowId < structVector.getSize(),
@@ -87,86 +83,72 @@ public class DefaultStructVector
         }
 
         @Override
-        public StructType getSchema()
-        {
+        public StructType getSchema() {
             return (StructType) structVector.getDataType();
         }
 
         @Override
-        public boolean isNullAt(int ordinal)
-        {
+        public boolean isNullAt(int ordinal) {
             return structVector.memberVectors[ordinal].isNullAt(rowId);
         }
 
         @Override
-        public boolean getBoolean(int ordinal)
-        {
+        public boolean getBoolean(int ordinal) {
             return structVector.memberVectors[ordinal].getBoolean(rowId);
         }
 
         @Override
-        public byte getByte(int ordinal)
-        {
+        public byte getByte(int ordinal) {
             return structVector.memberVectors[ordinal].getByte(rowId);
         }
 
         @Override
-        public short getShort(int ordinal)
-        {
+        public short getShort(int ordinal) {
             return structVector.memberVectors[ordinal].getShort(rowId);
         }
 
         @Override
-        public int getInt(int ordinal)
-        {
+        public int getInt(int ordinal) {
             return structVector.memberVectors[ordinal].getInt(rowId);
         }
 
         @Override
-        public long getLong(int ordinal)
-        {
+        public long getLong(int ordinal) {
             return structVector.memberVectors[ordinal].getLong(rowId);
         }
 
         @Override
-        public float getFloat(int ordinal)
-        {
+        public float getFloat(int ordinal) {
             return structVector.memberVectors[ordinal].getFloat(rowId);
         }
 
         @Override
-        public double getDouble(int ordinal)
-        {
+        public double getDouble(int ordinal) {
             return structVector.memberVectors[ordinal].getDouble(rowId);
         }
 
         @Override
-        public String getString(int ordinal)
-        {
+        public String getString(int ordinal) {
             return structVector.memberVectors[ordinal].getString(rowId);
         }
 
         @Override
-        public byte[] getBinary(int ordinal)
-        {
+        public byte[] getBinary(int ordinal) {
             return structVector.memberVectors[ordinal].getBinary(rowId);
         }
 
         @Override
-        public Row getStruct(int ordinal)
-        {
+        public Row getStruct(int ordinal) {
             return structVector.memberVectors[ordinal].getStruct(rowId);
         }
 
         @Override
-        public <T> List<T> getArray(int ordinal)
-        {
+        public <T> List<T> getArray(int ordinal) {
             return structVector.memberVectors[ordinal].getArray(rowId);
         }
 
         @Override
-        public <K, V> Map<K, V> getMap(int ordinal)
-        {
+        public <K, V> Map<K, V> getMap(int ordinal) {
             return structVector.memberVectors[ordinal].getMap(rowId);
         }
     }

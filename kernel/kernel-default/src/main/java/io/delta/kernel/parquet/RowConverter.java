@@ -25,8 +25,7 @@ import static io.delta.kernel.DefaultKernelUtils.findSubFieldType;
 
 class RowConverter
     extends GroupConverter
-    implements ParquetConverters.BaseConverter
-{
+    implements ParquetConverters.BaseConverter {
     private final StructType readSchema;
     private final Converter[] converters;
     // The delta may request columns that don't exists in Parquet
@@ -47,8 +46,7 @@ class RowConverter
     RowConverter(
         int initialBatchSize,
         StructType readSchema,
-        GroupType fileSchema)
-    {
+        GroupType fileSchema) {
         this.readSchema = requireNonNull(readSchema, "readSchema is not null");
         List<StructField> fields = readSchema.fields();
         this.converters = new Converter[fields.size()];
@@ -62,20 +60,19 @@ class RowConverter
             final StructField field = fields.get(i);
             final DataType typeFromClient = field.getDataType();
             final Type typeFromFile = field.isDataColumn() ?
-                    findSubFieldType(fileSchema, field) : null;
+                findSubFieldType(fileSchema, field) : null;
             if (typeFromFile == null) {
                 if (field.getName() == StructField.ROW_INDEX_COLUMN_NAME &&
-                        field.isMetadataColumn()) {
+                    field.isMetadataColumn()) {
                     checkArgument(field.getDataType() instanceof LongType,
-                            "row index metadata column must be type long");
+                        "row index metadata column must be type long");
                     converters[i] =
-                            new ParquetConverters.FileRowIndexColumnConverter(initialBatchSize);
+                        new ParquetConverters.FileRowIndexColumnConverter(initialBatchSize);
                 } else {
                     converters[i] = new ParquetConverters.NonExistentColumnConverter(
                         typeFromClient);
                 }
-            }
-            else {
+            } else {
                 converters[i] = ParquetConverters.createConverter(
                     initialBatchSize, typeFromClient, typeFromFile);
                 parquetOrdinalToConverterOrdinal.put(parquetOrdinal, i);
@@ -85,29 +82,25 @@ class RowConverter
     }
 
     @Override
-    public Converter getConverter(int fieldIndex)
-    {
+    public Converter getConverter(int fieldIndex) {
         return converters[parquetOrdinalToConverterOrdinal.get(fieldIndex)];
     }
 
     @Override
-    public void start()
-    {
+    public void start() {
         Arrays.stream(converters)
             .filter(conv -> !conv.isPrimitive())
             .forEach(conv -> ((GroupConverter) conv).start());
     }
 
     @Override
-    public void end()
-    {
+    public void end() {
         Arrays.stream(converters)
             .filter(conv -> !conv.isPrimitive())
             .forEach(conv -> ((GroupConverter) conv).end());
     }
 
-    public ColumnarBatch getDataAsColumnarBatch(int batchSize)
-    {
+    public ColumnarBatch getDataAsColumnarBatch(int batchSize) {
         ColumnVector[] memberVectors = collectMemberVectors(batchSize);
         ColumnarBatch batch = new DefaultColumnarBatch(batchSize, readSchema, memberVectors);
         resetWorkingState();
@@ -119,18 +112,18 @@ class RowConverter
      */
     private boolean moveConvertersToNextRow(Optional<Long> fileRowIndex) {
         long memberNullCount = Arrays.stream(converters)
-                .map(converter -> (ParquetConverters.BaseConverter) converter)
-                .map(converter -> {
-                    if (fileRowIndex.isPresent() &&
-                            converter instanceof ParquetConverters.FileRowIndexColumnConverter) {
-                        return ((ParquetConverters.FileRowIndexColumnConverter) converter)
-                                .moveToNextRow(fileRowIndex.get());
-                    } else {
-                        return converter.moveToNextRow();
-                    }
-                })
-                .filter(result -> result)
-                .count();
+            .map(converter -> (ParquetConverters.BaseConverter) converter)
+            .map(converter -> {
+                if (fileRowIndex.isPresent() &&
+                    converter instanceof ParquetConverters.FileRowIndexColumnConverter) {
+                    return ((ParquetConverters.FileRowIndexColumnConverter) converter)
+                        .moveToNextRow(fileRowIndex.get());
+                } else {
+                    return converter.moveToNextRow();
+                }
+            })
+            .filter(result -> result)
+            .count();
         return memberNullCount == converters.length;
     }
 
@@ -149,8 +142,7 @@ class RowConverter
     }
 
     @Override
-    public boolean moveToNextRow()
-    {
+    public boolean moveToNextRow() {
         resizeIfNeeded();
 
         boolean isNull = moveConvertersToNextRow(Optional.empty());
@@ -161,8 +153,7 @@ class RowConverter
         return isNull;
     }
 
-    public ColumnVector getDataColumnVector(int batchSize)
-    {
+    public ColumnVector getDataColumnVector(int batchSize) {
         ColumnVector[] memberVectors = collectMemberVectors(batchSize);
         ColumnVector vector = new DefaultStructVector(
             batchSize,
@@ -174,8 +165,7 @@ class RowConverter
         return vector;
     }
 
-    private ColumnVector[] collectMemberVectors(int batchSize)
-    {
+    private ColumnVector[] collectMemberVectors(int batchSize) {
         return Arrays.stream(converters)
             .map(converter -> ((ParquetConverters.BaseConverter) converter).getDataColumnVector(
                 batchSize))
@@ -183,8 +173,7 @@ class RowConverter
     }
 
     @Override
-    public void resizeIfNeeded()
-    {
+    public void resizeIfNeeded() {
         if (nullability.length == currentRowIndex) {
             int newSize = nullability.length * 2;
             this.nullability = Arrays.copyOf(this.nullability, newSize);
@@ -193,8 +182,7 @@ class RowConverter
     }
 
     @Override
-    public void resetWorkingState()
-    {
+    public void resetWorkingState() {
         this.currentRowIndex = 0;
         this.nullability = ParquetConverters.initNullabilityVector(this.nullability.length);
     }

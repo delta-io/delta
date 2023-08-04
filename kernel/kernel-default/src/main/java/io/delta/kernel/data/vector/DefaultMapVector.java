@@ -28,8 +28,7 @@ import static io.delta.kernel.DefaultKernelUtils.checkArgument;
  * {@link io.delta.kernel.data.ColumnVector} implementation for map type data.
  */
 public class DefaultMapVector
-    extends AbstractColumnVector
-{
+    extends AbstractColumnVector {
     private final int[] offsets;
     private final ColumnVector keyVector;
     private final ColumnVector valueVector;
@@ -37,12 +36,13 @@ public class DefaultMapVector
     /**
      * Create an instance of {@link io.delta.kernel.data.ColumnVector} for map type.
      *
-     * @param size number of elements in the vector.
+     * @param size        number of elements in the vector.
      * @param nullability Optional array of nullability value for each element in the vector.
-     * All values in the vector are considered non-null when parameter is empty.
-     * @param offsets Offsets into key and value column vectors on where the index of particular row
-     * values start and end.
-     * @param keyVector Vector containing the `key` values from the kv map.
+     *                    All values in the vector are considered non-null when parameter is empty.
+     * @param offsets     Offsets into key and value column vectors on where the index of
+     *                    particular row
+     *                    values start and end.
+     * @param keyVector   Vector containing the `key` values from the kv map.
      * @param valueVector Vector containing the `value` values from the kv map.
      */
     public DefaultMapVector(
@@ -51,8 +51,7 @@ public class DefaultMapVector
         Optional<boolean[]> nullability,
         int[] offsets,
         ColumnVector keyVector,
-        ColumnVector valueVector)
-    {
+        ColumnVector valueVector) {
         super(size, type, nullability);
         checkArgument(offsets.length >= size + 1, "invalid offset array size");
         this.offsets = requireNonNull(offsets, "offsets is null");
@@ -68,8 +67,7 @@ public class DefaultMapVector
      * @return
      */
     @Override
-    public <K, V> Map<K, V> getMap(int rowId)
-    {
+    public <K, V> Map<K, V> getMap(int rowId) {
         if (isNullAt(rowId)) {
             return null;
         }

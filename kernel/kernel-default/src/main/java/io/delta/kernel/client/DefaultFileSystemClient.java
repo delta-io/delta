@@ -33,18 +33,15 @@ import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.utils.Utils;
 
 public class DefaultFileSystemClient
-    implements FileSystemClient
-{
+    implements FileSystemClient {
     private final Configuration hadoopConf;
 
-    public DefaultFileSystemClient(Configuration hadoopConf)
-    {
+    public DefaultFileSystemClient(Configuration hadoopConf) {
         this.hadoopConf = hadoopConf;
     }
 
     @Override
-    public CloseableIterator<FileStatus> listFrom(String filePath)
-    {
+    public CloseableIterator<FileStatus> listFrom(String filePath) {
         try {
             Iterator<org.apache.hadoop.fs.FileStatus> iter;
 
@@ -68,8 +65,7 @@ public class DefaultFileSystemClient
                         hadoopFileStatus.getLen(),
                         hadoopFileStatus.getModificationTime())
                 );
-        }
-        catch (Exception ex) {
+        } catch (Exception ex) {
             throw new RuntimeException("Could not resolve the FileSystem", ex);
         }
     }
@@ -85,18 +81,18 @@ public class DefaultFileSystemClient
                 return new ByteArrayInputStream(buff);
             } catch (IOException ex) {
                 throw new RuntimeException(String.format(
-                        "IOException reading from file %s at offset %s size %s",
-                        filePath, offset, size), ex);
+                    "IOException reading from file %s at offset %s size %s",
+                    filePath, offset, size), ex);
             }
         } catch (IOException ex) {
             throw new RuntimeException(String.format(
-                    "Could not resolve the FileSystem for path %s", filePath), ex);
+                "Could not resolve the FileSystem for path %s", filePath), ex);
         }
     }
 
     @Override
     public CloseableIterator<ByteArrayInputStream> readFiles(
-            CloseableIterator<Tuple2<String, Tuple2<Integer, Integer>>> iter) {
+        CloseableIterator<Tuple2<String, Tuple2<Integer, Integer>>> iter) {
         return iter.map(elem -> getStream(elem._1, elem._2._1, elem._2._2));
     }
 }

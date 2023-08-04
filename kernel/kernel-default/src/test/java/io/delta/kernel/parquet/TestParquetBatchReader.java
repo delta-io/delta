@@ -53,8 +53,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.DefaultKernelTestUtils;
 import io.delta.kernel.utils.Tuple2;
 
-public class TestParquetBatchReader
-{
+public class TestParquetBatchReader {
     /**
      * Test reads data from a Parquet file with data of various combinations of data types supported
      * byt Delta Lake table protocol. Code for generating the golden parquet files is located:
@@ -95,15 +94,13 @@ public class TestParquetBatchReader
 
     @Test
     public void readAllTypesOfData()
-        throws Exception
-    {
+        throws Exception {
         readAndVerify(ALL_TYPES_FILE_SCHEMA, 90 /* readBatchSize */);
     }
 
     @Test
     public void readSubsetOfColumns()
-        throws Exception
-    {
+        throws Exception {
         StructType readSchema = new StructType()
             .add("byteType", ByteType.INSTANCE)
             .add("booleanType", BooleanType.INSTANCE)
@@ -122,8 +119,7 @@ public class TestParquetBatchReader
 
     @Test
     public void readSubsetOfColumnsWithMissingColumnsInFile()
-        throws Exception
-    {
+        throws Exception {
         StructType readSchema = new StructType()
             .add("booleanType", BooleanType.INSTANCE)
             .add("integerType", IntegerType.INSTANCE)
@@ -140,8 +136,7 @@ public class TestParquetBatchReader
         readAndVerify(readSchema, 23 /* readBatchSize */);
     }
 
-    private static Configuration newConf(Optional<Integer> batchSize)
-    {
+    private static Configuration newConf(Optional<Integer> batchSize) {
         Configuration conf = new Configuration();
         if (batchSize.isPresent()) {
             conf.set("delta.kernel.default.parquet.reader.batch-size", batchSize.get().toString());
@@ -150,8 +145,7 @@ public class TestParquetBatchReader
     }
 
     private static void readAndVerify(StructType readSchema, int readBatchSize)
-        throws Exception
-    {
+        throws Exception {
         ParquetBatchReader batchReader =
             new ParquetBatchReader(newConf(Optional.of(readBatchSize)));
         List<ColumnarBatch> batches =
@@ -165,8 +159,7 @@ public class TestParquetBatchReader
     private static List<ColumnarBatch> readAsBatches(
         ParquetBatchReader parquetReader,
         String path,
-        StructType readSchema) throws Exception
-    {
+        StructType readSchema) throws Exception {
         List<ColumnarBatch> batches = new ArrayList<>();
         try (CloseableIterator<ColumnarBatch> dataIter = parquetReader.read(path, readSchema)) {
             while (dataIter.hasNext()) {
@@ -179,8 +172,7 @@ public class TestParquetBatchReader
     private static void verifyRowFromAllTypesFile(
         StructType readSchema,
         List<ColumnarBatch> batches,
-        int rowId)
-    {
+        int rowId) {
         Tuple2<ColumnarBatch, Integer> batchWithIdx = getBatchForRowId(batches, rowId);
         int ordinal = 0;
         for (StructField structField : readSchema.fields()) {
@@ -191,8 +183,7 @@ public class TestParquetBatchReader
                     Boolean expValue = (rowId % 87 != 0) ? rowId % 2 == 0 : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else {
+                    } else {
                         assertEquals(expValue.booleanValue(), vector.getBoolean(batchWithIdx._2));
                     }
                     break;
@@ -201,8 +192,7 @@ public class TestParquetBatchReader
                     Byte expValue = (rowId % 72 != 0) ? (byte) rowId : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else {
+                    } else {
                         assertEquals(expValue.byteValue(), vector.getByte(batchWithIdx._2));
                     }
                     break;
@@ -211,8 +201,7 @@ public class TestParquetBatchReader
                     Short expValue = (rowId % 56 != 0) ? (short) rowId : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else {
+                    } else {
                         assertEquals(expValue.shortValue(), vector.getShort(batchWithIdx._2));
                     }
                     break;
@@ -224,8 +213,7 @@ public class TestParquetBatchReader
                         new Date(rowId * 20000000L).toLocalDate() : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else {
+                    } else {
                         long numDaysSinceEpoch = ChronoUnit.DAYS.between(EPOCH, expValue);
                         assertEquals(numDaysSinceEpoch, vector.getInt(batchWithIdx._2));
                     }
@@ -235,8 +223,7 @@ public class TestParquetBatchReader
                     Integer expValue = (rowId % 23 != 0) ? rowId : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else {
+                    } else {
                         assertEquals(expValue.intValue(), vector.getInt(batchWithIdx._2));
                     }
                     break;
@@ -245,8 +232,7 @@ public class TestParquetBatchReader
                     Long expValue = (rowId % 25 != 0) ? rowId + 1L : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else {
+                    } else {
                         assertEquals(expValue.longValue(), vector.getLong(batchWithIdx._2));
                     }
                     break;
@@ -255,8 +241,7 @@ public class TestParquetBatchReader
                     Float expValue = (rowId % 28 != 0) ? (rowId * 0.234f) : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else {
+                    } else {
                         assertEquals(expValue.floatValue(), vector.getFloat(batchWithIdx._2), 0.02);
                     }
                     break;
@@ -265,8 +250,7 @@ public class TestParquetBatchReader
                     Double expValue = (rowId % 54 != 0) ? (rowId * 234234.23d) : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else {
+                    } else {
                         assertEquals(expValue.doubleValue(), vector.getDouble(batchWithIdx._2),
                             0.02);
                     }
@@ -276,8 +260,7 @@ public class TestParquetBatchReader
                     String expValue = (rowId % 57 != 0) ? Integer.toString(rowId) : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else {
+                    } else {
                         assertEquals(expValue, vector.getString(batchWithIdx._2));
                     }
                     break;
@@ -286,8 +269,7 @@ public class TestParquetBatchReader
                     byte[] expValue = (rowId % 59 != 0) ? Integer.toString(rowId).getBytes() : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else {
+                    } else {
                         assertArrayEquals(expValue, vector.getBinary(batchWithIdx._2));
                     }
                     break;
@@ -309,8 +291,7 @@ public class TestParquetBatchReader
                     if (expAcValNull) {
                         assertTrue(struct.isNullAt(1));
                         assertNull(acVal);
-                    }
-                    else {
+                    } else {
                         int actAcaVal = acVal.getInt(0);
                         assertEquals(rowId, actAcaVal);
                     }
@@ -320,15 +301,13 @@ public class TestParquetBatchReader
                     boolean expIsNull = rowId % 25 == 0;
                     if (expIsNull) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else if (rowId % 29 == 0) {
+                    } else if (rowId % 29 == 0) {
                         // TODO: Parquet group converters calls to start/end don't differentiate
                         // between empty array or null array. The current reader always treats both
                         // of them nulls.
                         // assertEquals(Collections.emptyList(), vector.getArray(batchWithIdx._2));
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else {
+                    } else {
                         List<Integer> expArray = Arrays.asList(rowId, null, rowId + 1);
                         List<Integer> actArray = vector.getArray(batchWithIdx._2);
                         assertEquals(expArray, actArray);
@@ -348,15 +327,13 @@ public class TestParquetBatchReader
                     boolean expIsNull = rowId % 28 == 0;
                     if (expIsNull) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else if (rowId % 30 == 0) {
+                    } else if (rowId % 30 == 0) {
                         // TODO: Parquet group converters calls to start/end don't differentiate
                         // between empty map or null map. The current reader always treats both
                         // of them nulls.
                         // assertEquals(Collections.emptyList(), vector.getMap(batchWithIdx._2));
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else {
+                    } else {
                         Map<Integer, Long> actValue = vector.getMap(batchWithIdx._2);
                         assertTrue(actValue.size() == 2);
 
@@ -389,8 +366,7 @@ public class TestParquetBatchReader
                     Row actValue0 = actValue.get(key0);
                     if (expValue0IsNull) {
                         assertNull(actValue0);
-                    }
-                    else {
+                    } else {
                         Long actValue0Member = actValue0.getLong(0);
                         Long expValue0Member = rowId * 20L;
                         assertEquals(expValue0Member, actValue0Member);
@@ -410,8 +386,7 @@ public class TestParquetBatchReader
     }
 
     private static Tuple2<ColumnarBatch, Integer> getBatchForRowId(
-        List<ColumnarBatch> batches, int rowId)
-    {
+        List<ColumnarBatch> batches, int rowId) {
         int indexStart = 0;
         for (ColumnarBatch batch : batches) {
             if (indexStart <= rowId && rowId < indexStart + batch.getSize()) {
@@ -428,13 +403,13 @@ public class TestParquetBatchReader
         String path = DefaultKernelTestUtils.getTestResourceFilePath("parquet-basic-row-indexes");
         File dir = new File(URI.create(path).getPath());
         List<String> parquetFiles = Arrays.stream(Objects.requireNonNull(dir.listFiles()))
-                .filter(file -> file.getName().endsWith(".parquet"))
-                .map(File::getAbsolutePath)
-                .collect(Collectors.toList());
+            .filter(file -> file.getName().endsWith(".parquet"))
+            .map(File::getAbsolutePath)
+            .collect(Collectors.toList());
 
         StructType readSchema = new StructType()
-                .add("id", LongType.INSTANCE)
-                .add(StructField.ROW_INDEX_COLUMN);
+            .add("id", LongType.INSTANCE)
+            .add(StructField.ROW_INDEX_COLUMN);
 
         Configuration conf = new Configuration();
         // Set the batch size small enough so there will be multiple batches
@@ -445,7 +420,7 @@ public class TestParquetBatchReader
             try (CloseableIterator<ColumnarBatch> iter = reader.read(filePath, readSchema)) {
                 while (iter.hasNext()) {
                     ColumnarBatch batch = iter.next();
-                    for (int i = 0; i < batch.getSize(); i ++) {
+                    for (int i = 0; i < batch.getSize(); i++) {
                         long id = batch.getColumnVector(0).getLong(i);
                         long rowIndex = batch.getColumnVector(1).getLong(i);
                         assertEquals(id % 10, rowIndex);
@@ -456,12 +431,12 @@ public class TestParquetBatchReader
 
         // File with multiple row-groups [0, 20000) where rowIndex = id
         String filePath = DefaultKernelTestUtils.getTestResourceFilePath(
-                "parquet/row_index_multiple_row_groups.parquet");
+            "parquet/row_index_multiple_row_groups.parquet");
         reader = new ParquetBatchReader(new Configuration());
         try (CloseableIterator<ColumnarBatch> iter = reader.read(filePath, readSchema)) {
             while (iter.hasNext()) {
                 ColumnarBatch batch = iter.next();
-                for (int i = 0; i < batch.getSize(); i ++) {
+                for (int i = 0; i < batch.getSize(); i++) {
                     long id = batch.getColumnVector(0).getLong(i);
                     long rowIndex = batch.getColumnVector(1).getLong(i);
                     assertEquals(id, rowIndex);

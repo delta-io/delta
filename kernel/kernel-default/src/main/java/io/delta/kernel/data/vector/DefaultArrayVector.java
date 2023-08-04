@@ -28,19 +28,19 @@ import static io.delta.kernel.DefaultKernelUtils.checkArgument;
  * {@link io.delta.kernel.data.ColumnVector} implementation for array type data.
  */
 public class DefaultArrayVector
-    extends AbstractColumnVector
-{
+    extends AbstractColumnVector {
     private final int[] offsets;
     private final ColumnVector elementVector;
 
     /**
      * Create an instance of {@link io.delta.kernel.data.ColumnVector} for array type.
      *
-     * @param size number of elements in the vector.
-     * @param nullability Optional array of nullability value for each element in the vector.
-     * All values in the vector are considered non-null when parameter is empty.
-     * @param offsets Offsets into element vector on where the index of particular row
-     * values start and end.
+     * @param size          number of elements in the vector.
+     * @param nullability   Optional array of nullability value for each element in the vector.
+     *                      All values in the vector are considered non-null when parameter is
+     *                      empty.
+     * @param offsets       Offsets into element vector on where the index of particular row
+     *                      values start and end.
      * @param elementVector Vector containing the array elements.
      */
     public DefaultArrayVector(
@@ -48,8 +48,7 @@ public class DefaultArrayVector
         DataType type,
         Optional<boolean[]> nullability,
         int[] offsets,
-        ColumnVector elementVector)
-    {
+        ColumnVector elementVector) {
         super(size, type, nullability);
         checkArgument(offsets.length >= size + 1, "invalid offset array size");
         this.offsets = requireNonNull(offsets, "offsets is null");
@@ -64,8 +63,7 @@ public class DefaultArrayVector
      * @return
      */
     @Override
-    public <T> List<T> getArray(int rowId)
-    {
+    public <T> List<T> getArray(int rowId) {
         if (isNullAt(rowId)) {
             return null;
         }

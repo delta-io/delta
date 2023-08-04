@@ -40,14 +40,12 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.*;
 import static io.delta.kernel.DefaultKernelUtils.daysSinceEpoch;
 
-public class TestDefaultExpressionHandler
-{
+public class TestDefaultExpressionHandler {
     /**
      * Evaluate literal expressions. This is used to populate the partition column vectors.
      */
     @Test
-    public void evalLiterals()
-    {
+    public void evalLiterals() {
         StructType inputSchema = new StructType();
         ColumnVector[] data = new ColumnVector[0];
 
@@ -76,7 +74,7 @@ public class TestDefaultExpressionHandler
         testCases.add(Literal.of(new Timestamp(2342342342232L)));
         testCases.add(Literal.ofNull(TimestampType.INSTANCE));
 
-        ColumnarBatch[] inputBatches = new ColumnarBatch[] {
+        ColumnarBatch[] inputBatches = new ColumnarBatch[]{
             new DefaultColumnarBatch(0, inputSchema, data),
             new DefaultColumnarBatch(25, inputSchema, data),
             new DefaultColumnarBatch(128, inputSchema, data)
@@ -97,41 +95,30 @@ public class TestDefaultExpressionHandler
                     Object expRowValue = expression.value();
                     if (outputDataType instanceof BooleanType) {
                         assertEquals(expRowValue, outputVector.getBoolean(rowId));
-                    }
-                    else if (outputDataType instanceof ByteType) {
+                    } else if (outputDataType instanceof ByteType) {
                         assertEquals(expRowValue, outputVector.getByte(rowId));
-                    }
-                    else if (outputDataType instanceof ShortType) {
+                    } else if (outputDataType instanceof ShortType) {
                         assertEquals(expRowValue, outputVector.getShort(rowId));
-                    }
-                    else if (outputDataType instanceof IntegerType) {
+                    } else if (outputDataType instanceof IntegerType) {
                         assertEquals(expRowValue, outputVector.getInt(rowId));
-                    }
-                    else if (outputDataType instanceof LongType) {
+                    } else if (outputDataType instanceof LongType) {
                         assertEquals(expRowValue, outputVector.getLong(rowId));
-                    }
-                    else if (outputDataType instanceof FloatType) {
+                    } else if (outputDataType instanceof FloatType) {
                         assertEquals(expRowValue, outputVector.getFloat(rowId));
-                    }
-                    else if (outputDataType instanceof DoubleType) {
+                    } else if (outputDataType instanceof DoubleType) {
                         assertEquals(expRowValue, outputVector.getDouble(rowId));
-                    }
-                    else if (outputDataType instanceof StringType) {
+                    } else if (outputDataType instanceof StringType) {
                         assertEquals(expRowValue, outputVector.getString(rowId));
-                    }
-                    else if (outputDataType instanceof BinaryType) {
+                    } else if (outputDataType instanceof BinaryType) {
                         assertEquals(expRowValue, outputVector.getBinary(rowId));
-                    }
-                    else if (outputDataType instanceof DateType) {
+                    } else if (outputDataType instanceof DateType) {
                         assertEquals(
                             daysSinceEpoch((Date) expRowValue), outputVector.getInt(rowId));
-                    }
-                    else if (outputDataType instanceof TimestampType) {
+                    } else if (outputDataType instanceof TimestampType) {
                         Timestamp timestamp = (Timestamp) expRowValue;
                         long micros = timestamp.getTime() * 1000;
                         assertEquals(micros, outputVector.getLong(rowId));
-                    }
-                    else {
+                    } else {
                         throw new UnsupportedOperationException(
                             "unsupported output type encountered: " + outputDataType);
                     }
@@ -141,8 +128,7 @@ public class TestDefaultExpressionHandler
     }
 
     @Test
-    public void evalBooleanExpressionSimple()
-    {
+    public void evalBooleanExpressionSimple() {
         Expression expression = new EqualTo(
             new Column(0, "intType", IntegerType.INSTANCE),
             Literal.of(3));
@@ -150,7 +136,7 @@ public class TestDefaultExpressionHandler
         for (int size : Arrays.asList(26, 234, 567)) {
             StructType inputSchema = new StructType()
                 .add("intType", IntegerType.INSTANCE);
-            ColumnVector[] data = new ColumnVector[] {
+            ColumnVector[] data = new ColumnVector[]{
                 intVector(size)
             };
 
@@ -161,8 +147,7 @@ public class TestDefaultExpressionHandler
                 if (data[0].isNullAt(rowId)) {
                     // expect the output to be null as well
                     assertTrue(output.isNullAt(rowId));
-                }
-                else {
+                } else {
                     assertFalse(output.isNullAt(rowId));
                     boolean expValue = rowId % 7 == 3;
                     assertEquals(expValue, output.getBoolean(rowId));
@@ -172,8 +157,7 @@ public class TestDefaultExpressionHandler
     }
 
     @Test
-    public void evalBooleanExpressionComplex()
-    {
+    public void evalBooleanExpressionComplex() {
         Expression expression = new And(
             new EqualTo(new Column(0, "intType", IntegerType.INSTANCE), Literal.of(3)),
             new EqualTo(new Column(1, "longType", LongType.INSTANCE), Literal.of(4L))
@@ -183,7 +167,7 @@ public class TestDefaultExpressionHandler
             StructType inputSchema = new StructType()
                 .add("intType", IntegerType.INSTANCE)
                 .add("longType", LongType.INSTANCE);
-            ColumnVector[] data = new ColumnVector[] {
+            ColumnVector[] data = new ColumnVector[]{
                 intVector(size),
                 longVector(size),
             };
@@ -195,8 +179,7 @@ public class TestDefaultExpressionHandler
                 if (data[0].isNullAt(rowId) || data[1].isNullAt(rowId)) {
                     // expect the output to be null as well
                     assertTrue(output.isNullAt(rowId));
-                }
-                else {
+                } else {
                     assertFalse(output.isNullAt(rowId));
                     boolean expValue = (rowId % 7 == 3) && (rowId * 200L / 87 == 4);
                     assertEquals(expValue, output.getBoolean(rowId));
@@ -206,23 +189,20 @@ public class TestDefaultExpressionHandler
     }
 
     private static ColumnVector eval(
-        StructType inputSchema, ColumnarBatch input, Expression expression)
-    {
+        StructType inputSchema, ColumnarBatch input, Expression expression) {
         return new DefaultExpressionHandler()
             .getEvaluator(inputSchema, expression)
             .eval(input);
     }
 
-    private static ColumnVector intVector(int size)
-    {
+    private static ColumnVector intVector(int size) {
         int[] values = new int[size];
         boolean[] nullability = new boolean[size];
 
         for (int rowId = 0; rowId < size; rowId++) {
             if (rowId % 5 == 0) {
                 nullability[rowId] = true;
-            }
-            else {
+            } else {
                 values[rowId] = rowId % 7;
             }
         }
@@ -231,16 +211,14 @@ public class TestDefaultExpressionHandler
             IntegerType.INSTANCE, size, Optional.of(nullability), values);
     }
 
-    private static ColumnVector longVector(int size)
-    {
+    private static ColumnVector longVector(int size) {
         long[] values = new long[size];
         boolean[] nullability = new boolean[size];
 
         for (int rowId = 0; rowId < size; rowId++) {
             if (rowId % 5 == 0) {
                 nullability[rowId] = true;
-            }
-            else {
+            } else {
                 values[rowId] = rowId * 200L % 87;
             }
         }

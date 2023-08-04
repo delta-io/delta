@@ -40,18 +40,17 @@ import static io.delta.kernel.utils.DefaultKernelTestUtils.getTestResourceFilePa
  * implementation ({@link DefaultTableClient})
  * <p>
  * It uses golden tables generated using the source code here:
- * https://github.com/delta-io/delta/blob/master/connectors/golden-tables/src/test/scala/io/delta/golden/GoldenTables.scala
+ * https://github.com/delta-io/delta/blob/master/connectors/golden-tables/src/test/scala/io/delta
+ * /golden/GoldenTables.scala
  */
 public class TestDeltaTableReads
-    extends BaseIntegration
-{
+    extends BaseIntegration {
     @Rule
     public ExpectedException expectedEx = ExpectedException.none();
 
     @Test
     public void tablePrimitives()
-        throws Exception
-    {
+        throws Exception {
         String tablePath = goldenTablePath("data-reader-primitives");
         Snapshot snapshot = snapshot(tablePath);
         StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
@@ -71,7 +70,7 @@ public class TestDeltaTableReads
                 (float) i,
                 (double) i,
                 String.valueOf(i),
-                new byte[] {(byte) i, (byte) i}
+                new byte[]{(byte) i, (byte) i}
             );
         }
 
@@ -81,8 +80,7 @@ public class TestDeltaTableReads
 
     @Test
     public void partitionedTable()
-        throws Exception
-    {
+        throws Exception {
         String tablePath = goldenTablePath("data-reader-partition-values");
         Snapshot snapshot = snapshot(tablePath);
         StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
@@ -163,8 +161,7 @@ public class TestDeltaTableReads
 
     @Test
     public void tableWithComplexArrayTypes()
-        throws Exception
-    {
+        throws Exception {
         String tablePath = goldenTablePath("data-reader-array-complex-objects");
         Snapshot snapshot = snapshot(tablePath);
         StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
@@ -205,14 +202,12 @@ public class TestDeltaTableReads
                             Arrays.asList(i, i, i)))
                 ),
                 Arrays.asList(
-                    new HashMap()
-                    {
+                    new HashMap() {
                         {
                             put(String.valueOf(index), (long) index);
                         }
                     },
-                    new HashMap()
-                    {
+                    new HashMap() {
                         {
                             put(String.valueOf(index), (long) index);
                         }
@@ -232,8 +227,7 @@ public class TestDeltaTableReads
 
     @Test
     public void tableWithComplexMapTypes()
-        throws Exception
-    {
+        throws Exception {
         String tablePath = goldenTablePath("data-reader-map");
         Snapshot snapshot = snapshot(tablePath);
         StructType readSchema = new StructType()
@@ -256,32 +250,27 @@ public class TestDeltaTableReads
             final int index = i;
             builder.addRow(
                 i,
-                new HashMap()
-                {
+                new HashMap() {
                     {
                         put(index, index);
                     }
                 },
-                new HashMap()
-                {
+                new HashMap() {
                     {
                         put((long) index, (byte) index);
                     }
                 },
-                new HashMap()
-                {
+                new HashMap() {
                     {
                         put((short) index, index % 2 == 0);
                     }
                 },
-                new HashMap()
-                {
+                new HashMap() {
                     {
                         put((float) index, (double) index);
                     }
                 },
-                new HashMap()
-                {
+                new HashMap() {
                     {
                         StructType elemType = new StructType().add("val", IntegerType.INSTANCE);
                         put(
@@ -303,8 +292,7 @@ public class TestDeltaTableReads
 
     @Test
     public void tableWithCheckpoint()
-        throws Exception
-    {
+        throws Exception {
         String tablePath = getTestResourceFilePath("basic-with-checkpoint");
         Snapshot snapshot = snapshot(tablePath);
         StructType readSchema = snapshot.getSchema(tableClient);
@@ -321,8 +309,7 @@ public class TestDeltaTableReads
 
     @Test
     public void tableWithNameColumnMappingMode()
-        throws Exception
-    {
+        throws Exception {
         String tablePath = getTestResourceFilePath("data-reader-primitives-column-mapping-name");
         Snapshot snapshot = snapshot(tablePath);
         StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
@@ -342,7 +329,7 @@ public class TestDeltaTableReads
                 (float) i,
                 (double) i,
                 String.valueOf(i),
-                new byte[] {(byte) i, (byte) i}
+                new byte[]{(byte) i, (byte) i}
             );
         }
 
@@ -352,8 +339,7 @@ public class TestDeltaTableReads
 
     @Test
     public void partitionedTableWithColumnMapping()
-        throws Exception
-    {
+        throws Exception {
         String tablePath =
             getTestResourceFilePath("data-reader-partition-values-column-mapping-name");
         Snapshot snapshot = snapshot(tablePath);
@@ -380,8 +366,7 @@ public class TestDeltaTableReads
 
     @Test
     public void columnMappingIdModeThrowsError()
-        throws Exception
-    {
+        throws Exception {
         expectedEx.expect(UnsupportedOperationException.class);
         expectedEx.expectMessage("Unsupported column mapping mode: id");
 
@@ -390,13 +375,11 @@ public class TestDeltaTableReads
         readSnapshot(snapshot.getSchema(tableClient), snapshot);
     }
 
-    private StructType structTypeOf(StructType structType, String colName)
-    {
+    private StructType structTypeOf(StructType structType, String colName) {
         return (StructType) structType.get(colName).getDataType();
     }
 
-    private StructType arrayElemStructTypeOf(StructType structType, String colName)
-    {
+    private StructType arrayElemStructTypeOf(StructType structType, String colName) {
         return (StructType) ((ArrayType) structType.get(colName).getDataType()).getElementType();
     }
 }

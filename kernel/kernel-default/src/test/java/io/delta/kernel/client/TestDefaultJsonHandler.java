@@ -42,10 +42,8 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 import static io.delta.kernel.utils.DefaultKernelTestUtils.getTestResourceFilePath;
 
-public class TestDefaultJsonHandler
-{
-    private static final JsonHandler JSON_HANDLER = new DefaultJsonHandler(new Configuration()
-    {
+public class TestDefaultJsonHandler {
+    private static final JsonHandler JSON_HANDLER = new DefaultJsonHandler(new Configuration() {
         {
             set("delta.kernel.default.json.reader.batch-size", "1");
         }
@@ -55,11 +53,10 @@ public class TestDefaultJsonHandler
 
     @Test
     public void contextualizeFiles()
-        throws Exception
-    {
+        throws Exception {
         try (CloseableIterator<Row> inputScanFiles = testFiles();
-            CloseableIterator<FileReadContext> fileReadContexts =
-                JSON_HANDLER.contextualizeFileReads(testFiles(), Literal.TRUE)) {
+             CloseableIterator<FileReadContext> fileReadContexts =
+                 JSON_HANDLER.contextualizeFileReads(testFiles(), Literal.TRUE)) {
             while (inputScanFiles.hasNext() || fileReadContexts.hasNext()) {
                 assertEquals(inputScanFiles.hasNext(), fileReadContexts.hasNext());
                 Row inputScanFile = inputScanFiles.next();
@@ -71,8 +68,7 @@ public class TestDefaultJsonHandler
 
     @Test
     public void readJsonFiles()
-        throws Exception
-    {
+        throws Exception {
         try (
             CloseableIterator<FileDataReadResult> data =
                 JSON_HANDLER.readJsonFiles(
@@ -119,8 +115,7 @@ public class TestDefaultJsonHandler
 
     @Test
     public void parseJsonContent()
-        throws Exception
-    {
+        throws Exception {
         String input =
             "{" +
                 "   \"path\":" +
@@ -148,8 +143,7 @@ public class TestDefaultJsonHandler
                 row.getString(0)
             );
 
-            Map<String, String> expPartitionValues = new HashMap<String, String>()
-            {
+            Map<String, String> expPartitionValues = new HashMap<String, String>() {
                 {
                     put("p1", "0");
                     put("p2", "str");
@@ -162,8 +156,7 @@ public class TestDefaultJsonHandler
     }
 
     private static CloseableIterator<Row> testFiles()
-        throws Exception
-    {
+        throws Exception {
         String listFrom = getTestResourceFilePath("json-files/1.json");
         CloseableIterator<FileStatus> list = FS_CLIENT.listFrom(listFrom);
         return list.map(fileStatus ->
@@ -177,8 +170,7 @@ public class TestDefaultJsonHandler
         );
     }
 
-    private static ObjectNode addFileJsonFromPath(String path)
-    {
+    private static ObjectNode addFileJsonFromPath(String path) {
         ObjectMapper objectMapper = new ObjectMapper();
         ObjectNode object = objectMapper.createObjectNode();
         object.put("path", path);
@@ -187,8 +179,7 @@ public class TestDefaultJsonHandler
         return object;
     }
 
-    private static void compareScanFileRows(Row expected, Row actual)
-    {
+    private static void compareScanFileRows(Row expected, Row actual) {
         // basically compare the paths
         assertEquals(expected.getString(0), actual.getString(0));
     }

@@ -24,8 +24,7 @@ import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 
 public class DefaultColumnarBatch
-    implements ColumnarBatch
-{
+    implements ColumnarBatch {
     private final int size;
     private final StructType schema;
     private final List<ColumnVector> columnVectors;
@@ -34,30 +33,26 @@ public class DefaultColumnarBatch
         int size,
         StructType schema,
         ColumnVector[] columnVectors
-    )
-    {
+    ) {
         this.schema = schema;
         this.size = size;
         this.columnVectors = Collections.unmodifiableList(Arrays.asList(columnVectors));
     }
 
     @Override
-    public StructType getSchema()
-    {
+    public StructType getSchema() {
         return schema;
     }
 
     @Override
-    public ColumnVector getColumnVector(int ordinal)
-    {
+    public ColumnVector getColumnVector(int ordinal) {
         checkColumnOrdinal(ordinal);
         return columnVectors.get(ordinal);
     }
 
     @Override
     public ColumnarBatch withNewColumn(int ordinal, StructField structField,
-        ColumnVector columnVector)
-    {
+                                       ColumnVector columnVector) {
         if (ordinal < 0 || ordinal > columnVectors.size()) {
             throw new IllegalArgumentException("Invalid ordinal: " + ordinal);
         }
@@ -83,8 +78,7 @@ public class DefaultColumnarBatch
     }
 
     @Override
-    public ColumnarBatch withDeletedColumnAt(int ordinal)
-    {
+    public ColumnarBatch withDeletedColumnAt(int ordinal) {
         if (ordinal < 0 || ordinal > columnVectors.size()) {
             throw new IllegalArgumentException("Invalid ordinal: " + ordinal);
         }
@@ -103,8 +97,7 @@ public class DefaultColumnarBatch
     }
 
     @Override
-    public ColumnarBatch withNewSchema(StructType newSchema)
-    {
+    public ColumnarBatch withNewSchema(StructType newSchema) {
         if (!schema.equivalent(newSchema)) {
             throw new IllegalArgumentException(
                 "Given new schema data type is not same as the existing schema");
@@ -115,13 +108,11 @@ public class DefaultColumnarBatch
     }
 
     @Override
-    public int getSize()
-    {
+    public int getSize() {
         return size;
     }
 
-    private void checkColumnOrdinal(int ordinal)
-    {
+    private void checkColumnOrdinal(int ordinal) {
         if (ordinal < 0 || ordinal >= columnVectors.size()) {
             throw new IllegalArgumentException("invalid column ordinal");
         }

@@ -25,20 +25,18 @@ import static io.delta.kernel.DefaultKernelUtils.checkArgument;
  * {@link io.delta.kernel.data.ColumnVector} implementation for short type data.
  */
 public class DefaultShortVector
-    extends AbstractColumnVector
-{
+    extends AbstractColumnVector {
     private final short[] values;
 
     /**
      * Create an instance of {@link io.delta.kernel.data.ColumnVector} for short type.
      *
-     * @param size number of elements in the vector.
+     * @param size        number of elements in the vector.
      * @param nullability Optional array of nullability value for each element in the vector.
-     * All values in the vector are considered non-null when parameter is empty.
-     * @param values column vector values.
+     *                    All values in the vector are considered non-null when parameter is empty.
+     * @param values      column vector values.
      */
-    public DefaultShortVector(int size, Optional<boolean[]> nullability, short[] values)
-    {
+    public DefaultShortVector(int size, Optional<boolean[]> nullability, short[] values) {
         super(size, ShortType.INSTANCE, nullability);
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
@@ -53,8 +51,7 @@ public class DefaultShortVector
      * @return
      */
     @Override
-    public short getShort(int rowId)
-    {
+    public short getShort(int rowId) {
         checkValidRowId(rowId);
         return values[rowId];
     }

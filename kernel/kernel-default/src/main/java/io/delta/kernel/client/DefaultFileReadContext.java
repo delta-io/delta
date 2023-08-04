@@ -20,18 +20,15 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.data.Row;
 
 public class DefaultFileReadContext
-    implements FileReadContext
-{
+    implements FileReadContext {
     private final Row scanFileRow;
 
-    public DefaultFileReadContext(Row scanFileRow)
-    {
+    public DefaultFileReadContext(Row scanFileRow) {
         this.scanFileRow = requireNonNull(scanFileRow, "scanFileRow is null");
     }
 
     @Override
-    public Row getScanFileRow()
-    {
+    public Row getScanFileRow() {
         return this.scanFileRow;
     }
 }

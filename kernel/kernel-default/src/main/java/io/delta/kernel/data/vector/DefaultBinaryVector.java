@@ -29,18 +29,16 @@ import static io.delta.kernel.DefaultKernelUtils.checkArgument;
  * {@link io.delta.kernel.data.ColumnVector} implementation for binary type data.
  */
 public class DefaultBinaryVector
-    extends AbstractColumnVector
-{
+    extends AbstractColumnVector {
     private final byte[][] values;
 
     /**
      * Create an instance of {@link io.delta.kernel.data.ColumnVector} for binary type.
      *
-     * @param size number of elements in the vector.
+     * @param size   number of elements in the vector.
      * @param values column vector values.
      */
-    public DefaultBinaryVector(DataType dataType, int size, byte[][] values)
-    {
+    public DefaultBinaryVector(DataType dataType, int size, byte[][] values) {
         super(size, dataType, Optional.empty());
         checkArgument(dataType instanceof StringType || dataType instanceof BinaryType,
             "invalid type for binary vector: " + dataType);
@@ -50,8 +48,7 @@ public class DefaultBinaryVector
     }
 
     @Override
-    public boolean isNullAt(int rowId)
-    {
+    public boolean isNullAt(int rowId) {
         checkValidRowId(rowId);
         return values[rowId] == null;
     }
@@ -65,8 +62,7 @@ public class DefaultBinaryVector
      * @return
      */
     @Override
-    public String getString(int rowId)
-    {
+    public String getString(int rowId) {
         if (!(getDataType() instanceof StringType)) {
             throw unsupportedDataAccessException("string");
         }
@@ -87,8 +83,7 @@ public class DefaultBinaryVector
      * @return
      */
     @Override
-    public byte[] getBinary(int rowId)
-    {
+    public byte[] getBinary(int rowId) {
         if (!(getDataType() instanceof BinaryType)) {
             throw unsupportedDataAccessException("binary");
         }
