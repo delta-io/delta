@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.data.vector;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -132,6 +133,11 @@ public abstract class AbstractColumnVector
     public String getString(int rowId)
     {
         throw unsupportedDataAccessException("string");
+    }
+
+    @Override
+    public BigDecimal getDecimal(int rowId) {
+        throw unsupportedDataAccessException("decimal");
     }
 
     @Override

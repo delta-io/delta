@@ -41,7 +41,6 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.data.vector.VectorUtils;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.DecimalType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -118,15 +117,14 @@ public abstract class BaseIntegration
 
     /**
      * Remove unsupported top level delta types in Kernel from the schema. Unsupported data types
-     * include `DECIMAL` and `TIMESTAMP`.
+     * include `TIMESTAMP`.
      */
     protected StructType removeUnsupportedType(StructType schema)
     {
         List<StructField> filterList =
             schema.fields().stream()
                 .filter(
-                    field -> !(field.getDataType() instanceof DecimalType ||
-                        field.getDataType() instanceof TimestampType)
+                    field -> !(field.getDataType() instanceof TimestampType)
                 ).collect(Collectors.toList());
 
         return new StructType(filterList);

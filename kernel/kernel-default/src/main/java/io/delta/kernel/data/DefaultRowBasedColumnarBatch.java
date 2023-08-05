@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.data;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -149,6 +150,12 @@ public class DefaultRowBasedColumnarBatch
         {
             assertValidRowId(rowId);
             return rows.get(rowId).getString(columnOrdinal);
+        }
+
+        @Override
+        public BigDecimal getDecimal(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getDecimal(columnOrdinal);
         }
 
         @Override

@@ -1,21 +1,7 @@
 package io.delta.kernel.data.vector;
 
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.BinaryType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.ByteType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.DateType;
-import io.delta.kernel.types.DoubleType;
-import io.delta.kernel.types.FloatType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.ShortType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
-import io.delta.kernel.types.TimestampType;
+import io.delta.kernel.types.*;
 
 /**
  * Utility methods for {@link io.delta.kernel.data.ColumnVector} implementations.
@@ -65,6 +51,8 @@ public class VectorUtils
             return vector.getMap(rowId);
         } else if (dataType instanceof ArrayType) {
             return vector.getArray(rowId);
+        } else if (dataType instanceof DecimalType) {
+            return vector.getDecimal(rowId);
         }
 
         throw new UnsupportedOperationException(dataType + " is not supported yet");

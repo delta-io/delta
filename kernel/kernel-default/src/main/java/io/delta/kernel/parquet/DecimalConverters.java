@@ -225,6 +225,4 @@ public class DecimalConverters {
             addDecimal(decimalFromBinary(value));
         }
     }
-
-
 }
