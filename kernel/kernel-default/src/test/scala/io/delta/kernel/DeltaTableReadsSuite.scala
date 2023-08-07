@@ -36,7 +36,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
       // kernel expects a fully qualified path
       val path = "file:" + goldenTablePath(tablePath)
-      val snapshot = latestSnapshot(path)
+      val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
 
       val result = readSnapshot(snapshot).map { row =>
         (row.getDecimal(0), row.getDecimal(1), row.getDecimal(2), row.getDecimal(3))

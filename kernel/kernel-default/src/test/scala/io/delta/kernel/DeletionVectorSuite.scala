@@ -27,7 +27,7 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
     val path = DefaultKernelTestUtils.getTestResourceFilePath("basic-dv-no-checkpoint")
     val expectedResult = Seq.range(start = 2, end = 10).toSet
 
-    val snapshot = latestSnapshot(path)
+    val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
     val result = readSnapshot(snapshot).map { row =>
       row.getLong(0)
     }
@@ -39,7 +39,7 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
     val path = DefaultKernelTestUtils.getTestResourceFilePath("basic-dv-with-checkpoint")
     val expectedResult = Seq.range(start = 0, end = 500).filter(_ % 11 != 0).toSet
 
-    val snapshot = latestSnapshot(path)
+    val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
     val result = readSnapshot(snapshot).map  { row =>
       row.getLong(0)
     }
@@ -60,7 +60,7 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
     conf.setInt("delta.kernel.default.parquet.reader.batch-size", 2)
     val tableClient = DefaultTableClient.create(conf)
 
-    val snapshot = latestSnapshot(path, tableClient = tableClient)
+    val snapshot = Table.forPath(path).getLatestSnapshot(tableClient)
     val result = readSnapshot(snapshot, tableClient = tableClient).map { row =>
       (row.getInt(0), row.getInt(1), row.getString(2))
     }
@@ -77,7 +77,7 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
         !(col1 % 2 == 0 && col1 < 30)
       }.toSet
 
-    val snapshot = latestSnapshot(path)
+    val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
     val result = readSnapshot(snapshot).map { row =>
       (row.getInt(0), row.getInt(1), row.getString(2))
     }

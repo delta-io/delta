@@ -65,10 +65,6 @@ trait TestUtils {
     }
   }
 
-  def latestSnapshot(tablePath: String, tableClient: TableClient = defaultTableClient): Snapshot = {
-    Table.forPath(tablePath).getLatestSnapshot(tableClient)
-  }
-
   def readSnapshot(
     snapshot: Snapshot,
     readSchema: StructType = null,
