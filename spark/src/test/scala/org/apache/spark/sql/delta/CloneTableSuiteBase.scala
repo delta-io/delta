@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATUR
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.util.FileNames.{checksumFile, deltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -110,6 +111,7 @@ trait CloneTableSuiteBase extends QueryTest
       target: String,
       sourceIsTable: Boolean = false,
       targetIsTable: Boolean = false,
+      sourceFormat: String = "delta",
       targetLocation: Option[String] = None,
       sourceVersion: Option[Long] = None,
       sourceTimestamp: Option[String] = None,
@@ -127,6 +129,7 @@ trait CloneTableSuiteBase extends QueryTest
           target,
           sourceIsTable,
           targetIsTable,
+          sourceFormat,
           targetLocation,
           sourceVersion,
           sourceTimestamp,
@@ -154,9 +157,11 @@ trait CloneTableSuiteBase extends QueryTest
     val allLogs = Log4jUsageLogger.track {
       f()
     }
+    val sourceIsDelta = sourceFormat == "delta"
     verifyAllCloneOperationsEmitted(allLogs,
       isReplaceOperation && isReplaceDelta,
-      commitLargeMetricsMap)
+      commitLargeMetricsMap,
+      sourceIsDelta)
 
     val blob = JsonUtils.fromJson[Map[String, Any]](allLogs
       .filter(_.metric == "tahoeEvent")
@@ -164,8 +169,8 @@ trait CloneTableSuiteBase extends QueryTest
       .filter(_.blob.contains("source"))
       .map(_.blob).last)
 
-    val sourceIdent = resolveTableIdentifier(source, Some("delta"), sourceIsTable)
-    val (cloneSource: CloneSource, sourceDf: DataFrame) = {
+    val sourceIdent = resolveTableIdentifier(source, Some(sourceFormat), sourceIsTable)
+    val (cloneSource: CloneSource, sourceDf: DataFrame) = if (sourceIsDelta) {
       val sourceLog = DeltaLog.forTable(spark, sourceIdent)
       val timeTravelSpec: Option[DeltaTimeTravelSpec] =
         if (sourceVersion.isDefined || sourceTimestamp.isDefined) {
@@ -180,6 +185,20 @@ trait CloneTableSuiteBase extends QueryTest
           snapshotToUseOpt = Some(deltaTable.snapshot),
           isTimeTravelQuery = sourceVersion.isDefined || sourceTimestamp.isDefined)))
       (new CloneDeltaSource(deltaTable), sourceData)
+    } else {
+      assert(sourceFormat == "parquet")
+      val catalogTable: Option[CatalogTable] = {
+        // Verify the source parquet table is not modified.
+        if (sourceIsTable) {
+          val catalogTable = spark.sessionState.catalog.getTableMetadata(sourceIdent)
+          assert(catalogTable.provider.contains(sourceFormat))
+          Some(spark.sessionState.catalog.getTableMetadata(sourceIdent))
+        } else {
+          assert(!new File(source, "_delta_log").exists())
+          None
+        }
+      }
+      (new CloneParquetSource(sourceIdent, catalogTable, spark), expectedDataframe)
     }
 
     val targetLog = if (targetIsTable) {
@@ -199,7 +218,7 @@ trait CloneTableSuiteBase extends QueryTest
       val catalog = CatalogManager.SESSION_CATALOG_NAME
       s"$catalog.default.$source".toLowerCase(Locale.ROOT)
     } else {
-      s"delta.`$qualifiedSourcePath`"
+      s"$sourceFormat.`$qualifiedSourcePath`"
     }
 
     val rawTarget = new Path(targetLocation.getOrElse(targetLog.dataPath.toString))
@@ -212,7 +231,7 @@ trait CloneTableSuiteBase extends QueryTest
     assert(blob("source") != null)
     val actualLogSource = blob("source").toString
     assert(actualLogSource === logSource)
-    if (source != target) {
+    if (sourceIsDelta && source != target) {
       assert(blob("sourceVersion") === sourceSnapshot.get.version)
     }
     val replacingDeltaTable = isReplaceOperation && isReplaceDelta
@@ -256,7 +275,8 @@ trait CloneTableSuiteBase extends QueryTest
   protected def verifyAllCloneOperationsEmitted(
       allLogs: Seq[UsageRecord],
       emitHandleExistingTable: Boolean,
-      commitLargeMetricsMap: Map[String, String] = Map.empty): Unit = {
+      commitLargeMetricsMap: Map[String, String] = Map.empty,
+      sourceIsDelta: Boolean = true): Unit = {
     val cloneLogs = allLogs
       .filter(_.metric === "sparkOperationDuration")
       .filter(_.opType.isDefined)
@@ -264,6 +284,7 @@ trait CloneTableSuiteBase extends QueryTest
 
 
       assert(cloneLogs.count(_.opType.get.typeName.equals("delta.clone.makeAbsolute")) == 1)
+
 
     val commitStatsUsageRecords = allLogs
       .filter(_.metric === "tahoeEvent")
@@ -321,6 +342,7 @@ trait CloneTableSuiteBase extends QueryTest
       target: String,
       sourceIsTable: Boolean = false,
       targetIsTable: Boolean = false,
+      sourceFormat: String = "delta",
       targetLocation: Option[String] = None,
       versionAsOf: Option[Long] = None,
       timestampAsOf: Option[String] = None,
@@ -724,6 +746,77 @@ trait CloneTableSuiteBase extends QueryTest
     }
   }
 
+  testAllClones("clone parquet source using path - non-partitioned") {
+    (source, clone, isShallow) =>
+      val df = spark.range(100)
+        .withColumn("key1", col("id") % 4)
+        .withColumn("key2", col("id") % 7 cast "String")
+      df.write.format("parquet").save(source)
+
+      runAndValidateClone(
+        source, clone,
+        sourceFormat = "parquet",
+        expectedDataframe = df)()
+  }
+
+  // CLONE doesn't support partitioned parquet table using path since it requires customer to
+  // provide the partition schema in the command like `CONVERT TO DELTA`, but such an option is not
+  // available in CLONE yet.
+  testAllClones("clone parquet source using path - partitioned") {
+    (source, clone, isShallow) =>
+      val df = spark.range(100)
+        .withColumn("key1", col("id") % 4)
+        .withColumn("key2", col("id") % 7 cast "String")
+      df.write.format("parquet").partitionBy("key1", "key2").save(source)
+
+      val se = intercept[SparkException] {
+        cloneTable(
+          source,
+          clone,
+          sourceFormat = "parquet")
+      }
+
+      assert(se.getMessage.contains("Expecting 0 partition column(s)"))
+  }
+
+  testAllClones("clone parquet source using table name - non-partitioned") {
+    (_, clone, isShallow) =>
+      val sourceTable = "source"
+      withTable(sourceTable) {
+        val df = spark.range(100)
+          .withColumn("key1", col("id") % 4)
+          .withColumn("key2", col("id") % 7 cast "String")
+
+        df.write.format("parquet").saveAsTable(sourceTable)
+
+        runAndValidateClone(
+          sourceTable,
+          clone,
+          sourceIsTable = true,
+          sourceFormat = "parquet",
+          expectedDataframe = df)()
+      }
+  }
+
+  testAllClones("clone parquet source using table name - partitioned") {
+    (_, clone, isShallow) =>
+      val sourceTable = "source"
+      withTable(sourceTable) {
+        val df = spark.range(100)
+          .withColumn("key1", col("id") % 4)
+          .withColumn("key2", col("id") % 7 cast "String")
+
+        df.write.format("parquet").partitionBy("key1", "key2").saveAsTable(sourceTable)
+
+        runAndValidateClone(
+          sourceTable,
+          clone,
+          sourceIsTable = true,
+          sourceFormat = "parquet",
+          expectedDataframe = df)()
+      }
+  }
+
   testAllClones("CLONE with table properties to disable DV") { (source, target, isShallow) =>
     withSQLConf(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
       spark.range(10).write.format("delta").save(source)
@@ -735,6 +828,97 @@ trait CloneTableSuiteBase extends QueryTest
         target,
         tableProperties = Map(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "false"))()
     }.getErrorClass === "DELTA_ADDING_DELETION_VECTORS_DISALLOWED"
+  }
+
+  testAllClones("clone parquet source - create or replace existing table using name",
+    TAG_CHANGE_COLUMN_MAPPING_MODE) {
+    (_, _, isShallow) =>
+      val source = "source"
+      val target = "target"
+      Seq(true, false).foreach { isCreate =>
+        withTable(source, target) {
+          val df1 = spark.range(50).toDF()
+          val df2 = spark.range(20).toDF()
+          df1.write.format("parquet").saveAsTable(source)
+          df2.write.format("delta").saveAsTable(target)
+
+          runAndValidateClone(
+            source,
+            target,
+            sourceIsTable = true,
+            targetIsTable = true,
+            isCreate = isCreate,
+            isReplaceOperation = true,
+            sourceFormat = "parquet",
+            expectedDataframe = df1)()
+        }
+      }
+  }
+
+  testAllClones("clone parquet source - create or replace existing table using path",
+    TAG_CHANGE_COLUMN_MAPPING_MODE) {
+    (_, _, isShallow) =>
+      Seq(true, false).foreach { isCreate =>
+        withTempPaths(2) { dirs =>
+          val index = if (isCreate) 1 else 0
+          val dir = dirs(index)
+          val source = new File(dir, "source").getCanonicalPath
+          val target = new File(dir, "target").getCanonicalPath
+
+          val df1 = spark.range(50).toDF()
+          val df2 = spark.range(20).toDF()
+          df1.write.format("parquet").save(source)
+          df2.write.format("delta").save(target)
+
+          runAndValidateClone(
+            source,
+            target,
+            isCreate = isCreate,
+            isReplaceOperation = true,
+            sourceFormat = "parquet",
+            expectedDataframe = df1)()
+        }
+      }
+  }
+
+  testAllClones("clone parquet source - create and update shallow cloned table",
+    TAG_CHANGE_COLUMN_MAPPING_MODE) {
+    (_, _, isShallow) =>
+      val source = "source"
+      val target = "target"
+      withTable(source, target) {
+        val df1 = spark.range(100)
+          .withColumn("key1", col("id") % 4)
+          .withColumn("key2", col("id") % 7 cast "String")
+
+        df1.write.format("parquet").partitionBy("key1", "key2").saveAsTable(source)
+
+        runAndValidateClone(
+          source,
+          target,
+          sourceIsTable = true,
+          targetIsTable = true,
+          sourceFormat = "parquet",
+          expectedDataframe = df1)()
+
+        val df2 = spark.range(100, 200)
+          .withColumn("key1", col("id") % 4)
+          .withColumn("key2", col("id") % 7 cast "String")
+
+        df2.write.format("parquet")
+          .partitionBy("key1", "key2")
+          .mode("append")
+          .saveAsTable(source)
+
+        runAndValidateClone(
+          source,
+          target,
+          sourceIsTable = true,
+          targetIsTable = true,
+          isReplaceOperation = true,
+          sourceFormat = "parquet",
+          expectedDataframe = df1.union(df2))()
+      }
   }
 
   for(targetExists <- BOOLEAN_DOMAIN)
@@ -852,6 +1036,8 @@ trait CloneTableColumnMappingSuiteBase
 
     "validate commitLarge usage metrics",
     "clones take the set transactions of the source",
+    "clone parquet source using path - non-partitioned",
+    "clone parquet source using path - partitioned",
     "block changing column mapping mode and modify max id modes under CLONE"
   )
 
