@@ -22,10 +22,8 @@ import io.delta.kernel.types.StructType;
 /**
  * Helper method to decode a Log file Action to its specific type.
  */
-public class SingleAction
-{
-    public static SingleAction fromRow(Row row, TableClient tableClient)
-    {
+public class SingleAction {
+    public static SingleAction fromRow(Row row, TableClient tableClient) {
         if (!row.isNullAt(0)) {
             final SetTransaction txn = SetTransaction.fromRow(row.getStruct(0));
             return new SingleAction(txn, null, null, null, null, null, null);
@@ -88,8 +86,7 @@ public class SingleAction
         Metadata metadata,
         Protocol protocol,
         AddCDCFile cdc,
-        CommitInfo commitInfo)
-    {
+        CommitInfo commitInfo) {
         this.txn = txn;
         this.add = add;
         this.remove = remove;
@@ -99,8 +96,7 @@ public class SingleAction
         this.commitInfo = commitInfo;
     }
 
-    public Action unwrap()
-    {
+    public Action unwrap() {
         if (txn != null) {
             return txn;
         }

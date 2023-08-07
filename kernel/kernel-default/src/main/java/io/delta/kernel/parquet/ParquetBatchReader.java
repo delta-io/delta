@@ -40,21 +40,18 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
-public class ParquetBatchReader
-{
+public class ParquetBatchReader {
     private final Configuration configuration;
     private final int maxBatchSize;
 
-    public ParquetBatchReader(Configuration configuration)
-    {
+    public ParquetBatchReader(Configuration configuration) {
         this.configuration = requireNonNull(configuration, "configuration is null");
         this.maxBatchSize =
             configuration.getInt("delta.kernel.default.parquet.reader.batch-size", 1024);
         checkArgument(maxBatchSize > 0, "invalid Parquet reader batch size: " + maxBatchSize);
     }
 
-    public CloseableIterator<ColumnarBatch> read(String path, StructType schema)
-    {
+    public CloseableIterator<ColumnarBatch> read(String path, StructType schema) {
         BatchReadSupport batchReadSupport = new BatchReadSupport(maxBatchSize, schema);
         ParquetRecordReader<Object> reader = new ParquetRecordReader<>(batchReadSupport);
 
@@ -67,40 +64,34 @@ public class ParquetBatchReader
                 configuration,
                 Reporter.NULL
             );
-        }
-        catch (IOException | InterruptedException e) {
+        } catch (IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }
 
-        return new CloseableIterator<ColumnarBatch>()
-        {
+        return new CloseableIterator<ColumnarBatch>() {
             private boolean hasNotConsumedNextElement;
 
             @Override
             public void close()
-                throws IOException
-            {
+                throws IOException {
                 reader.close();
             }
 
             @Override
-            public boolean hasNext()
-            {
+            public boolean hasNext() {
                 try {
                     if (hasNotConsumedNextElement) {
                         return true;
                     }
                     hasNotConsumedNextElement = reader.nextKeyValue();
                     return hasNotConsumedNextElement;
-                }
-                catch (IOException | InterruptedException e) {
+                } catch (IOException | InterruptedException e) {
                     throw new RuntimeException(e);
                 }
             }
 
             @Override
-            public ColumnarBatch next()
-            {
+            public ColumnarBatch next() {
                 if (!hasNotConsumedNextElement) {
                     throw new NoSuchElementException();
                 }
@@ -127,21 +118,18 @@ public class ParquetBatchReader
      * as a {@link ColumnarBatch}.
      */
     public static class BatchReadSupport
-        extends ReadSupport<Object>
-    {
+        extends ReadSupport<Object> {
         private final int maxBatchSize;
         private final StructType readSchema;
         private RowRecordCollector rowRecordCollector;
 
-        public BatchReadSupport(int maxBatchSize, StructType readSchema)
-        {
+        public BatchReadSupport(int maxBatchSize, StructType readSchema) {
             this.maxBatchSize = maxBatchSize;
             this.readSchema = requireNonNull(readSchema, "readSchema is not null");
         }
 
         @Override
-        public ReadContext init(InitContext context)
-        {
+        public ReadContext init(InitContext context) {
             return new ReadContext(
                 DefaultKernelUtils.pruneSchema(context.getFileSchema(), readSchema));
         }
@@ -151,22 +139,19 @@ public class ParquetBatchReader
             Configuration configuration,
             Map<String, String> keyValueMetaData,
             MessageType fileSchema,
-            ReadContext readContext)
-        {
+            ReadContext readContext) {
             rowRecordCollector = new RowRecordCollector(maxBatchSize, readSchema, fileSchema);
             return rowRecordCollector;
         }
 
-        public ColumnarBatch getDataAsColumnarBatch(int batchSize)
-        {
+        public ColumnarBatch getDataAsColumnarBatch(int batchSize) {
             return rowRecordCollector.getDataAsColumnarBatch(batchSize);
         }
 
         /**
          * @param fileRowIndex the file row index of the row just processed
          */
-        public void moveToNextRow(long fileRowIndex)
-        {
+        public void moveToNextRow(long fileRowIndex) {
             rowRecordCollector.moveToNextRow(fileRowIndex);
         }
     }
@@ -180,20 +165,17 @@ public class ParquetBatchReader
      * {@link ColumnarBatch} at the end.
      */
     public static class RowRecordCollector
-        extends RecordMaterializer<Object>
-    {
+        extends RecordMaterializer<Object> {
         private static final Object FAKE_ROW_RECORD = new Object();
         private final RowConverter rowRecordGroupConverter;
 
-        public RowRecordCollector(int maxBatchSize, StructType readSchema, MessageType fileSchema)
-        {
+        public RowRecordCollector(int maxBatchSize, StructType readSchema, MessageType fileSchema) {
             this.rowRecordGroupConverter =
                 new RowConverter(maxBatchSize, readSchema, fileSchema);
         }
 
         @Override
-        public void skipCurrentRecord()
-        {
+        public void skipCurrentRecord() {
             super.skipCurrentRecord();
         }
 
@@ -202,30 +184,26 @@ public class ParquetBatchReader
          * {@link #getDataAsColumnarBatch}} once a sufficient number of rows are collected.
          */
         @Override
-        public Object getCurrentRecord()
-        {
+        public Object getCurrentRecord() {
             return FAKE_ROW_RECORD;
         }
 
         @Override
-        public GroupConverter getRootConverter()
-        {
+        public GroupConverter getRootConverter() {
             return rowRecordGroupConverter;
         }
 
         /**
          * Return the data collected so far as a {@link ColumnarBatch}.
          */
-        public ColumnarBatch getDataAsColumnarBatch(int batchSize)
-        {
+        public ColumnarBatch getDataAsColumnarBatch(int batchSize) {
             return rowRecordGroupConverter.getDataAsColumnarBatch(batchSize);
         }
 
         /**
          * @param fileRowIndex the file row index of the row just processed
          */
-        public void moveToNextRow(long fileRowIndex)
-        {
+        public void moveToNextRow(long fileRowIndex) {
             rowRecordGroupConverter.moveToNextRow(fileRowIndex);
         }
     }

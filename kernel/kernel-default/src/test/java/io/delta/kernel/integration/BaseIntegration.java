@@ -53,8 +53,7 @@ import io.delta.kernel.utils.DefaultKernelTestUtils;
  * Base class containing utility method to write integration tests that read data from
  * Delta tables using the Kernel APIs.
  */
-public abstract class BaseIntegration
-{
+public abstract class BaseIntegration {
     protected TableClient tableClient = DefaultTableClient.create(
         new Configuration() {
             {
@@ -64,19 +63,16 @@ public abstract class BaseIntegration
             }
         });
 
-    protected Table table(String path) throws Exception
-    {
+    protected Table table(String path) throws Exception {
         return Table.forPath(path);
     }
 
-    protected Snapshot snapshot(String path) throws Exception
-    {
+    protected Snapshot snapshot(String path) throws Exception {
         return table(path).getLatestSnapshot(tableClient);
     }
 
     protected List<ColumnarBatch> readSnapshot(StructType readSchema, Snapshot snapshot)
-        throws Exception
-    {
+        throws Exception {
         Scan scan = snapshot.getScanBuilder(tableClient)
             .withReadSchema(tableClient, readSchema)
             .build();
@@ -89,18 +85,17 @@ public abstract class BaseIntegration
 
     protected List<ColumnarBatch> readScanFiles(
         Row scanState,
-        CloseableIterator<ColumnarBatch> scanFilesBatchIter) throws Exception
-    {
+        CloseableIterator<ColumnarBatch> scanFilesBatchIter) throws Exception {
         List<ColumnarBatch> dataBatches = new ArrayList<>();
         try {
             while (scanFilesBatchIter.hasNext()) {
                 // Read data
                 try (CloseableIterator<DataReadResult> data =
-                    Scan.readData(
-                        tableClient,
-                        scanState,
-                        scanFilesBatchIter.next().getRows(),
-                        Optional.empty())) {
+                         Scan.readData(
+                             tableClient,
+                             scanState,
+                             scanFilesBatchIter.next().getRows(),
+                             Optional.empty())) {
                     while (data.hasNext()) {
                         DataReadResult dataReadResult = data.next();
                         assertFalse(dataReadResult.getSelectionVector().isPresent());
@@ -108,8 +103,7 @@ public abstract class BaseIntegration
                     }
                 }
             }
-        }
-        finally {
+        } finally {
             scanFilesBatchIter.close();
         }
 
@@ -120,8 +114,7 @@ public abstract class BaseIntegration
      * Remove unsupported top level delta types in Kernel from the schema. Unsupported data types
      * include `DECIMAL` and `TIMESTAMP`.
      */
-    protected StructType removeUnsupportedType(StructType schema)
-    {
+    protected StructType removeUnsupportedType(StructType schema) {
         List<StructField> filterList =
             schema.fields().stream()
                 .filter(
@@ -133,8 +126,7 @@ public abstract class BaseIntegration
     }
 
     protected void compareEqualUnorderd(ColumnarBatch expDataBatch,
-        List<ColumnarBatch> actDataBatches)
-    {
+                                        List<ColumnarBatch> actDataBatches) {
         Set<Integer> expDataRowsMatched = new HashSet<>();
         for (int actDataBatchIdx = 0; actDataBatchIdx < actDataBatches.size(); actDataBatchIdx++) {
             ColumnarBatch actDataBatch = actDataBatches.get(actDataBatchIdx);
@@ -171,8 +163,7 @@ public abstract class BaseIntegration
         ColumnarBatch expDataBatch,
         int expRowId,
         ColumnarBatch actDataBatch,
-        int actRowId)
-    {
+        int actRowId) {
         StructType readSchema = expDataBatch.getSchema();
 
         for (int fieldId = 0; fieldId < readSchema.length(); fieldId++) {
@@ -192,8 +183,7 @@ public abstract class BaseIntegration
         return true;
     }
 
-    protected boolean compareRows(Row exp, Row act)
-    {
+    protected boolean compareRows(Row exp, Row act) {
         assertEquals(exp.getSchema(), act.getSchema());
         for (int fieldId = 0; fieldId < exp.getSchema().length(); fieldId++) {
             DataType fileDataType = exp.getSchema().at(fieldId).getDataType();
@@ -208,8 +198,7 @@ public abstract class BaseIntegration
         return true;
     }
 
-    protected <T> boolean compareArrays(ArrayType dataType, List<T> exp, List<T> act)
-    {
+    protected <T> boolean compareArrays(ArrayType dataType, List<T> exp, List<T> act) {
         assertEquals(exp.size(), act.size());
         for (int i = 0; i < exp.size(); i++) {
             boolean matched = compareObjects(dataType.getElementType(), exp.get(i), act.get(i));
@@ -220,8 +209,7 @@ public abstract class BaseIntegration
         return true;
     }
 
-    protected <K, V> boolean compareMaps(MapType dataType, Map<K, V> exp, Map<K, V> act)
-    {
+    protected <K, V> boolean compareMaps(MapType dataType, Map<K, V> exp, Map<K, V> act) {
         assertEquals(exp.size(), act.size());
         Set<Map.Entry<K, V>> expEntrySet = exp.entrySet();
         for (Map.Entry<K, V> expEntry : expEntrySet) {
@@ -237,16 +225,13 @@ public abstract class BaseIntegration
         return true;
     }
 
-    protected boolean compareObjects(DataType dataType, Object exp, Object act)
-    {
+    protected boolean compareObjects(DataType dataType, Object exp, Object act) {
         boolean matched = Objects.deepEquals(exp, act);
         if (dataType instanceof StructType) {
             matched = compareRows((Row) exp, (Row) act);
-        }
-        else if (dataType instanceof ArrayType) {
+        } else if (dataType instanceof ArrayType) {
             matched = compareArrays((ArrayType) dataType, (List) exp, (List) act);
-        }
-        else if (dataType instanceof MapType) {
+        } else if (dataType instanceof MapType) {
             matched = compareMaps((MapType) dataType, (Map) exp, (Map) act);
         }
         return matched;

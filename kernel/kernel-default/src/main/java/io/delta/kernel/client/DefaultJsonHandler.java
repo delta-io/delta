@@ -46,14 +46,12 @@ import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
 public class DefaultJsonHandler
     extends DefaultFileHandler
-    implements JsonHandler
-{
+    implements JsonHandler {
     private final ObjectMapper objectMapper;
     private final Configuration hadoopConf;
     private final int maxBatchSize;
 
-    public DefaultJsonHandler(Configuration hadoopConf)
-    {
+    public DefaultJsonHandler(Configuration hadoopConf) {
         this.objectMapper = new ObjectMapper();
         this.hadoopConf = hadoopConf;
         this.maxBatchSize =
@@ -62,8 +60,7 @@ public class DefaultJsonHandler
     }
 
     @Override
-    public ColumnarBatch parseJson(ColumnVector jsonStringVector, StructType outputSchema)
-    {
+    public ColumnarBatch parseJson(ColumnVector jsonStringVector, StructType outputSchema) {
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < jsonStringVector.getSize(); i++) {
             rows.add(parseJson(jsonStringVector.getString(i), outputSchema));
@@ -74,24 +71,20 @@ public class DefaultJsonHandler
     @Override
     public CloseableIterator<FileDataReadResult> readJsonFiles(
         CloseableIterator<FileReadContext> fileIter,
-        StructType physicalSchema) throws IOException
-    {
-        return new CloseableIterator<FileDataReadResult>()
-        {
+        StructType physicalSchema) throws IOException {
+        return new CloseableIterator<FileDataReadResult>() {
             private FileReadContext currentFile;
             private BufferedReader currentFileReader;
             private String nextLine;
 
             @Override
             public void close()
-                throws IOException
-            {
+                throws IOException {
                 Utils.closeCloseables(currentFileReader, fileIter);
             }
 
             @Override
-            public boolean hasNext()
-            {
+            public boolean hasNext() {
                 if (nextLine != null) {
                     return true; // we have un-consumed last read line
                 }
@@ -108,8 +101,7 @@ public class DefaultJsonHandler
                             nextLine = currentFileReader.readLine();
                         }
                     }
-                }
-                catch (IOException ex) {
+                } catch (IOException ex) {
                     throw new RuntimeException(ex);
                 }
 
@@ -117,8 +109,7 @@ public class DefaultJsonHandler
             }
 
             @Override
-            public FileDataReadResult next()
-            {
+            public FileDataReadResult next() {
                 if (nextLine == null) {
                     throw new NoSuchElementException();
                 }
@@ -135,25 +126,21 @@ public class DefaultJsonHandler
 
                 ColumnarBatch batch = new DefaultRowBasedColumnarBatch(physicalSchema, rows);
                 Row scanFileRow = currentFile.getScanFileRow();
-                return new FileDataReadResult()
-                {
+                return new FileDataReadResult() {
                     @Override
-                    public ColumnarBatch getData()
-                    {
+                    public ColumnarBatch getData() {
                         return batch;
                     }
 
                     @Override
-                    public Row getScanFileRow()
-                    {
+                    public Row getScanFileRow() {
                         return scanFileRow;
                     }
                 };
             }
 
             private void tryOpenNextFile()
-                throws IOException
-            {
+                throws IOException {
                 Utils.closeCloseables(currentFileReader); // close the current opened file
                 currentFileReader = null;
 
@@ -168,8 +155,7 @@ public class DefaultJsonHandler
                         stream = fs.open(filePath);
                         currentFileReader = new BufferedReader(
                             new InputStreamReader(stream, StandardCharsets.UTF_8));
-                    }
-                    catch (Exception e) {
+                    } catch (Exception e) {
                         Utils.closeCloseablesSilently(stream); // close it avoid leaking resources
                         throw e;
                     }
@@ -178,13 +164,11 @@ public class DefaultJsonHandler
         };
     }
 
-    private Row parseJson(String json, StructType readSchema)
-    {
+    private Row parseJson(String json, StructType readSchema) {
         try {
             final JsonNode jsonNode = objectMapper.readTree(json);
             return new DefaultJsonRow((ObjectNode) jsonNode, readSchema);
-        }
-        catch (JsonProcessingException ex) {
+        } catch (JsonProcessingException ex) {
             throw new RuntimeException(String.format("Could not parse JSON: %s", json), ex);
         }
     }

@@ -30,14 +30,12 @@ import static io.delta.kernel.DefaultKernelUtils.checkArgument;
  * common to most of the specific data type {@link ColumnVector} implementations.
  */
 public abstract class AbstractColumnVector
-    implements ColumnVector
-{
+    implements ColumnVector {
     private final int size;
     private final DataType dataType;
     private final Optional<boolean[]> nullability;
 
-    protected AbstractColumnVector(int size, DataType dataType, Optional<boolean[]> nullability)
-    {
+    protected AbstractColumnVector(int size, DataType dataType, Optional<boolean[]> nullability) {
         checkArgument(size >= 0, "invalid size: %s", size);
         nullability.ifPresent(array ->
             checkArgument(array.length >= size,
@@ -49,20 +47,17 @@ public abstract class AbstractColumnVector
     }
 
     @Override
-    public DataType getDataType()
-    {
+    public DataType getDataType() {
         return dataType;
     }
 
     @Override
-    public int getSize()
-    {
+    public int getSize() {
         return size;
     }
 
     @Override
-    public void close()
-    {
+    public void close() {
         // By default, nothing to close, if the implementation has any resources to release
         // it can override it
     }
@@ -74,86 +69,72 @@ public abstract class AbstractColumnVector
      * @return
      */
     @Override
-    public boolean isNullAt(int rowId)
-    {
+    public boolean isNullAt(int rowId) {
         checkValidRowId(rowId);
         return !nullability.isPresent() || nullability.get()[rowId];
     }
 
     @Override
-    public boolean getBoolean(int rowId)
-    {
+    public boolean getBoolean(int rowId) {
         throw unsupportedDataAccessException("boolean");
     }
 
     @Override
-    public byte getByte(int rowId)
-    {
+    public byte getByte(int rowId) {
         throw unsupportedDataAccessException("byte");
     }
 
     @Override
-    public short getShort(int rowId)
-    {
+    public short getShort(int rowId) {
         throw unsupportedDataAccessException("short");
     }
 
     @Override
-    public int getInt(int rowId)
-    {
+    public int getInt(int rowId) {
         throw unsupportedDataAccessException("int");
     }
 
     @Override
-    public long getLong(int rowId)
-    {
+    public long getLong(int rowId) {
         throw unsupportedDataAccessException("long");
     }
 
     @Override
-    public float getFloat(int rowId)
-    {
+    public float getFloat(int rowId) {
         throw unsupportedDataAccessException("float");
     }
 
     @Override
-    public double getDouble(int rowId)
-    {
+    public double getDouble(int rowId) {
         throw unsupportedDataAccessException("double");
     }
 
     @Override
-    public byte[] getBinary(int rowId)
-    {
+    public byte[] getBinary(int rowId) {
         throw unsupportedDataAccessException("binary");
     }
 
     @Override
-    public String getString(int rowId)
-    {
+    public String getString(int rowId) {
         throw unsupportedDataAccessException("string");
     }
 
     @Override
-    public <K, V> Map<K, V> getMap(int rowId)
-    {
+    public <K, V> Map<K, V> getMap(int rowId) {
         throw unsupportedDataAccessException("map");
     }
 
     @Override
-    public Row getStruct(int rowId)
-    {
+    public Row getStruct(int rowId) {
         throw unsupportedDataAccessException("struct");
     }
 
     @Override
-    public <T> List<T> getArray(int rowId)
-    {
+    public <T> List<T> getArray(int rowId) {
         throw unsupportedDataAccessException("array");
     }
 
-    protected UnsupportedOperationException unsupportedDataAccessException(String accessType)
-    {
+    protected UnsupportedOperationException unsupportedDataAccessException(String accessType) {
         String msg = String.format(
             "Trying to access a `%s` value from vector of type `%s`",
             accessType,
@@ -166,8 +147,7 @@ public abstract class AbstractColumnVector
      *
      * @param rowId
      */
-    protected void checkValidRowId(int rowId)
-    {
+    protected void checkValidRowId(int rowId) {
         if (rowId < 0 || rowId >= size) {
             throw new IllegalArgumentException("invalid row access: " + rowId);
         }

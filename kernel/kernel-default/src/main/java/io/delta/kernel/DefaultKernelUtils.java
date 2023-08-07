@@ -30,8 +30,7 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 
-public class DefaultKernelUtils
-{
+public class DefaultKernelUtils {
     private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
 
     private DefaultKernelUtils() {}
@@ -45,25 +44,24 @@ public class DefaultKernelUtils
      * @return
      */
     public static final MessageType pruneSchema(
-        GroupType fileSchema, // parquet
-        StructType deltaType) // delta-core
-    {
+        GroupType fileSchema /* parquet */,
+        StructType deltaType /* delta-kernel */) {
         return new MessageType("fileSchema", pruneFields(fileSchema, deltaType));
     }
 
     private static List<Type> pruneFields(GroupType type, StructType deltaDataType) {
         // prune fields including nested pruning like in pruneSchema
         return deltaDataType.fields().stream()
-                .map(column -> {
-                    Type subType = findSubFieldType(type, column);
-                    if (subType != null) {
-                        return prunedType(subType, column.getDataType());
-                    } else {
-                        return null;
-                    }
-                })
-                .filter(Objects::nonNull)
-                .collect(Collectors.toList());
+            .map(column -> {
+                Type subType = findSubFieldType(type, column);
+                if (subType != null) {
+                    return prunedType(subType, column.getDataType());
+                } else {
+                    return null;
+                }
+            })
+            .filter(Objects::nonNull)
+            .collect(Collectors.toList());
     }
 
     private static Type prunedType(Type type, DataType deltaType) {
@@ -81,11 +79,10 @@ public class DefaultKernelUtils
      * given {@code field}.
      *
      * @param groupType Parquet group type coming from the file schema.
-     * @param field Sub field given as Delta Kernel's {@link StructField}
+     * @param field     Sub field given as Delta Kernel's {@link StructField}
      * @return {@link Type} of the Parquet field. Returns {@code null}, if not found.
      */
-    public static Type findSubFieldType(GroupType groupType, StructField field)
-    {
+    public static Type findSubFieldType(GroupType groupType, StructField field) {
         // TODO: Need a way to search by id once we start supporting column mapping `id` mode.
         final String columnName = field.getName();
         if (groupType.containsField(columnName)) {
@@ -109,8 +106,7 @@ public class DefaultKernelUtils
      * @throws IllegalArgumentException if {@code isValid} is false
      */
     public static void checkArgument(boolean isValid)
-        throws IllegalArgumentException
-    {
+        throws IllegalArgumentException {
         if (!isValid) {
             throw new IllegalArgumentException();
         }
@@ -124,8 +120,7 @@ public class DefaultKernelUtils
      * @throws IllegalArgumentException if {@code isValid} is false
      */
     public static void checkArgument(boolean isValid, String message)
-        throws IllegalArgumentException
-    {
+        throws IllegalArgumentException {
         if (!isValid) {
             throw new IllegalArgumentException(message);
         }
@@ -136,12 +131,11 @@ public class DefaultKernelUtils
      *
      * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
      * @param message A String message for the exception.
-     * @param args Objects used to fill in {@code %s} placeholders in the message
+     * @param args    Objects used to fill in {@code %s} placeholders in the message
      * @throws IllegalArgumentException if {@code isValid} is false
      */
     public static void checkArgument(boolean isValid, String message, Object... args)
-        throws IllegalArgumentException
-    {
+        throws IllegalArgumentException {
         if (!isValid) {
             throw new IllegalArgumentException(
                 String.format(String.valueOf(message), args));
@@ -156,8 +150,7 @@ public class DefaultKernelUtils
      * @throws IllegalStateException if {@code isValid} is false
      */
     public static void checkState(boolean isValid, String message)
-        throws IllegalStateException
-    {
+        throws IllegalStateException {
         if (!isValid) {
             throw new IllegalStateException(message);
         }
@@ -168,8 +161,7 @@ public class DefaultKernelUtils
      *
      * @param date
      */
-    public static int daysSinceEpoch(Date date)
-    {
+    public static int daysSinceEpoch(Date date) {
         LocalDate localDate = date.toLocalDate();
         return (int) ChronoUnit.DAYS.between(EPOCH, localDate);
     }

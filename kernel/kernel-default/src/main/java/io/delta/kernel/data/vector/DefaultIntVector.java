@@ -27,21 +27,19 @@ import static io.delta.kernel.DefaultKernelUtils.checkArgument;
  * {@link io.delta.kernel.data.ColumnVector} implementation for integer type data.
  */
 public class DefaultIntVector
-    extends AbstractColumnVector
-{
+    extends AbstractColumnVector {
     private final int[] values;
 
     /**
      * Create an instance of {@link io.delta.kernel.data.ColumnVector} for integer type.
      *
-     * @param size number of elements in the vector.
+     * @param size        number of elements in the vector.
      * @param nullability Optional array of nullability value for each element in the vector.
-     * All values in the vector are considered non-null when parameter is empty.
-     * @param values column vector values.
+     *                    All values in the vector are considered non-null when parameter is empty.
+     * @param values      column vector values.
      */
     public DefaultIntVector(
-        DataType dataType, int size, Optional<boolean[]> nullability, int[] values)
-    {
+        DataType dataType, int size, Optional<boolean[]> nullability, int[] values) {
         super(size, dataType, nullability);
         checkArgument(dataType instanceof IntegerType || dataType instanceof DateType);
         this.values = requireNonNull(values, "values is null");
@@ -57,8 +55,7 @@ public class DefaultIntVector
      * @return
      */
     @Override
-    public int getInt(int rowId)
-    {
+    public int getInt(int rowId) {
         checkValidRowId(rowId);
         return values[rowId];
     }

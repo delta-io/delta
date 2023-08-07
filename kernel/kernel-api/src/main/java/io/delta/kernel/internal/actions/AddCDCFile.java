@@ -32,10 +32,8 @@ import io.delta.kernel.internal.fs.Path;
 /**
  * Delta log action representing an `AddCDCFile`
  */
-public class AddCDCFile extends FileAction
-{
-    public static AddCDCFile fromRow(Row row)
-    {
+public class AddCDCFile extends FileAction {
+    public static AddCDCFile fromRow(Row row) {
         if (row == null) {
             return null;
         }
@@ -64,16 +62,14 @@ public class AddCDCFile extends FileAction
         String path,
         Map<String, String> partitionValues,
         long size,
-        boolean dataChange)
-    {
+        boolean dataChange) {
         super(path, dataChange);
         this.partitionValues = partitionValues == null ? Collections.emptyMap() : partitionValues;
         this.size = size;
     }
 
     @Override
-    public AddCDCFile copyWithDataChange(boolean dataChange)
-    {
+    public AddCDCFile copyWithDataChange(boolean dataChange) {
         if (this.dataChange == dataChange) {
             return this;
         }
@@ -85,8 +81,7 @@ public class AddCDCFile extends FileAction
         );
     }
 
-    public AddCDCFile withAbsolutePath(Path dataPath)
-    {
+    public AddCDCFile withAbsolutePath(Path dataPath) {
         Path filePath = new Path(path);
         if (filePath.isAbsolute()) {
             return this;
@@ -100,19 +95,16 @@ public class AddCDCFile extends FileAction
         );
     }
 
-    public Map<String, String> getPartitionValues()
-    {
+    public Map<String, String> getPartitionValues() {
         return Collections.unmodifiableMap(partitionValues);
     }
 
-    public long getSize()
-    {
+    public long getSize() {
         return size;
     }
 
     @Override
-    public String toString()
-    {
+    public String toString() {
         return "AddCDCFile{" +
             "path='" + path + '\'' +
             ", partitionValues=" + partitionValues +

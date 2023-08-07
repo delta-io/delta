@@ -18,12 +18,12 @@ package io.delta.kernel.utils;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
-public class DefaultKernelTestUtils
-{
+public class DefaultKernelTestUtils {
     private DefaultKernelTestUtils() {}
 
     /**
      * Returns a URI encoded path of the resource.
+     *
      * @param resourcePath
      * @return
      */

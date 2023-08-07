@@ -25,20 +25,18 @@ import static io.delta.kernel.DefaultKernelUtils.checkArgument;
  * {@link io.delta.kernel.data.ColumnVector} implementation for byte type data.
  */
 public class DefaultByteVector
-    extends AbstractColumnVector
-{
+    extends AbstractColumnVector {
     private final byte[] values;
 
     /**
      * Create an instance of {@link io.delta.kernel.data.ColumnVector} for byte type.
      *
-     * @param size number of elements in the vector.
+     * @param size        number of elements in the vector.
      * @param nullability Optional array of nullability value for each element in the vector.
-     * All values in the vector are considered non-null when parameter is empty.
-     * @param values column vector values.
+     *                    All values in the vector are considered non-null when parameter is empty.
+     * @param values      column vector values.
      */
-    public DefaultByteVector(int size, Optional<boolean[]> nullability, byte[] values)
-    {
+    public DefaultByteVector(int size, Optional<boolean[]> nullability, byte[] values) {
         super(size, ByteType.INSTANCE, nullability);
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
@@ -53,8 +51,7 @@ public class DefaultByteVector
      * @return
      */
     @Override
-    public byte getByte(int rowId)
-    {
+    public byte getByte(int rowId) {
         checkValidRowId(rowId);
         return values[rowId];
     }

@@ -20,8 +20,7 @@ import io.delta.kernel.types.TimestampType;
 /**
  * Utility methods for {@link io.delta.kernel.data.ColumnVector} implementations.
  */
-public class VectorUtils
-{
+public class VectorUtils {
     private VectorUtils() {}
 
     /**

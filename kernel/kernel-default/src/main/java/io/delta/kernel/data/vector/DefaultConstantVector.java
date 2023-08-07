@@ -23,14 +23,12 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
 
 public class DefaultConstantVector
-    implements ColumnVector
-{
+    implements ColumnVector {
     private final DataType dataType;
     private final int numRows;
     private final Object value;
 
-    public DefaultConstantVector(DataType dataType, int numRows, Object value)
-    {
+    public DefaultConstantVector(DataType dataType, int numRows, Object value) {
         // TODO: Validate datatype and value object type
         this.dataType = dataType;
         this.numRows = numRows;
@@ -38,98 +36,82 @@ public class DefaultConstantVector
     }
 
     @Override
-    public DataType getDataType()
-    {
+    public DataType getDataType() {
         return dataType;
     }
 
     @Override
-    public int getSize()
-    {
+    public int getSize() {
         return numRows;
     }
 
     @Override
-    public void close()
-    {
+    public void close() {
         // nothing to close
     }
 
     @Override
-    public boolean isNullAt(int rowId)
-    {
+    public boolean isNullAt(int rowId) {
         return value == null;
     }
 
     @Override
-    public boolean getBoolean(int rowId)
-    {
+    public boolean getBoolean(int rowId) {
         return (boolean) value;
     }
 
     @Override
-    public byte getByte(int rowId)
-    {
+    public byte getByte(int rowId) {
         return (byte) value;
     }
 
     @Override
-    public short getShort(int rowId)
-    {
+    public short getShort(int rowId) {
         return (short) value;
     }
 
     @Override
-    public int getInt(int rowId)
-    {
+    public int getInt(int rowId) {
         return (int) value;
     }
 
     @Override
-    public long getLong(int rowId)
-    {
+    public long getLong(int rowId) {
         return (long) value;
     }
 
     @Override
-    public float getFloat(int rowId)
-    {
+    public float getFloat(int rowId) {
         return (float) value;
     }
 
     @Override
-    public double getDouble(int rowId)
-    {
+    public double getDouble(int rowId) {
         return (double) value;
     }
 
     @Override
-    public byte[] getBinary(int rowId)
-    {
+    public byte[] getBinary(int rowId) {
         return (byte[]) value;
     }
 
     @Override
-    public String getString(int rowId)
-    {
+    public String getString(int rowId) {
         return (String) value;
     }
 
     @Override
-    public <K, V> Map<K, V> getMap(int rowId)
-    {
+    public <K, V> Map<K, V> getMap(int rowId) {
         return (Map<K, V>) value;
     }
 
     @Override
-    public Row getStruct(int rowId)
-    {
+    public Row getStruct(int rowId) {
         return (Row) value;
     }
 
     @Override
-    public <T> List<T> getArray(int rowId)
-    {
+    public <T> List<T> getArray(int rowId) {
         return (List<T>) value;
     }
 }

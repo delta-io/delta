@@ -34,27 +34,22 @@ import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 import static io.delta.kernel.DefaultKernelUtils.daysSinceEpoch;
 
 public class DefaultExpressionHandler
-    implements ExpressionHandler
-{
+    implements ExpressionHandler {
     @Override
-    public ExpressionEvaluator getEvaluator(StructType batchSchema, Expression expression)
-    {
+    public ExpressionEvaluator getEvaluator(StructType batchSchema, Expression expression) {
         return new DefaultExpressionEvaluator(expression);
     }
 
     private static class DefaultExpressionEvaluator
-        implements ExpressionEvaluator
-    {
+        implements ExpressionEvaluator {
         private final Expression expression;
 
-        private DefaultExpressionEvaluator(Expression expression)
-        {
+        private DefaultExpressionEvaluator(Expression expression) {
             this.expression = expression;
         }
 
         @Override
-        public ColumnVector eval(ColumnarBatch input)
-        {
+        public ColumnVector eval(ColumnarBatch input) {
             if (expression instanceof Literal) {
                 return evalLiteralExpression(input, (Literal) expression);
             }
@@ -73,8 +68,7 @@ public class DefaultExpressionHandler
     }
 
     private static ColumnVector evalBooleanOutputExpression(
-        ColumnarBatch input, Expression expression)
-    {
+        ColumnarBatch input, Expression expression) {
         checkArgument(expression.dataType().equals(BooleanType.INSTANCE),
             "expression should return a boolean");
 
@@ -86,16 +80,14 @@ public class DefaultExpressionHandler
             Object evalResult = expression.eval(rows.next());
             if (evalResult == null) {
                 nullResult[currentIndex] = true;
-            }
-            else {
+            } else {
                 result[currentIndex] = ((Boolean) evalResult).booleanValue();
             }
         }
         return new DefaultBooleanVector(batchSize, Optional.of(nullResult), result);
     }
 
-    private static ColumnVector evalLiteralExpression(ColumnarBatch input, Literal literal)
-    {
+    private static ColumnVector evalLiteralExpression(ColumnarBatch input, Literal literal) {
         Object result = literal.value();
         DataType dataType = literal.dataType();
         int size = input.getSize();
@@ -114,12 +106,10 @@ public class DefaultExpressionHandler
             dataType instanceof StringType ||
             dataType instanceof BinaryType) {
             return new DefaultConstantVector(dataType, size, result);
-        }
-        else if (dataType instanceof DateType) {
+        } else if (dataType instanceof DateType) {
             int numOfDaysSinceEpoch = daysSinceEpoch((Date) result);
             return new DefaultConstantVector(dataType, size, numOfDaysSinceEpoch);
-        }
-        else if (dataType instanceof TimestampType) {
+        } else if (dataType instanceof TimestampType) {
             Timestamp timestamp = (Timestamp) result;
             long micros = timestamp.getTime() * 1000;
             return new DefaultConstantVector(dataType, size, micros);

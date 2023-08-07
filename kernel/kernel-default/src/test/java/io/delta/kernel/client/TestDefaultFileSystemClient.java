@@ -27,11 +27,9 @@ import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
 import static io.delta.kernel.utils.DefaultKernelTestUtils.getTestResourceFilePath;
 
-public class TestDefaultFileSystemClient
-{
+public class TestDefaultFileSystemClient {
     @Test
-    public void listFrom() throws Exception
-    {
+    public void listFrom() throws Exception {
         String basePath = getTestResourceFilePath("json-files");
         String listFrom = getTestResourceFilePath("json-files/2.json");
 
@@ -47,8 +45,7 @@ public class TestDefaultFileSystemClient
         assertEquals(expListOutput, actListOutput);
     }
 
-    private static DefaultFileSystemClient fsClient()
-    {
+    private static DefaultFileSystemClient fsClient() {
         return new DefaultFileSystemClient(new Configuration());
     }
 }

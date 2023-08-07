@@ -51,55 +51,43 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import static io.delta.kernel.DefaultKernelUtils.checkArgument;
 
-class ParquetConverters
-{
+class ParquetConverters {
     public static Converter createConverter(
         int initialBatchSize,
         DataType typeFromClient,
         Type typeFromFile
-    )
-    {
+    ) {
         if (typeFromClient instanceof StructType) {
             return new RowConverter(
                 initialBatchSize,
                 (StructType) typeFromClient,
                 (GroupType) typeFromFile);
-        }
-        else if (typeFromClient instanceof ArrayType) {
+        } else if (typeFromClient instanceof ArrayType) {
             return new ArrayConverter(
                 initialBatchSize,
                 (ArrayType) typeFromClient,
                 (GroupType) typeFromFile
             );
-        }
-        else if (typeFromClient instanceof MapType) {
+        } else if (typeFromClient instanceof MapType) {
             return new MapConverter(
                 initialBatchSize,
                 (MapType) typeFromClient,
                 (GroupType) typeFromFile);
-        }
-        else if (typeFromClient instanceof StringType || typeFromClient instanceof BinaryType) {
+        } else if (typeFromClient instanceof StringType || typeFromClient instanceof BinaryType) {
             return new BinaryColumnConverter(typeFromClient, initialBatchSize);
-        }
-        else if (typeFromClient instanceof BooleanType) {
+        } else if (typeFromClient instanceof BooleanType) {
             return new BooleanColumnConverter(initialBatchSize);
-        }
-        else if (typeFromClient instanceof IntegerType || typeFromClient instanceof DateType) {
+        } else if (typeFromClient instanceof IntegerType || typeFromClient instanceof DateType) {
             return new IntColumnConverter(typeFromClient, initialBatchSize);
-        }
-        else if (typeFromClient instanceof ByteType) {
+        } else if (typeFromClient instanceof ByteType) {
             return new ByteColumnConverter(initialBatchSize);
-        }
-        else if (typeFromClient instanceof ShortType) {
+        } else if (typeFromClient instanceof ShortType) {
             return new ShortColumnConverter(initialBatchSize);
-        }
-        else if (typeFromClient instanceof LongType) {
+        } else if (typeFromClient instanceof LongType) {
             return new LongColumnConverter(initialBatchSize);
-        }
-        else if (typeFromClient instanceof FloatType) {
+        } else if (typeFromClient instanceof FloatType) {
             return new FloatColumnConverter(initialBatchSize);
-        }
-        else if (typeFromClient instanceof DoubleType) {
+        } else if (typeFromClient instanceof DoubleType) {
             return new DoubleColumnConverter(initialBatchSize);
         }
         // else if (typeFromClient instanceof DecimalType) {
@@ -110,8 +98,7 @@ class ParquetConverters
         throw new UnsupportedOperationException(typeFromClient + " is not supported");
     }
 
-    public interface BaseConverter
-    {
+    public interface BaseConverter {
         ColumnVector getDataColumnVector(int batchSize);
 
         /**
@@ -128,38 +115,32 @@ class ParquetConverters
 
     public static class NonExistentColumnConverter
         extends PrimitiveConverter
-        implements BaseConverter
-    {
+        implements BaseConverter {
         private final DataType dataType;
 
-        NonExistentColumnConverter(DataType dataType)
-        {
+        NonExistentColumnConverter(DataType dataType) {
             this.dataType = Objects.requireNonNull(dataType, "dataType is null");
         }
 
         @Override
-        public ColumnVector getDataColumnVector(int batchSize)
-        {
+        public ColumnVector getDataColumnVector(int batchSize) {
             return new DefaultConstantVector(dataType, batchSize, null);
         }
 
         @Override
-        public boolean moveToNextRow()
-        {
+        public boolean moveToNextRow() {
             return true;
         }
     }
 
     public abstract static class BasePrimitiveColumnConverter
         extends PrimitiveConverter
-        implements BaseConverter
-    {
+        implements BaseConverter {
         // working state
         protected int currentRowIndex;
         protected boolean[] nullability;
 
-        BasePrimitiveColumnConverter(int initialBatchSize)
-        {
+        BasePrimitiveColumnConverter(int initialBatchSize) {
             checkArgument(initialBatchSize >= 0, "invalid initialBatchSize: %s", initialBatchSize);
 
             // Initialize the working state
@@ -167,8 +148,7 @@ class ParquetConverters
         }
 
         @Override
-        public boolean moveToNextRow()
-        {
+        public boolean moveToNextRow() {
             resizeIfNeeded();
             currentRowIndex++;
             return this.nullability[currentRowIndex - 1];
@@ -176,28 +156,24 @@ class ParquetConverters
     }
 
     public static class BooleanColumnConverter
-        extends BasePrimitiveColumnConverter
-    {
+        extends BasePrimitiveColumnConverter {
         // working state
         private boolean[] values;
 
-        BooleanColumnConverter(int initialBatchSize)
-        {
+        BooleanColumnConverter(int initialBatchSize) {
             super(initialBatchSize);
             this.values = new boolean[initialBatchSize];
         }
 
         @Override
-        public void addBoolean(boolean value)
-        {
+        public void addBoolean(boolean value) {
             resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
 
         @Override
-        public ColumnVector getDataColumnVector(int batchSize)
-        {
+        public ColumnVector getDataColumnVector(int batchSize) {
             ColumnVector vector =
                 new DefaultBooleanVector(batchSize, Optional.of(nullability), values);
             this.nullability = initNullabilityVector(nullability.length);
@@ -207,8 +183,7 @@ class ParquetConverters
         }
 
         @Override
-        public void resizeIfNeeded()
-        {
+        public void resizeIfNeeded() {
             if (values.length == currentRowIndex) {
                 int newSize = values.length * 2;
                 this.values = Arrays.copyOf(this.values, newSize);
@@ -219,29 +194,25 @@ class ParquetConverters
     }
 
     public static class ByteColumnConverter
-        extends BasePrimitiveColumnConverter
-    {
+        extends BasePrimitiveColumnConverter {
 
         // working state
         private byte[] values;
 
-        ByteColumnConverter(int initialBatchSize)
-        {
+        ByteColumnConverter(int initialBatchSize) {
             super(initialBatchSize);
             this.values = new byte[initialBatchSize];
         }
 
         @Override
-        public void addInt(int value)
-        {
+        public void addInt(int value) {
             resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = (byte) value;
         }
 
         @Override
-        public ColumnVector getDataColumnVector(int batchSize)
-        {
+        public ColumnVector getDataColumnVector(int batchSize) {
             ColumnVector vector =
                 new DefaultByteVector(batchSize, Optional.of(nullability), values);
             this.nullability = initNullabilityVector(nullability.length);
@@ -251,8 +222,7 @@ class ParquetConverters
         }
 
         @Override
-        public void resizeIfNeeded()
-        {
+        public void resizeIfNeeded() {
             if (values.length == currentRowIndex) {
                 int newSize = values.length * 2;
                 this.values = Arrays.copyOf(this.values, newSize);
@@ -263,29 +233,25 @@ class ParquetConverters
     }
 
     public static class ShortColumnConverter
-        extends BasePrimitiveColumnConverter
-    {
+        extends BasePrimitiveColumnConverter {
 
         // working state
         private short[] values;
 
-        ShortColumnConverter(int initialBatchSize)
-        {
+        ShortColumnConverter(int initialBatchSize) {
             super(initialBatchSize);
             this.values = new short[initialBatchSize];
         }
 
         @Override
-        public void addInt(int value)
-        {
+        public void addInt(int value) {
             resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = (short) value;
         }
 
         @Override
-        public ColumnVector getDataColumnVector(int batchSize)
-        {
+        public ColumnVector getDataColumnVector(int batchSize) {
             ColumnVector vector =
                 new DefaultShortVector(batchSize, Optional.of(nullability), values);
             this.nullability = initNullabilityVector(nullability.length);
@@ -295,8 +261,7 @@ class ParquetConverters
         }
 
         @Override
-        public void resizeIfNeeded()
-        {
+        public void resizeIfNeeded() {
             if (values.length == currentRowIndex) {
                 int newSize = values.length * 2;
                 this.values = Arrays.copyOf(this.values, newSize);
@@ -307,14 +272,12 @@ class ParquetConverters
     }
 
     public static class IntColumnConverter
-        extends BasePrimitiveColumnConverter
-    {
+        extends BasePrimitiveColumnConverter {
         private final DataType dataType;
         // working state
         private int[] values;
 
-        IntColumnConverter(DataType dataType, int initialBatchSize)
-        {
+        IntColumnConverter(DataType dataType, int initialBatchSize) {
             super(initialBatchSize);
             checkArgument(dataType instanceof IntegerType || dataType instanceof DataType);
             this.dataType = dataType;
@@ -322,16 +285,14 @@ class ParquetConverters
         }
 
         @Override
-        public void addInt(int value)
-        {
+        public void addInt(int value) {
             resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
 
         @Override
-        public ColumnVector getDataColumnVector(int batchSize)
-        {
+        public ColumnVector getDataColumnVector(int batchSize) {
             ColumnVector vector =
                 new DefaultIntVector(dataType, batchSize, Optional.of(nullability), values);
             this.nullability = initNullabilityVector(nullability.length);
@@ -341,8 +302,7 @@ class ParquetConverters
         }
 
         @Override
-        public void resizeIfNeeded()
-        {
+        public void resizeIfNeeded() {
             if (values.length == currentRowIndex) {
                 int newSize = values.length * 2;
                 this.values = Arrays.copyOf(this.values, newSize);
@@ -353,29 +313,25 @@ class ParquetConverters
     }
 
     public static class LongColumnConverter
-        extends BasePrimitiveColumnConverter
-    {
+        extends BasePrimitiveColumnConverter {
 
         // working state
         private long[] values;
 
-        LongColumnConverter(int initialBatchSize)
-        {
+        LongColumnConverter(int initialBatchSize) {
             super(initialBatchSize);
             this.values = new long[initialBatchSize];
         }
 
         @Override
-        public void addLong(long value)
-        {
+        public void addLong(long value) {
             resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
 
         @Override
-        public ColumnVector getDataColumnVector(int batchSize)
-        {
+        public ColumnVector getDataColumnVector(int batchSize) {
             ColumnVector vector =
                 new DefaultLongVector(batchSize, Optional.of(nullability), values);
             this.nullability = initNullabilityVector(nullability.length);
@@ -385,8 +341,7 @@ class ParquetConverters
         }
 
         @Override
-        public void resizeIfNeeded()
-        {
+        public void resizeIfNeeded() {
             if (values.length == currentRowIndex) {
                 int newSize = values.length * 2;
                 this.values = Arrays.copyOf(this.values, newSize);
@@ -397,28 +352,24 @@ class ParquetConverters
     }
 
     public static class FloatColumnConverter
-        extends BasePrimitiveColumnConverter
-    {
+        extends BasePrimitiveColumnConverter {
         // working state
         private float[] values;
 
-        FloatColumnConverter(int initialBatchSize)
-        {
+        FloatColumnConverter(int initialBatchSize) {
             super(initialBatchSize);
             this.values = new float[initialBatchSize];
         }
 
         @Override
-        public void addFloat(float value)
-        {
+        public void addFloat(float value) {
             resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
 
         @Override
-        public ColumnVector getDataColumnVector(int batchSize)
-        {
+        public ColumnVector getDataColumnVector(int batchSize) {
             ColumnVector vector =
                 new DefaultFloatVector(batchSize, Optional.of(nullability), values);
             this.nullability = initNullabilityVector(nullability.length);
@@ -428,8 +379,7 @@ class ParquetConverters
         }
 
         @Override
-        public void resizeIfNeeded()
-        {
+        public void resizeIfNeeded() {
             if (values.length == currentRowIndex) {
                 int newSize = values.length * 2;
                 this.values = Arrays.copyOf(this.values, newSize);
@@ -440,29 +390,25 @@ class ParquetConverters
     }
 
     public static class DoubleColumnConverter
-        extends BasePrimitiveColumnConverter
-    {
+        extends BasePrimitiveColumnConverter {
 
         // working state
         private double[] values;
 
-        DoubleColumnConverter(int initialBatchSize)
-        {
+        DoubleColumnConverter(int initialBatchSize) {
             super(initialBatchSize);
             this.values = new double[initialBatchSize];
         }
 
         @Override
-        public void addDouble(double value)
-        {
+        public void addDouble(double value) {
             resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
 
         @Override
-        public ColumnVector getDataColumnVector(int batchSize)
-        {
+        public ColumnVector getDataColumnVector(int batchSize) {
             ColumnVector vector =
                 new DefaultDoubleVector(batchSize, Optional.of(nullability), values);
             // re-initialize the working space
@@ -473,8 +419,7 @@ class ParquetConverters
         }
 
         @Override
-        public void resizeIfNeeded()
-        {
+        public void resizeIfNeeded() {
             if (values.length == currentRowIndex) {
                 int newSize = values.length * 2;
                 this.values = Arrays.copyOf(this.values, newSize);
@@ -485,31 +430,27 @@ class ParquetConverters
     }
 
     public static class BinaryColumnConverter
-        extends BasePrimitiveColumnConverter
-    {
+        extends BasePrimitiveColumnConverter {
         private final DataType dataType;
 
         // working state
         private byte[][] values;
 
-        BinaryColumnConverter(DataType dataType, int initialBatchSize)
-        {
+        BinaryColumnConverter(DataType dataType, int initialBatchSize) {
             super(initialBatchSize);
             this.dataType = dataType;
             this.values = new byte[initialBatchSize][];
         }
 
         @Override
-        public void addBinary(Binary value)
-        {
+        public void addBinary(Binary value) {
             resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value.getBytes();
         }
 
         @Override
-        public ColumnVector getDataColumnVector(int batchSize)
-        {
+        public ColumnVector getDataColumnVector(int batchSize) {
             ColumnVector vector = new DefaultBinaryVector(dataType, batchSize, values);
             // re-initialize the working space
             this.nullability = initNullabilityVector(nullability.length);
@@ -519,8 +460,7 @@ class ParquetConverters
         }
 
         @Override
-        public void resizeIfNeeded()
-        {
+        public void resizeIfNeeded() {
             if (values.length == currentRowIndex) {
                 int newSize = values.length * 2;
                 this.values = Arrays.copyOf(this.values, newSize);
@@ -531,7 +471,7 @@ class ParquetConverters
     }
 
     public static class FileRowIndexColumnConverter
-            extends LongColumnConverter {
+        extends LongColumnConverter {
 
         FileRowIndexColumnConverter(int initialBatchSize) {
             super(initialBatchSize);
@@ -553,8 +493,7 @@ class ParquetConverters
         }
     }
 
-    static boolean[] initNullabilityVector(int size)
-    {
+    static boolean[] initNullabilityVector(int size) {
         boolean[] nullability = new boolean[size];
         // Initialize all values as null. As Parquet calls this converter only for non-null
         // values, make the corresponding value to false.
@@ -563,8 +502,7 @@ class ParquetConverters
         return nullability;
     }
 
-    static void setNullabilityToTrue(boolean[] nullability, int start, int end)
-    {
+    static void setNullabilityToTrue(boolean[] nullability, int start, int end) {
         // Initialize all values as null. As Parquet calls this converter only for non-null
         // values, make the corresponding value to false.
         Arrays.fill(nullability, start, end, true);

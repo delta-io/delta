@@ -28,34 +28,28 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 
-public class DefaultParquetHandler extends DefaultFileHandler implements ParquetHandler
-{
+public class DefaultParquetHandler extends DefaultFileHandler implements ParquetHandler {
     private final Configuration hadoopConf;
 
-    public DefaultParquetHandler(Configuration hadoopConf)
-    {
+    public DefaultParquetHandler(Configuration hadoopConf) {
         this.hadoopConf = hadoopConf;
     }
 
     @Override
     public CloseableIterator<FileDataReadResult> readParquetFiles(
-        CloseableIterator<FileReadContext> fileIter, StructType physicalSchema) throws IOException
-    {
-        return new CloseableIterator<FileDataReadResult>()
-        {
+        CloseableIterator<FileReadContext> fileIter, StructType physicalSchema) throws IOException {
+        return new CloseableIterator<FileDataReadResult>() {
             private final ParquetBatchReader batchReader = new ParquetBatchReader(hadoopConf);
             private FileReadContext currentFile;
             private CloseableIterator<ColumnarBatch> currentFileReader;
 
             @Override
-            public void close() throws IOException
-            {
+            public void close() throws IOException {
                 Utils.closeCloseables(currentFileReader, fileIter);
             }
 
             @Override
-            public boolean hasNext()
-            {
+            public boolean hasNext() {
                 // There is no file in reading or the current file being read has no more data
                 // initialize the next file reader or return false if there are no more files to
                 // read.
@@ -66,8 +60,7 @@ public class DefaultParquetHandler extends DefaultFileHandler implements Parquet
                         currentFile = fileIter.next();
                         FileStatus fileStatus = Utils.getFileStatus(currentFile.getScanFileRow());
                         currentFileReader = batchReader.read(fileStatus.getPath(), physicalSchema);
-                    }
-                    else {
+                    } else {
                         return false;
                     }
                 }
@@ -76,20 +69,16 @@ public class DefaultParquetHandler extends DefaultFileHandler implements Parquet
             }
 
             @Override
-            public FileDataReadResult next()
-            {
+            public FileDataReadResult next() {
                 final ColumnarBatch data = currentFileReader.next();
-                return new FileDataReadResult()
-                {
+                return new FileDataReadResult() {
                     @Override
-                    public ColumnarBatch getData()
-                    {
+                    public ColumnarBatch getData() {
                         return data;
                     }
 
                     @Override
-                    public Row getScanFileRow()
-                    {
+                    public Row getScanFileRow() {
                         return currentFile.getScanFileRow();
                     }
                 };

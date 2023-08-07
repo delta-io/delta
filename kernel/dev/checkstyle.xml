@@ -183,6 +183,9 @@
             <property name="arrayInitIndent" value="4"/>
         </module>
 
+        <module name="LeftCurly"/>
+        <module name="RightCurly"/>
+
         <!--
         We use the following import order:
         import java.*
@@ -198,7 +201,8 @@
         <module name="ImportOrder">
             <property name="separated" value="true"/>
             <property name="ordered" value="true"/>
-            <property name="groups" value="java.,javax.,scala,*,io.delta.kernel,io.delta.kernel.internal"/>
+            <property name="groups" value="java,javax,scala,*,io.delta.kernel,io.delta.kernel.internal"/>
+            <property name="option" value="under"/>
         </module>
 
         <!--

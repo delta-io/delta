@@ -49,8 +49,7 @@ import io.delta.kernel.internal.util.PartitionUtils;
 /**
  * Represents a scan of a Delta table.
  */
-public interface Scan
-{
+public interface Scan {
     /**
      * Get an iterator of data files to scan.
      *
@@ -80,13 +79,14 @@ public interface Scan
     /**
      * Get the data from the given scan files using the connector provided {@link TableClient}.
      *
-     * @param tableClient Connector provided {@link TableClient} implementation.
-     * @param scanState Scan state returned by {@link Scan#getScanState(TableClient)}
+     * @param tableClient     Connector provided {@link TableClient} implementation.
+     * @param scanState       Scan state returned by {@link Scan#getScanState(TableClient)}
      * @param scanFileRowIter an iterator of {@link Row}s. Each {@link Row} represents one scan file
-     * from the {@link ColumnarBatch} returned by
-     * {@link Scan#getScanFiles(TableClient)}
-     * @param filter An optional filter that can be used for data skipping while reading the
-     * scan files.
+     *                        from the {@link ColumnarBatch} returned by
+     *                        {@link Scan#getScanFiles(TableClient)}
+     * @param filter          An optional filter that can be used for data skipping while reading
+     *                       the
+     *                        scan files.
      * @return Data read from the input scan files as an iterator of {@link DataReadResult}s. Each
      * {@link DataReadResult} instance contains the data read and an optional selection
      * vector that indicates data rows as valid or invalid. It is the responsibility of the
@@ -97,8 +97,7 @@ public interface Scan
         TableClient tableClient,
         Row scanState,
         CloseableIterator<Row> scanFileRowIter,
-        Optional<Expression> filter) throws IOException
-    {
+        Optional<Expression> filter) throws IOException {
         StructType physicalSchema = Utils.getPhysicalSchema(tableClient, scanState);
         StructType logicalSchema = Utils.getLogicalSchema(tableClient, scanState);
         List<String> partitionColumns = Utils.getPartitionColumns(scanState);
@@ -127,26 +126,22 @@ public interface Scan
 
         String tablePath = ScanStateRow.getTablePath(scanState);
 
-        return new CloseableIterator<DataReadResult>()
-        {
+        return new CloseableIterator<DataReadResult>() {
             RoaringBitmapArray currBitmap = null;
             DeletionVectorDescriptor currDV = null;
 
             @Override
-            public void close() throws IOException
-            {
+            public void close() throws IOException {
                 data.close();
             }
 
             @Override
-            public boolean hasNext()
-            {
+            public boolean hasNext() {
                 return data.hasNext();
             }
 
             @Override
-            public DataReadResult next()
-            {
+            public DataReadResult next() {
                 FileDataReadResult fileDataReadResult = data.next();
 
                 Row scanFileRow = fileDataReadResult.getScanFileRow();
@@ -154,7 +149,7 @@ public interface Scan
                     scanFileRow.getStruct(AddFileColumnarBatch.getDeletionVectorColOrdinal()));
 
                 int rowIndexOrdinal = fileDataReadResult.getData().getSchema()
-                        .indexOf(StructField.ROW_INDEX_COLUMN_NAME);
+                    .indexOf(StructField.ROW_INDEX_COLUMN_NAME);
 
                 // Get the selectionVector if DV is present
                 Optional<ColumnVector> selectionVector;
@@ -163,29 +158,29 @@ public interface Scan
                 } else {
                     if (!dv.equals(currDV)) {
                         Tuple2<DeletionVectorDescriptor, RoaringBitmapArray> dvInfo =
-                                DeletionVectorUtils.loadNewDvAndBitmap(tableClient, tablePath, dv);
+                            DeletionVectorUtils.loadNewDvAndBitmap(tableClient, tablePath, dv);
                         this.currDV = dvInfo._1;
                         this.currBitmap = dvInfo._2;
                     }
                     ColumnVector rowIndexVector =
-                            fileDataReadResult.getData().getColumnVector(rowIndexOrdinal);
+                        fileDataReadResult.getData().getColumnVector(rowIndexOrdinal);
                     selectionVector = Optional.of(
-                            new SelectionColumnVector(currBitmap, rowIndexVector));
+                        new SelectionColumnVector(currBitmap, rowIndexVector));
                 }
 
                 // Remove the row_index columns
                 ColumnarBatch updatedBatch = fileDataReadResult.getData()
-                        .withDeletedColumnAt(rowIndexOrdinal);
+                    .withDeletedColumnAt(rowIndexOrdinal);
 
                 // Add partition columns
                 updatedBatch =
-                        PartitionUtils.withPartitionColumns(
-                                tableClient.getExpressionHandler(),
-                                updatedBatch,
-                                readSchemaWithoutPartitionColumns,
-                                Utils.getPartitionValues(fileDataReadResult.getScanFileRow()),
-                                physicalSchema
-                        );
+                    PartitionUtils.withPartitionColumns(
+                        tableClient.getExpressionHandler(),
+                        updatedBatch,
+                        readSchemaWithoutPartitionColumns,
+                        Utils.getPartitionValues(fileDataReadResult.getScanFileRow()),
+                        physicalSchema
+                    );
 
                 // Change back to logical schema
                 String columnMappingMode = Utils.getColumnMappingMode(scanState);
@@ -197,7 +192,7 @@ public interface Scan
                         break;
                     default:
                         throw new UnsupportedOperationException(
-                                "Column mapping mode is not yet supported: " + columnMappingMode);
+                            "Column mapping mode is not yet supported: " + columnMappingMode);
                 }
 
                 return new DataReadResult(updatedBatch, selectionVector);

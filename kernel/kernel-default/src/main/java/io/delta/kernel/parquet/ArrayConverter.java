@@ -31,8 +31,7 @@ import static io.delta.kernel.parquet.ParquetConverters.setNullabilityToTrue;
 
 class ArrayConverter
     extends GroupConverter
-    implements ParquetConverters.BaseConverter
-{
+    implements ParquetConverters.BaseConverter {
     private final ArrayType typeFromClient;
     private final ArrayCollector converter;
 
@@ -45,8 +44,7 @@ class ArrayConverter
     ArrayConverter(
         int initialBatchSize,
         ArrayType typeFromClient,
-        GroupType typeFromFile)
-    {
+        GroupType typeFromFile) {
         this.typeFromClient = typeFromClient;
         final GroupType innerElementType = (GroupType) typeFromFile.getType("list");
         this.converter = new ArrayCollector(
@@ -61,8 +59,7 @@ class ArrayConverter
     }
 
     @Override
-    public Converter getConverter(int fieldIndex)
-    {
+    public Converter getConverter(int fieldIndex) {
         switch (fieldIndex) {
             case 0:
                 return converter;
@@ -73,22 +70,19 @@ class ArrayConverter
     }
 
     @Override
-    public void start()
-    {
+    public void start() {
         collectorIndexAtStart = converter.currentEntryIndex;
     }
 
     @Override
-    public void end()
-    {
+    public void end() {
         int collectorIndexAtEnd = converter.currentEntryIndex;
         this.nullability[currentRowIndex] = collectorIndexAtEnd == collectorIndexAtStart;
         this.offsets[currentRowIndex + 1] = collectorIndexAtEnd;
     }
 
     @Override
-    public ColumnVector getDataColumnVector(int batchSize)
-    {
+    public ColumnVector getDataColumnVector(int batchSize) {
         ColumnVector vector = new DefaultArrayVector(
             batchSize,
             typeFromClient,
@@ -101,8 +95,7 @@ class ArrayConverter
     }
 
     @Override
-    public boolean moveToNextRow()
-    {
+    public boolean moveToNextRow() {
         currentRowIndex++;
         resizeIfNeeded();
 
@@ -110,8 +103,7 @@ class ArrayConverter
     }
 
     @Override
-    public void resizeIfNeeded()
-    {
+    public void resizeIfNeeded() {
         if (nullability.length == currentRowIndex) {
             int newSize = nullability.length * 2;
             this.nullability = Arrays.copyOf(this.nullability, newSize);
@@ -122,23 +114,20 @@ class ArrayConverter
     }
 
     @Override
-    public void resetWorkingState()
-    {
+    public void resetWorkingState() {
         this.currentRowIndex = 0;
         this.nullability = initNullabilityVector(nullability.length);
         this.offsets = new int[offsets.length];
     }
 
     public static class ArrayCollector
-        extends GroupConverter
-    {
+        extends GroupConverter {
         private final Converter converter;
 
         // working state
         private int currentEntryIndex;
 
-        ArrayCollector(int maxBatchSize, ArrayType typeFromClient, GroupType innerArrayType)
-        {
+        ArrayCollector(int maxBatchSize, ArrayType typeFromClient, GroupType innerArrayType) {
             this.converter = ParquetConverters.createConverter(
                 maxBatchSize,
                 typeFromClient.getElementType(),
@@ -146,8 +135,7 @@ class ArrayConverter
         }
 
         @Override
-        public Converter getConverter(int fieldIndex)
-        {
+        public Converter getConverter(int fieldIndex) {
             switch (fieldIndex) {
                 case 0:
                     return converter;
@@ -158,16 +146,14 @@ class ArrayConverter
         }
 
         @Override
-        public void start()
-        {
+        public void start() {
             if (!converter.isPrimitive()) {
                 converter.asGroupConverter().start();
             }
         }
 
         @Override
-        public void end()
-        {
+        public void end() {
             if (!converter.isPrimitive()) {
                 converter.asGroupConverter().end();
             }
@@ -175,8 +161,7 @@ class ArrayConverter
             currentEntryIndex++;
         }
 
-        public ColumnVector getArrayVector()
-        {
+        public ColumnVector getArrayVector() {
             ColumnVector vector = ((ParquetConverters.BaseConverter) converter)
                 .getDataColumnVector(currentEntryIndex);
 
