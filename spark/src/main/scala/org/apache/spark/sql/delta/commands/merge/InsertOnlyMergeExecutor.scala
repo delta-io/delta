@@ -72,11 +72,15 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       val incrSourceRowCountExpr = incrementMetricAndReturnBool(numSourceRowsMetric, true)
       // source DataFrame
       var sourceDF = getSourceDF().filter(new Column(incrSourceRowCountExpr))
+      // If there is only one insert clause, then filter out the source rows that do not
+      // satisfy the clause condition because those rows will not be written out.
       if (notMatchedClauses.size == 1) {
-        // If there is only one insert clause, then filter out the source rows that do not
-        // satisfy the clause condition because those rows will not be written out.
-        sourceDF =
-          sourceDF.filter(new Column(notMatchedClauses.head.condition.getOrElse(Literal(true))))
+        notMatchedClauses
+          .head
+          .condition
+          .foreach { conditionCol =>
+            sourceDF = sourceDF.filter(new Column(conditionCol))
+          }
       }
 
       var dataSkippedFiles: Option[Seq[AddFile]] = None
