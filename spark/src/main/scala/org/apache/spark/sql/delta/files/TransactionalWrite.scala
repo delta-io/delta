@@ -332,8 +332,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       (Some(new DeltaJobStatisticsTracker(deltaLog.newDeltaHadoopConf(),
                                           outputPath,
                                           outputStatsCollectionSchema,
-                                          statsColExpr
-        )),
+                                          statsColExpr)),
        Some(statsCollection))
     } else {
       (None, None)

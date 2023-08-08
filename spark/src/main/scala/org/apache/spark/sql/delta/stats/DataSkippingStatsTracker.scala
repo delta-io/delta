@@ -171,8 +171,7 @@ class DeltaJobStatisticsTracker(
     @transient private val hadoopConf: Configuration,
     @transient val path: Path,
     val dataCols: Seq[Attribute],
-    val statsColExpr: Expression
-) extends WriteJobStatsTracker {
+    val statsColExpr: Expression) extends WriteJobStatsTracker {
 
   var recordedStats: Map[String, String] = _
 
