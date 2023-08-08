@@ -13,17 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.examples.utils;
+
+import java.io.UncheckedIOException;
+import java.util.HashMap;
+import java.util.Map;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.data.DefaultJsonRow;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.types.TableSchemaSerDe;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.ByteType;
@@ -38,34 +40,30 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 
-import java.io.UncheckedIOException;
-import java.util.HashMap;
-import java.util.Map;
+import io.delta.kernel.internal.types.TableSchemaSerDe;
+
+import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 
 /**
  * Utility class to serialize and deserialize {@link Row} object.
  */
-public class RowSerDe
-{
+public class RowSerDe {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    private RowSerDe()
-    {
+    private RowSerDe() {
     }
 
     /**
      * Utility method to serialize a {@link Row} as a JSON string
      */
-    public static String serializeRowToJson(Row row)
-    {
+    public static String serializeRowToJson(Row row) {
         Map<String, Object> rowObject = convertRowToJsonObject(row);
         try {
             Map<String, Object> rowWithSchema = new HashMap<>();
             rowWithSchema.put("schema", TableSchemaSerDe.toJson(row.getSchema()));
             rowWithSchema.put("row", rowObject);
             return OBJECT_MAPPER.writeValueAsString(rowWithSchema);
-        }
-        catch (JsonProcessingException e) {
+        } catch (JsonProcessingException e) {
             throw new UncheckedIOException(e);
         }
     }
@@ -73,21 +71,19 @@ public class RowSerDe
     /**
      * Utility method to deserialize a {@link Row} object from the JSON form.
      */
-    public static Row deserializeRowFromJson(TableClient tableClient, String jsonRowWithSchema)
-    {
+    public static Row deserializeRowFromJson(TableClient tableClient, String jsonRowWithSchema) {
         try {
             JsonNode jsonNode = OBJECT_MAPPER.readTree(jsonRowWithSchema);
             JsonNode schemaNode = jsonNode.get("schema");
-            StructType schema = TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), schemaNode.asText());
+            StructType schema =
+                TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), schemaNode.asText());
             return parseRowFromJsonWithSchema((ObjectNode) jsonNode.get("row"), schema);
-        }
-        catch (JsonProcessingException ex) {
+        } catch (JsonProcessingException ex) {
             throw new UncheckedIOException(ex);
         }
     }
 
-    private static Map<String, Object> convertRowToJsonObject(Row row)
-    {
+    private static Map<String, Object> convertRowToJsonObject(Row row) {
         StructType rowType = row.getSchema();
         Map<String, Object> rowObject = new HashMap<>();
         for (int fieldId = 0; fieldId < rowType.length(); fieldId++) {
@@ -103,39 +99,28 @@ public class RowSerDe
             Object value;
             if (fieldType instanceof BooleanType) {
                 value = row.getBoolean(fieldId);
-            }
-            else if (fieldType instanceof ByteType) {
+            } else if (fieldType instanceof ByteType) {
                 value = row.getByte(fieldId);
-            }
-            else if (fieldType instanceof ShortType) {
+            } else if (fieldType instanceof ShortType) {
                 value = row.getShort(fieldId);
-            }
-            else if (fieldType instanceof IntegerType) {
+            } else if (fieldType instanceof IntegerType) {
                 value = row.getInt(fieldId);
-            }
-            else if (fieldType instanceof LongType) {
+            } else if (fieldType instanceof LongType) {
                 value = row.getLong(fieldId);
-            }
-            else if (fieldType instanceof FloatType) {
+            } else if (fieldType instanceof FloatType) {
                 value = row.getFloat(fieldId);
-            }
-            else if (fieldType instanceof DoubleType) {
+            } else if (fieldType instanceof DoubleType) {
                 value = row.getDouble(fieldId);
-            }
-            else if (fieldType instanceof StringType) {
+            } else if (fieldType instanceof StringType) {
                 value = row.getString(fieldId);
-            }
-            else if (fieldType instanceof ArrayType) {
+            } else if (fieldType instanceof ArrayType) {
                 value = row.getArray(fieldId);
-            }
-            else if (fieldType instanceof MapType) {
+            } else if (fieldType instanceof MapType) {
                 value = row.getMap(fieldId);
-            }
-            else if (fieldType instanceof StructType) {
+            } else if (fieldType instanceof StructType) {
                 Row subRow = row.getStruct(fieldId);
                 value = convertRowToJsonObject(subRow);
-            }
-            else {
+            } else {
                 throw new UnsupportedOperationException("NYI");
             }
 
@@ -145,8 +130,7 @@ public class RowSerDe
         return rowObject;
     }
 
-    private static Row parseRowFromJsonWithSchema(ObjectNode rowJsonNode, StructType rowType)
-    {
+    private static Row parseRowFromJsonWithSchema(ObjectNode rowJsonNode, StructType rowType) {
         return new DefaultJsonRow(rowJsonNode, rowType);
     }
 }
