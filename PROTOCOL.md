@@ -1257,7 +1257,7 @@ To remove the append-only restriction, the table property `delta.appendOnly` mus
 ## Column Invariants
 Enablement:
  - If the table is on a Writer Version starting from 2 up to 6, Column Invariants are always enabled.
- - If the table is on Writer Version 7, the feature `columnInvariants` must exist in the table `protocol`'s `writerFeatures`.
+ - If the table is on Writer Version 7, the feature `invariants` must exist in the table `protocol`'s `writerFeatures`.
 
 When enabled:
  - The `metadata` for a column in the table schema MAY contain the key `delta.invariants`.
