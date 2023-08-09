@@ -231,12 +231,12 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
   )
 
-lazy val kernelDefault = (project in file("kernel/kernel-default"))
+lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(kernelApi)
   .dependsOn(spark % "test")
   .dependsOn(goldenTables % "test")
   .settings(
-    name := "delta-kernel-default",
+    name := "delta-kernel-defaults",
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
@@ -995,7 +995,7 @@ lazy val sparkGroup = project
   )
 
 lazy val kernelGroup = project
-  .aggregate(kernelApi, kernelDefault)
+  .aggregate(kernelApi, kernelDefaults)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
