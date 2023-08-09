@@ -16,6 +16,7 @@
 
 package io.delta.kernel.internal.data;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -96,6 +97,11 @@ public class PojoRow<POJO_TYPE> implements Row {
     @Override
     public byte[] getBinary(int ordinal) {
         return (byte[]) getValue(ordinal);
+    }
+
+    @Override
+    public BigDecimal getDecimal(int ordinal) {
+        return (BigDecimal) getValue(ordinal);
     }
 
     @Override

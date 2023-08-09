@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.data;
 
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,19 +23,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.BinaryType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.ByteType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.DoubleType;
-import io.delta.kernel.types.FloatType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.ShortType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -206,6 +195,12 @@ public class ScanStateRow
     public String getString(int ordinal) {
         throwIfUnsafeAccess(ordinal, StringType.class, "string");
         return (String) getValue(ordinal);
+    }
+
+    @Override
+    public BigDecimal getDecimal(int ordinal) {
+        throwIfUnsafeAccess(ordinal, DecimalType.class, "decimal");
+        return (BigDecimal) getValue(ordinal);
     }
 
     @Override

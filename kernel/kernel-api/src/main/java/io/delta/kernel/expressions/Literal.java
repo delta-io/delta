@@ -16,12 +16,14 @@
 
 package io.delta.kernel.expressions;
 
+import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.Objects;
 
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
+import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
 /**
  * A literal value.
@@ -120,6 +122,18 @@ public final class Literal extends LeafExpression {
      */
     public static Literal of(Timestamp value) {
         return new Literal(value, TimestampType.INSTANCE);
+    }
+
+    /**
+     * @return a {@link Literal} with data type {@link DecimalType}
+     */
+    public static Literal of(BigDecimal value, int precision, int scale) {
+        // throws an error if rounding is required to set the specified scale
+        BigDecimal valueToStore = value.setScale(scale);
+        checkArgument(valueToStore.precision() <= precision, String.format(
+                "Decimal precision=%s for decimal %s exceeds max precision %s",
+                valueToStore.precision(), valueToStore, precision));
+        return new Literal(valueToStore, new DecimalType(precision, scale));
     }
 
     /**

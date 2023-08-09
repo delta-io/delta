@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.data;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -85,6 +86,11 @@ public class ColumnarBatchRow
     @Override
     public String getString(int ordinal) {
         return columnVector(ordinal).getString(rowId);
+    }
+
+    @Override
+    public BigDecimal getDecimal(int ordinal) {
+        return columnVector(ordinal).getDecimal(rowId);
     }
 
     @Override

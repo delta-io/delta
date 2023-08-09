@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.util;
 
+import java.math.BigDecimal;
 import java.sql.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -133,6 +134,11 @@ public class PartitionUtils {
         }
         if (dataType instanceof DateType) {
             return Literal.of(Date.valueOf(partitionValue));
+        }
+        if (dataType instanceof DecimalType) {
+            DecimalType decimalType = (DecimalType) dataType;
+            return Literal.of(
+                new BigDecimal(partitionValue), decimalType.getPrecision(), decimalType.getScale());
         }
 
         throw new UnsupportedOperationException("Unsupported partition column: " + dataType);

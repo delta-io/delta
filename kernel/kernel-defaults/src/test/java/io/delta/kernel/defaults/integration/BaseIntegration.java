@@ -101,14 +101,13 @@ public abstract class BaseIntegration {
 
     /**
      * Remove unsupported top level delta types in Kernel from the schema. Unsupported data types
-     * include `DECIMAL` and `TIMESTAMP`.
+     * include `TIMESTAMP`.
      */
     protected StructType removeUnsupportedType(StructType schema) {
         List<StructField> filterList =
             schema.fields().stream()
                 .filter(
-                    field -> !(field.getDataType() instanceof DecimalType ||
-                        field.getDataType() instanceof TimestampType)
+                    field -> !(field.getDataType() instanceof TimestampType)
                 ).collect(Collectors.toList());
 
         return new StructType(filterList);
