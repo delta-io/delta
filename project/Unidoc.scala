@@ -53,7 +53,9 @@ object Unidoc {
         updatedProject = updatedProject.enablePlugins(ScalaUnidocPlugin)
       }
       updatedProject
-        .enablePlugins(GenJavadocPlugin, PublishJavadocPlugin, JavaUnidocPlugin)
+        .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin)
+        // TODO: Allows maven publishing to use unidoc doc jar, but it currently throws errors.
+        // .enablePlugins(PublishJavadocPlugin)
         .settings(
           libraryDependencies ++= Seq(
             // Ensure genJavaDoc plugin is of the right version that works with Scala 2.12
@@ -128,6 +130,14 @@ object Unidoc {
             allSourceFiles = (JavaUnidoc / unidoc / unidocAllSources).value,
             sourceFilePatternsToKeep = unidocSourceFilePatterns.value)
         },
+
+        // Settings for plain, old Java doc needed for successful doc generation during publishing.
+        Compile / doc / javacOptions ++= Seq(
+          "-public",
+          "-noqualifier", "java.lang",
+          "-tag", "implNote:a:Implementation Note:",
+          "-tag", "apiNote:a:API Note:",
+          "-Xdoclint:all")
       )
 
       val scalaUnidocSettings = if (generateScalaDoc) Seq(
