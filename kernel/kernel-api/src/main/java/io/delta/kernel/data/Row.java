@@ -25,8 +25,7 @@ import io.delta.kernel.types.StructType;
 /**
  * Represent a single record
  */
-public interface Row
-{
+public interface Row {
 
     /**
      * @return Schema of the record.

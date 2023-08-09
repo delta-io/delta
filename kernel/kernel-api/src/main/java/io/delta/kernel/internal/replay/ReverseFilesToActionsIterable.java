@@ -43,15 +43,13 @@ import io.delta.kernel.internal.lang.CloseableIterable;
 import io.delta.kernel.internal.util.InternalUtils;
 
 public class ReverseFilesToActionsIterable
-    implements CloseableIterable<Tuple2<Action, Boolean>>
-{
+    implements CloseableIterable<Tuple2<Action, Boolean>> {
     private final TableClient tableClient;
     private final List<FileStatus> reverseSortedFiles;
 
     public ReverseFilesToActionsIterable(
         TableClient tableClient,
-        Stream<FileStatus> filesUnsorted)
-    {
+        Stream<FileStatus> filesUnsorted) {
         this.tableClient = tableClient;
         this.reverseSortedFiles = filesUnsorted
             .sorted(Comparator.comparing(
@@ -60,17 +58,14 @@ public class ReverseFilesToActionsIterable
     }
 
     @Override
-    public CloseableIterator<Tuple2<Action, Boolean>> iterator()
-    {
-        return new CloseableIterator<Tuple2<Action, Boolean>>()
-        {
+    public CloseableIterator<Tuple2<Action, Boolean>> iterator() {
+        return new CloseableIterator<Tuple2<Action, Boolean>>() {
             private final Iterator<FileStatus> filesIter = reverseSortedFiles.iterator();
             private Optional<CloseableIterator<Tuple2<Action, Boolean>>> actionsIter =
                 Optional.empty();
 
             @Override
-            public boolean hasNext()
-            {
+            public boolean hasNext() {
                 tryEnsureNextActionsIterIsReady();
 
                 // By definition of tryEnsureNextActionsIterIsReady, we know that if actionsIter
@@ -80,15 +75,13 @@ public class ReverseFilesToActionsIterable
             }
 
             @Override
-            public Tuple2<Action, Boolean> next()
-            {
+            public Tuple2<Action, Boolean> next() {
                 return actionsIter.get().next();
             }
 
             @Override
             public void close()
-                throws IOException
-            {
+                throws IOException {
                 if (actionsIter.isPresent()) {
                     actionsIter.get().close();
                     actionsIter = Optional.empty();
@@ -99,8 +92,7 @@ public class ReverseFilesToActionsIterable
              * If the current `actionsIter` has no more elements, this function finds the next
              * non-empty file in `filesIter` and uses it to set `actionsIter`.
              */
-            private void tryEnsureNextActionsIterIsReady()
-            {
+            private void tryEnsureNextActionsIterIsReady() {
                 if (actionsIter.isPresent()) {
                     // This iterator already has a next element, so we can exit early;
                     if (actionsIter.get().hasNext()) {
@@ -110,8 +102,7 @@ public class ReverseFilesToActionsIterable
                     // Clean up resources
                     try {
                         actionsIter.get().close();
-                    }
-                    catch (IOException ex) {
+                    } catch (IOException ex) {
                         throw new RuntimeException(ex);
                     }
 
@@ -130,8 +121,7 @@ public class ReverseFilesToActionsIterable
                     // It was an empty file.// Clean up resources
                     try {
                         actionsIter.get().close();
-                    }
-                    catch (IOException ex) {
+                    } catch (IOException ex) {
                         throw new RuntimeException(ex);
                     }
 
@@ -143,8 +133,7 @@ public class ReverseFilesToActionsIterable
             /**
              * Requires that `filesIter.hasNext` is true
              */
-            private CloseableIterator<Tuple2<Action, Boolean>> getNextActionsIter()
-            {
+            private CloseableIterator<Tuple2<Action, Boolean>> getNextActionsIter() {
                 final FileStatus nextFile = filesIter.next();
                 final Path nextFilePath = new Path(nextFile.getPath());
                 final JsonHandler jsonHandler = tableClient.getJsonHandler();
@@ -162,8 +151,7 @@ public class ReverseFilesToActionsIterable
                                 SingleAction.READ_SCHEMA),
                             false // isFromCheckpoint
                         );
-                    }
-                    else if (nextFilePath.getName().endsWith(".parquet")) {
+                    } else if (nextFilePath.getName().endsWith(".parquet")) {
                         ParquetHandler parquetHandler = tableClient.getParquetHandler();
                         CloseableIterator<FileReadContext> fileWithContext =
                             parquetHandler.contextualizeFileReads(
@@ -177,14 +165,12 @@ public class ReverseFilesToActionsIterable
                                 SingleAction.READ_SCHEMA),
                             true // isFromCheckpoint
                         );
-                    }
-                    else {
+                    } else {
                         throw new IllegalStateException(
                             String.format("Unexpected log file path: %s", nextFilePath)
                         );
                     }
-                }
-                catch (IOException ex) {
+                } catch (IOException ex) {
                     throw new RuntimeException(ex);
                 }
             }
@@ -192,8 +178,7 @@ public class ReverseFilesToActionsIterable
     }
 
     private class ColumnarBatchToActionIterator
-        implements CloseableIterator<Tuple2<Action, Boolean>>
-    {
+        implements CloseableIterator<Tuple2<Action, Boolean>> {
         private final CloseableIterator<FileDataReadResult> batchIterator;
         private final boolean isFromCheckpoint;
 
@@ -204,15 +189,13 @@ public class ReverseFilesToActionsIterable
          */
         ColumnarBatchToActionIterator(
             CloseableIterator<FileDataReadResult> batchIterator,
-            boolean isFromCheckpoint)
-        {
+            boolean isFromCheckpoint) {
             this.batchIterator = batchIterator;
             this.isFromCheckpoint = isFromCheckpoint;
         }
 
         @Override
-        public boolean hasNext()
-        {
+        public boolean hasNext() {
             if (
                 (currentBatchIterator == null || !currentBatchIterator.hasNext()) &&
                     batchIterator.hasNext()) {
@@ -222,8 +205,7 @@ public class ReverseFilesToActionsIterable
         }
 
         @Override
-        public Tuple2<Action, Boolean> next()
-        {
+        public Tuple2<Action, Boolean> next() {
             return new Tuple2<>(
                 SingleAction.fromRow(currentBatchIterator.next(), tableClient).unwrap(),
                 isFromCheckpoint
@@ -232,8 +214,7 @@ public class ReverseFilesToActionsIterable
 
         @Override
         public void close()
-            throws IOException
-        {
+            throws IOException {
             // TODO: Use a safe close of the both Closeables
             if (currentBatchIterator != null) {
                 currentBatchIterator.close();

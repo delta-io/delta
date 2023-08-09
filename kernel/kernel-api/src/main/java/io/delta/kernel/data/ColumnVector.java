@@ -51,15 +51,18 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the boolean type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Boolean value at the given row id
      */
     default boolean getBoolean(int rowId) {
         throw new UnsupportedOperationException("Invalid value request for data type");
     }
+
     /**
      * Returns the byte type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Byte value at the given row id
      */
@@ -70,6 +73,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the short type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Short value at the given row id
      */
@@ -80,6 +84,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the int type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Integer value at the given row id
      */
@@ -90,6 +95,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the long type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Long value at the given row id
      */
@@ -100,6 +106,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the float type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Float value at the given row id
      */
@@ -110,6 +117,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the double type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Double value at the given row id
      */
@@ -120,6 +128,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the binary type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Binary value at the given row id
      */
@@ -130,6 +139,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the string type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return String value at the given row id
      */
@@ -150,9 +160,10 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Return the map type value located at {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
-     * @param <K> Return map key type
-     * @param <V> Return map value type
+     * @param <K>   Return map key type
+     * @param <V>   Return map value type
      * @return
      */
     default <K, V> Map<K, V> getMap(int rowId) {
@@ -162,6 +173,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Return the row value located at {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return
      */
@@ -174,7 +186,7 @@ public interface ColumnVector extends AutoCloseable {
      * anything, if the slot for {@code rowId} is null.
      *
      * @param rowId
-     * @param <T> Array element type
+     * @param <T>   Array element type
      * @return
      */
     default <T> List<T> getArray(int rowId) {

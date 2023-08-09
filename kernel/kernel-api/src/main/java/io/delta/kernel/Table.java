@@ -22,8 +22,7 @@ import io.delta.kernel.internal.TableImpl;
 /**
  * Represents the Delta Lake table for a given path.
  */
-public interface Table
-{
+public interface Table {
     /**
      * Instantiate a table object for the Delta Lake table at the given path.
      *
@@ -32,8 +31,7 @@ public interface Table
      * @throws TableNotFoundException when there is no Delta table at the given path.
      */
     static Table forPath(String path)
-        throws TableNotFoundException
-    {
+        throws TableNotFoundException {
         return TableImpl.forPath(path);
     }
 

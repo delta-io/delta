@@ -741,13 +741,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     scan
   }
 
-  /** Returns a[[DeltaScan]] based on the limit clause when there are no filters or projections. */
-  override def filesForScan(limit: Long): DeltaScan = {
-    val scan = snapshot.filesForScan(limit)
-    trackFilesRead(scan.files)
-    scan
-  }
-
   /** Returns a[[DeltaScan]] based on the given partition filters, projections and limits. */
   override def filesForScan(
       limit: Long,

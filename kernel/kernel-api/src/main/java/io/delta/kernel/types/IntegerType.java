@@ -18,12 +18,10 @@ package io.delta.kernel.types;
 /**
  * The data type representing {@code integer} type values.
  */
-public class IntegerType extends BasePrimitiveType
-{
+public class IntegerType extends BasePrimitiveType {
     public static final IntegerType INSTANCE = new IntegerType();
 
-    private IntegerType()
-    {
+    private IntegerType() {
         super("integer");
     }
 }

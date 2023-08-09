@@ -162,7 +162,8 @@ object DeltaSourceOffset extends Logging {
         validateSourceVersion(s.json)
         val o = JsonUtils.mapper.readValue[DeltaSourceOffset](s.json)
         if (o.reservoirId != reservoirId) {
-          throw DeltaErrors.nonExistentDeltaTableStreaming(o.reservoirId)
+          throw DeltaErrors.differentDeltaTableReadByStreamingSource(
+            newTableId = reservoirId, oldTableId = o.reservoirId)
         }
         // Always upgrade to use the current latest INDEX_VERSION_BASE
         val offsetIndex = if (o.sourceVersion < VERSION_3 && o.index == BASE_INDEX_V1) {

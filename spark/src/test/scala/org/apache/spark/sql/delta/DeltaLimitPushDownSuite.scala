@@ -108,7 +108,7 @@ trait DeltaLimitPushDownTests extends QueryTest
       file.write.format("delta").mode("append").save(deltaLog.dataPath.toString)
     }
 
-    val deltaScan = deltaLog.snapshot.filesForScan(3)
+    val deltaScan = deltaLog.snapshot.filesForScan(limit = 3, partitionFilters = Seq.empty)
 
     assert(deltaScan.scanned.bytesCompressed === deltaScan.total.bytesCompressed)
   }
@@ -129,7 +129,7 @@ trait DeltaLimitPushDownTests extends QueryTest
       file.write.format("delta").mode("append").save(deltaLog.dataPath.toString)
     }
 
-    val deltaScan = deltaLog.snapshot.filesForScan(3)
+    val deltaScan = deltaLog.snapshot.filesForScan(limit = 3, partitionFilters = Seq.empty)
 
     assert(deltaScan.scanned.rows === Some(4))
     assert(deltaScan.scanned.bytesCompressed != deltaScan.total.bytesCompressed)

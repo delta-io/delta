@@ -101,9 +101,10 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
     val matchedPredicate =
       if (isMatchedOnly) {
         matchedClauses
-          .map(clause => clause.condition.getOrElse(Literal(true)))
+          // An undefined condition (None) is implicitly true
+          .map(_.condition.getOrElse(Literal.TrueLiteral))
           .reduce((a, b) => Or(a, b))
-      } else Literal(true)
+      } else Literal.TrueLiteral
 
     // Compute the columns needed for the inner join.
     val targetColsNeeded = {

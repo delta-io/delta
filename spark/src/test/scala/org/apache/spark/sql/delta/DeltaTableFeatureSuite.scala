@@ -279,6 +279,24 @@ class DeltaTableFeatureSuite
           TestWriterFeature,
           AppendOnlyTableFeature))
         .canDowngradeTo(tableFeatureProtocol))
+    // Remove reader+writer feature.
+    assert(tableFeatureProtocol.withFeatures(Seq(TestReaderWriterFeature))
+      .canDowngradeTo(tableFeatureProtocol))
+    // Only one feature at a time.
+    assert(
+      !tableFeatureProtocol
+        .withFeatures(Seq(TestReaderWriterFeature, TestReaderWriterMetadataAutoUpdateFeature))
+        .canDowngradeTo(tableFeatureProtocol))
+    // Only one feature at a time - multiple reader+writer features.
+    assert(
+      !tableFeatureProtocol
+        .withFeatures(Seq(TestReaderWriterFeature, TestReaderWriterMetadataAutoUpdateFeature))
+        .canDowngradeTo(tableFeatureProtocol))
+    // Only one feature at a time - mix of reader+writer and writer features.
+    assert(
+      !tableFeatureProtocol
+        .withFeatures(Seq(TestWriterFeature, TestReaderWriterFeature))
+        .canDowngradeTo(tableFeatureProtocol))
   }
 
   test("add reader and writer feature descriptors") {

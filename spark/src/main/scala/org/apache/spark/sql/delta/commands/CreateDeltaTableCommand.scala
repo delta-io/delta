@@ -223,7 +223,11 @@ case class CreateDeltaTableCommand(
       // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
       // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
       if (!isV1Writer) {
-        replaceMetadataIfNecessary(txn, tableWithLocation, options, schema)
+        replaceMetadataIfNecessary(
+          txn,
+          tableWithLocation,
+          options,
+          schema)
       }
       var actions = deltaWriter.write(
         txn,
@@ -298,7 +302,8 @@ case class CreateDeltaTableCommand(
         assertPathEmpty(hadoopConf, tableWithLocation)
         // This is a user provided schema.
         // Doesn't come from a query, Follow nullability invariants.
-        val newMetadata = getProvidedMetadata(tableWithLocation, table.schema.json)
+        val newMetadata =
+          getProvidedMetadata(tableWithLocation, table.schema.json)
         txn.updateMetadataForNewTable(newMetadata)
         protocol.foreach { protocol =>
           txn.updateProtocol(protocol)
@@ -329,7 +334,11 @@ case class CreateDeltaTableCommand(
           throw DeltaErrors.schemaNotProvidedException
         }
         // We need to replace
-        replaceMetadataIfNecessary(txn, tableWithLocation, options, tableWithLocation.schema)
+        replaceMetadataIfNecessary(
+          txn,
+          tableWithLocation,
+          options,
+          tableWithLocation.schema)
         // Truncate the table
         val operationTimestamp = System.currentTimeMillis()
         var actionsToCommit = Seq.empty[Action]
@@ -572,7 +581,8 @@ case class CreateDeltaTableCommand(
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
-      txn.updateMetadataForNewTable(getProvidedMetadata(table, schema.json))
+      val newMetadata = getProvidedMetadata(table, schema.json)
+      txn.updateMetadataForNewTable(newMetadata)
     }
   }
 

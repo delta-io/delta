@@ -21,8 +21,16 @@ import java.nio.file.Files
 // Scala versions
 val scala212 = "2.12.15"
 val scala213 = "2.13.5"
-val default_scala_version = scala212
 val all_scala_versions = Seq(scala212, scala213)
+
+// Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
+// It was necessary to change default_scala_version to scala213 in build.sbt
+// to build the project with Scala 2.13 only
+// As a setting, it's possible to set it on command line easily
+// sbt 'set default_scala_version := 2.13.5' [commands]
+// FIXME Why not use scalaVersion?
+val default_scala_version = settingKey[String]("Default Scala version")
+Global / default_scala_version := scala212
 
 // Dependent library versions
 val sparkVersion = "3.4.0"
@@ -42,20 +50,25 @@ val hadoopVersionForHive2 = "2.7.2"
 val hive2Version = "2.3.3"
 val tezVersionForHive2 = "0.8.4"
 
-scalaVersion := default_scala_version
+scalaVersion := default_scala_version.value
 
 // crossScalaVersions must be set to Nil on the root project
 crossScalaVersions := Nil
 
+// For Java 11 use the following on command line
+// sbt 'set targetJvm := "11"' [commands]
+val targetJvm = settingKey[String]("Target JVM version")
+Global / targetJvm := "1.8"
+
 lazy val commonSettings = Seq(
   organization := "io.delta",
-  scalaVersion := default_scala_version,
+  scalaVersion := default_scala_version.value,
   crossScalaVersions := all_scala_versions,
   fork := true,
-  scalacOptions ++= Seq("-target:jvm-1.8", "-Ywarn-unused:imports"),
-  javacOptions ++= Seq("-source", "1.8"),
+  scalacOptions ++= Seq(s"-target:jvm-${targetJvm.value}", "-Ywarn-unused:imports"),
+  javacOptions ++= Seq("-source", targetJvm.value),
   // -target cannot be passed as a parameter to javadoc. See https://github.com/sbt/sbt/issues/355
-  Compile / compile / javacOptions ++= Seq("-target", "1.8"),
+  Compile / compile / javacOptions ++= Seq("-target", targetJvm.value),
 
   // Make sure any tests in any project that uses Spark is configured for running well locally
   Test / javaOptions ++= Seq(
@@ -218,12 +231,12 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
   )
 
-lazy val kernelDefault = (project in file("kernel/kernel-default"))
+lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(kernelApi)
   .dependsOn(spark % "test")
   .dependsOn(goldenTables % "test")
   .settings(
-    name := "delta-kernel-default",
+    name := "delta-kernel-defaults",
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
@@ -982,7 +995,7 @@ lazy val sparkGroup = project
   )
 
 lazy val kernelGroup = project
-  .aggregate(kernelApi, kernelDefault)
+  .aggregate(kernelApi, kernelDefaults)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
@@ -1143,7 +1156,7 @@ lazy val javaOnlyReleaseSettings = releaseSettings ++ Seq(
   // we publish jars for each scalaVersion in crossScalaVersions. however, we only need to publish
   // one java jar. thus, only do so when the current scala version == default scala version
   publishArtifact := {
-    val (expMaj, expMin, _) = getMajorMinorPatch(default_scala_version)
+    val (expMaj, expMin, _) = getMajorMinorPatch(default_scala_version.value)
     s"$expMaj.$expMin" == scalaBinaryVersion.value
   },
 

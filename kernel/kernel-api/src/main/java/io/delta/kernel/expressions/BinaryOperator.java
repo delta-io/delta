@@ -35,7 +35,7 @@ public abstract class BinaryOperator extends BinaryExpression {
                     "BinaryOperator left and right DataTypes must be the same. Found %s and %s.",
                     left.dataType(),
                     right.dataType()
-            ));
+                ));
         }
     }
 

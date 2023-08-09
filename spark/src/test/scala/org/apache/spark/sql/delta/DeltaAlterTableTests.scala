@@ -1693,6 +1693,7 @@ class DeltaAlterTableByNameSuite
 }
 
 class DeltaAlterTableByPathSuite extends DeltaAlterTableByPathTests with DeltaSQLCommandTest
+  with DeltaAlterTableReplaceTests
 
 
 trait DeltaAlterTableColumnMappingSelectedTests extends DeltaColumnMappingSelectedTestMixin {

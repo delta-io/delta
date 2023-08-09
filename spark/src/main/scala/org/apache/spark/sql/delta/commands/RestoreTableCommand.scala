@@ -310,8 +310,3 @@ case class RestoreTableCommand(
     }
   }
 }
-
-object RestoreTableCommand {
-  // Op name used by RESTORE command
-  val OP_NAME = "RESTORE"
-}

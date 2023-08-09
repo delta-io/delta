@@ -432,15 +432,18 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getMessage == s"Delta table $table doesn't exist.")
     }
-    {
-      val table = "t"
-      val e = intercept[DeltaIllegalStateException] {
-        throw DeltaErrors.nonExistentDeltaTableStreaming(table)
-      }
-      assert(e.getMessage ==
-        s"Delta table $table doesn't exist. Please delete your streaming query " +
-        "checkpoint and restart.")
-    }
+    checkError(
+      exception = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.differentDeltaTableReadByStreamingSource(
+          newTableId = "027fb01c-94aa-4cab-87cb-5aab6aec6d17",
+          oldTableId = "2edf2c02-bb63-44e9-a84c-517fad0db296")
+      },
+      errorClass = "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE",
+      parameters = Map(
+        "oldTableId" -> "2edf2c02-bb63-44e9-a84c-517fad0db296",
+        "newTableId" -> "027fb01c-94aa-4cab-87cb-5aab6aec6d17")
+    )
+
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.nonExistentColumnInSchema("c", "s")

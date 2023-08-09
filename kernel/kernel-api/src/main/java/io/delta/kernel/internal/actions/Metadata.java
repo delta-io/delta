@@ -32,10 +32,8 @@ import static io.delta.kernel.utils.Utils.requireNonNull;
 
 import io.delta.kernel.internal.types.TableSchemaSerDe;
 
-public class Metadata implements Action
-{
-    public static Metadata fromRow(Row row, TableClient tableClient)
-    {
+public class Metadata implements Action {
+    public static Metadata fromRow(Row row, TableClient tableClient) {
         if (row == null) {
             return null;
         }
@@ -89,8 +87,7 @@ public class Metadata implements Action
         StructType schema,
         List<String> partitionColumns,
         Optional<Long> createdTime,
-        Map<String, String> configuration)
-    {
+        Map<String, String> configuration) {
         this.id = requireNonNull(id, "id is null");
         this.name = name;
         this.description = requireNonNull(description, "description is null");
@@ -103,48 +100,39 @@ public class Metadata implements Action
         this.configuration = configuration == null ? Collections.emptyMap() : configuration;
     }
 
-    public String getSchemaString()
-    {
+    public String getSchemaString() {
         return schemaString;
     }
 
-    public StructType getSchema()
-    {
+    public StructType getSchema() {
         return schema;
     }
 
-    public List<String> getPartitionColumns()
-    {
+    public List<String> getPartitionColumns() {
         return partitionColumns;
     }
 
-    public String getId()
-    {
+    public String getId() {
         return id;
     }
 
-    public Optional<String> getName()
-    {
+    public Optional<String> getName() {
         return name;
     }
 
-    public Optional<String> getDescription()
-    {
+    public Optional<String> getDescription() {
         return description;
     }
 
-    public Format getFormat()
-    {
+    public Format getFormat() {
         return format;
     }
 
-    public Optional<Long> getCreatedTime()
-    {
+    public Optional<Long> getCreatedTime() {
         return createdTime;
     }
 
-    public Map<String, String> getConfiguration()
-    {
+    public Map<String, String> getConfiguration() {
         return configuration;
     }
 }

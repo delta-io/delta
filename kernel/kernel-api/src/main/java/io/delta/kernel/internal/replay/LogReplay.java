@@ -34,8 +34,7 @@ import io.delta.kernel.internal.lang.CloseableIterable;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
 
-public class LogReplay
-{
+public class LogReplay {
     private final Path dataPath;
     private final LogSegment logSegment;
     private final CloseableIterable<Tuple2<Action, Boolean>> reverseActionsIterable;
@@ -45,8 +44,7 @@ public class LogReplay
         Path logPath,
         Path dataPath,
         TableClient tableHelper,
-        LogSegment logSegment)
-    {
+        LogSegment logSegment) {
         this.dataPath = dataPath;
         this.logSegment = logSegment;
 
@@ -61,25 +59,22 @@ public class LogReplay
         this.protocolAndMetadata = new Lazy<>(this::loadTableProtocolAndMetadata);
     }
 
-    public Lazy<Tuple2<Protocol, Metadata>> lazyLoadProtocolAndMetadata()
-    {
+    public Lazy<Tuple2<Protocol, Metadata>> lazyLoadProtocolAndMetadata() {
         return this.protocolAndMetadata;
     }
 
-    public CloseableIterator<AddFile> getAddFiles()
-    {
+    public CloseableIterator<AddFile> getAddFiles() {
         final CloseableIterator<Tuple2<Action, Boolean>> reverseActionsIter =
             reverseActionsIterable.iterator();
         return new ReverseActionsToAddFilesIterator(dataPath, reverseActionsIter);
     }
 
-    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata()
-    {
+    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata() {
         Protocol protocol = null;
         Metadata metadata = null;
 
         try (CloseableIterator<Tuple2<Action, Boolean>> reverseIter =
-            reverseActionsIterable.iterator()) {
+                 reverseActionsIterable.iterator()) {
             while (reverseIter.hasNext()) {
                 final Action action = reverseIter.next()._1;
 
@@ -92,8 +87,7 @@ public class LogReplay
                         validateSupportedTable(protocol, metadata);
                         return new Tuple2<>(protocol, metadata);
                     }
-                }
-                else if (action instanceof Metadata && metadata == null) {
+                } else if (action instanceof Metadata && metadata == null) {
                     // We only need the latest Metadata
                     metadata = (Metadata) action;
 
@@ -104,8 +98,7 @@ public class LogReplay
                     }
                 }
             }
-        }
-        catch (IOException ex) {
+        } catch (IOException ex) {
             throw new RuntimeException("Could not close iterator", ex);
         }
 
@@ -120,8 +113,7 @@ public class LogReplay
         );
     }
 
-    private void validateSupportedTable(Protocol protocol, Metadata metadata)
-    {
+    private void validateSupportedTable(Protocol protocol, Metadata metadata) {
         switch (protocol.getMinReaderVersion()) {
             case 1:
                 break;
@@ -162,8 +154,7 @@ public class LogReplay
     /**
      * Verifies that a set of delta or checkpoint files to be read actually belongs to this table.
      */
-    private void assertLogFilesBelongToTable(Path logPath, Stream<FileStatus> allFiles)
-    {
+    private void assertLogFilesBelongToTable(Path logPath, Stream<FileStatus> allFiles) {
         // TODO:
     }
 }

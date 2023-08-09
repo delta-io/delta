@@ -26,6 +26,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
 
 // TODO: check for unsafe access
+
 /**
  * Exposes a POJO object as a {@link Row}
  */
@@ -35,29 +36,26 @@ public class PojoRow<POJO_TYPE> implements Row {
     private final Map<Integer, Function<POJO_TYPE, Object>> ordinalToAccessor;
 
     public PojoRow(
-            POJO_TYPE pojoObject,
-            StructType schema,
-            Map<Integer, Function<POJO_TYPE, Object>> ordinalToAccessor) {
+        POJO_TYPE pojoObject,
+        StructType schema,
+        Map<Integer, Function<POJO_TYPE, Object>> ordinalToAccessor) {
         this.pojoObject = requireNonNull(pojoObject, "pojoObjects is null");
         this.schema = requireNonNull(schema, "schema is null");
         this.ordinalToAccessor = requireNonNull(ordinalToAccessor, "ordinalToAccessor is null");
     }
 
     @Override
-    public StructType getSchema()
-    {
+    public StructType getSchema() {
         return schema;
     }
 
     @Override
-    public boolean isNullAt(int ordinal)
-    {
+    public boolean isNullAt(int ordinal) {
         return getValue(ordinal) == null;
     }
 
     @Override
-    public boolean getBoolean(int ordinal)
-    {
+    public boolean getBoolean(int ordinal) {
         return (boolean) getValue(ordinal);
     }
 
@@ -72,14 +70,12 @@ public class PojoRow<POJO_TYPE> implements Row {
     }
 
     @Override
-    public int getInt(int ordinal)
-    {
+    public int getInt(int ordinal) {
         return (int) getValue(ordinal);
     }
 
     @Override
-    public long getLong(int ordinal)
-    {
+    public long getLong(int ordinal) {
         return (long) getValue(ordinal);
     }
 
@@ -94,8 +90,7 @@ public class PojoRow<POJO_TYPE> implements Row {
     }
 
     @Override
-    public String getString(int ordinal)
-    {
+    public String getString(int ordinal) {
         return (String) getValue(ordinal);
     }
 
@@ -110,20 +105,17 @@ public class PojoRow<POJO_TYPE> implements Row {
     }
 
     @Override
-    public Row getStruct(int ordinal)
-    {
+    public Row getStruct(int ordinal) {
         return (Row) getValue(ordinal);
     }
 
     @Override
-    public <T> List<T> getArray(int ordinal)
-    {
+    public <T> List<T> getArray(int ordinal) {
         return (List<T>) getValue(ordinal);
     }
 
     @Override
-    public <K, V> Map<K, V> getMap(int ordinal)
-    {
+    public <K, V> Map<K, V> getMap(int ordinal) {
         return (Map<K, V>) getValue(ordinal);
     }
 
