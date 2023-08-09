@@ -18,12 +18,10 @@ package io.delta.kernel.types;
 /**
  * The data type representing {@code float} type values.
  */
-public class FloatType extends BasePrimitiveType
-{
+public class FloatType extends BasePrimitiveType {
     public static final FloatType INSTANCE = new FloatType();
 
-    private FloatType()
-    {
+    private FloatType() {
         super("float");
     }
 }

@@ -18,8 +18,7 @@ package io.delta.kernel.types;
 /**
  * Data type representing {@code boolean} type values.
  */
-public class BooleanType extends BasePrimitiveType
-{
+public class BooleanType extends BasePrimitiveType {
     public static final BooleanType INSTANCE = new BooleanType();
 
     private BooleanType() {

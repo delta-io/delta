@@ -20,38 +20,32 @@ import java.util.Objects;
 /**
  * Data type representing a map type.
  */
-public class MapType extends DataType
-{
+public class MapType extends DataType {
 
     private final DataType keyType;
     private final DataType valueType;
     private final boolean valueContainsNull;
 
-    public MapType(DataType keyType, DataType valueType, boolean valueContainsNull)
-    {
+    public MapType(DataType keyType, DataType valueType, boolean valueContainsNull) {
         this.keyType = keyType;
         this.valueType = valueType;
         this.valueContainsNull = valueContainsNull;
     }
 
-    public DataType getKeyType()
-    {
+    public DataType getKeyType() {
         return keyType;
     }
 
-    public DataType getValueType()
-    {
+    public DataType getValueType() {
         return valueType;
     }
 
-    public boolean isValueContainsNull()
-    {
+    public boolean isValueContainsNull() {
         return valueContainsNull;
     }
 
     @Override
-    public boolean equivalent(DataType dataType)
-    {
+    public boolean equivalent(DataType dataType) {
         return dataType instanceof MapType &&
             ((MapType) dataType).getKeyType().equivalent(keyType) &&
             ((MapType) dataType).getValueType().equivalent(valueType) &&
@@ -59,8 +53,7 @@ public class MapType extends DataType
     }
 
     @Override
-    public boolean equals(Object o)
-    {
+    public boolean equals(Object o) {
         if (this == o) {
             return true;
         }
@@ -73,14 +66,12 @@ public class MapType extends DataType
     }
 
     @Override
-    public int hashCode()
-    {
+    public int hashCode() {
         return Objects.hash(keyType, valueType, valueContainsNull);
     }
 
     @Override
-    public String toJson()
-    {
+    public String toJson() {
         return String.format("{" +
             "\"type\": \"map\"," +
             "\"keyType\": %s," +
@@ -90,8 +81,7 @@ public class MapType extends DataType
     }
 
     @Override
-    public String toString()
-    {
+    public String toString() {
         return String.format("Map[%s, %s]", keyType, valueType);
     }
 }

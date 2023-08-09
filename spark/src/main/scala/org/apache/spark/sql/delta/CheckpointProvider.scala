@@ -38,10 +38,10 @@ trait UninitializedCheckpointProvider {
   def version: Long
 
   /**
-   * Minimum set of files that represents this checkpoint.
+   * Top level files that represents this checkpoint.
    * These files could be reused again to initialize the [[CheckpointProvider]].
    */
-  def files: Seq[FileStatus]
+  def topLevelFiles: Seq[FileStatus]
 }
 
 /**
@@ -63,21 +63,21 @@ trait CheckpointProvider extends UninitializedCheckpointProvider {
  * An implementation of [[CheckpointProvider]] where the information about checkpoint files
  * (i.e. Seq[FileStatus]) is already known in advance.
  *
- * @param files - file statuses that describes the checkpoint
+ * @param topLevelFiles - file statuses that describes the checkpoint
  * @param lastCheckpointInfoOpt - optional [[LastCheckpointInfo]] corresponding to this checkpoint.
  *                                This comes from _last_checkpoint file
  */
 case class PreloadedCheckpointProvider(
-    override val files: Seq[FileStatus],
+    override val topLevelFiles: Seq[FileStatus],
     lastCheckpointInfoOpt: Option[LastCheckpointInfo])
   extends CheckpointProvider
   with DeltaLogging {
 
-  require(files.nonEmpty, "There should be atleast 1 checkpoint file")
+  require(topLevelFiles.nonEmpty, "There should be atleast 1 checkpoint file")
   private lazy val fileIndex =
-    DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, files).get
+    DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, topLevelFiles).get
 
-  override def version: Long = checkpointVersion(files.head)
+  override def version: Long = checkpointVersion(topLevelFiles.head)
 
   override def effectiveCheckpointSizeInBytes(): Long = fileIndex.sizeInBytes
 
@@ -95,7 +95,7 @@ case class PreloadedCheckpointProvider(
  */
 object EmptyCheckpointProvider extends CheckpointProvider {
   override def version: Long = -1
-  override def files: Seq[FileStatus] = Nil
+  override def topLevelFiles: Seq[FileStatus] = Nil
   override def effectiveCheckpointSizeInBytes(): Long = 0L
   override def allActionsFileIndexes(): Seq[DeltaLogFileIndex] = Nil
 }

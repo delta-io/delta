@@ -176,19 +176,14 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
   private def collectActions(
       startVersion: Long,
       endVersion: Long
-  )(matcher: Action => Boolean): Seq[(Long, Action)] = {
-    val metadataActions = mutable.ArrayBuffer[(Long, Action)]()
+  ): ClosableIterator[(Long, Action)] = {
     deltaLog.getChangeLogFiles(startVersion, options.failOnDataLoss).takeWhile {
       case (version, _) => version <= endVersion
-    }.foreach { case (version, fileStatus) =>
-      val fileIterator = DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)
-      fileIterator.processAndClose { actionsIter =>
-        actionsIter
-          .collectFirst { case a if matcher(a) => a }
-          .foreach { m => metadataActions.append((version, m)) }
-      }
+    }.flatMapWithClose { case (version, fileStatus) =>
+      DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)
+        .map((version, _))
+        .toClosable
     }
-    metadataActions.toSeq
   }
 
   /**
@@ -205,12 +200,9 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
    * mark the metadata and protocol safe to read for all data files between startVersion and
    * endVersion.
    */
-  private def resolveValidMetadataOfConstructedBatchForInitialization(
+  private def validateAndResolveMetadataForLogInitialization(
       startVersion: Long, endVersion: Long): (Metadata, Protocol) = {
-    assert(readyToInitializeMetadataTrackingEagerly)
-    val metadataChanges =
-      collectActions(startVersion, endVersion)(_.isInstanceOf[Metadata]).map(_._2)
-        .map(_.asInstanceOf[Metadata])
+    val metadataChanges = collectMetadataActions(startVersion, endVersion).map(_._2)
     val startSnapshot = getSnapshotFromDeltaLog(startVersion)
     val startMetadata = startSnapshot.metadata
 
@@ -236,9 +228,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
 
     // Check protocol changes and use the most supportive protocol
     val startProtocol = startSnapshot.protocol
-    val protocolChanges =
-      collectActions(startVersion, endVersion)(_.isInstanceOf[Protocol])
-        .map(_._2.asInstanceOf[Protocol])
+    val protocolChanges = collectProtocolActions(startVersion, endVersion).map(_._2)
 
     var mostSupportiveProtocol = startProtocol
     protocolChanges.foreach { p =>
@@ -259,16 +249,42 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
    * Collect a metadata action at the commit version if possible.
    */
   private def collectMetadataAtVersion(version: Long): Option[Metadata] = {
-    collectActions(version, version)(_.isInstanceOf[Metadata])
-      .headOption.map(_._2.asInstanceOf[Metadata])
+    collectActions(version, version).processAndClose { iter =>
+      iter.map(_._2).collectFirst {
+        case a: Metadata => a
+      }
+    }
+  }
+
+  protected def collectMetadataActions(
+      startVersion: Long,
+      endVersion: Long): Seq[(Long, Metadata)] = {
+    collectActions(startVersion, endVersion).processAndClose { iter =>
+      iter.collect {
+        case (version, a: Metadata) => (version, a)
+      }.toSeq
+    }
   }
 
   /**
    * Collect a protocol action at the commit version if possible.
    */
   private def collectProtocolAtVersion(version: Long): Option[Protocol] = {
-    collectActions(version, version)(_.isInstanceOf[Protocol])
-      .headOption.map(_._2.asInstanceOf[Protocol])
+    collectActions(version, version).processAndClose { iter =>
+      iter.map(_._2).collectFirst {
+        case a: Protocol => a
+      }
+    }
+  }
+
+  protected def collectProtocolActions(
+      startVersion: Long,
+      endVersion: Long): Seq[(Long, Protocol)] = {
+    collectActions(startVersion, endVersion).processAndClose { iter =>
+      iter.collect {
+        case (version, a: Protocol) => (version, a)
+      }.toSeq
+    }
   }
 
 
@@ -319,7 +335,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
     // schema log.
     val (version, metadata, protocol) = batchEndVersionOpt.map { endVersion =>
       val (validMetadata, validProtocol) =
-        resolveValidMetadataOfConstructedBatchForInitialization(batchStartVersion, endVersion)
+        validateAndResolveMetadataForLogInitialization(batchStartVersion, endVersion)
       // `endVersion` should be valid for initialization
       (endVersion, validMetadata, validProtocol)
     }.getOrElse {
@@ -347,7 +363,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
    * It's ok to fail during commit() because in streaming's semantics, the batch with offset ending
    * at `end` should've already being processed completely.
    */
-  protected def updateSchemaTrackingLogAndFailTheStreamIfNeeded(end: Offset): Unit = {
+  protected def updateMetadataTrackingLogAndFailTheStreamIfNeeded(end: Offset): Unit = {
     val offset = DeltaSourceOffset(tableId, end)
     if (trackingMetadataChange &&
         (offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX ||
@@ -498,7 +514,7 @@ object DeltaSourceMetadataEvolutionSupport {
         if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
           // Throw error to prompt user to set the correct confs
           throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
-            NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP,
+            NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP,
             schemaChangeVersion,
             checkpointHash,
             allowAll, allowAll)

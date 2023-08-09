@@ -37,11 +37,9 @@ import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 
-public class TestTableSchemaSerDe
-{
+public class TestTableSchemaSerDe {
     @Test
-    public void primitiveTypeRoundTrip()
-    {
+    public void primitiveTypeRoundTrip() {
         List<StructField> fieldList = new ArrayList<>();
         for (DataType dataType : BasePrimitiveType.getAllPrimitiveTypes()) {
             fieldList.add(structField("col1" + dataType, dataType, true));
@@ -62,8 +60,7 @@ public class TestTableSchemaSerDe
     }
 
     @Test
-    public void complexTypesRoundTrip()
-    {
+    public void complexTypesRoundTrip() {
         List<StructField> fieldList = new ArrayList<>();
 
         ArrayType arrayType = array(IntegerType.INSTANCE, true);
@@ -93,8 +90,7 @@ public class TestTableSchemaSerDe
         assertEquals(expSchem, actSchema);
     }
 
-    private StructField structField(String name, DataType type, boolean nullable)
-    {
+    private StructField structField(String name, DataType type, boolean nullable) {
         return structField(name, type, nullable, Collections.emptyMap());
     }
 
@@ -102,23 +98,19 @@ public class TestTableSchemaSerDe
         String name,
         DataType type,
         boolean nullable,
-        Map<String, String> metadata)
-    {
+        Map<String, String> metadata) {
         return new StructField(name, type, nullable, metadata);
     }
 
-    private ArrayType array(DataType elemType, boolean containsNull)
-    {
+    private ArrayType array(DataType elemType, boolean containsNull) {
         return new ArrayType(elemType, containsNull);
     }
 
-    private MapType map(DataType keyType, DataType valueType, boolean valueContainsNull)
-    {
+    private MapType map(DataType keyType, DataType valueType, boolean valueContainsNull) {
         return new MapType(keyType, valueType, valueContainsNull);
     }
 
-    private Map<String, String> sampleMetadata()
-    {
+    private Map<String, String> sampleMetadata() {
         Map<String, String> metadata = new HashMap<>();
         metadata.put("key1", "value1");
         metadata.put("key2", "value2");

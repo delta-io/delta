@@ -35,9 +35,6 @@ trait DeltaScanGenerator {
   /** Returns a [[DeltaScan]] based on the given filters. */
   def filesForScan(filters: Seq[Expression], keepNumRecords: Boolean = false): DeltaScan
 
-  /** Returns a[[DeltaScan]] based on the limit clause when there are no filters or projections. */
-  def filesForScan(limit: Long): DeltaScan
-
   /** Returns a [[DeltaScan]] based on the given partition filters and limits. */
   def filesForScan(limit: Long, partitionFilters: Seq[Expression]): DeltaScan
 }

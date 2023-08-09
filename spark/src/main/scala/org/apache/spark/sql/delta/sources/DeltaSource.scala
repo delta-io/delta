@@ -203,7 +203,7 @@ trait DeltaSourceBase extends Source
    * A global flag to mark whether we have done a per-stream start check for column mapping
    * schema changes (rename / drop).
    */
-  protected var hasCheckedReadIncompatibleSchemaChangesOnStreamStart: Boolean = false
+  @volatile protected var hasCheckedReadIncompatibleSchemaChangesOnStreamStart: Boolean = false
 
   override val schema: StructType = {
     val schemaWithoutCDC = DeltaTableUtils.removeInternalMetadata(spark, readSchemaAtSourceInit)
@@ -490,9 +490,16 @@ trait DeltaSourceBase extends Source
    *
    * If a schema log is already initialized, we don't have to run the initialization nor schema
    * checks any more.
+   *
+   * @param batchStartVersion Start version we want to verify read compatibility against
+   * @param batchEndVersionOpt Optionally, if we are checking against an existing constructed batch
+   *                           during streaming initialization, we would also like to verify all
+   *                           schema changes in between as well before we can lazily initialize the
+   *                           schema log if needed.
    */
   protected def checkReadIncompatibleSchemaChangeOnStreamStartOnce(
-      batchStartVersion: Long): Unit = {
+      batchStartVersion: Long,
+      batchEndVersionOpt: Option[Long] = None): Unit = {
     if (trackingMetadataChange) return
     if (hasCheckedReadIncompatibleSchemaChangesOnStreamStart) return
 
@@ -513,8 +520,26 @@ trait DeltaSourceBase extends Source
         !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
       startVersionSnapshotOpt.foreach { snapshot =>
         checkReadIncompatibleSchemaChanges(
-          snapshot.metadata, snapshot.version, batchStartVersion,
-          validateAgainstStartSnapshot = true)
+          snapshot.metadata,
+          snapshot.version,
+          batchStartVersion,
+          batchEndVersionOpt,
+          validatedDuringStreamStart = true
+        )
+        // If end version is defined (i.e. we have a pending batch), let's also eagerly check all
+        // intermediate schema changes against the stream read schema to capture corners cases such
+        // as rename and rename back.
+        for {
+          endVersion <- batchEndVersionOpt
+          (version, metadata) <- collectMetadataActions(batchStartVersion, endVersion)
+        } {
+          checkReadIncompatibleSchemaChanges(
+            metadata,
+            version,
+            batchStartVersion,
+            Some(endVersion),
+            validatedDuringStreamStart = true)
+        }
       }
     }
 
@@ -530,16 +555,18 @@ trait DeltaSourceBase extends Source
    *    b) No data type changes
    *    c) No read-incompatible nullability changes
    * If the check fails, we throw an exception to exit the stream.
+   * If lazy log initialization is required, we also run a one time scan to safely initialize the
+   * metadata tracking log upon any non-additive schema change failures.
    * @param metadata Metadata that contains a potential schema change
    * @param version Version for the metadata action
-   * @param validateAgainstStartSnapshot Whether this check is being done on a start snapshot.
+   * @param validatedDuringStreamStart Whether this check is being done during stream start.
    */
   protected def checkReadIncompatibleSchemaChanges(
       metadata: Metadata,
       version: Long,
       batchStartVersion: Long,
       batchEndVersionOpt: Option[Long] = None,
-      validateAgainstStartSnapshot: Boolean = false): Unit = {
+      validatedDuringStreamStart: Boolean = false): Unit = {
     log.info(s"checking read incompatibility with schema at version $version, " +
       s"inside batch[$batchStartVersion, ${batchEndVersionOpt.getOrElse("latest")}]")
 
@@ -557,12 +584,12 @@ trait DeltaSourceBase extends Source
           spark,
           oldMetadata.schema,
           newMetadata.schema,
-          detectedDuringStreaming = !validateAgainstStartSnapshot)
+          detectedDuringStreaming = !validatedDuringStreamStart)
       }
     }
 
     // Other standard read compatibility changes
-    if (!validateAgainstStartSnapshot ||
+    if (!validatedDuringStreamStart ||
         !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
 
       val schemaChange = if (options.readChangeFeed) {
@@ -972,8 +999,18 @@ case class DeltaSource(
     // contained such a schema change.
     // In either world, the initialization logic would find the superset compatible schema for this
     // batch by scanning Delta log.
+    // We don't have to include the end reservoir version when the end offset is a base index, i.e.
+    // no data commit has been marked within a constructed batch, we can simply ignore end offset
+    // version. This can help us avoid overblocking a potential ending offset right at a schema
+    // change.
+    val endVersionForMetadataLogInit = if (endOffset.index == DeltaSourceOffset.BASE_INDEX) {
+      endOffset.reservoirVersion - 1
+    } else {
+      endOffset.reservoirVersion
+    }
+    // For eager initialization, we initialize the log right now.
     if (readyToInitializeMetadataTrackingEagerly) {
-      initializeMetadataTrackingAndExitStream(startVersion, Some(endOffset.reservoirVersion))
+      initializeMetadataTrackingAndExitStream(startVersion, Some(endVersionForMetadataLogInit))
     }
 
     if (startOffsetOption.contains(endOffset)) {
@@ -994,7 +1031,12 @@ case class DeltaSource(
     // Check for column mapping + streaming incompatible schema changes
     // Note for initial snapshot, the startVersion should be the same as the latestOffset's
     // version and therefore this check won't have any effect.
-    checkReadIncompatibleSchemaChangeOnStreamStartOnce(startVersion)
+    // This method would also handle read-compatibility checks against the pending batch(es)
+    // as well as lazy metadata log initialization.
+    checkReadIncompatibleSchemaChangeOnStreamStartOnce(
+      startVersion,
+      Some(endVersionForMetadataLogInit)
+    )
 
     val createdDf = createDataFrameBetweenOffsets(
       startVersion, startIndex, isStartingVersion, startDeltaOffsetOption, endOffset)
@@ -1013,7 +1055,7 @@ case class DeltaSource(
     super.commit(end)
     // IMPORTANT: for future developers, please place any work you would like to do in commit()
     // before `updateSchemaTrackingLogAndFailTheStreamIfNeeded(end)` as it may throw an exception.
-    updateSchemaTrackingLogAndFailTheStreamIfNeeded(end)
+    updateMetadataTrackingLogAndFailTheStreamIfNeeded(end)
   }
 
   override def toString(): String = s"DeltaSource[${deltaLog.dataPath}]"

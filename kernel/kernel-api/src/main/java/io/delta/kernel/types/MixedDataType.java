@@ -57,34 +57,29 @@ import io.delta.kernel.data.ColumnVector;
  * The implementation of reader should convert the `string` or `struct` value to `string` type.
  * Reader implementations can expect this type only for JSON format data reading cases only.
  */
-public class MixedDataType extends DataType
-{
+public class MixedDataType extends DataType {
     public static final MixedDataType INSTANCE = new MixedDataType();
 
     private MixedDataType() {}
 
     @Override
-    public String toJson()
-    {
+    public String toJson() {
         throw new UnsupportedOperationException(
             "this should never called as this type is not persisted to storage");
     }
 
     @Override
-    public int hashCode()
-    {
+    public int hashCode() {
         return 0;
     }
 
     @Override
-    public boolean equals(Object obj)
-    {
+    public boolean equals(Object obj) {
         return obj == this;
     }
 
     @Override
-    public String toString()
-    {
+    public String toString() {
         return "mixed";
     }
 }

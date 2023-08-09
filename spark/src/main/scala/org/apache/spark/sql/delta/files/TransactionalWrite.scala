@@ -329,8 +329,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       }
       val statsColExpr = getStatsColExpr(outputStatsCollectionSchema, statsCollection)
 
-      val hadoopConf = deltaLog.newDeltaHadoopConf()
-      (Some(new DeltaJobStatisticsTracker(hadoopConf,
+      (Some(new DeltaJobStatisticsTracker(deltaLog.newDeltaHadoopConf(),
                                           outputPath,
                                           outputStatsCollectionSchema,
                                           statsColExpr)),

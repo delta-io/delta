@@ -18,12 +18,10 @@ package io.delta.kernel.types;
 /**
  * The data type representing {@code double} type values.
  */
-public class DoubleType extends BasePrimitiveType
-{
+public class DoubleType extends BasePrimitiveType {
     public static final DoubleType INSTANCE = new DoubleType();
 
-    private DoubleType()
-    {
+    private DoubleType() {
         super("double");
     }
 }

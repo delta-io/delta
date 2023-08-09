@@ -30,16 +30,14 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.FilteredCloseableIterator;
 
 public class ReverseActionsToAddFilesIterator
-    extends FilteredCloseableIterator<AddFile, Tuple2<Action, Boolean>>
-{
+    extends FilteredCloseableIterator<AddFile, Tuple2<Action, Boolean>> {
     private final Path dataPath;
     private final HashMap<UniqueFileActionTuple, RemoveFile> tombstonesFromJson;
     private final HashMap<UniqueFileActionTuple, AddFile> addFilesFromJson;
 
     public ReverseActionsToAddFilesIterator(
         Path dataPath,
-        CloseableIterator<Tuple2<Action, Boolean>> reverseActionIter)
-    {
+        CloseableIterator<Tuple2<Action, Boolean>> reverseActionIter) {
         super(reverseActionIter);
         this.dataPath = dataPath;
         this.tombstonesFromJson = new HashMap<>();
@@ -47,8 +45,7 @@ public class ReverseActionsToAddFilesIterator
     }
 
     @Override
-    protected Optional<AddFile> accept(Tuple2<Action, Boolean> element)
-    {
+    protected Optional<AddFile> accept(Tuple2<Action, Boolean> element) {
         final Action action = element._1;
         final boolean isFromCheckpoint = element._2;
 
@@ -72,8 +69,7 @@ public class ReverseActionsToAddFilesIterator
                     return Optional.of(add);
                 }
             }
-        }
-        else if (action instanceof RemoveFile && !isFromCheckpoint) {
+        } else if (action instanceof RemoveFile && !isFromCheckpoint) {
             // Note: There's no reason to put a RemoveFile from a checkpoint into tombstones map
             //       since, when we generate a checkpoint, any corresponding AddFile would have
             //       been excluded
@@ -90,10 +86,8 @@ public class ReverseActionsToAddFilesIterator
     }
 
     private static class UniqueFileActionTuple
-        extends Tuple2<URI, Optional<String>>
-    {
-        UniqueFileActionTuple(URI fileURI, Optional<String> deletionVectorURI)
-        {
+        extends Tuple2<URI, Optional<String>> {
+        UniqueFileActionTuple(URI fileURI, Optional<String> deletionVectorURI) {
             super(fileURI, deletionVectorURI);
         }
     }

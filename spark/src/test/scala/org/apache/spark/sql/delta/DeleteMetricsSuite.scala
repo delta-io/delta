@@ -232,7 +232,10 @@ class DeleteMetricsSuite extends QueryTest
     numBytesRemoved = -1, // We don't want to assert equality on bytes
     changeFileBytes = -1, // We don't want to assert equality on bytes
     scanTimeMs = 0,
-    rewriteTimeMs = 0
+    rewriteTimeMs = 0,
+    numDeletionVectorsAdded = 0,
+    numDeletionVectorsRemoved = 0,
+    numDeletionVectorsUpdated = 0
   )
 
 

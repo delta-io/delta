@@ -23,15 +23,14 @@ import io.delta.kernel.types.StructType;
 /**
  * Builder to construct {@link Scan} object.
  */
-public interface ScanBuilder
-{
+public interface ScanBuilder {
 
     /**
      * Apply the given filter expression to prune any files that do not contain data satisfying
      * the given filter.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @param filter an {@link Expression} which evaluates to boolean.
+     * @param filter      an {@link Expression} which evaluates to boolean.
      * @return A {@link ScanBuilder} with filter applied.
      */
     ScanBuilder withFilter(TableClient tableClient, Expression filter);
@@ -41,7 +40,7 @@ public interface ScanBuilder
      * this again replaces the existing projection.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @param readSchema Subset of columns to read from the Delta table.
+     * @param readSchema  Subset of columns to read from the Delta table.
      * @return A {@link ScanBuilder} with projection pruning.
      */
     ScanBuilder withReadSchema(TableClient tableClient, StructType readSchema);

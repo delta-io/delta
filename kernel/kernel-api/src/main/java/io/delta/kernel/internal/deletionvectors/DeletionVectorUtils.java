@@ -27,21 +27,18 @@ import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 /**
  * Utility methods regarding deletion vectors.
  */
-public class DeletionVectorUtils
-{
+public class DeletionVectorUtils {
     public static Tuple2<DeletionVectorDescriptor, RoaringBitmapArray> loadNewDvAndBitmap(
         TableClient tableClient,
         String tablePath,
-        DeletionVectorDescriptor dv)
-    {
+        DeletionVectorDescriptor dv) {
         DeletionVectorStoredBitmap storedBitmap =
             new DeletionVectorStoredBitmap(dv, Optional.of(tablePath));
         try {
             RoaringBitmapArray bitmap = storedBitmap
                 .load(tableClient.getFileSystemClient());
             return new Tuple2<>(dv, bitmap);
-        }
-        catch (IOException e) {
+        } catch (IOException e) {
             throw new RuntimeException("Couldn't load dv", e);
         }
     }

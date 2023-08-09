@@ -71,6 +71,12 @@
     ],
     "sqlState" : "42837"
   },
+  "DELTA_AMBIGUOUS_DATA_TYPE_CHANGE" : {
+    "message" : [
+      "Cannot change data type of <column> from <from> to <to>. This change contains column removals and additions, therefore they are ambiguous. Please make these changes individually using ALTER TABLE [ADD | DROP | RENAME] COLUMN."
+    ],
+    "sqlState" : "429BQ"
+  },
   "DELTA_AMBIGUOUS_PARTITION_COLUMN" : {
     "message" : [
       "Ambiguous partition column <column> can be <colMatches>."
@@ -734,7 +740,6 @@
       "To do this, run the following command for each of features listed above:",
       "  ALTER TABLE table_name SET TBLPROPERTIES ('delta.feature.feature_name' = 'supported')",
       "Replace \"table_name\" and \"feature_name\" with real values.",
-      "Note that the procedure is irreversible: once supported, a feature can never be unsupported again.",
       "",
       "Current supported feature(s): <supportedFeatures>."
     ],
@@ -754,6 +759,14 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST" : {
+    "message" : [
+      "Cannot drop <feature> because the Delta log contains historical versions that use the feature.",
+      "Please wait until the history retention period (<logRetentionPeriodKey>=<logRetentionPeriod>) ",
+      "has passed since the feature was last active."
+    ],
+    "sqlState" : "0AKDE"
+  },
   "DELTA_FEATURE_DROP_LEGACY_FEATURE" : {
     "message" : [
       "Cannot drop <feature> because it is implicitly supported by the table protocol version."
@@ -762,7 +775,7 @@
   },
   "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE" : {
     "message" : [
-      "Cannot drop <feature> because removing this feature is not supported."
+      "Cannot drop <feature> because dropping this feature is not supported."
     ],
     "sqlState" : "0AKDE"
   },
@@ -770,6 +783,20 @@
     "message" : [
       "Cannot drop <feature> because it is not supported by this Delta version.",
       "Consider using Delta with a higher version."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD" : {
+    "message" : [
+      "Dropping <feature> was partially successful.",
+      "",
+      "The feature is now no longer used in the current version of the table. However, the feature",
+      "is still present in historical versions of the table. The table feature cannot be dropped",
+      "from the table protocol until these historical versions have expired.",
+      "",
+      "To drop the table feature from the protocol, please wait for the historical versions to",
+      "expire, and then repeat this command. The retention period for historical versions is",
+      "currently configured as <logRetentionPeriodKey>=<logRetentionPeriod>."
     ],
     "sqlState" : "0AKDE"
   },
@@ -852,7 +879,7 @@
     "subClass" : {
       "DISABLING_REQUIRED_TABLE_FEATURE" : {
         "message" : [
-          "IcebergCompatV1 requires feature <feature> to be supported and enabled. You cannot remove it from the table. Instead, please disable IcebergCompatV1 first."
+          "IcebergCompatV1 requires feature <feature> to be supported and enabled. You cannot drop it from the table. Instead, please disable IcebergCompatV1 first."
         ]
       },
       "INCOMPATIBLE_TABLE_FEATURE" : {
@@ -1882,12 +1909,6 @@
     ],
     "sqlState" : "42P01"
   },
-  "DELTA_TABLE_NOT_FOUND_STREAMING" : {
-    "message" : [
-      "Delta table <tableName> doesn't exist. Please delete your streaming query checkpoint and restart."
-    ],
-    "sqlState" : "42P01"
-  },
   "DELTA_TABLE_NOT_SUPPORTED_IN_OP" : {
     "message" : [
       "Table is not supported in <operation>. Please use a path instead."
@@ -2403,6 +2424,16 @@
       "<colName> is a partition column. Z-Ordering can only be performed on data columns"
     ],
     "sqlState" : "42P10"
+  },
+  "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE" : {
+    "message" : [
+      "The streaming query was reading from an unexpected Delta table (id = '<newTableId>'). ",
+      "It used to read from another Delta table (id = '<oldTableId>') according to checkpoint. ",
+      "This may happen when you changed the code to read from a new table or you deleted and ",
+      "re-created a table. Please revert your change or delete your streaming query checkpoint ",
+      "to restart from scratch."
+    ],
+    "sqlState" : "55019"
   },
   "INCORRECT_NUMBER_OF_ARGUMENTS" : {
     "message" : [

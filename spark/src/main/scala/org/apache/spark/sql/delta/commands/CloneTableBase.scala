@@ -170,7 +170,6 @@ abstract class CloneTableBase(
    * @param spark [[SparkSession]] to use
    * @param txn [[OptimisticTransaction]] to use for the commit to the target table.
    * @param destinationTable [[DeltaLog]] of the destination table.
-   * @param opName Name of the operation used in log4j logs
    * @param deltaOperation [[DeltaOperations.Operation]] to use when commit changes to DeltaLog
    * @return
    */
@@ -178,7 +177,6 @@ abstract class CloneTableBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       destinationTable: DeltaLog,
-      opName: String,
       hdpConf: Configuration,
       deltaOperation: DeltaOperations.Operation): Seq[Row] = {
     val targetFs = targetPath.getFileSystem(hdpConf)
@@ -203,13 +201,13 @@ abstract class CloneTableBase(
       sourceTable.allFiles
     }
 
-    val metadataToUpdate = determineTargetMetadata(txn.snapshot, opName)
+    val metadataToUpdate = determineTargetMetadata(txn.snapshot, deltaOperation.name)
     // Don't merge in the default properties when cloning, or we'll end up with different sets of
     // properties between source and target.
     txn.updateMetadata(metadataToUpdate, ignoreDefaultProperties = true)
 
     val datasetOfAddedFileList = handleNewDataFiles(
-      opName,
+      deltaOperation.name,
       datasetOfNewFilesToAdd,
       qualifiedSource,
       destinationTable)
@@ -222,20 +220,14 @@ abstract class CloneTableBase(
     val operationTimestamp = sourceTable.clock.getTimeMillis()
 
 
-    val newProtocol = determineTargetProtocol(spark, txn, opName)
+    val newProtocol = determineTargetProtocol(spark, txn, deltaOperation.name)
 
     try {
       var actions = Iterator.single(newProtocol) ++
         addedFileList.iterator.asScala.map { fileToCopy =>
           val copiedFile = fileToCopy.copy(dataChange = dataChangeInFileAction)
-          opName match {
-            case CloneTableCommand.OP_NAME =>
-              // CLONE does not preserve Row IDs and Commit Versions
-              copiedFile.copy(baseRowId = None, defaultRowCommitVersion = None)
-            case RestoreTableCommand.OP_NAME =>
-              // RESTORE preserves Row IDs and Commit Versions
-              copiedFile
-          }
+          // CLONE does not preserve Row IDs and Commit Versions
+          copiedFile.copy(baseRowId = None, defaultRowCommitVersion = None)
         }
       val sourceName = sourceTable.name
       // Override source table metadata with user-defined table properties
@@ -249,7 +241,8 @@ abstract class CloneTableBase(
         addedFilesSize)
       val commitOpMetrics = getOperationMetricsForDeltaLog(opMetrics)
 
-        recordDeltaOperation(destinationTable, s"delta.${opName.toLowerCase()}.commit") {
+        recordDeltaOperation(
+          destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
           txn.commitLarge(
             spark,
             actions,
@@ -266,7 +259,8 @@ abstract class CloneTableBase(
         PARTITION_BY -> sourceTable.metadata.partitionColumns,
         IS_REPLACE_DELTA -> isReplaceDelta) ++
         sourceTable.snapshot.map(s => SOURCE_VERSION -> s.version)
-      recordDeltaEvent(destinationTable, s"delta.${opName.toLowerCase()}", data = cloneLogData)
+      recordDeltaEvent(
+        destinationTable, s"delta.${deltaOperation.name.toLowerCase()}", data = cloneLogData)
 
       getOutputSeq(commitOpMetrics)
     } finally {
@@ -285,18 +279,16 @@ abstract class CloneTableBase(
         id = UUID.randomUUID().toString,
         name = targetSnapshot.metadata.name,
         description = targetSnapshot.metadata.description)
-    if (opName == CloneTableCommand.OP_NAME) {
-      // If it's a new table, we remove the row tracking table property to create a 1:1 CLONE of
-      // the source, just without row tracking. If it's an existing table, we take whatever
-      // setting is currently on the target, as the setting should be independent between
-      // target and source.
-      if (!tableExists(targetSnapshot)) {
-        clonedMetadata = RowTracking.removeRowTrackingProperty(clonedMetadata)
-      } else {
-        clonedMetadata = RowTracking.takeRowTrackingPropertyFromTarget(
-          targetMetadata = targetSnapshot.metadata,
-          sourceMetadata = clonedMetadata)
-      }
+    // If it's a new table, we remove the row tracking table property to create a 1:1 CLONE of
+    // the source, just without row tracking. If it's an existing table, we take whatever
+    // setting is currently on the target, as the setting should be independent between
+    // target and source.
+    if (!tableExists(targetSnapshot)) {
+      clonedMetadata = RowTracking.removeRowTrackingProperty(clonedMetadata)
+    } else {
+      clonedMetadata = RowTracking.takeRowTrackingPropertyFromTarget(
+        targetMetadata = targetSnapshot.metadata,
+        sourceMetadata = clonedMetadata)
     }
     clonedMetadata
   }
@@ -370,11 +362,7 @@ abstract class CloneTableBase(
       minWriterVersion = minWriterVersion.max(sourceProtocol.minWriterVersion)
       val minProtocol = Protocol(minReaderVersion, minWriterVersion).withFeatures(enabledFeatures)
       // Row tracking settings should be independent between target and source.
-      if (opName == CloneTableCommand.OP_NAME) {
-        sourceProtocolWithoutRowTracking.merge(minProtocol)
-      } else {
-        sourceProtocol.merge(minProtocol)
-      }
+      sourceProtocolWithoutRowTracking.merge(minProtocol)
     } else {
       // Take the maximum of all protocol versions being merged to ensure that table features
       // from table property overrides are correctly added to the table feature list or are only
@@ -385,11 +373,7 @@ abstract class CloneTableBase(
         targetProtocol.minWriterVersion, sourceProtocol.minWriterVersion, minWriterVersion).max
       val minProtocol = Protocol(minReaderVersion, minWriterVersion).withFeatures(enabledFeatures)
       // Row tracking settings should be independent between target and source.
-      if (opName == CloneTableCommand.OP_NAME) {
-        targetProtocol.merge(sourceProtocolWithoutRowTracking, minProtocol)
-      } else {
-        targetProtocol.merge(sourceProtocol, minProtocol)
-      }
+      targetProtocol.merge(sourceProtocolWithoutRowTracking, minProtocol)
     }
   }
 }

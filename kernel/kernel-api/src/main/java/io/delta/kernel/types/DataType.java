@@ -16,8 +16,7 @@
 
 package io.delta.kernel.types;
 
-public abstract class DataType
-{
+public abstract class DataType {
     /**
      * Convert the data type to Delta protocol specified serialization format.
      *
@@ -31,8 +30,7 @@ public abstract class DataType
      * @param dataType
      * @return
      */
-    public boolean equivalent(DataType dataType)
-    {
+    public boolean equivalent(DataType dataType) {
         return equals(dataType);
     }
 

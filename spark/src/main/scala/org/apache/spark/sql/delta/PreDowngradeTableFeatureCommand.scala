@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableUnsetPropertiesDeltaCommand
+import org.apache.spark.sql.delta.metering.DeltaLogging
 
 /**
  * A base class for implementing a preparation command for removing table features.
@@ -28,15 +29,37 @@ import org.apache.spark.sql.delta.commands.AlterTableUnsetPropertiesDeltaCommand
  * See [[RemovableFeature.preDowngradeCommand]].
  */
 sealed abstract class PreDowngradeTableFeatureCommand {
-  def table: DeltaTableV2
-  def run(): Unit
+  /**
+   * Returns true when it performs a cleaning action. When no action was required
+   * it returns false.
+   */
+  def removeFeatureTracesIfNeeded(): Boolean
 }
 
 case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
-  extends PreDowngradeTableFeatureCommand {
+  extends PreDowngradeTableFeatureCommand
+  with DeltaLogging {
   // To remove the feature we only need to remove the table property.
-  override def run(): Unit = {
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    // Make sure feature data/metadata exist before proceeding.
+    if (TestRemovableWriterFeature.validateRemoval(table.snapshot)) return false
+
+    recordDeltaEvent(table.deltaLog, "delta.test.TestWriterFeaturePreDowngradeCommand")
     val properties = Seq(TestRemovableWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    true
+  }
+}
+
+case class TestReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+  // To remove the feature we only need to remove the table property.
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    // Make sure feature data/metadata exist before proceeding.
+    if (TestRemovableReaderWriterFeature.validateRemoval(table.snapshot)) return false
+
+    val properties = Seq(TestRemovableReaderWriterFeature.TABLE_PROP_KEY)
+    AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    true
   }
 }
