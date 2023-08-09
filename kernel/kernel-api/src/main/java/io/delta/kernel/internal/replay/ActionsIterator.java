@@ -159,6 +159,9 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
     private CloseableIterator<Tuple2<FileDataReadResult, Boolean>> getNextActionsIter() {
         final FileStatus nextFile = filesIter.next();
 
+        // TODO: [#1965] It should be possible to contextualize our JSON and parquet files
+        //       many-at-once instead of one at a time.
+
         try {
             if (nextFile.getPath().endsWith(".json")) {
                 final JsonHandler jsonHandler = tableClient.getJsonHandler();
