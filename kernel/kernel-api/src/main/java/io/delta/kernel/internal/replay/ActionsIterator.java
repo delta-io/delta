@@ -16,14 +16,12 @@
 
 package io.delta.kernel.internal.replay;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
 
-import io.delta.kernel.client.FileReadContext;
-import io.delta.kernel.client.JsonHandler;
-import io.delta.kernel.client.ParquetHandler;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.client.*;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.fs.FileStatus;
@@ -158,6 +156,7 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
      */
     private CloseableIterator<Tuple2<FileDataReadResult, Boolean>> getNextActionsIter() {
         final FileStatus nextFile = filesIter.next();
+        final Closeable[] iteratorsToClose = new Closeable[2];
 
         // TODO: [#1965] It should be possible to contextualize our JSON and parquet files
         //       many-at-once instead of one at a time.
@@ -175,11 +174,18 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
                         Literal.TRUE
                     );
 
+                iteratorsToClose[0] = fileReadContextIter;
+
                 // Read that file
                 final CloseableIterator<FileDataReadResult> fileReadDataIter =
                     tableClient.getJsonHandler().readJsonFiles(
+                        // We are passing ownership of this CloseableIterator to `readJsonFiles`.
+                        // Under normal circumstances, `readJsonFiles` will close it. However, we
+                        // still need to keep a reference to it to close it in case of exceptions.
                         fileReadContextIter,
                         readSchema);
+
+                iteratorsToClose[1] = fileReadDataIter;
 
                 return combine(fileReadDataIter, false /* isFromCheckpoint */);
             } else if (nextFile.getPath().endsWith(".parquet")) {
@@ -187,17 +193,24 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
 
                 // Convert the `nextFile` FileStatus into an internal ScanFile Row and then
                 // allow the connector to contextualize it (i.e. perform any splitting)
-                final CloseableIterator<FileReadContext> fileWithContext =
+                final CloseableIterator<FileReadContext> fileReadContextIter =
                     parquetHandler.contextualizeFileReads(
                         Utils.singletonCloseableIterator(
                             InternalUtils.getScanFileRow(nextFile)),
                         Literal.TRUE);
 
+                iteratorsToClose[0] = fileReadContextIter;
+
                 // Read that file
                 final CloseableIterator<FileDataReadResult> fileReadDataIter =
                     tableClient.getParquetHandler().readParquetFiles(
-                        fileWithContext,
+                        // We are passing ownership of this CloseableIterator to `readParquetFiles`.
+                        // Under normal circumstances, `readParquetFiles` will close it. However, we
+                        // still need to keep a reference to it to close it in case of exceptions.
+                        fileReadContextIter,
                         readSchema);
+
+                iteratorsToClose[1] = fileReadDataIter;
 
                 return combine(fileReadDataIter, true /* isFromCheckpoint */);
             } else {
@@ -207,6 +220,11 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
             }
         } catch (IOException ex) {
             throw new UncheckedIOException(ex);
+        } finally {
+            // We don't know if this is normal operation, or if `readJsonFiles` or
+            // `readParquetFiles` above have thrown an exception. Luckily, it doesn't matter:
+            // closing a closeable that is already closed is safe.
+            Utils.closeCloseables(iteratorsToClose);
         }
     }
 
