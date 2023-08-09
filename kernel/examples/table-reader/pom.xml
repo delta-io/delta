@@ -47,7 +47,7 @@ limitations under the License.-->
 
         <dependency>
             <groupId>io.delta</groupId>
-            <artifactId>delta-kernel-default</artifactId>
+            <artifactId>delta-kernel-defaults</artifactId>
             <version>${delta-kernel.version}</version>
         </dependency>
 

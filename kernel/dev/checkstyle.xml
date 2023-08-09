@@ -197,11 +197,15 @@
         <blank line>
         import io.delta.kernel.*
         import io.delta.kernel.internal.*
+        <blank line>
+        import io.delta.kernel.defaults.*
+        import io.delta.kernel.defaults.internal.*
         -->
         <module name="ImportOrder">
             <property name="separated" value="true"/>
             <property name="ordered" value="true"/>
-            <property name="groups" value="java,javax,scala,*,io.delta.kernel,io.delta.kernel.internal"/>
+            <property name="groups"
+                      value="java,javax,scala,*,io.delta.kernel,io.delta.kernel.internal,io.delta.kernel.defaults,io.delta.kernel.defaults.internal"/>
             <property name="option" value="under"/>
         </module>
 
@@ -216,6 +220,13 @@
             <property name="checks" value="ImportOrder"/>
             <property name="message" value="^'io.delta.kernel.internal\..*'.*"/>
         </module>
+
+        <!-- io.delta.kernel.defaults and io.delta.kernel.defaults.internal -->
+        <module name="SuppressionXpathSingleFilter">
+            <property name="checks" value="ImportOrder"/>
+            <property name="message" value="^'io.delta.kernel.defaults.internal\..*'.*"/>
+        </module>
+
         <!-- java and javax -->
         <module name="SuppressionXpathSingleFilter">
             <property name="checks" value="ImportOrder"/>
