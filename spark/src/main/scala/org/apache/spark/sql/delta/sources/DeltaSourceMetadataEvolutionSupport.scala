@@ -366,8 +366,8 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
   protected def updateMetadataTrackingLogAndFailTheStreamIfNeeded(end: Offset): Unit = {
     val offset = DeltaSourceOffset(tableId, end)
     if (trackingMetadataChange &&
-        (offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX ||
-          offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX)) {
+      (offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX ||
+        offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX)) {
       // The offset must point to a metadata or protocol change action
       val changedMetadataOpt = collectMetadataAtVersion(offset.reservoirVersion)
       val changedProtocolOpt = collectProtocolAtVersion(offset.reservoirVersion)
@@ -380,25 +380,45 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
       // second one is committed.
       // If the first one is committed (typically), the stream will fail and restart with the
       // evolved schema, then we should NOT fail/evolve again when we commit the second offset.
-      if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
-          changedMetadataOpt, changedProtocolOpt, offset.reservoirVersion)) {
+      updateMetadataTrackingLogAndFailTheStreamIfNeeded(
+        changedMetadataOpt, changedProtocolOpt, offset.reservoirVersion)
+    }
+  }
 
-        val schemaToPersist = PersistedMetadata(
-          deltaLog.tableId,
-          offset.reservoirVersion,
-          changedMetadataOpt.getOrElse(readSnapshotDescriptor.metadata),
-          changedProtocolOpt.getOrElse(readSnapshotDescriptor.protocol),
-          metadataPath
-        )
-        // Update schema log
+  /**
+   * Write a new potentially changed metadata into the metadata tracking log. Then fail the stream
+   * to allow reanalysis if there are changes.
+   * @param changedMetadataOpt Potentially changed metadata action
+   * @param changedProtocolOpt Potentially changed protocol action
+   * @param version The version of change
+   */
+  protected def updateMetadataTrackingLogAndFailTheStreamIfNeeded(
+      changedMetadataOpt: Option[Metadata],
+      changedProtocolOpt: Option[Protocol],
+      version: Long,
+      replace: Boolean = false): Unit = {
+    if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
+        changedMetadataOpt, changedProtocolOpt, version)) {
+
+      val schemaToPersist = PersistedMetadata(
+        deltaLog.tableId,
+        version,
+        changedMetadataOpt.getOrElse(readSnapshotDescriptor.metadata),
+        changedProtocolOpt.getOrElse(readSnapshotDescriptor.protocol),
+        metadataPath
+      )
+      // Update schema log
+      if (replace) {
+        metadataTrackingLog.get.replaceCurrentMetadata(schemaToPersist)
+      } else {
         metadataTrackingLog.get.writeNewMetadata(schemaToPersist)
-        // Fail the stream with schema evolution exception
-        throw DeltaErrors.streamingMetadataEvolutionException(
-          schemaToPersist.dataSchema,
-          schemaToPersist.tableConfigurations.get,
-          schemaToPersist.protocol.get
-        )
       }
+      // Fail the stream with schema evolution exception
+      throw DeltaErrors.streamingMetadataEvolutionException(
+        schemaToPersist.dataSchema,
+        schemaToPersist.tableConfigurations.get,
+        schemaToPersist.protocol.get
+      )
     }
   }
 }

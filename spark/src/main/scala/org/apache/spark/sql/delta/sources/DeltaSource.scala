@@ -771,6 +771,10 @@ case class DeltaSource(
     iter
   }
 
+  /**
+   * This method computes the initial snapshot to read when Delta Source was initialized on a fresh
+   * stream.
+   */
   protected def getSnapshotAt(version: Long): Iterator[IndexedFile] = {
     if (initialState == null || version != initialStateVersion) {
       super[DeltaSourceBase].cleanUpSnapshotResources()
@@ -778,6 +782,31 @@ case class DeltaSource(
 
       initialState = new DeltaSourceSnapshot(spark, snapshot, filters)
       initialStateVersion = version
+
+      // This handle a special case for schema tracking log when it's initialized but the initial
+      // snapshot's schema has changed, suppose:
+      // 1. The stream starts and looks at the initial snapshot to compute the starting offset, say
+      //    at version 0 with schema <a>
+      // 2. User renames a column, creates version 1 with schema <b>
+      // 3. The read compatibility check fails during scanning version 1, initializes schema log
+      //    using the initial snapshot's schema (<a>, because that's the safest thing to do as we
+      //    have not served any data from initial snapshot yet) and exits stream.
+      // 4. Stream restarts, since no starting offset was generated, it will retry loading the
+      //    initial snapshot, which is now at version 1, but the tracked schema <a> is now different
+      //    from the "new" initial snapshot schema! Worse, since schema tracking ignores any schema
+      //    changes inside initial snapshot, we will then be reading the files using a wrong schema!
+      // The below logic allows us to detect any discrepancies when reading initial snapshot using
+      // a tracked schema, and reinitialize the log if needed.
+      if (trackingMetadataChange &&
+          initialState.snapshot.version >= readSnapshotDescriptor.version) {
+        updateMetadataTrackingLogAndFailTheStreamIfNeeded(
+          Some(initialState.snapshot.metadata),
+          Some(initialState.snapshot.protocol),
+          initialState.snapshot.version,
+          // The new schema should replace the previous initialized schema for initial snapshot
+          replace = true
+        )
+      }
     }
     initialState.iterator()
   }

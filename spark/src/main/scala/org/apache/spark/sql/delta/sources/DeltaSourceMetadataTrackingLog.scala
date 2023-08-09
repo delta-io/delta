@@ -187,7 +187,7 @@ class DeltaSourceMetadataTrackingLog private(
   /**
    * Replace the latest/current tracked schema in the log
    */
-  def replaceCurrentSchema(newSchema: PersistedMetadata): Unit =
+  def replaceCurrentMetadata(newSchema: PersistedMetadata): Unit =
     convertException(FailedToEvolveSchema,
       DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
         rootMetadataLocation, sourceSnapshot.deltaLog.dataPath.toString)) {
@@ -257,7 +257,7 @@ object DeltaSourceMetadataTrackingLog extends Logging {
       // and then be able to determine if it's OK for the stream to proceed.
       getMergedConsecutiveMetadataChanges(
         sparkSession, sourceSnapshot.deltaLog, log.getCurrentTrackedMetadata.get
-      ).foreach(log.replaceCurrentSchema)
+      ).foreach(log.replaceCurrentMetadata)
     }
 
     // The validation is ran in execution phase where the metadata path becomes available.
