@@ -13,12 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel
+package io.delta.kernel.defaults
 
 import java.math.BigDecimal
 
-import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.scalatest.funsuite.AnyFunSuite
+
+import io.delta.golden.GoldenTableUtils.goldenTablePath
+
+import io.delta.kernel.Table
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 

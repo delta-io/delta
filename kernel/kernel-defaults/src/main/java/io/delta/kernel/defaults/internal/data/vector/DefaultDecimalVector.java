@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.data.vector;
+package io.delta.kernel.defaults.internal.data.vector;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -21,7 +21,8 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.DecimalType;
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
+
+import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for decimal type data.
@@ -50,15 +51,13 @@ public class DefaultDecimalVector extends AbstractColumnVector {
     }
 
     @Override
-    public boolean isNullAt(int rowId)
-    {
+    public boolean isNullAt(int rowId) {
         checkValidRowId(rowId);
         return values[rowId] == null;
     }
 
     @Override
-    public BigDecimal getDecimal(int rowId)
-    {
+    public BigDecimal getDecimal(int rowId) {
         checkValidRowId(rowId);
         return values[rowId];
     }

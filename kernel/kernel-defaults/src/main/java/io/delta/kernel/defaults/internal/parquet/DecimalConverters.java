@@ -1,4 +1,4 @@
-package io.delta.kernel.parquet;
+package io.delta.kernel.defaults.internal.parquet;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -14,10 +14,11 @@ import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.*;
 import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.BINARY;
 
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.vector.DefaultDecimalVector;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.DecimalType;
-import static io.delta.kernel.DefaultKernelUtils.checkArgument;
+
+import io.delta.kernel.defaults.internal.data.vector.DefaultDecimalVector;
+import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 
 public class DecimalConverters {
 
@@ -127,8 +128,7 @@ public class DecimalConverters {
         }
 
         @Override
-        public ColumnVector getDataColumnVector(int batchSize)
-        {
+        public ColumnVector getDataColumnVector(int batchSize) {
             ColumnVector vector = new DefaultDecimalVector(dataType, batchSize, values);
             // re-initialize the working space
             this.nullability = ParquetConverters.initNullabilityVector(nullability.length);
@@ -138,8 +138,7 @@ public class DecimalConverters {
         }
 
         @Override
-        public void resizeIfNeeded()
-        {
+        public void resizeIfNeeded() {
             if (values.length == currentRowIndex) {
                 int newSize = values.length * 2;
                 this.values = Arrays.copyOf(this.values, newSize);

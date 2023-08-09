@@ -13,17 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel
+package io.delta.kernel.defaults
 
 import java.io.File
 import java.math.BigDecimal
 
 import org.scalatest.funsuite.AnyFunSuite
 
-import io.delta.golden.GoldenTableUtils.goldenTableFile
-import io.delta.kernel.parquet.ParquetBatchReader
-import io.delta.kernel.types.{DecimalType, IntegerType, StructType}
 import org.apache.hadoop.conf.Configuration
+import io.delta.golden.GoldenTableUtils.goldenTableFile
+
+import io.delta.kernel.types.{DecimalType, IntegerType, StructType}
+
+import io.delta.kernel.defaults.internal.parquet.ParquetBatchReader
 
 class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
 

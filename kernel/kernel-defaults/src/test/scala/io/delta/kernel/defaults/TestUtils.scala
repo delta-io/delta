@@ -14,18 +14,22 @@
  * limitations under the License.
  */
 
-package io.delta.kernel
+package io.delta.kernel.defaults
 
-import java.util.{Optional, TimeZone}
+import java.util.Optional
 
 import collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.hadoop.conf.Configuration
-import io.delta.kernel.client.{DefaultTableClient, TableClient}
+
+import io.delta.kernel.{Scan, Snapshot}
+import io.delta.kernel.client.TableClient
 import io.delta.kernel.data.Row
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterator
+
+import io.delta.kernel.defaults.client.DefaultTableClient
 
 trait TestUtils {
 

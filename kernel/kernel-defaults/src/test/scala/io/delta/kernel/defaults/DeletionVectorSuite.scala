@@ -16,7 +16,7 @@
 package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.{Table, TestUtils}
+import io.delta.kernel.Table
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils
 import org.apache.hadoop.conf.Configuration

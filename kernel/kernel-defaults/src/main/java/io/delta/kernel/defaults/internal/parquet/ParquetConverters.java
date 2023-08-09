@@ -69,8 +69,7 @@ class ParquetConverters {
             return new FloatColumnConverter(initialBatchSize);
         } else if (typeFromClient instanceof DoubleType) {
             return new DoubleColumnConverter(initialBatchSize);
-        }
-        else if (typeFromClient instanceof DecimalType) {
+        } else if (typeFromClient instanceof DecimalType) {
             return DecimalConverters.createDecimalConverter(
                 initialBatchSize, (DecimalType) typeFromClient, typeFromFile);
         }

@@ -127,8 +127,7 @@ public final class Literal extends LeafExpression {
     /**
      * @return a {@link Literal} with data type {@link DecimalType}
      */
-    public static Literal of(BigDecimal value, int precision, int scale)
-    {
+    public static Literal of(BigDecimal value, int precision, int scale) {
         // throws an error if rounding is required to set the specified scale
         BigDecimal valueToStore = value.setScale(scale);
         checkArgument(valueToStore.precision() <= precision, String.format(
