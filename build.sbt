@@ -1013,7 +1013,7 @@ lazy val kernelGroup = project
     publish / skip := false,
     unidocSourceFilePatterns := {
       (kernelApi / unidocSourceFilePatterns).value.scopeToProject(kernelApi) ++
-      (kernelDefault / unidocSourceFilePatterns).value.scopeToProject(kernelDefault)
+      (kernelDefaults / unidocSourceFilePatterns).value.scopeToProject(kernelDefaults)
     }
   ).configureUnidoc(docTitle = "Delta Kernel")
 
