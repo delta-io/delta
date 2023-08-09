@@ -88,8 +88,8 @@ public class PartitionUtils {
                     dataBatchSchema,
                     literalForPartitionValue(
                         structField.getDataType(),
-                        partitionValues.get(structField.getName())
-                    )
+                        partitionValues.get(structField.getName())),
+                    structField.getDataType()
                 );
 
                 ColumnVector partitionVector = evaluator.eval(dataBatch);
@@ -106,38 +106,38 @@ public class PartitionUtils {
         }
 
         if (dataType instanceof BooleanType) {
-            return Literal.of(Boolean.parseBoolean(partitionValue));
+            return Literal.ofBoolean(Boolean.parseBoolean(partitionValue));
         }
         if (dataType instanceof ByteType) {
-            return Literal.of(Byte.parseByte(partitionValue));
+            return Literal.ofByte(Byte.parseByte(partitionValue));
         }
         if (dataType instanceof ShortType) {
-            return Literal.of(Short.parseShort(partitionValue));
+            return Literal.ofShort(Short.parseShort(partitionValue));
         }
         if (dataType instanceof IntegerType) {
-            return Literal.of(Integer.parseInt(partitionValue));
+            return Literal.ofInt(Integer.parseInt(partitionValue));
         }
         if (dataType instanceof LongType) {
-            return Literal.of(Long.parseLong(partitionValue));
+            return Literal.ofLong(Long.parseLong(partitionValue));
         }
         if (dataType instanceof FloatType) {
-            return Literal.of(Float.parseFloat(partitionValue));
+            return Literal.ofFloat(Float.parseFloat(partitionValue));
         }
         if (dataType instanceof DoubleType) {
-            return Literal.of(Double.parseDouble(partitionValue));
+            return Literal.ofDouble(Double.parseDouble(partitionValue));
         }
         if (dataType instanceof StringType) {
-            return Literal.of(partitionValue);
+            return Literal.ofString(partitionValue);
         }
         if (dataType instanceof BinaryType) {
-            return Literal.of(partitionValue.getBytes());
+            return Literal.ofBinary(partitionValue.getBytes());
         }
         if (dataType instanceof DateType) {
-            return Literal.of(Date.valueOf(partitionValue));
+            return Literal.ofDate(InternalUtils.daysSinceEpoch(Date.valueOf(partitionValue)));
         }
         if (dataType instanceof DecimalType) {
             DecimalType decimalType = (DecimalType) dataType;
-            return Literal.of(
+            return Literal.ofDecimal(
                 new BigDecimal(partitionValue), decimalType.getPrecision(), decimalType.getScale());
         }
 

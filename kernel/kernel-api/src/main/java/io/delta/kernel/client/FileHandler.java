@@ -18,7 +18,7 @@ package io.delta.kernel.client;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
 
@@ -49,5 +49,5 @@ public interface FileHandler {
      */
     CloseableIterator<FileReadContext> contextualizeFileReads(
         CloseableIterator<Row> fileIter,
-        Expression predicate);
+        Predicate predicate);
 }

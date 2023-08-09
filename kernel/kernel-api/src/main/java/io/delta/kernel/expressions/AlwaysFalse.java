@@ -13,31 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.expressions;
 
 import java.util.Collections;
-import java.util.List;
-import java.util.Set;
 
 /**
- * An {@link Expression} with no children.
+ * Predicate which always evaluates to {@code false}.
  */
-public abstract class LeafExpression implements Expression {
+public final class AlwaysFalse extends Predicate {
+    public static final AlwaysFalse ALWAYS_FALSE = new AlwaysFalse();
 
-    protected LeafExpression() {}
-
-    @Override
-    public List<Expression> children() {
-        return Collections.emptyList();
+    private AlwaysFalse() {
+        super("ALWAYS_FALSE", Collections.emptyList());
     }
-
-    @Override
-    public Set<String> references() {
-        return Collections.emptySet();
-    }
-
-    public abstract boolean equals(Object o);
-
-    public abstract int hashCode();
 }

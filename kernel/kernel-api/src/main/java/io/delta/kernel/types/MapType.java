@@ -87,6 +87,6 @@ public class MapType extends DataType {
 
     @Override
     public String toString() {
-        return String.format("Map[%s, %s]", keyType, valueType);
+        return String.format("map[%s, %s]", keyType, valueType);
     }
 }

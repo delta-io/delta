@@ -15,9 +15,7 @@
  */
 package io.delta.kernel.defaults.internal;
 
-import java.sql.Date;
 import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -74,6 +72,8 @@ public class DefaultKernelUtils {
         return null;
     }
 
+    // TODO: Move these precondition checks into a separate utility class.
+
     /**
      * Precondition-style validation that throws {@link IllegalArgumentException}.
      *
@@ -117,20 +117,6 @@ public class DefaultKernelUtils {
         }
     }
 
-    /**
-     * Precondition-style validation that throws {@link IllegalStateException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @param message A String message for the exception.
-     * @throws IllegalStateException if {@code isValid} is false
-     */
-    public static void checkState(boolean isValid, String message)
-        throws IllegalStateException {
-        if (!isValid) {
-            throw new IllegalStateException(message);
-        }
-    }
-
     private static List<Type> pruneFields(GroupType type, StructType deltaDataType) {
         // prune fields including nested pruning like in pruneSchema
         return deltaDataType.fields().stream()
@@ -154,16 +140,6 @@ public class DefaultKernelUtils {
         } else {
             return type;
         }
-    }
-
-    /**
-     * Utility method to get the number of days since epoch this given date is.
-     *
-     * @param date
-     */
-    public static int daysSinceEpoch(Date date) {
-        LocalDate localDate = date.toLocalDate();
-        return (int) ChronoUnit.DAYS.between(EPOCH, localDate);
     }
 
     //////////////////////////////////////////////////////////////////////////////////

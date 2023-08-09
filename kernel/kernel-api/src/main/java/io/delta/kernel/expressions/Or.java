@@ -18,19 +18,18 @@ package io.delta.kernel.expressions;
 import java.util.Arrays;
 
 /**
- * {@code AND} expression
+ * {@code OR} expression
  * <p>
  * Definition:
- * <p>
- * <ul>
- *     <li>Logical {@code expr1} AND {@code expr2} on two inputs.</li>
+ * <p><ul>
+ *     <li>Logical {@code expr1} OR {@code expr2} on two inputs.</li>
  *     <li>Requires both left and right input expressions of type {@link Predicate}.</li>
  *     <li>Result is null at least one of the inputs is null.</li>
  * </ul>
  */
-public final class And extends Predicate {
-    public And(Predicate left, Predicate right) {
-        super("AND", Arrays.asList(left, right));
+public final class Or extends Predicate {
+    public Or(Predicate left, Predicate right) {
+        super("OR", Arrays.asList(left, right));
     }
 
     /**
@@ -49,6 +48,6 @@ public final class And extends Predicate {
 
     @Override
     public String toString() {
-        return "(" + getLeft() + " AND " + getRight() + ")";
+        return "(" + getLeft() + " OR " + getRight() + ")";
     }
 }
