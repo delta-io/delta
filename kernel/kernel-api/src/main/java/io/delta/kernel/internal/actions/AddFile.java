@@ -34,18 +34,26 @@ import io.delta.kernel.internal.fs.Path;
  * Delta log action representing an `AddFile`
  */
 public class AddFile extends FileAction {
+
+    public static String getPathFromRow(Row row) {
+        return requireNonNull(row, 0, "path").getString(0);
+    }
+
+    public static DeletionVectorDescriptor getDeletionVectorDescriptorFromRow(Row row) {
+        return DeletionVectorDescriptor.fromRow(row.getStruct(5));
+    }
+
     public static AddFile fromRow(Row row) {
         if (row == null) {
             return null;
         }
 
-        final String path = requireNonNull(row, 0, "path").getString(0);
+        final String path = getPathFromRow(row);
         final Map<String, String> partitionValues = row.getMap(1);
         final long size = requireNonNull(row, 2, "size").getLong(2);
         final long modificationTime = requireNonNull(row, 3, "modificationTime").getLong(3);
         final boolean dataChange = requireNonNull(row, 4, "dataChange").getBoolean(4);
-        final DeletionVectorDescriptor deletionVector =
-            DeletionVectorDescriptor.fromRow(row.getStruct(5));
+        final DeletionVectorDescriptor deletionVector = getDeletionVectorDescriptorFromRow(row);
 
         return new AddFile(
             path, partitionValues, size, modificationTime, dataChange, deletionVector);

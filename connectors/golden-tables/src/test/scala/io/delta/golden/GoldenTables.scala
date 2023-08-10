@@ -47,7 +47,7 @@ import org.apache.spark.sql.types._
  *
  * To generate a single table (that is specified below) run:
  * ```
- * GENERATE_GOLDEN_TABLES=1 build/sbt 'goldenTables/test-only *GoldenTables -- -z tbl_name'
+ * GENERATE_GOLDEN_TABLES=1 build/sbt 'goldenTables/testOnly *GoldenTables -- -z "tbl_name"'
  * ```
  *
  * After generating golden tables, be sure to package or test project standalone, otherwise the
@@ -968,6 +968,25 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       .write
       .format("delta")
       .save(tablePath)
+  }
+
+  generateGoldenTable("basic-with-inserts-deletes-checkpoint") { tablePath =>
+    // scalastyle:off line.size.limit
+    spark.range(0, 10).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(10, 20).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(20, 30).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(30, 40).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(40, 50).repartition(1).write.format("delta").mode("append").save(tablePath)
+    sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 5 AND id <= 9")
+    sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 15 AND id <= 19")
+    sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 25 AND id <= 29")
+    sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 35 AND id <= 39")
+    sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 45 AND id <= 49")
+    spark.range(50, 60).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(60, 70).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(70, 80).repartition(1).write.format("delta").mode("append").save(tablePath)
+    sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 66")
+    // scalastyle:on line.size.limit
   }
 }
 
