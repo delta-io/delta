@@ -202,10 +202,11 @@ sealed trait RemovableFeature { self: TableFeature =>
    *
    * 1) We find the earliest valid checkpoint, recreate a snapshot at that version and we check
    *    whether there any traces of the feature-to-remove.
-   * 2) We check all commits from the version of the earliest checkpoint until the current version.
-   *    This includes both the earliest and the current versions. This is because a commit might
-   *    include information that is not available in the snapshot. Examples include
-   *    CommitInfo, CDCInfo etc.
+   * 2) We check all commits that exist between version 0 and the current version.
+   *    This includes the versions we validated the snapshots. This is because a commit
+   *    might include information that is not available in the snapshot. Examples include
+   *    CommitInfo, CDCInfo etc. Note, there can still be valid log commit files with
+   *    versions prior the earliest checkpoint version.
    * 3) We do not need to recreate a snapshot at the current version because this is already being
    *    handled by validateRemoval.
    *
@@ -220,19 +221,19 @@ sealed trait RemovableFeature { self: TableFeature =>
       downgradeTxnReadSnapshot: Snapshot): Boolean = {
     require(isReaderWriterFeature)
     val deltaLog = downgradeTxnReadSnapshot.deltaLog
-    val fromVersion = deltaLog.findEarliestReliableCheckpoint().getOrElse(0L)
+    val earliestCheckpointVersion = deltaLog.findEarliestReliableCheckpoint().getOrElse(0L)
     val toVersion = downgradeTxnReadSnapshot.version
 
-    // Use the snapshot at fromVersion to validate the checkpoint identified by
+    // Use the snapshot at earliestCheckpointVersion to validate the checkpoint identified by
     // findEarliestReliableCheckpoint.
-    val fromVersionSnapshot = deltaLog.getSnapshotAt(fromVersion)
-    if (containsFeatureTraces(fromVersionSnapshot.stateDS)) {
+    val earliestSnapshot = deltaLog.getSnapshotAt(earliestCheckpointVersion)
+    if (containsFeatureTraces(earliestSnapshot.stateDS)) {
       return true
     }
 
-    // Check if all commits between fromVersion and toVersion contain any traces of the feature.
+    // Check if commits between 0 version and toVersion contain any traces of the feature.
     val allHistoricalDeltaFiles = deltaLog
-      .listFrom(fromVersion)
+      .listFrom(0L)
       .takeWhile(file => FileNames.getFileVersionOpt(file.getPath).forall(_ <= toVersion))
       .filter(FileNames.isDeltaFile)
       .toSeq
