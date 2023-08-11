@@ -20,9 +20,7 @@ package org.apache.spark.sql.delta.sources
 import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
-import scala.util.control.NonFatal
 import scala.util.matching.Regex
 
 import org.apache.spark.sql.delta._
@@ -334,16 +332,40 @@ trait DeltaSourceBase extends Source
    * @param indexedFiles actions iterator from which to generate the DataFrame.
    */
   protected def createDataFrame(indexedFiles: Iterator[IndexedFile]): DataFrame = {
-    val addFilesList = indexedFiles
-        .map(_.getFileAction)
-        .filter(_.isInstanceOf[AddFile])
-        .asInstanceOf[Iterator[AddFile]].toArray
-
-    deltaLog.createDataFrame(
-      readSnapshotDescriptor,
-      addFilesList,
-      isStreaming = true
-    )
+    val addFiles = indexedFiles
+      .filter(_.getFileAction.isInstanceOf[AddFile])
+      .toSeq
+    val hasDeletionVectors =
+      addFiles.exists(_.getFileAction.asInstanceOf[AddFile].deletionVector != null)
+    if (hasDeletionVectors) {
+      // Read AddFiles from different versions in different scans.
+      // This avoids an issue where we might read the same file with different deletion vectors in
+      // the same scan, which we cannot support as long we broadcast a map of DVs for lookup.
+      // This code can be removed once we can pass the DVs into the scan directly together with the
+      // AddFile/PartitionedFile entry.
+      addFiles
+        .groupBy(_.version)
+        .values
+        .map { addFilesList =>
+          deltaLog.createDataFrame(
+            readSnapshotDescriptor,
+            addFilesList.map(_.getFileAction.asInstanceOf[AddFile]),
+            isStreaming = true)
+        }
+        .reduceOption(_ union _)
+        .getOrElse {
+          // If we filtered out all the values before the groupBy, just return an empty DataFrame.
+          deltaLog.createDataFrame(
+            readSnapshotDescriptor,
+            Seq.empty[AddFile],
+            isStreaming = true)
+        }
+    } else {
+      deltaLog.createDataFrame(
+        readSnapshotDescriptor,
+        addFiles.map(_.getFileAction.asInstanceOf[AddFile]),
+        isStreaming = true)
+    }
   }
 
   /**
