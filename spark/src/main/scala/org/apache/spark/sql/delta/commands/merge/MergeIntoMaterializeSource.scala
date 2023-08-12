@@ -20,7 +20,6 @@ import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
-import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
@@ -62,7 +61,6 @@ import org.apache.spark.storage.StorageLevel
  * We record such failures for tracking purpuses.
  */
 trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
-  self: MergeIntoCommandBase =>
 
   import MergeIntoMaterializeSource._
 
@@ -135,26 +133,6 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     type Result = Value
 
     val Retry, RethrowException, ExhaustedRetries = Value
-  }
-
-  /**
-   * Throws an exception if merge metrics indicate that the source table changed between the first
-   * and the second source table scans.
-   */
-  protected def checkNonDeterministicSource(spark: SparkSession): Unit = {
-    // We only detect changes in the number of source rows. This is a best-effort detection; a
-    // more comprehensive solution would be to checksum the values for the columns that we read
-    // in both jobs.
-    // If numSourceRowsInSecondScan is < 0 then it hasn't run, e.g. for insert-only merges.
-    // In that case we have only read the source table once.
-    if (metrics("numSourceRowsInSecondScan").value >= 0 &&
-        metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
-      log.warn(s"Merge source has ${metrics("numSourceRows")} rows in initial scan but " +
-        s"${metrics("numSourceRowsInSecondScan")} rows in second scan")
-      if (conf.getConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED)) {
-        throw DeltaErrors.sourceNotDeterministicInMergeException(spark)
-      }
-    }
   }
 
   /**
@@ -277,12 +255,11 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     val sourceWithSelectedColumns = Project(referencedSourceColumns, source)
     val baseSourcePlanDF = Dataset.ofRows(spark, sourceWithSelectedColumns)
 
-    // Caches the source in RDD cache using localCheckpopoint, which cuts away the RDD lineage,
+    // Caches the source in RDD cache using localCheckpoint, which cuts away the RDD lineage,
     // which shall ensure that the source cannot be recomputed and thus become inconsistent.
     val checkpointedSourcePlanDF = baseSourcePlanDF
-      // eager = false makes it be executed and materialized first time it's used.
-      // Doing it lazily inside the query lets it interleave this work better with other work.
-      // On the other hand, it makes it impossible to measure the time it took in a metric.
+      // Set eager=false for now, even if we should be doing eager, so that we can set the storage
+      // level before executing.
       .localCheckpoint(eager = false)
 
     // We have to reach through the crust and into the plan of the checkpointed DF
@@ -308,6 +285,20 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
       }
     )
     rdd.persist(storageLevel)
+
+    // WARNING: if eager == false, the source used during the first Spark Job that uses this may
+    // still be inconsistent with source materialized afterwards.
+    // This is because doCheckpoint that finalizes the lazy checkpoint is called after the Job
+    // that triggered the lazy checkpointing finished.
+    // If blocks were lost during that job, they may still get recomputed and changed compared
+    // to how they were used during the execution of the job.
+    if (spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_EAGER)) {
+      // Force the evaluation of the `rdd`, since we cannot access `doCheckpoint()` from here.
+      rdd
+        .mapPartitions(_ => Iterator.empty.asInstanceOf[Iterator[InternalRow]])
+        .foreach((_: InternalRow) => ())
+      assert(rdd.isCheckpointed)
+    }
 
     logDebug(s"Materializing MERGE with pruned columns $referencedSourceColumns. ")
     logDebug(s"Materialized MERGE source plan:\n${sourceDF.get.queryExecution}")

@@ -27,12 +27,10 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.AddFileColumnarBatch;
 
-public class InternalUtils
-{
+public class InternalUtils {
     private InternalUtils() {}
 
-    public static Row getScanFileRow(FileStatus fileStatus)
-    {
+    public static Row getScanFileRow(FileStatus fileStatus) {
         AddFile addFile = new AddFile(
             fileStatus.getPath(),
             Collections.emptyMap(),
@@ -48,15 +46,14 @@ public class InternalUtils
     }
 
     /**
-     * Utility method to read at most one row from the given data {@link FileDataReadResult} iterator.
-     * If there is more than one row, an exception will be thrown.
+     * Utility method to read at most one row from the given data {@link FileDataReadResult}
+     * iterator. If there is more than one row, an exception will be thrown.
      *
      * @param dataIter
      * @return
      */
     public static Optional<Row> getSingularRow(CloseableIterator<FileDataReadResult> dataIter)
-        throws IOException
-    {
+        throws IOException {
         Row row = null;
         while (dataIter.hasNext()) {
             try (CloseableIterator<Row> rows = dataIter.next().getData().getRows()) {
@@ -77,14 +74,13 @@ public class InternalUtils
      * If there is more than element row, an exception will be thrown.
      */
     public static <T> Optional<T> getSingularElement(CloseableIterator<T> iter)
-        throws IOException
-    {
+        throws IOException {
         try {
             T result = null;
             while (iter.hasNext()) {
                 if (result != null) {
                     throw new IllegalArgumentException(
-                            "Iterator contains more than one element");
+                        "Iterator contains more than one element");
                 }
                 result = iter.next();
             }
@@ -101,8 +97,7 @@ public class InternalUtils
      * @throws IllegalArgumentException if {@code isValid} is false
      */
     public static void checkArgument(boolean isValid)
-            throws IllegalArgumentException
-    {
+        throws IllegalArgumentException {
         if (!isValid) {
             throw new IllegalArgumentException();
         }
@@ -116,8 +111,7 @@ public class InternalUtils
      * @throws IllegalArgumentException if {@code isValid} is false
      */
     public static void checkArgument(boolean isValid, String message)
-            throws IllegalArgumentException
-    {
+        throws IllegalArgumentException {
         if (!isValid) {
             throw new IllegalArgumentException(message);
         }

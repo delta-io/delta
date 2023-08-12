@@ -127,20 +127,4 @@ object RowId {
    */
   private[delta] def extractHighWatermark(snapshot: Snapshot): Option[Long] =
     RowTrackingMetadataDomain.fromSnapshot(snapshot).map(_.rowIdHighWaterMark)
-
-  /**
-   * Checks whether CONVERT TO DELTA collects statistics if row tracking is supported. If it does
-   * not collect statistics, we cannot assign fresh row IDs, hence we throw an error to either rerun
-   * the command without enabling the row tracking table feature, or to enable the necessary
-   * flags to collect statistics.
-   */
-  private[delta] def checkStatsCollectedIfRowTrackingSupported(
-      protocol: Protocol,
-      convertToDeltaShouldCollectStats: Boolean,
-      statsCollectionEnabled: Boolean): Unit = {
-    if (!isSupported(protocol)) return
-    if (!convertToDeltaShouldCollectStats || !statsCollectionEnabled) {
-      throw DeltaErrors.convertToDeltaRowTrackingEnabledWithoutStatsCollection
-    }
-  }
 }

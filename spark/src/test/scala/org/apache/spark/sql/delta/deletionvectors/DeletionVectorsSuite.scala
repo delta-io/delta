@@ -259,6 +259,23 @@ class DeletionVectorsSuite extends QueryTest
     }
   }
 
+  Seq("name", "id").foreach(mode =>
+    test(s"DELETE with DVs with column mapping mode=$mode") {
+      withTempDir { dirName =>
+        val path = dirName.getAbsolutePath
+        val data = (0 until 50).map(x => (x % 10, x, s"foo${x % 5}"))
+        spark.conf.set("spark.databricks.delta.properties.defaults.columnMapping.mode", mode)
+        data.toDF("part", "col1", "col2").write.format("delta").partitionBy(
+          "part").save(path)
+        val tableLog = DeltaLog.forTable(spark, path)
+        enableDeletionVectorsInTable(tableLog, true)
+        spark.sql(s"DELETE FROM delta.`$path` WHERE col1 = 2")
+        checkAnswer(spark.sql(s"select * from delta.`$path` WHERE col1 = 2"), Seq())
+        verifyDVsExist(tableLog, 1)
+      }
+    }
+  )
+
   test("DELETE with DVs - existing table already has DVs") {
     withSQLConf(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
       withTempDir { tempDir =>
@@ -306,6 +323,9 @@ class DeletionVectorsSuite extends QueryTest
           val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
           assert(opMetrics.getOrElse("numDeletedRows", -1) === 6)
           assert(opMetrics.getOrElse("numRemovedFiles", -1) === 1)
+          assert(opMetrics.getOrElse("numDeletionVectorsAdded", -1) === 1)
+          assert(opMetrics.getOrElse("numDeletionVectorsRemoved", -1) === 0)
+          assert(opMetrics.getOrElse("numDeletionVectorsUpdated", -1) === 0)
         }
 
         {
@@ -314,6 +334,9 @@ class DeletionVectorsSuite extends QueryTest
           val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
           assert(opMetrics.getOrElse("numDeletedRows", -1) === 1)
           assert(opMetrics.getOrElse("numRemovedFiles", -1) === 0)
+          assert(opMetrics.getOrElse("numDeletionVectorsAdded", -1) === 0)
+          assert(opMetrics.getOrElse("numDeletionVectorsRemoved", -1) === 0)
+          assert(opMetrics.getOrElse("numDeletionVectorsUpdated", -1) === 1)
         }
 
         {
@@ -322,6 +345,9 @@ class DeletionVectorsSuite extends QueryTest
           val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
           assert(opMetrics.getOrElse("numDeletedRows", -1) === 3)
           assert(opMetrics.getOrElse("numRemovedFiles", -1) === 1)
+          assert(opMetrics.getOrElse("numDeletionVectorsAdded", -1) === 0)
+          assert(opMetrics.getOrElse("numDeletionVectorsRemoved", -1) === 1)
+          assert(opMetrics.getOrElse("numDeletionVectorsUpdated", -1) === 0)
         }
       }
     }

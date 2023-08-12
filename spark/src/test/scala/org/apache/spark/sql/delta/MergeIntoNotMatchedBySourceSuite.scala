@@ -75,7 +75,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
   }
 
   // Test analysis errors with NOT MATCHED BY SOURCE clauses.
-  testAnalysisErrorsInUnlimitedClauses(
+  testErrorsInUnlimitedClauses(
     "error on multiple not matched by source update clauses without condition")(
     mergeOn = "s.key = t.key",
     updateNotMatched(condition = "t.key == 3", set = "value = 2 * value"),
@@ -84,7 +84,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
     errorStrs = "when there are more than one not matched by source clauses in a merge " +
       "statement, only the last not matched by source clause can omit the condition" :: Nil)
 
-  testAnalysisErrorsInUnlimitedClauses(
+  testErrorsInUnlimitedClauses(
     "error on multiple not matched by source update/delete clauses without condition")(
     mergeOn = "s.key = t.key",
     updateNotMatched(condition = "t.key == 3", set = "value = 2 * value"),
@@ -93,7 +93,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
     errorStrs = "when there are more than one not matched by source clauses in a merge " +
       "statement, only the last not matched by source clause can omit the condition" :: Nil)
 
-  testAnalysisErrorsInUnlimitedClauses(
+  testErrorsInUnlimitedClauses(
     "error on non-empty condition following empty condition in not matched by source " +
       "update clauses")(
     mergeOn = "s.key = t.key",
@@ -102,7 +102,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
     errorStrs = "when there are more than one not matched by source clauses in a merge " +
       "statement, only the last not matched by source clause can omit the condition" :: Nil)
 
-  testAnalysisErrorsInUnlimitedClauses(
+  testErrorsInUnlimitedClauses(
     "error on non-empty condition following empty condition in not matched by source " +
       "delete clauses")(
     mergeOn = "s.key = t.key",

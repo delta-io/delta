@@ -83,7 +83,7 @@ trait DeltaAlterTableTestBase
   }
 
   protected def assertNotSupported(command: String, messages: String*): Unit = {
-    val ex = intercept[AnalysisException] {
+    val ex = intercept[Exception] {
       sql(command)
     }.getMessage
     assert(ex.contains("not supported") || ex.contains("Unsupported") || ex.contains("Cannot"))
@@ -1353,7 +1353,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         assert(ex1.getMessage.contains("Missing field V1") ||
           ex1.getMessage.contains("Cannot update missing field V1"))
 
-        val ex2 = intercept[AnalysisException] {
+        val ex2 = intercept[ParseException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 V1 integer")
         }
         assert(ex2.getMessage.contains("Renaming column is not supported"))
@@ -1693,6 +1693,7 @@ class DeltaAlterTableByNameSuite
 }
 
 class DeltaAlterTableByPathSuite extends DeltaAlterTableByPathTests with DeltaSQLCommandTest
+  with DeltaAlterTableReplaceTests
 
 
 trait DeltaAlterTableColumnMappingSelectedTests extends DeltaColumnMappingSelectedTestMixin {

@@ -82,9 +82,9 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
     // Prune non-matching files if we don't need to collect them for NOT MATCHED BY SOURCE clauses.
     val dataSkippedFiles =
       if (notMatchedBySourceClauses.isEmpty) {
-        deltaTxn.filterFiles(getTargetOnlyPredicates(spark))
+        deltaTxn.filterFiles(getTargetOnlyPredicates(spark), keepNumRecords = true)
       } else {
-        deltaTxn.filterFiles()
+        deltaTxn.filterFiles(filters = Seq(Literal.TrueLiteral), keepNumRecords = true)
       }
 
     // Join the source and target table using the merge condition to find touched files. An inner
@@ -101,9 +101,10 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
     val matchedPredicate =
       if (isMatchedOnly) {
         matchedClauses
-          .map(clause => clause.condition.getOrElse(Literal(true)))
+          // An undefined condition (None) is implicitly true
+          .map(_.condition.getOrElse(Literal.TrueLiteral))
           .reduce((a, b) => Or(a, b))
-      } else Literal(true)
+      } else Literal.TrueLiteral
 
     // Compute the columns needed for the inner join.
     val targetColsNeeded = {

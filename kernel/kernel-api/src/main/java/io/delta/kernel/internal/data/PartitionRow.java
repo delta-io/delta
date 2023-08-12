@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.data;
 
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,8 +31,7 @@ import io.delta.kernel.types.StructType;
  * schema.
  */
 public class PartitionRow
-    implements Row
-{
+    implements Row {
 
     private final StructType schema;
     private final Map<Integer, String> ordinalToValue;
@@ -39,8 +39,7 @@ public class PartitionRow
     public PartitionRow(
         StructType schema,
         Map<String, Integer> partitionOrdinals,
-        Map<String, String> partitionValuesMap)
-    {
+        Map<String, String> partitionValuesMap) {
         this.ordinalToValue = new HashMap<>();
         for (Map.Entry<String, Integer> entry : partitionOrdinals.entrySet()) {
             final String partitionColumnName = entry.getKey();
@@ -52,87 +51,78 @@ public class PartitionRow
     }
 
     @Override
-    public StructType getSchema()
-    {
+    public StructType getSchema() {
         return schema;
     }
 
     @Override
-    public boolean isNullAt(int ordinal)
-    {
+    public boolean isNullAt(int ordinal) {
         return ordinalToValue.get(ordinal) == null;
     }
 
     @Override
-    public boolean getBoolean(int ordinal)
-    {
+    public boolean getBoolean(int ordinal) {
         return Boolean.parseBoolean(ordinalToValue.get(ordinal));
     }
 
     @Override
-    public byte getByte(int ordinal)
-    {
+    public byte getByte(int ordinal) {
         return Byte.parseByte(ordinalToValue.get(ordinal));
     }
 
     @Override
-    public short getShort(int ordinal)
-    {
+    public short getShort(int ordinal) {
         return Short.parseShort(ordinalToValue.get(ordinal));
     }
 
     @Override
-    public int getInt(int ordinal)
-    {
+    public int getInt(int ordinal) {
         return Integer.parseInt(ordinalToValue.get(ordinal));
     }
 
     @Override
-    public long getLong(int ordinal)
-    {
+    public long getLong(int ordinal) {
         return Long.parseLong(ordinalToValue.get(ordinal));
     }
 
     @Override
-    public float getFloat(int ordinal)
-    {
+    public float getFloat(int ordinal) {
         return Float.parseFloat(ordinalToValue.get(ordinal));
     }
 
     @Override
-    public double getDouble(int ordinal)
-    {
+    public double getDouble(int ordinal) {
         return Double.parseDouble(ordinalToValue.get(ordinal));
     }
 
     @Override
-    public String getString(int ordinal)
-    {
+    public String getString(int ordinal) {
         return ordinalToValue.get(ordinal);
     }
 
     @Override
-    public byte[] getBinary(int ordinal)
-    {
+    public BigDecimal getDecimal(int ordinal) {
+        throw new UnsupportedOperationException("not yet implemented");
+    }
+
+    @Override
+    public byte[] getBinary(int ordinal) {
         // TODO: verify if this is the correct way.
         return ordinalToValue.get(ordinal).getBytes();
     }
 
     @Override
-    public Row getStruct(int ordinal)
-    {
+    public Row getStruct(int ordinal) {
         throw new UnsupportedOperationException("Partition values can't be StructTypes");
     }
 
     @Override
-    public <T> List<T> getArray(int ordinal)
-    {
+    public <T> List<T> getArray(int ordinal) {
         throw new UnsupportedOperationException("Partition values can't be ArrayType");
     }
 
     @Override
-    public <K, V> Map<K, V> getMap(int ordinal)
-    {
+    public <K, V> Map<K, V> getMap(int ordinal) {
         throw new UnsupportedOperationException("Partition values can't be MapType");
     }
 }

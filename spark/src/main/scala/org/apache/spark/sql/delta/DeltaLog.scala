@@ -31,7 +31,6 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
-import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -459,8 +458,7 @@ class DeltaLog private(
   def createRelation(
       partitionFilters: Seq[Expression] = Nil,
       snapshotToUseOpt: Option[Snapshot] = None,
-      isTimeTravelQuery: Boolean = false,
-      cdcOptions: CaseInsensitiveStringMap = CaseInsensitiveStringMap.empty): BaseRelation = {
+      isTimeTravelQuery: Boolean = false): BaseRelation = {
 
     /** Used to link the files present in the table into the query planner. */
     // TODO: If snapshotToUse is unspecified, get the correct snapshot from update()
@@ -469,14 +467,6 @@ class DeltaLog private(
       // A negative version here means the dataPath is an empty directory. Read query should error
       // out in this case.
       throw DeltaErrors.pathNotExistsException(dataPath.toString)
-    }
-
-    // For CDC we have to return the relation that represents the change data instead of actual
-    // data.
-    if (!cdcOptions.isEmpty) {
-      recordDeltaEvent(this, "delta.cdf.read", data = cdcOptions.asCaseSensitiveMap())
-      return CDCReader.getCDCRelation(
-        spark, snapshotToUse, isTimeTravelQuery, spark.sessionState.conf, cdcOptions)
     }
 
     val fileIndex = TahoeLogFileIndex(

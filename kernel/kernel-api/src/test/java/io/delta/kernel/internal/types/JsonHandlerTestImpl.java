@@ -1,14 +1,16 @@
 package io.delta.kernel.internal.types;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.JsonHandler;
@@ -34,55 +36,46 @@ import io.delta.kernel.utils.Utils;
  * Implementation of {@link JsonHandler} for testing Delta Kernel APIs
  */
 public class JsonHandlerTestImpl
-    implements JsonHandler
-{
+    implements JsonHandler {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
     public CloseableIterator<FileReadContext> contextualizeFileReads(
-        CloseableIterator<Row> fileIter, Expression predicate)
-    {
+        CloseableIterator<Row> fileIter, Expression predicate) {
         throw new UnsupportedOperationException("not yet implemented");
     }
 
     @Override
-    public ColumnarBatch parseJson(ColumnVector jsonStringVector, StructType outputSchema)
-    {
+    public ColumnarBatch parseJson(ColumnVector jsonStringVector, StructType outputSchema) {
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < jsonStringVector.getSize(); i++) {
             final String json = jsonStringVector.getString(i);
             try {
                 final JsonNode jsonNode = objectMapper.readTree(json);
                 rows.add(new TestJsonRow((ObjectNode) jsonNode, outputSchema));
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                 throw new RuntimeException(e);
             }
         }
 
-        return new ColumnarBatch()
-        {
+        return new ColumnarBatch() {
             @Override
-            public StructType getSchema()
-            {
+            public StructType getSchema() {
                 return outputSchema;
             }
 
             @Override
-            public ColumnVector getColumnVector(int ordinal)
-            {
+            public ColumnVector getColumnVector(int ordinal) {
                 throw new UnsupportedOperationException("not yet implemented");
             }
 
             @Override
-            public int getSize()
-            {
+            public int getSize() {
                 return rows.size();
             }
 
             @Override
-            public CloseableIterator<Row> getRows()
-            {
+            public CloseableIterator<Row> getRows() {
                 return Utils.toCloseableIterator(rows.iterator());
             }
         };
@@ -90,23 +83,19 @@ public class JsonHandlerTestImpl
 
     @Override
     public CloseableIterator<FileDataReadResult> readJsonFiles(
-        CloseableIterator<FileReadContext> fileIter, StructType physicalSchema)
-    {
+        CloseableIterator<FileReadContext> fileIter, StructType physicalSchema) {
         throw new UnsupportedOperationException("not yet implemented");
     }
 
-    private static class TestJsonRow implements Row
-    {
-        static void throwIfTypeMismatch(String expType, boolean hasExpType, JsonNode jsonNode)
-        {
+    private static class TestJsonRow implements Row {
+        static void throwIfTypeMismatch(String expType, boolean hasExpType, JsonNode jsonNode) {
             if (!hasExpType) {
                 throw new RuntimeException(
                     String.format("Couldn't decode %s, expected a %s", jsonNode, expType));
             }
         }
 
-        private static Object decodeElement(JsonNode jsonValue, DataType dataType)
-        {
+        private static Object decodeElement(JsonNode jsonValue, DataType dataType) {
             if (jsonValue.isNull()) {
                 return null;
             }
@@ -114,8 +103,7 @@ public class JsonHandlerTestImpl
             if (dataType.equals(MixedDataType.INSTANCE)) {
                 if (jsonValue.isTextual()) {
                     return jsonValue.textValue();
-                }
-                else if (jsonValue instanceof ObjectNode) {
+                } else if (jsonValue instanceof ObjectNode) {
                     return jsonValue.toString();
                 }
                 throwIfTypeMismatch("object or string", false, jsonValue);
@@ -181,8 +169,7 @@ public class JsonHandlerTestImpl
             );
         }
 
-        private static Object decodeField(ObjectNode rootNode, StructField field)
-        {
+        private static Object decodeField(ObjectNode rootNode, StructField field) {
             if (rootNode.get(field.getName()) == null) {
                 if (field.isNullable()) {
                     return null;
@@ -200,8 +187,7 @@ public class JsonHandlerTestImpl
         private final Object[] parsedValues;
         private final StructType readSchema;
 
-        public TestJsonRow(ObjectNode rootNode, StructType readSchema)
-        {
+        TestJsonRow(ObjectNode rootNode, StructType readSchema) {
             this.readSchema = readSchema;
             this.parsedValues = new Object[readSchema.length()];
 
@@ -213,86 +199,77 @@ public class JsonHandlerTestImpl
         }
 
         @Override
-        public StructType getSchema()
-        {
+        public StructType getSchema() {
             return readSchema;
         }
 
         @Override
-        public boolean isNullAt(int ordinal)
-        {
+        public boolean isNullAt(int ordinal) {
             return parsedValues[ordinal] == null;
         }
 
         @Override
-        public boolean getBoolean(int ordinal)
-        {
+        public boolean getBoolean(int ordinal) {
             return (boolean) parsedValues[ordinal];
         }
 
         @Override
-        public byte getByte(int ordinal)
-        {
+        public byte getByte(int ordinal) {
             throw new UnsupportedOperationException("not yet implemented - test only");
         }
 
         @Override
-        public short getShort(int ordinal)
-        {
+        public short getShort(int ordinal) {
             throw new UnsupportedOperationException("not yet implemented - test only");
         }
 
         @Override
-        public int getInt(int ordinal)
-        {
+        public int getInt(int ordinal) {
             return (int) parsedValues[ordinal];
         }
 
         @Override
-        public long getLong(int ordinal)
-        {
+        public long getLong(int ordinal) {
             return (long) parsedValues[ordinal];
         }
 
         @Override
-        public float getFloat(int ordinal)
-        {
+        public float getFloat(int ordinal) {
             throw new UnsupportedOperationException("not yet implemented - test only");
         }
 
         @Override
-        public double getDouble(int ordinal)
-        {
+        public double getDouble(int ordinal) {
             throw new UnsupportedOperationException("not yet implemented - test only");
         }
 
         @Override
-        public String getString(int ordinal)
-        {
+        public String getString(int ordinal) {
             return (String) parsedValues[ordinal];
         }
 
         @Override
-        public byte[] getBinary(int ordinal)
-        {
+        public BigDecimal getDecimal(int ordinal) {
             throw new UnsupportedOperationException("not yet implemented - test only");
         }
 
         @Override
-        public Row getStruct(int ordinal)
-        {
+        public byte[] getBinary(int ordinal) {
+            throw new UnsupportedOperationException("not yet implemented - test only");
+        }
+
+        @Override
+        public Row getStruct(int ordinal) {
             return (TestJsonRow) parsedValues[ordinal];
         }
 
         @Override
-        public <T> List<T> getArray(int ordinal)
-        {
+        public <T> List<T> getArray(int ordinal) {
             return (List<T>) parsedValues[ordinal];
         }
 
         @Override
-        public <K, V> Map<K, V> getMap(int ordinal)
-        {
+        public <K, V> Map<K, V> getMap(int ordinal) {
             return (Map<K, V>) parsedValues[ordinal];
         }
     }

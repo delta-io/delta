@@ -22,12 +22,10 @@ package io.delta.kernel.types;
  * Internally, this is represented as the number of microseconds since the Unix epoch,
  * 1970-01-01 00:00:00 UTC..
  */
-public class TimestampType extends BasePrimitiveType
-{
+public class TimestampType extends BasePrimitiveType {
     public static final TimestampType INSTANCE = new TimestampType();
 
-    private TimestampType()
-    {
+    private TimestampType() {
         super("timestamp");
     }
 }

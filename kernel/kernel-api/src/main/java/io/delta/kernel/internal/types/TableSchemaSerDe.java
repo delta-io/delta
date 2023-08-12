@@ -43,10 +43,8 @@ import io.delta.kernel.utils.Utils;
 /**
  * Utility class to serialize and deserialize the table schema which is of type {@link StructType}.
  */
-public class TableSchemaSerDe
-{
-    private TableSchemaSerDe()
-    {
+public class TableSchemaSerDe {
+    private TableSchemaSerDe() {
     }
 
     /**
@@ -56,8 +54,7 @@ public class TableSchemaSerDe
      * @param structType Data type to serialize
      * @return Table schema serialized as JSON string.
      */
-    public static String toJson(StructType structType)
-    {
+    public static String toJson(StructType structType) {
         return structType.toJson();
     }
 
@@ -65,21 +62,20 @@ public class TableSchemaSerDe
      * Deserialize the table schema from {@code serializedStructType} using the given
      * {@code tableClient}
      *
-     * @param jsonHandler An instance of {@link JsonHandler} to use for parsing
-     * JSON operations.
+     * @param jsonHandler          An instance of {@link JsonHandler} to use for parsing
+     *                             JSON operations.
      * @param serializedStructType Table schema in JSON format compliant with the Delta Protocol.
      * @return Table schema
      */
-    public static StructType fromJson(JsonHandler jsonHandler, String serializedStructType)
-    {
+    public static StructType fromJson(JsonHandler jsonHandler, String serializedStructType) {
         return parseStructType(jsonHandler, serializedStructType);
     }
 
     /**
      * Utility method to parse a given struct as struct type.
      */
-    private static StructType parseStructType(JsonHandler jsonHandler, String serializedStructType)
-    {
+    private static StructType parseStructType(JsonHandler jsonHandler,
+                                              String serializedStructType) {
         Function<Row, StructType> evalMethod = (row) -> {
             final List<Row> fields = row.getArray(0);
             return new StructType(
@@ -94,8 +90,7 @@ public class TableSchemaSerDe
     /**
      * Utility method to parse a {@link StructField} from the {@link Row}
      */
-    private static StructField parseStructField(JsonHandler jsonHandler, Row row)
-    {
+    private static StructField parseStructField(JsonHandler jsonHandler, Row row) {
         String name = row.getString(0);
         String serializedDataType = row.getString(1);
         DataType type = parseDataType(jsonHandler, serializedDataType);
@@ -108,8 +103,7 @@ public class TableSchemaSerDe
     /**
      * Utility method to parse the data type from the {@link Row}.
      */
-    private static DataType parseDataType(JsonHandler jsonHandler, String serializedDataType)
-    {
+    private static DataType parseDataType(JsonHandler jsonHandler, String serializedDataType) {
         if (BasePrimitiveType.isPrimitiveType(serializedDataType)) {
             return BasePrimitiveType.createPrimitive(serializedDataType);
         }
@@ -145,8 +139,7 @@ public class TableSchemaSerDe
         return parseStructType(jsonHandler, serializedDataType);
     }
 
-    private static Optional<ArrayType> parseAsArrayType(JsonHandler jsonHandler, String json)
-    {
+    private static Optional<ArrayType> parseAsArrayType(JsonHandler jsonHandler, String json) {
         Function<Row, Optional<ArrayType>> evalMethod = (row) -> {
             if (!"array".equalsIgnoreCase(row.getString(0))) {
                 return Optional.empty();
@@ -166,8 +159,7 @@ public class TableSchemaSerDe
         return parseAndEvalSingleRow(jsonHandler, json, ARRAY_TYPE_SCHEMA, evalMethod);
     }
 
-    private static Optional<MapType> parseAsMapType(JsonHandler jsonHandler, String json)
-    {
+    private static Optional<MapType> parseAsMapType(JsonHandler jsonHandler, String json) {
         Function<Row, Optional<MapType>> evalMethod = (row -> {
             if (!"map".equalsIgnoreCase(row.getString(0))) {
                 return Optional.empty();
@@ -195,8 +187,7 @@ public class TableSchemaSerDe
         JsonHandler jsonHandler,
         String jsonString,
         StructType outputSchema,
-        Function<Row, R> evalFunction)
-    {
+        Function<Row, R> evalFunction) {
         ColumnVector columnVector = Utils.singletonColumnVector(jsonString);
         ColumnarBatch result = jsonHandler.parseJson(columnVector, outputSchema);
 
@@ -205,8 +196,7 @@ public class TableSchemaSerDe
         CloseableIterator<Row> rows = result.getRows();
         try {
             return evalFunction.apply(rows.next());
-        }
-        finally {
+        } finally {
             Utils.closeCloseables(rows);
         }
     }

@@ -34,36 +34,30 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
 
-public class Utils
-{
+public class Utils {
     /**
      * Utility method to create a singleton {@link CloseableIterator}.
      *
      * @param elem Element to create iterator with.
-     * @param <T> Element type.
+     * @param <T>  Element type.
      * @return A {@link CloseableIterator} with just one element.
      */
-    public static <T> CloseableIterator<T> singletonCloseableIterator(T elem)
-    {
-        return new CloseableIterator<T>()
-        {
+    public static <T> CloseableIterator<T> singletonCloseableIterator(T elem) {
+        return new CloseableIterator<T>() {
             private boolean accessed;
 
             @Override
-            public void close() throws IOException
-            {
+            public void close() throws IOException {
                 // nothing to close
             }
 
             @Override
-            public boolean hasNext()
-            {
+            public boolean hasNext() {
                 return !accessed;
             }
 
             @Override
-            public T next()
-            {
+            public T next() {
                 accessed = true;
                 return elem;
             }
@@ -75,25 +69,21 @@ public class Utils
      * for arguments that require {@link CloseableIterator} type.
      *
      * @param iter {@link Iterator} instance
-     * @param <T> Element type
+     * @param <T>  Element type
      * @return A {@link CloseableIterator} wrapping the given {@link Iterator}
      */
-    public static <T> CloseableIterator<T> toCloseableIterator(Iterator<T> iter)
-    {
-        return new CloseableIterator<T>()
-        {
+    public static <T> CloseableIterator<T> toCloseableIterator(Iterator<T> iter) {
+        return new CloseableIterator<T>() {
             @Override
             public void close() {}
 
             @Override
-            public boolean hasNext()
-            {
+            public boolean hasNext() {
                 return iter.hasNext();
             }
 
             @Override
-            public T next()
-            {
+            public T next() {
                 return iter.next();
             }
         };
@@ -106,36 +96,29 @@ public class Utils
      * @return A {@link ColumnVector} with a single element {@code value}
      */
     // TODO: add String to method name or make generic?
-    public static ColumnVector singletonColumnVector(String value)
-    {
-        return new ColumnVector()
-        {
+    public static ColumnVector singletonColumnVector(String value) {
+        return new ColumnVector() {
             @Override
-            public DataType getDataType()
-            {
+            public DataType getDataType() {
                 return StringType.INSTANCE;
             }
 
             @Override
-            public int getSize()
-            {
+            public int getSize() {
                 return 1;
             }
 
             @Override
-            public void close()
-            {
+            public void close() {
             }
 
             @Override
-            public boolean isNullAt(int rowId)
-            {
+            public boolean isNullAt(int rowId) {
                 return value == null;
             }
 
             @Override
-            public String getString(int rowId)
-            {
+            public String getString(int rowId) {
                 if (rowId != 0) {
                     throw new IllegalArgumentException("Invalid row id: " + rowId);
                 }
@@ -149,11 +132,10 @@ public class Utils
      * {@link Scan#getScanState(TableClient)}.
      *
      * @param tableClient instance of {@link TableClient} to use.
-     * @param scanState Scan state {@link Row}
+     * @param scanState   Scan state {@link Row}
      * @return Logical schema to read from the data files.
      */
-    public static StructType getLogicalSchema(TableClient tableClient, Row scanState)
-    {
+    public static StructType getLogicalSchema(TableClient tableClient, Row scanState) {
         int schemaStringOrdinal = ScanStateRow.getLogicalSchemaStringColOrdinal();
         String serializedSchema = scanState.getString(schemaStringOrdinal);
         return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
@@ -164,11 +146,10 @@ public class Utils
      * {@link Scan#getScanState(TableClient)}.
      *
      * @param tableClient instance of {@link TableClient} to use.
-     * @param scanState Scan state {@link Row}
+     * @param scanState   Scan state {@link Row}
      * @return Physical schema to read from the data files.
      */
-    public static StructType getPhysicalSchema(TableClient tableClient, Row scanState)
-    {
+    public static StructType getPhysicalSchema(TableClient tableClient, Row scanState) {
         int schemaStringOrdinal = ScanStateRow.getPhysicalSchemaStringColOrdinal();
         String serializedSchema = scanState.getString(schemaStringOrdinal);
         return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
@@ -181,8 +162,7 @@ public class Utils
      * @param scanState Scan state {@link Row}
      * @return List of partition column names according to the scan state.
      */
-    public static List<String> getPartitionColumns(Row scanState)
-    {
+    public static List<String> getPartitionColumns(Row scanState) {
         int partitionColumnsOrdinal = ScanStateRow.getPartitionColumnsColOrdinal();
         return scanState.getArray(partitionColumnsOrdinal);
     }
@@ -191,8 +171,7 @@ public class Utils
      * Get the column mapping mode from the scan state {@link Row} returned by
      * {@link Scan#getScanState(TableClient)}.
      */
-    public static String getColumnMappingMode(Row scanState)
-    {
+    public static String getColumnMappingMode(Row scanState) {
         int configOrdinal = ScanStateRow.getConfigurationColOrdinal();
         Map<String, String> configuration = scanState.getMap(configOrdinal);
         String cmMode = configuration.get("delta.columnMapping.mode");
@@ -206,8 +185,7 @@ public class Utils
      * @param scanFileInfo {@link Row} representing one scan file.
      * @return a {@link FileStatus} object created from the given scan file row.
      */
-    public static FileStatus getFileStatus(Row scanFileInfo)
-    {
+    public static FileStatus getFileStatus(Row scanFileInfo) {
         String path = scanFileInfo.getString(0);
         Long size = scanFileInfo.getLong(2);
 
@@ -220,8 +198,7 @@ public class Utils
      * @param scanFileInfo {@link Row} representing one scan file.
      * @return Map of partition column name to partition column value.
      */
-    public static Map<String, String> getPartitionValues(Row scanFileInfo)
-    {
+    public static Map<String, String> getPartitionValues(Row scanFileInfo) {
         return scanFileInfo.getMap(1);
     }
 
@@ -234,8 +211,7 @@ public class Utils
      *
      * @param closeables
      */
-    public static void closeCloseables(Closeable... closeables)
-    {
+    public static void closeCloseables(Closeable... closeables) {
         RuntimeException exception = null;
         for (Closeable closeable : closeables) {
             if (closeable == null) {
@@ -243,12 +219,10 @@ public class Utils
             }
             try {
                 closeable.close();
-            }
-            catch (Exception ex) {
+            } catch (Exception ex) {
                 if (exception == null) {
                     exception = new RuntimeException(ex);
-                }
-                else {
+                } else {
                     exception.addSuppressed(ex);
                 }
             }
@@ -263,20 +237,18 @@ public class Utils
      *
      * @param closeables
      */
-    public static void closeCloseablesSilently(Closeable... closeables)
-    {
+    public static void closeCloseablesSilently(Closeable... closeables) {
         try {
             closeCloseables(closeables);
-        }
-        catch (Throwable throwable) {
+        } catch (Throwable throwable) {
             // ignore
         }
     }
 
-    public static Row requireNonNull(Row row, int ordinal, String columnName)
-    {
+    public static Row requireNonNull(Row row, int ordinal, String columnName) {
         if (row.isNullAt(ordinal)) {
-            throw new IllegalArgumentException("Expected a non-null value for column: " + columnName);
+            throw new IllegalArgumentException(
+                "Expected a non-null value for column: " + columnName);
         }
         return row;
     }

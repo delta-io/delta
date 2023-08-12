@@ -33,3 +33,8 @@ addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "3.9.15")
 addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.0")
 
 addSbtPlugin("net.aichler" % "sbt-jupiter-interface" % "0.9.1")
+
+addSbtPlugin("com.etsy" % "sbt-checkstyle-plugin" % "3.1.1")
+// By default, sbt-checkstyle-plugin uses checkstyle version 6.15, but we should set it to use the
+// same version as Spark
+dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "8.43"

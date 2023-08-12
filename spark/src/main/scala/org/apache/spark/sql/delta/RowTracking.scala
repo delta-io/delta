@@ -44,4 +44,48 @@ object RowTracking {
     }
     isEnabled
   }
+
+  /**
+   * Checks whether CONVERT TO DELTA collects statistics if row tracking is supported. If it does
+   * not collect statistics, we cannot assign fresh row IDs, hence we throw an error to either rerun
+   * the command without enabling the row tracking table feature, or to enable the necessary
+   * flags to collect statistics.
+   */
+  private[delta] def checkStatsCollectedIfRowTrackingSupported(
+      protocol: Protocol,
+      convertToDeltaShouldCollectStats: Boolean,
+      statsCollectionEnabled: Boolean): Unit = {
+    if (!isSupported(protocol)) return
+    if (!convertToDeltaShouldCollectStats || !statsCollectionEnabled) {
+      throw DeltaErrors.convertToDeltaRowTrackingEnabledWithoutStatsCollection
+    }
+  }
+
+  /**
+   * Returns the sourceMetadata with the row tracking property coming from the targetMetadata.
+   */
+  private[delta] def takeRowTrackingPropertyFromTarget(
+      targetMetadata: Metadata,
+      sourceMetadata: Metadata): Metadata = {
+    var newConfig = sourceMetadata.configuration - DeltaConfigs.ROW_TRACKING_ENABLED.key
+    targetMetadata.configuration.get(DeltaConfigs.ROW_TRACKING_ENABLED.key).foreach { v =>
+      newConfig += DeltaConfigs.ROW_TRACKING_ENABLED.key -> v
+    }
+    sourceMetadata.copy(configuration = newConfig)
+  }
+
+  /**
+   * Removes the row tracking property from the metadata.
+   */
+  private[delta] def removeRowTrackingProperty(metadata: Metadata): Metadata = {
+    metadata.copy(configuration = metadata.configuration - DeltaConfigs.ROW_TRACKING_ENABLED.key)
+  }
+
+  /**
+   * Removes the row tracking table feature from the protocol.
+   */
+  private[delta] def removeRowTrackingTableFeature(protocol: Protocol): Protocol = {
+    val writerFeaturesWithoutRowTracking = protocol.writerFeatures.map(_ - RowTrackingFeature.name)
+    protocol.copy(writerFeatures = writerFeaturesWithoutRowTracking)
+  }
 }

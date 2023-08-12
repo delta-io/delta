@@ -598,7 +598,7 @@ trait DeltaTableCreationTests
               """.stripMargin)
           }
 
-          intercept[AnalysisException] {
+          intercept[ParseException] {
             sql(
               s"""CREATE TABLE delta_test(
                  |  a string,

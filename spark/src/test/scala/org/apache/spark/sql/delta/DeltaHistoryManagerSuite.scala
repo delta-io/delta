@@ -37,6 +37,7 @@ import org.scalatest.GivenWhenThen
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.connector.catalog.CatalogManager
 import org.apache.spark.sql.internal.SQLConf
@@ -234,7 +235,8 @@ trait DeltaTimeTravelTests extends QueryTest
       val e = intercept[Exception] {
         spark.sql("SELECT * FROM t1 VERSION AS OF 0")
       }.getMessage
-      assert(e.contains("does not support time travel"))
+      assert(e.contains("does not support time travel") ||
+        e.contains("The feature is not supported: Time travel on the relation"))
     }
   }
 
@@ -502,9 +504,11 @@ trait DeltaTimeTravelTests extends QueryTest
         val e = intercept[Exception] {
           sql(s"select * from ${versionAsOf(tblName, 0)}").collect()
         }
-        var catalogPrefix = ""
+        var catalogName = ""
+        val catalogPrefix = if (catalogName == "") "" else catalogName + "."
         assert(e.getMessage.contains(
-          s"Table ${catalogPrefix}default.parq_table does not support time travel"))
+          s"Table ${catalogPrefix}default.parq_table does not support time travel") ||
+          e.getMessage.contains(s"Time travel on the relation: `$catalogName`.`default`.`parq_table`"))
       }
 
       val viewName = "parq_view"
@@ -524,19 +528,19 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
       generateCommits(tblName, start, start + 20.minutes)
 
       // These all actually fail parsing
-      intercept[AnalysisException] {
+      intercept[ParseException] {
         sql(s"insert into ${versionAsOf(tblName, 0)} values (11, 12, 13)")
       }
 
-      intercept[AnalysisException] {
+      intercept[ParseException] {
         sql(s"update ${versionAsOf(tblName, 0)} set id = id - 1 where id < 10")
       }
 
-      intercept[AnalysisException] {
+      intercept[ParseException] {
         sql(s"delete from ${versionAsOf(tblName, 0)} id < 10")
       }
 
-      intercept[AnalysisException] {
+      intercept[ParseException] {
         sql(s"""merge into ${versionAsOf(tblName, 0)} old
                |using $tblName new
                |on old.id = new.id

@@ -16,12 +16,14 @@
 
 package io.delta.kernel.expressions;
 
+import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.Objects;
 
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
+import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
 /**
  * A literal value.
@@ -29,8 +31,7 @@ import io.delta.kernel.types.*;
  * Only supports primitive data types, see
  * <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types">Delta Transaction Log Protocol: Primitive Types</a>.
  */
-public final class Literal extends LeafExpression
-{
+public final class Literal extends LeafExpression {
     public static final Literal TRUE = Literal.of(true);
     public static final Literal FALSE = Literal.of(false);
 
@@ -40,24 +41,21 @@ public final class Literal extends LeafExpression
      * @param value boolean value
      * @return a {@link Literal} with data type {@link BooleanType}
      */
-    public static Literal of(boolean value)
-    {
+    public static Literal of(boolean value) {
         return new Literal(value, BooleanType.INSTANCE);
     }
 
     /**
      * @return a {@link Literal} with data type {@link ByteType}
      */
-    public static Literal of(byte value)
-    {
+    public static Literal of(byte value) {
         return new Literal(value, ByteType.INSTANCE);
     }
 
     /**
      * @return a {@link Literal} with data type {@link ShortType}
      */
-    public static Literal of(short value)
-    {
+    public static Literal of(short value) {
         return new Literal(value, ShortType.INSTANCE);
     }
 
@@ -67,8 +65,7 @@ public final class Literal extends LeafExpression
      * @param value integer value
      * @return a {@link Literal} with data type {@link IntegerType}
      */
-    public static Literal of(int value)
-    {
+    public static Literal of(int value) {
         return new Literal(value, IntegerType.INSTANCE);
     }
 
@@ -78,24 +75,21 @@ public final class Literal extends LeafExpression
      * @param value long value
      * @return a {@link Literal} with data type {@link LongType}
      */
-    public static Literal of(long value)
-    {
+    public static Literal of(long value) {
         return new Literal(value, LongType.INSTANCE);
     }
 
     /**
      * @return a {@link Literal} with data type {@link FloatType}
      */
-    public static Literal of(float value)
-    {
+    public static Literal of(float value) {
         return new Literal(value, FloatType.INSTANCE);
     }
 
     /**
      * @return a {@link Literal} with data type {@link DoubleType}
      */
-    public static Literal of(double value)
-    {
+    public static Literal of(double value) {
         return new Literal(value, DoubleType.INSTANCE);
     }
 
@@ -105,40 +99,47 @@ public final class Literal extends LeafExpression
      * @param value string value
      * @return a {@link Literal} with data type {@link StringType}
      */
-    public static Literal of(String value)
-    {
+    public static Literal of(String value) {
         return new Literal(value, StringType.INSTANCE);
     }
 
     /**
      * @return a {@link Literal} with data type {@link BinaryType}
      */
-    public static Literal of(byte[] value)
-    {
+    public static Literal of(byte[] value) {
         return new Literal(value, BinaryType.INSTANCE);
     }
 
     /**
      * @return a {@link Literal} with data type {@link DateType}
      */
-    public static Literal of(Date value)
-    {
+    public static Literal of(Date value) {
         return new Literal(value, DateType.INSTANCE);
     }
 
     /**
      * @return a {@link Literal} with data type {@link TimestampType}
      */
-    public static Literal of(Timestamp value)
-    {
+    public static Literal of(Timestamp value) {
         return new Literal(value, TimestampType.INSTANCE);
+    }
+
+    /**
+     * @return a {@link Literal} with data type {@link DecimalType}
+     */
+    public static Literal of(BigDecimal value, int precision, int scale) {
+        // throws an error if rounding is required to set the specified scale
+        BigDecimal valueToStore = value.setScale(scale);
+        checkArgument(valueToStore.precision() <= precision, String.format(
+                "Decimal precision=%s for decimal %s exceeds max precision %s",
+                valueToStore.precision(), valueToStore, precision));
+        return new Literal(valueToStore, new DecimalType(precision, scale));
     }
 
     /**
      * @return a null {@link Literal} with the given data type
      */
-    public static Literal ofNull(DataType dataType)
-    {
+    public static Literal ofNull(DataType dataType) {
         if (dataType instanceof ArrayType
             || dataType instanceof MapType
             || dataType instanceof StructType) {
@@ -151,38 +152,32 @@ public final class Literal extends LeafExpression
     private final Object value;
     private final DataType dataType;
 
-    private Literal(Object value, DataType dataType)
-    {
+    private Literal(Object value, DataType dataType) {
         this.value = value;
         this.dataType = dataType;
     }
 
-    public Object value()
-    {
+    public Object value() {
         return value;
     }
 
     @Override
-    public Object eval(Row record)
-    {
+    public Object eval(Row record) {
         return value;
     }
 
     @Override
-    public DataType dataType()
-    {
+    public DataType dataType() {
         return dataType;
     }
 
     @Override
-    public String toString()
-    {
+    public String toString() {
         return String.valueOf(value);
     }
 
     @Override
-    public boolean equals(Object o)
-    {
+    public boolean equals(Object o) {
         if (this == o) {
             return true;
         }
@@ -195,8 +190,7 @@ public final class Literal extends LeafExpression
     }
 
     @Override
-    public int hashCode()
-    {
+    public int hashCode() {
         return Objects.hash(value, dataType);
     }
 }

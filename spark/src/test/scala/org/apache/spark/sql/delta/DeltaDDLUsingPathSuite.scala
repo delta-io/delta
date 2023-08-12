@@ -38,6 +38,9 @@ trait DeltaDDLUsingPathTests extends QueryTest
 
   import testImplicits._
 
+  protected def catalogName: String = {
+    CatalogManager.SESSION_CATALOG_NAME
+  }
 
   protected def testUsingPath(command: String, tags: Tag*)(f: (String, String) => Unit): Unit = {
     test(s"$command - using path", tags: _*) {
@@ -146,6 +149,138 @@ trait DeltaDDLUsingPathTests extends QueryTest
     }
   }
 
+  testUsingPath("SHOW TBLPROPERTIES") { (table, path) =>
+    sql(s"ALTER TABLE $table SET TBLPROPERTIES " +
+      "('delta.logRetentionDuration' = '2 weeks', 'key' = 'value')")
+
+    val metadata = loadDeltaLog(path).snapshot.metadata
+
+    Seq(table, s"delta.`$path`").foreach { tableOrPath =>
+      checkDatasetUnorderly(
+        dropColumnMappingConfigurations(
+          sql(s"SHOW TBLPROPERTIES $tableOrPath('delta.logRetentionDuration')")
+            .as[(String, String)]),
+        "delta.logRetentionDuration" -> "2 weeks")
+      checkDatasetUnorderly(
+        dropColumnMappingConfigurations(
+          sql(s"SHOW TBLPROPERTIES $tableOrPath('key')").as[(String, String)]),
+        "key" -> "value")
+    }
+
+    checkDatasetUnorderly(
+      dropColumnMappingConfigurations(
+        sql(s"SHOW TBLPROPERTIES $table").as[(String, String)]),
+      "delta.logRetentionDuration" -> "2 weeks",
+      "delta.minReaderVersion" ->
+        Protocol.forNewTable(spark, Some(metadata)).minReaderVersion.toString,
+      "delta.minWriterVersion" ->
+        Protocol.forNewTable(spark, Some(metadata)).minWriterVersion.toString,
+      "key" -> "value")
+
+    checkDatasetUnorderly(
+      dropColumnMappingConfigurations(
+        sql(s"SHOW TBLPROPERTIES delta.`$path`").as[(String, String)]),
+      "delta.logRetentionDuration" -> "2 weeks",
+      "delta.minReaderVersion" ->
+        Protocol.forNewTable(spark, Some(metadata)).minReaderVersion.toString,
+      "delta.minWriterVersion" ->
+        Protocol.forNewTable(spark, Some(metadata)).minWriterVersion.toString,
+      "key" -> "value")
+
+    if (table == "`delta_test`") {
+      val tableName = s"$catalogName.default.delta_test"
+      checkDatasetUnorderly(
+        dropColumnMappingConfigurations(
+          sql(s"SHOW TBLPROPERTIES $table('dEltA.lOgrEteNtiOndURaTion')").as[(String, String)]),
+        "dEltA.lOgrEteNtiOndURaTion" ->
+          s"Table $tableName does not have property: dEltA.lOgrEteNtiOndURaTion")
+      checkDatasetUnorderly(
+        dropColumnMappingConfigurations(
+          sql(s"SHOW TBLPROPERTIES $table('kEy')").as[(String, String)]),
+        "kEy" -> s"Table $tableName does not have property: kEy")
+    } else {
+      checkDatasetUnorderly(
+        dropColumnMappingConfigurations(
+          sql(s"SHOW TBLPROPERTIES $table('kEy')").as[(String, String)]),
+        "kEy" -> s"Table $catalogName.delta.delta_test does not have property: kEy")
+    }
+    checkDatasetUnorderly(
+      dropColumnMappingConfigurations(
+        sql(s"SHOW TBLPROPERTIES delta.`$path`('dEltA.lOgrEteNtiOndURaTion')")
+          .as[(String, String)]),
+      "dEltA.lOgrEteNtiOndURaTion" ->
+        s"Table $catalogName.delta.`$path` does not have property: dEltA.lOgrEteNtiOndURaTion")
+    checkDatasetUnorderly(
+      dropColumnMappingConfigurations(
+        sql(s"SHOW TBLPROPERTIES delta.`$path`('kEy')").as[(String, String)]),
+      "kEy" ->
+        s"Table $catalogName.delta.`$path` does not have property: kEy")
+
+    val e = intercept[AnalysisException] {
+      sql(s"SHOW TBLPROPERTIES delta.`/path/to/delta`").as[(String, String)]
+    }
+    assert(e.getMessage.contains(s"not a Delta table"))
+  }
+
+  testUsingPath("SHOW COLUMNS") { (table, path) =>
+    Seq(table, s"delta.`$path`").foreach { tableOrPath =>
+      checkDatasetUnorderly(
+        sql(s"SHOW COLUMNS IN $tableOrPath").as[String],
+        "v1", "v2", "struct")
+    }
+    if (table == "`delta_test`") {
+      checkDatasetUnorderly(
+        sql(s"SHOW COLUMNS IN $table").as[String],
+        "v1", "v2", "struct")
+    } else {
+      checkDatasetUnorderly(
+        sql(s"SHOW COLUMNS IN $table IN delta").as[String],
+        "v1", "v2", "struct")
+    }
+    checkDatasetUnorderly(
+      sql(s"SHOW COLUMNS IN `$path` IN delta").as[String],
+      "v1", "v2", "struct")
+    checkDatasetUnorderly(
+      sql(s"SHOW COLUMNS IN delta.`$path` IN delta").as[String],
+      "v1", "v2", "struct")
+    val e = intercept[AnalysisException] {
+      sql("SHOW COLUMNS IN delta.`/path/to/delta`")
+    }
+    assert(e.getMessage.contains(s"not a Delta table"))
+  }
+
+  testUsingPath("DESCRIBE COLUMN") { (table, path) =>
+    Seq(table, s"delta.`$path`").foreach { tableOrPath =>
+      checkDatasetUnorderly(
+        sql(s"DESCRIBE $tableOrPath v1").as[(String, String)],
+        "col_name" -> "v1",
+        "data_type" -> "int",
+        "comment" -> "NULL")
+      checkDatasetUnorderly(
+        sql(s"DESCRIBE $tableOrPath struct").as[(String, String)],
+        "col_name" -> "struct",
+        "data_type" -> "struct<x:int,y:string>",
+        "comment" -> "NULL")
+      checkDatasetUnorderly(
+        sql(s"DESCRIBE EXTENDED $tableOrPath v1").as[(String, String)],
+        "col_name" -> "v1",
+        "data_type" -> "int",
+        "comment" -> "NULL"
+      )
+      val ex1 = intercept[AnalysisException] {
+        sql(s"DESCRIBE $tableOrPath unknown")
+      }
+      assert(ex1.getErrorClass() === "UNRESOLVED_COLUMN.WITH_SUGGESTION")
+      val ex2 = intercept[AnalysisException] {
+        sql(s"DESCRIBE $tableOrPath struct.x")
+      }
+      assert(ex2.getMessage.contains("DESC TABLE COLUMN does not support nested column: struct.x"))
+    }
+    val ex = intercept[AnalysisException] {
+      sql("DESCRIBE delta.`/path/to/delta` v1")
+    }
+    assert(ex.getMessage.contains("not a Delta table"), s"Original message: ${ex.getMessage()}")
+  }
 }
 
 class DeltaDDLUsingPathSuite extends DeltaDDLUsingPathTests with DeltaSQLCommandTest {

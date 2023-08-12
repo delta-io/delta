@@ -57,7 +57,7 @@ class CheckConstraintsSuite extends QueryTest
 
   test("can't add unparseable constraint") {
     withTestTable { table =>
-      val e = intercept[AnalysisException] {
+      val e = intercept[ParseException] {
         sql(s"ALTER TABLE $table\nADD CONSTRAINT lessThan5 CHECK (id <)")
       }
       // Make sure we're still getting a useful parse error, even though we do some complicated

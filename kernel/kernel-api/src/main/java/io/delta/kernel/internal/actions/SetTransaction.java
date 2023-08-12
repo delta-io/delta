@@ -19,14 +19,11 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-
 import static io.delta.kernel.utils.Utils.requireNonNull;
 
 public class SetTransaction
-    implements Action
-{
-    public static SetTransaction fromRow(Row row)
-    {
+    implements Action {
+    public static SetTransaction fromRow(Row row) {
         if (row == null) {
             return null;
         }
@@ -50,25 +47,21 @@ public class SetTransaction
     public SetTransaction(
         String appId,
         long version,
-        long lastUpdated)
-    {
+        long lastUpdated) {
         this.appId = appId;
         this.version = version;
         this.lastUpdated = lastUpdated;
     }
 
-    public String getAppId()
-    {
+    public String getAppId() {
         return appId;
     }
 
-    public long getVersion()
-    {
+    public long getVersion() {
         return version;
     }
 
-    public long getLastUpdated()
-    {
+    public long getLastUpdated() {
         return lastUpdated;
     }
 }

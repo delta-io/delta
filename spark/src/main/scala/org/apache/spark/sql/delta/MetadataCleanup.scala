@@ -18,9 +18,12 @@ package org.apache.spark.sql.delta
 
 import java.util.{Calendar, TimeZone}
 
+import scala.collection.mutable.ArrayBuffer
+
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.util.FileNames.{checkpointVersion, listingPrefix, CheckpointFile, DeltaFile}
 import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -97,5 +100,65 @@ trait MetadataCleanup extends DeltaLogging {
     DateUtils.truncate(
       date,
       Calendar.DAY_OF_MONTH)
+  }
+
+  /**
+   * Finds a checkpoint such that we are able to construct table snapshot for all versions at or
+   * greater than the checkpoint version returned.
+   */
+  def findEarliestReliableCheckpoint(): Option[Long] = {
+    val hadoopConf = newDeltaHadoopConf()
+    var earliestCheckpointVersionOpt: Option[Long] = None
+    // This is used to collect the checkpoint files from the current version that we are listing.
+    // When we list a file that is not part of the checkpoint, then we must have seen the entire
+    // checkpoint. We then verify if the checkpoint was complete, and if it is not, we clear the
+    // collection and wait for the next checkpoint to appear in the file listing.
+    // Whenever we see a complete checkpoint for the first time, we remember it as the earliest
+    // checkpoint.
+    val currentCheckpointFiles = ArrayBuffer.empty[Path]
+    var prevCommitVersion = 0L
+
+    def currentCheckpointVersionOpt: Option[Long] =
+      currentCheckpointFiles.headOption.map(checkpointVersion(_))
+
+    def isCurrentCheckpointComplete: Boolean = {
+      val instances = currentCheckpointFiles.map(CheckpointInstance(_)).toArray
+      getLatestCompleteCheckpointFromList(instances).isDefined
+    }
+
+    store.listFrom(listingPrefix(logPath, 0L), hadoopConf)
+      .map(_.getPath)
+      .foreach {
+        case CheckpointFile(f, checkpointVersion) if earliestCheckpointVersionOpt.isEmpty =>
+          if (!currentCheckpointVersionOpt.contains(checkpointVersion)) {
+            // If it's a different checkpoint, clear the existing one.
+            currentCheckpointFiles.clear()
+          }
+          currentCheckpointFiles += f
+        case DeltaFile(_, deltaVersion) =>
+          if (earliestCheckpointVersionOpt.isEmpty && isCurrentCheckpointComplete) {
+            // We have found a complete checkpoint, but we should not stop here. If a future
+            // commit version is missing, then this checkpoint will be discarded and we will need
+            // to restart the search from that point.
+
+            // Ensure that the commit json is there at the checkpoint version. If it's not there,
+            // we don't consider such a checkpoint as a reliable checkpoint.
+            if (currentCheckpointVersionOpt.contains(deltaVersion)) {
+              earliestCheckpointVersionOpt = currentCheckpointVersionOpt
+              prevCommitVersion = deltaVersion
+            }
+          }
+          // Need to clear it so that if there is a gap in commit versions, we are forced to
+          // look for a new complete checkpoint.
+          currentCheckpointFiles.clear()
+          if (deltaVersion > prevCommitVersion + 1) {
+            // Missing commit versions. Restart the search.
+            earliestCheckpointVersionOpt = None
+          }
+          prevCommitVersion = deltaVersion
+        case _ =>
+      }
+
+    earliestCheckpointVersionOpt
   }
 }

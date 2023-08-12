@@ -175,6 +175,35 @@ private[delta] class ConflictChecker(
       if (currentTransactionInfo.actions.exists(_.isInstanceOf[Protocol])) {
         throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
       }
+      // When a protocol downgrade occurs all other interleaved txns abort. Note, that in the
+      // opposite scenario, when the current transaction is the protocol downgrade, we resolve
+      // the conflict and proceed with the downgrade. This is because a protocol downgrade would
+      // be hard to succeed in concurrent workloads. On the other hand, a protocol downgrade is
+      // a rare event and thus not that disruptive if other concurrent transactions fail.
+      val winningProtocol = winningCommitSummary.protocol.get
+      val readProtocol = currentTransactionInfo.readSnapshot.protocol
+      val isWinnerDroppingFeatures = TableFeature.isProtocolRemovingExplicitFeatures(
+        newProtocol = winningProtocol,
+        oldProtocol = readProtocol)
+      if (isWinnerDroppingFeatures) {
+        throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
+      }
+    }
+    // When the winning transaction does not change the protocol but the losing txn is
+    // a protocol downgrade, we re-validate the invariants of the removed feature.
+    // TODO: only revalidate against the snapshot of the last interleaved txn.
+    val currentProtocol = currentTransactionInfo.protocol
+    val readProtocol = currentTransactionInfo.readSnapshot.protocol
+    if (TableFeature.isProtocolRemovingExplicitFeatures(currentProtocol, readProtocol)) {
+      val winningSnapshot = deltaLog.getSnapshotAt(winningCommitSummary.commitVersion)
+      val isDowngradeCommitValid = TableFeature.validateFeatureRemovalAtSnapshot(
+        newProtocol = currentProtocol,
+        oldProtocol = readProtocol,
+        snapshot = winningSnapshot)
+      if (!isDowngradeCommitValid) {
+        throw DeltaErrors.dropTableFeatureConflictRevalidationFailed(
+          winningCommitSummary.commitInfo)
+      }
     }
   }
 

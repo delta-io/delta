@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.concurrent.TimeUnit
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
@@ -64,21 +66,20 @@ case class CreateDeltaTableCommand(
   with DeltaLogging {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    var table = this.table
 
     assert(table.tableType != CatalogTableType.VIEW)
     assert(table.identifier.database.isDefined, "Database should've been fixed at analysis")
     // There is a subtle race condition here, where the table can be created by someone else
     // while this command is running. Nothing we can do about that though :(
-    val tableExists = existingTableOpt.isDefined
-    if (mode == SaveMode.Ignore && tableExists) {
+    val tableExistsInCatalog = existingTableOpt.isDefined
+    if (mode == SaveMode.Ignore && tableExistsInCatalog) {
       // Early exit on ignore
       return Nil
-    } else if (mode == SaveMode.ErrorIfExists && tableExists) {
+    } else if (mode == SaveMode.ErrorIfExists && tableExistsInCatalog) {
       throw DeltaErrors.tableAlreadyExists(table)
     }
 
-    var tableWithLocation = if (tableExists) {
+    var tableWithLocation = if (tableExistsInCatalog) {
       val existingTable = existingTableOpt.get
       table.storage.locationUri match {
         case Some(location) if location.getPath != existingTable.location.getPath =>
@@ -100,111 +101,155 @@ case class CreateDeltaTableCommand(
       table
     }
 
-    val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val tableLocation = new Path(tableWithLocation.location)
     val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
-    val hadoopConf = deltaLog.newDeltaHadoopConf()
-    val fs = tableLocation.getFileSystem(hadoopConf)
-    val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
-    var result: Seq[Row] = Nil
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
-      val txn = deltaLog.startTransaction()
+      handleCommit(sparkSession, deltaLog, tableWithLocation)
+    }
+  }
 
-      // During CREATE/REPLACE, we synchronously run conversion (if Uniform is enabled) so
-      // we always remove the post commit hook here.
-      txn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
+  /**
+   * Handles the transaction logic for the command. Returns the operation metrics in case of CLONE.
+   */
+  private def handleCommit(
+      sparkSession: SparkSession,
+      deltaLog: DeltaLog,
+      tableWithLocation: CatalogTable): Seq[Row] = {
+    val tableExistsInCatalog = existingTableOpt.isDefined
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+    val tableLocation = new Path(tableWithLocation.location)
+    val fs = tableLocation.getFileSystem(hadoopConf)
 
-      val opStartTs = System.currentTimeMillis()
-      if (query.isDefined) {
-        // If the mode is Ignore or ErrorIfExists, the table must not exist, or we would return
-        // earlier. And the data should not exist either, to match the behavior of
-        // Ignore/ErrorIfExists mode. This means the table path should not exist or is empty.
-        if (mode == SaveMode.Ignore || mode == SaveMode.ErrorIfExists) {
-          assert(!tableExists)
-          // We may have failed a previous write. The retry should still succeed even if we have
-          // garbage data
-          if (txn.readVersion > -1 || !fs.exists(deltaLog.logPath)) {
-            assertPathEmpty(hadoopConf, tableWithLocation)
-          }
+    def checkPathEmpty(txn: OptimisticTransaction): Unit = {
+      // Verify the table does not exist.
+      if (mode == SaveMode.Ignore || mode == SaveMode.ErrorIfExists) {
+        // We should have returned earlier in Ignore and ErrorIfExists mode if the table
+        // is already registered in the catalog.
+        assert(!tableExistsInCatalog)
+        // Verify that the data path does not contain any data.
+        // We may have failed a previous write. The retry should still succeed even if we have
+        // garbage data
+        if (txn.readVersion > -1 || !fs.exists(deltaLog.logPath)) {
+          assertPathEmpty(hadoopConf, tableWithLocation)
         }
+      }
+    }
 
-        // Execute write command for `deltaWriter` by
-        //   - replacing the metadata new target table for DataFrameWriterV2 writer if it is a
-        //     REPLACE or CREATE_OR_REPLACE command,
-        //   - running the write procedure of DataFrameWriter command and returning the
-        //     new created actions,
-        //   - returning the Delta Operation type of this DataFrameWriter
-        def doDeltaWrite(
-            deltaWriter: WriteIntoDelta,
-            schema: StructType): (Seq[Action], DeltaOperations.Operation) = {
-          // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
-          // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
-          if (!isV1Writer) {
-            replaceMetadataIfNecessary(txn, tableWithLocation, options, schema)
-          }
-          var actions = deltaWriter.write(
-            txn,
-            sparkSession
-          )
-          val newDomainMetadata = Seq.empty[DomainMetadata]
-          if (isReplace) {
-            // Ensure to remove any domain metadata for REPLACE TABLE.
-            actions = actions ++ DomainMetadataUtils.handleDomainMetadataForReplaceTable(
-              txn.snapshot.domainMetadata, newDomainMetadata)
-          } else {
-            actions = actions ++ newDomainMetadata
-          }
-          val op = getOperation(txn.metadata, isManagedTable, Some(options)
-          )
-          (actions, op)
-        }
+    val txn = startTxnForTableCreation(sparkSession, deltaLog, tableWithLocation)
 
-        // We are either appending/overwriting with saveAsTable or creating a new table with CTAS or
-        // we are creating a table as part of a RunnableCommand
-        query.get match {
-          case deltaWriter: WriteIntoDelta =>
-              if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
-                val (actions, op) = doDeltaWrite(deltaWriter, deltaWriter.data.schema.asNullable)
-                txn.commit(actions, op)
-              }
-          case cmd: RunnableCommand =>
-            result = cmd.run(sparkSession)
-          case other =>
-            // When using V1 APIs, the `other` plan is not yet optimized, therefore, it is safe
-            // to once again go through analysis
-            val data = Dataset.ofRows(sparkSession, other)
-            val deltaWriter = WriteIntoDelta(
-              deltaLog = deltaLog,
-              mode = mode,
-              options,
-              partitionColumns = table.partitionColumnNames,
-              configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
-              data = data)
-            if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
-              val (actions, op) = doDeltaWrite(deltaWriter, other.schema.asNullable)
-              txn.commit(actions, op)
-            }
-        }
-      } else {
+    val result = query match {
+      // CLONE handled separately from other CREATE TABLE syntax
+      case Some(cmd: CloneTableCommand) =>
+        checkPathEmpty(txn)
+        cmd.handleClone(sparkSession, txn, targetDeltaLog = deltaLog)
+      case Some(deltaWriter: WriteIntoDelta) =>
+        checkPathEmpty(txn)
+        handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
+        Nil
+      case Some(query) =>
+        checkPathEmpty(txn)
+        require(!query.isInstanceOf[RunnableCommand])
+        // When using V1 APIs, the `query` plan is not yet optimized, therefore, it is safe
+        // to once again go through analysis
+        val data = Dataset.ofRows(sparkSession, query)
+        val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+        val deltaWriter = WriteIntoDelta(
+          deltaLog = deltaLog,
+          mode = mode,
+          options,
+          partitionColumns = table.partitionColumnNames,
+          configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
+          data = data)
+        handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
+        Nil
+      case _ =>
         handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
+        Nil
+    }
+
+    runPostCommitUpdates(sparkSession, txn, deltaLog, tableWithLocation)
+
+    result
+  }
+
+  /**
+   * Runs updates post table creation commit, such as updating the catalog
+   * with relevant information.
+   */
+  private def runPostCommitUpdates(
+      sparkSession: SparkSession,
+      txnUsedForCommit: OptimisticTransaction,
+      deltaLog: DeltaLog,
+      tableWithLocation: CatalogTable): Unit = {
+    // Note that someone may have dropped and recreated the table in a separate location in the
+    // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
+    logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
+    val opStartTs = TimeUnit.NANOSECONDS.toMillis(txnUsedForCommit.txnStartTimeNs)
+    val postCommitSnapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(opStartTs))
+    val didNotChangeMetadata = txnUsedForCommit.metadata == txnUsedForCommit.snapshot.metadata
+    updateCatalog(sparkSession, tableWithLocation, postCommitSnapshot, didNotChangeMetadata)
+
+
+    if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata)) {
+      deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, None)
+    }
+  }
+
+  /**
+   * Handles the transaction logic for CTAS-like statements, i.e.:
+   * CREATE TABLE AS SELECT
+   * CREATE OR REPLACE TABLE AS SELECT
+   * .saveAsTable in DataframeWriter API
+   */
+  private def handleCreateTableAsSelect(
+      sparkSession: SparkSession,
+      txn: OptimisticTransaction,
+      deltaLog: DeltaLog,
+      deltaWriter: WriteIntoDelta,
+      tableWithLocation: CatalogTable): Unit = {
+    val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
+    val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+
+    // Execute write command for `deltaWriter` by
+    //   - replacing the metadata new target table for DataFrameWriterV2 writer if it is a
+    //     REPLACE or CREATE_OR_REPLACE command,
+    //   - running the write procedure of DataFrameWriter command and returning the
+    //     new created actions,
+    //   - returning the Delta Operation type of this DataFrameWriter
+    def doDeltaWrite(
+        deltaWriter: WriteIntoDelta,
+        schema: StructType): (Seq[Action], DeltaOperations.Operation) = {
+      // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
+      // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
+      if (!isV1Writer) {
+        replaceMetadataIfNecessary(
+          txn,
+          tableWithLocation,
+          options,
+          schema)
       }
-
-      // We would have failed earlier on if we couldn't ignore the existence of the table
-      // In addition, we just might using saveAsTable to append to the table, so ignore the creation
-      // if it already exists.
-      // Note that someone may have dropped and recreated the table in a separate location in the
-      // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
-      logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
-      val snapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(opStartTs))
-      updateCatalog(sparkSession, tableWithLocation, snapshot, txn)
-
-
-      if (UniversalFormat.icebergEnabled(snapshot.metadata)) {
-        deltaLog.icebergConverter.convertSnapshot(snapshot, None)
+      var actions = deltaWriter.write(
+        txn,
+        sparkSession
+      )
+      val newDomainMetadata = Seq.empty[DomainMetadata]
+      if (isReplace) {
+        // Ensure to remove any domain metadata for REPLACE TABLE.
+        actions = actions ++ DomainMetadataUtils.handleDomainMetadataForReplaceTable(
+          txn.snapshot.domainMetadata, newDomainMetadata)
+      } else {
+        actions = actions ++ newDomainMetadata
       }
+      val op = getOperation(txn.metadata, isManagedTable, Some(options)
+      )
+      (actions, op)
+    }
 
-      result
+    // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
+    if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
+      val (actions, op) = doDeltaWrite(deltaWriter, deltaWriter.data.schema.asNullable)
+      txn.commit(actions, op)
     }
   }
 
@@ -221,10 +266,10 @@ case class CreateDeltaTableCommand(
 
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val tableLocation = new Path(tableWithLocation.location)
-    val tableExists = existingTableOpt.isDefined
+    val tableExistsInCatalog = existingTableOpt.isDefined
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
 
-    def createTransactionLogOrVerify(): Unit = {
+    def createActionsForNewTableOrVerify(): Seq[Action] = {
       if (isManagedTable) {
         // When creating a managed table, the table path should not exist or is empty, or
         // users would be surprised to see the data, or see the data directory being dropped
@@ -257,32 +302,31 @@ case class CreateDeltaTableCommand(
         assertPathEmpty(hadoopConf, tableWithLocation)
         // This is a user provided schema.
         // Doesn't come from a query, Follow nullability invariants.
-        val newMetadata = getProvidedMetadata(tableWithLocation, table.schema.json)
+        val newMetadata =
+          getProvidedMetadata(tableWithLocation, table.schema.json)
         txn.updateMetadataForNewTable(newMetadata)
         protocol.foreach { protocol =>
           txn.updateProtocol(protocol)
         }
-        val op = getOperation(newMetadata, isManagedTable, None
-        )
-        val actionsToCommit = Seq.empty[Action]
-        txn.commit(actionsToCommit, op)
+        Nil
       } else {
         verifyTableMetadata(txn, tableWithLocation)
+        Nil
       }
     }
 
     // We are defining a table using the Create or Replace Table statements.
-    operation match {
+    val actionsToCommit = operation match {
       case TableCreationModes.Create =>
-        require(!tableExists, "Can't recreate a table when it exists")
-        createTransactionLogOrVerify()
+        require(!tableExistsInCatalog, "Can't recreate a table when it exists")
+        createActionsForNewTableOrVerify()
 
-      case TableCreationModes.CreateOrReplace if !tableExists =>
+      case TableCreationModes.CreateOrReplace if !tableExistsInCatalog =>
         // If the table doesn't exist, CREATE OR REPLACE must provide a schema
         if (tableWithLocation.schema.isEmpty) {
           throw DeltaErrors.schemaNotProvidedException
         }
-        createTransactionLogOrVerify()
+        createActionsForNewTableOrVerify()
       case _ =>
         // When the operation is a REPLACE or CREATE OR REPLACE, then the schema shouldn't be
         // empty, since we'll use the entry to replace the schema
@@ -290,15 +334,25 @@ case class CreateDeltaTableCommand(
           throw DeltaErrors.schemaNotProvidedException
         }
         // We need to replace
-        replaceMetadataIfNecessary(txn, tableWithLocation, options, tableWithLocation.schema)
+        replaceMetadataIfNecessary(
+          txn,
+          tableWithLocation,
+          options,
+          tableWithLocation.schema)
         // Truncate the table
         val operationTimestamp = System.currentTimeMillis()
         var actionsToCommit = Seq.empty[Action]
         val removes = txn.filterFiles().map(_.removeWithTimestamp(operationTimestamp))
         actionsToCommit = removes
-        val op = getOperation(txn.metadata, isManagedTable, None
-        )
-        txn.commit(actionsToCommit, op)
+        actionsToCommit
+    }
+
+    val changedMetadata = txn.metadata != txn.snapshot.metadata
+    val changedProtocol = txn.protocol != txn.snapshot.protocol
+    if (actionsToCommit.nonEmpty || changedMetadata || changedProtocol) {
+      val op = getOperation(txn.metadata, isManagedTable, None
+      )
+      txn.commit(actionsToCommit, op)
     }
   }
 
@@ -462,7 +516,7 @@ case class CreateDeltaTableCommand(
       spark: SparkSession,
       table: CatalogTable,
       snapshot: Snapshot,
-      txn: OptimisticTransaction
+      didNotChangeMetadata: Boolean
     ): Unit = {
     val cleaned = cleanupTableDefinition(spark, table, snapshot)
     operation match {
@@ -527,7 +581,8 @@ case class CreateDeltaTableCommand(
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
-      txn.updateMetadataForNewTable(getProvidedMetadata(table, schema.json))
+      val newMetadata = getProvidedMetadata(table, schema.json)
+      txn.updateMetadataForNewTable(newMetadata)
     }
   }
 
@@ -548,6 +603,21 @@ case class CreateDeltaTableCommand(
   private def isReplace: Boolean = {
     operation == TableCreationModes.CreateOrReplace ||
       operation == TableCreationModes.Replace
+  }
+
+  /** Returns the transaction that should be used for the CREATE/REPLACE commit. */
+  private def startTxnForTableCreation(
+      sparkSession: SparkSession,
+      deltaLog: DeltaLog,
+      tableWithLocation: CatalogTable,
+      snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
+    val txn = deltaLog.startTransaction(snapshotOpt)
+
+    // During CREATE/REPLACE, we synchronously run conversion (if Uniform is enabled) so
+    // we always remove the post commit hook here.
+    txn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
+
+    txn
   }
 }
 

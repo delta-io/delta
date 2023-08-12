@@ -16,8 +16,8 @@
 
 package io.delta.kernel.client;
 
-import java.io.FileNotFoundException;
 import java.io.ByteArrayInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 
 import io.delta.kernel.fs.FileStatus;
@@ -30,21 +30,21 @@ import io.delta.kernel.utils.Tuple2;
  * Connector implementation of this interface can hide filesystem specific details from Delta
  * Kernel.
  */
-public interface FileSystemClient
-{
+public interface FileSystemClient {
     /**
      * List the paths in the same directory that are lexicographically greater or equal to
      * (UTF-8 sorting) the given `path`. The result should also be sorted by the file name.
      *
      * @param filePath Fully qualified path to a file
      * @return Closeable iterator of files. It is the responsibility of the caller to close the
-     *         iterator.
+     * iterator.
      * @throws FileNotFoundException if the file at the given path is not found
      */
     CloseableIterator<FileStatus> listFrom(String filePath)
-            throws FileNotFoundException;
+        throws FileNotFoundException;
 
     // TODO: solidify input type; need some combination of path, offset, size
+
     /**
      * Read data specified by the start and end offset from the file. It is the responsibility
      * of the caller close each returned stream.
@@ -54,6 +54,6 @@ public interface FileSystemClient
      * @throws IOException
      */
     CloseableIterator<ByteArrayInputStream> readFiles(
-            CloseableIterator<Tuple2<String, Tuple2<Integer, Integer>>> iter)
-            throws IOException;
+        CloseableIterator<Tuple2<String, Tuple2<Integer, Integer>>> iter)
+        throws IOException;
 }

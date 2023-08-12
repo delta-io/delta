@@ -38,7 +38,6 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
       target: String,
       sourceIsTable: Boolean = false,
       targetIsTable: Boolean = false,
-      sourceFormat: String = "delta",
       targetLocation: Option[String] = None,
       versionAsOf: Option[Long] = None,
       timestampAsOf: Option[String] = None,
@@ -47,10 +46,15 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
       tableProperties: Map[String, String] = Map.empty): Unit = {
     val commandSql = CloneTableSQLTestUtils.buildCloneSqlString(
       source, target,
-      sourceIsTable, targetIsTable,
-      sourceFormat, targetLocation,
-      versionAsOf, timestampAsOf,
-      isCreate, isReplace, tableProperties)
+      sourceIsTable,
+      targetIsTable,
+      "delta",
+      targetLocation,
+      versionAsOf,
+      timestampAsOf,
+      isCreate,
+      isReplace,
+      tableProperties)
     sql(commandSql)
   }
   // scalastyle:on argcount

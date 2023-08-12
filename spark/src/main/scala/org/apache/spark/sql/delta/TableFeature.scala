@@ -19,12 +19,14 @@ package org.apache.spark.sql.delta
 import java.util.Locale
 
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.FileNames
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.types.TimestampNTZType
 
 /* --------------------------------------- *
@@ -101,6 +103,11 @@ sealed abstract class TableFeature(
   def isLegacyFeature: Boolean = this.isInstanceOf[LegacyFeatureType]
 
   /**
+   * True if this feature can be removed.
+   */
+  def isRemovable: Boolean = this.isInstanceOf[RemovableFeature]
+
+  /**
    * Set of table features that this table feature depends on. I.e. the set of features that need
    * to be enabled if this table feature is enabled.
    */
@@ -143,6 +150,107 @@ sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
   require(
     !this.isLegacyFeature || automaticallyUpdateProtocolOfExistingTables,
     "Legacy feature must be auto-update capable.")
+}
+
+/**
+ * A trait indicating a feature can be removed. Classes that extend the trait need to
+ * implement the following three functions:
+ *
+ * a) preDowngradeCommand. This is where all required actions for removing the feature are
+ *    implemented. For example, to remove the DVs feature we need to remove metadata config
+ *    and purge all DVs from table. This action takes place before the protocol downgrade in
+ *    separate commit(s). Note, the command needs to be implemented in a way concurrent
+ *    transactions do not nullify the effect. For example, disabling DVs on a table before
+ *    purging will stop concurrent transactions from adding DVs. During protocol downgrade
+ *    we perform a validation in [[validateRemoval]] to make sure all invariants still hold.
+ *
+ * b) validateRemoval. Add any feature-specific checks before proceeding to the protocol
+ *    downgrade. This function is guaranteed to be called at the latest version before the
+ *    protocol downgrade is committed to the table. When the protocol downgrade txn conflicts,
+ *    the validation is repeated against the winning txn snapshot. As soon as the protocol
+ *    downgrade succeeds, all subsequent interleaved txns are aborted.
+ *
+ * c) actionUsesFeature. For reader+writer features we check whether past versions contain any
+ *    traces of the removed feature. This is achieved by calling [[actionUsesFeature]] for
+ *    every action of every reachable commit version in the log. Note, a feature may leave traces
+ *    in both data and metadata. Depending on the feature, we need to check several types of
+ *    actions such as Metadata, AddFile, RemoveFile etc.
+ *    Writer features should directly return false.
+ *
+ *    WARNING: actionUsesFeature should not check Protocol actions for the feature being removed,
+ *    because at the time actionUsesFeature is invoked the protocol downgrade did not happen yet.
+ *    Thus, the feature-to-remove is still active. As a result, any unrelated operations that
+ *    produce a protocol action (while we are waiting for the retention period to expire) will
+ *    "carry" the feature-to-remove. Checking protocol for that feature would result in an
+ *    unnecessary failure during the history validation of the next DROP FEATURE call. Note,
+ *    while the feature-to-remove is supported in the protocol we cannot generate a legit protocol
+ *    action that adds support for that feature since it is already supported.
+ */
+sealed trait RemovableFeature { self: TableFeature =>
+  // Legacy feature removal is not supported.
+  if (this.isLegacyFeature) {
+    throw DeltaErrors.dropTableFeatureLegacyFeature(this.name)
+  }
+
+  def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand
+  def validateRemoval(snapshot: Snapshot): Boolean
+  def actionUsesFeature(action: Action): Boolean
+
+  /**
+   * Examines all historical commits for traces of the removableFeature.
+   * This is achieved as follows:
+   *
+   * 1) We find the earliest valid checkpoint, recreate a snapshot at that version and we check
+   *    whether there any traces of the feature-to-remove.
+   * 2) We check all commits that exist between version 0 and the current version.
+   *    This includes the versions we validated the snapshots. This is because a commit
+   *    might include information that is not available in the snapshot. Examples include
+   *    CommitInfo, CDCInfo etc. Note, there can still be valid log commit files with
+   *    versions prior the earliest checkpoint version.
+   * 3) We do not need to recreate a snapshot at the current version because this is already being
+   *    handled by validateRemoval.
+   *
+   * Note, this is a slow process.
+   *
+   * @param spark The SparkSession.
+   * @param downgradeTxnReadSnapshot The read snapshot of the protocol downgrade transaction.
+   * @return True if the history contains any trace of the feature.
+   */
+  def historyContainsFeature(
+      spark: SparkSession,
+      downgradeTxnReadSnapshot: Snapshot): Boolean = {
+    require(isReaderWriterFeature)
+    val deltaLog = downgradeTxnReadSnapshot.deltaLog
+    val earliestCheckpointVersion = deltaLog.findEarliestReliableCheckpoint().getOrElse(0L)
+    val toVersion = downgradeTxnReadSnapshot.version
+
+    // Use the snapshot at earliestCheckpointVersion to validate the checkpoint identified by
+    // findEarliestReliableCheckpoint.
+    val earliestSnapshot = deltaLog.getSnapshotAt(earliestCheckpointVersion)
+    if (containsFeatureTraces(earliestSnapshot.stateDS)) {
+      return true
+    }
+
+    // Check if commits between 0 version and toVersion contain any traces of the feature.
+    val allHistoricalDeltaFiles = deltaLog
+      .listFrom(0L)
+      .takeWhile(file => FileNames.getFileVersionOpt(file.getPath).forall(_ <= toVersion))
+      .filter(FileNames.isDeltaFile)
+      .toSeq
+    DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, allHistoricalDeltaFiles)
+      .exists(i => containsFeatureTraces(deltaLog.loadIndex(i, Action.logSchema).as[SingleAction]))
+  }
+
+  /** Returns whether a dataset of actions contains any trace of this feature. */
+  private def containsFeatureTraces(ds: Dataset[SingleAction]): Boolean = {
+    import org.apache.spark.sql.delta.implicits._
+    ds.mapPartitions { actions =>
+      actions
+        .map(_.unwrap)
+        .collectFirst { case a if actionUsesFeature(a) => true }
+        .toIterator
+    }.take(1).nonEmpty
+  }
 }
 
 /**
@@ -203,7 +311,6 @@ sealed abstract class LegacyReaderWriterFeature(
   with ReaderWriterFeatureType
 
 object TableFeature {
-
   /**
    * All table features recognized by this client. Update this set when you added a new Table
    * Feature.
@@ -232,6 +339,8 @@ object TableFeature {
         TestReaderWriterFeature,
         TestReaderWriterMetadataAutoUpdateFeature,
         TestReaderWriterMetadataNoAutoUpdateFeature,
+        TestRemovableWriterFeature,
+        TestRemovableReaderWriterFeature,
         TestFeatureWithDependency,
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency,
@@ -246,6 +355,49 @@ object TableFeature {
   /** Get a [[TableFeature]] object by its name. */
   def featureNameToFeature(featureName: String): Option[TableFeature] =
     allSupportedFeaturesMap.get(featureName.toLowerCase(Locale.ROOT))
+
+  /**
+   * Extracts the removed (explicit) feature names by comparing new and old protocols.
+   * Returns None if there are no removed (explicit) features.
+   */
+  protected def getDroppedExplicitFeatureNames(
+      newProtocol: Protocol,
+      oldProtocol: Protocol): Option[Set[String]] = {
+    val newFeatureNames = newProtocol.readerAndWriterFeatureNames
+    val oldFeatureNames = oldProtocol.readerAndWriterFeatureNames
+    Option(oldFeatureNames -- newFeatureNames).filter(_.nonEmpty)
+  }
+
+  /**
+   * Identifies whether there was any feature removal between two protocols.
+   */
+  def isProtocolRemovingExplicitFeatures(newProtocol: Protocol, oldProtocol: Protocol): Boolean = {
+    getDroppedExplicitFeatureNames(newProtocol = newProtocol, oldProtocol = oldProtocol).isDefined
+  }
+
+  /**
+   * Validates whether all requirements of a removed feature hold against the provided snapshot.
+   */
+  def validateFeatureRemovalAtSnapshot(
+      newProtocol: Protocol,
+      oldProtocol: Protocol,
+      snapshot: Snapshot): Boolean = {
+    val droppedFeatureNamesOpt = TableFeature.getDroppedExplicitFeatureNames(
+      newProtocol = newProtocol,
+      oldProtocol = oldProtocol)
+    val droppedFeatureName = droppedFeatureNamesOpt match {
+      case Some(f) if f.size == 1 => f.head
+      // We do not support dropping more than one features at a time so we have to reject
+      // the validation.
+      case Some(_) => return false
+      case None => return true
+    }
+
+    TableFeature.featureNameToFeature(droppedFeatureName) match {
+      case Some(feature: RemovableFeature) => feature.validateRemoval(snapshot)
+      case _ => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(droppedFeatureName)
+    }
+  }
 }
 
 /* ---------------------------------------- *
@@ -416,6 +568,51 @@ object TestReaderWriterMetadataAutoUpdateFeature
       spark: SparkSession): Boolean = {
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
   }
+}
+
+private[sql] object TestRemovableWriterFeature
+  extends WriterFeature(name = "testRemovableWriter")
+  with FeatureAutomaticallyEnabledByMetadata
+  with RemovableFeature {
+
+  val TABLE_PROP_KEY = "_123TestRemovableWriter321_"
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+  }
+
+  override def validateRemoval(snapshot: Snapshot): Boolean =
+    !snapshot.metadata.configuration.contains(TABLE_PROP_KEY)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+private[sql] object TestRemovableReaderWriterFeature
+  extends ReaderWriterFeature(name = "testRemovableReaderWriter")
+    with FeatureAutomaticallyEnabledByMetadata
+    with RemovableFeature {
+
+  val TABLE_PROP_KEY = "_123TestRemovableReaderWriter321_"
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+  }
+
+  override def validateRemoval(snapshot: Snapshot): Boolean =
+    !snapshot.metadata.configuration.contains(TABLE_PROP_KEY)
+
+  override def actionUsesFeature(action: Action): Boolean = action match {
+    case m: Metadata => m.configuration.contains(TABLE_PROP_KEY)
+    case _ => false
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestReaderWriterFeaturePreDowngradeCommand(table)
 }
 
 object TestFeatureWithDependency

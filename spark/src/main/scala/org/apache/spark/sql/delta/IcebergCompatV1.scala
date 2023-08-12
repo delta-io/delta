@@ -136,7 +136,6 @@ object IcebergCompatV1 extends DeltaLogging {
                 throw DeltaErrors.icebergCompatV1MissingRequiredTableFeatureException(f)
               }
             case (true, false) => // txn is removing/un-supporting it!
-              // Note: currently it is impossible to remove/un-support a table feature
               throw DeltaErrors.icebergCompatV1DisablingRequiredTableFeatureException(f)
           }
         }

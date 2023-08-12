@@ -25,16 +25,15 @@ import io.delta.kernel.types.StructType;
  * to evaluate predicate on partition filters, fill up partition column values and any computation
  * on data using {@link Expression}s.
  */
-public interface ExpressionHandler
-{
+public interface ExpressionHandler {
     /**
      * Create an {@link ExpressionEvaluator} that can evaluate the given <i>expression</i> on
      * {@link io.delta.kernel.data.ColumnarBatch}s with the given <i>batchSchema</i>.
      *
      * @param batchSchema Schema of the input data.
-     * @param expression Expression to evaluate.
+     * @param expression  Expression to evaluate.
      * @return An {@link ExpressionEvaluator} instance bound to the given expression and
-     *         batchSchema.
+     * batchSchema.
      */
     ExpressionEvaluator getEvaluator(StructType batchSchema, Expression expression);
 }

@@ -369,7 +369,7 @@ abstract class ConvertToDeltaCommandBase(
       // TODO: we have not decided on how to implement CONVERT TO DELTA under column mapping modes
       //  for some convert targets so we block this feature for them here
       checkColumnMapping(txn.metadata, targetTable)
-      RowId.checkStatsCollectedIfRowTrackingSupported(
+      RowTracking.checkStatsCollectedIfRowTrackingSupported(
         txn.protocol,
         collectStats,
         statsEnabled)

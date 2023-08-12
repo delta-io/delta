@@ -15,32 +15,23 @@
  */
 package io.delta.kernel.internal.util;
 
+import java.math.BigDecimal;
 import java.sql.Date;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.util.stream.Stream;
 
 import io.delta.kernel.client.ExpressionHandler;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.expressions.And;
-import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.Tuple2;
 
-import io.delta.kernel.internal.lang.ListUtils;
-
-public class PartitionUtils
-{
+public class PartitionUtils {
     private PartitionUtils() {}
 
     /**
@@ -48,25 +39,26 @@ public class PartitionUtils
      * given {@code physicalSchema}.
      *
      * @param physicalSchema
-     * @param logicalSchema To create a logical name to physical name map. Partition column names
-     * are in logical space and we need to identify the equivalent physical column name.
+     * @param logicalSchema   To create a logical name to physical name map. Partition column names
+     *                        are in logical space and we need to identify the equivalent
+     *                        physical column name.
      * @param columnsToRemove
      * @return
      */
     public static StructType physicalSchemaWithoutPartitionColumns(
-        StructType logicalSchema, StructType physicalSchema, Set<String> columnsToRemove)
-    {
+        StructType logicalSchema, StructType physicalSchema, Set<String> columnsToRemove) {
         if (columnsToRemove == null || columnsToRemove.size() == 0) {
             return physicalSchema;
         }
 
         // Partition columns are top-level only
-        Map<String, String> physicalToLogical = new HashMap<String, String>()
-        {{
-            IntStream.range(0, logicalSchema.length())
-                .mapToObj(i -> new Tuple2<>(logicalSchema.at(i), physicalSchema.at(i)))
-                .forEach(tuple2 -> put(tuple2._2.getName(), tuple2._1.getName()));
-        }};
+        Map<String, String> physicalToLogical = new HashMap<String, String>() {
+            {
+                IntStream.range(0, logicalSchema.length())
+                    .mapToObj(i -> new Tuple2<>(logicalSchema.at(i), physicalSchema.at(i)))
+                    .forEach(tuple2 -> put(tuple2._2.getName(), tuple2._1.getName()));
+            }
+        };
 
         return new StructType(
             physicalSchema.fields().stream()
@@ -80,8 +72,7 @@ public class PartitionUtils
         ColumnarBatch dataBatch,
         StructType dataBatchSchema,
         Map<String, String> partitionValues,
-        StructType schemaWithPartitionCols)
-    {
+        StructType schemaWithPartitionCols) {
         if (partitionValues == null || partitionValues.size() == 0) {
             // no partition column vectors to attach to.
             return dataBatch;
@@ -109,8 +100,7 @@ public class PartitionUtils
         return dataBatch;
     }
 
-    private static Literal literalForPartitionValue(DataType dataType, String partitionValue)
-    {
+    private static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
         if (partitionValue == null) {
             return Literal.ofNull(dataType);
         }
@@ -144,6 +134,11 @@ public class PartitionUtils
         }
         if (dataType instanceof DateType) {
             return Literal.of(Date.valueOf(partitionValue));
+        }
+        if (dataType instanceof DecimalType) {
+            DecimalType decimalType = (DecimalType) dataType;
+            return Literal.of(
+                new BigDecimal(partitionValue), decimalType.getPrecision(), decimalType.getScale());
         }
 
         throw new UnsupportedOperationException("Unsupported partition column: " + dataType);

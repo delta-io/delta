@@ -223,7 +223,8 @@ abstract class DeleteSuiteBase extends QueryTest
     val e = intercept[AnalysisException] {
       executeDelete(target = s"delta.`$tempPath`", where = "rand() > 0.5")
     }.getMessage
-    assert(e.contains("nondeterministic expressions are only allowed in"))
+    assert(e.contains("nondeterministic expressions are only allowed in") ||
+      e.contains("The operator expects a deterministic expression"))
   }
 
   test("Negative case - DELETE the child directory") {

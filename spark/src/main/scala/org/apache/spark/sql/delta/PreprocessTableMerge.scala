@@ -175,7 +175,8 @@ case class PreprocessTableMerge(override val conf: SQLConf)
             castIfNeeded(
               a.expr,
               targetAttrib.dataType,
-              allowStructEvolution = migrateSchema),
+              allowStructEvolution = migrateSchema,
+              targetAttrib.name),
             targetColNameResolved = true)
         }.getOrElse {
           // If a target table column was not found in the INSERT columns and expressions,

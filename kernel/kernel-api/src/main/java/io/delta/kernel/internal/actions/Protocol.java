@@ -25,10 +25,8 @@ import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
-public class Protocol implements Action
-{
-    public static Protocol fromRow(Row row)
-    {
+public class Protocol implements Action {
+    public static Protocol fromRow(Row row) {
         if (row == null) {
             return null;
         }
@@ -54,37 +52,31 @@ public class Protocol implements Action
         int minReaderVersion,
         int minWriterVersion,
         List<String> readerFeatures,
-        List<String> writerFeatures)
-    {
+        List<String> writerFeatures) {
         this.minReaderVersion = minReaderVersion;
         this.minWriterVersion = minWriterVersion;
         this.readerFeatures = readerFeatures;
         this.writerFeatures = writerFeatures;
     }
 
-    public int getMinReaderVersion()
-    {
+    public int getMinReaderVersion() {
         return minReaderVersion;
     }
 
-    public int getMinWriterVersion()
-    {
+    public int getMinWriterVersion() {
         return minWriterVersion;
     }
 
-    public List<String> getReaderFeatures()
-    {
+    public List<String> getReaderFeatures() {
         return readerFeatures;
     }
 
-    public List<String> getWriterFeatures()
-    {
+    public List<String> getWriterFeatures() {
         return writerFeatures;
     }
 
     @Override
-    public String toString()
-    {
+    public String toString() {
         final StringBuilder sb = new StringBuilder("Protocol{");
         sb.append("minReaderVersion=").append(minReaderVersion);
         sb.append(", minWriterVersion=").append(minWriterVersion);

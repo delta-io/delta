@@ -305,7 +305,7 @@ class Snapshot(
     DeltaLog.minSetTransactionRetentionInterval(metadata).map(deltaLog.clock.getTimeMillis() - _)
   }
 
-  protected def getNumPartitions: Int = {
+  private[delta] def getNumPartitions: Int = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
       .getOrElse(Snapshot.defaultNumSnapshotPartitions)
   }

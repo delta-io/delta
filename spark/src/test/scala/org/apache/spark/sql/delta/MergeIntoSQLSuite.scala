@@ -195,7 +195,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBySo
       append(Seq((2, 2), (1, 4)).toDF("trgKey", "trgValue"))
 
       // only the last NOT MATCHED clause can omit the condition
-      val e = intercept[AnalysisException](
+      val e = intercept[ParseException](
         sql(s"""
           |MERGE INTO delta.`$tempPath`
           |USING source

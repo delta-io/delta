@@ -19,13 +19,10 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-
 import static io.delta.kernel.utils.Utils.requireNonNull;
 
-public class Format
-{
-    public static Format fromRow(Row row)
-    {
+public class Format {
+    public static Format fromRow(Row row) {
         if (row == null) {
             return null;
         }
@@ -43,8 +40,7 @@ public class Format
 
     private final String provider;
 
-    public Format(String provider)
-    {
+    public Format(String provider) {
         this.provider = provider;
     }
 }

@@ -17,45 +17,37 @@ package io.delta.kernel.internal.actions;
 
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.Objects;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.lang.Lazy;
 
-import static java.util.Objects.requireNonNull;
-
-public abstract class FileAction implements Action
-{
+public abstract class FileAction implements Action {
     protected final String path;
     protected final boolean dataChange;
     private final Lazy<URI> pathAsUri;
 
-    public FileAction(String path, boolean dataChange)
-    {
+    public FileAction(String path, boolean dataChange) {
         this.path = requireNonNull(path, "path is null");
         this.dataChange = dataChange;
 
         this.pathAsUri = new Lazy<>(() -> {
             try {
                 return new URI(path);
-            }
-            catch (URISyntaxException ex) {
+            } catch (URISyntaxException ex) {
                 throw new RuntimeException(ex);
             }
         });
     }
 
-    public String getPath()
-    {
+    public String getPath() {
         return path;
     }
 
-    public boolean isDataChange()
-    {
+    public boolean isDataChange() {
         return dataChange;
     }
 
-    public URI toURI()
-    {
+    public URI toURI() {
         return pathAsUri.get();
     }
 

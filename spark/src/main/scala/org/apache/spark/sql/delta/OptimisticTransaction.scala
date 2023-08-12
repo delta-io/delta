@@ -575,6 +575,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
     }
 
+    newMetadataTmp = MaterializedRowId.updateMaterializedColumnName(
+      protocol, oldMetadata = snapshot.metadata, newMetadataTmp)
+    newMetadataTmp = MaterializedRowCommitVersion.updateMaterializedColumnName(
+      protocol, oldMetadata = snapshot.metadata, newMetadataTmp)
 
     RowId.verifyMetadata(
       snapshot.protocol, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
@@ -652,6 +656,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     if (spark.conf.get(DeltaSQLConf.DELTA_TABLE_PROPERTY_CONSTRAINTS_CHECK_ENABLED)) {
       Protocol.assertTablePropertyConstraintsSatisfied(spark, metadata, snapshot)
     }
+    MaterializedRowId.throwIfMaterializedColumnNameConflictsWithSchema(metadata)
+    MaterializedRowCommitVersion.throwIfMaterializedColumnNameConflictsWithSchema(metadata)
   }
 
   private def setNewProtocolWithFeaturesEnabledByMetadata(metadata: Metadata): Unit = {
@@ -731,13 +737,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   ): DeltaScan = {
     val scan = snapshot.filesForScan(filters, keepNumRecords)
     trackReadPredicates(filters)
-    trackFilesRead(scan.files)
-    scan
-  }
-
-  /** Returns a[[DeltaScan]] based on the limit clause when there are no filters or projections. */
-  override def filesForScan(limit: Long): DeltaScan = {
-    val scan = snapshot.filesForScan(limit)
     trackFilesRead(scan.files)
     scan
   }
@@ -1119,6 +1118,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     op: DeltaOperations.Operation,
     context: Map[String, String],
     metrics: Map[String, String]): (Long, Snapshot) = {
+    assert(!committed, "Transaction already committed.")
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
     try {
@@ -1396,7 +1396,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         require(newVersion.minWriterVersion > 0, "The writer version needs to be greater than 0")
         if (!canAssignAnyNewProtocol) {
           val currentVersion = snapshot.protocol
-          if (!currentVersion.canUpgradeTo(newVersion)) {
+          if (!currentVersion.canTransitionTo(newVersion, op)) {
             throw new ProtocolDowngradeException(currentVersion, newVersion)
           }
         }

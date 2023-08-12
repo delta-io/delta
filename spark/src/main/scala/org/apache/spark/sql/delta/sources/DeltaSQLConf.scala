@@ -23,7 +23,6 @@ import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.util.Utils
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -275,6 +274,14 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "maxSnapshotLineageLength must be positive.")
       .createWithDefault(50)
 
+  val DELTA_REPLACE_COLUMNS_SAFE =
+    buildConf("alter.replaceColumns.safe.enabled")
+      .internal()
+      .doc("Prevents an ALTER TABLE REPLACE COLUMNS method from dropping all columns, which " +
+        "leads to losing all data. It will only allow safe, unambiguous column changes.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_HISTORY_PAR_SEARCH_THRESHOLD =
     buildConf("history.maxKeysPerList")
       .internal()
@@ -509,6 +516,13 @@ trait DeltaSQLConfBase {
       .doc("How many times to try MERGE with in case of lost RDD materialized source data")
       .intConf
       .createWithDefault(4)
+
+  val MERGE_MATERIALIZE_SOURCE_EAGER =
+    buildConf("merge.materializeSource.eager")
+      .internal()
+      .doc("Materialize the source eagerly before Job 1")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
     buildConf("lastCommitVersionInSession")
@@ -1205,6 +1219,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val TABLE_FEATURE_DROP_ENABLED =
+    buildConf("tableFeatures.dropEnabled")
+      .internal()
+      .doc("""Controls whether table feature removal is allowed.
+             |Table feature removal is currently a feature in development.
+             |This is a dev only config.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE =
     buildConf("columnMapping.reuseColumnMetadataDuringOverwrite")
       .internal()
@@ -1237,6 +1260,15 @@ trait DeltaSQLConfBase {
         |""".stripMargin)
     .intConf
     .createWithDefault(100 * 1000)
+
+  val UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG =
+    buildConf("updateAndMergeCastingFollowsAnsiEnabledFlag")
+      .internal()
+      .doc("""If false, casting behaviour in implicit casts in UPDATE and MERGE follows
+             |'spark.sql.storeAssignmentPolicy'. If true, these casts follow 'ansi.enabled'.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 
 }
 

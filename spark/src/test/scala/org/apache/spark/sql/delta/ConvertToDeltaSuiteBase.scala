@@ -541,19 +541,15 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
       writeFiles(tempDir + "/part=1/", Seq(1).toDF("id"))
 
       val fs = new Path(tempDir).getFileSystem(sessionHadoopConf)
-      def listFileNames: Array[String] =
-        fs.listStatus(new Path(tempDir + "/part=1/"))
-          .map(_.getPath)
-          .filter(path => !path.getName.startsWith("_") && !path.getName.startsWith("."))
-          .map(_.toUri.toString)
+      // Rename the parquet file in partition "part=1" with something containing "="
+      val files = fs.listStatus(new Path(tempDir + "/part=1/"))
+        .map(_.getPath)
+        .filter(path => !path.getName.startsWith("_") && !path.getName.startsWith("."))
 
-      val fileNames = listFileNames
-      assert(fileNames.size == 1)
-      fs.rename(new Path(fileNames.head), new Path(fileNames.head
-        .stripSuffix(".snappy.parquet").concat("-id=1.snappy.parquet")))
+      assert(files.length == 1)
+      fs.rename(
+        files.head, new Path(files.head.getParent.getName, "some-data-id=1.snappy.parquet"))
 
-      val newFileNames = listFileNames
-      assert(newFileNames.head.endsWith("-id=1.snappy.parquet"))
       convertToDelta(s"parquet.`$tempDir`", Some("part string"))
       checkAnswer(spark.read.format("delta").load(tempDir), Row(1, "1"))
     }
@@ -566,18 +562,14 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
       writeFiles(tempDir + "/part=2/", Seq(2).toDF("id"))
 
       val fs = new Path(tempDir).getFileSystem(sessionHadoopConf)
-      def listFileNames: Array[String] =
-        fs.listStatus(new Path(tempDir + "/part=1/"))
-          .map(_.getPath)
-          .filter(path => !path.getName.startsWith("_") && !path.getName.startsWith("."))
-          .map(_.toUri.toString)
+      // Remove the suffix of the parquet file in partition "part=1"
+      val files = fs.listStatus(new Path(tempDir + "/part=1/"))
+        .map(_.getPath)
+        .filter(path => !path.getName.startsWith("_") && !path.getName.startsWith("."))
 
-      val fileNames = listFileNames
-      assert(fileNames.size == 1)
-      fs.rename(new Path(fileNames.head), new Path(fileNames.head.stripSuffix(".parquet")))
+      assert(files.length == 1)
+      fs.rename(files.head, new Path(files.head.getParent.toString, "unknown_suffix"))
 
-      val newFileNames = listFileNames
-      assert(fileNames === newFileNames.map(_ + ".parquet"))
       convertToDelta(s"parquet.`$tempDir`", Some("part string"))
       checkAnswer(spark.read.format("delta").load(tempDir), Row(1, "1") :: Row(2, "2") :: Nil)
     }
