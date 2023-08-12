@@ -25,12 +25,12 @@ import java.util.stream.Collectors;
 
 import org.apache.hadoop.conf.Configuration;
 import org.junit.Test;
+import static io.delta.golden.GoldenTableUtils.goldenTableFile;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-import static io.delta.golden.GoldenTableUtils.goldenTableFile;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -39,8 +39,8 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 
-import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
+import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 
 public class TestParquetBatchReader {
     /**
@@ -249,8 +249,7 @@ public class TestParquetBatchReader {
                             DefaultKernelUtils.DateTimeConstants.MILLIS_PER_DAY) : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
-                    }
-                    else {
+                    } else {
                         assertEquals(expValue.intValue(), vector.getInt(batchWithIdx._2));
                     }
                     break;

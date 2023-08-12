@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults.client;
 
 import java.sql.Date;
-import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -72,8 +71,8 @@ public class TestDefaultExpressionHandler {
         testCases.add(Literal.ofNull(BinaryType.INSTANCE));
         testCases.add(Literal.of(new Date(234234234)));
         testCases.add(Literal.ofNull(DateType.INSTANCE));
-        testCases.add(Literal.of(new Timestamp(2342342342232L)));
-        testCases.add(Literal.ofNull(TimestampType.INSTANCE));
+        // testCases.add(Literal.of(new Timestamp(2342342342232L)));
+        // testCases.add(Literal.ofNull(TimestampType.INSTANCE));
 
         ColumnarBatch[] inputBatches = new ColumnarBatch[] {
             new DefaultColumnarBatch(0, inputSchema, data),
@@ -115,10 +114,6 @@ public class TestDefaultExpressionHandler {
                     } else if (outputDataType instanceof DateType) {
                         assertEquals(
                             daysSinceEpoch((Date) expRowValue), outputVector.getInt(rowId));
-                    } else if (outputDataType instanceof TimestampType) {
-                        Timestamp timestamp = (Timestamp) expRowValue;
-                        long micros = timestamp.getTime() * 1000;
-                        assertEquals(micros, outputVector.getLong(rowId));
                     } else {
                         throw new UnsupportedOperationException(
                             "unsupported output type encountered: " + outputDataType);

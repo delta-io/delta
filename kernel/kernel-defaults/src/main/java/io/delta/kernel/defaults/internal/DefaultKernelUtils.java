@@ -166,7 +166,6 @@ public class DefaultKernelUtils {
         return (int) ChronoUnit.DAYS.between(EPOCH, localDate);
     }
 
-<<<<<<< HEAD:kernel/kernel-default/src/main/java/io/delta/kernel/DefaultKernelUtils.java
     //////////////////////////////////////////////////////////////////////////////////
     // Below utils are adapted from org.apache.spark.sql.catalyst.util.DateTimeUtils
     //////////////////////////////////////////////////////////////////////////////////
