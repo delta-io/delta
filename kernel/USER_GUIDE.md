@@ -8,7 +8,7 @@ Delta Kernel is a library for operating on Delta tables. Specifically, it provid
 
 In this user guide, we are going to walk through the following: 
 * [How to set up Delta Kernel with your project and read Delta tables using the default table client](#read-a-delta-table-in-a-single-process).
-* [How to build a Delta connector for distributed engines with custom table client](#build-a-delta-connector-for-a-processing-engine).
+* [How to build a Delta connector for distributed engines with custom table client](#build-a-delta-connector-for-a-distributed-processing-engine).
 * How to migrate existing Delta connectors to use Delta Kernel (coming soon).
 
 ## Read a Delta table in a single process
@@ -17,7 +17,7 @@ In this section, we will walk through how to build a very simple single-process 
 You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/kernel/examples) present in the Delta code repository.
 
 ### Step 1: Set up Delta Kernel for your project
-You need to `io.delta:delta-kernel.api` and `io.delta:delta-kernel-defaults` dependencies. Following is example Maven `pom` file dependency list.
+You need to `io.delta:delta-kernel.api` and `io.delta:delta-kernel-defaults` dependencies. Following is an example Maven `pom` file dependency list.
 
 ```xml
 <dependencies>
@@ -166,7 +166,7 @@ Expression remainingFilter = myFilteredScan.getRemainingFilter();
 
 The scan files returned by  `myFilteredScan.getScanFiles(myTableClient)` will have rows representing files only of the required partition. Similarly, you can provide filters for non-partition columns, and if the data in the table is well clustered by those columns, then Delta Kernel will be able to skip files as well as much as possible.
 
-## Build a Delta connector for a processing engine
+## Build a Delta connector for a distributed processing engine
 Unlike simple apps that just read the table in a single process, building a connector for complex processing engines like Apache Spark and Trino can require quite a bit of additional effort. For example, to build a connector for a SQL engine you have to do the following
 
 * Understand the APIs provided by the engine to build connectors and how Delta Kernel can be used to provide the information necessary for the connector + engine to operate on a Delta table.
@@ -201,7 +201,7 @@ In the Delta Kernel project, there are multiple dependencies you can choose to d
 #### Set up Java projects
 As discussed above, you can import one or both of the artifacts as follows:
 
-```
+```xml
 <!-- Must have dependency -->
 <dependency>
   <groupId>io.delta</groupId>
@@ -220,10 +220,10 @@ As discussed above, you can import one or both of the artifacts as follows:
 ### Step 2: Build your own TableClient
 In this section, we are going to explore the [`TableClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/client/TableClient.html) interface and walk through how to implement your own implementation so that you can plug in your connector/engine-specific implementations of computationally-intensive operations, threading model, resource management, etc.
 
-** Important Note ** 
+#### Important Note
 During the validation process, if you believe that all the dependencies of the default `TableClient` implementation can work with your connector and engine, then you can skip this step and jump to Step 3 of implementing your connector using the default client. If later you have the need to customize the helper for your connector, you can revisit this step.
 
-#### Implement the TableClient interface
+#### Step 2.1: Implement the TableClient interface
 
 The [`TableClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/client/TableClient.html) interface combines a bunch of sub-interfaces each of which is designed for a specific purpose. Here is a brief overview of the subinterfaces. See the API docs (Java) for the more detailed view.
 
@@ -271,14 +271,14 @@ class MyTableClient extends DefaultTableClient {
 
 Next we will walk through how to implement each interface.
 
-#### Implement [`FileSystemClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/client/FileSystemClient.html) interface
+#### Step 2.2: Implement [`FileSystemClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/client/FileSystemClient.html) interface
 
 The [`FileSystemClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/client/FileSystemClient.html) interface contains basic file system operations like listing directories and reading bytes from files. Implementation of this interface must take care of the following when interacting with the storage systems such as S3, Hadoop or ADLS:
 
 * Credentials and permissions: Connector must populate its `FileSystemClient` with necessary configurations and credentials for the client to retrieve the necessary data from the storage system. For example, an implementation based on Hadoop's FileSystem abstractions can be passed S3 credentials via the Hadoop configurations.
 * Decryption: If file system objects are encrypted, then the implementation must decrypt the data before returning the data.
 
-#### Implement [`ParquetReader`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/client/ParquetHandler.html)
+#### Step 2.3: Implement [`ParquetReader`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/client/ParquetHandler.html)
 
 As the name suggests, this interface contains everything related to reading Parquet files. It has been designed such that a connector can plug in a wide variety of implementations, from a simple single-threaded reader, to a very advanced multi-threaded reader with pre-fetching and advanced connector-specific expression pushdown. Let's explore the methods to implement, and the guarantees associated with them. 
 
@@ -286,7 +286,7 @@ As the name suggests, this interface contains everything related to reading Parq
 
 This method associates the information of a to-be-read file to a connector-specific context object, called `FileReadContext`. Implementations can use this method to inject connector-specific information to optimize the file read. For example, if you want split reading a 256 MB Parquet file (say, `file1.parquet`) into 2 chunks of size 128 MB, then you can create two successive entries `fileReadContext1(file1.parquet)` and `fileReadContext2(file1.parquet)` where the context objects created by this method contains the byte ranges to read. This byte ranges will be used by the next method to do the necessary partial reads of the file `file1.parquet`.
 
-**Requirements and guarantees:**
+##### Requirements and guarantees:**
 
 Any implementation must adhere to the following guarantees.
 * The output iterator must maintain the same ordering as the input iterator. For example, if file1 is before file2 in the input iterator, then all the contexts associated with file1 must be before those of file2 in the output iterator.
@@ -303,38 +303,37 @@ When identifying the columns to read, note that there are multiple types of colu
 * Metadata columns: These are special columns that must be populated using metadata about the Parquet file ([`StructField#isMetadataColumn`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/types/StructField.html#isMetadataColumn--) tells whether a column in `StructType` is a metadata column). To understand how to populate such a column, first match the column name against the set of standard metadata column name constants. For example, 
     * `StructFileld#isMetadataColumn()` returns true and the column name is `StructField.ROW_INDEX_COLUMN_NAME`, then you have to a generate column vector populated with the actual index of each row in the Parquet file (that is, not indexed by the possibly subset of rows return after Parquet data skipping).
 
-**Requirements and guarantees:**
+##### Requirements and guarantees:**
 Any implementation must adhere to the following guarantees.
 
 * The schema of the returned `ColumnarBatch`es must match the physical schema. 
   * If a data column is not found and the `StructField.isNullable = true`, then return a `ColumnVector` of nulls. Throw error if it is not nullable.
 * The output iterator must maintain ordering as the input iterator. That is, if `file1` is before `file2` in the input iterator, then columnar batches of `file1` must be before those of `file2` in the output iterator.
 
-**Performance suggestions:**
+##### Performance suggestions:**
 * The representation of data as `ColumnVector`s and `ColumnarBatch`es can have a significant impact on the query performance and it's best to read the Parquet file data directly into vectors and batches of the engine-native format to avoid potentially costly in-memory data format conversion. Create a Kernel `ColumnVector` and `ColumnarBatch` wrappers around the engine-native format equivalent classes.
 
-
-#### Implement [`ExpressionHandler`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/client/ExpressionHandler.htm)
+#### Step 2.4: Implement [`ExpressionHandler`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/client/ExpressionHandler.htm)
 The [`ExpressionHandler`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/client/ExpressionHandler.html) interface has all the methods needed for handling expressions that may be applied on columnar data. 
 
 ##### Method [`getEvaluator(StructType batchSchema, Expression expresion)`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/client/ExpressionHandler.html#getEvaluator-io.delta.kernel.types.StructType-io.delta.kernel.expressions.Expression-)
 
 This method generates an object of type [`ExpressionEvaluator`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/expressions/ExpressionEvaluator.html) that can evaluate the `expression` on a batch of row data to produce a result of a single column vector. To generate this function, the `getEvaluator()` method takes as input the expression and the schema of the `ColumnarBatch`es of data on which the expressions will be applied. Same object can be used to evaluate multiple columnar batches of input with the same schema and expression the evaluator is created for.
 
-**Requirements and guarantees:**
+##### Requirements and guarantees:
 Any implementation must adhere to the following guarantees.
 
 * Implementation must handle all possible variations of expressions. If the implementation encounters an expression type that it does not know how to handle, then it must throw a specific language-dependent exception.
   * Java: [NotSupportedException](https://docs.oracle.com/javaee/7/api/javax/resource/NotSupportedException.html) 
 * The `ColumnarBatch`es on which the generated `ExpressionEvaluator` is going to be used are guaranteed to have the schema provided during generation. Hence, it is safe to bind the expression evaluation logic to column ordinals instead of column names, thus making the actual evaluation faster.
 
-#### Implement [`JsonHandler`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/client/JsonHandler.html)
+#### Step 2.5: Implement [`JsonHandler`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/client/JsonHandler.html)
 This client interface allows connector to use plug-in their own JSON handing code and expose it to the Delta Kernel.
 
 ##### Method [`contextualizeFileReads()`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/client/FileHandler.html#contextualizeFileReads-io.delta.kernel.utils.CloseableIterator-io.delta.kernel.expressions.Expression-)
 This method associates the information of a to-be-read file to a connector-specific context object, called `FileReadContext`. Implementations can use this method to inject connector-specific information to optimize the file read.
 
-**Requirements and guarantees: **
+#### Requirements and guarantees
 Any implementation must adhere to the following guarantees.
 
 * The output iterator must maintain the same ordering as the input iterator. For example, if `file1` is before `file2` in the input iterator, then all the contexts associated with `file1` must be before those of `file2` in the output iterator.
@@ -349,7 +348,7 @@ When identifying the columns to read, note that there are multiple types of colu
 
 This method allows parsing a `ColumnVector` of string values which are in JSON format into the output format specified by the `outputSchema`. If a given column column `outputSchema` is not found, then a null value is returned.
 
-#### Implement [`ColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/data/ColumnarBatch.html) and [`ColumnVector`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/data/ColumnVector.html)
+#### Step 2.6: Implement [`ColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/data/ColumnarBatch.html) and [`ColumnVector`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/data/ColumnVector.html)
 
 `ColumnarBatch` and `ColumnVector` are two interfaces to represent the data read into memory from files. This representation can have a significant impact on query performance. Each engine likely has a native representation of in-memory data with which it applies data transformations operations. For example, in Apache Spark, the row data is internally represented as `UnsafeRow` for efficient processing. So it's best to read the Parquet file data directly into vectors and batches of the native format to avoid potentially costly in-memory data format conversions. So the recommended approach is to build wrapper classes that extend the two interfaces but internally use engine-native classes to store the data. When the connector has to forward the columnar batches received from the kernel to the engine, it has to be smart enough to skip converting vectors and batches that are already in the engine-native format.
 
@@ -460,19 +459,16 @@ while (myScanFilesAsBatches.hasNext()) {
 
 As we will soon see, reading the columnar data from a selected file will need to use both, the scan state row, and a scan file row with the file information.
 
-**Requirements and guarantees: **
-
+##### Requirements and guarantees: **
 Here are the details you need to ensure when defining this scan.
 
 * The provided `readSchema` must be the exact schema of the data that the engine will expect when executing the query. Any mismatch in the schema defined during this query planning and the query execution will result in runtime failures. Hence you must build the scan with the readSchema only after the engine has finalize the logical plan after any optimizations like column pruning.
 * When applicable (for example, with Java Kernel APIs), you have to make sure to call the close() method as you consume the `ColumnarBatch`es of scan files (that is, either serialize the rows, or use them to read the table data).
 
 #### Step 3.3: Distribute the file information to the workers
-
 If you are building a connector for a distributed engine like Spark/Presto/Trino/Flink, then your connector has to send all the scan metadata from the query planning machine (henceforth called the driver) to task execution machines (henceforth called the workers). You will have to serialize and deserialize the scan state and scan file rows. It is the connector job to implement serialization and deserialization utilities for a [`Row`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/data/Row.html). 
 
-
-#### Custom `Row` Serializer/Deserializer 
+##### Custom `Row` Serializer/Deserializer
 Here are steps on how to build your own serializer/deserializer such that it will work with any [`Row`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/data/Row.html) of any schema. 
 
 * Serializing
