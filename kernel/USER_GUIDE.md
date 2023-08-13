@@ -286,7 +286,7 @@ As the name suggests, this interface contains everything related to reading Parq
 
 This method associates the information of a to-be-read file to a connector-specific context object, called `FileReadContext`. Implementations can use this method to inject connector-specific information to optimize the file read. For example, if you want split reading a 256 MB Parquet file (say, `file1.parquet`) into 2 chunks of size 128 MB, then you can create two successive entries `fileReadContext1(file1.parquet)` and `fileReadContext2(file1.parquet)` where the context objects created by this method contains the byte ranges to read. This byte ranges will be used by the next method to do the necessary partial reads of the file `file1.parquet`.
 
-##### Requirements and guarantees:**
+##### Requirements and guarantees
 
 Any implementation must adhere to the following guarantees.
 * The output iterator must maintain the same ordering as the input iterator. For example, if file1 is before file2 in the input iterator, then all the contexts associated with file1 must be before those of file2 in the output iterator.
@@ -303,14 +303,14 @@ When identifying the columns to read, note that there are multiple types of colu
 * Metadata columns: These are special columns that must be populated using metadata about the Parquet file ([`StructField#isMetadataColumn`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/types/StructField.html#isMetadataColumn--) tells whether a column in `StructType` is a metadata column). To understand how to populate such a column, first match the column name against the set of standard metadata column name constants. For example, 
     * `StructFileld#isMetadataColumn()` returns true and the column name is `StructField.ROW_INDEX_COLUMN_NAME`, then you have to a generate column vector populated with the actual index of each row in the Parquet file (that is, not indexed by the possibly subset of rows return after Parquet data skipping).
 
-##### Requirements and guarantees:**
+##### Requirements and guarantees
 Any implementation must adhere to the following guarantees.
 
 * The schema of the returned `ColumnarBatch`es must match the physical schema. 
   * If a data column is not found and the `StructField.isNullable = true`, then return a `ColumnVector` of nulls. Throw error if it is not nullable.
 * The output iterator must maintain ordering as the input iterator. That is, if `file1` is before `file2` in the input iterator, then columnar batches of `file1` must be before those of `file2` in the output iterator.
 
-##### Performance suggestions:**
+##### Performance suggestions
 * The representation of data as `ColumnVector`s and `ColumnarBatch`es can have a significant impact on the query performance and it's best to read the Parquet file data directly into vectors and batches of the engine-native format to avoid potentially costly in-memory data format conversion. Create a Kernel `ColumnVector` and `ColumnarBatch` wrappers around the engine-native format equivalent classes.
 
 #### Step 2.4: Implement [`ExpressionHandler`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api/io/delta/kernel/client/ExpressionHandler.htm)
@@ -320,7 +320,7 @@ The [`ExpressionHandler`](https://delta-io.github.io/delta/snapshot/kernel-api/j
 
 This method generates an object of type [`ExpressionEvaluator`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/expressions/ExpressionEvaluator.html) that can evaluate the `expression` on a batch of row data to produce a result of a single column vector. To generate this function, the `getEvaluator()` method takes as input the expression and the schema of the `ColumnarBatch`es of data on which the expressions will be applied. Same object can be used to evaluate multiple columnar batches of input with the same schema and expression the evaluator is created for.
 
-##### Requirements and guarantees:
+##### Requirements and guarantees
 Any implementation must adhere to the following guarantees.
 
 * Implementation must handle all possible variations of expressions. If the implementation encounters an expression type that it does not know how to handle, then it must throw a specific language-dependent exception.
@@ -333,7 +333,7 @@ This client interface allows connector to use plug-in their own JSON handing cod
 ##### Method [`contextualizeFileReads()`](https://delta-io.github.io/delta/snapshot/kernel-api/java/api//io/delta/kernel/client/FileHandler.html#contextualizeFileReads-io.delta.kernel.utils.CloseableIterator-io.delta.kernel.expressions.Expression-)
 This method associates the information of a to-be-read file to a connector-specific context object, called `FileReadContext`. Implementations can use this method to inject connector-specific information to optimize the file read.
 
-#### Requirements and guarantees
+###### Requirements and guarantees
 Any implementation must adhere to the following guarantees.
 
 * The output iterator must maintain the same ordering as the input iterator. For example, if `file1` is before `file2` in the input iterator, then all the contexts associated with `file1` must be before those of `file2` in the output iterator.
@@ -459,7 +459,7 @@ while (myScanFilesAsBatches.hasNext()) {
 
 As we will soon see, reading the columnar data from a selected file will need to use both, the scan state row, and a scan file row with the file information.
 
-##### Requirements and guarantees: **
+##### Requirements and guarantees
 Here are the details you need to ensure when defining this scan.
 
 * The provided `readSchema` must be the exact schema of the data that the engine will expect when executing the query. Any mismatch in the schema defined during this query planning and the query execution will result in runtime failures. Hence you must build the scan with the readSchema only after the engine has finalize the logical plan after any optimizations like column pruning.
