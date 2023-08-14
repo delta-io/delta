@@ -44,8 +44,8 @@ public class TimestampConverters {
 
             LogicalTypeAnnotation typeAnnotation = primType.getLogicalTypeAnnotation();
             if (!(typeAnnotation instanceof LogicalTypeAnnotation.TimestampLogicalTypeAnnotation)) {
-                throw new IllegalStateException(String.format(
-                    "Invalid parquet type %s for timestamp column",
+                throw new RuntimeException(String.format(
+                    "Unable to create Parquet converter for timestamp column with Parquet type %s.",
                     typeFromFile));
             }
             LogicalTypeAnnotation.TimestampLogicalTypeAnnotation timestamp =
@@ -64,8 +64,8 @@ public class TimestampConverters {
             }
 
         } else {
-            throw new IllegalStateException(String.format(
-                "Invalid parquet type %s for timestamp column",
+            throw new RuntimeException(String.format(
+                "Unable to create Parquet converter for timestamp column with Parquet type %s.",
                 typeFromFile));
         }
     }
