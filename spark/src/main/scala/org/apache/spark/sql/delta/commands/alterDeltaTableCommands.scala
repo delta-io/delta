@@ -208,6 +208,11 @@ case class AlterTableUnsetPropertiesDeltaCommand(
  *     current state again and the history. If everything is clean, it proceeds with the protocol
  *     downgrade. Note, the retention period is always rounded up so that the cutoff is at a
  *     midnight UTC boundary.
+ *
+ *  Note, legacy features can be removed as well, as soon as the protocol supports Table Features.
+ *  This will not downgrade protocol versions but only remove the feature from the
+ *  supported features list. For example, removing legacyRWFeature from
+ *  (3, 7, [legacyRWFeature], [legacyRWFeature]) will result in (3, 7, [], []) and not (1, 1).
  */
 case class AlterTableDropFeatureDeltaCommand(
     table: DeltaTableV2,

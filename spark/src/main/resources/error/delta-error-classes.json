@@ -767,12 +767,6 @@
     ],
     "sqlState" : "0AKDE"
   },
-  "DELTA_FEATURE_DROP_LEGACY_FEATURE" : {
-    "message" : [
-      "Cannot drop <feature> because it is implicitly supported by the table protocol version."
-    ],
-    "sqlState" : "0AKDE"
-  },
   "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE" : {
     "message" : [
       "Cannot drop <feature> because dropping this feature is not supported."

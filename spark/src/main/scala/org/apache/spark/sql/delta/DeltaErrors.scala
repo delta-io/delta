@@ -2244,12 +2244,6 @@ trait DeltaErrorsBase
       messageParameters = Array(concurrentCommit))
   }
 
-  def dropTableFeatureLegacyFeature(feature: String): DeltaTableFeatureException = {
-    new DeltaTableFeatureException(
-      errorClass = "DELTA_FEATURE_DROP_LEGACY_FEATURE",
-      messageParameters = Array(feature))
-  }
-
   def dropTableFeatureFeatureNotSupportedByClient(
       feature: String): DeltaTableFeatureException = {
     new DeltaTableFeatureException(
