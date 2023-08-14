@@ -672,7 +672,7 @@ class OptimisticTransactionSuite
   Seq(true, false).foreach { skip =>
     test(s"Elide empty commits when requested - skipRecordingEmptyCommits=$skip") {
       withSQLConf(DeltaSQLConf.DELTA_SKIP_RECORDING_EMPTY_COMMITS.key -> skip.toString) {
-        withTempDir { tableDir => 
+        withTempDir { tableDir =>
           val df = Seq((1, 0), (2, 1)).toDF("key", "value")
           df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
 
