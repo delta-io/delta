@@ -171,8 +171,7 @@ public class ParquetBatchReader {
         private final RowConverter rowRecordGroupConverter;
 
         public RowRecordCollector(int maxBatchSize, StructType readSchema, MessageType fileSchema) {
-            this.rowRecordGroupConverter =
-                new RowConverter(maxBatchSize, readSchema, fileSchema);
+            this.rowRecordGroupConverter = new RowConverter(maxBatchSize, readSchema, fileSchema);
         }
 
         @Override

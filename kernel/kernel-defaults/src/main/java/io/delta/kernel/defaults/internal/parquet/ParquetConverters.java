@@ -101,6 +101,7 @@ class ParquetConverters {
          * Move the converter to accept the next row value.
          *
          * @return True if the last converted value is null, false otherwise
+         * TODO: Remove the return value. It is no longer relevant.
          */
         boolean moveToNextRow();
 

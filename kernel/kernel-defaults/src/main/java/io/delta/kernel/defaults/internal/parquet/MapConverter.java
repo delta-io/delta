@@ -16,177 +16,57 @@
 
 package io.delta.kernel.defaults.internal.parquet;
 
-import java.util.Arrays;
 import java.util.Optional;
 
 import org.apache.parquet.io.api.Converter;
-import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.schema.GroupType;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.MapType;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultMapVector;
-import static io.delta.kernel.defaults.internal.parquet.ParquetConverters.initNullabilityVector;
-import static io.delta.kernel.defaults.internal.parquet.ParquetConverters.setNullabilityToTrue;
+import static io.delta.kernel.defaults.internal.parquet.ParquetConverters.createConverter;
 
-class MapConverter
-    extends GroupConverter
-    implements ParquetConverters.BaseConverter {
+class MapConverter extends RepeatedValueConverter {
     private final MapType typeFromClient;
-    private final MapCollector converter;
 
-    // working state
-    private int currentRowIndex;
-    private boolean[] nullability;
-    private int[] offsets;
-    private int collectorIndexAtStart;
-
-    MapConverter(
-        int initialBatchSize,
-        MapType typeFromClient,
-        GroupType typeFromFile) {
-        this.typeFromClient = typeFromClient;
-        final GroupType innerMapType = (GroupType) typeFromFile.getType("key_value");
-        this.converter = new MapCollector(
+    MapConverter(int initialBatchSize, MapType typeFromClient, GroupType typeFromFile) {
+        super(
             initialBatchSize,
-            typeFromClient,
-            innerMapType
-        );
-
-        // initialize working state
-        this.nullability = initNullabilityVector(initialBatchSize);
-        this.offsets = new int[initialBatchSize + 1];
-    }
-
-    @Override
-    public Converter getConverter(int fieldIndex) {
-        switch (fieldIndex) {
-            case 0:
-                return converter;
-            default:
-                throw new IllegalArgumentException(
-                    "Invalid field index for a map column: " + fieldIndex);
-        }
-    }
-
-    @Override
-    public void start() {
-        collectorIndexAtStart = converter.currentEntryIndex;
-    }
-
-    @Override
-    public void end() {
-        int collectorIndexAtEnd = converter.currentEntryIndex;
-        this.nullability[currentRowIndex] = collectorIndexAtEnd == collectorIndexAtStart;
-        this.offsets[currentRowIndex + 1] = collectorIndexAtEnd;
+            createElementConverters(initialBatchSize, typeFromClient, typeFromFile));
+        this.typeFromClient = typeFromClient;
     }
 
     @Override
     public ColumnVector getDataColumnVector(int batchSize) {
-        ColumnVector vector = new DefaultMapVector(
+        ColumnVector[] elementVectors = getElementDataVectors();
+        ColumnVector mapVector = new DefaultMapVector(
             batchSize,
             typeFromClient,
-            Optional.of(nullability),
-            offsets,
-            converter.getKeyVector(),
-            converter.getValueVector()
+            Optional.of(getNullability()),
+            getOffsets(),
+            elementVectors[0],
+            elementVectors[1]
         );
         resetWorkingState();
-
-        return vector;
+        return mapVector;
     }
 
-    @Override
-    public boolean moveToNextRow() {
-        currentRowIndex++;
-        resizeIfNeeded();
+    private static Converter[] createElementConverters(
+        int initialBatchSize,
+        MapType typeFromClient,
+        GroupType typeFromFile) {
+        final GroupType innerMapType = (GroupType) typeFromFile.getType("key_value");
+        Converter[] elemConverters = new Converter[2];
+        elemConverters[0] = createConverter(
+            initialBatchSize,
+            typeFromClient.getKeyType(),
+            innerMapType.getType("key"));
+        elemConverters[1] = createConverter(
+            initialBatchSize,
+            typeFromClient.getValueType(),
+            innerMapType.getType("value"));
 
-        return nullability[currentRowIndex - 1];
-    }
-
-    @Override
-    public void resizeIfNeeded() {
-        if (nullability.length == currentRowIndex) {
-            int newSize = nullability.length * 2;
-            this.nullability = Arrays.copyOf(this.nullability, newSize);
-            setNullabilityToTrue(this.nullability, newSize / 2, newSize);
-            this.offsets = Arrays.copyOf(this.offsets, newSize + 1);
-        }
-    }
-
-    @Override
-    public void resetWorkingState() {
-        this.currentRowIndex = 0;
-        this.converter.currentEntryIndex = 0;
-        this.nullability = initNullabilityVector(nullability.length);
-        this.offsets = new int[offsets.length];
-    }
-
-    public static class MapCollector
-        extends GroupConverter {
-        private final Converter[] converters;
-
-        // working state
-        private int currentEntryIndex;
-
-        MapCollector(
-            int maxBatchSize,
-            MapType typeFromClient,
-            GroupType innerMapType) {
-            this.converters = new Converter[2];
-            this.converters[0] = ParquetConverters.createConverter(
-                maxBatchSize,
-                typeFromClient.getKeyType(),
-                innerMapType.getType("key"));
-            this.converters[1] = ParquetConverters.createConverter(
-                maxBatchSize,
-                typeFromClient.getValueType(),
-                innerMapType.getType("value"));
-        }
-
-        @Override
-        public Converter getConverter(int fieldIndex) {
-            switch (fieldIndex) {
-                case 0: // fall through
-                case 1:
-                    return converters[fieldIndex];
-                default:
-                    throw new IllegalArgumentException(
-                        "Invalid field index for a map column: " + fieldIndex);
-            }
-        }
-
-        @Override
-        public void start() {
-            for (int i = 0; i < converters.length; i++) {
-                if (!converters[i].isPrimitive()) {
-                    ((GroupConverter) converters[i]).start();
-                }
-            }
-        }
-
-        @Override
-        public void end() {
-            for (int i = 0; i < converters.length; i++) {
-                if (!converters[i].isPrimitive()) {
-                    ((GroupConverter) converters[i]).end();
-                }
-            }
-            for (int i = 0; i < converters.length; i++) {
-                ((ParquetConverters.BaseConverter) converters[i]).moveToNextRow();
-            }
-            currentEntryIndex++;
-        }
-
-        public ColumnVector getKeyVector() {
-            return ((ParquetConverters.BaseConverter) converters[0])
-                .getDataColumnVector(currentEntryIndex);
-        }
-
-        public ColumnVector getValueVector() {
-            return ((ParquetConverters.BaseConverter) converters[1])
-                .getDataColumnVector(currentEntryIndex);
-        }
+        return elemConverters;
     }
 }
