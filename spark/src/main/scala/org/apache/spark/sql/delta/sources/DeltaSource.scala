@@ -20,9 +20,7 @@ package org.apache.spark.sql.delta.sources
 import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
-import scala.util.control.NonFatal
 import scala.util.matching.Regex
 
 import org.apache.spark.sql.delta._
@@ -334,16 +332,40 @@ trait DeltaSourceBase extends Source
    * @param indexedFiles actions iterator from which to generate the DataFrame.
    */
   protected def createDataFrame(indexedFiles: Iterator[IndexedFile]): DataFrame = {
-    val addFilesList = indexedFiles
-        .map(_.getFileAction)
-        .filter(_.isInstanceOf[AddFile])
-        .asInstanceOf[Iterator[AddFile]].toArray
-
-    deltaLog.createDataFrame(
-      readSnapshotDescriptor,
-      addFilesList,
-      isStreaming = true
-    )
+    val addFiles = indexedFiles
+      .filter(_.getFileAction.isInstanceOf[AddFile])
+      .toSeq
+    val hasDeletionVectors =
+      addFiles.exists(_.getFileAction.asInstanceOf[AddFile].deletionVector != null)
+    if (hasDeletionVectors) {
+      // Read AddFiles from different versions in different scans.
+      // This avoids an issue where we might read the same file with different deletion vectors in
+      // the same scan, which we cannot support as long we broadcast a map of DVs for lookup.
+      // This code can be removed once we can pass the DVs into the scan directly together with the
+      // AddFile/PartitionedFile entry.
+      addFiles
+        .groupBy(_.version)
+        .values
+        .map { addFilesList =>
+          deltaLog.createDataFrame(
+            readSnapshotDescriptor,
+            addFilesList.map(_.getFileAction.asInstanceOf[AddFile]),
+            isStreaming = true)
+        }
+        .reduceOption(_ union _)
+        .getOrElse {
+          // If we filtered out all the values before the groupBy, just return an empty DataFrame.
+          deltaLog.createDataFrame(
+            readSnapshotDescriptor,
+            Seq.empty[AddFile],
+            isStreaming = true)
+        }
+    } else {
+      deltaLog.createDataFrame(
+        readSnapshotDescriptor,
+        addFiles.map(_.getFileAction.asInstanceOf[AddFile]),
+        isStreaming = true)
+    }
   }
 
   /**
@@ -771,6 +793,10 @@ case class DeltaSource(
     iter
   }
 
+  /**
+   * This method computes the initial snapshot to read when Delta Source was initialized on a fresh
+   * stream.
+   */
   protected def getSnapshotAt(version: Long): Iterator[IndexedFile] = {
     if (initialState == null || version != initialStateVersion) {
       super[DeltaSourceBase].cleanUpSnapshotResources()
@@ -778,6 +804,31 @@ case class DeltaSource(
 
       initialState = new DeltaSourceSnapshot(spark, snapshot, filters)
       initialStateVersion = version
+
+      // This handle a special case for schema tracking log when it's initialized but the initial
+      // snapshot's schema has changed, suppose:
+      // 1. The stream starts and looks at the initial snapshot to compute the starting offset, say
+      //    at version 0 with schema <a>
+      // 2. User renames a column, creates version 1 with schema <b>
+      // 3. The read compatibility check fails during scanning version 1, initializes schema log
+      //    using the initial snapshot's schema (<a>, because that's the safest thing to do as we
+      //    have not served any data from initial snapshot yet) and exits stream.
+      // 4. Stream restarts, since no starting offset was generated, it will retry loading the
+      //    initial snapshot, which is now at version 1, but the tracked schema <a> is now different
+      //    from the "new" initial snapshot schema! Worse, since schema tracking ignores any schema
+      //    changes inside initial snapshot, we will then be reading the files using a wrong schema!
+      // The below logic allows us to detect any discrepancies when reading initial snapshot using
+      // a tracked schema, and reinitialize the log if needed.
+      if (trackingMetadataChange &&
+          initialState.snapshot.version >= readSnapshotDescriptor.version) {
+        updateMetadataTrackingLogAndFailTheStreamIfNeeded(
+          Some(initialState.snapshot.metadata),
+          Some(initialState.snapshot.protocol),
+          initialState.snapshot.version,
+          // The new schema should replace the previous initialized schema for initial snapshot
+          replace = true
+        )
+      }
     }
     initialState.iterator()
   }

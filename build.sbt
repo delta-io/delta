@@ -17,6 +17,7 @@
 // scalastyle:off line.size.limit
 
 import java.nio.file.Files
+import Mima._
 import Unidoc._
 
 // Scala versions
@@ -95,7 +96,7 @@ lazy val spark = (project in file("spark"))
     name := "delta-spark",
     commonSettings,
     scalaStyleSettings,
-    mimaSettings,
+    sparkMimaSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
@@ -216,6 +217,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
 
@@ -246,6 +248,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
@@ -700,7 +703,7 @@ lazy val standalone = (project in file("connectors/standalone"))
     name := "delta-standalone-original",
     commonSettings,
     skipReleaseSettings,
-    // mimaSettings, // TODO(TD): re-enable this
+    standaloneMimaSettings,
     // When updating any dependency here, we should also review `pomPostProcess` in project
     // `standaloneCosmetic` and update it accordingly.
     libraryDependencies ++= scalaCollectionPar(scalaVersion.value) ++ Seq(
@@ -874,6 +877,7 @@ lazy val flink = (project in file("connectors/flink"))
     name := "delta-flink",
     commonSettings,
     releaseSettings,
+    flinkMimaSettings,
     publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
     Test / publishArtifact := false,
@@ -1035,62 +1039,6 @@ lazy val scalaStyleSettings = Seq(
   testScalastyle := (Test / scalastyle).toTask("").value,
 
   Test / test := ((Test / test) dependsOn testScalastyle).value
-)
-
-/*
- ********************
- *  MIMA settings   *
- ********************
- */
-
-/**
- * @return tuple of (major, minor, patch) versions extracted from a version string.
- *         e.g. "1.2.3" would return (1, 2, 3)
- */
-def getMajorMinorPatch(versionStr: String): (Int, Int, Int) = {
-  implicit def extractInt(str: String): Int = {
-    """\d+""".r.findFirstIn(str).map(java.lang.Integer.parseInt).getOrElse {
-      throw new Exception(s"Could not extract version number from $str in $version")
-    }
-  }
-
-  versionStr.split("\\.").toList match {
-    case majorStr :: minorStr :: patchStr :: _ =>
-      (majorStr, minorStr, patchStr)
-    case _ => throw new Exception(s"Could not parse version for $version.")
-  }
-}
-
-def getPrevName(currentVersion: String): String = {
-  val (major, minor, patch) = getMajorMinorPatch(currentVersion)
-  // name change in version 3.0.0, so versions > 3.0.0 should have delta-spark are prev version.
-  if (major >= 3 && (minor > 0 || patch > 0)) "delta-spark" else "delta-core"
-}
-
-def getPrevVersion(currentVersion: String): String = {
-  val (major, minor, patch) = getMajorMinorPatch(currentVersion)
-
-  val lastVersionInMajorVersion = Map(
-    0 -> "0.8.0",
-    1 -> "1.2.1",
-    2 -> "2.4.0"
-  )
-  if (minor == 0) {  // 1.0.0 or 2.0.0 or 3.0.0
-    lastVersionInMajorVersion.getOrElse(major - 1, {
-      throw new Exception(s"Last version of ${major - 1}.x.x not configured.")
-    })
-  } else if (patch == 0) {
-    s"$major.${minor - 1}.0"      // 1.1.0 -> 1.0.0
-  } else {
-    s"$major.$minor.${patch - 1}" // 1.1.1 -> 1.1.0
-  }
-}
-
-lazy val mimaSettings = Seq(
-  Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
-  mimaPreviousArtifacts :=
-    Set("io.delta" %% getPrevName(version.value) %  getPrevVersion(version.value)),
-  mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
 )
 
 /*

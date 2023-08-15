@@ -207,10 +207,12 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
   }
 
   protected def getDefaultSchemaLog(
-      sourceTrackingId: Option[String] = None
+      sourceTrackingId: Option[String] = None,
+      initializeEagerly: Boolean = true
   )(implicit log: DeltaLog): DeltaSourceMetadataTrackingLog =
     DeltaSourceMetadataTrackingLog.create(
-      spark, getDefaultSchemaLocation.toString, log.update(), sourceTrackingId)
+      spark, getDefaultSchemaLocation.toString, log.update(), sourceTrackingId,
+      initMetadataLogEagerly = initializeEagerly)
 
   protected def getDefaultCheckpoint(implicit log: DeltaLog): Path =
     new Path(log.dataPath, "_checkpoint")
@@ -345,11 +347,14 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       )
       schemaLog.writeNewMetadata(newSchema)
 
-      testStream(readStream(schemaLocation = Some(getDefaultSchemaLocation.toString)))(
+      testStream(
+          readStream(schemaLocation = Some(getDefaultSchemaLocation.toString),
+            // Ignore initial snapshot
+          startingVersion = Some(1L)))(
         StartStream(checkpointLocation = getDefaultCheckpoint.toString),
         ProcessAllAvailable(),
         // See how the schema returns one more dimension for `c`
-        CheckAnswer((-1 until 5).map(_.toString).map(i => (i, i, null)): _*)
+        CheckAnswer((0 until 5).map(_.toString).map(i => (i, i, null)): _*)
       )
 
       // Cannot use schema from another table
@@ -366,7 +371,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       schemaLog.writeNewMetadata(newSchemaWithTableId)
       assert {
         val e = intercept[DeltaAnalysisException] {
-          val q = readStream(schemaLocation = Some(getDefaultSchemaLocation.toString))
+          val q = readStream(
+              schemaLocation = Some(getDefaultSchemaLocation.toString),
+              // Ignore initial snapshot
+              startingVersion = Some(1L))
             .writeStream
             .option("checkpointLocation", getDefaultCheckpoint.toString)
             .outputMode("append")

@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults.internal.data.vector;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -98,6 +99,11 @@ public class DefaultConstantVector
     @Override
     public String getString(int rowId) {
         return (String) value;
+    }
+
+    @Override
+    public BigDecimal getDecimal(int rowId) {
+        return (BigDecimal) value;
     }
 
     @Override

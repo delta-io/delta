@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.util.FileNames.deltaFile
+import org.apache.spark.sql.delta.util.FileNames.{deltaFile, DeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.{SparkConf, SparkThrowable}
@@ -2031,6 +2031,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       readerFeatures = Some(Set.empty),
       writerFeatures = Some(Set.empty))
 
+  /** Assumes there is at least 1 commit. */
+  def getEarliestCommitVersion(deltaLog: DeltaLog): Long =
+    deltaLog.listFrom(0L).collectFirst { case DeltaFile(_, v) => v }.get
+
   test("Remove writer feature when table protocol does not support reader features") {
     withTempDir { dir =>
       val deltaLog = DeltaLog.forTable(spark, dir)
@@ -2262,7 +2266,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         writerFeatures = Some(Set(feature.name))))
   }
 
-  test("Remove reader+writer feature") {
+  for (advanceClockPastRetentionPeriod <- BOOLEAN_DOMAIN)
+  test(s"Remove reader+writer feature " +
+    s"advanceClockPastRetentionPeriod: $advanceClockPastRetentionPeriod") {
     withTempDir { dir =>
       val clock = new ManualClock(System.currentTimeMillis())
       val deltaLog = DeltaLog.forTable(spark, dir, clock)
@@ -2309,8 +2315,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         deltaLog.checkpoint(deltaLog.update())
 
         // Pretend retention period has passed.
-        clock.advance(deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
-          TimeUnit.DAYS.toMillis(1))
+        if (advanceClockPastRetentionPeriod) {
+          clock.advance(deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
+            TimeUnit.DAYS.toMillis(1))
+        }
 
         // Generate commit.
         spark.range(120, 140).write.format("delta").mode("append").save(dir.getCanonicalPath)
@@ -2319,18 +2327,40 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         // Cleanup logs.
         deltaLog.cleanUpExpiredLogs(deltaLog.update())
 
-        // History is now clean. We should be able to remove the feature.
-        AlterTableDropFeatureDeltaCommand(
-          DeltaTableV2(spark, deltaLog.dataPath),
-          TestRemovableReaderWriterFeature.name).run(spark)
-      }
+        // Verify commits before the checkpoint are cleaned.
+        val earliestExpectedCommitVersion =
+          if (advanceClockPastRetentionPeriod) deltaLog.findEarliestReliableCheckpoint().get else 0L
+        assert(getEarliestCommitVersion(deltaLog) === earliestExpectedCommitVersion)
 
-      // Reader+writer feature is removed from the features set.
-      val snapshot = deltaLog.update()
-      assert(snapshot.protocol === emptyProtocolWithReaderFeatures)
-      assert(!snapshot.metadata.configuration
-        .contains(TestRemovableReaderWriterFeature.TABLE_PROP_KEY))
-      assertPropertiesAndShowTblProperties(deltaLog)
+        val dropCommand = AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          TestRemovableReaderWriterFeature.name)
+
+        if (advanceClockPastRetentionPeriod) {
+          // History is now clean. We should be able to remove the feature.
+          dropCommand.run(spark)
+
+          // Reader+writer feature is removed from the features set.
+          val snapshot = deltaLog.update()
+          assert(snapshot.protocol === emptyProtocolWithReaderFeatures)
+          assert(!snapshot.metadata.configuration
+            .contains(TestRemovableReaderWriterFeature.TABLE_PROP_KEY))
+          assertPropertiesAndShowTblProperties(deltaLog)
+        } else {
+          // When the clock did not advance the logs are not cleaned. We should detect there
+          // are still versions that contain traces of the feature.
+          val e3 = intercept[DeltaTableFeatureException] {
+            dropCommand.run(spark)
+          }
+          checkError(
+            exception = e3,
+            errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+            parameters = Map(
+              "feature" -> TestRemovableReaderWriterFeature.name,
+              "logRetentionPeriodKey" -> "delta.logRetentionDuration",
+              "logRetentionPeriod" -> "30 days"))
+        }
+      }
 
       // Validate extra commits.
       val table = io.delta.tables.DeltaTable.forPath(deltaLog.dataPath.toString)
@@ -2460,11 +2490,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           DeltaTableV2(spark, deltaLog.dataPath),
           Map(DeltaConfigs.LOG_RETENTION.key -> "1 DAY")).run(spark)
 
-        // Pretend retention period has passed.
-        clock.advance(deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
-          TimeUnit.DAYS.toMillis(1))
-
-        // Retention period had passed but metadata is not cleaned yet. Attempt should fail.
+        // Metadata is not cleaned yet. Attempt should fail.
         val e2 = intercept[DeltaTableFeatureException] {
           AlterTableDropFeatureDeltaCommand(
             DeltaTableV2(spark, deltaLog.dataPath),
@@ -2478,9 +2504,20 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             "logRetentionPeriodKey" -> "delta.logRetentionDuration",
             "logRetentionPeriod" -> "1 days"))
 
-        // Cleanup logs.
         deltaLog.checkpoint(deltaLog.update())
+        spark.range(1, 100).write.format("delta").mode("append").save(dir.getCanonicalPath)
+        deltaLog.checkpoint(deltaLog.update())
+
+        // Pretend retention period has passed.
+        clock.advance(deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
+          TimeUnit.DAYS.toMillis(1))
+
+        // Cleanup logs.
         deltaLog.cleanUpExpiredLogs(deltaLog.update())
+
+        // Verify commits before the checkpoint are cleaned.
+        val earliestExpectedCommitVersion = deltaLog.findEarliestReliableCheckpoint().get
+        assert(getEarliestCommitVersion(deltaLog) === earliestExpectedCommitVersion)
 
         // History is now clean. We should be able to remove the feature.
         AlterTableDropFeatureDeltaCommand(
@@ -2592,6 +2629,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
         // Cleanup logs.
         deltaLog.cleanUpExpiredLogs(deltaLog.update())
+
+        // Verify commits before the checkpoint are cleaned.
+        val earliestExpectedCommitVersion = deltaLog.findEarliestReliableCheckpoint().get
+        assert(getEarliestCommitVersion(deltaLog) === earliestExpectedCommitVersion)
 
         // The unrelated metadata change should not interfere with validation and we should
         // be able to downgrade the protocol.

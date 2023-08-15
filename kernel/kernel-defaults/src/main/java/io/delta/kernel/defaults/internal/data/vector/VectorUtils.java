@@ -50,6 +50,8 @@ public class VectorUtils {
             return vector.getMap(rowId);
         } else if (dataType instanceof ArrayType) {
             return vector.getArray(rowId);
+        } else if (dataType instanceof DecimalType) {
+            return vector.getDecimal(rowId);
         }
 
         throw new UnsupportedOperationException(dataType + " is not supported yet");

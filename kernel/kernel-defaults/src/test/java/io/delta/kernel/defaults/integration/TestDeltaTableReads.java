@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults.integration;
 
+import java.math.BigDecimal;
 import java.sql.Date;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -71,7 +72,8 @@ public class TestDeltaTableReads
                 (float) i,
                 (double) i,
                 String.valueOf(i),
-                new byte[] {(byte) i, (byte) i}
+                new byte[] {(byte) i, (byte) i,},
+                new BigDecimal(i)
             );
         }
 
@@ -102,6 +104,7 @@ public class TestDeltaTableReads
                 String.valueOf(i),
                 "null",
                 daysSinceEpoch(Date.valueOf("2021-09-08")),
+                new BigDecimal(i),
                 Arrays.asList(
                     row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), i),
                     row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), i),
@@ -125,6 +128,7 @@ public class TestDeltaTableReads
         }
 
         builder = builder.addRow(
+            null,
             null,
             null,
             null,
@@ -330,7 +334,8 @@ public class TestDeltaTableReads
                 (float) i,
                 (double) i,
                 String.valueOf(i),
-                new byte[] {(byte) i, (byte) i}
+                new byte[] {(byte) i, (byte) i},
+                new BigDecimal(i)
             );
         }
 

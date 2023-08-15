@@ -15,8 +15,11 @@
  */
 package io.delta.kernel.defaults.internal.data;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -35,9 +38,21 @@ public class DefaultRowBasedColumnarBatch
     private final StructType schema;
     private final List<Row> rows;
 
+    /**
+     * Holds the actual ColumnVectors, once the rows have been parsed for that column.
+     *
+     * Uses lazy initialization, i.e. a value of Optional.empty() at an ordinal means we have not
+     * parsed the rows for that column yet.
+     */
+    private final List<Optional<ColumnVector>> columnVectors;
+
     public DefaultRowBasedColumnarBatch(StructType schema, List<Row> rows) {
         this.schema = schema;
         this.rows = rows;
+        this.columnVectors = new ArrayList<>(schema.length());
+        for (int i = 0; i < schema.length(); i++) {
+            columnVectors.add(Optional.empty());
+        }
     }
 
     @Override
@@ -52,8 +67,53 @@ public class DefaultRowBasedColumnarBatch
 
     @Override
     public ColumnVector getColumnVector(int ordinal) {
-        StructField field = schema.at(ordinal);
-        return new DefaultColumnVector(field.getDataType(), rows, ordinal);
+        if (ordinal < 0 || ordinal >= columnVectors.size()) {
+            throw new IllegalArgumentException("Invalid ordinal: " + ordinal);
+        }
+
+        if (!columnVectors.get(ordinal).isPresent()) {
+            final StructField field = schema.at(ordinal);
+            final ColumnVector vector = new DefaultColumnVector(field.getDataType(), rows, ordinal);
+            columnVectors.set(ordinal, Optional.of(vector));
+        }
+
+        return columnVectors.get(ordinal).get();
+    }
+
+    /**
+     * TODO this implementation sucks
+     */
+    @Override
+    public ColumnarBatch withDeletedColumnAt(int ordinal) {
+        if (ordinal < 0 || ordinal >= columnVectors.size()) {
+            throw new IllegalArgumentException("Invalid ordinal: " + ordinal);
+        }
+
+        // Update the schema
+        final List<StructField> newStructFields = new ArrayList<>(schema.fields());
+        newStructFields.remove(ordinal);
+        final StructType newSchema = new StructType(newStructFields);
+
+        // Fill all the vectors, except the one being deleted
+        for (int i = 0; i < columnVectors.size(); i++) {
+            if (i == ordinal) continue;
+            getColumnVector(i);
+        }
+
+        // Delete the vector at the target ordinal
+        final List<Optional<ColumnVector>> newColumnVectors = new ArrayList<>(columnVectors);
+        newColumnVectors.remove(ordinal);
+
+        // Fill the new array
+        ColumnVector[] newColumnVectorArr = new ColumnVector[newColumnVectors.size()];
+        for (int i = 0; i < newColumnVectorArr.length; i++) {
+            newColumnVectorArr[i] = newColumnVectors.get(i).get();
+        }
+
+        return new DefaultColumnarBatch(
+            getSize(), // # of rows hasn't changed
+            newSchema,
+            newColumnVectorArr);
     }
 
     /**
@@ -135,6 +195,12 @@ public class DefaultRowBasedColumnarBatch
         public String getString(int rowId) {
             assertValidRowId(rowId);
             return rows.get(rowId).getString(columnOrdinal);
+        }
+
+        @Override
+        public BigDecimal getDecimal(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getDecimal(columnOrdinal);
         }
 
         @Override

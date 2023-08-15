@@ -17,6 +17,8 @@ package io.delta.kernel.defaults.internal.parquet;
 
 import java.io.File;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.sql.Date;
 import java.time.LocalDate;
@@ -63,7 +65,7 @@ public class TestParquetBatchReader {
         .add("longType", LongType.INSTANCE)
         .add("floatType", FloatType.INSTANCE)
         .add("doubleType", DoubleType.INSTANCE)
-        // .add("decimal", new DecimalType(10, 2)) // TODO
+        .add("decimal", new DecimalType(10, 2))
         .add("booleanType", BooleanType.INSTANCE)
         .add("stringType", StringType.INSTANCE)
         .add("binaryType", BinaryType.INSTANCE)
@@ -318,7 +320,15 @@ public class TestParquetBatchReader {
                     throw new UnsupportedOperationException("not yet implemented: " + name);
                 }
                 case "decimal": {
-                    throw new UnsupportedOperationException("not yet implemented: " + name);
+                    BigDecimal expValue = (rowId % 67 != 0) ?
+                            // Value is rounded to scale=2 when written
+                            new BigDecimal(rowId * 123.52).setScale(2, RoundingMode.HALF_UP) : null;
+                    if (expValue == null) {
+                        assertTrue(vector.isNullAt(batchWithIdx._2));
+                    } else {
+                        assertEquals(expValue, vector.getDecimal(batchWithIdx._2));
+                    }
+                    break;
                 }
                 case "nested_struct": {
                     Row struct = vector.getStruct(batchWithIdx._2);

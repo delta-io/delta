@@ -81,7 +81,7 @@ public class DefaultColumnarBatch
 
     @Override
     public ColumnarBatch withDeletedColumnAt(int ordinal) {
-        if (ordinal < 0 || ordinal > columnVectors.size()) {
+        if (ordinal < 0 || ordinal >= columnVectors.size()) {
             throw new IllegalArgumentException("Invalid ordinal: " + ordinal);
         }
 

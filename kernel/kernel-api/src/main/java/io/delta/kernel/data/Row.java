@@ -16,6 +16,7 @@
 
 package io.delta.kernel.data;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -84,6 +85,12 @@ public interface Row {
      * Throws error if the column at given ordinal is not of varchar type,
      */
     String getString(int ordinal);
+
+    /**
+     * Return decimal value of the column located at the given ordinal.
+     * Throws error if the column at given ordinal is not of decimal type,
+     */
+    BigDecimal getDecimal(int ordinal);
 
     /**
      * Return binary value of the column located at the given ordinal.

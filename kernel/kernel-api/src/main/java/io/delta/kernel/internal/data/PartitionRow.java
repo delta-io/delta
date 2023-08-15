@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.data;
 
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -97,6 +98,11 @@ public class PartitionRow
     @Override
     public String getString(int ordinal) {
         return ordinalToValue.get(ordinal);
+    }
+
+    @Override
+    public BigDecimal getDecimal(int ordinal) {
+        throw new UnsupportedOperationException("not yet implemented");
     }
 
     @Override
