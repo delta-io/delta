@@ -17,7 +17,7 @@ In this section, we will walk through how to build a very simple single-process 
 You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/kernel/examples) present in the Delta code repository.
 
 ### Step 1: Set up Delta Kernel for your project
-You need to `io.delta:delta-kernel.api` and `io.delta:delta-kernel-defaults` dependencies. Following is an example Maven `pom` file dependency list.
+You need to `io.delta:delta-kernel.api` and `io.delta:delta-kernel-default` dependencies. Following is an example Maven `pom` file dependency list.
 
 ```xml
 <dependencies>
@@ -29,7 +29,7 @@ You need to `io.delta:delta-kernel.api` and `io.delta:delta-kernel-defaults` dep
 
   <dependency>
     <groupId>io.delta</groupId>
-    <artifactId>delta-kernel-defaults</artifactId>
+    <artifactId>delta-kernel-default</artifactId>
     <version>${delta-kernel.version}</version>
   </dependency>
 </dependencies>
@@ -212,7 +212,7 @@ As discussed above, you can import one or both of the artifacts as follows:
 <!-- Optional depdendency -->
 <dependency>
   <groupId>io.delta</groupId>
-  <artifactId>delta-kernel-defaults</artifactId>
+  <artifactId>delta-kernel-default</artifactId>
   <version>${delta-kernel.version}</version>
 </dependency>
 ```
