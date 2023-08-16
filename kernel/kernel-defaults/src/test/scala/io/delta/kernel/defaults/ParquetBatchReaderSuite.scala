@@ -112,4 +112,9 @@ class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
 
     assert(expectedResult == result.toSet)
   }
+
+  //////////////////////////////////////////////////////////////////////////////////
+  // Timestamp type tests
+  //////////////////////////////////////////////////////////////////////////////////
+  // TODO move over from DeltaTableReadsSuite once there is better testing infra
 }

@@ -64,7 +64,7 @@ class ParquetConverters {
         } else if (typeFromClient instanceof ShortType) {
             return new ShortColumnConverter(initialBatchSize);
         } else if (typeFromClient instanceof LongType) {
-            return new LongColumnConverter(initialBatchSize);
+            return new LongColumnConverter(typeFromClient, initialBatchSize);
         } else if (typeFromClient instanceof FloatType) {
             return new FloatColumnConverter(initialBatchSize);
         } else if (typeFromClient instanceof DoubleType) {
@@ -72,9 +72,9 @@ class ParquetConverters {
         } else if (typeFromClient instanceof DecimalType) {
             return DecimalConverters.createDecimalConverter(
                 initialBatchSize, (DecimalType) typeFromClient, typeFromFile);
+        } else if (typeFromClient instanceof TimestampType) {
+            return TimestampConverters.createTimestampConverter(initialBatchSize, typeFromFile);
         }
-        // else if (typeFromClient instanceof TimestampType) {
-        // }
 
         throw new UnsupportedOperationException(typeFromClient + " is not supported");
     }
@@ -308,14 +308,16 @@ class ParquetConverters {
         }
     }
 
-    public static class LongColumnConverter
-        extends BasePrimitiveColumnConverter {
+    public static class LongColumnConverter extends BasePrimitiveColumnConverter {
 
+        private final DataType dataType;
         // working state
         private long[] values;
 
-        LongColumnConverter(int initialBatchSize) {
+        LongColumnConverter(DataType dataType, int initialBatchSize) {
             super(initialBatchSize);
+            checkArgument(dataType instanceof LongType || dataType instanceof TimestampType);
+            this.dataType = dataType;
             this.values = new long[initialBatchSize];
         }
 
@@ -329,7 +331,7 @@ class ParquetConverters {
         @Override
         public ColumnVector getDataColumnVector(int batchSize) {
             ColumnVector vector =
-                new DefaultLongVector(batchSize, Optional.of(nullability), values);
+                new DefaultLongVector(dataType, batchSize, Optional.of(nullability), values);
             this.nullability = initNullabilityVector(nullability.length);
             this.values = new long[values.length];
             this.currentRowIndex = 0;
@@ -470,7 +472,7 @@ class ParquetConverters {
         extends LongColumnConverter {
 
         FileRowIndexColumnConverter(int initialBatchSize) {
-            super(initialBatchSize);
+            super(LongType.INSTANCE, initialBatchSize);
         }
 
         @Override

@@ -20,19 +20,12 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
-import java.sql.Date;
-import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import org.apache.hadoop.conf.Configuration;
 import org.junit.Test;
+import static io.delta.golden.GoldenTableUtils.goldenTableFile;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -47,16 +40,19 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
+import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 
 public class TestParquetBatchReader {
     /**
      * Test reads data from a Parquet file with data of various combinations of data types supported
-     * byt Delta Lake table protocol. Code for generating the golden parquet files is located:
-     * https://gist.github.com/vkorukanti/238bad726545e466202278966989f02b (TODO: Move this a better
-     * place).
+     * by the Delta Lake table protocol.
      */
     private static final String ALL_TYPES_FILE =
-        DefaultKernelTestUtils.getTestResourceFilePath("parquet/all_types.parquet");
+        Arrays.stream(goldenTableFile("parquet-all-types").listFiles())
+            .filter(file -> file.getName().endsWith(".parquet"))
+            .map(File::getAbsolutePath)
+            .findFirst()
+            .get();
 
     private static final StructType ALL_TYPES_FILE_SCHEMA = new StructType()
         .add("byteType", ByteType.INSTANCE)
@@ -70,7 +66,7 @@ public class TestParquetBatchReader {
         .add("stringType", StringType.INSTANCE)
         .add("binaryType", BinaryType.INSTANCE)
         .add("dateType", DateType.INSTANCE)
-        // .add("timestampType", TimestampType.INSTANCE) // TODO
+        .add("timestampType", TimestampType.INSTANCE)
         .add("nested_struct",
             new StructType()
                 .add("aa", StringType.INSTANCE)
@@ -84,8 +80,6 @@ public class TestParquetBatchReader {
             IntegerType.INSTANCE,
             new StructType().add("ab", LongType.INSTANCE),
             true));
-
-    private static final LocalDate EPOCH = new Date(0).toLocalDate().ofEpochDay(0);
 
     @Test
     public void readAllTypesOfData()
@@ -249,15 +243,14 @@ public class TestParquetBatchReader {
                     break;
                 }
                 case "datetype": {
-                    // Set `-Duser.timezone="UTC"` as JVM arg to pass this test in computers
-                    // whose local timezone is non-UTC zone.
-                    LocalDate expValue = (rowId % 61 != 0) ?
-                        new Date(rowId * 20000000L).toLocalDate() : null;
+                    Integer expValue = (rowId % 61 != 0) ?
+                        (int) Math.floorDiv(
+                            rowId * 20000000L,
+                            DefaultKernelUtils.DateTimeConstants.MILLIS_PER_DAY) : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
                     } else {
-                        long numDaysSinceEpoch = ChronoUnit.DAYS.between(EPOCH, expValue);
-                        assertEquals(numDaysSinceEpoch, vector.getInt(batchWithIdx._2));
+                        assertEquals(expValue.intValue(), vector.getInt(batchWithIdx._2));
                     }
                     break;
                 }
@@ -317,7 +310,15 @@ public class TestParquetBatchReader {
                     break;
                 }
                 case "timestamptype": {
-                    throw new UnsupportedOperationException("not yet implemented: " + name);
+                    // Tests only for spark.sql.parquet.outputTimestampTyp = INT96, other formats
+                    // are tested in end-to-end tests in DeltaTableReadsSuite
+                    Long expValue = (rowId % 62 != 0) ? 23423523L * rowId * 1000 : null;
+                    if (expValue == null) {
+                        assertTrue(vector.isNullAt(batchWithIdx._2));
+                    } else {
+                        assertEquals(expValue.longValue(), vector.getLong(batchWithIdx._2));
+                    }
+                    break;
                 }
                 case "decimal": {
                     BigDecimal expValue = (rowId % 67 != 0) ?
@@ -393,12 +394,8 @@ public class TestParquetBatchReader {
                         Long expValue0 = (rowId % 29 == 0) ? null : (rowId + 2L);
                         assertEquals(expValue0, actValue0);
 
-                        // entry 1: key = if (rowId % 27 != 0) rowId + 2 else null
-                        // TODO: Not sure if this is a bug or expected behavior. In Delta-Spark,
-                        // whenever the map key value is null - it is stored as 0. Not sure
-                        // what happens for non-integer keys.
-                        // Integer key1 = (rowId % 27 == 0) ? null : rowId + 2;
-                        Integer key1 = (rowId % 27 == 0) ? 0 : rowId + 2;
+                        // entry 1: key = i*2
+                        Integer key1 = rowId * 2;
                         Long actValue1 = actValue.get(key1);
                         Long expValue1 = rowId + 9L;
                         assertEquals(expValue1, actValue1);

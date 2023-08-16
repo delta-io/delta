@@ -17,7 +17,6 @@
 package io.delta.kernel.defaults.client;
 
 import java.sql.Date;
-import java.sql.Timestamp;
 import java.util.Optional;
 
 import io.delta.kernel.client.ExpressionHandler;
@@ -85,11 +84,8 @@ public class DefaultExpressionHandler
         } else if (dataType instanceof DateType) {
             int numOfDaysSinceEpoch = daysSinceEpoch((Date) result);
             return new DefaultConstantVector(dataType, size, numOfDaysSinceEpoch);
-        } else if (dataType instanceof TimestampType) {
-            Timestamp timestamp = (Timestamp) result;
-            long micros = timestamp.getTime() * 1000;
-            return new DefaultConstantVector(dataType, size, micros);
         }
+        // TODO: support timestamptype
 
         throw new UnsupportedOperationException(
             "unsupported expression encountered: " + literal);

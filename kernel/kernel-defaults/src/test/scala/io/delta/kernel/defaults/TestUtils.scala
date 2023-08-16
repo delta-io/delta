@@ -13,10 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.defaults
 
-import java.util.Optional
+import java.util.{Optional, TimeZone}
 
 import collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
@@ -117,5 +116,15 @@ trait TestUtils {
       }
     }
     result
+  }
+
+  def withTimeZone(zoneId: String)(f: => Unit): Unit = {
+    val currentDefault = TimeZone.getDefault
+    try {
+      TimeZone.setDefault(TimeZone.getTimeZone(zoneId))
+      f
+    } finally {
+      TimeZone.setDefault(currentDefault)
+    }
   }
 }
