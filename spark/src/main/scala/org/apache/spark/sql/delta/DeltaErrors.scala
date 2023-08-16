@@ -2829,7 +2829,8 @@ trait DeltaErrorsBase
 
   def cannotContinueStreamingPostSchemaEvolution(
       nonAdditiveSchemaChangeOpType: String,
-      schemaChangeVersion: Long,
+      previousSchemaChangeVersion: Long,
+      currentSchemaChangeVersion: Long,
       checkpointHash: Int,
       allowAllMode: String,
       opTypeSpecificAllowMode: String): Throwable = {
@@ -2837,14 +2838,21 @@ trait DeltaErrorsBase
     new DeltaRuntimeException(
       errorClass = "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION",
       messageParameters = Array(
-        nonAdditiveSchemaChangeOpType, schemaChangeVersion.toString,
+        nonAdditiveSchemaChangeOpType,
+        previousSchemaChangeVersion.toString,
+        currentSchemaChangeVersion.toString,
+        currentSchemaChangeVersion.toString,
         // Allow this stream to pass for this particular version
-        s"$allowAllSqlConfKey.ckpt_$checkpointHash", schemaChangeVersion.toString,
+        s"$allowAllSqlConfKey.ckpt_$checkpointHash",
+        currentSchemaChangeVersion.toString,
         // Allow this stream to pass
-        s"$allowAllSqlConfKey.ckpt_$checkpointHash", "always",
+        s"$allowAllSqlConfKey.ckpt_$checkpointHash",
+        "always",
         // Allow all streams to pass
-        allowAllSqlConfKey, "always",
-        allowAllMode, opTypeSpecificAllowMode
+        allowAllSqlConfKey,
+        "always",
+        allowAllMode,
+        opTypeSpecificAllowMode
       )
     )
   }

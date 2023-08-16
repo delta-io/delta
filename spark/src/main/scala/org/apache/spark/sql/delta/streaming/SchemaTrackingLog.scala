@@ -118,7 +118,6 @@ class SchemaTrackingLog[T <: PartitionAndDataSchema: ClassTag: Manifest](
   // already exists is illegal.
   // Subclass can leverage this to compare the differences.
   private var currentTrackedSchema: Option[T] = schemaAndSeqNumAtLogInit.map(_._2)
-  private var previousTrackedSchema: Option[T] = get(currentSeqNum - 1L)
 
 
   /**
@@ -127,9 +126,14 @@ class SchemaTrackingLog[T <: PartitionAndDataSchema: ClassTag: Manifest](
   def getCurrentTrackedSchema: Option[T] = currentTrackedSchema
 
   /**
-   * Get the previously tracked schema entry by this schema log
+   * Get the latest tracked schema batch ID / seq num by this log
    */
-  def getPreviousTrackedSchema: Option[T] = previousTrackedSchema
+  def getCurrentTrackedSeqNum: Long = currentSeqNum
+
+  /**
+   * Get the tracked schema at specified seq num.
+   */
+  def getTrackedSchemaAtSeqNum(seqNum: Long): Option[T] = get(seqNum)
 
   /**
    * Deserializes the log entry from input stream.
@@ -161,27 +165,10 @@ class SchemaTrackingLog[T <: PartitionAndDataSchema: ClassTag: Manifest](
       throw FailedToEvolveSchema
     }
 
-    previousTrackedSchema = currentTrackedSchema
     currentTrackedSchema = Some(newSchema)
     currentSeqNum = nextSeqNumToWrite
     nextSeqNumToWrite += 1
     newSchema
-  }
-
-  /**
-   * Replace the current (latest) entry in the schema log with a new entry.
-   */
-  def replaceCurrentSchemaInLog(newSchema: T): Unit = synchronized {
-    logInfo(s"Replacing the latest metadata version $currentSeqNum in the metadata log")
-    // Ensure the current batch id is also the global latest.
-    assert(getLatestBatchId().forall(_ == currentSeqNum))
-    // Delete the current schema and then replace it with the new schema
-    purgeAfter(currentSeqNum - 1)
-    // Similar to how MicrobatchExecution detects concurrent checkpoint updates
-    if (!add(currentSeqNum, newSchema)) {
-      throw FailedToEvolveSchema
-    }
-    currentTrackedSchema = Some(newSchema)
   }
 }
 
