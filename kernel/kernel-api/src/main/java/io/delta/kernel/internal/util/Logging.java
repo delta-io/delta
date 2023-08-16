@@ -30,6 +30,7 @@ public interface Logging {
     default void logDebug(String msg) {
         System.out.println(this.getClass() + " :: " + msg);
     }
+
     default void logDebug(Supplier<String> msg) {
         System.out.println(this.getClass() + " :: " + msg.get());
     }

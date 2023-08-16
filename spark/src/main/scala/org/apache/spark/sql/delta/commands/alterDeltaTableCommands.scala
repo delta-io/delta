@@ -190,6 +190,24 @@ case class AlterTableUnsetPropertiesDeltaCommand(
  * {{{
  *   ALTER TABLE t DROP FEATURE f
  * }}}
+ *
+ * The operation consists of two stages (see [[RemovableFeature]]):
+ *  1) preDowngradeCommand. This command is responsible for removing any data and metadata
+ *     related to the feature.
+ *  2) Protocol downgrade. Removes the feature from the current version's protocol.
+ *     During this stage we also validate whether all traces of the feature-to-be-removed are gone.
+ *
+ *  For removing writer features the 2 steps above are sufficient. However, for removing
+ *  reader+writer features we also need to ensure the history does not contain any traces of the
+ *  removed feature. The user journey is the following:
+ *
+ *  1) The user runs the remove feature command which removes any traces of the feature from
+ *     the latest version. The removal command throws a message that there was partial success
+ *     and the retention period must pass before a protocol downgrade is possible.
+ *  2) The user runs again the command after the retention period is over. The command checks the
+ *     current state again and the history. If everything is clean, it proceeds with the protocol
+ *     downgrade. Note, the retention period is always rounded up so that the cutoff is at a
+ *     midnight UTC boundary.
  */
 case class AlterTableDropFeatureDeltaCommand(
     table: DeltaTableV2,
@@ -199,7 +217,7 @@ case class AlterTableDropFeatureDeltaCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeature") {
-      // This guard is only temporary while the remove feature is in development.
+      // This guard is only temporary while the drop feature is in development.
       require(sparkSession.conf.get(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED))
 
       val removableFeature = TableFeature.featureNameToFeature(featureName) match {
@@ -223,16 +241,45 @@ case class AlterTableDropFeatureDeltaCommand(
       //
       // Note, for features that cannot be disabled we solely rely for correctness on
       // validateRemoval.
-      removableFeature.preDowngradeCommand(table).run()
+      val isReaderWriterFeature = removableFeature.isReaderWriterFeature
+      val preDowngradeMadeChanges =
+        removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded()
+      if (preDowngradeMadeChanges && isReaderWriterFeature) {
+        // If the pre-downgrade command made changes, then the table's historical versions
+        // certainly still contain traces of the feature. We don't have to run an expensive
+        // explicit check, but instead we fail straight away.
+        throw DeltaErrors.dropTableFeatureWaitForRetentionPeriod(
+          featureName, table.snapshot.metadata)
+      }
 
       val txn = startTransaction(sparkSession)
+      val snapshot = txn.snapshot
 
       // Verify whether all requirements hold before performing the protocol downgrade.
       // If any concurrent transactions interfere with the protocol downgrade txn we
       // revalidate the requirements against the snapshot of the winning txn.
-      if (!removableFeature.validateRemoval(txn.snapshot)) {
+      if (!removableFeature.validateRemoval(snapshot)) {
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
       }
+
+      // For reader+writer features, before downgrading the protocol we need to ensure there are no
+      // traces of the feature in past versions. If traces are found, the user is advised to wait
+      // until the retention period is over. This is a slow operation.
+      // Note, if this txn conflicts, we check all winning commits for traces of the feature.
+      // Therefore, we do not need to check again for historical versions during conflict
+      // resolution.
+      if (isReaderWriterFeature) {
+        // Run a log cleanup first to make sure there is no concurrent metadataCleanup during
+        // findEarliestReliableCheckpoint.
+        deltaLog.cleanUpExpiredLogs(snapshot)
+        val historyContainsFeature = removableFeature.historyContainsFeature(
+          spark = sparkSession,
+          downgradeTxnReadSnapshot = snapshot)
+        if (historyContainsFeature) {
+          throw DeltaErrors.dropTableFeatureHistoricalVersionsExist(featureName, snapshot.metadata)
+        }
+      }
+
       txn.updateProtocol(txn.protocol.removeFeature(removableFeature))
       txn.commit(Nil, DeltaOperations.DropTableFeature(featureName))
       Nil
@@ -596,6 +643,51 @@ case class AlterTableChangeColumnDeltaCommand(
         s"'${UnresolvedAttribute(Seq(newColumn.name)).name}' with type " +
           s"'${newColumn.dataType}" +
           s" (nullable = ${newColumn.nullable})'")
+    }
+  }
+}
+
+/**
+ * A command to replace columns for a Delta table, support changing the comment of a column,
+ * reordering columns, and loosening nullabilities.
+ *
+ * The syntax of using this command in SQL is:
+ * {{{
+ *   ALTER TABLE table_identifier REPLACE COLUMNS (col_spec[, col_spec ...]);
+ * }}}
+ */
+case class AlterTableReplaceColumnsDeltaCommand(
+    table: DeltaTableV2,
+    columns: Seq[StructField])
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    recordDeltaOperation(table.deltaLog, "delta.ddl.alter.replaceColumns") {
+      val txn = startTransaction(sparkSession)
+
+      val metadata = txn.metadata
+      val existingSchema = metadata.schema
+
+      val resolver = sparkSession.sessionState.conf.resolver
+      val changingSchema = StructType(columns)
+
+      SchemaUtils.canChangeDataType(existingSchema, changingSchema, resolver,
+        txn.metadata.columnMappingMode, failOnAmbiguousChanges = true).foreach { operation =>
+        throw DeltaErrors.alterTableReplaceColumnsException(
+          existingSchema, changingSchema, operation)
+      }
+
+      val newSchema = SchemaUtils.changeDataType(existingSchema, changingSchema, resolver)
+        .asInstanceOf[StructType]
+
+      SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
+      SchemaUtils.checkSchemaFieldNames(newSchema, metadata.columnMappingMode)
+
+      val newMetadata = metadata.copy(schemaString = newSchema.json)
+      txn.updateMetadata(newMetadata)
+      txn.commit(Nil, DeltaOperations.ReplaceColumns(columns))
+
+      Nil
     }
   }
 }

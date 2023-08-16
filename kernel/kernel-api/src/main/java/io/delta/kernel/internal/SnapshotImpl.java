@@ -31,11 +31,9 @@ import io.delta.kernel.internal.snapshot.LogSegment;
 /**
  * Implementation of {@link Snapshot}.
  */
-public class SnapshotImpl implements Snapshot
-{
+public class SnapshotImpl implements Snapshot {
     private final Path dataPath;
     private final long version;
-
     private final LogReplay logReplay;
     private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
 
@@ -45,8 +43,7 @@ public class SnapshotImpl implements Snapshot
         long version,
         LogSegment logSegment,
         TableClient tableClient,
-        long timestamp)
-    {
+        long timestamp) {
         this.dataPath = dataPath;
         this.version = version;
 
@@ -55,24 +52,21 @@ public class SnapshotImpl implements Snapshot
             dataPath,
             tableClient,
             logSegment);
-        this.protocolAndMetadata = logReplay.lazyLoadProtocolAndMetadata();
+        this.protocolAndMetadata = new Lazy<>(logReplay::loadProtocolAndMetadata);
     }
 
     @Override
-    public long getVersion(TableClient tableClient)
-    {
+    public long getVersion(TableClient tableClient) {
         return version;
     }
 
     @Override
-    public StructType getSchema(TableClient tableClient)
-    {
+    public StructType getSchema(TableClient tableClient) {
         return getMetadata().getSchema();
     }
 
     @Override
-    public ScanBuilder getScanBuilder(TableClient tableClient)
-    {
+    public ScanBuilder getScanBuilder(TableClient tableClient) {
         return new ScanBuilderImpl(
             dataPath,
             protocolAndMetadata,
@@ -82,13 +76,11 @@ public class SnapshotImpl implements Snapshot
         );
     }
 
-    public Metadata getMetadata()
-    {
+    public Metadata getMetadata() {
         return protocolAndMetadata.get()._2;
     }
 
-    public Protocol getProtocol()
-    {
+    public Protocol getProtocol() {
         return protocolAndMetadata.get()._1;
     }
 }

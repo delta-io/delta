@@ -18,12 +18,10 @@ package io.delta.kernel.types;
 /**
  * The data type representing {@code byte} type values.
  */
-public class ByteType extends BasePrimitiveType
-{
+public class ByteType extends BasePrimitiveType {
     public static final ByteType INSTANCE = new ByteType();
 
-    private ByteType()
-    {
+    private ByteType() {
         super("byte");
     }
 }

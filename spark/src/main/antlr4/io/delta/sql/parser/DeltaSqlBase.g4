@@ -86,6 +86,8 @@ statement
       constraint                                                        #addTableConstraint
     | ALTER TABLE table=qualifiedName
         DROP CONSTRAINT (IF EXISTS)? name=identifier                    #dropTableConstraint
+    | ALTER TABLE table=qualifiedName
+        DROP FEATURE featureName=featureNameValue                       #alterTableDropFeature
     | OPTIMIZE (path=STRING | table=qualifiedName)
         (WHERE partitionPredicate=predicateToken)?
         (zorderSpec)?                                                   #optimizeTable
@@ -146,6 +148,11 @@ propertyValue
     | booleanValue
     | identifier LEFT_PAREN stringLit COMMA stringLit RIGHT_PAREN
     | value=stringLit
+    ;
+
+featureNameValue
+    : identifier
+    | stringLit
     ;
 
 stringLit
@@ -218,6 +225,7 @@ nonReserved
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
     | SHOW | COLUMNS | IN | FROM | NO | STATISTICS
     | CLONE | SHALLOW
+    | FEATURE
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -243,6 +251,7 @@ DROP: 'DROP';
 DRY: 'DRY';
 EXISTS: 'EXISTS';
 FALSE: 'FALSE';
+FEATURE: 'FEATURE';
 FOR: 'FOR';
 FROM: 'FROM';
 GENERATE: 'GENERATE';

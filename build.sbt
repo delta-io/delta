@@ -17,12 +17,21 @@
 // scalastyle:off line.size.limit
 
 import java.nio.file.Files
+import Mima._
 
 // Scala versions
 val scala212 = "2.12.15"
 val scala213 = "2.13.5"
-val default_scala_version = scala212
 val all_scala_versions = Seq(scala212, scala213)
+
+// Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
+// It was necessary to change default_scala_version to scala213 in build.sbt
+// to build the project with Scala 2.13 only
+// As a setting, it's possible to set it on command line easily
+// sbt 'set default_scala_version := 2.13.5' [commands]
+// FIXME Why not use scalaVersion?
+val default_scala_version = settingKey[String]("Default Scala version")
+Global / default_scala_version := scala212
 
 // Dependent library versions
 val sparkVersion = "3.4.0"
@@ -42,20 +51,25 @@ val hadoopVersionForHive2 = "2.7.2"
 val hive2Version = "2.3.3"
 val tezVersionForHive2 = "0.8.4"
 
-scalaVersion := default_scala_version
+scalaVersion := default_scala_version.value
 
 // crossScalaVersions must be set to Nil on the root project
 crossScalaVersions := Nil
 
+// For Java 11 use the following on command line
+// sbt 'set targetJvm := "11"' [commands]
+val targetJvm = settingKey[String]("Target JVM version")
+Global / targetJvm := "1.8"
+
 lazy val commonSettings = Seq(
   organization := "io.delta",
-  scalaVersion := default_scala_version,
+  scalaVersion := default_scala_version.value,
   crossScalaVersions := all_scala_versions,
   fork := true,
-  scalacOptions ++= Seq("-target:jvm-1.8", "-Ywarn-unused:imports"),
-  javacOptions ++= Seq("-source", "1.8"),
+  scalacOptions ++= Seq(s"-target:jvm-${targetJvm.value}", "-Ywarn-unused:imports"),
+  javacOptions ++= Seq("-source", targetJvm.value),
   // -target cannot be passed as a parameter to javadoc. See https://github.com/sbt/sbt/issues/355
-  Compile / compile / javacOptions ++= Seq("-target", "1.8"),
+  Compile / compile / javacOptions ++= Seq("-target", targetJvm.value),
 
   // Make sure any tests in any project that uses Spark is configured for running well locally
   Test / javaOptions ++= Seq(
@@ -78,7 +92,7 @@ lazy val spark = (project in file("spark"))
     name := "delta-spark",
     commonSettings,
     scalaStyleSettings,
-    mimaSettings,
+    sparkMimaSettings,
     unidocSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
@@ -201,6 +215,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
 
@@ -218,15 +233,16 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
   )
 
-lazy val kernelDefault = (project in file("kernel/kernel-default"))
+lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(kernelApi)
   .dependsOn(spark % "test")
   .dependsOn(goldenTables % "test")
   .settings(
-    name := "delta-kernel-default",
+    name := "delta-kernel-defaults",
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
@@ -674,7 +690,7 @@ lazy val standalone = (project in file("connectors/standalone"))
     name := "delta-standalone-original",
     commonSettings,
     skipReleaseSettings,
-    // mimaSettings, // TODO(TD): re-enable this
+    standaloneMimaSettings,
     // When updating any dependency here, we should also review `pomPostProcess` in project
     // `standaloneCosmetic` and update it accordingly.
     libraryDependencies ++= scalaCollectionPar(scalaVersion.value) ++ Seq(
@@ -845,6 +861,7 @@ lazy val flink = (project in file("connectors/flink"))
     name := "delta-flink",
     commonSettings,
     releaseSettings,
+    flinkMimaSettings,
     publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
     Test / publishArtifact := false,
@@ -982,7 +999,7 @@ lazy val sparkGroup = project
   )
 
 lazy val kernelGroup = project
-  .aggregate(kernelApi, kernelDefault)
+  .aggregate(kernelApi, kernelDefaults)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
@@ -1008,62 +1025,6 @@ lazy val scalaStyleSettings = Seq(
   testScalastyle := (Test / scalastyle).toTask("").value,
 
   Test / test := ((Test / test) dependsOn testScalastyle).value
-)
-
-/*
- ********************
- *  MIMA settings   *
- ********************
- */
-
-/**
- * @return tuple of (major, minor, patch) versions extracted from a version string.
- *         e.g. "1.2.3" would return (1, 2, 3)
- */
-def getMajorMinorPatch(versionStr: String): (Int, Int, Int) = {
-  implicit def extractInt(str: String): Int = {
-    """\d+""".r.findFirstIn(str).map(java.lang.Integer.parseInt).getOrElse {
-      throw new Exception(s"Could not extract version number from $str in $version")
-    }
-  }
-
-  versionStr.split("\\.").toList match {
-    case majorStr :: minorStr :: patchStr :: _ =>
-      (majorStr, minorStr, patchStr)
-    case _ => throw new Exception(s"Could not parse version for $version.")
-  }
-}
-
-def getPrevName(currentVersion: String): String = {
-  val (major, minor, patch) = getMajorMinorPatch(currentVersion)
-  // name change in version 3.0.0, so versions > 3.0.0 should have delta-spark are prev version.
-  if (major >= 3 && (minor > 0 || patch > 0)) "delta-spark" else "delta-core"
-}
-
-def getPrevVersion(currentVersion: String): String = {
-  val (major, minor, patch) = getMajorMinorPatch(currentVersion)
-
-  val lastVersionInMajorVersion = Map(
-    0 -> "0.8.0",
-    1 -> "1.2.1",
-    2 -> "2.4.0"
-  )
-  if (minor == 0) {  // 1.0.0 or 2.0.0 or 3.0.0
-    lastVersionInMajorVersion.getOrElse(major - 1, {
-      throw new Exception(s"Last version of ${major - 1}.x.x not configured.")
-    })
-  } else if (patch == 0) {
-    s"$major.${minor - 1}.0"      // 1.1.0 -> 1.0.0
-  } else {
-    s"$major.$minor.${patch - 1}" // 1.1.1 -> 1.1.0
-  }
-}
-
-lazy val mimaSettings = Seq(
-  Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
-  mimaPreviousArtifacts :=
-    Set("io.delta" %% getPrevName(version.value) %  getPrevVersion(version.value)),
-  mimaBinaryIssueFilters ++= MimaExcludes.ignoredABIProblems
 )
 
 /*
@@ -1143,7 +1104,7 @@ lazy val javaOnlyReleaseSettings = releaseSettings ++ Seq(
   // we publish jars for each scalaVersion in crossScalaVersions. however, we only need to publish
   // one java jar. thus, only do so when the current scala version == default scala version
   publishArtifact := {
-    val (expMaj, expMin, _) = getMajorMinorPatch(default_scala_version)
+    val (expMaj, expMin, _) = getMajorMinorPatch(default_scala_version.value)
     s"$expMaj.$expMin" == scalaBinaryVersion.value
   },
 

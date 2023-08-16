@@ -282,7 +282,7 @@ class DeltaSuite extends QueryTest
         }.getMessage
         if (enabled) {
           assert(e3.contains(
-            "A column or function parameter with name `not_a_column` cannot be resolved") ||
+            "or function parameter with name `not_a_column` cannot be resolved") ||
             e3.contains("Column 'not_a_column' does not exist. Did you mean one of " +
               "the following? [value, is_odd]"))
         } else {

@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.util;
 
+import java.math.BigDecimal;
 import java.sql.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -30,8 +31,7 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.Tuple2;
 
-public class PartitionUtils
-{
+public class PartitionUtils {
     private PartitionUtils() {}
 
     /**
@@ -39,21 +39,20 @@ public class PartitionUtils
      * given {@code physicalSchema}.
      *
      * @param physicalSchema
-     * @param logicalSchema To create a logical name to physical name map. Partition column names
-     * are in logical space and we need to identify the equivalent physical column name.
+     * @param logicalSchema   To create a logical name to physical name map. Partition column names
+     *                        are in logical space and we need to identify the equivalent
+     *                        physical column name.
      * @param columnsToRemove
      * @return
      */
     public static StructType physicalSchemaWithoutPartitionColumns(
-        StructType logicalSchema, StructType physicalSchema, Set<String> columnsToRemove)
-    {
+        StructType logicalSchema, StructType physicalSchema, Set<String> columnsToRemove) {
         if (columnsToRemove == null || columnsToRemove.size() == 0) {
             return physicalSchema;
         }
 
         // Partition columns are top-level only
-        Map<String, String> physicalToLogical = new HashMap<String, String>()
-        {
+        Map<String, String> physicalToLogical = new HashMap<String, String>() {
             {
                 IntStream.range(0, logicalSchema.length())
                     .mapToObj(i -> new Tuple2<>(logicalSchema.at(i), physicalSchema.at(i)))
@@ -73,8 +72,7 @@ public class PartitionUtils
         ColumnarBatch dataBatch,
         StructType dataBatchSchema,
         Map<String, String> partitionValues,
-        StructType schemaWithPartitionCols)
-    {
+        StructType schemaWithPartitionCols) {
         if (partitionValues == null || partitionValues.size() == 0) {
             // no partition column vectors to attach to.
             return dataBatch;
@@ -102,8 +100,7 @@ public class PartitionUtils
         return dataBatch;
     }
 
-    private static Literal literalForPartitionValue(DataType dataType, String partitionValue)
-    {
+    private static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
         if (partitionValue == null) {
             return Literal.ofNull(dataType);
         }
@@ -137,6 +134,11 @@ public class PartitionUtils
         }
         if (dataType instanceof DateType) {
             return Literal.of(Date.valueOf(partitionValue));
+        }
+        if (dataType instanceof DecimalType) {
+            DecimalType decimalType = (DecimalType) dataType;
+            return Literal.of(
+                new BigDecimal(partitionValue), decimalType.getPrecision(), decimalType.getScale());
         }
 
         throw new UnsupportedOperationException("Unsupported partition column: " + dataType);

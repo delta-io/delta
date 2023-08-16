@@ -63,7 +63,10 @@ trait DeleteCommandMetrics { self: LeafRunnableCommand =>
       createTimingMetric(sc, "time taken to rewrite the matched files"),
     "numAddedChangeFiles" -> createMetric(sc, "number of change data capture files generated"),
     "changeFileBytes" -> createMetric(sc, "total size of change data capture files generated"),
-    "numTouchedRows" -> createMetric(sc, "number of rows touched")
+    "numTouchedRows" -> createMetric(sc, "number of rows touched"),
+    "numDeletionVectorsAdded" -> createMetric(sc, "number of deletion vectors added"),
+    "numDeletionVectorsRemoved" -> createMetric(sc, "number of deletion vectors removed"),
+    "numDeletionVectorsUpdated" -> createMetric(sc, "number of deletion vectors updated")
   )
 
   def getDeletedRowsFromAddFilesAndUpdateMetrics(files: Seq[AddFile]) : Option[Long] = {
@@ -160,6 +163,9 @@ case class DeleteCommand(
     var numPartitionsAddedTo: Option[Long] = None
     var numDeletedRows: Option[Long] = None
     var numCopiedRows: Option[Long] = None
+    var numDeletionVectorsAdded: Long = 0
+    var numDeletionVectorsRemoved: Long = 0
+    var numDeletionVectorsUpdated: Long = 0
 
     val startTime = System.nanoTime()
     val numFilesTotal = txn.snapshot.numOfFiles
@@ -171,6 +177,7 @@ case class DeleteCommand(
         val allFiles = txn.filterFiles(Nil, keepNumRecords = reportRowLevelMetrics)
 
         numRemovedFiles = allFiles.size
+        numDeletionVectorsRemoved = allFiles.count(_.deletionVector != null)
         scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
         val (numBytes, numPartitions) = totalBytesAndDistinctPartitionValues(allFiles)
         numRemovedBytes = numBytes
@@ -207,6 +214,7 @@ case class DeleteCommand(
           numRemovedFiles = candidateFiles.size
           numRemovedBytes = candidateFiles.map(_.size).sum
           numFilesAfterSkipping = candidateFiles.size
+          numDeletionVectorsRemoved = candidateFiles.count(_.deletionVector != null)
           val (numCandidateBytes, numCandidatePartitions) =
             totalBytesAndDistinctPartitionValues(candidateFiles)
           numBytesAfterSkipping = numCandidateBytes
@@ -268,6 +276,9 @@ case class DeleteCommand(
                 touchedFiles,
                 txn.snapshot)
               metrics("numDeletedRows").set(metricMap("numModifiedRows"))
+              numDeletionVectorsAdded = metricMap("numDeletionVectorsAdded")
+              numDeletionVectorsRemoved = metricMap("numDeletionVectorsRemoved")
+              numDeletionVectorsUpdated = metricMap("numDeletionVectorsUpdated")
               numRemovedFiles = metricMap("numRemovedFiles")
               actions
             } else {
@@ -334,7 +345,7 @@ case class DeleteCommand(
               numDeletedRows = Some(metrics("numDeletedRows").value)
               numCopiedRows =
                 Some(metrics("numTouchedRows").value - metrics("numDeletedRows").value)
-
+              numDeletionVectorsRemoved = removedFiles.count(_.deletionVector != null)
               val operationTimestamp = System.currentTimeMillis()
               removeFilesFromPaths(
                 deltaLog, nameToAddFileMap, filesToRewrite, operationTimestamp) ++ rewrittenActions
@@ -356,6 +367,9 @@ case class DeleteCommand(
     metrics("numBytesBeforeSkipping").set(numBytesBeforeSkipping)
     metrics("numFilesAfterSkipping").set(numFilesAfterSkipping)
     metrics("numBytesAfterSkipping").set(numBytesAfterSkipping)
+    metrics("numDeletionVectorsAdded").set(numDeletionVectorsAdded)
+    metrics("numDeletionVectorsRemoved").set(numDeletionVectorsRemoved)
+    metrics("numDeletionVectorsUpdated").set(numDeletionVectorsUpdated)
     numPartitionsAfterSkipping.foreach(metrics("numPartitionsAfterSkipping").set)
     numPartitionsAddedTo.foreach(metrics("numPartitionsAddedTo").set)
     numPartitionsRemovedFrom.foreach(metrics("numPartitionsRemovedFrom").set)
@@ -387,7 +401,10 @@ case class DeleteCommand(
         numRemovedBytes,
         changeFileBytes = changeFileBytes,
         scanTimeMs,
-        rewriteTimeMs)
+        rewriteTimeMs,
+        numDeletionVectorsAdded,
+        numDeletionVectorsRemoved,
+        numDeletionVectorsUpdated)
     )
 
     if (deleteActions.nonEmpty) {
@@ -484,6 +501,9 @@ object DeleteCommand {
  * @param changeFileBytes: total size of change files generated
  * @param scanTimeMs: how long did finding take
  * @param rewriteTimeMs: how long did rewriting take
+ * @param numDeletionVectorsAdded: how many deletion vectors were added
+ * @param numDeletionVectorsRemoved: how many deletion vectors were removed
+ * @param numDeletionVectorsUpdated: how many deletion vectors were updated
  *
  * @note All the time units are milliseconds.
  */
@@ -510,5 +530,8 @@ case class DeleteMetric(
     numBytesRemoved: Long,
     changeFileBytes: Long,
     scanTimeMs: Long,
-    rewriteTimeMs: Long
+    rewriteTimeMs: Long,
+    numDeletionVectorsAdded: Long,
+    numDeletionVectorsRemoved: Long,
+    numDeletionVectorsUpdated: Long
 )

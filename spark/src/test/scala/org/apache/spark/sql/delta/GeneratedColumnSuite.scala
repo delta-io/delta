@@ -1848,7 +1848,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
               df2.write.format("delta").mode("append").saveAsTable("tbl")
             }
             e.getMessage.contains(
-              "A column or function parameter with name `c2` cannot be resolved")
+              "A column, variable, or function parameter with name `c2` cannot be resolved")
           }
         }
       }

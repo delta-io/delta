@@ -11,8 +11,7 @@
     - [Delta Log Entries](#delta-log-entries)
     - [Checkpoints](#checkpoints)
     - [Last Checkpoint File](#last-checkpoint-file)
-      - [JSON checksum](#json-checksum)
-        - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
+      - [Last Checkpoint File Schema](#last-checkpoint-file-schema)
   - [Actions](#actions)
     - [Change Metadata](#change-metadata)
       - [Format Specification](#format-specification)
@@ -55,7 +54,17 @@
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
   - [Delta Log Entries](#delta-log-entries-1)
   - [Checkpoints](#checkpoints-1)
-    - [Checkpoint Format](#checkpoint-format)
+    - [Checkpoint Specs](#checkpoint-specs)
+      - [V2 Spec](#v2-spec)
+      - [V1 Spec](#v1-spec)
+    - [Checkpoint naming scheme](#checkpoint-naming-scheme)
+      - [UUID-named checkpoint](#uuid-named-checkpoint)
+      - [Classic checkpoint](#classic-checkpoint)
+      - [Multi-part checkpoint (deprecated)](#multi-part-checkpoint)
+        - [Problems with multi-part checkpoints](#problems-with-multi-part-checkpoints)
+    - [Metadata Cleanup](#metadata-cleanup)
+    - [Handling Backward compatibility while moving to UUID-named v2 Checkpoints](#handling-backward-compatibility-while-moving-to-uuid-named-v2-checkpoints)
+    - [Allowed combinations for `checkpoint spec` <-> `checkpoint file naming`](#allowed-combinations-for-checkpoint-spec---checkpoint-file-naming)
   - [Data Files](#data-files-1)
   - [Append-only Tables](#append-only-tables)
   - [Column Invariants](#column-invariants)
@@ -80,6 +89,8 @@
     - [Column Metadata](#column-metadata)
     - [Example](#example)
   - [Checkpoint Schema](#checkpoint-schema)
+  - [JSON checksum](#json-checksum)
+    - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -169,25 +180,49 @@ A delta file, `n.json`, contains an atomic set of [_actions_](#Actions) that sho
 An action changes one aspect of the table's state, for example, adding or removing a file.
 
 ### Checkpoints
-Checkpoints are also stored in the `_delta_log` directory, and can be created for any version of the table.
+Checkpoints are also stored in the `_delta_log` directory, and can be created at any time, for any committed version of the table.
+For performance reasons, readers should prefer to use the newest complete checkpoint possible.
+For time travel, the checkpoint used must not be newer than the time travel version.
 
-A checkpoint contains the complete replay of all actions up until this version, with invalid actions removed.
-Invalid actions are those that have been canceled out by a subsequent ones (for example removing a file that has been added), using the [rules for reconciliation](#Action-Reconciliation)
-Checkpoints allow readers to short-cut the cost of reading the log up-to a given point in order to reconstruct a snapshot, and allow older JSON Delta log entries to be deleted after a period of time.
+A checkpoint contains the complete replay of all actions, up to and including the checkpointed table version, with invalid actions removed.
+Invalid actions are those that have been canceled out by subsequent ones (for example removing a file that has been added), using the [rules for reconciliation](#Action-Reconciliation).
+In addition to above, checkpoint also contains the [_remove tombstones_](#add-file-and-remove-file) until they are expired.
+Checkpoints allow readers to short-cut the cost of reading the log up-to a given point in order to reconstruct a snapshot, and they also allow [Metadata cleanup](#metadata-cleanup) to delete expired JSON Delta log entries.
 
-
-By default, the reference implementation creates a checkpoint every 10 commits.
+Readers SHOULD NOT make any assumptions about the existence or frequency of checkpoints, with one exception:
+[Metadata cleanup](#metadata-cleanup) MUST provide a checkpoint for the oldest kept table version, to cover all deleted [Delta log entries](#delta-log-entries).
+That said, writers are encouraged to checkpoint reasonably frequently, so that readers do not pay excessive log replay costs due to reading large numbers of delta files.
 
 The checkpoint file name is based on the version of the table that the checkpoint contains.
-The format of the checkpoint file name can take one of two forms:
 
-1. A single checkpoint file for version `n` of the table will be named `n.checkpoint.parquet`. For example:
+Delta supports three kinds of checkpoints:
+
+1. UUID-named Checkpoints: These follow [V2 spec](#v2-spec) which uses the following file name: `n.checkpoint.u.{json/parquet}`, where `u` is a UUID and `n` is the
+snapshot version that this checkpoint represents. The UUID-named V2 Checkpoint may be in json or parquet format, and references zero or more checkpoint sidecars
+in the `_delta_log/_sidecars` directory. A checkpoint sidecar is a uniquely-named parquet file: `{unique}.parquet` where `unique` is some unique
+string such as a UUID.
+
+For example:
+
+```
+00000000000000000010.checkpoint.80a083e8-7026-4e79-81be-64bd76c43a11.json
+_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet
+_sidecars/016ae953-37a9-438e-8683-9a9a4a79a395.parquet
+_sidecars/7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.parquet
+```
+
+2. A [classic checkpoint](#classic-checkpoint) for version `n` of the table consists of a file named `n.checkpoint.parquet`.
+These could follow either [V1 spec](#v1-spec) or [V2 spec](#v2-spec).
+For example:
 
 ```
 00000000000000000010.checkpoint.parquet
 ```
 
-2. A multi-part checkpoint for version `n` can be fragmented into `p` files. Fragment `o` of `p` is named `n.checkpoint.o.p.parquet`. For example:
+
+3. A [multi-part checkpoint](#multi-part-checkpoint) for version `n` consists of `p` "part" files (`p > 1`), where
+part `o` of `p` is named `n.checkpoint.o.p.parquet`. These are always [V1 checkpoints](#v1-spec).
+For example:
 
 ```
 00000000000000000010.checkpoint.0000000001.0000000003.parquet
@@ -195,9 +230,28 @@ The format of the checkpoint file name can take one of two forms:
 00000000000000000010.checkpoint.0000000003.0000000003.parquet
 ```
 
-Since it is possible that a writer will fail while writing out one or more parts of a multi-part checkpoint, readers must only use a complete checkpoint, wherein all fragments are present. For performance reasons, readers should search for the most recent earlier checkpoint that is complete.
+A writer can choose to write checkpoints with following constraints:
+- Writers are always allowed create a [classic checkpoint](#classic-checkpoint) following [v1 spec](#v1-spec).
+- Writers are forbidden to create [multi-part checkpoints](#multi-part-checkpoint) if [v2 checkpoints](#v2-checkpoint-table-feature) are enabled.
+- Writers are allowed to create v2 spec checkpoints (either [classic](#classic-checkpoint) or [uuid-named](#uuid-named-checkpoint)) if [v2 checkpoint table feature](#v2-checkpoint-table-feature) is enabled.
+
+Multi-part checkpoints are [deprecated](#problems-with-multi-part-checkpoints), and writers should avoid creating them. Use uuid-named [V2 spec](#v2-spec) checkpoints instead of these.
+
+Multiple checkpoints could exist for the same table version, e.g. if two clients race to create checkpoints at the same time, but with different formats.
+In such cases, a client can choose which checkpoint to use.
+
+Because a multi-part checkpoint cannot be created atomically (e.g. vulnerable to slow and/or failed writes), readers must ignore multi-part checkpoints with missing parts.
 
 Checkpoints for a given version must only be created after the associated delta file has been successfully written.
+
+#### Sidecar Files
+
+A sidecar file contains file actions. These files are in parquet format and they must have unique names.
+These are then [linked](#sidecar-file-information) to checkpoints. Refer to [V2 checkpoint spec](#v2-spec)
+for more detail. The sidecar files can have only [add file and remove file](#Add-File-and-Remove-File) entries
+as of now. The add and remove file actions are stored as their individual columns in parquet as struct fields.
+
+These files reside in the `_delta_log/_sidecars` directory.
 
 ### Last Checkpoint File
 The Delta transaction log will often contain many (e.g. 10,000+) files.
@@ -206,6 +260,8 @@ The last checkpoint file can help reduce the cost of constructing the latest sna
 
 Rather than list the entire directory, readers can locate a recent checkpoint by looking at the `_delta_log/_last_checkpoint` file.
 Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexicographically-sorted, paginated directory listing to enumerate any delta files or newer checkpoints that comprise more recent versions of the table.
+
+#### Last Checkpoint File Schema
 
 This last checkpoint file is encoded as JSON and contains the following information:
 
@@ -217,53 +273,13 @@ parts | The number of fragments if the last checkpoint was written in multiple p
 sizeInBytes | The number of bytes of the checkpoint. This field is optional.
 numOfAddFiles | The number of AddFile actions in the checkpoint. This field is optional.
 checkpointSchema | The schema of the checkpoint file. This field is optional.
+tags | String-string map containing any additional metadata about the last checkpoint. This field is optional.
 checksum | The checksum of the last checkpoint JSON. This field is optional.
 
 The checksum field is an optional field which contains the MD5 checksum for fields of the last checkpoint json file.
 Last checkpoint file readers are encouraged to validate the checksum, if present, and writers are encouraged to write the checksum
 while overwriting the file. Refer to [this section](#json-checksum) for rules around calculating the checksum field
 for the last checkpoint JSON.
-
-#### JSON checksum
-To generate the checksum for the last checkpoint JSON, firstly, the checksum JSON is canonicalized and converted to a string. Then
-the 32 character MD5 digest is calculated on the resultant string to get the checksum. Rules for [JSON](https://datatracker.ietf.org/doc/html/rfc8259) canonicalization are:
-
-1. Literal values (`true`, `false`, and `null`) are their own canonical form
-2. Numeric values (e.g. `42` or `3.14`) are their own canonical form
-3. String values (e.g. `"hello world"`) are canonicalized by preserving the surrounding quotes and [URL-encoding](#how-to-url-encode-keys-and-string-values)
-their content, e.g. `"hello%20world"`
-4. Object values (e.g. `{"a": 10, "b": {"y": null, "x": "https://delta.io"} }` are canonicalized by:
-   * Canonicalize each scalar (leaf) value following the rule for its type (literal, numeric, string)
-   * Canonicalize each (string) name along the path to that value
-   * Connect path segments by `+`, e.g. `"b"+"y"`
-   * Connect path and value pairs by `=`, e.g. `"b"+"y"=null`
-   * Sort canonicalized path/value pairs using a byte-order sort on paths. The byte-order sort can be done by converting paths to byte array using UTF-8 charset\
-    and then comparing them, e.g. `"a" < "b"+"x" < "b"+"y"`
-   * Separate ordered pairs by `,`, e.g. `"a"=10,"b"+"x"="https%3A%2F%2Fdelta.io","b"+"y"=null`
-
-5. Array values (e.g. `[null, "hi ho", 2.71]`) are canonicalized as if they were objects, except the "name" has numeric type instead of string type, and gives the (0-based) 
-position of the corresponding array element, e.g. `0=null,1="hi%20ho",2=2.71`
-
-6. Top level `checksum` key is ignored in the canonicalization process. e.g. 
-`{"k1": "v1", "checksum": "<anything>", "k3": 23}` is canonicalized to `"k1"="v1","k3"=23`
-
-7. Duplicate keys are not allowed in the last checkpoint JSON and such JSON is considered invalid.
-
-Given the following test sample JSON, a correct implementation of JSON canonicalization should produce the corresponding canonicalized form and checksum value:
-e.g.
-Json: `{"k0":"'v 0'", "checksum": "adsaskfljadfkjadfkj", "k1":{"k2": 2, "k3": ["v3", [1, 2], {"k4": "v4", "k5": ["v5", "v6", "v7"]}]}}`\
-Canonicalized form: `"k0"="%27v%200%27","k1"+"k2"=2,"k1"+"k3"+0="v3","k1"+"k3"+1+0=1,"k1"+"k3"+1+1=2,"k1"+"k3"+2+"k4"="v4","k1"+"k3"+2+"k5"+0="v5","k1"+"k3"+2+"k5"+1="v6","k1"+"k3"+2+"k5"+2="v7"`\
-Checksum is `6a92d155a59bf2eecbd4b4ec7fd1f875`
-
-##### How to URL encode keys and string values
-The [URL Encoding](https://datatracker.ietf.org/doc/html/rfc3986) spec is a bit flexible to give a reliable encoding. e.g. the spec allows both
-uppercase and lowercase as part of percent-encoding. Thus, we require a stricter set of rules for encoding:
-
-1. The string to be encoded must be represented as octets according to the UTF-8 character encoding
-2. All octets except a-z / A-Z / 0-9 / "-" / "." / "_" / "~" are reserved
-3. Always [percent-encode](https://datatracker.ietf.org/doc/html/rfc3986#section-2) reserved octets
-4. Never percent-encode non-reserved octets
-5. A percent-encoded octet consists of three characters: `%` followed by its 2-digit hexadecimal value in uppercase letters, e.g. `>` encodes to `%3E`
 
 ## Actions
 Actions modify the state of the table and they are stored both in delta files and in checkpoints.
@@ -466,11 +482,11 @@ The Delta transaction protocol does not, for example, assume monotonicity of the
 
 The schema of the `txn` action is as follows:
 
-Field Name | Data Type | Description
--|-|-
-appId | String | A unique identifier for the application performing the transaction
-version | Long | An application-specific numeric identifier for this transaction
-lastUpdated | Option[Long] | The time when this transaction action is created, in milliseconds since the Unix epoch
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+appId | String | A unique identifier for the application performing the transaction | required
+version | Long | An application-specific numeric identifier for this transaction | required
+lastUpdated | Option[Long] | The time when this transaction action is created, in milliseconds since the Unix epoch | optional
 
 The following is an example `txn` action:
 ```json
@@ -494,12 +510,12 @@ Reader Version 3 and Writer Version 7 add two lists of table features to the pro
 
 The schema of the `protocol` action is as follows:
 
-Field Name | Data Type | Description
--|-|-
-minReaderVersion | Int | The minimum version of the Delta read protocol that a client must implement in order to correctly *read* this table
-minWriterVersion | Int | The minimum version of the Delta write protocol that a client must implement in order to correctly *write* this table
-readerFeatures | Array[String] | A collection of features that a client must implement in order to correctly read this table (exist only when `minReaderVersion` is set to `3`)
-writerFeatures | Array[String] | A collection of features that a client must implement in order to correctly write this table (exist only when `minWriterVersion` is set to `7`)
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+minReaderVersion | Int | The minimum version of the Delta read protocol that a client must implement in order to correctly *read* this table | required
+minWriterVersion | Int | The minimum version of the Delta write protocol that a client must implement in order to correctly *write* this table | required
+readerFeatures | Array[String] | A collection of features that a client must implement in order to correctly read this table (exist only when `minReaderVersion` is set to `3`) | optional
+writerFeatures | Array[String] | A collection of features that a client must implement in order to correctly write this table (exist only when `minWriterVersion` is set to `7`) | optional
 
 Some example Delta protocols:
 ```json
@@ -596,6 +612,51 @@ The following is an example `domainMetadata` action:
 }
 ```
 
+### Sidecar File Information
+The `sidecar` action references a [sidecar file](#sidecar-files) which provides some of the checkpoint's file actions.
+This action is only allowed in checkpoints following [V2 spec](#v2-spec).
+The schema of `sidecar` action is as follows:
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+fileName | String | Name of the sidecar file (not a path). The file must reside in the _delta_log/_sidecars directory. | required
+sizeInBytes | Long | Size of the sidecar file. | required
+modificationTime | Long | The time this logical file was created, as milliseconds since the epoch. | required
+type | String | Type of sidecar. Valid values are: "fileaction". This could be extended in future to allow different kinds of sidecars. | required
+tags|`Map[String, String]`|Map containing any additional metadata about the checkpoint sidecar file. | optional
+
+The following is an example `sidecar` action:
+```json
+{
+  "sidecar":{
+    "fileName": "016ae953-37a9-438e-8683-9a9a4a79a395.parquet",
+    "sizeInBytes": 2304522,
+    "modificationTime": 1512909768000,
+    "type": "fileaction",
+    "tags": {}
+  }
+}
+```
+
+#### Checkpoint Metadata
+This action is only allowed in checkpoints following [V2 spec](#v2-spec).
+It describes the details about the checkpoint. It has the following schema:
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+flavor|`String`|The flavor of the V2 checkpoint. Allowed values: "flat".| required
+tags|`Map[String, String]`|Map containing any additional metadata about the v2 spec checkpoint.| optional
+
+E.g.
+```json
+{
+  "checkpointMetadata":{
+    "flavor":"flat",
+    "tags":{}
+  }
+}
+```
+
 # Action Reconciliation
 A given snapshot of the table can be computed by replaying the events committed to the table in ascending order by commit version. A given snapshot of a Delta table consists of:
 
@@ -615,6 +676,7 @@ To achieve the requirements above, related actions from different delta files ne
  - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file.
  - To replay the log, scan all file actions and keep only the newest reference for each logical file.
  - `add` actions in the result identify logical files currently present in the table (for queries). `remove` actions in the result identify tombstones of logical files no longer present in the table (for VACUUM).
+ - [v2 checkpoint spec](#v2-spec) actions are not allowed in normal commit files, and do not participate in log replay.
 
 # Table Features
 Table features must only exist on tables that have a supported protocol version. When the table's Reader Version is 3, `readerFeatures` must exist in the `protocol` action, and when the Writer Version is 7, `writerFeatures` must exist in the `protocol` action. `readerFeatures` and `writerFeatures` define the features that readers and writers must implement in order to read and write this table.
@@ -802,7 +864,17 @@ This feature introduces a new data type to support timestamps without timezone i
 The serialization method is described in Sections [Partition Value Serialization](#partition-value-serialization) and [Schema Serialization Format](#schema-serialization-format).
 
 Enablement:
- - To have a column of TimestampNtz type in a table, the table must have Reader Version 3 and Writer Version 7. A feature name `timestampNtz` must exist in the table's `readerFeatures` and `writerFeatures`.
+- To have a column of TimestampNTZ type in a table, the table must have Reader Version 3 and Writer Version 7. A feature name `timestampNTZ` must exist in the table's `readerFeatures` and `writerFeatures`.
+
+
+# V2 Checkpoint Table Feature
+Enablement:
+- To enable [V2 Checkpoints](#v2-spec) on a table, the table must have Reader Version 3 and Writer Version 7. A feature name `v2Checkpoint` must exist in the table's `readerFeatures` and `writerFeatures`.
+
+When enabled:
+- A table could use [uuid-named](#uuid-named-checkpoint) [V2 spec Checkpoints](#v2-spec) which must have [checkpoint metadata](#checkpoint-metadata) and may have [sidecar files](#sidecar-files) OR
+- A table could use [classic](#classic-checkpoint) checkpoints which can be follow [V1](#v1-spec) or [V2](#v2-spec) spec.
+- A table must not use [multi-part checkpoints](#multi-part-checkpoint)
 
 # Row Tracking
 
@@ -963,19 +1035,19 @@ This section documents additional requirements that writers must follow in order
   - More than one SetTransaction with the same `appId`
 
 ## Checkpoints
- - A checkpoint MUST only be written after the corresponding log entry has been completely written.
- - When writing multi-part checkpoints, the data must be clustered (either through hash or range partitioning) by the 'path' of an added or removed file, or null otherwise. This ensures deterministic content in each part file in case of multiple attempts to write the files.
-
-### Checkpoint Format
-
-Checkpoint files must be written in [Apache Parquet](https://parquet.apache.org/) format. Each row in the checkpoint corresponds to a single action. The checkpoint **must** contain all information regarding the following actions:
+Each row in the checkpoint corresponds to a single action. The checkpoint **must** contain all information regarding the following actions:
  * The [protocol version](#Protocol-Evolution)
  * The [metadata](#Change-Metadata) of the table
- * Files that have been [added and removed](#Add-File-and-Remove-File)
+ * Files that have been [added](#Add-File-and-Remove-File) and not yet removed
+ * Files that were recently [removed](#Add-File-and-Remove-File) and have not yet expired
  * [Transaction identifiers](#Transaction-Identifiers)
  * [Domain Metadata](#Domain-Metadata)
+ * [Checkpoint Metadata](#checkpoint-metadata) - Requires [V2 checkpoints](#v2-spec)
+ * [Sidecar File](#sidecar-files) - Requires [V2 checkpoints](#v2-spec)
 
-Commit provenance information does not need to be included in the checkpoint. All of these actions are stored as their individual columns in parquet as struct fields.
+All of these actions are stored as their individual columns in parquet as struct fields. Any missing column should be treated as null.
+
+Checkpoints must not preserve [commit provenance information](#commit-provenance-information) nor [change data](#add-cdc-file) actions.
 
 Within the checkpoint, the `add` struct may or may not contain the following columns based on the configuration of the table:
  - partitionValues_parsed: In this struct, the column names correspond to the partition columns and the values are stored in their corresponding data type. This is a required field when the table is partitioned and the table property `delta.checkpoint.writeStatsAsStruct` is set to `true`. If the table is not partitioned, this column can be omitted. For example, for partition columns `year`, `month` and `event` with data types `int`, `int` and `string` respectively, the schema for this field will look like:
@@ -995,6 +1067,178 @@ Within the checkpoint, the `remove` struct does not contain the `stats` and `tag
 
 Refer to the [appendix](#checkpoint-schema) for an example on the schema of the checkpoint.
 
+Delta supports two checkpoint specs and three kind of checkpoint naming schemes.
+
+### Checkpoint Specs
+Delta supports following two checkpoint specs:
+
+#### V2 Spec
+This checkpoint spec allows putting [add and remove file](#Add-File-and-Remove-File) in the
+[sidecar files](#sidecar-files). This spec can be used only when [v2 checkpoint table feature](#v2-checkpoint-table-feature) is enabled.
+Checkpoints following V2 spec have the following structure:
+- Each v2 spec checkpoint includes exactly one [Checkpoint Metadata](#checkpoint-metadata) action.
+- Remaining rows in the V2 spec checkpoint refer to the other actions mentioned [here](#checkpoints-1)
+- All the non-file actions i.e. all actions except [add and remove file](#Add-File-and-Remove-File)
+must be part of the v2 spec checkpoint itself.
+- A writer could choose to include the [add and remove file](#Add-File-and-Remove-File) action in the
+V2 spec Checkpoint or they could write the [add and remove file](#Add-File-and-Remove-File) actions in
+separate [sidecar files](#sidecar-files). These sidecar files will then be referenced in the V2 spec checkpoint.
+All sidecar files reside in the `_delta_log/_sidecars` directory.
+- A V2 spec Checkpoint could reference zero or more [sidecar file actions](#sidecar-file-information).
+
+Note: A V2 spec Checkpoint can either have all the [add and remove file](#Add-File-and-Remove-File) actions
+embedded inside itself or all of them should be in [sidecar files](#sidecar-files). Having partial
+add and remove file actions in V2 Checkpoint and partial entries in sidecar files is not allowed.
+
+After producing a V2 spec checkpoint, a writer can choose to embed some or all of the V2 spec checkpoint in
+the `_last_checkpoint` file, so that readers don't have to read the V2 Checkpoint.
+
+E.g. showing the content of V2 spec checkpoint:
+```
+{"checkpointMetadata":{"flavor":"flat","tags":{}}}
+{"metaData":{...}}
+{"protocol":{...}}
+{"txn":{"appId":"3ba13872-2d47-4e17-86a0-21afd2a22395","version":364475}}
+{"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4389}}
+{"sidecar":{"path":"3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet","sizeInBytes":2341330,"modificationTime":1512909768000,"type":"fileaction","tags":{}}
+{"sidecar":{"path":"016ae953-37a9-438e-8683-9a9a4a79a395.parquet","sizeInBytes":8468120,"modificationTime":1512909848000,"type":"fileaction","tags":{}}
+```
+
+Another example of a v2 spec checkpoint without sidecars:
+```
+{"checkpointMetadata":{"flavor":"flat","tags":{}}}
+{"metaData":{...}}
+{"protocol":{...}}
+{"txn":{"appId":"3ba13872-2d47-4e17-86a0-21afd2a22395","version":364475}}
+{"add":{"path":"date=2017-12-10/part-000...c000.gz.parquet",...}
+{"add":{"path":"date=2017-12-09/part-000...c000.gz.parquet",...}
+{"remove":{"path":"date=2017-12-08/part-000...c000.gz.parquet",...}
+```
+
+#### V1 Spec
+
+The V1 Spec does not support [sidecar files](#sidecar-files) and [checkpoint metadata](#checkpoint-metadata).
+These are flat checkpoints which contains all actions mentioned [here](#checkpoints-1).
+
+### Checkpoint Naming Scheme
+Delta supports three checkpoint naming schemes: UUID-named, classic, and multi-part.
+
+#### UUID-named checkpoint
+This naming scheme represents a [V2 spec checkpoint](#v2-spec) with following file name: `n.checkpoint.u.{json/parquet}`,
+where `u` is a UUID and `n` is the snapshot version that this checkpoint represents.
+The UUID-named checkpoints may be in JSON or parquet format. Since these are following [V2 spec](#v2-spec), they must
+have a [checkpoint metadata](#checkpoint-metadata) action and may reference zero or more checkpoint [sidecar files](#sidecar-files).
+
+Example-1: Json UUID-named checkpoint with sidecars
+
+```
+00000000000000000010.checkpoint.80a083e8-7026-4e79-81be-64bd76c43a11.json
+_sidecars/016ae953-37a9-438e-8683-9a9a4a79a395.parquet
+_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet
+_sidecars/7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.parquet
+```
+
+Example-2: Parquet UUID-named checkpoint with sidecars
+
+```
+00000000000000000020.checkpoint.80a083e8-7026-4e79-81be-64bd76c43a11.parquet
+_sidecars/016ae953-37a9-438e-8683-9a9a4a79a395.parquet
+_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet
+```
+
+Example-3: Json UUID-named checkpoint without sidecars
+
+```
+00000000000000000112.checkpoint.80a083e8-7026-4e79-81be-64bd76c43a11.json
+```
+
+#### Classic checkpoint
+
+A classic checkpoint for version `n` uses the file name `n.checkpoint.parquet`. For example:
+
+```
+00000000000000000010.checkpoint.parquet
+```
+
+If two checkpoint writers race to create the same classic checkpoint, the latest writer wins.
+However, this should not matter because both checkpoints should contain the same information and a
+reader could safely use either one.
+
+A classic checkpoint could:
+1. Either follow [V1 spec](#v1-spec) or
+2. Could follow [V2 spec](#v2-spec). This is possible only when
+[V2 Checkpoint table feature](#v2-checkpoint-table-feature) is enabled. In this case it must include
+[checkpoint metadata](#checkpoint-metadata) and may or may not have [sidecar files](#sidecar-file-information).
+
+#### Multi-part checkpoint
+Multi-part checkpoint uses parquet format.
+This checkpoint type is [deprecated](#problems-with-multi-part-checkpoints) and writers should avoid using it.
+
+A multi-part checkpoint for version `n` consists of `p` "part" files (`p > 1`), where part `o` of `p` is named `n.checkpoint.o.p.parquet`. For example:
+
+```
+00000000000000000010.checkpoint.0000000001.0000000003.parquet
+00000000000000000010.checkpoint.0000000002.0000000003.parquet
+00000000000000000010.checkpoint.0000000003.0000000003.parquet
+```
+
+For [safety reasons](#problems-with-multi-part-checkpoints), multi-part checkpoints MUST be clustered by
+spark-style hash partitioning. If the table supports [Deletion Vectors](#deletion-vectors), the partitioning
+key is the logical file identifier `(path, dvId)`; otherwise the key is just `path` (not `(path, NULL)`). This
+ensures deterministic content in each part file in case of multiple attempts to write the files -- even when
+older and newer Delta clients race.
+
+##### Problems with multi-part checkpoints
+
+Because they cannot be written atomically, multi-part checkpoints have several weaknesses:
+
+1. A writer cannot validate the content of the just-written checkpoint before readers could start using it.
+
+2. Two writers who race to produce the same checkpoint (same version, same number of parts) can overwrite each other, producing an arbitrary mix of checkpoint part files. If an overwrite changes the content of a file in any way, the resulting checkpoint may not produce an accurate snapshot.
+
+3. Not amenable to performance and scalability optimizations. For example, there is no way to store skipping stats for checkpoint parts, nor to reuse checkpoint part files across multiple checkpoints.
+
+4. Multi-part checkpoints also bloat the _delta_log dir and slow down LIST operations.
+
+The [UUID-named](#uuid-named-checkpoint) checkpoint (which follows [V2 spec](#v2-spec)) solves all
+of these problems and should be preferred over multi-part checkpoints. For this reason, Multi-part
+checkpoints are forbidden when [V2 Checkpoints table feature](#v2-checkpoint-table-feature) is enabled.
+
+### Handling Backward compatibility while moving to UUID-named v2 Checkpoints
+
+A UUID-named v2 Checkpoint should only be created by clients if the [v2 checkpoint table feature](#v2-checkpoint-table-feature) is enabled.
+When UUID-named v2 checkpoints are enabled, Writers should occasionally create a v2 [Classic Checkpoint](#classic-checkpoint)
+to maintain compatibility with older clients which do not support [v2 checkpoint table feature](#v2-checkpoint-table-feature) and
+so do not recognize UUID-named checkpoints. These classic checkpoints have the same content as the UUID-named v2 checkpoint, but older
+clients will recognize the classic file name, allowing them to extract [Protocol](#protocol-evolution) and fail gracefully with an
+invalid protocol version error on v2-checkpoint enabled tables. Writers should create classic checkpoints often enough to allow older
+clients to discover them and fail gracefully.
+
+### Allowed combinations for `checkpoint spec` <-> `checkpoint file naming`
+
+Checkpoint Spec | [UUID-named](#uuid-named-checkpoint) | [classic](#classic-checkpoint) | [multi-part](#multi-part-checkpoint)
+-|-|-|-
+[V1](#v1-spec) | Invalid | Valid | Valid
+[V2](#v2-spec) | Valid | Valid | Invalid
+
+### Metadata Cleanup
+
+The _delta_log directory grows over time as more and more commits and checkpoints are accumulated.
+Implementations are recommended to delete expired commits and checkpoints in order to reduce the directory size.
+The following steps could be used to do cleanup of the DeltaLog directory:
+1. Identify a threshold (in days) uptil which we want to preserve the deltaLog. Let's refer to
+midnight UTC of that day as `cutOffTimestamp`. The newest commit not newer than the `cutOffTimestamp` is
+the `cutoffCommit`, because a commit exactly at midnight is an acceptable cutoff. We want to retain everything including and after the `cutoffCommit`.
+2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`.
+We need to preserve the `cutOffCheckpoint` and all commits after it, because we need them to enable
+time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
+3. Delete all [delta log entries](#delta-log-entries) and [checkpoint files](#checkpoints) before the `cutOffCheckpoint` checkpoint.
+4. Now read all the available [checkpoints](#checkpoints-1) in the _delta_log directory and identify
+the corresponding [sidecar files](#sidecar-files). These sidecar files need to be protected.
+5. List all the files in `_delta_log/_sidecars` directory, preserve files that are less than a day
+old (as of midnight UTC), to not break in-progress checkpoints. Also preserve the referenced sidecar files
+identified in Step-4 above. Delete everything else.
+
 ## Data Files
  - Data files MUST be uniquely named and MUST NOT be overwritten. The reference implementation uses a GUID in the name to ensure this property.
 
@@ -1013,7 +1257,7 @@ To remove the append-only restriction, the table property `delta.appendOnly` mus
 ## Column Invariants
 Enablement:
  - If the table is on a Writer Version starting from 2 up to 6, Column Invariants are always enabled.
- - If the table is on Writer Version 7, the feature `columnInvariants` must exist in the table `protocol`'s `writerFeatures`.
+ - If the table is on Writer Version 7, the feature `invariants` must exist in the table `protocol`'s `writerFeatures`.
 
 When enabled:
  - The `metadata` for a column in the table schema MAY contain the key `delta.invariants`.
@@ -1135,6 +1379,7 @@ Feature | Name | Readers or Writers?
 [Row Tracking](#row-tracking) | `rowTracking` | Writers only
 [Timestamp without Timezone](#timestamp-without-timezone-timestampntz) | `timestampNtz` | Readers and writers
 [Domain Metadata](#domain-metadata) | `domainMetadata` | Writers only
+[V2 Checkpoint](#v2-checkpoint-table-feature) | `v2Checkpoint` | Readers and writers
 [Iceberg Compatibility V1](#iceberg-compatibility-v1) | `icebergCompatV1` | Writers only
 
 ## Deletion Vector Format
@@ -1462,6 +1707,14 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |-- path: string
 |    |-- deletionTimestamp: long
 |    |-- dataChange: boolean
+|-- checkpointMetadata: struct
+|    |-- version: long
+|    |-- tags: map<string,string>
+|-- sidecar: struct
+|    |-- path: string
+|    |-- sizeInBytes: long
+|    |-- modificationTime: long
+|    |-- tags: map<string,string>
 ```
 
 Observe that `readerFeatures` and `writerFeatures` fields should comply with:
@@ -1540,3 +1793,44 @@ Checkpoint schema (just the `add` column):
 |    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: long
 |    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: long
 ```
+
+## JSON checksum
+To generate the checksum for the last checkpoint JSON, firstly, the checksum JSON is canonicalized and converted to a string. Then
+the 32 character MD5 digest is calculated on the resultant string to get the checksum. Rules for [JSON](https://datatracker.ietf.org/doc/html/rfc8259) canonicalization are:
+
+1. Literal values (`true`, `false`, and `null`) are their own canonical form
+2. Numeric values (e.g. `42` or `3.14`) are their own canonical form
+3. String values (e.g. `"hello world"`) are canonicalized by preserving the surrounding quotes and [URL-encoding](#how-to-url-encode-keys-and-string-values)
+their content, e.g. `"hello%20world"`
+4. Object values (e.g. `{"a": 10, "b": {"y": null, "x": "https://delta.io"} }` are canonicalized by:
+   * Canonicalize each scalar (leaf) value following the rule for its type (literal, numeric, string)
+   * Canonicalize each (string) name along the path to that value
+   * Connect path segments by `+`, e.g. `"b"+"y"`
+   * Connect path and value pairs by `=`, e.g. `"b"+"y"=null`
+   * Sort canonicalized path/value pairs using a byte-order sort on paths. The byte-order sort can be done by converting paths to byte array using UTF-8 charset\
+    and then comparing them, e.g. `"a" < "b"+"x" < "b"+"y"`
+   * Separate ordered pairs by `,`, e.g. `"a"=10,"b"+"x"="https%3A%2F%2Fdelta.io","b"+"y"=null`
+
+5. Array values (e.g. `[null, "hi ho", 2.71]`) are canonicalized as if they were objects, except the "name" has numeric type instead of string type, and gives the (0-based)
+position of the corresponding array element, e.g. `0=null,1="hi%20ho",2=2.71`
+
+6. Top level `checksum` key is ignored in the canonicalization process. e.g.
+`{"k1": "v1", "checksum": "<anything>", "k3": 23}` is canonicalized to `"k1"="v1","k3"=23`
+
+7. Duplicate keys are not allowed in the last checkpoint JSON and such JSON is considered invalid.
+
+Given the following test sample JSON, a correct implementation of JSON canonicalization should produce the corresponding canonicalized form and checksum value:
+e.g.
+Json: `{"k0":"'v 0'", "checksum": "adsaskfljadfkjadfkj", "k1":{"k2": 2, "k3": ["v3", [1, 2], {"k4": "v4", "k5": ["v5", "v6", "v7"]}]}}`\
+Canonicalized form: `"k0"="%27v%200%27","k1"+"k2"=2,"k1"+"k3"+0="v3","k1"+"k3"+1+0=1,"k1"+"k3"+1+1=2,"k1"+"k3"+2+"k4"="v4","k1"+"k3"+2+"k5"+0="v5","k1"+"k3"+2+"k5"+1="v6","k1"+"k3"+2+"k5"+2="v7"`\
+Checksum is `6a92d155a59bf2eecbd4b4ec7fd1f875`
+
+### How to URL encode keys and string values
+The [URL Encoding](https://datatracker.ietf.org/doc/html/rfc3986) spec is a bit flexible to give a reliable encoding. e.g. the spec allows both
+uppercase and lowercase as part of percent-encoding. Thus, we require a stricter set of rules for encoding:
+
+1. The string to be encoded must be represented as octets according to the UTF-8 character encoding
+2. All octets except a-z / A-Z / 0-9 / "-" / "." / "_" / "~" are reserved
+3. Always [percent-encode](https://datatracker.ietf.org/doc/html/rfc3986#section-2) reserved octets
+4. Never percent-encode non-reserved octets
+5. A percent-encoded octet consists of three characters: `%` followed by its 2-digit hexadecimal value in uppercase letters, e.g. `>` encodes to `%3E`

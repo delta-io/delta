@@ -45,8 +45,7 @@ import io.delta.kernel.internal.util.InternalSchemaUtils;
  * Implementation of {@link Scan}
  */
 public class ScanImpl
-    implements Scan
-{
+    implements Scan {
     /**
      * Schema of the snapshot from the Delta log being scanned in this scan. It is a logical schema
      * with metadata properties to derive the physical schema.
@@ -71,8 +70,7 @@ public class ScanImpl
         Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
         CloseableIterator<AddFile> filesIter,
         Optional<Expression> filter,
-        Path dataPath)
-    {
+        Path dataPath) {
         this.snapshotSchema = snapshotSchema;
         this.readSchema = readSchema;
         this.protocolAndMetadata = protocolAndMetadata;
@@ -88,20 +86,17 @@ public class ScanImpl
      * @return data in {@link ColumnarBatch} batch format. Each row correspond to one survived file.
      */
     @Override
-    public CloseableIterator<ColumnarBatch> getScanFiles(TableClient tableClient)
-    {
+    public CloseableIterator<ColumnarBatch> getScanFiles(TableClient tableClient) {
         if (accessedScanFiles) {
             throw new IllegalStateException("Scan files are already fetched from this instance");
         }
         accessedScanFiles = true;
-        return new CloseableIterator<ColumnarBatch>()
-        {
+        return new CloseableIterator<ColumnarBatch>() {
             private Optional<AddFile> nextValid = Optional.empty();
             private boolean closed;
 
             @Override
-            public boolean hasNext()
-            {
+            public boolean hasNext() {
                 if (closed) {
                     throw new IllegalStateException("Can't call `hasNext` on a closed iterator.");
                 }
@@ -112,8 +107,7 @@ public class ScanImpl
             }
 
             @Override
-            public ColumnarBatch next()
-            {
+            public ColumnarBatch next() {
                 if (closed) {
                     throw new IllegalStateException("Can't call `next` on a closed iterator.");
                 }
@@ -133,14 +127,12 @@ public class ScanImpl
 
             @Override
             public void close()
-                throws IOException
-            {
+                throws IOException {
                 filesIter.close();
                 this.closed = true;
             }
 
-            private Optional<AddFile> findNextValid()
-            {
+            private Optional<AddFile> findNextValid() {
                 if (filesIter.hasNext()) {
                     return Optional.of(filesIter.next());
                 }
@@ -150,8 +142,7 @@ public class ScanImpl
     }
 
     @Override
-    public Row getScanState(TableClient tableClient)
-    {
+    public Row getScanState(TableClient tableClient) {
         return new ScanStateRow(
             protocolAndMetadata.get()._2,
             protocolAndMetadata.get()._1,
@@ -168,8 +159,7 @@ public class ScanImpl
     }
 
     @Override
-    public Optional<Expression> getRemainingFilter()
-    {
+    public Optional<Expression> getRemainingFilter() {
         return filter;
     }
 }

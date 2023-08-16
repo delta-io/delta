@@ -36,8 +36,7 @@ import io.delta.kernel.internal.lang.Lazy;
  * Implementation of {@link ScanBuilder}.
  */
 public class ScanBuilderImpl
-    implements ScanBuilder
-{
+    implements ScanBuilder {
 
     private final StructType snapshotSchema;
     private final CloseableIterator<AddFile> filesIter;
@@ -53,8 +52,7 @@ public class ScanBuilderImpl
         Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
         StructType snapshotSchema,
         CloseableIterator<AddFile> filesIter,
-        TableClient tableClient)
-    {
+        TableClient tableClient) {
         this.dataPath = dataPath;
         this.snapshotSchema = snapshotSchema;
         this.filesIter = filesIter;
@@ -66,8 +64,7 @@ public class ScanBuilderImpl
     }
 
     @Override
-    public ScanBuilder withFilter(TableClient tableClient, Expression filter)
-    {
+    public ScanBuilder withFilter(TableClient tableClient, Expression filter) {
         if (this.filter.isPresent()) {
             throw new IllegalArgumentException("There already exists a filter in current builder");
         }
@@ -76,16 +73,14 @@ public class ScanBuilderImpl
     }
 
     @Override
-    public ScanBuilder withReadSchema(TableClient tableClient, StructType readSchema)
-    {
+    public ScanBuilder withReadSchema(TableClient tableClient, StructType readSchema) {
         // TODO: validate the readSchema is a subset of the table schema
         this.readSchema = readSchema;
         return this;
     }
 
     @Override
-    public Scan build()
-    {
+    public Scan build() {
         return new ScanImpl(
             snapshotSchema,
             readSchema,
