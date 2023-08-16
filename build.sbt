@@ -18,6 +18,7 @@
 
 import java.nio.file.Files
 import Mima._
+import Unidoc._
 
 // Scala versions
 val scala212 = "2.12.15"
@@ -83,17 +84,19 @@ lazy val commonSettings = Seq(
   ),
 
   testOptions += Tests.Argument("-oF"),
+
+  // Unidoc settings: by default dont document any source file
+  unidocSourceFilePatterns := Nil,
 )
 
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
-  .enablePlugins(GenJavadocPlugin, JavaUnidocPlugin, ScalaUnidocPlugin, Antlr4Plugin)
+  .enablePlugins(Antlr4Plugin)
   .settings (
     name := "delta-spark",
     commonSettings,
     scalaStyleSettings,
     sparkMimaSettings,
-    unidocSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
@@ -111,11 +114,6 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
-
-      // Compiler plugins
-      // -- Bump up the genjavadoc version explicitly to 0.18 to work with Scala 2.12
-      compilerPlugin(
-        "com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
     ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
@@ -170,7 +168,11 @@ lazy val spark = (project in file("spark"))
       Seq(file)
     },
     TestParallelization.settings,
+
+    // Unidoc settings
+    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/")),
   )
+  .configureUnidoc(generateScalaDoc = true)
 
 lazy val contribs = (project in file("contribs"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
@@ -207,7 +209,7 @@ lazy val contribs = (project in file("contribs"))
       Files.createDirectories(dir.toPath)
     },
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
-  )
+  ).configureUnidoc()
 
 lazy val kernelApi = (project in file("kernel/kernel-api"))
   .settings(
@@ -224,14 +226,18 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "junit" % "junit" % "4.11" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
     ),
+
     // Can be run explicitly via: build/sbt $module/checkstyle
     // Will automatically be run during compilation (e.g. build/sbt compile)
     // and during tests (e.g. build/sbt test)
     checkstyleConfigLocation := CheckstyleConfigLocation.File("kernel/dev/checkstyle.xml"),
     checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
     (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
-    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
-  )
+    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value,
+
+    // Unidoc settings
+    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kernel/")),
+  ).configureUnidoc(docTitle = "Delta Kernel")
 
 lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(kernelApi)
@@ -252,14 +258,18 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "junit" % "junit" % "4.11" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
     ),
+
     // Can be run explicitly via: build/sbt $module/checkstyle
     // Will automatically be run during compilation (e.g. build/sbt compile)
     // and during tests (e.g. build/sbt test)
     checkstyleConfigLocation := CheckstyleConfigLocation.File("kernel/dev/checkstyle.xml"),
     checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
     (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
-    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
-  )
+    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value,
+
+      // Unidoc settings
+    unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
+  ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
 // TODO javastyle tests
 // TODO unidoc
@@ -280,8 +290,11 @@ lazy val storage = (project in file("storage"))
 
       // Test Deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-    )
-  )
+    ),
+
+    // Unidoc settings
+    unidocSourceFilePatterns += SourceFilePattern("/LogStore.java", "/CloseableIterator.java"),
+  ).configureUnidoc()
 
 lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
   .dependsOn(storage % "compile->compile;test->test;provided->provided")
@@ -301,7 +314,7 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
       // Test Deps
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException
     )
-  )
+  ).configureUnidoc()
 
 val icebergSparkRuntimeArtifactName = {
  val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
@@ -774,7 +787,10 @@ lazy val standalone = (project in file("connectors/standalone"))
       art.withClassifier(Some("assembly"))
     },
     addArtifact(assembly / artifact, assembly),
-  )
+
+    // Unidoc setting
+    unidocSourceFilePatterns += SourceFilePattern("io/delta/standalone/"),
+  ).configureUnidoc()
 
 
 /*
@@ -940,7 +956,7 @@ lazy val flink = (project in file("connectors/flink"))
     // generating source java class with version number to be passed during commit to the DeltaLog as engine info
     // (part of transaction's metadata)
     Compile / sourceGenerators += Def.task {
-      val file = (Compile / sourceManaged).value / "meta" / "Meta.java"
+      val file = (Compile / sourceManaged).value / "io" / "delta" / "flink" / "internal" / "Meta.java"
       IO.write(file,
         s"""package io.delta.flink.internal;
            |
@@ -952,15 +968,9 @@ lazy val flink = (project in file("connectors/flink"))
       Seq(file)
     },
 
-    // Javadoc settings needed for successful doc generation needed for publishing.
-    Compile / doc / javacOptions ++= Seq(
-      "-public",
-      "-noqualifier", "java.lang",
-      "-tag", "implNote:a:Implementation Note:",
-      "-tag", "apiNote:a:API Note:",
-      "-Xdoclint:all")
-  )
-
+    // Unidoc settings
+    unidocSourceFilePatterns += SourceFilePattern("io/delta/flink/"),
+  ).configureUnidoc()
 
 /**
  * Get list of python files and return the mapping between source files and target paths
@@ -1004,8 +1014,12 @@ lazy val kernelGroup = project
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
     publishArtifact := false,
-    publish / skip := false
-  )
+    publish / skip := false,
+    unidocSourceFilePatterns := {
+      (kernelApi / unidocSourceFilePatterns).value.scopeToProject(kernelApi) ++
+      (kernelDefaults / unidocSourceFilePatterns).value.scopeToProject(kernelDefaults)
+    }
+  ).configureUnidoc(docTitle = "Delta Kernel")
 
 /*
  ***********************
@@ -1025,62 +1039,6 @@ lazy val scalaStyleSettings = Seq(
   testScalastyle := (Test / scalastyle).toTask("").value,
 
   Test / test := ((Test / test) dependsOn testScalastyle).value
-)
-
-/*
- *******************
- * Unidoc settings *
- *******************
- */
-
-// Explicitly remove source files by package because these docs are not formatted well for Javadocs
-def ignoreUndocumentedPackages(packages: Seq[Seq[java.io.File]]): Seq[Seq[java.io.File]] = {
-  packages
-    .map(_.filterNot(_.getName.contains("$")))
-    .map(_.filterNot(_.getCanonicalPath.contains("kernel")))
-    .map(_.filterNot(_.getCanonicalPath.contains("connectors")))
-    .map { _.filterNot { f =>
-        // Remove all files in the spark module except those in package io.delta
-        f.getCanonicalPath.contains("spark") && !f.getCanonicalPath.contains("io/delta/tables/")
-      }
-    }
-    // Remove files in internal packages inside io.delta.tables
-    .map(_.filterNot(_.getCanonicalPath.contains("io/delta/tables/execution")))
-    .map { _.filterNot { f =>
-        // LogStore.java and CloseableIterator.java are the only public io.delta.storage APIs
-        f.getCanonicalPath.contains("io/delta/storage") &&
-          f.getName != "LogStore.java" &&
-          f.getName != "CloseableIterator.java"
-      }
-    }
-}
-
-lazy val unidocSettings = Seq(
-
-  // Configure Scala unidoc
-  ScalaUnidoc / unidoc / scalacOptions ++= Seq(
-    "-skip-packages", "org:com:io.delta.sql:io.delta.tables.execution",
-    "-doc-title", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " ScalaDoc"
-  ),
-
-  ScalaUnidoc / unidoc / unidocAllSources := {
-    ignoreUndocumentedPackages((ScalaUnidoc / unidoc / unidocAllSources).value)
-  },
-
-  // Configure Java unidoc
-  JavaUnidoc / unidoc / javacOptions := Seq(
-    "-public",
-    "-exclude", "org:com:io.delta.sql:io.delta.tables.execution",
-    "-windowtitle", "Delta Lake " + version.value.replaceAll("-SNAPSHOT", "") + " JavaDoc",
-    "-noqualifier", "java.lang",
-    "-tag", "return:X",
-    // `doclint` is disabled on Circle CI. Need to enable it manually to test our javadoc.
-    "-Xdoclint:all"
-  ),
-
-  JavaUnidoc / unidoc / unidocAllSources := {
-    ignoreUndocumentedPackages((JavaUnidoc / unidoc / unidocAllSources).value)
-  },
 )
 
 /*
