@@ -36,7 +36,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.paths.SparkPath
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
+import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, FileSourceMetadataAttribute, GenericInternalRow}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, LogicalRelation}
@@ -51,7 +51,7 @@ import org.apache.spark.util.{SerializableConfiguration, Utils => SparkUtils}
  */
 object DMLWithDeletionVectorsHelper extends DeltaCommand {
   /**
-   * Creates a DataFrame that can be used to scan for rows matching condition in given
+   * Creates a DataFrame that can be used to scan for rows matching the condition in the given
    * files. Generally the given file list is a pruned file list using the stats based pruning.
    */
   def createTargetDfForScanningForMatches(
@@ -170,7 +170,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       spark: SparkSession,
       touchedFiles: Seq[TouchedFileWithDV],
       snapshot: Snapshot): (Seq[FileAction], Map[String, Long]) = {
-    val numModifiedRows: Long = touchedFiles.map(_.numberOfModifiedRows).sum
+    val numTouchedRows: Long = touchedFiles.map(_.numberOfModifiedRows).sum
     val numRemovedFiles: Long = touchedFiles.count(_.isFullyReplaced())
 
     val (fullyRemovedFiles, notFullyRemovedFiles) = touchedFiles.partition(_.isFullyReplaced())
@@ -197,7 +197,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       }
     numDeletionVectorsRemoved += fullyRemoved.count(_.deletionVector != null)
     val metricMap = Map(
-      "numModifiedRows" -> numModifiedRows,
+      "numTouchedRows" -> numTouchedRows,
       "numRemovedFiles" -> numRemovedFiles,
       "numDeletionVectorsAdded" -> numDeletionVectorsAdded,
       "numDeletionVectorsRemoved" -> numDeletionVectorsRemoved,
@@ -490,8 +490,8 @@ object DeletionVectorData {
 }
 
 /** Final output for each file containing the file path, DeletionVectorDescriptor and how many
- * rows are marked as deleted in this file as part of the this OP (doesn't include already
- * rows marked as deleted)
+ * rows are marked as deleted in this file as part of the this operation (doesn't include rows that
+ * are already marked as deleted).
  *
  * @param filePath        Absolute path of the data file this DV result is generated for.
  * @param deletionVector  Deletion vector generated containing the newly deleted row indices from
@@ -648,7 +648,7 @@ object DeletionVectorWriter extends DeltaLogging {
   }
 
   /**
-   * Prepares a mapper function that can be used by DML command to store the Deletion Vectors
+   * Prepares a mapper function that can be used by DML commands to store the Deletion Vectors
    * that are in described in [[DeletionVectorData]] and return their descriptors
    * [[DeletionVectorResult]].
    */

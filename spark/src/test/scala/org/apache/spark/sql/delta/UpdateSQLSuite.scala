@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.delta.actions.AddFile
@@ -113,7 +114,6 @@ class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
     enableDeletionVectors(spark, update = true)
   }
 
-
   override def excluded: Seq[String] = super.excluded ++
     Seq(
       // The following two tests must fail when DV is used. Covered by another test case:
@@ -131,60 +131,95 @@ class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
       val log = DeltaLog.forTable(spark, path)
       spark.range(0, 10, 1, numPartitions = 2).write.format("delta").save(path)
 
+      // scalastyle:off argcount
       def updateAndCheckLog(
           where: String,
           expectedAnswer: Seq[Row],
-          numAddFiles: Int,
+
           numAddFilesWithDVs: Int,
-          numRowsInExistingFile: Int,
-          numRowsInNewFile: Int,
-          dvCardinality: Long): Unit = {
+          sumNumRowsInAddFileWithDV: Int,
+          sumNumRowsInAddFileWithoutDV: Int,
+          sumDvCardinalityInAddFile: Long,
+
+          numRemoveFilesWithDVs: Int,
+          sumNumRowsInRemoveFileWithDV: Int,
+          sumNumRowsInRemoveFileWithoutDV: Int,
+          sumDvCardinalityInRemoveFile: Long): Unit = {
         executeUpdate(s"delta.`$path`", "id = -1", where)
         checkAnswer(sql(s"SELECT * FROM delta.`$path`"), expectedAnswer)
 
-        val allFiles =
-          log.getChanges(log.update().version).flatMap(_._2).collect { case f: AddFile => f }.toSeq
-        assert(allFiles.length === numAddFiles)
-        assert(allFiles.count(_.deletionVector != null) === numAddFilesWithDVs)
-        for (add <- allFiles) {
-          if (add.deletionVector == null) {
-            assert(add.numPhysicalRecords === Some(numRowsInNewFile))
-          } else {
-            assert(add.numPhysicalRecords === Some(numRowsInExistingFile))
-            assert(add.deletionVector.cardinality === dvCardinality)
-          }
-        }
-      }
+        val fileActions = log.getChanges(log.update().version).flatMap(_._2)
+          .collect { case f: FileAction => f }
+          .toSeq
+        val addFiles = fileActions.collect { case f: AddFile => f }
+        val removeFiles = fileActions.collect { case f: RemoveFile => f }
 
-      // DV created.
+        val (addFilesWithDV, addFilesWithoutDV) = addFiles.partition(_.deletionVector != null)
+        assert(addFilesWithDV.size === numAddFilesWithDVs)
+        assert(
+          addFilesWithDV.map(_.numPhysicalRecords.getOrElse(0L)).sum ===
+            sumNumRowsInAddFileWithDV)
+        assert(
+          addFilesWithDV.map(_.deletionVector.cardinality).sum ===
+            sumDvCardinalityInAddFile)
+        assert(
+          addFilesWithoutDV.map(_.numPhysicalRecords.getOrElse(0L)).sum ===
+            sumNumRowsInAddFileWithoutDV)
+
+        val (removeFilesWithDV, removeFilesWithoutDV) =
+          removeFiles.partition(_.deletionVector != null)
+        assert(removeFilesWithDV.size === numRemoveFilesWithDVs)
+        assert(
+          removeFilesWithDV.map(_.numPhysicalRecords.getOrElse(0L)).sum ===
+            sumNumRowsInRemoveFileWithDV)
+        assert(
+          removeFilesWithDV.map(_.deletionVector.cardinality).sum ===
+            sumDvCardinalityInRemoveFile)
+        assert(
+          removeFilesWithoutDV.map(_.numPhysicalRecords.getOrElse(0L)).sum ===
+            sumNumRowsInRemoveFileWithoutDV)
+      }
+      // scalastyle:on argcount
+
+      // DV created. 4 rows updated.
       updateAndCheckLog(
         "id % 3 = 0",
         Seq(-1, 1, 2, -1, 4, 5, -1, 7, 8, -1).map(Row(_)),
-        numAddFiles = 4,
         numAddFilesWithDVs = 2,
-        numRowsInExistingFile = 5,
-        numRowsInNewFile = 2,
-        dvCardinality = 2)
+        sumNumRowsInAddFileWithDV = 10,
+        sumNumRowsInAddFileWithoutDV = 4,
+        sumDvCardinalityInAddFile = 4,
 
-      // DV updated.
+        numRemoveFilesWithDVs = 0,
+        sumNumRowsInRemoveFileWithDV = 0,
+        sumNumRowsInRemoveFileWithoutDV = 10,
+        sumDvCardinalityInRemoveFile = 0)
+
+      // DV updated. 2 rows from the original file updated.
       updateAndCheckLog(
         "id % 4 = 0",
         Seq(-1, 1, 2, -1, -1, 5, -1, 7, -1, -1).map(Row(_)),
-        numAddFiles = 4,
         numAddFilesWithDVs = 2,
-        numRowsInExistingFile = 5,
-        numRowsInNewFile = 1,
-        dvCardinality = 3)
+        sumNumRowsInAddFileWithDV = 10,
+        sumNumRowsInAddFileWithoutDV = 2,
+        sumDvCardinalityInAddFile = 6,
+        numRemoveFilesWithDVs = 2,
+        sumNumRowsInRemoveFileWithDV = 10,
+        sumNumRowsInRemoveFileWithoutDV = 0,
+        sumDvCardinalityInRemoveFile = 4)
 
-      // File with DV removed, because all rows in the second file are deleted.
+      // Original files DV removed, because all rows in the SECOND FILE are deleted.
       updateAndCheckLog(
         "id IN (5, 7)",
         Seq(-1, 1, 2, -1, -1, -1, -1, -1, -1, -1).map(Row(_)),
-        numAddFiles = 1,
         numAddFilesWithDVs = 0,
-        numRowsInExistingFile = -1, // doesn't matter
-        numRowsInNewFile = 2,
-        dvCardinality = -1) // doesn't matter
+        sumNumRowsInAddFileWithDV = 0,
+        sumNumRowsInAddFileWithoutDV = 2,
+        sumDvCardinalityInAddFile = 0,
+        numRemoveFilesWithDVs = 1,
+        sumNumRowsInRemoveFileWithDV = 5,
+        sumNumRowsInRemoveFileWithoutDV = 0,
+        sumDvCardinalityInRemoveFile = 3)
     }
   }
 }

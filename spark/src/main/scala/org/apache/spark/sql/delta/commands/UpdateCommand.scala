@@ -17,11 +17,14 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.concurrent.TimeUnit
+
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
@@ -127,7 +130,7 @@ case class UpdateCommand(
 
     val nameToAddFile = generateCandidateFileMap(deltaLog.dataPath, candidateFiles)
 
-    scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
+    scanTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime)
 
     val allActions: Seq[FileAction] = if (candidateFiles.isEmpty) {
       // Case 1: Do nothing if no row qualifies the partition predicates
@@ -141,22 +144,18 @@ case class UpdateCommand(
       // Rewrite all candidateFiles
       val addAndRemoveActions =
         withStatusCode("DELTA", UpdateCommand.rewritingFilesMsg(candidateFiles.size)) {
-          if (candidateFiles.nonEmpty) {
-            rewriteFiles(
-              sparkSession,
-              txn,
-              tahoeFileIndex.path,
-              candidateFiles,
-              nameToAddFile,
-              updateCondition,
-              generateRemoveFileActions = true,
-              copyUnmodifiedRows = true)
-          } else {
-            Nil
-          }
+          rewriteFiles(
+            sparkSession,
+            txn,
+            rootPath = tahoeFileIndex.path,
+            inputLeafFiles = candidateFiles,
+            nameToAddFileMap = nameToAddFile,
+            condition = updateCondition,
+            generateRemoveFileActions = true,
+            copyUnmodifiedRows = true)
         }
 
-      rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs
+      rewriteTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime) - scanTimeMs
       val (addActions, removeActions) = addAndRemoveActions.partition(_.isInstanceOf[AddFile])
       numRewrittenFiles = addActions.size
       numAddedBytes = addActions.map(_.getFileSize).sum
@@ -176,7 +175,7 @@ case class UpdateCommand(
           fileIndex)
 
         // Does the target table already has DVs enabled? If so, we need to read the table
-        // with deletion vectors
+        // with deletion vectors.
         val mustReadDeletionVectors = DeletionVectorUtils.deletionVectorsReadable(txn.snapshot)
 
         val touchedFiles = DMLWithDeletionVectorsHelper.findTouchedFiles(
@@ -196,17 +195,17 @@ case class UpdateCommand(
             txn.snapshot)
           metrics("numUpdatedRows").set(metricMap("numModifiedRows"))
           numTouchedFiles = metricMap("numRemovedFiles")
-          val dvRewriteStartMs = System.nanoTime()
+          val dvRewriteStartNs = System.nanoTime()
           val newFiles = rewriteFiles(
             sparkSession,
             txn,
-            tahoeFileIndex.path,
-            touchedFiles.map(_.fileLogEntry),
-            nameToAddFile,
-            updateCondition,
+            rootPath = tahoeFileIndex.path,
+            inputLeafFiles = touchedFiles.map(_.fileLogEntry),
+            nameToAddFileMap = nameToAddFile,
+            condition = updateCondition,
             generateRemoveFileActions = false,
             copyUnmodifiedRows = false)
-          rewriteTimeMs = (System.nanoTime() - dvRewriteStartMs) / 1000 / 1000
+          rewriteTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - dvRewriteStartNs)
 
           dvActions ++ newFiles
         } else {
@@ -229,7 +228,7 @@ case class UpdateCommand(
               .collect()
           }
 
-        scanTimeMs = (System.nanoTime() - startTime) / 1000 / 1000
+        scanTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime)
 
         val touchedFiles =
           pathsToRewrite.map(getTouchedFile(deltaLog.dataPath, _, nameToAddFile)).toSeq
@@ -241,17 +240,17 @@ case class UpdateCommand(
               rewriteFiles(
                 sparkSession,
                 txn,
-                tahoeFileIndex.path,
-                touchedFiles,
-                nameToAddFile,
-                updateCondition,
+                rootPath = tahoeFileIndex.path,
+                inputLeafFiles = touchedFiles,
+                nameToAddFileMap = nameToAddFile,
+                condition = updateCondition,
                 generateRemoveFileActions = true,
                 copyUnmodifiedRows = true)
             } else {
               Nil
             }
           }
-        rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs
+        rewriteTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime) - scanTimeMs
         numTouchedFiles = touchedFiles.length
         val (addActions, removeActions) = addAndRemoveActions.partition(_.isInstanceOf[AddFile])
         numRewrittenFiles = addActions.size
@@ -261,9 +260,9 @@ case class UpdateCommand(
       }
     }
 
-    val (changeActions, _) = allActions.partition(_.isInstanceOf[AddCDCFile])
+    val changeActions = allActions.collect{ case f: AddCDCFile => f }
     numAddedChangeFiles = changeActions.size
-    changeFileBytes = changeActions.collect { case f: AddCDCFile => f.size }.sum
+    changeFileBytes = changeActions.map(_.size).sum
 
     metrics("numAddedFiles").set(numRewrittenFiles)
     metrics("numAddedBytes").set(numAddedBytes)
@@ -271,7 +270,7 @@ case class UpdateCommand(
     metrics("changeFileBytes").set(changeFileBytes)
     metrics("numRemovedFiles").set(numTouchedFiles)
     metrics("numRemovedBytes").set(numRemovedBytes)
-    metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
+    metrics("executionTimeMs").set(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime))
     metrics("scanTimeMs").set(scanTimeMs)
     metrics("rewriteTimeMs").set(rewriteTimeMs)
     // In the case where the numUpdatedRows is not captured, we can siphon out the metrics from

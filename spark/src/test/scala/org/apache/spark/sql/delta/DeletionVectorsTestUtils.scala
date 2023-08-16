@@ -45,9 +45,8 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
     spark.conf.set(DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key, update.toString)
   }
 
-  def enableDeletionVectorsForAllOperations(spark: SparkSession): Unit =
+  def enableDeletionVectorsForAllSupportedOperations(spark: SparkSession): Unit =
     enableDeletionVectors(spark, delete = true, update = true)
-
 
   def testWithDVs(testName: String, testTags: org.scalatest.Tag*)(thunk: => Unit): Unit = {
     test(testName, testTags : _*) {
