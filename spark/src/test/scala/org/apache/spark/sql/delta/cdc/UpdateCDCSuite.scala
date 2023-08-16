@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.cdc
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.test.DeltaExcludedTestMixin
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -203,5 +204,31 @@ class UpdateCDCWithDeletionVectorsSuite extends UpdateCDCSuite
       "schema pruning on finding files to update",
       "nested schema pruning on finding files to update"
     )
+
+  test("UPDATE with DV write CDC files explicitly") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      val log = DeltaLog.forTable(spark, path)
+      spark.range(0, 10, 1, numPartitions = 2).write.format("delta").save(path)
+      executeUpdate(s"delta.`$path`", "id = -1", "id % 4 = 0")
+
+      val cdcActions =
+        log.getChanges(log.update().version).flatMap(_._2).collect { case f: AddCDCFile => f }.toSeq
+      assert(cdcActions.nonEmpty)
+
+      val latestVersion = log.update().version
+      checkAnswer(
+        CDCReader
+          .changesToBatchDF(log, latestVersion, latestVersion, spark)
+          .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+        Row(0, "update_preimage", latestVersion) ::
+          Row(-1, "update_postimage", latestVersion) ::
+          Row(4, "update_preimage", latestVersion) ::
+          Row(-1, "update_postimage", latestVersion) ::
+          Row(8, "update_preimage", latestVersion) ::
+          Row(-1, "update_postimage", latestVersion) ::
+          Nil)
+    }
+  }
 }
 

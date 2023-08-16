@@ -192,7 +192,7 @@ case class UpdateCommand(
             sparkSession,
             touchedFiles,
             txn.snapshot)
-          metrics("numUpdatedRows").set(metricMap("numModifiedRows"))
+          metrics("numUpdatedRows").set(metricMap("numTouchedRows"))
           numTouchedFiles = metricMap("numRemovedFiles")
           val dvRewriteStartNs = System.nanoTime()
           val newFiles = rewriteFiles(
