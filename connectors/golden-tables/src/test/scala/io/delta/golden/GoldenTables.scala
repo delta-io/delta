@@ -60,6 +60,8 @@ class GoldenTables extends QueryTest with SharedSparkSession {
   override def sparkConf: SparkConf = super.sparkConf
     .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
     .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    // disable _SUCCESS files
+    .set("spark.hadoop.mapreduce.fileoutputcommitter.marksuccessfuljobs", "false")
 
   // Timezone is fixed to America/Los_Angeles for timezone-sensitive tests
   TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"))
@@ -866,35 +868,15 @@ class GoldenTables extends QueryTest with SharedSparkSession {
   }
   */
 
-  for (parquetTimestampType <- SQLConf.ParquetOutputTimestampType.values) {
-    generateGoldenTable(s"kernel-timestamp-${parquetTimestampType.toString}") { tablePath =>
-      withSQLConf(("spark.sql.parquet.outputTimestampType", parquetTimestampType.toString)) {
-        TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
-        // Create a partition value of both {year}-{month}-{day} {hour}:{minute}:{second} format and
-        // {year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}
-        val data = Row(0, Timestamp.valueOf("2020-01-01 08:09:10.001"), Timestamp.valueOf("2020-02-01 08:09:10")) ::
-          Row(1, Timestamp.valueOf("2021-10-01 08:09:20"), Timestamp.valueOf("1999-01-01 09:00:00")) ::
-          Row(2, Timestamp.valueOf("2021-10-01 08:09:20"), Timestamp.valueOf("2000-01-01 09:00:00")) :: Nil
-
-        val schema = new StructType()
-          .add("id", IntegerType)
-          .add("part", TimestampType)
-          .add("time", TimestampType)
-
-        spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
-          .write
-          .format("delta")
-          .partitionBy("part")
-          .save(tablePath)
-      }
-    }
-  }
-
-  generateGoldenTable("kernel-timestamp-PST") { tablePath =>
-    TimeZone.setDefault(TimeZone.getTimeZone("PST"))
+  def writeBasicTimestampTable(path: String, timeZone: TimeZone): Unit = {
+    TimeZone.setDefault(timeZone)
+    // Create a partition value of both {year}-{month}-{day} {hour}:{minute}:{second} format and
+    // {year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}
     val data = Row(0, Timestamp.valueOf("2020-01-01 08:09:10.001"), Timestamp.valueOf("2020-02-01 08:09:10")) ::
       Row(1, Timestamp.valueOf("2021-10-01 08:09:20"), Timestamp.valueOf("1999-01-01 09:00:00")) ::
-      Row(2, Timestamp.valueOf("2021-10-01 08:09:20"), Timestamp.valueOf("2000-01-01 09:00:00")) :: Nil
+      Row(2, Timestamp.valueOf("2021-10-01 08:09:20"), Timestamp.valueOf("2000-01-01 09:00:00")) ::
+      Row(3, Timestamp.valueOf("1969-01-01 00:00:00"), Timestamp.valueOf("1969-01-01 00:00:00")) ::
+      Row(4, null, null) :: Nil
 
     val schema = new StructType()
       .add("id", IntegerType)
@@ -905,7 +887,19 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       .write
       .format("delta")
       .partitionBy("part")
-      .save(tablePath)
+      .save(path)
+  }
+
+  for (parquetTimestampType <- SQLConf.ParquetOutputTimestampType.values) {
+    generateGoldenTable(s"kernel-timestamp-${parquetTimestampType.toString}") { tablePath =>
+      withSQLConf(("spark.sql.parquet.outputTimestampType", parquetTimestampType.toString)) {
+        writeBasicTimestampTable(tablePath, TimeZone.getTimeZone("UTC"))
+      }
+    }
+  }
+
+  generateGoldenTable("kernel-timestamp-PST") { tablePath =>
+    writeBasicTimestampTable(tablePath, TimeZone.getTimeZone("PST"))
   }
 
   generateGoldenTable("parquet-all-types") { tablePath =>

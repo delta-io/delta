@@ -25,7 +25,7 @@ import io.delta.kernel.types.TimestampType;
 import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 
 /**
- * {@link io.delta.kernel.data.ColumnVector} implementation for long type data.
+ * {@link io.delta.kernel.data.ColumnVector} implementation for long or timestamp type data.
  */
 public class DefaultLongVector
     extends AbstractColumnVector {

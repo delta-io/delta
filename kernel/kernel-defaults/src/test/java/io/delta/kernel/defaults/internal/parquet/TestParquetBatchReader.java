@@ -66,7 +66,7 @@ public class TestParquetBatchReader {
         .add("stringType", StringType.INSTANCE)
         .add("binaryType", BinaryType.INSTANCE)
         .add("dateType", DateType.INSTANCE)
-         .add("timestampType", TimestampType.INSTANCE)
+        .add("timestampType", TimestampType.INSTANCE)
         .add("nested_struct",
             new StructType()
                 .add("aa", StringType.INSTANCE)

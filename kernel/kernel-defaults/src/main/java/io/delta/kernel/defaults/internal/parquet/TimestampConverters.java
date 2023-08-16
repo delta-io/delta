@@ -37,15 +37,13 @@ public class TimestampConverters {
         PrimitiveType primType = typeFromFile.asPrimitiveType();
 
         if (primType.getPrimitiveTypeName() == INT96) {
-
             return new TimestampBinaryConverter(initialBatchSize);
 
         } else if (primType.getPrimitiveTypeName() == INT64) {
-
             LogicalTypeAnnotation typeAnnotation = primType.getLogicalTypeAnnotation();
             if (!(typeAnnotation instanceof LogicalTypeAnnotation.TimestampLogicalTypeAnnotation)) {
                 throw new RuntimeException(String.format(
-                    "Unable to create Parquet converter for timestamp column with Parquet type %s.",
+                    "Unsupported timestamp column with Parquet type %s.",
                     typeFromFile));
             }
             LogicalTypeAnnotation.TimestampLogicalTypeAnnotation timestamp =
@@ -65,7 +63,7 @@ public class TimestampConverters {
 
         } else {
             throw new RuntimeException(String.format(
-                "Unable to create Parquet converter for timestamp column with Parquet type %s.",
+                "Unsupported timestamp column with Parquet type %s.",
                 typeFromFile));
         }
     }

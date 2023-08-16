@@ -50,73 +50,77 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   0        | 2020-01-01 08:09:10.001           | 2020-02-01 08:09:10
   1        | 2021-10-01 08:09:20               | 1999-01-01 09:00:00
   2        | 2021-10-01 08:09:20               | 2000-01-01 09:00:00
+  3        | 1969-01-01 00:00:00               | 1969-01-01 00:00:00
+  4        | null                              | null
   */
 
-  def row0: (Int, Long) = (
+  def row0: (Int, Option[Long]) = (
     0,
-    // 2020-02-01 08:09:10 UTC to micros since the epoch
-    1580544550000000L)
+    Some(1580544550000000L) // 2020-02-01 08:09:10 UTC to micros since the epoch
+  )
 
-  def row1: (Int, Long) = (
+  def row1: (Int, Option[Long]) = (
     1,
-    // 1999-01-01 09:00:00 UTC to micros since the epoch
-    915181200000000L
+    Some(915181200000000L) // 1999-01-01 09:00:00 UTC to micros since the epoch
   )
 
-  def row2: (Int, Long) = (
+  def row2: (Int, Option[Long]) = (
     2,
-    // 2000-01-01 09:00:00 UTC to micros since the epoch
-    946717200000000L
+    Some(946717200000000L) // 2000-01-01 09:00:00 UTC to micros since the epoch
   )
 
-  def utcTableExpectedResult: Set[(Int, Long)] = Set(row0, row1, row2)
+  def row3: (Int, Option[Long]) = (
+    3,
+    Some(-31536000000000L) // 1969-01-01 00:00:00 UTC to micros since the epoch
+  )
+
+  def row4: (Int, Option[Long]) = (
+    4,
+    None
+  )
+
+  // TODO: refactor this once testing utilities have support for Rows/ColumnarBatches
+  def utcTableExpectedResult: Set[(Int, Option[Long])] = Set(row0, row1, row2, row3, row4)
+
+  def testTimestampTable(
+    goldenTableName: String,
+    timeZone: String,
+    expectedResult: Set[(Int, Option[Long])]): Unit = {
+    withTimeZone(timeZone) {
+      // kernel expects a fully qualified path
+      val path = "file:" + goldenTablePath(goldenTableName)
+      val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
+
+      // for now omit "part" column since we don't support reading timestamp partition values
+      val readSchema = snapshot.getSchema(defaultTableClient)
+        .withoutField("part")
+
+      val result = readSnapshot(snapshot, readSchema).map { row =>
+        (row.getInt(0), if (row.isNullAt(1)) Option.empty[Long] else Some(row.getLong(1)))
+      }
+
+      assert(result.toSet == expectedResult)
+    }
+  }
 
   for (timestampType <- Seq("INT96", "TIMESTAMP_MICROS", "TIMESTAMP_MILLIS")) {
     for (timeZone <- Seq("UTC", "Iceland", "PST", "America/Los_Angeles")) {
       test(
         s"end-to-end usage: timestamp table parquet timestamp format $timestampType tz $timeZone") {
-        withTimeZone(timeZone) {
-          // kernel expects a fully qualified path
-          val path = "file:" + goldenTablePath("kernel-timestamp-" + timestampType)
-          val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
-
-          // for now omit "part" column since we don't support reading timestamp partition values
-          val readSchema = snapshot.getSchema(defaultTableClient)
-            .withoutField("part")
-
-          val result = readSnapshot(snapshot, readSchema).map { row =>
-            (row.getInt(0), row.getLong(1))
-          }
-
-          assert(result.toSet == utcTableExpectedResult)
-        }
+        testTimestampTable("kernel-timestamp-" + timestampType, timeZone, utcTableExpectedResult)
       }
     }
   }
 
   // PST table - all the "time" col timestamps are + 8 hours
-  def pstTableExpectedResult: Set[(Int, Long)] = utcTableExpectedResult.map {
+  def pstTableExpectedResult: Set[(Int, Option[Long])] = utcTableExpectedResult.map {
     case (id, col) =>
-      (id, col + DefaultKernelUtils.DateTimeConstants.MICROS_PER_HOUR * 8)
+      (id, col.map(_ + DefaultKernelUtils.DateTimeConstants.MICROS_PER_HOUR * 8))
   }
 
   for (timeZone <- Seq("UTC", "Iceland", "PST", "America/Los_Angeles")) {
     test(s"end-to-end usage: timestamp in written in PST read in $timeZone") {
-      withTimeZone(timeZone) {
-        // kernel expects a fully qualified path
-        val path = "file:" + goldenTablePath("kernel-timestamp-PST")
-        val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
-
-        // for now omit "part" column since we don't support reading timestamp partition values
-        val readSchema = snapshot.getSchema(defaultTableClient)
-          .withoutField("part")
-
-        val result = readSnapshot(snapshot, readSchema).map { row =>
-          (row.getInt(0), row.getLong(1))
-        }
-
-        assert(result.toSet == pstTableExpectedResult)
-      }
+      testTimestampTable("kernel-timestamp-PST", timeZone, pstTableExpectedResult)
     }
   }
 
