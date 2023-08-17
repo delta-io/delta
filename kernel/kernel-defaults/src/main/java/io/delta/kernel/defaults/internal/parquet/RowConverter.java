@@ -36,18 +36,22 @@ class RowConverter
     private final Map<Integer, Integer> parquetOrdinalToConverterOrdinal;
 
     // Working state
+    private boolean isCurrentValueNull = true;
     private int currentRowIndex;
     private boolean[] nullability;
 
     /**
-     * We have some necessary requirements here:
-     * - the fields in fileSchema are a subset of readSchema (parquet schema has been pruned)
-     * - the fields in fileSchema are in the same order as the corresponding fields in readSchema
+     * Create converter for {@link StructType} column.
+     *
+     * @param initialBatchSize Estimate of initial row batch size. Used in memory allocations.
+     * @param readSchema       Schem of the columns to read from the file.
+     * @param fileSchema       Schema of the pruned columns from the file schema We have some
+     *                         necessary requirements here: (1) the fields in fileSchema are a
+     *                         subset of readSchema (parquet schema has been pruned). (2) the
+     *                         fields in fileSchema are in the same order as the corresponding
+     *                         fields in readSchema.
      */
-    RowConverter(
-        int initialBatchSize,
-        StructType readSchema,
-        GroupType fileSchema) {
+    RowConverter(int initialBatchSize, StructType readSchema, GroupType fileSchema) {
         this.readSchema = requireNonNull(readSchema, "readSchema is not null");
         List<StructField> fields = readSchema.fields();
         this.converters = new Converter[fields.size()];
@@ -89,20 +93,11 @@ class RowConverter
 
     @Override
     public void start() {
-        for (int i = 0; i < converters.length; i++) {
-            if (!converters[i].isPrimitive()) {
-                ((GroupConverter) converters[i]).start();
-            }
-        }
+        isCurrentValueNull = false;
     }
 
     @Override
     public void end() {
-        for (int i = 0; i < converters.length; i++) {
-            if (!converters[i].isPrimitive()) {
-                ((GroupConverter) converters[i]).end();
-            }
-        }
     }
 
     public ColumnarBatch getDataAsColumnarBatch(int batchSize) {
@@ -115,11 +110,12 @@ class RowConverter
     @Override
     public boolean moveToNextRow() {
         resizeIfNeeded();
-        boolean isNull = moveConvertersToNextRow(Optional.empty());
-        nullability[currentRowIndex] = isNull;
+        moveConvertersToNextRow(Optional.empty());
+        nullability[currentRowIndex] = isCurrentValueNull;
+        isCurrentValueNull = true;
         currentRowIndex++;
 
-        return isNull;
+        return nullability[currentRowIndex - 1];
     }
 
     /**
@@ -127,13 +123,12 @@ class RowConverter
      */
     public boolean moveToNextRow(long fileRowIndex) {
         resizeIfNeeded();
-
-        boolean isNull = moveConvertersToNextRow(Optional.of(fileRowIndex));
-        nullability[currentRowIndex] = isNull;
-
+        moveConvertersToNextRow(Optional.of(fileRowIndex));
+        nullability[currentRowIndex] = isCurrentValueNull;
+        isCurrentValueNull = true;
         currentRowIndex++;
 
-        return isNull;
+        return nullability[currentRowIndex - 1];
     }
 
     public ColumnVector getDataColumnVector(int batchSize) {
@@ -160,6 +155,7 @@ class RowConverter
     @Override
     public void resetWorkingState() {
         this.currentRowIndex = 0;
+        this.isCurrentValueNull = true;
         this.nullability = ParquetConverters.initNullabilityVector(this.nullability.length);
     }
 

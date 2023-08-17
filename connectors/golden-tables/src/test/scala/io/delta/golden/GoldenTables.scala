@@ -27,12 +27,13 @@ import scala.language.implicitConversions
 import io.delta.tables.DeltaTable
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.SparkConf
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, JobInfo, Metadata, NotebookInfo, Protocol, RemoveFile, SetTransaction, SingleAction}
+import org.apache.spark.sql.delta.actions.{Metadata, _}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.internal.SQLConf
@@ -905,8 +906,6 @@ class GoldenTables extends QueryTest with SharedSparkSession {
   generateGoldenTable("parquet-all-types") { tablePath =>
     val timeZone = java.util.TimeZone.getTimeZone("UTC")
     java.util.TimeZone.setDefault(timeZone)
-    import org.apache.spark.sql.types._
-    import org.apache.spark.sql._
     import java.sql._
 
     val decimalType = DecimalType(10, 2)
@@ -943,7 +942,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     )
 
     fields = fields :+ StructField("array_of_prims", ArrayType(IntegerType))
-
+    fields = fields :+ StructField("array_of_arrays", ArrayType(ArrayType(IntegerType)))
     fields = fields :+ StructField(
       "array_of_structs",
       ArrayType(new StructType().add("ab", LongType)))
@@ -952,10 +951,13 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       "map_of_prims",
       MapType(IntegerType, LongType)
     )
-
     fields = fields :+ StructField(
-      "map_of_complex",
+      "map_of_rows",
       MapType(IntegerType, new StructType().add("ab", LongType))
+    )
+    fields = fields :+ StructField(
+      "map_of_arrays",
+      MapType(LongType, ArrayType(IntegerType))
     )
 
     val schema = StructType(fields)
@@ -974,12 +976,35 @@ class GoldenTables extends QueryTest with SharedSparkSession {
         if (i % 59 != 0) (i).toString.getBytes else null,
         if (i % 61 != 0) new java.sql.Date(i * 20000000L) else null,
         if (i % 62 != 0) new Timestamp(i * 23423523L) else null,
-        Row(i.toString, if (i % 23 != 0) Row(i) else null),
+        if (i % 63 != 0) {
+          if (i % 19 == 0) {
+            // write a struct with all fields null
+            Row(null, null)
+          } else {
+            Row(i.toString, if (i % 23 != 0) Row(i) else null)
+          }
+        } else null,
         if (i % 25 != 0) {
           if (i % 29 == 0) {
             scala.Array()
           } else {
             scala.Array(i, null, i + 1)
+          }
+        } else null,
+        if (i % 8 != 0) {
+          val singleElemArray = scala.Array(i)
+          val doubleElemArray = scala.Array(i + 10, i + 20)
+          val arrayWithNulls = scala.Array(null, i + 200)
+          val singleElemNullArray = scala.Array(null)
+          val emptyArray = scala.Array()
+          (i % 7) match {
+            case 0 => scala.Array(singleElemArray, singleElemArray, arrayWithNulls)
+            case 1 => scala.Array(singleElemArray, doubleElemArray, emptyArray)
+            case 2 => scala.Array(arrayWithNulls)
+            case 3 => scala.Array(singleElemNullArray)
+            case 4 => scala.Array(null)
+            case 5 => scala.Array(emptyArray)
+            case 6 => scala.Array()
           }
         } else null,
         scala.Array(Row(i.longValue()), null),
@@ -989,11 +1014,23 @@ class GoldenTables extends QueryTest with SharedSparkSession {
           } else {
             Map(
               i -> (if (i % 29 != 0) (i + 2).longValue() else null),
-              i * 2 -> (i + 9).longValue()
+              (if (i % 27 != 0) i + 2 else i + 3) -> (i + 9).longValue()
             )
           }
         } else null,
-        Map(i + 1 -> (if (i % 10 == 0) Row((i*20).longValue()) else null))
+        Map(i + 1 -> (if (i % 10 == 0) Row((i * 20).longValue()) else null)),
+        if (i % 30 != 0) {
+          if (i % 24 == 0) {
+            Map()
+          } else {
+            val val1 = if (i % 4 == 0) scala.Array(i, null, i + 1) else scala.Array()
+            val val2 = if (i % 7 == 0) scala.Array[Integer]() else scala.Array[Integer](null)
+            Map(
+              i.longValue() -> val1,
+              (i + 1).longValue() -> val2
+            )
+          }
+        } else null
       )
     }
 
