@@ -211,7 +211,9 @@ case class UpdateCommand(
           Nil // Nothing to update
         }
       } else {
-        // Case 3.2: Update without persistent deletion vectors. Existing DVs will be materialized
+        // Case 3.2: Update without persistent deletion vectors. Existing DVs will be applied to
+        // the data files (rows marked by DV will be physically removed).
+
         // Keep everything from the resolved target except a new TahoeFileIndex
         // that only involves the affected files instead of all files.
         val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)

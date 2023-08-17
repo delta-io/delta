@@ -116,9 +116,12 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       fileIndex: TahoeFileIndex,
       condition: Expression,
       opName: String): Seq[TouchedFileWithDV] = {
-    require(
-      Set("DELETE", "UPDATE").contains(opName),
-      s"Expecting 'DELETE' or 'UPDATE', but got '$opName'.")
+    {
+      val supportedOps = Seq("DELETE", "UPDATE")
+      require(
+        supportedOps.contains(opName),
+        s"Expecting opName to be one of ${supportedOps.mkString(", ")}, but got '$opName'.")
+    }
 
     recordDeltaOperation(deltaLog, opType = s"$opName.findTouchedFiles") {
       val candidateFiles = fileIndex match {
