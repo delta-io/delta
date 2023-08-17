@@ -324,7 +324,8 @@ object TableFeature {
       ColumnMappingTableFeature,
       TimestampNTZTableFeature,
       IcebergCompatV1TableFeature,
-      DeletionVectorsTableFeature)
+      DeletionVectorsTableFeature,
+      V2CheckpointTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
@@ -343,6 +344,13 @@ object TableFeature {
         TestWriterFeatureWithTransitiveDependency,
         // Row IDs are still under development and only available in testing.
         RowTrackingFeature)
+    }
+    val exposeV2Checkpoints =
+      DeltaUtils.isTesting || SparkSession.getActiveSession.map { spark =>
+        spark.conf.get(DeltaSQLConf.EXPOSE_CHECKPOINT_V2_TABLE_FEATURE_FOR_TESTING)
+      }.getOrElse(false)
+    if (exposeV2Checkpoints) {
+      features += V2CheckpointTableFeature
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -512,6 +520,24 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }
 
+
+/**
+ * V2 Checkpoint table feature is for checkpoints with sidecars and the new format and
+ * file naming scheme.
+ * This is still WIP feature.
+ */
+object V2CheckpointTableFeature
+  extends ReaderWriterFeature(name = "v2Checkpoint-under-development")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(metadata).needsV2CheckpointSupport
+  }
+}
 
 /**
  * Features below are for testing only, and are being registered to the system only in the testing
