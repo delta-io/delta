@@ -60,11 +60,8 @@ public class ParquetBatchReader {
         try {
             FileSystem fs = filePath.getFileSystem(configuration);
             FileStatus fileStatus = fs.getFileStatus(filePath);
-            reader.initialize(
-                new FileSplit(filePath, 0, fileStatus.getLen(), new String[0]),
-                configuration,
-                Reporter.NULL
-            );
+            FileSplit fileSplit = new FileSplit(filePath, 0, fileStatus.getLen(), new String[0]);
+            reader.initialize(fileSplit, configuration, Reporter.NULL);
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }

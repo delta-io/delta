@@ -71,15 +71,13 @@ abstract class RepeatedValueConverter extends GroupConverter implements BaseConv
     public void end() {}
 
     @Override
-    public boolean moveToNextRow() {
+    public void moveToNextRow(long prevRowIndex) {
         this.offsets[currentRowIndex + 1] = collector.currentEntryIndex;
         this.nullability[currentRowIndex] = isCurrentValueNull;
         this.isCurrentValueNull = true;
 
         currentRowIndex++;
         resizeIfNeeded();
-
-        return nullability[currentRowIndex - 1];
     }
 
     @Override
@@ -147,7 +145,9 @@ abstract class RepeatedValueConverter extends GroupConverter implements BaseConv
         @Override
         public void end() {
             for (Converter converter : elementConverters) {
-                ((ParquetConverters.BaseConverter) converter).moveToNextRow();
+                // Row indexes are not needed for nested columns
+                long prevRowIndex = -1;
+                ((ParquetConverters.BaseConverter) converter).moveToNextRow(prevRowIndex);
             }
             currentEntryIndex++;
         }

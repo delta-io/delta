@@ -99,11 +99,9 @@ class ParquetConverters {
 
         /**
          * Move the converter to accept the next row value.
-         *
-         * @return True if the last converted value is null, false otherwise
-         * TODO: Remove the return value. It is no longer relevant.
+         * @param prevRowIndex Row index of the previous row in the Parquet file.
          */
-        boolean moveToNextRow();
+        void moveToNextRow(long prevRowIndex);
 
         default void resizeIfNeeded() {}
 
@@ -125,9 +123,7 @@ class ParquetConverters {
         }
 
         @Override
-        public boolean moveToNextRow() {
-            return true;
-        }
+        public void moveToNextRow(long prevRowIndex) {}
     }
 
     public abstract static class BasePrimitiveColumnConverter
@@ -145,10 +141,9 @@ class ParquetConverters {
         }
 
         @Override
-        public boolean moveToNextRow() {
-            resizeIfNeeded();
+        public void moveToNextRow(long prevRowIndex) {
             currentRowIndex++;
-            return this.nullability[currentRowIndex - 1];
+            resizeIfNeeded();
         }
     }
 
@@ -481,14 +476,12 @@ class ParquetConverters {
             throw new UnsupportedOperationException("cannot add long to metadata column");
         }
 
-        /**
-         * @param fileRowIndex the file row index of the row processed
-         */
-        // If moveToNextRow() is called instead the value will be null
-        public boolean moveToNextRow(long fileRowIndex) {
-            super.values[currentRowIndex] = fileRowIndex;
+        @Override
+        public void moveToNextRow(long prevRowIndex) {
+            // Set the previous row index value as the value
+            super.values[currentRowIndex] = prevRowIndex;
             this.nullability[currentRowIndex] = false;
-            return moveToNextRow();
+            super.moveToNextRow(prevRowIndex);
         }
     }
 }

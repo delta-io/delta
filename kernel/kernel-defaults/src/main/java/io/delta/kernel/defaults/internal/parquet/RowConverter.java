@@ -123,27 +123,12 @@ class RowConverter
     }
 
     @Override
-    public boolean moveToNextRow() {
-        resizeIfNeeded();
-        moveConvertersToNextRow(Optional.empty());
+    public void moveToNextRow(long prevRowIndex) {
+        moveConvertersToNextRow(prevRowIndex);
         nullability[currentRowIndex] = isCurrentValueNull;
         isCurrentValueNull = true;
         currentRowIndex++;
-
-        return nullability[currentRowIndex - 1];
-    }
-
-    /**
-     * @param fileRowIndex the file row index of the row processed
-     */
-    public boolean moveToNextRow(long fileRowIndex) {
         resizeIfNeeded();
-        moveConvertersToNextRow(Optional.of(fileRowIndex));
-        nullability[currentRowIndex] = isCurrentValueNull;
-        isCurrentValueNull = true;
-        currentRowIndex++;
-
-        return nullability[currentRowIndex - 1];
     }
 
     public ColumnVector getDataColumnVector(int batchSize) {
@@ -174,29 +159,10 @@ class RowConverter
         this.nullability = ParquetConverters.initNullabilityVector(this.nullability.length);
     }
 
-    /**
-     * @return true if all members were null
-     */
-    private boolean moveConvertersToNextRow(Optional<Long> fileRowIndex) {
-        long memberNullCount = 0;
-
+    private void moveConvertersToNextRow(long prevRowIndex) {
         for (int i = 0; i < converters.length; i++) {
-            final ParquetConverters.BaseConverter baseConverter =
-                (ParquetConverters.BaseConverter) converters[i];
-
-            if (fileRowIndex.isPresent() &&
-                baseConverter instanceof ParquetConverters.FileRowIndexColumnConverter) {
-                final ParquetConverters.FileRowIndexColumnConverter fileRowIndexColumnConverter =
-                    (ParquetConverters.FileRowIndexColumnConverter) baseConverter;
-                if (fileRowIndexColumnConverter.moveToNextRow(fileRowIndex.get())) {
-                    memberNullCount++;
-                }
-            } else if (baseConverter.moveToNextRow()) {
-                memberNullCount++;
-            }
+            ((ParquetConverters.BaseConverter) converters[i]).moveToNextRow(prevRowIndex);
         }
-
-        return memberNullCount == converters.length;
     }
 
     private ColumnVector[] collectMemberVectors(int batchSize) {
