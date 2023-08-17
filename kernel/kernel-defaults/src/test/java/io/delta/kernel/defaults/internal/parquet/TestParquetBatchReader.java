@@ -518,10 +518,12 @@ public class TestParquetBatchReader {
 
         Map<Long, List<Integer>> expMap = Collections.emptyMap();
         if (tableRowId % 24 != 0) {
-            expMap = new HashMap<Long, List<Integer>>() {{
-                put((long) tableRowId, val1);
-                put(tableRowId + 1L, val2);
-            }};
+            expMap = new HashMap<Long, List<Integer>>() {
+                {
+                    put((long) tableRowId, val1);
+                    put(tableRowId + 1L, val2);
+                }
+            };
         }
         assertEquals(expMap, vector.getMap(batchRowId));
     }
