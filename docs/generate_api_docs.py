@@ -1,4 +1,4 @@
-# !/usr/bin/env python
+# !/usr/bin/env python3
 #
 #  Copyright (2021) The Delta Lake Project Authors.
 #  Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,14 +29,31 @@ def main():
     # Set up the directories
     docs_root_dir = os.path.dirname(os.path.realpath(__file__))
     repo_root_dir = os.path.dirname(docs_root_dir)
-    scaladoc_gen_dir = repo_root_dir + "/core/target/scala-2.12/unidoc"
-    javadoc_gen_dir = repo_root_dir + "/core/target/javaunidoc"
-    all_api_docs_final_dir = docs_root_dir + "/_site/api"
-    scala_api_docs_final_dir = all_api_docs_final_dir + "/scala"
-    java_api_docs_final_dir = all_api_docs_final_dir + "/java"
-    sphinx_gen_dir = repo_root_dir + "/docs/python"
-    sphinx_cp_dir = sphinx_gen_dir + "/_build/html"
-    sphinx_docs_final_dir = all_api_docs_final_dir + "/python"
+
+    # --- dirs where docs are generated
+    spark_scaladoc_gen_dir = repo_root_dir + "/spark/target/scala-2.12/unidoc"
+    spark_javadoc_gen_dir = repo_root_dir + "/spark/target/javaunidoc"
+    spark_pythondoc_dir = repo_root_dir + "/docs/python"
+    spark_pythondoc_gen_dir = spark_pythondoc_dir + "/_build/html"
+
+    standalone_javadoc_gen_dir = repo_root_dir + "/connectors/standalone/target/javaunidoc"
+    flink_javadoc_gen_dir = repo_root_dir + "/connectors/flink/target/javaunidoc"
+    kernel_javadoc_gen_dir = repo_root_dir + "/kernelGroup/target/javaunidoc"
+
+    # --- final dirs where the docs will be copied to
+    all_docs_final_dir = docs_root_dir + "/_site/api"
+    all_javadocs_final_dir = all_docs_final_dir + "/java"
+    all_scaladocs_final_dir = all_docs_final_dir + "/scala"
+    all_pythondocs_final_dir = all_docs_final_dir + "/python"
+
+    spark_javadoc_final_dir = all_javadocs_final_dir + "/spark"
+    spark_scaladoc_final_dir = all_scaladocs_final_dir + "/spark"
+    spark_pythondoc_final_dir = all_pythondocs_final_dir + "/spark"
+
+    standalone_javadoc_final_dir = all_javadocs_final_dir + "/standalone"
+    flink_javadoc_final_dir = all_javadocs_final_dir + "/flink"
+    kernel_javadoc_final_dir = all_javadocs_final_dir + "/kernel"
+
 
     # Generate Java and Scala docs
     print("## Generating ScalaDoc and JavaDoc ...")
@@ -45,14 +62,53 @@ def main():
 
     # Update Scala docs
     print("## Patching ScalaDoc ...")
-    with WorkingDirectory(scaladoc_gen_dir):
+    patch_scala_docs(spark_scaladoc_gen_dir, docs_root_dir)
+
+    # Update Java docs
+    print("## Patching JavaDoc ...")
+    jquery_path = spark_scaladoc_gen_dir + "/lib/jquery.min.js" # grab the JQuery library from Scaladocs
+    all_javadoc_gen_dirs = [
+        spark_javadoc_gen_dir,
+        standalone_javadoc_gen_dir,
+        flink_javadoc_gen_dir,
+        kernel_javadoc_gen_dir,
+    ]
+    for javadoc_gen_dir in all_javadoc_gen_dirs:
+        patch_java_docs(javadoc_gen_dir, docs_root_dir, jquery_path)
+
+    # Generate Python docs
+    print('## Generating Python docs ...')
+    with WorkingDirectory(spark_pythondoc_dir):
+        run_cmd(["make", "html"], stream_output=verbose)
+
+    # Copy to final location
+    log("## Copying to API doc directory %s" % all_docs_final_dir)
+    src_dst_dirs = [
+        (spark_javadoc_gen_dir, spark_javadoc_final_dir),
+        (spark_scaladoc_gen_dir, spark_scaladoc_final_dir),
+        (spark_pythondoc_gen_dir, spark_pythondoc_final_dir),
+        (flink_javadoc_gen_dir, flink_javadoc_final_dir),
+        (standalone_javadoc_gen_dir, standalone_javadoc_final_dir),
+        (kernel_javadoc_gen_dir, kernel_javadoc_final_dir),
+    ]
+
+    run_cmd(["rm", "-rf", all_docs_final_dir])
+    run_cmd(["mkdir", "-p", all_docs_final_dir])
+    for (src_dir, dst_dir) in src_dst_dirs:
+        run_cmd(["mkdir", "-p", dst_dir])
+        run_cmd(["cp", "-r", src_dir.rstrip("/") + "/", dst_dir])
+
+    print("## API docs generated in " + all_docs_final_dir)
+
+def patch_scala_docs(scaladoc_dir, docs_root_dir):
+    with WorkingDirectory(scaladoc_dir):
         # Patch the js and css files
         append(docs_root_dir + "/api-docs.js", "./lib/template.js")  # append new js functions
         append(docs_root_dir + "/api-docs.css", "./lib/template.css")  # append new styles
 
-    # Update Java docs
-    print("## Patching JavaDoc ...")
-    with WorkingDirectory(javadoc_gen_dir):
+def patch_java_docs(javadoc_dir, docs_root_dir, jquery_path):
+    print("### Patching JavaDoc in %s ..." % javadoc_dir)
+    with WorkingDirectory(javadoc_dir):
         # Find html files to patch
         (_, stdout, _) = run_cmd(["find", ".", "-name", "*.html", "-mindepth", "2"])
         log("HTML files found:\n" + stdout)
@@ -83,24 +139,9 @@ def main():
 
         # Patch the js and css files
         run_cmd(["mkdir", "-p", "./lib"])
-        run_cmd(["cp", scaladoc_gen_dir + "/lib/jquery.min.js", "./lib/"])  # copy from ScalaDocs
+        run_cmd(["cp", jquery_path, "./lib/"])  # copy from ScalaDocs
         run_cmd(["cp", docs_root_dir + "/api-javadocs.js", "./lib/"])   # copy new js file
         append(docs_root_dir + "/api-javadocs.css", "./stylesheet.css")  # append new styles
-
-    # Generate Python docs
-    print('## Generating Python(Sphinx) docs ...')
-    with WorkingDirectory(sphinx_gen_dir):
-        run_cmd(["make", "html"], stream_output=verbose)
-
-    # Copy to final location
-    log("Copying to API doc directory %s" % all_api_docs_final_dir)
-    run_cmd(["rm", "-rf", all_api_docs_final_dir])
-    run_cmd(["mkdir", "-p", all_api_docs_final_dir])
-    run_cmd(["cp", "-r", scaladoc_gen_dir, scala_api_docs_final_dir])
-    run_cmd(["cp", "-r", javadoc_gen_dir, java_api_docs_final_dir])
-    run_cmd(["cp", "-r", sphinx_cp_dir, sphinx_docs_final_dir])
-
-    print("## API docs generated in " + all_api_docs_final_dir)
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
@@ -118,7 +159,7 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
     stream_output is false, then a tuple of the exit code, standard output and standard error is
     returned.
     """
-    log("Running command %s" % str(cmd))
+    print("Running command %s" % str(cmd))
     cmd_env = os.environ.copy()
     if env:
         cmd_env.update(env)
@@ -142,9 +183,9 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
             stderr = stderr.decode("UTF-8")
 
         exit_code = child.wait()
-        if throw_on_error and exit_code is not 0:
+        if throw_on_error and exit_code != 0:
             raise Exception(
-                "Non-zero exitcode: %s\n\nSTDOUT:\n%s\n\nSTDERR:%s" %
+                "Non-zero exitcode: cmd%s\n\nSTDOUT:\n%s\n\nSTDERR:%s" %
                 (exit_code, stdout, stderr))
         return (exit_code, stdout, stderr)
 
@@ -188,7 +229,7 @@ def log(str):
         print(str)
 
 
-verbose = False
+verbose = True
 
 if __name__ == "__main__":
     # pylint: disable=e1120
