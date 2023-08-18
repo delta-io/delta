@@ -48,4 +48,17 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       assert(expectedResult == result.toSet)
     }
   }
+
+  test("end to end: multi-part checkpoint") {
+    val expectedResult = Seq(0) ++ (0 until 30)
+
+    // kernel expects a fully qualified path
+    val path = "file:" + goldenTablePath("multi-part-checkpoint")
+    val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
+    val result = readSnapshot(snapshot).map { row =>
+      row.getLong(0)
+    }
+
+    assert(result.toSet == expectedResult.toSet)
+  }
 }
