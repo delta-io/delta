@@ -338,10 +338,15 @@ class DeletionVectorsSuite extends QueryTest
           val numDVUpdated = 1
           // An "updated" DV is "deleted" then "added" again.
           // We increment the count for "updated", "added", and "deleted".
-          val numDVAddedOrRemoved = initialNumDVs + numDVUpdated
-          assert(opMetrics.getOrElse("numDeletionVectorsAdded", -1) === numDVAddedOrRemoved)
-          assert(opMetrics.getOrElse("numDeletionVectorsRemoved", -1) === numDVAddedOrRemoved)
-          assert(opMetrics.getOrElse("numDeletionVectorsUpdated", -1) === numDVUpdated)
+          assert(
+            opMetrics.getOrElse("numDeletionVectorsAdded", -1) ===
+              initialNumDVs + numDVUpdated)
+          assert(
+            opMetrics.getOrElse("numDeletionVectorsRemoved", -1) ===
+              initialNumDVs + numDVUpdated)
+          assert(
+            opMetrics.getOrElse("numDeletionVectorsUpdated", -1) ===
+              numDVUpdated)
         }
 
         {
