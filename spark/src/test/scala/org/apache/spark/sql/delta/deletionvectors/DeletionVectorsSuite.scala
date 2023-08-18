@@ -334,9 +334,19 @@ class DeletionVectorsSuite extends QueryTest
           val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
           assert(opMetrics.getOrElse("numDeletedRows", -1) === 1)
           assert(opMetrics.getOrElse("numRemovedFiles", -1) === 0)
-          assert(opMetrics.getOrElse("numDeletionVectorsAdded", -1) === 0)
-          assert(opMetrics.getOrElse("numDeletionVectorsRemoved", -1) === 0)
-          assert(opMetrics.getOrElse("numDeletionVectorsUpdated", -1) === 1)
+          val initialNumDVs = 0
+          val numDVUpdated = 1
+          // An "updated" DV is "deleted" then "added" again.
+          // We increment the count for "updated", "added", and "deleted".
+          assert(
+            opMetrics.getOrElse("numDeletionVectorsAdded", -1) ===
+              initialNumDVs + numDVUpdated)
+          assert(
+            opMetrics.getOrElse("numDeletionVectorsRemoved", -1) ===
+              initialNumDVs + numDVUpdated)
+          assert(
+            opMetrics.getOrElse("numDeletionVectorsUpdated", -1) ===
+              numDVUpdated)
         }
 
         {
