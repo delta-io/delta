@@ -159,7 +159,7 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
     stream_output is false, then a tuple of the exit code, standard output and standard error is
     returned.
     """
-    print("Running command %s" % str(cmd))
+    log("Running command %s" % str(cmd))
     cmd_env = os.environ.copy()
     if env:
         cmd_env.update(env)
@@ -229,7 +229,7 @@ def log(str):
         print(str)
 
 
-verbose = True
+verbose = False
 
 if __name__ == "__main__":
     # pylint: disable=e1120
