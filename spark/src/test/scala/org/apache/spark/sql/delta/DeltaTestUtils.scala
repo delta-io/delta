@@ -378,14 +378,14 @@ trait DeltaDMLTestUtils
 
   protected def tempPath: String = tempDir.getCanonicalPath
 
-  override def beforeEach(): Unit = {
+  override protected def beforeEach(): Unit = {
     super.beforeEach()
     // Using a space in path to provide coverage for special characters.
     tempDir = Utils.createTempDir(namePrefix = "spark test")
     deltaLog = DeltaLog.forTable(spark, new Path(tempPath))
   }
 
-  override def afterEach(): Unit = {
+  override protected def afterEach(): Unit = {
     try {
       Utils.deleteRecursively(tempDir)
       DeltaLog.clearCache()
