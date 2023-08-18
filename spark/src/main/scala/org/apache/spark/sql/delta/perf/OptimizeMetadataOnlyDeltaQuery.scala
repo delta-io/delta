@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.perf
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Alias, Cast, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Alias, Literal, ToPrettyString}
 import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, Complete, Count}
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -25,7 +25,6 @@ import org.apache.spark.sql.delta.DeltaTable
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
 import org.apache.spark.sql.functions.{coalesce, col, count, lit, sum, when}
-import org.apache.spark.sql.types.StringType
 import org.apache.spark.unsafe.types.UTF8String
 
 trait OptimizeMetadataOnlyDeltaQuery {
@@ -79,9 +78,9 @@ trait OptimizeMetadataOnlyDeltaQuery {
         Nil,
         Seq(
           Alias(
-            Cast(
+            ToPrettyString(
               AggregateExpression(Count(Seq(Literal(1, _))), Complete, false, None, _),
-              StringType, _, _),
+              _),
           _)
         ),
         PhysicalOperation(_, Nil, DeltaTable(i: TahoeLogFileIndex))

@@ -34,6 +34,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.connector.catalog._
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.datasources.{BasicWriteJobStatsTracker, FileFormatWriter, WriteJobStatsTracker}
@@ -270,7 +271,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       .filterNot(c => partitionColNames.contains(c.name))
 
     // The tableStatsCollectionSchema comes from table schema
-    val statsTableSchema = metadata.schema.toAttributes
+    val statsTableSchema = toAttributes(metadata.schema)
     val mappedStatsTableSchema = if (metadata.columnMappingMode == NoMapping) {
       statsTableSchema
     } else {
