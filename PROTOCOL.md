@@ -1424,7 +1424,8 @@ Bytes | Name | Description
 ### Deletion Vector File Storage Format
 
 Deletion Vectors can be stored in files in cloud storage or inline in the Delta log.
-The format for storing DVs in file storage is one (or more) of DV, using the 64-bit RoaringBitmaps described in the previous section, per file, together with a checksum for each DV:
+The format for storing DVs in file storage is one (or more) DV, using the 64-bit RoaringBitmaps described in the previous section, per file, together with a checksum for each DV.
+The concrete format is as follows, with all numerical values written in big endian byte order:
 
 Bytes | Name | Description
 -|-|-
