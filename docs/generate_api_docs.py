@@ -185,7 +185,7 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
         exit_code = child.wait()
         if throw_on_error and exit_code != 0:
             raise Exception(
-                "Non-zero exitcode: cmd%s\n\nSTDOUT:\n%s\n\nSTDERR:%s" %
+                "Non-zero exitcode: %s\n\nSTDOUT:\n%s\n\nSTDERR:%s" %
                 (exit_code, stdout, stderr))
         return (exit_code, stdout, stderr)
 
