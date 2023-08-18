@@ -346,9 +346,9 @@ object TableFeature {
         RowTrackingFeature)
     }
     val exposeV2Checkpoints =
-      DeltaUtils.isTesting || SparkSession.getActiveSession.map { spark =>
+      DeltaUtils.isTesting || SparkSession.getActiveSession.exists { spark =>
         spark.conf.get(DeltaSQLConf.EXPOSE_CHECKPOINT_V2_TABLE_FEATURE_FOR_TESTING)
-      }.getOrElse(false)
+      }
     if (exposeV2Checkpoints) {
       features += V2CheckpointTableFeature
     }

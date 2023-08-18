@@ -743,6 +743,6 @@ object CheckpointPolicy {
 
   /** Converts a `name` String into a [[Policy]] */
   def fromName(name: String): Policy = ALL.find(_.name == name).getOrElse {
-    throw new IllegalStateException(s"Invalid policy $name")
+    throw new IllegalArgumentException(s"Invalid policy $name")
   }
 }

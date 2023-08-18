@@ -1212,40 +1212,9 @@ case class CheckpointMetadata(
     tags: Map[String, String] = null)
   extends Action with CheckpointOnlyAction {
 
-  import CheckpointMetadata.Tags
   override def wrap: SingleAction = SingleAction(checkpointMetadata = this)
 }
 
-object CheckpointMetadata {
-
-  def apply(
-      version: Long,
-      sidecarNumActions: Long,
-      sidecarSizeInBytes: Long,
-      numOfAddFiles: Long,
-      sidecarFileSchemaOpt: Option[StructType]): CheckpointMetadata = {
-    val tagMapWithSchema = sidecarFileSchemaOpt
-      .map(schema => Map(Tags.SIDECAR_FILE_SCHEMA.name -> schema.json))
-      .getOrElse(Map.empty)
-    CheckpointMetadata(
-      version = version,
-      tags = Map(
-        Tags.SIDECAR_NUM_ACTIONS.name -> sidecarNumActions.toString,
-        Tags.SIDECAR_SIZE_IN_BYTES.name -> sidecarSizeInBytes.toString,
-        Tags.NUM_OF_ADD_FILES.name -> numOfAddFiles.toString
-      ) ++ tagMapWithSchema
-    )
-  }
-
-  object Tags {
-    sealed abstract class KeyType(val name: String)
-
-    object SIDECAR_NUM_ACTIONS extends KeyType("sidecarNumActions")
-    object SIDECAR_SIZE_IN_BYTES extends KeyType("sidecarSizeInBytes")
-    object NUM_OF_ADD_FILES extends KeyType("numOfAddFiles")
-    object SIDECAR_FILE_SCHEMA extends KeyType("sidecarFileSchema")
-  }
-}
 
 /** A serialization helper to create a common action envelope. */
 case class SingleAction(

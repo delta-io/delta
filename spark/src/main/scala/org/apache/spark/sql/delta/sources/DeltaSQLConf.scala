@@ -589,6 +589,8 @@ trait DeltaSQLConfBase {
       .checkValues(Set("json", "parquet"))
       .createOptional
 
+  // This is temporary conf to make sure v2 checkpoints are not used by anyone other than devs as
+  // the feature is not fully ready.
   val EXPOSE_CHECKPOINT_V2_TABLE_FEATURE_FOR_TESTING =
     buildConf("checkpointV2.exposeTableFeatureForTesting")
       .internal()
