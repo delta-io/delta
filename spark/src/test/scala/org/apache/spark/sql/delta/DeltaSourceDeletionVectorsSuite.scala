@@ -25,6 +25,7 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.concurrent.Eventually
 import org.scalatest.concurrent.PatienceConfiguration.Timeout
 
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.execution.streaming.StreamExecution
 import org.apache.spark.sql.streaming.{StreamTest, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
@@ -170,10 +171,22 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
       },
       AssertOnQuery { q =>
         sql(sqlCommand1)
+        val addedFiles = log
+          .getChanges(log.update().version)
+          .next()
+          ._2
+          .count(_.isInstanceOf[AddFile])
+        assert(addedFiles === 1, "sqlCommand1")
         deletionVectorsPresentIfExpected(inputDir, expectDVsInCommand1)
       },
       AssertOnQuery { q =>
         sql(sqlCommand2)
+        val addedFiles = log
+          .getChanges(log.update().version)
+          .next()
+          ._2
+          .count(_.isInstanceOf[AddFile])
+        assert(addedFiles === 1, "sqlCommand2")
         deletionVectorsPresentIfExpected(inputDir, expectDVsInCommand2)
       },
       AdvanceManualClock(20L * 1000L)) ++
@@ -379,7 +392,7 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
 
   for (sourceOption <- allSourceOptions)
   testQuietly(
-    "subsequent DML commands are processed correctly in a batch - INSERT->UPDATE" +
+    "subsequent DML commands are processed correctly in a batch - INSERT->DELETE" +
       s" - $sourceOption") {
     val expectations: List[StreamAction] = sourceOption.map(_._1) match {
       case List(DeltaOptions.IGNORE_DELETES_OPTION) | Nil =>
