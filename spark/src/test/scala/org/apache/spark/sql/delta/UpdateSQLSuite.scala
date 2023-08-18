@@ -32,7 +32,7 @@ class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
     assert(outputs.contains("Delta"))
     assert(!outputs.contains("index") && !outputs.contains("ActionLog"))
     // no change should be made by explain
-    checkAnswer(readDeltaTableByPath(tempPath), Row(2, 2))
+    checkAnswer(readDeltaTable(tempPath), Row(2, 2))
   }
 
   test("SC-11376: Update command should check target columns during analysis, same key") {

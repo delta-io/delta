@@ -30,45 +30,12 @@ import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
-class MergeIntoSQLSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBySourceSuite
+class MergeIntoSQLSuite extends MergeIntoSuiteBase
+  with MergeIntoSQLTestUtils  with MergeIntoNotMatchedBySourceSuite
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews {
 
   import testImplicits._
-
-  private def basicMergeStmt(
-      target: String,
-      source: String,
-      condition: String,
-      update: String,
-      insert: String): String = {
-    s"""
-       |MERGE INTO $target
-       |USING $source
-       |ON $condition
-       |WHEN MATCHED THEN UPDATE SET $update
-       |WHEN NOT MATCHED THEN INSERT $insert
-      """.stripMargin
-  }
-
-  override def executeMerge(
-      target: String,
-      source: String,
-      condition: String,
-      update: String,
-      insert: String): Unit = {
-    sql(basicMergeStmt(target, source, condition, update, insert))
-  }
-
-  override def executeMerge(
-      tgt: String,
-      src: String,
-      cond: String,
-      clauses: MergeClause*): Unit = {
-
-    val merge = s"MERGE INTO $tgt USING $src ON $cond\n" + clauses.map(_.sql).mkString("\n")
-    sql(merge)
-  }
 
   test("CTE as a source in MERGE") {
     withTable("source") {

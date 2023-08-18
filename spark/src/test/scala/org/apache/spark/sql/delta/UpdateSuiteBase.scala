@@ -17,14 +17,11 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.File
 import java.util.Locale
 
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.hadoop.fs.Path
-import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
@@ -33,58 +30,20 @@ import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
-import org.apache.spark.util.Utils
 
 abstract class UpdateSuiteBase
   extends QueryTest
   with SharedSparkSession
-  with BeforeAndAfterEach  with SQLTestUtils
+  with DeltaDMLTestUtils
+  with SQLTestUtils
   with DeltaTestUtilsForTempViews {
   import testImplicits._
-
-  var tempDir: File = _
-
-  var deltaLog: DeltaLog = _
-
-  protected def tempPath = tempDir.getCanonicalPath
-
-  protected def readDeltaTable(table: String): DataFrame = {
-    spark.read.format("delta").table(table)
-  }
-
-  protected def readDeltaTableByPath(path: String): DataFrame = {
-    spark.read.format("delta").load(path)
-  }
-
-  override def beforeEach() {
-    super.beforeEach()
-    // Using a space in path to provide coverage for special characters.
-    tempDir = Utils.createTempDir(namePrefix = "spark test")
-    deltaLog = DeltaLog.forTable(spark, new Path(tempPath))
-  }
-
-  override def afterEach() {
-    try {
-      Utils.deleteRecursively(tempDir)
-      DeltaLog.clearCache()
-    } finally {
-      super.afterEach()
-    }
-  }
 
   protected def executeUpdate(target: String, set: Seq[String], where: String): Unit = {
     executeUpdate(target, set.mkString(", "), where)
   }
 
   protected def executeUpdate(target: String, set: String, where: String = null): Unit
-
-  protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
-    val writer = df.write.format("delta").mode("append")
-    if (partitionBy.nonEmpty) {
-      writer.partitionBy(partitionBy: _*)
-    }
-    writer.save(deltaLog.dataPath.toString)
-  }
 
   implicit def jsonStringToSeq(json: String): Seq[String] = json.split("\n")
 
@@ -99,8 +58,8 @@ abstract class UpdateSuiteBase
     executeUpdate(tableName.getOrElse(s"delta.`$tempPath`"), setClauses, where = condition.orNull)
     checkAnswer(
       tableName
-        .map(readDeltaTable(_))
-        .getOrElse(readDeltaTableByPath(tempPath))
+        .map(spark.read.format("delta").table(_))
+        .getOrElse(readDeltaTable(tempPath))
         .select(s"${prefix}key", s"${prefix}value"),
       expectedResults)
   }
@@ -826,7 +785,7 @@ abstract class UpdateSuiteBase
           toDF(source).createOrReplaceTempView("source")
         }
         executeUpdate(s"delta.`$dir`", set, updateWhere)
-        checkAnswer(readDeltaTableByPath(dir.toString), toDF(expected))
+        checkAnswer(readDeltaTable(dir.toString), toDF(expected))
       }
     }
   }
