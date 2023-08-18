@@ -56,16 +56,16 @@ def main():
 
 
     # Generate Java and Scala docs
-    print("## Generating ScalaDoc and JavaDoc ...")
+    print("## Generating Scala and Java docs ...")
     with WorkingDirectory(repo_root_dir):
         run_cmd(["build/sbt", ";clean;unidoc"], stream_output=verbose)
 
     # Update Scala docs
-    print("## Patching ScalaDoc ...")
+    print("## Patching Scala docs ...")
     patch_scala_docs(spark_scaladoc_gen_dir, docs_root_dir)
 
     # Update Java docs
-    print("## Patching JavaDoc ...")
+    print("## Patching Java docs ...")
     jquery_path = spark_scaladoc_gen_dir + "/lib/jquery.min.js" # grab the JQuery library from Scaladocs
     all_javadoc_gen_dirs = [
         spark_javadoc_gen_dir,
@@ -100,11 +100,13 @@ def main():
 
     print("## API docs generated in " + all_docs_final_dir)
 
+
 def patch_scala_docs(scaladoc_dir, docs_root_dir):
     with WorkingDirectory(scaladoc_dir):
         # Patch the js and css files
         append(docs_root_dir + "/api-docs.js", "./lib/template.js")  # append new js functions
         append(docs_root_dir + "/api-docs.css", "./lib/template.css")  # append new styles
+
 
 def patch_java_docs(javadoc_dir, docs_root_dir, jquery_path):
     print("### Patching JavaDoc in %s ..." % javadoc_dir)
