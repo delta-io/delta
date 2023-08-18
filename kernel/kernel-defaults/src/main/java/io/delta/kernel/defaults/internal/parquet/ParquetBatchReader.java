@@ -98,7 +98,7 @@ public class ParquetBatchReader {
                     hasNotConsumedNextElement = false;
                     // hasNext reads to row to confirm there is a next element.
                     try {
-                        batchReadSupport.moveToNextRow(reader.getCurrentRowIndex());
+                        batchReadSupport.finalizeCurrentRow(reader.getCurrentRowIndex());
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     }
@@ -149,8 +149,8 @@ public class ParquetBatchReader {
         /**
          * @param fileRowIndex the file row index of the row just processed
          */
-        public void moveToNextRow(long fileRowIndex) {
-            rowRecordCollector.moveToNextRow(fileRowIndex);
+        public void finalizeCurrentRow(long fileRowIndex) {
+            rowRecordCollector.finalizeCurrentRow(fileRowIndex);
         }
     }
 
@@ -198,10 +198,11 @@ public class ParquetBatchReader {
         }
 
         /**
+         * Finalize the current row.
          * @param fileRowIndex the file row index of the row just processed
          */
-        public void moveToNextRow(long fileRowIndex) {
-            rowRecordGroupConverter.moveToNextRow(fileRowIndex);
+        public void finalizeCurrentRow(long fileRowIndex) {
+            rowRecordGroupConverter.finalizeCurrentRow(fileRowIndex);
         }
     }
 }

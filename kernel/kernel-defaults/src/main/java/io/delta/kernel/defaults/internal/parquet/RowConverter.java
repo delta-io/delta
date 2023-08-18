@@ -67,6 +67,7 @@ class RowConverter
      *                         fields in readSchema.
      */
     RowConverter(int initialBatchSize, StructType readSchema, GroupType fileSchema) {
+        checkArgument(initialBatchSize > 0, "invalid initialBatchSize: %s", initialBatchSize);
         this.readSchema = requireNonNull(readSchema, "readSchema is not null");
         List<StructField> fields = readSchema.fields();
         this.converters = new Converter[fields.size()];
@@ -123,12 +124,13 @@ class RowConverter
     }
 
     @Override
-    public void moveToNextRow(long prevRowIndex) {
-        moveConvertersToNextRow(prevRowIndex);
-        nullability[currentRowIndex] = isCurrentValueNull;
-        isCurrentValueNull = true;
-        currentRowIndex++;
+    public void finalizeCurrentRow(long currentRowIndex) {
+        moveConvertersToNextRow(currentRowIndex);
         resizeIfNeeded();
+        nullability[this.currentRowIndex] = isCurrentValueNull;
+        isCurrentValueNull = true;
+
+        this.currentRowIndex++;
     }
 
     public ColumnVector getDataColumnVector(int batchSize) {
@@ -161,7 +163,7 @@ class RowConverter
 
     private void moveConvertersToNextRow(long prevRowIndex) {
         for (int i = 0; i < converters.length; i++) {
-            ((ParquetConverters.BaseConverter) converters[i]).moveToNextRow(prevRowIndex);
+            ((ParquetConverters.BaseConverter) converters[i]).finalizeCurrentRow(prevRowIndex);
         }
     }
 

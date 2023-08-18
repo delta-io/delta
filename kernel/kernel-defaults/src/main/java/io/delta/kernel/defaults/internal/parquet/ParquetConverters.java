@@ -98,10 +98,10 @@ class ParquetConverters {
         ColumnVector getDataColumnVector(int batchSize);
 
         /**
-         * Move the converter to accept the next row value.
-         * @param prevRowIndex Row index of the previous row in the Parquet file.
+         * Finalize the current row (set any state) and move to accept the next row value.
+         * @param currentRowIndex Row index of the current row in the Parquet file.
          */
-        void moveToNextRow(long prevRowIndex);
+        void finalizeCurrentRow(long currentRowIndex);
 
         default void resizeIfNeeded() {}
 
@@ -123,7 +123,7 @@ class ParquetConverters {
         }
 
         @Override
-        public void moveToNextRow(long prevRowIndex) {}
+        public void finalizeCurrentRow(long currentRowIndex) {}
     }
 
     public abstract static class BasePrimitiveColumnConverter
@@ -134,21 +134,19 @@ class ParquetConverters {
         protected boolean[] nullability;
 
         BasePrimitiveColumnConverter(int initialBatchSize) {
-            checkArgument(initialBatchSize >= 0, "invalid initialBatchSize: %s", initialBatchSize);
-
+            checkArgument(initialBatchSize > 0, "invalid initialBatchSize: %s", initialBatchSize);
             // Initialize the working state
             this.nullability = initNullabilityVector(initialBatchSize);
         }
 
         @Override
-        public void moveToNextRow(long prevRowIndex) {
-            currentRowIndex++;
+        public void finalizeCurrentRow(long currentRowIndex) {
+            this.currentRowIndex++;
             resizeIfNeeded();
         }
     }
 
-    public static class BooleanColumnConverter
-        extends BasePrimitiveColumnConverter {
+    public static class BooleanColumnConverter extends BasePrimitiveColumnConverter {
         // working state
         private boolean[] values;
 
@@ -159,7 +157,6 @@ class ParquetConverters {
 
         @Override
         public void addBoolean(boolean value) {
-            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
@@ -185,9 +182,7 @@ class ParquetConverters {
         }
     }
 
-    public static class ByteColumnConverter
-        extends BasePrimitiveColumnConverter {
-
+    public static class ByteColumnConverter extends BasePrimitiveColumnConverter {
         // working state
         private byte[] values;
 
@@ -198,7 +193,6 @@ class ParquetConverters {
 
         @Override
         public void addInt(int value) {
-            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = (byte) value;
         }
@@ -224,9 +218,7 @@ class ParquetConverters {
         }
     }
 
-    public static class ShortColumnConverter
-        extends BasePrimitiveColumnConverter {
-
+    public static class ShortColumnConverter extends BasePrimitiveColumnConverter {
         // working state
         private short[] values;
 
@@ -237,7 +229,6 @@ class ParquetConverters {
 
         @Override
         public void addInt(int value) {
-            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = (short) value;
         }
@@ -263,8 +254,7 @@ class ParquetConverters {
         }
     }
 
-    public static class IntColumnConverter
-        extends BasePrimitiveColumnConverter {
+    public static class IntColumnConverter extends BasePrimitiveColumnConverter {
         private final DataType dataType;
         // working state
         private int[] values;
@@ -278,7 +268,6 @@ class ParquetConverters {
 
         @Override
         public void addInt(int value) {
-            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
@@ -305,7 +294,6 @@ class ParquetConverters {
     }
 
     public static class LongColumnConverter extends BasePrimitiveColumnConverter {
-
         private final DataType dataType;
         // working state
         private long[] values;
@@ -319,7 +307,6 @@ class ParquetConverters {
 
         @Override
         public void addLong(long value) {
-            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
@@ -345,8 +332,7 @@ class ParquetConverters {
         }
     }
 
-    public static class FloatColumnConverter
-        extends BasePrimitiveColumnConverter {
+    public static class FloatColumnConverter extends BasePrimitiveColumnConverter {
         // working state
         private float[] values;
 
@@ -357,7 +343,6 @@ class ParquetConverters {
 
         @Override
         public void addFloat(float value) {
-            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
@@ -383,9 +368,7 @@ class ParquetConverters {
         }
     }
 
-    public static class DoubleColumnConverter
-        extends BasePrimitiveColumnConverter {
-
+    public static class DoubleColumnConverter extends BasePrimitiveColumnConverter {
         // working state
         private double[] values;
 
@@ -396,7 +379,6 @@ class ParquetConverters {
 
         @Override
         public void addDouble(double value) {
-            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
@@ -423,8 +405,7 @@ class ParquetConverters {
         }
     }
 
-    public static class BinaryColumnConverter
-        extends BasePrimitiveColumnConverter {
+    public static class BinaryColumnConverter extends BasePrimitiveColumnConverter {
         private final DataType dataType;
 
         // working state
@@ -438,7 +419,6 @@ class ParquetConverters {
 
         @Override
         public void addBinary(Binary value) {
-            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value.getBytes();
         }
@@ -464,9 +444,7 @@ class ParquetConverters {
         }
     }
 
-    public static class FileRowIndexColumnConverter
-        extends LongColumnConverter {
-
+    public static class FileRowIndexColumnConverter extends LongColumnConverter {
         FileRowIndexColumnConverter(int initialBatchSize) {
             super(LongType.INSTANCE, initialBatchSize);
         }
@@ -477,11 +455,10 @@ class ParquetConverters {
         }
 
         @Override
-        public void moveToNextRow(long prevRowIndex) {
+        public void finalizeCurrentRow(long currentRowIndex) {
             // Set the previous row index value as the value
-            super.values[currentRowIndex] = prevRowIndex;
-            this.nullability[currentRowIndex] = false;
-            super.moveToNextRow(prevRowIndex);
+            super.addLong(currentRowIndex);
+            super.finalizeCurrentRow(currentRowIndex);
         }
     }
 }
