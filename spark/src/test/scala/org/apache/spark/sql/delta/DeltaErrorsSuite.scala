@@ -59,7 +59,8 @@ import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, In
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
-    with SharedSparkSession    with GivenWhenThen
+    with SharedSparkSession
+    with GivenWhenThen
     with DeltaSQLCommandTest
     with SQLTestUtils
     with QueryErrorsBase {

@@ -25,7 +25,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.{ThreadUtils, Utils}
 
 trait DeltaWithNewTransactionSuiteBase extends QueryTest
-  with SharedSparkSession  with DeltaColumnMappingTestUtils
+  with SharedSparkSession
+  with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
 
   /**

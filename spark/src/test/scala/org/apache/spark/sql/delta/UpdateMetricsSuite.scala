@@ -31,7 +31,8 @@ import org.apache.spark.sql.test.SharedSparkSession
  */
 class UpdateMetricsSuite extends QueryTest
   with SharedSparkSession
-  with DatabricksLogging  with DeltaSQLCommandTest {
+  with DatabricksLogging
+  with DeltaSQLCommandTest {
 
 
   /**

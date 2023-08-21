@@ -22,7 +22,8 @@ import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 
-class MaterializedColumnSuite extends RowIdTestUtils  with ParquetTest {
+class MaterializedColumnSuite extends RowIdTestUtils
+  with ParquetTest {
 
   private val testTableName = "target"
   private val testDataColumnName = "test_data"

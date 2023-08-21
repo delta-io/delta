@@ -30,7 +30,8 @@ import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.ManualClock
 
 class DeltaConfigSuite extends SparkFunSuite
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   test("parseCalendarInterval") {
     for (input <- Seq("5 MINUTES", "5 minutes", "5 Minutes", "inTERval 5 minutes")) {

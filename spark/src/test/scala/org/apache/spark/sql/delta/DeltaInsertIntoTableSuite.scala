@@ -874,7 +874,8 @@ abstract class DeltaInsertIntoTests(
 
 trait InsertIntoSQLOnlyTests
     extends QueryTest
-    with SharedSparkSession    with BeforeAndAfter {
+    with SharedSparkSession
+    with BeforeAndAfter {
 
   import testImplicits._
 

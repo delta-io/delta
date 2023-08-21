@@ -21,7 +21,8 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{QueryTest, Row}
 
-class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
+class UpdateSQLSuite extends UpdateSuiteBase
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 

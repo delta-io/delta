@@ -48,7 +48,9 @@ import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
-  with SharedSparkSession  with DeltaColumnMappingTestUtils  with SQLTestUtils
+  with SharedSparkSession
+  with DeltaColumnMappingTestUtils
+  with SQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._

@@ -23,7 +23,8 @@ import io.delta.tables.DeltaTableTestUtils
 
 import org.apache.spark.sql.{functions, Row}
 
-class UpdateScalaSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
+class UpdateScalaSuite extends UpdateSuiteBase
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 

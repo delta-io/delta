@@ -39,7 +39,8 @@ import org.apache.spark.sql.types.StructType
 
 
 class CheckpointsSuite extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   protected override def sparkConf = {
     // Set the gs LogStore impl to `LocalLogStore` so that it will work with `FakeGCSFileSystem`.
