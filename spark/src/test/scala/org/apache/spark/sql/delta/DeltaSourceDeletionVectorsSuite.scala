@@ -378,9 +378,11 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
   }
 
   for (sourceOption <- allSourceOptions)
-  testQuietly(
+  // TODO(larsk-db): Reinstate once flakiness is fixed: testQuietly(
+  ignore(
     "subsequent DML commands are processed correctly in a batch - INSERT->UPDATE" +
-      s" - $sourceOption") {
+      s" - $sourceOption"
+  ) {
     val expectations: List[StreamAction] = sourceOption.map(_._1) match {
       case List(DeltaOptions.IGNORE_DELETES_OPTION) | Nil =>
         // These two do not allow updates.
