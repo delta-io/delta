@@ -29,7 +29,8 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 
 class MergeIntoScalaSuite extends MergeIntoSuiteBase
-  with MergeIntoScalaTestUtils  with MergeIntoNotMatchedBySourceSuite
+  with MergeIntoScalaTestUtils
+  with MergeIntoNotMatchedBySourceSuite
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews {
 

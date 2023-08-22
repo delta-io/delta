@@ -369,7 +369,8 @@ trait DeltaTestUtilsForTempViews
  * cleaning it up after each test.
  */
 trait DeltaDMLTestUtils
-  extends DeltaTestUtilsBase  with BeforeAndAfterEach {
+  extends DeltaTestUtilsBase
+  with BeforeAndAfterEach {
   self: SharedSparkSession =>
 
   protected var tempDir: File = _

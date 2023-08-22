@@ -87,7 +87,7 @@ trait MergeIntoSQLTestUtils extends SQLTestUtils with MergeIntoTestUtils {
       """.stripMargin
   }
 
-  override def executeMerge(
+  override protected def executeMerge(
       target: String,
       source: String,
       condition: String,
@@ -95,7 +95,7 @@ trait MergeIntoSQLTestUtils extends SQLTestUtils with MergeIntoTestUtils {
       insert: String): Unit =
     sql(basicMergeStmt(target, source, condition, update, insert))
 
-  override def executeMerge(
+  override protected def executeMerge(
       tgt: String,
       src: String,
       cond: String,
@@ -106,7 +106,7 @@ trait MergeIntoSQLTestUtils extends SQLTestUtils with MergeIntoTestUtils {
 trait MergeIntoScalaTestUtils extends MergeIntoTestUtils {
   self: SharedSparkSession =>
 
-  override def executeMerge(
+  override protected def executeMerge(
       target: String,
       source: String,
       condition: String,
@@ -120,7 +120,7 @@ trait MergeIntoScalaTestUtils extends MergeIntoTestUtils {
       this.insert(values = insert))
   }
 
-  override def executeMerge(
+  override protected def executeMerge(
       tgt: String,
       src: String,
       cond: String,

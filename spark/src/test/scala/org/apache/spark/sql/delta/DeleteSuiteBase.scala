@@ -27,7 +27,8 @@ import org.apache.spark.sql.types.StructType
 
 abstract class DeleteSuiteBase extends QueryTest
   with SharedSparkSession
-  with DeltaDMLTestUtils  with DeltaTestUtilsForTempViews {
+  with DeltaDMLTestUtils
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
