@@ -148,13 +148,31 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           // We allow entries with no file actions and index as [[DeltaSourceOffset.BASE_INDEX]]
           // that are used primarily to update latest offset when no other
           // file action based entries are present.
-          fileActions.filter(indexedFile => hasAddsOrRemoves(indexedFile) ||
-            hasNoFileActionAndStartIndex(indexedFile))
-            .filter(
-              isValidIndexedFile(_, fromVersion, fromIndex, endOffset)
-            ).takeWhile { indexedFile =>
-            admissionControl.admit(Option(indexedFile.getFileAction))
-          }.toIterator
+          val filteredFiles = fileActions
+            .filter { indexedFile =>
+              hasAddsOrRemoves(indexedFile) || hasNoFileActionAndStartIndex(indexedFile)
+            }
+            .filter(isValidIndexedFile(_, fromVersion, fromIndex, endOffset))
+          val filteredFileActions = filteredFiles.flatMap(f => Option(f.getFileAction))
+          val hasDeletionVectors = filteredFileActions.exists {
+            case add: AddFile => add.deletionVector != null
+            case remove: RemoveFile => remove.deletionVector != null
+            case _ => false
+          }
+          if (hasDeletionVectors) {
+            // We cannot split up add/remove pairs with Deletion Vectors, because we will get the
+            // wrong result.
+            // So in this case we behave as above with CDC files and either admit all or none.
+            if (admissionControl.admit(filteredFileActions)) {
+              filteredFiles.toIterator
+            } else {
+              Iterator()
+            }
+          } else {
+            filteredFiles.takeWhile { indexedFile =>
+              admissionControl.admit(Option(indexedFile.getFileAction))
+            }.toIterator
+          }
         }
       }
     }
@@ -279,7 +297,6 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     } else {
       filterAndIndexDeltaLogs(fromVersion)
     }
-
     // In this case, filterFiles will consume the available capacity. We use takeWhile
     // to stop the iteration when we reach the limit which will save us from reading
     // unnecessary log files.
