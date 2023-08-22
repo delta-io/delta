@@ -35,7 +35,8 @@ import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
 
 class StatsCollectionSuite
     extends QueryTest
-    with SharedSparkSession    with DeltaColumnMappingTestUtils
+    with SharedSparkSession
+    with DeltaColumnMappingTestUtils
     with TestsStatistics
     with DeltaSQLCommandTest
     with DeletionVectorsTestUtils {

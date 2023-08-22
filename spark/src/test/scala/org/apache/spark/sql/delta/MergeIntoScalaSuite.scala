@@ -29,7 +29,8 @@ import org.apache.spark.sql.catalyst.plans.logical.{Assignment, DeltaMergeIntoCl
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 
-class MergeIntoScalaSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBySourceSuite
+class MergeIntoScalaSuite extends MergeIntoSuiteBase
+  with MergeIntoNotMatchedBySourceSuite
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews {
 

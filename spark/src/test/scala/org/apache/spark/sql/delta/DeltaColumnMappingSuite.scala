@@ -95,7 +95,8 @@ trait DeltaColumnMappingSuiteUtils extends SharedSparkSession with DeltaSQLComma
 }
 
 class DeltaColumnMappingSuite extends QueryTest
-  with GivenWhenThen  with DeltaColumnMappingSuiteUtils {
+  with GivenWhenThen
+  with DeltaColumnMappingSuiteUtils {
 
   import testImplicits._
 

@@ -20,7 +20,8 @@ import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandT
 
 import org.apache.spark.sql.Row
 
-class DeleteSQLSuite extends DeleteSuiteBase  with DeltaSQLCommandTest {
+class DeleteSQLSuite extends DeleteSuiteBase
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 

@@ -32,7 +32,8 @@ import org.apache.spark.sql.types.{StringType, StructField, StructType}
 // truly a subset of the tests in OptimisticTransactionSuite.
 trait OptimisticTransactionLegacyTests
   extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   private val addA = createTestAddFile(path = "a")
   private val addB = createTestAddFile(path = "b")

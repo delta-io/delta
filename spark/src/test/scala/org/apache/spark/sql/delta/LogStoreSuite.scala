@@ -44,7 +44,8 @@ import org.apache.spark.util.Utils
 
 abstract class LogStoreSuiteBase extends QueryTest
   with LogStoreProvider
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   def logStoreClassName: String
 

@@ -30,7 +30,8 @@ import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
-class MergeIntoSQLSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBySourceSuite
+class MergeIntoSQLSuite extends MergeIntoSuiteBase
+  with MergeIntoNotMatchedBySourceSuite
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews {
 

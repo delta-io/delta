@@ -45,7 +45,8 @@ import org.apache.spark.sql.types.StringType
  * At the end of the test suite, it prints out summary tables all of the cases above.
  */
 class DeltaWriteConfigsSuite extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   val config_no_prefix = "dataSkippingNumIndexedCols"
   val config_no_prefix_value = "33"

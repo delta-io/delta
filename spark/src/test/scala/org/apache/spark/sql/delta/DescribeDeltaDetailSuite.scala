@@ -32,7 +32,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
 trait DescribeDeltaDetailSuiteBase extends QueryTest
-  with SharedSparkSession  with DeltaTestUtilsForTempViews {
+  with SharedSparkSession
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 

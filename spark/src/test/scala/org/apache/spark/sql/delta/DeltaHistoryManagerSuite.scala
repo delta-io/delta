@@ -46,7 +46,8 @@ import org.apache.spark.util.Utils
 
 /** A set of tests which we can open source after Spark 3.0 is released. */
 trait DeltaTimeTravelTests extends QueryTest
-    with SharedSparkSession    with GivenWhenThen
+    with SharedSparkSession
+    with GivenWhenThen
     with DeltaSQLCommandTest
     with StatsUtils {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
