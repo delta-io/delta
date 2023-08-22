@@ -62,4 +62,3 @@ trait ConvertToDeltaSQLSuiteBase extends ConvertToDeltaSuiteBaseCommons
 
 class ConvertToDeltaSQLSuite extends ConvertToDeltaSQLSuiteBase
   with ConvertToDeltaSuiteBase
-
