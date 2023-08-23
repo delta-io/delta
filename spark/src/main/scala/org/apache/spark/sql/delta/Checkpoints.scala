@@ -240,7 +240,7 @@ trait Checkpoints extends DeltaLogging {
     }
   }
 
-  protected def checkpointAndCleanUpDeltaLog(
+  def checkpointAndCleanUpDeltaLog(
       snapshotToCheckpoint: Snapshot): Unit = {
     val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint)
     writeLastCheckpointFile(
