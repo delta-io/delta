@@ -317,7 +317,7 @@ abstract class UpdateSuiteBase
       DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
       checkUpdate(
         condition = None,
-        setClauses = "value = 4::int",
+        setClauses = "value = 4",
         expectedResults = Row(100, 4) :: Row(101, 4) :: Row(99, 4) :: Nil)
     }
   }
