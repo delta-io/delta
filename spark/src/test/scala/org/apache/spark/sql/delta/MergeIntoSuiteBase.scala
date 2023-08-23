@@ -23,10 +23,8 @@ import java.util.Locale
 import scala.language.implicitConversions
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
-import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.commands.merge.MergeStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.ScanReportHelper
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -47,62 +45,12 @@ import org.apache.spark.util.Utils
 abstract class MergeIntoSuiteBase
     extends QueryTest
     with SharedSparkSession
-    with BeforeAndAfterEach
     with SQLTestUtils
     with ScanReportHelper
     with DeltaTestUtilsForTempViews
-    with MergeHelpers {
+    with MergeIntoTestUtils {
 
   import testImplicits._
-
-  protected var tempDir: File = _
-
-  protected def tempPath: String = tempDir.getCanonicalPath
-
-  override def beforeEach() {
-    super.beforeEach()
-    // Using a space in path to provide coverage for special characters.
-    tempDir = Utils.createTempDir(namePrefix = "spark test")
-  }
-
-  override def afterEach() {
-    try {
-      Utils.deleteRecursively(tempDir)
-    } finally {
-      super.afterEach()
-    }
-  }
-
-  protected def executeMerge(
-      target: String,
-      source: String,
-      condition: String,
-      update: String,
-      insert: String): Unit
-
-  protected def executeMerge(
-      tgt: String,
-      src: String,
-      cond: String,
-      clauses: MergeClause*): Unit
-
-  protected def append(df: DataFrame, partitions: Seq[String] = Nil): Unit = {
-    val dfw = df.write.format("delta").mode("append")
-    if (partitions.nonEmpty) {
-      dfw.partitionBy(partitions: _*)
-    }
-    dfw.save(tempPath)
-  }
-
-  protected def readDeltaTable(path: String): DataFrame = {
-    spark.read.format("delta").load(path)
-  }
-
-  protected def getDeltaFileStmt(path: String): String = s"SELECT * FROM delta.`$path`"
-
-  protected def withCrossJoinEnabled(body: => Unit): Unit = {
-    withSQLConf(SQLConf.CROSS_JOINS_ENABLED.key -> "true") { body }
-  }
 
   Seq(true, false).foreach { isPartitioned =>
     test(s"basic case - merge to Delta table by path, isPartitioned: $isPartitioned") {
@@ -2708,24 +2656,6 @@ abstract class MergeIntoSuiteBase
     isMatchedOnly = true,
     update(condition = "t.key == 1 AND t.value == 5", set = "*"))(
     result = Seq((1, 10), (2, 20), (3, 30)))
-
-
-  /**
-   * Parse the input JSON data into a dataframe, one row per input element.
-   * Throws an exception on malformed inputs or records that don't comply with the provided schema.
-   */
-  protected def readFromJSON(data: Seq[String], schema: StructType = null): DataFrame = {
-    if (schema != null) {
-      spark.read
-        .schema(schema)
-        .option("mode", FailFastMode.name)
-        .json(data.toDS)
-    } else {
-      spark.read
-        .option("mode", FailFastMode.name)
-        .json(data.toDS)
-    }
-  }
 
   // scalastyle:off argcount
   protected def testNestedStructsEvolution(name: String)(
@@ -5994,51 +5924,4 @@ class ComplexTestUDT extends UserDefinedType[ComplexTest] {
   }
 
   override def userClass: Class[ComplexTest] = classOf[ComplexTest]
-}
-
-trait MergeHelpers {
-  /** A simple representative of a any WHEN clause in a MERGE statement */
-  protected sealed trait MergeClause {
-    def condition: String
-    def action: String
-    def clause: String
-    def sql: String = {
-      assert(action != null, "action not specified yet")
-      val cond = if (condition != null) s"AND $condition" else ""
-      s"WHEN $clause $cond THEN $action"
-    }
-  }
-
-  protected case class MatchedClause(condition: String, action: String) extends MergeClause {
-    override def clause: String = "MATCHED"
-  }
-
-  protected case class NotMatchedClause(condition: String, action: String) extends MergeClause {
-    override def clause: String = "NOT MATCHED"
-  }
-
-  protected case class NotMatchedBySourceClause(condition: String, action: String)
-    extends MergeClause {
-    override def clause: String = "NOT MATCHED BY SOURCE"
-  }
-
-  protected def update(set: String = null, condition: String = null): MergeClause = {
-    MatchedClause(condition, s"UPDATE SET $set")
-  }
-
-  protected def delete(condition: String = null): MergeClause = {
-    MatchedClause(condition, s"DELETE")
-  }
-
-  protected def insert(values: String = null, condition: String = null): MergeClause = {
-    NotMatchedClause(condition, s"INSERT $values")
-  }
-
-  protected def updateNotMatched(set: String = null, condition: String = null): MergeClause = {
-    NotMatchedBySourceClause(condition, s"UPDATE SET $set")
-  }
-
-  protected def deleteNotMatched(condition: String = null): MergeClause = {
-    NotMatchedBySourceClause(condition, s"DELETE")
-  }
 }

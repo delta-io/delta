@@ -32,7 +32,7 @@ class UpdateScalaSuite extends UpdateSuiteBase
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
     val table = io.delta.tables.DeltaTable.forPath(tempPath)
     table.updateExpr(Map("key" -> "100"))
-    checkAnswer(readDeltaTableByPath(tempPath),
+    checkAnswer(readDeltaTable(tempPath),
       Row(100, 10) :: Row(100, 20) :: Row(100, 30) :: Row(100, 40) :: Nil)
   }
 
@@ -40,7 +40,7 @@ class UpdateScalaSuite extends UpdateSuiteBase
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
     val table = io.delta.tables.DeltaTable.forPath(tempPath)
     table.update(Map("key" -> functions.expr("100")))
-    checkAnswer(readDeltaTableByPath(tempPath),
+    checkAnswer(readDeltaTable(tempPath),
       Row(100, 10) :: Row(100, 20) :: Row(100, 30) :: Row(100, 40) :: Nil)
   }
 
@@ -48,7 +48,7 @@ class UpdateScalaSuite extends UpdateSuiteBase
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
     val table = io.delta.tables.DeltaTable.forPath(tempPath)
     table.updateExpr("key = 1 or key = 2", Map("key" -> "100"))
-    checkAnswer(readDeltaTableByPath(tempPath),
+    checkAnswer(readDeltaTable(tempPath),
       Row(100, 10) :: Row(100, 20) :: Row(3, 30) :: Row(4, 40) :: Nil)
   }
 
@@ -57,7 +57,7 @@ class UpdateScalaSuite extends UpdateSuiteBase
     val table = io.delta.tables.DeltaTable.forPath(tempPath)
     table.update(functions.expr("key = 1 or key = 2"),
       Map("key" -> functions.expr("100"), "value" -> functions.expr("101")))
-    checkAnswer(readDeltaTableByPath(tempPath),
+    checkAnswer(readDeltaTable(tempPath),
       Row(100, 101) :: Row(100, 101) :: Row(3, 30) :: Row(4, 40) :: Nil)
   }
 
