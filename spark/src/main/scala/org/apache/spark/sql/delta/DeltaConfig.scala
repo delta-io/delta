@@ -624,6 +624,15 @@ trait DeltaConfigsBase extends DeltaLogging {
     "must be Serializable"
   )
 
+  /** Policy to decide what kind of checkpoint to write to a table. */
+  val CHECKPOINT_POLICY = buildConfig[CheckpointPolicy.Policy](
+    key = "checkpointPolicy-dev",
+    defaultValue = CheckpointPolicy.Classic.name,
+    fromString = str => CheckpointPolicy.fromName(str),
+    validationFunction = (v => CheckpointPolicy.ALL.exists(_.name == v.name)),
+    helpMessage = s"can be one of the " +
+      s"following: ${CheckpointPolicy.Classic.name}, ${CheckpointPolicy.V2.name}")
+
   /**
    * Indicates whether Row Tracking is enabled on the table. When this flag is turned on, all rows
    * are guaranteed to have Row IDs and Row Commit Versions assigned to them, and writers are

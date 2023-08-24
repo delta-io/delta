@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{JsonUtils, Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.FileNames
 import com.fasterxml.jackson.annotation._
 import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.core.JsonGenerator
@@ -37,7 +38,7 @@ import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import com.fasterxml.jackson.databind.node.ObjectNode
 
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Column, Encoder, SparkSession}
@@ -1162,6 +1163,61 @@ object CommitInfo {
 
 }
 
+/** A trait to represent actions which can only be part of Checkpoint */
+sealed trait CheckpointOnlyAction extends Action
+
+/**
+ * An [[Action]] containing the information about a sidecar file.
+ *
+ * @param path - sidecar path relative to `_delta_log/_sidecar` directory
+ * @param sizeInBytes - size in bytes for the sidecar file
+ * @param modificationTime - modification time of the sidecar file
+ * @param tags - attributes of the sidecar file, defaults to null (which is semantically same as an
+ *               empty Map). This is kept null to ensure that the field is not present in the
+ *               generated json.
+ */
+case class SidecarFile(
+    path: String,
+    sizeInBytes: Long,
+    modificationTime: Long,
+    tags: Map[String, String] = null)
+  extends Action with CheckpointOnlyAction {
+
+  override def wrap: SingleAction = SingleAction(sidecar = this)
+
+  def toFileStatus(logPath: Path): FileStatus = {
+    val partFilePath = new Path(FileNames.sidecarDirPath(logPath), path)
+    new FileStatus(sizeInBytes, false, 0, 0, modificationTime, partFilePath)
+  }
+}
+
+object SidecarFile {
+  def apply(fileStatus: SerializableFileStatus): SidecarFile = {
+    SidecarFile(fileStatus.getHadoopPath.getName, fileStatus.length, fileStatus.modificationTime)
+  }
+
+  def apply(fileStatus: FileStatus): SidecarFile = {
+    SidecarFile(fileStatus.getPath.getName, fileStatus.getLen, fileStatus.getModificationTime)
+  }
+}
+
+/**
+ * Holds information about the Delta Checkpoint. This action will only be part of checkpoints.
+ *
+ * @param version version of the checkpoint
+ * @param tags    attributes of the checkpoint, defaults to null (which is semantically same as an
+ *                empty Map). This is kept null to ensure that the field is not present in the
+ *                generated json.
+ */
+case class CheckpointMetadata(
+    version: Long,
+    tags: Map[String, String] = null)
+  extends Action with CheckpointOnlyAction {
+
+  override def wrap: SingleAction = SingleAction(checkpointMetadata = this)
+}
+
+
 /** A serialization helper to create a common action envelope. */
 case class SingleAction(
     txn: SetTransaction = null,
@@ -1170,6 +1226,8 @@ case class SingleAction(
     metaData: Metadata = null,
     protocol: Protocol = null,
     cdc: AddCDCFile = null,
+    checkpointMetadata: CheckpointMetadata = null,
+    sidecar: SidecarFile = null,
     domainMetadata: DomainMetadata = null,
     commitInfo: CommitInfo = null) {
 
@@ -1186,6 +1244,10 @@ case class SingleAction(
       protocol
     } else if (cdc != null) {
       cdc
+    } else if (sidecar != null) {
+      sidecar
+    } else if (checkpointMetadata != null) {
+      checkpointMetadata
     } else if (domainMetadata != null) {
       domainMetadata
     } else if (commitInfo != null) {
