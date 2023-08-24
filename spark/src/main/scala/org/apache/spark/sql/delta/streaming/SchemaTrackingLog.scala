@@ -27,7 +27,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.streaming.{HDFSMetadataLog, MetadataVersionUtil}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{DataType, StructType}
 
 /**
  * A serializable schema with a partition schema and a data schema.
@@ -35,7 +35,7 @@ import org.apache.spark.sql.types.StructType
 trait PartitionAndDataSchema {
 
   @JsonIgnore
-  def dataSchema: StructType
+  def dataSchema: DataType
 
   @JsonIgnore
   def partitionSchema: StructType
