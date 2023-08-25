@@ -39,7 +39,8 @@ import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 
 class InvariantEnforcementSuite extends QueryTest
-    with SharedSparkSession    with DeltaSQLCommandTest
+    with SharedSparkSession
+    with DeltaSQLCommandTest
     with SQLTestUtils {
 
 

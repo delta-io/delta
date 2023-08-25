@@ -1036,8 +1036,10 @@ case class DeltaSource(
     // This case specifically handles initialization when we are already working with an initialized
     // stream.
     // Here we may have two conditions:
-    // 1. We are dealing with the recovery getBatch() that gives us the previous committed offset.
-    // In this case, we should initialize the schema at the previous committed offset (endOffset).
+    // 1. We are dealing with the recovery getBatch() that gives us the previous committed offset
+    // where start and end corresponds to the previous batch.
+    // In this case, we should initialize the schema at the previous committed offset (endOffset),
+    // which can be done using the same `initializeMetadataTrackingAndExitStream` method.
     // This also means we are caught up with the stream and we can start schema tracking in the
     // next latestOffset call.
     // 2. We are running an already-constructed batch, we need the schema to be compatible

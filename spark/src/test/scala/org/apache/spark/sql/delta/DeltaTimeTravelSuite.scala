@@ -36,7 +36,8 @@ import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 
 class DeltaTimeTravelSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils
+  with SharedSparkSession
+  with SQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._

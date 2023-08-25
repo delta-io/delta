@@ -56,6 +56,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     // Enable for testing
     conf.set(DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING.key, "true")
     conf.set(
+      DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING_MERGE_CONSECUTIVE_CHANGES.key, "true")
+    conf.set(
       s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.allowSourceColumnRenameAndDrop", "always")
     if (isCdcTest) {
       conf.set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
@@ -64,12 +66,16 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     }
   }
 
+  protected def withoutAllowStreamRestart(f: => Unit): Unit = {
+    withSQLConf(s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming" +
+      s".allowSourceColumnRenameAndDrop" -> "false") {
+      f
+    }
+  }
+
   protected def testWithoutAllowStreamRestart(testName: String)(f: => Unit): Unit = {
     test(testName) {
-      withSQLConf(s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming" +
-        s".allowSourceColumnRenameAndDrop" -> "false") {
-        f
-      }
+      withoutAllowStreamRestart(f)
     }
   }
 
@@ -550,6 +556,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     // We should've updated the schema to the version just before the schema change version
     // because that's the previous version's schema we left with. To be safe and in case there
     // are more file actions to process, we saved that schema instead of the renamed schema.
+    // Also, since the previous batch was still on initial snapshot, the last file action was not
+    // bumped to the next version, so the schema initialization effectively did not consider the
+    // rename column schema change's version.
     assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion ==
       schemaChangeDeltaVersion - 1)
     // Start the stream again with the same schema location
@@ -1615,7 +1624,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       val se = e.asInstanceOf[DeltaRuntimeException]
       assert {
         se.getErrorClass == "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION" &&
-          se.messageParameters(0) == opType && se.messageParameters(1) == ver.toString &&
+          se.messageParameters(0) == opType && se.messageParameters(2) == ver.toString &&
           se.messageParameters.exists(_.contains(checkpointHash.toString))
       }
     }
@@ -1847,7 +1856,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       StructType.fromDDL("a INT").json,
       sourceMetadataPath = "",
       tableConfigurations = None,
-      protocolJson = None
+      protocolJson = None,
+      previousMetadataSeqNum = None
     ))
   }
 
@@ -1859,7 +1869,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       StructType.fromDDL("a INT").json,
       sourceMetadataPath = "/path",
       tableConfigurations = Some(Map("a" -> "b")),
-      protocolJson = Some(Protocol(1, 2).json)
+      protocolJson = Some(Protocol(1, 2).json),
+      previousMetadataSeqNum = Some(1L)
     )
 
     assert {
@@ -1920,6 +1931,58 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       ExpectMetadataEvolutionException
     )
     assert(getDefaultSchemaLog().getLatestMetadata.exists(_.deltaCommitVersion == v1))
+  }
+
+  testSchemaEvolution("schema log replace current", columnMapping = false) { implicit log =>
+    withSQLConf(
+      DeltaSQLConf.DELTA_STREAMING_SCHEMA_TRACKING_METADATA_PATH_CHECK_ENABLED.key -> "false") {
+      // Schema log's schema is respected
+      val schemaLog = getDefaultSchemaLog()
+      val s0 = PersistedMetadata(log.tableId, 0,
+        makeMetadata(
+          new StructType().add("a", StringType, true)
+            .add("b", StringType, true)
+            .add("c", StringType, true),
+          partitionSchema = new StructType()
+        ),
+        log.update().protocol,
+        sourceMetadataPath = ""
+      )
+      // The `replaceCurrent` is noop because there is no previous schema.
+      schemaLog.writeNewMetadata(s0, replaceCurrent = true)
+      assert(schemaLog.getCurrentTrackedMetadata.contains(s0))
+      assert(schemaLog.getPreviousTrackedMetadata.isEmpty)
+
+      val s1 = s0.copy(deltaCommitVersion = 1L)
+      schemaLog.writeNewMetadata(s1)
+      assert(schemaLog.getCurrentTrackedMetadata.contains(s1))
+      assert(schemaLog.getPreviousTrackedMetadata.contains(s0))
+
+      val s2 = s1.copy(deltaCommitVersion = 2L)
+      schemaLog.writeNewMetadata(s2, replaceCurrent = true)
+      assert(schemaLog.getCurrentTrackedMetadata.contains(
+        s2.copy(previousMetadataSeqNum = Some(0L))))
+      assert(schemaLog.getPreviousTrackedMetadata.contains(s0))
+
+      val s3 = s2.copy(deltaCommitVersion = 3L)
+      schemaLog.writeNewMetadata(s3, replaceCurrent = true)
+      assert(schemaLog.getCurrentTrackedMetadata.contains(
+        s3.copy(previousMetadataSeqNum = Some(0L))))
+      assert(schemaLog.getPreviousTrackedMetadata.contains(s0))
+
+      val s4 = s3.copy(deltaCommitVersion = 4L)
+      schemaLog.writeNewMetadata(s4)
+      assert(schemaLog.getCurrentTrackedMetadata.contains(s4))
+      assert(schemaLog.getPreviousTrackedMetadata.contains(
+        s3.copy(previousMetadataSeqNum = Some(0L))))
+
+      val s5 = s4.copy(deltaCommitVersion = 5L)
+      schemaLog.writeNewMetadata(s5, replaceCurrent = true)
+      assert(schemaLog.getCurrentTrackedMetadata.contains(
+        s5.copy(previousMetadataSeqNum = Some(3L))))
+      assert(schemaLog.getPreviousTrackedMetadata.contains(
+        s3.copy(previousMetadataSeqNum = Some(0L))))
+    }
   }
 }
 

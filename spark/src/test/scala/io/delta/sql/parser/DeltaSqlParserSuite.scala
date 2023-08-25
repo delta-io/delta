@@ -62,6 +62,12 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
       UnresolvedTable(Seq("db", "tbl"), "OPTIMIZE", None))
 
+    parsedCmd = parser.parsePlan("OPTIMIZE catalog_foo.db.tbl")
+    assert(parsedCmd ===
+      OptimizeTableCommand(None, Some(tblId("tbl", "db", "catalog_foo")), Nil)(Nil))
+    assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
+      UnresolvedTable(Seq("catalog_foo", "db", "tbl"), "OPTIMIZE", None))
+
     assert(parser.parsePlan("OPTIMIZE tbl_${system:spark.testing}") ===
       OptimizeTableCommand(None, Some(tblId("tbl_true")), Nil)(Nil))
 
@@ -230,7 +236,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
               versionAsOf,
               Some("sql"))
           },
-          UnresolvedRelation(tblId(target)),
+          new UnresolvedRelation(target.split('.')),
           ifNotExists = false,
           isReplaceCommand = isReplace,
           isCreateCommand = isCreate,
@@ -260,11 +266,8 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     checkCloneStmt(parser, source = "t1", target = "t1", versionAsOf = Some(1L))
     // Clone with 3L table (only useful for Iceberg table now)
     checkCloneStmt(parser, source = "local.iceberg.table", target = "t1", sourceIs3LTable = true)
-    // Yet target cannot be a 3L table yet
-    intercept[ParseException] {
-      checkCloneStmt(parser, source = "local.iceberg.table", target = "catalog.delta.table",
-        sourceIs3LTable = true)
-    }
+    checkCloneStmt(parser, source = "local.iceberg.table", target = "delta.table",
+      sourceIs3LTable = true)
     // Custom source format with path
     checkCloneStmt(parser, source = "/path/to/iceberg", target = "t1", sourceFormat = "iceberg",
       sourceIsTable = false)
@@ -274,8 +277,16 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     new UnresolvedAttribute(colName)
   }
 
-  private def tblId(tblName: String, schema: String = null): TableIdentifier = {
-    if (schema == null) new TableIdentifier(tblName)
-    else new TableIdentifier(tblName, Some(schema))
+  private def tblId(
+      tblName: String,
+      schema: String = null,
+      catalog: String = null): TableIdentifier = {
+    if (catalog == null) {
+      if (schema == null) new TableIdentifier(tblName)
+      else new TableIdentifier(tblName, Some(schema))
+    } else {
+      assert(schema != null)
+      new TableIdentifier(tblName, Some(schema), Some(catalog))
+    }
   }
 }

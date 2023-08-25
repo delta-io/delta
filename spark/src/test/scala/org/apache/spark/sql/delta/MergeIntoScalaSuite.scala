@@ -21,7 +21,6 @@ import java.util.Locale
 import org.apache.spark.sql.delta.actions.SetTransaction
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import io.delta.tables._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.plans.Inner
@@ -29,7 +28,9 @@ import org.apache.spark.sql.catalyst.plans.logical.{Assignment, DeltaMergeIntoCl
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 
-class MergeIntoScalaSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBySourceSuite
+class MergeIntoScalaSuite extends MergeIntoSuiteBase
+  with MergeIntoScalaTestUtils
+  with MergeIntoNotMatchedBySourceSuite
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews {
 
@@ -585,99 +586,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBy
     }
   }
 
-  override protected def executeMerge(
-      target: String,
-      source: String,
-      condition: String,
-      update: String,
-      insert: String): Unit = {
-
-    executeMerge(
-      tgt = target,
-      src = source,
-      cond = condition,
-      this.update(set = update),
-      this.insert(values = insert))
-  }
-
-  override protected def executeMerge(
-      tgt: String,
-      src: String,
-      cond: String,
-      clauses: MergeClause*): Unit = {
-
-    def buildClause(clause: MergeClause, mergeBuilder: DeltaMergeBuilder)
-      : DeltaMergeBuilder = clause match {
-      case _: MatchedClause =>
-        val actionBuilder: DeltaMergeMatchedActionBuilder =
-          if (clause.condition != null) mergeBuilder.whenMatched(clause.condition)
-          else mergeBuilder.whenMatched()
-        if (clause.action.startsWith("DELETE")) {   // DELETE clause
-          actionBuilder.delete()
-        } else {                                    // UPDATE clause
-          val setColExprStr = clause.action.trim.stripPrefix("UPDATE SET")
-          if (setColExprStr.trim == "*") {          // UPDATE SET *
-            actionBuilder.updateAll()
-          } else if (setColExprStr.contains("array_")) { // UPDATE SET x = array_union(..)
-            val setColExprPairs = parseUpdate(setColExprStr)
-            actionBuilder.updateExpr(setColExprPairs)
-          } else {                                 // UPDATE SET x = a, y = b, z = c
-            val setColExprPairs = parseUpdate(setColExprStr.split(","))
-            actionBuilder.updateExpr(setColExprPairs)
-          }
-        }
-      case _: NotMatchedClause =>                     // INSERT clause
-        val actionBuilder: DeltaMergeNotMatchedActionBuilder =
-          if (clause.condition != null) mergeBuilder.whenNotMatched(clause.condition)
-          else mergeBuilder.whenNotMatched()
-        val valueStr = clause.action.trim.stripPrefix("INSERT")
-        if (valueStr.trim == "*") {                   // INSERT *
-          actionBuilder.insertAll()
-        } else {                                      // INSERT (x, y, z) VALUES (a, b, c)
-          val valueColExprsPairs = parseInsert(valueStr, Some(clause))
-          actionBuilder.insertExpr(valueColExprsPairs)
-        }
-      case _: NotMatchedBySourceClause =>
-        val actionBuilder: DeltaMergeNotMatchedBySourceActionBuilder =
-          if (clause.condition != null) mergeBuilder.whenNotMatchedBySource(clause.condition)
-          else mergeBuilder.whenNotMatchedBySource()
-        if (clause.action.startsWith("DELETE")) { // DELETE clause
-          actionBuilder.delete()
-        } else { // UPDATE clause
-          val setColExprStr = clause.action.trim.stripPrefix("UPDATE SET")
-          if (setColExprStr.contains("array_")) { // UPDATE SET x = array_union(..)
-            val setColExprPairs = parseUpdate(setColExprStr)
-            actionBuilder.updateExpr(setColExprPairs)
-          } else { // UPDATE SET x = a, y = b, z = c
-            val setColExprPairs = parseUpdate(setColExprStr.split(","))
-            actionBuilder.updateExpr(setColExprPairs)
-          }
-        }
-      }
-
-    val deltaTable = {
-      val (tableNameOrPath, optionalAlias) = DeltaTestUtils.parseTableAndAlias(tgt)
-      var table = makeDeltaTable(tableNameOrPath)
-      optionalAlias.foreach { alias => table = table.as(alias) }
-      table
-    }
-
-    val sourceDataFrame: DataFrame = {
-      val (tableOrQuery, optionalAlias) = DeltaTestUtils.parseTableAndAlias(src)
-      var df =
-        if (tableOrQuery.startsWith("(")) spark.sql(tableOrQuery) else spark.table(tableOrQuery)
-      optionalAlias.foreach { alias => df = df.as(alias) }
-      df
-    }
-
-    var mergeBuilder = deltaTable.merge(sourceDataFrame, cond)
-    clauses.foreach { clause =>
-      mergeBuilder = buildClause(clause, mergeBuilder)
-    }
-    mergeBuilder.execute()
-    deltaTable.toDF
-  }
-
   // scalastyle:off argcount
   override def testNestedDataSupport(name: String, namePrefix: String = "nested data support")(
       source: String,
@@ -742,46 +650,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase  with MergeIntoNotMatchedBy
         }
       }
     }
-  }
-
-  private def makeDeltaTable(nameOrPath: String): DeltaTable = {
-    val isPath: Boolean = nameOrPath.startsWith("delta.")
-    if (isPath) {
-      val path = nameOrPath.stripPrefix("delta.`").stripSuffix("`")
-      io.delta.tables.DeltaTable.forPath(spark, path)
-    } else {
-      DeltaTableTestUtils.createTable(spark.table(nameOrPath), DeltaLog.forTable(spark, nameOrPath))
-    }
-  }
-
-  private def parseUpdate(update: Seq[String]): Map[String, String] = {
-    update.map { _.split("=").toList }.map {
-      case setCol :: setExpr :: Nil => setCol.trim -> setExpr.trim
-      case _ => fail("error parsing update actions " + update)
-    }.toMap
-  }
-
-  private def parseInsert(valueStr: String, clause: Option[MergeClause]): Map[String, String] = {
-    valueStr.split("VALUES").toList match {
-      case colsStr :: exprsStr :: Nil =>
-        def parse(str: String): Seq[String] = {
-          str.trim.stripPrefix("(").stripSuffix(")").split(",").map(_.trim)
-        }
-        val cols = parse(colsStr)
-        val exprs = parse(exprsStr)
-        require(cols.size == exprs.size,
-          s"Invalid insert action ${clause.get.action}: cols = $cols, exprs = $exprs")
-        cols.zip(exprs).toMap
-
-      case list =>
-        fail(s"Invalid insert action ${clause.get.action} split into $list")
-    }
-  }
-
-  private def parsePath(nameOrPath: String): String = {
-    if (nameOrPath.startsWith("delta.`")) {
-      nameOrPath.stripPrefix("delta.`").stripSuffix("`")
-    } else nameOrPath
   }
 
   // Scala API won't hit the resolution exception.

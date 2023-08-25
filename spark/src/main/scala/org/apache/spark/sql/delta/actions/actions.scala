@@ -728,15 +728,17 @@ case class AddFile(
       case Some(_) => deletionVector.copy(maxRowIndex = None)
       case _ => deletionVector
     }
-    val withUpdatedDV =
+    var addFileWithNewDv =
       this.copy(deletionVector = dvDescriptorWithoutMaxRowIndex, dataChange = dataChange)
-    val addFile = if (updateStats) {
-      withUpdatedDV.withoutTightBoundStats
-    } else {
-      withUpdatedDV
+    if (updateStats) {
+      addFileWithNewDv = addFileWithNewDv.withoutTightBoundStats
     }
-    val removeFile = this.removeWithTimestamp(dataChange = dataChange)
-    (addFile, removeFile)
+    val removeFileWithOldDv = this.removeWithTimestamp(dataChange = dataChange)
+
+    // Sanity check for incremental DV updates.
+    require(addFileWithNewDv.numDeletedRecords >= removeFileWithOldDv.numDeletedRecords)
+
+    (addFileWithNewDv, removeFileWithOldDv)
   }
 
   /**

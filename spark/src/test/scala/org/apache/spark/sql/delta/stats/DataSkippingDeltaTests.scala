@@ -42,7 +42,8 @@ import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 trait DataSkippingDeltaTestsBase extends QueryTest
-    with SharedSparkSession    with DeltaSQLCommandTest
+    with SharedSparkSession
+    with DeltaSQLCommandTest
     with PredicateHelper
     with GivenWhenThen
     with ScanReportHelper {

@@ -203,7 +203,8 @@ class DeltaTableSuite extends QueryTest
 }
 
 class DeltaTableHadoopOptionsSuite extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 

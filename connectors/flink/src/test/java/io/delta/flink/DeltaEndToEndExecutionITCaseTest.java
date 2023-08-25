@@ -320,7 +320,7 @@ public class DeltaEndToEndExecutionITCaseTest {
                         );
                         assertThat(
                             row.getString(ALL_DATA_TABLE_COLUMN_NAMES[8]),
-                            equalTo(String.valueOf(i))
+                            equalTo("test-" + i)
                         );
 
                         // same value for all columns

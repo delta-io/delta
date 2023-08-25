@@ -409,7 +409,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
       )
       // Update schema log
       if (replace) {
-        metadataTrackingLog.get.replaceCurrentMetadata(schemaToPersist)
+        metadataTrackingLog.get.writeNewMetadata(schemaToPersist, replaceCurrent = true)
       } else {
         metadataTrackingLog.get.writeNewMetadata(schemaToPersist)
       }
@@ -453,6 +453,12 @@ object DeltaSourceMetadataEvolutionSupport {
     }
   }
 
+  def getCheckpointHash(path: String): Int = path.hashCode
+
+  final val SQL_CONF_UNBLOCK_ALL = "allowSourceColumnRenameAndDrop"
+  final val SQL_CONF_UNBLOCK_RENAME = "allowSourceColumnRename"
+  final val SQL_CONF_UNBLOCK_DROP = "allowSourceColumnDrop"
+
   // scalastyle:off
   /**
    * Given a non-additive operation type from a previous schema evolution, check we can process
@@ -482,10 +488,7 @@ object DeltaSourceMetadataEvolutionSupport {
       currentSchema: PersistedMetadata,
       previousSchema: PersistedMetadata): Unit = {
     val sqlConfPrefix = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming"
-    val checkpointHash = metadataPath.hashCode
-    val allowAll = "allowSourceColumnRenameAndDrop"
-    val allowRename = "allowSourceColumnRename"
-    val allowDrop = "allowSourceColumnDrop"
+    val checkpointHash = getCheckpointHash(metadataPath)
 
     def getConf(key: String): Option[String] =
       Option(spark.sessionState.conf.getConfString(key, null))
@@ -499,35 +502,42 @@ object DeltaSourceMetadataEvolutionSupport {
         (s"$sqlConfPrefix.$allowSchemaChange.ckpt_$checkpointHash", schemaChangeVersion.toString)
       )
 
-    val schemaChangeVersion = currentSchema.deltaCommitVersion
+    // The start version of a possible series of consecutive schema changes.
+    val previousSchemaChangeVersion = previousSchema.deltaCommitVersion
+    // The end version of a possible series of consecutive schema changes.
+    val currentSchemaChangeVersion = currentSchema.deltaCommitVersion
     val confPairsToAllowAllSchemaChange =
-      getConfPairsToAllowSchemaChange(allowAll, schemaChangeVersion)
+      getConfPairsToAllowSchemaChange(SQL_CONF_UNBLOCK_ALL, currentSchemaChangeVersion)
 
     determineNonAdditiveSchemaChangeType(
       currentSchema.dataSchema, previousSchema.dataSchema).foreach {
       case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP =>
         val validConfKeysValuePair =
-          getConfPairsToAllowSchemaChange(allowDrop, schemaChangeVersion) ++
+          getConfPairsToAllowSchemaChange(SQL_CONF_UNBLOCK_DROP, currentSchemaChangeVersion) ++
             confPairsToAllowAllSchemaChange
         if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
           // Throw error to prompt user to set the correct confs
           throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
             NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP,
-            schemaChangeVersion,
+            previousSchemaChangeVersion,
+            currentSchemaChangeVersion,
             checkpointHash,
-            allowAll, allowDrop)
+            SQL_CONF_UNBLOCK_ALL,
+            SQL_CONF_UNBLOCK_DROP)
         }
       case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME =>
         val validConfKeysValuePair =
-          getConfPairsToAllowSchemaChange(allowRename, schemaChangeVersion) ++
+          getConfPairsToAllowSchemaChange(SQL_CONF_UNBLOCK_RENAME, currentSchemaChangeVersion) ++
             confPairsToAllowAllSchemaChange
         if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
           // Throw error to prompt user to set the correct confs
           throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
             NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME,
-            schemaChangeVersion,
+            previousSchemaChangeVersion,
+            currentSchemaChangeVersion,
             checkpointHash,
-            allowAll, allowRename)
+            SQL_CONF_UNBLOCK_ALL,
+            SQL_CONF_UNBLOCK_RENAME)
         }
       case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP =>
         val validConfKeysValuePair = confPairsToAllowAllSchemaChange
@@ -535,9 +545,11 @@ object DeltaSourceMetadataEvolutionSupport {
           // Throw error to prompt user to set the correct confs
           throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
             NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP,
-            schemaChangeVersion,
+            previousSchemaChangeVersion,
+            currentSchemaChangeVersion,
             checkpointHash,
-            allowAll, allowAll)
+            SQL_CONF_UNBLOCK_ALL,
+            SQL_CONF_UNBLOCK_ALL)
         }
     }
   }
