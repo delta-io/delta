@@ -25,7 +25,6 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.concurrent.Eventually
 import org.scalatest.concurrent.PatienceConfiguration.Timeout
 
-import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.execution.streaming.StreamExecution
 import org.apache.spark.sql.streaming.{StreamTest, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
@@ -167,7 +166,7 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
       AdvanceManualClock(1000L),
       CheckAnswer((0 until 15): _*),
       AssertOnQuery { q =>
-        // Make sure we only processed a single batch since the initial data load.
+        // Ensure we only processed a single batch since the initial data load.
         q.commitLog.getLatestBatchId().get == 0
       },
       AssertOnQuery { q =>
@@ -188,9 +187,10 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
         deletionVectorsPresentIfExpected(inputDir, expectDVsInCommand2)
       },
       AssertOnQuery { q =>
-        // Make sure we only processed a single batch since the initial data load.
+        // Ensure we still didn't process the DML commands.
         q.commitLog.getLatestBatchId().get == 0
       },
+      // Advance the clock, so that we process the two DML commands.
       AdvanceManualClock(2000L)) ++
       (if (shouldFailAfterCommands) {
          Seq.empty[StreamAction]
@@ -200,7 +200,7 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
            AssertOnQuery(waitUntilBatchProcessed(1, _)),
            AssertOnQuery { q =>
              eventually("Next batch was never processed") {
-               // Make sure we only processed a single batch since the initial data load.
+               // Ensure we only processed a single batch with the DML commands.
                assert(q.commitLog.getLatestBatchId().get === 1)
              }
              true
@@ -393,7 +393,8 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
   }
 
   for (sourceOption <- allSourceOptions)
-  testQuietly("subsequent DML commands are processed correctly in a batch - INSERT->DELETE" +
+  testQuietly(
+    "subsequent DML commands are processed correctly in a batch - INSERT->DELETE" +
       s" - $sourceOption") {
     val expectations: List[StreamAction] = sourceOption.map(_._1) match {
       case List(DeltaOptions.IGNORE_DELETES_OPTION) | Nil =>
