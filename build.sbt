@@ -62,6 +62,8 @@ crossScalaVersions := Nil
 val targetJvm = settingKey[String]("Target JVM version")
 Global / targetJvm := "1.8"
 
+// Test - some random change
+
 lazy val commonSettings = Seq(
   organization := "io.delta",
   scalaVersion := default_scala_version.value,
