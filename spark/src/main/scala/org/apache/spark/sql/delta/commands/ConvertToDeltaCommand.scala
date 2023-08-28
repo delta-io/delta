@@ -275,7 +275,7 @@ abstract class ConvertToDeltaCommandBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       addFiles: Seq[AddFile]): Iterator[AddFile] = {
-    val initialSnapshot = new InitialSnapshot(txn.deltaLog.dataPath, txn.deltaLog, txn.metadata)
+    val initialSnapshot = new InitialSnapshot(txn.deltaLog.logPath, txn.deltaLog, txn.metadata)
     ConvertToDeltaCommand.computeStats(txn.deltaLog, initialSnapshot, addFiles)
   }
 
