@@ -965,7 +965,7 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
   2. Otherwise, readers must use the default generated Row ID of the `add` or `remove` action containing the row in all other cases.
      I.e. readers must add the index of the row in the file to the `baseRowId` of the `add` or `remove` action for the file containing the row.
 - When Row Commit Versions are requested, readers must reconstruct them as follows:
-  1. Readers must use the materialized Row Commit Versions if the column determined by `delta.rowTracking.materializedRowCommitVersionColumnName is present in the data file and the column contains a non `null` value for a row.
+  1. Readers must use the materialized Row Commit Versions if the column determined by `delta.rowTracking.materializedRowCommitVersionColumnName` is present in the data file and the column contains a non `null` value for a row.
   2. Otherwise, Readers must use the default generated Row Commit Versions of the `add` or `remove` action containing the row in all other cases.
      I.e. readers must use the `defaultRowCommitVersion` of the `add` or `remove` action for the file containing the row.
 - Readers cannot read Row IDs and Row Commit Versions while reading change data files from `cdc` actions.
