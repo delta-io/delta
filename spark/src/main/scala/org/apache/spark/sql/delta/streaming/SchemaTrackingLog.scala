@@ -178,13 +178,4 @@ object SchemaTrackingExceptions {
     new RuntimeException("Failed to deserialize schema log")
   val FailedToEvolveSchema =
     new RuntimeException("Failed to add schema entry to log. Concurrent operations detected.")
-
-  /**
-   * Simple util to convert common schema log exceptions to custom exceptions
-   */
-  def convertException[E](from: Throwable, to: Throwable)(f: => E): E = {
-    try f catch {
-      case e: Throwable if e == from => throw to
-    }
-  }
 }
