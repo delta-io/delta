@@ -3923,7 +3923,7 @@ abstract class MergeIntoSuiteBase
   )
 
   // Valid implicit casts that are not upcasts (e.g. string -> int) are allowed with
-  // storeAssignmentPolicy = LEGACY, ANSI and rejected with storeAssignmentPolicy = STRICT.
+  // storeAssignmentPolicy = LEGACY or ANSI.
   for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
   testEvolution("valid implicit cast string source type into int target, " +
    s"storeAssignmentPolicy = ${storeAssignmentPolicy}")(
@@ -3937,6 +3937,8 @@ abstract class MergeIntoSuiteBase
       DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
   )
 
+  // Valid implicit casts that are not upcasts (e.g. string -> int) are rejected with
+  // storeAssignmentPolicy = STRICT.
   testEvolution("valid implicit cast string source type into int target, " +
    s"storeAssignmentPolicy = ${StoreAssignmentPolicy.STRICT}")(
     targetData = Seq((0, 0), (1, 1), (3, 3)).toDF("key", "value"),

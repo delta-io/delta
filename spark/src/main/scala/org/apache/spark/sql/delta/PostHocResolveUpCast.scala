@@ -25,6 +25,10 @@ import org.apache.spark.sql.catalyst.rules.Rule
  * new unresolved UpCast expressions that won't be resolved by [[ResolveUpCast]] that ran in the
  * previous resolution phase. This rule ensures these UpCast expressions get resolved in the
  * Post-hoc resolution phase.
+ *
+ * Note: we can't inject [[ResolveUpCast]] directly because we need an initialized analyzer instance
+ * for that which is not available at the time Delta rules are injected. [[PostHocResolveUpCast]] is
+ * just a mean to delay accessing the analyzer until after it's initialized.
  */
 case class PostHocResolveUpCast(spark: SparkSession)
   extends Rule[LogicalPlan] {

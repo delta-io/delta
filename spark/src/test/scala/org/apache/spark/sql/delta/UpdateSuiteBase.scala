@@ -323,7 +323,8 @@ abstract class UpdateSuiteBase
   }
 
   // Casts that are not valid implicit casts (e.g. string -> boolean) are allowed only when
-  // storeAssignmentPolicy is LEGACY or ANSI.
+  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLSuite]] only due to
+  // limitations when using the Scala API.
   for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
   test("invalid implicit cast string source type into boolean target, " +
     s"storeAssignmentPolicy = $storeAssignmentPolicy") {
@@ -339,7 +340,8 @@ abstract class UpdateSuiteBase
   }
 
   // Valid implicit casts that are not upcasts (e.g. string -> int) are allowed only when
-  // storeAssignmentPolicy is LEGACY or ANSI.
+  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLSuite]] only due to
+  // limitations when using the Scala API.
   for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
   test("valid implicit cast string source type into int target, " +
      s"storeAssignmentPolicy = ${storeAssignmentPolicy}") {
