@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{Dataset, QueryTest}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.expr
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -127,6 +128,11 @@ class UpdateMetricsSuite extends QueryTest
         createTempTable(table, tableName, testConfig)
           val resultDf = spark.sql(s"UPDATE $tableName SET id = -1 $whereClause")
         operationMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
+
+        // Check operation metrics against commit actions.
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        DeltaMetricsUtils.checkOperationMetricsAgainstCommitActions(
+          deltaLog, deltaLog.update().version, operationMetrics)
       }
     }
     TestMetricResults(
