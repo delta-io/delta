@@ -721,20 +721,6 @@ object DeltaLog extends DeltaLogging {
     apply(spark, logPathFor(new Path(table.location)), clock)
   }
 
-  /** Helper for creating a log for the table. */
-  def forTable(spark: SparkSession, deltaTable: DeltaTableIdentifier): DeltaLog = {
-    forTable(spark, deltaTable, new SystemClock)
-  }
-
-  /** Helper for creating a log for the table. */
-  def forTable(spark: SparkSession, deltaTable: DeltaTableIdentifier, clock: Clock): DeltaLog = {
-    if (deltaTable.path.isDefined) {
-      forTable(spark, new Path(deltaTable.path.get), clock)
-    } else {
-      forTable(spark, deltaTable.table.get, clock)
-    }
-  }
-
   private def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog =
     apply(spark, rawPath, Map.empty, clock)
 
@@ -751,12 +737,6 @@ object DeltaLog extends DeltaLogging {
   def forTableWithSnapshot(
       spark: SparkSession,
       tableName: TableIdentifier): (DeltaLog, Snapshot) =
-    withFreshSnapshot { forTable(spark, tableName, _) }
-
-  /** Helper for getting a log, as well as the latest snapshot, of the table */
-  def forTableWithSnapshot(
-      spark: SparkSession,
-      tableName: DeltaTableIdentifier): (DeltaLog, Snapshot) =
     withFreshSnapshot { forTable(spark, tableName, _) }
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
