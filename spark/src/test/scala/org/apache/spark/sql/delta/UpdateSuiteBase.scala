@@ -28,6 +28,7 @@ import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 
@@ -263,6 +264,54 @@ abstract class UpdateSuiteBase
         condition = Some("cast(key as long) * cast('1.0' as decimal(38, 18)) > 100"),
         setClauses = "value = -3",
         expectedResults = Row(100, 4) :: Row(101, -3) :: Row(99, 2) :: Nil)
+    }
+  }
+
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values)
+  test("upcast int source type into long target, storeAssignmentPolicy = " +
+    s"$storeAssignmentPolicy") {
+    append(Seq((99, 2L), (100, 4L), (101, 3L)).toDF("key", "value"))
+    withSQLConf(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
+      checkUpdate(
+        condition = None,
+        setClauses = "value = 4",
+        expectedResults = Row(100, 4) :: Row(101, 4) :: Row(99, 4) :: Nil)
+    }
+  }
+
+  // Casts that are not valid implicit casts (e.g. string -> boolean) are allowed only when
+  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLSuite]] only due to
+  // limitations when using the Scala API.
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
+  test("invalid implicit cast string source type into boolean target, " +
+    s"storeAssignmentPolicy = $storeAssignmentPolicy") {
+    append(Seq((99, true), (100, false), (101, true)).toDF("key", "value"))
+    withSQLConf(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
+      checkUpdate(
+        condition = None,
+        setClauses = "value = 'false'",
+        expectedResults = Row(100, false) :: Row(101, false) :: Row(99, false) :: Nil)
+    }
+  }
+
+  // Valid implicit casts that are not upcasts (e.g. string -> int) are allowed only when
+  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLSuite]] only due to
+  // limitations when using the Scala API.
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
+  test("valid implicit cast string source type into int target, " +
+     s"storeAssignmentPolicy = ${storeAssignmentPolicy}") {
+    append(Seq((99, 2), (100, 4), (101, 3)).toDF("key", "value"))
+    withSQLConf(
+        SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+        DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
+      checkUpdate(
+        condition = None,
+        setClauses = "value = '5'",
+        expectedResults = Row(100, 5) :: Row(101, 5) :: Row(99, 5) :: Nil)
     }
   }
 

@@ -38,6 +38,7 @@ import org.apache.spark.sql.catalyst.util.FailFastMode
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
@@ -3803,6 +3804,82 @@ abstract class MergeIntoSuiteBase
         .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
     // Disable ANSI as this test needs to cast string "notANumber" to int
     confs = Seq(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "LEGACY")
+  )
+
+  // Upcasting is always allowed.
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values)
+  testEvolution("upcast int source type into long target, storeAssignmentPolicy = " +
+    s"$storeAssignmentPolicy")(
+    targetData = Seq((0, 0L), (1, 1L), (3, 3L)).toDF("key", "value"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected =
+      ((0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 3L) +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution =
+      ((0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 3L) +: Nil).toDF("key", "value"),
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
+  )
+
+  // Casts that are not valid implicit casts (e.g. string -> boolean) are never allowed with
+  // schema evolution enabled and allowed only when storeAssignmentPolicy is LEGACY or ANSI when
+  // schema evolution is disabled.
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
+  testEvolution("invalid implicit cast string source type into boolean target, " +
+    s"storeAssignmentPolicy = $storeAssignmentPolicy")(
+    targetData = Seq((0, true), (1, false), (3, true)).toDF("key", "value"),
+    sourceData = Seq((1, "true"), (2, "false")).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expectErrorContains = "Failed to merge incompatible data types BooleanType and StringType",
+    expectedWithoutEvolution = ((0, true) +: (1, true) +: (2, false) +: (3, true) +: Nil)
+      .toDF("key", "value"),
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
+  )
+
+  // Casts that are not valid implicit casts (e.g. string -> boolean) are not allowed with
+  // storeAssignmentPolicy = STRICT.
+  testEvolution("invalid implicit cast string source type into boolean target, " +
+   s"storeAssignmentPolicy = ${StoreAssignmentPolicy.STRICT}")(
+    targetData = Seq((0, true), (1, false), (3, true)).toDF("key", "value"),
+    sourceData = Seq((1, "true"), (2, "false")).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expectErrorContains = "Failed to merge incompatible data types BooleanType and StringType",
+    expectErrorWithoutEvolutionContains = "cannot up cast s.value from \"string\" to \"boolean\"",
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
+  )
+
+  // Valid implicit casts that are not upcasts (e.g. string -> int) are allowed with
+  // storeAssignmentPolicy = LEGACY or ANSI.
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
+  testEvolution("valid implicit cast string source type into int target, " +
+   s"storeAssignmentPolicy = ${storeAssignmentPolicy}")(
+    targetData = Seq((0, 0), (1, 1), (3, 3)).toDF("key", "value"),
+    sourceData = Seq((1, "1"), (2, "2")).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected = ((0, 0)+: (1, 1) +: (2, 2) +: (3, 3)  +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution = ((0, 0) +: (1, 1) +: (2, 2) +: (3, 3) +: Nil).toDF("key", "value"),
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
+  )
+
+  // Valid implicit casts that are not upcasts (e.g. string -> int) are rejected with
+  // storeAssignmentPolicy = STRICT.
+  testEvolution("valid implicit cast string source type into int target, " +
+   s"storeAssignmentPolicy = ${StoreAssignmentPolicy.STRICT}")(
+    targetData = Seq((0, 0), (1, 1), (3, 3)).toDF("key", "value"),
+    sourceData = Seq((1, "1"), (2, "2")).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expectErrorContains = "cannot up cast s.value from \"string\" to \"int\"",
+    expectErrorWithoutEvolutionContains = "cannot up cast s.value from \"string\" to \"int\"",
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
   )
 
   // This is kinda bug-for-bug compatibility. It doesn't really make sense that infinity is casted
