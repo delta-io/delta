@@ -27,6 +27,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableNotFoundException;
@@ -44,6 +45,7 @@ import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Logging;
 import static io.delta.kernel.internal.fs.Path.getName;
+import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
 public class SnapshotManager
     implements Logging {
@@ -59,17 +61,25 @@ public class SnapshotManager
         Optional<Long> expectedStartVersion,
         Optional<Long> expectedEndVersion) {
         if (!versions.isEmpty()) {
-            // TODO: check if contiguous
+            List<Long> contVersions = LongStream
+                    .rangeClosed(versions.get(0), versions.get(versions.size() -1))
+                    .boxed()
+                    .collect(Collectors.toList());
+            if (!contVersions.equals(versions)) {
+                throw new IllegalStateException(
+                        String.format("Versions (%s) are not continuous", versions));
+            }
         }
         expectedStartVersion.ifPresent(v -> {
-            assert (!versions.isEmpty() && Objects.equals(versions.get(0), v)) :
+            checkArgument(!versions.isEmpty() && Objects.equals(versions.get(0), v),
                 String.format(
-                    "Did not get the first delta file version %s to compute Snapshot", v);
+                    "Did not get the first delta file version %s to compute Snapshot", v));
         });
         expectedEndVersion.ifPresent(v -> {
-            assert (!versions.isEmpty() && Objects.equals(versions.get(versions.size() - 1), v)) :
+            checkArgument(!versions.isEmpty() &&
+                            Objects.equals(versions.get(versions.size() - 1), v),
                 String.format(
-                    "Did not get the last delta file version %s to compute Snapshot", v);
+                    "Did not get the last delta file version %s to compute Snapshot", v));
         });
     }
 
