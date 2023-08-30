@@ -1168,6 +1168,16 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 66")
     // scalastyle:on line.size.limit
   }
+
+  generateGoldenTable("multi-part-checkpoint") { tablePath =>
+    withSQLConf(
+      ("spark.databricks.delta.checkpoint.partSize", "5"),
+      ("spark.databricks.delta.properties.defaults.checkpointInterval", "1")
+    ) {
+      spark.range(1).repartition(1).write.format("delta").save(tablePath)
+      spark.range(30).repartition(9).write.format("delta").mode("append").save(tablePath)
+    }
+  }
 }
 
 case class TestStruct(f1: String, f2: Long)
