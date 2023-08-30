@@ -36,19 +36,21 @@ public class CheckpointInstance
     public final long version;
     public final Optional<Integer> numParts;
 
-    public CheckpointInstance(Path path) {
-        String[] pathParts = path.getName().split("\\.");
+    public CheckpointInstance(String pathName) {
+        String[] pathParts = pathName.split("\\.");
 
         if (pathParts.length == 3 && pathParts[1].equals("checkpoint") &&
                 pathParts[2].equals("parquet")) {
+            // Classic checkpoint 00000000000000000010.checkpoint.parquet
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.empty();
         } else if (pathParts.length == 5 && pathParts[1].equals("checkpoint")
                 && pathParts[4].equals("parquet")) {
+            // Multi-part checkpoint 00000000000000000010.checkpoint.0000000001.0000000003.parquet
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.of(Integer.parseInt(pathParts[3]));
         } else {
-            throw new RuntimeException("Unrecognized checkpoint path format: " + path.getName());
+            throw new RuntimeException("Unrecognized checkpoint path format: " + pathName);
         }
     }
 
@@ -80,10 +82,10 @@ public class CheckpointInstance
 
     /**
      * Comparison rules:
-     * 1. A [[CheckpointInstance]] with higher version is greater than the one with lower version.
-     * 2. For [[CheckpointInstance]]s with same version, a Multi-part checkpoint is greater than a
+     * 1. A CheckpointInstance with higher version is greater than the one with lower version.
+     * 2. For CheckpointInstances with same version, a Multi-part checkpoint is greater than a
      *    Single part checkpoint.
-     * 3. For Multi-part [[CheckpointInstance]]s corresponding to same version, the one with more
+     * 3. For Multi-part CheckpointInstance corresponding to same version, the one with more
      *    parts is greater than the one with less parts.
      */
     @Override

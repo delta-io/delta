@@ -366,7 +366,7 @@ public class SnapshotManager
 
         final List<CheckpointInstance> checkpointFiles = checkpoints
             .stream()
-            .map(f -> new CheckpointInstance(new Path(f.getPath())))
+            .map(f -> new CheckpointInstance(f.getPath()))
             .collect(Collectors.toList());
         logDebug(() ->
             String.format("checkpointFiles: %s", Arrays.toString(checkpointFiles.toArray())));
