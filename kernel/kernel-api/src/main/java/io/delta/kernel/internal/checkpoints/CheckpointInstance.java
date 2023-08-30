@@ -36,8 +36,8 @@ public class CheckpointInstance
     public final long version;
     public final Optional<Integer> numParts;
 
-    public CheckpointInstance(String pathName) {
-        String[] pathParts = pathName.split("\\.");
+    public CheckpointInstance(String path) {
+        String[] pathParts = getPathName(path).split("\\.");
 
         if (pathParts.length == 3 && pathParts[1].equals("checkpoint") &&
                 pathParts[2].equals("parquet")) {
@@ -50,7 +50,7 @@ public class CheckpointInstance
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.of(Integer.parseInt(pathParts[3]));
         } else {
-            throw new RuntimeException("Unrecognized checkpoint path format: " + pathName);
+            throw new RuntimeException("Unrecognized checkpoint path format: " + getPathName(path));
         }
     }
 
@@ -118,5 +118,10 @@ public class CheckpointInstance
     @Override
     public int hashCode() {
         return Objects.hash(version, numParts);
+    }
+
+    private String getPathName(String path) {
+        int slash = path.lastIndexOf("/");
+        return path.substring(slash + 1);
     }
 }
