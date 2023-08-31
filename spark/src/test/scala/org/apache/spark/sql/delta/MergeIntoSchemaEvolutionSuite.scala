@@ -28,20 +28,6 @@ import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, NullType, StringType, StructType}
 
-/**
- * Suite covering MERGE behavior with schema evolution enabled/disabled.
- * Test helpers are defined in [[MergeIntoSchemaEvolutionMixin]] and tests are grouped in:
- * - [[MergeIntoSchemaEvolutionCoreTests]]
- * - [[MergeIntoSchemaEvolutionBaseTests]]
- * - [[MergeIntoSchemaEvolutionNotMatchedBySourceTests]]
- * - [[MergeIntoNestedStructEvolutionTests]]
- */
-class MergeIntoSchemaEvolutionSuite extends QueryTest
-  with SharedSparkSession
-  with MergeIntoSQLTestUtils
-  with DeltaSQLCommandTest
-  with MergeIntoSchemaEvolutionMixin
-  with MergeIntoSchemaEvolutionAllTests
 
 /**
  * Trait collecting all other schema evolution test traits for convenience.
@@ -52,7 +38,6 @@ trait MergeIntoSchemaEvolutionAllTests extends MergeIntoSchemaEvolutionCoreTests
   with MergeIntoNestedStructEvolutionTests {
     self: MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils with SharedSparkSession =>
   }
-
 
 /**
  * Trait collecting schema evolution test runner methods and other helpers.
