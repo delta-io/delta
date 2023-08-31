@@ -23,6 +23,7 @@ import org.apache.parquet.io.api.GroupConverter;
 import io.delta.kernel.data.ColumnVector;
 
 import io.delta.kernel.defaults.internal.parquet.ParquetConverters.BaseConverter;
+import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 import static io.delta.kernel.defaults.internal.parquet.ParquetConverters.initNullabilityVector;
 import static io.delta.kernel.defaults.internal.parquet.ParquetConverters.setNullabilityToTrue;
 
@@ -48,6 +49,7 @@ abstract class RepeatedValueConverter extends GroupConverter implements BaseConv
      * @param elementConverters List of converters that are part of the repeated type.
      */
     RepeatedValueConverter(int initialBatchSize, Converter... elementConverters) {
+        checkArgument(initialBatchSize > 0, "invalid initialBatchSize: %s", initialBatchSize);
         this.collector = new Collector(elementConverters);
         // initialize working state
         this.nullability = initNullabilityVector(initialBatchSize);
@@ -71,15 +73,13 @@ abstract class RepeatedValueConverter extends GroupConverter implements BaseConv
     public void end() {}
 
     @Override
-    public boolean moveToNextRow() {
-        this.offsets[currentRowIndex + 1] = collector.currentEntryIndex;
-        this.nullability[currentRowIndex] = isCurrentValueNull;
+    public void finalizeCurrentRow(long currentRowIndex) {
+        resizeIfNeeded();
+        this.offsets[this.currentRowIndex + 1] = collector.currentEntryIndex;
+        this.nullability[this.currentRowIndex] = isCurrentValueNull;
         this.isCurrentValueNull = true;
 
-        currentRowIndex++;
-        resizeIfNeeded();
-
-        return nullability[currentRowIndex - 1];
+        this.currentRowIndex++;
     }
 
     @Override
@@ -147,7 +147,8 @@ abstract class RepeatedValueConverter extends GroupConverter implements BaseConv
         @Override
         public void end() {
             for (Converter converter : elementConverters) {
-                ((ParquetConverters.BaseConverter) converter).moveToNextRow();
+                long prevRowIndex = -1; // Row indexes are not needed for nested columns
+                ((ParquetConverters.BaseConverter) converter).finalizeCurrentRow(prevRowIndex);
             }
             currentEntryIndex++;
         }

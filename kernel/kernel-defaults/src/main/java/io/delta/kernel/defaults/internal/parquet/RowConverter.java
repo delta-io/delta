@@ -67,6 +67,7 @@ class RowConverter
      *                         fields in readSchema.
      */
     RowConverter(int initialBatchSize, StructType readSchema, GroupType fileSchema) {
+        checkArgument(initialBatchSize > 0, "invalid initialBatchSize: %s", initialBatchSize);
         this.readSchema = requireNonNull(readSchema, "readSchema is not null");
         List<StructField> fields = readSchema.fields();
         this.converters = new Converter[fields.size()];
@@ -123,27 +124,13 @@ class RowConverter
     }
 
     @Override
-    public boolean moveToNextRow() {
+    public void finalizeCurrentRow(long currentRowIndex) {
         resizeIfNeeded();
-        moveConvertersToNextRow(Optional.empty());
-        nullability[currentRowIndex] = isCurrentValueNull;
+        finalizeLastRowInConverters(currentRowIndex);
+        nullability[this.currentRowIndex] = isCurrentValueNull;
         isCurrentValueNull = true;
-        currentRowIndex++;
 
-        return nullability[currentRowIndex - 1];
-    }
-
-    /**
-     * @param fileRowIndex the file row index of the row processed
-     */
-    public boolean moveToNextRow(long fileRowIndex) {
-        resizeIfNeeded();
-        moveConvertersToNextRow(Optional.of(fileRowIndex));
-        nullability[currentRowIndex] = isCurrentValueNull;
-        isCurrentValueNull = true;
-        currentRowIndex++;
-
-        return nullability[currentRowIndex - 1];
+        this.currentRowIndex++;
     }
 
     public ColumnVector getDataColumnVector(int batchSize) {
@@ -174,29 +161,10 @@ class RowConverter
         this.nullability = ParquetConverters.initNullabilityVector(this.nullability.length);
     }
 
-    /**
-     * @return true if all members were null
-     */
-    private boolean moveConvertersToNextRow(Optional<Long> fileRowIndex) {
-        long memberNullCount = 0;
-
+    private void finalizeLastRowInConverters(long prevRowIndex) {
         for (int i = 0; i < converters.length; i++) {
-            final ParquetConverters.BaseConverter baseConverter =
-                (ParquetConverters.BaseConverter) converters[i];
-
-            if (fileRowIndex.isPresent() &&
-                baseConverter instanceof ParquetConverters.FileRowIndexColumnConverter) {
-                final ParquetConverters.FileRowIndexColumnConverter fileRowIndexColumnConverter =
-                    (ParquetConverters.FileRowIndexColumnConverter) baseConverter;
-                if (fileRowIndexColumnConverter.moveToNextRow(fileRowIndex.get())) {
-                    memberNullCount++;
-                }
-            } else if (baseConverter.moveToNextRow()) {
-                memberNullCount++;
-            }
+            ((ParquetConverters.BaseConverter) converters[i]).finalizeCurrentRow(prevRowIndex);
         }
-
-        return memberNullCount == converters.length;
     }
 
     private ColumnVector[] collectMemberVectors(int batchSize) {
