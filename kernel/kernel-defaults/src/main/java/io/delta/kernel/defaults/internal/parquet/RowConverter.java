@@ -125,8 +125,8 @@ class RowConverter
 
     @Override
     public void finalizeCurrentRow(long currentRowIndex) {
-        moveConvertersToNextRow(currentRowIndex);
         resizeIfNeeded();
+        finalizeLastRowInConverters(currentRowIndex);
         nullability[this.currentRowIndex] = isCurrentValueNull;
         isCurrentValueNull = true;
 
@@ -161,7 +161,7 @@ class RowConverter
         this.nullability = ParquetConverters.initNullabilityVector(this.nullability.length);
     }
 
-    private void moveConvertersToNextRow(long prevRowIndex) {
+    private void finalizeLastRowInConverters(long prevRowIndex) {
         for (int i = 0; i < converters.length; i++) {
             ((ParquetConverters.BaseConverter) converters[i]).finalizeCurrentRow(prevRowIndex);
         }

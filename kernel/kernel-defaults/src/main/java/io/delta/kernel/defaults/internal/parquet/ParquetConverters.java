@@ -94,11 +94,25 @@ class ParquetConverters {
         Arrays.fill(nullability, start, end, true);
     }
 
+    /**
+     * Base converter for all implementations of Parquet {@link Converter} to return data in
+     * columnar batch. General operation flow is:
+     *  - each converter implementation allocates state to receive a fixed number of column values
+     *  - before accepting a new value the state is resized if it is not of sufficient size
+     *  - after each row, {@link #finalizeCurrentRow(long)} is called to finalize the state of
+     *    the last read row column value.
+     */
     public interface BaseConverter {
         ColumnVector getDataColumnVector(int batchSize);
 
         /**
-         * Finalize the current row (set any state) and move to accept the next row value.
+         * Finalize the current row:
+         *  - close the state of the row that was read most recently.
+         *  - reallocate the state to be of sufficient size for the current batch size. Generally
+         *    the state value arrays are resized as part of setting the value, but method doesn't
+         *    get called for null values which results in the state value arrays are not sufficient
+         *    size for the current batch size.
+         *
          * @param currentRowIndex Row index of the current row in the Parquet file.
          */
         void finalizeCurrentRow(long currentRowIndex);
@@ -141,8 +155,8 @@ class ParquetConverters {
 
         @Override
         public void finalizeCurrentRow(long currentRowIndex) {
-            this.currentRowIndex++;
             resizeIfNeeded();
+            this.currentRowIndex++;
         }
     }
 
@@ -157,6 +171,7 @@ class ParquetConverters {
 
         @Override
         public void addBoolean(boolean value) {
+            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
@@ -193,6 +208,7 @@ class ParquetConverters {
 
         @Override
         public void addInt(int value) {
+            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = (byte) value;
         }
@@ -229,6 +245,7 @@ class ParquetConverters {
 
         @Override
         public void addInt(int value) {
+            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = (short) value;
         }
@@ -268,6 +285,7 @@ class ParquetConverters {
 
         @Override
         public void addInt(int value) {
+            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
@@ -307,6 +325,7 @@ class ParquetConverters {
 
         @Override
         public void addLong(long value) {
+            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
@@ -343,6 +362,7 @@ class ParquetConverters {
 
         @Override
         public void addFloat(float value) {
+            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
@@ -379,6 +399,7 @@ class ParquetConverters {
 
         @Override
         public void addDouble(double value) {
+            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
@@ -419,6 +440,7 @@ class ParquetConverters {
 
         @Override
         public void addBinary(Binary value) {
+            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value.getBytes();
         }

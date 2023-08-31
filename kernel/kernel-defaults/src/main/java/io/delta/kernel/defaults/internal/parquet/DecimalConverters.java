@@ -128,6 +128,7 @@ public class DecimalConverters {
         }
 
         protected void addDecimal(BigDecimal value) {
+            resizeIfNeeded();
             this.nullability[currentRowIndex] = false;
             this.values[currentRowIndex] = value;
         }
