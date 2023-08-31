@@ -1452,8 +1452,8 @@ trait DeltaAlterTableByNameTests extends DeltaAlterTableTests {
 
         sql("ALTER TABLE delta_test ADD COLUMNS (v3 long, v4 double)")
 
-        val deltaLog = DeltaLog.forTable(spark, path)
-        assertEqual(deltaLog.snapshot.schema, new StructType()
+        val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, path)
+        assertEqual(snapshot.schema, new StructType()
           .add("v1", "integer").add("v2", "string")
           .add("v3", "long").add("v4", "double"))
 

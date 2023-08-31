@@ -126,8 +126,8 @@ class DefaultRowCommitVersionSuite extends QueryTest
           spark.sql(s"CREATE TABLE target SHALLOW CLONE delta.`${sourceDir.getAbsolutePath}` " +
               s"TBLPROPERTIES ('${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = 'true')")
 
-          val targetLog = DeltaLog.forTable(spark, TableIdentifier("target"))
-          targetLog.update().allFiles.collect().foreach { f =>
+          val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("target"))
+          snapshot.allFiles.collect().foreach { f =>
             assert(f.defaultRowCommitVersion.contains(0L))
           }
         }
