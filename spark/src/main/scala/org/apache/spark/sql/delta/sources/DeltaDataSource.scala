@@ -183,7 +183,7 @@ class DeltaDataSource
       .map(DeltaDataSource.decodePartitioningColumns)
       .getOrElse(Nil)
 
-    val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path, parameters)
+    val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, new Path(path), parameters)
     WriteIntoDelta(
       deltaLog = deltaLog,
       mode = mode,

@@ -98,7 +98,7 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest with SQLTestUtils with 
           .mode("append")
           .save(path)
         // Ensure we did write the checkpoint and read it back
-        val deltaLog = DeltaLog.forTable(spark, path, fakeFileSystemOptions)
+        val deltaLog = DeltaLog.forTable(spark, dir, fakeFileSystemOptions)
         assert(deltaLog.readLastCheckpointFile().get.version == 1)
       }
     }
@@ -111,12 +111,12 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest with SQLTestUtils with 
         .options(fakeFileSystemOptions)
         .mode("append")
         .save(path)
-      val deltaLog = DeltaLog.forTable(spark, path, fakeFileSystemOptions)
+      val deltaLog = DeltaLog.forTable(spark, dir, fakeFileSystemOptions)
       spark.range(1, 10).write.format("delta")
         .options(fakeFileSystemOptions)
         .mode("append")
         .save(path)
-      val cachedDeltaLog = DeltaLog.forTable(spark, path, fakeFileSystemOptions)
+      val cachedDeltaLog = DeltaLog.forTable(spark, dir, fakeFileSystemOptions)
       assert(deltaLog eq cachedDeltaLog)
       withSQLConf(fakeFileSystemOptions.toSeq: _*) {
         DeltaLog.invalidateCache(spark, new Path(path))
@@ -125,7 +125,7 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest with SQLTestUtils with 
         .options(fakeFileSystemOptions)
         .mode("append")
         .save(path)
-      val newDeltaLog = DeltaLog.forTable(spark, path, fakeFileSystemOptions)
+      val newDeltaLog = DeltaLog.forTable(spark, dir, fakeFileSystemOptions)
       assert(deltaLog ne newDeltaLog)
     }
   }
