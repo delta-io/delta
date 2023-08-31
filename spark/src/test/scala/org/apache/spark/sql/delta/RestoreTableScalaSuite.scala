@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.test.DeltaExcludedTestMixin
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.util.Utils

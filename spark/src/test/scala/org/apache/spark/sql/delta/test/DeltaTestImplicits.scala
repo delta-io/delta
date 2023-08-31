@@ -16,11 +16,15 @@
 
 package org.apache.spark.sql.delta.test
 
+import java.io.File
+
 import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
+import org.apache.spark.util.Clock
+
 
 /**
  * Additional method definitions for Delta classes that are intended for use only in testing.
@@ -61,6 +65,17 @@ object DeltaTestImplicits {
 
     def commitWriteAppend(actions: Action*): Long = {
       commitActions(Write(SaveMode.Append), actions: _*)
+    }
+  }
+
+  /** Add test-only File overloads for DeltaTable.forPath */
+  implicit class DeltaLogObjectTestHelper(deltaLog: DeltaLog.type) {
+    def forTable(spark: SparkSession, dataPath: File): DeltaLog = {
+      DeltaLog.forTable(spark, dataPath.getCanonicalPath)
+    }
+
+    def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
+      DeltaLog.forTable(spark, dataPath.getCanonicalPath, clock)
     }
   }
 

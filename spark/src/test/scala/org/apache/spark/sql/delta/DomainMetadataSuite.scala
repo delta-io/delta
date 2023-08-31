@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.actions.{DomainMetadata, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.junit.Assert._
 

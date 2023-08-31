@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
 import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
