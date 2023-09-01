@@ -512,6 +512,8 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }
 
+}
+// END-EDGE
 
 /**
  * Features below are for testing only, and are being registered to the system only in the testing
