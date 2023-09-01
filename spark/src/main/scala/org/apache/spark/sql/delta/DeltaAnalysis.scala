@@ -408,7 +408,8 @@ class DeltaAnalysis(session: SparkSession)
         u
       } else {
         val catalog = session.sessionState.catalogManager.currentCatalog.asTableCatalog
-        ResolvedTable.create(catalog, Identifier.of(Array(DeltaSourceUtils.ALT_NAME), u.path), table)
+        val identifier = Identifier.of(Array(DeltaSourceUtils.ALT_NAME), u.path)
+        ResolvedTable.create(catalog, identifier, table)
       }
 
     case u: UnresolvedPathBasedDeltaTable =>

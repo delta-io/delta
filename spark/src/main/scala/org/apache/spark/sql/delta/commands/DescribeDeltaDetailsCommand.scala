@@ -38,7 +38,8 @@ import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchTa
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.command.UnaryRunnableCommand
+import org.apache.spark.sql.catalyst.trees.UnaryLike
+import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.types.StructType
 
 /** The result returned by the `describe detail` command. */
@@ -77,7 +78,7 @@ object TableDetail {
 case class DescribeDeltaDetailCommand(
     override val child: LogicalPlan,
     hadoopConf: Map[String, String])
-  extends UnaryRunnableCommand with DeltaLogging with DeltaCommand {
+  extends RunnableCommand with UnaryLike[LogicalPlan] with DeltaLogging with DeltaCommand {
 
   override val output: Seq[Attribute] = TableDetail.schema.toAttributes
 

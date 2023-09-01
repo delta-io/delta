@@ -28,7 +28,6 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{
   NoSuchTableException,
-  UnresolvedLeafNode,
   UnresolvedTable
 }
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
