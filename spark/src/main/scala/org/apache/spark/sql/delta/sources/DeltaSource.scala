@@ -249,7 +249,7 @@ trait DeltaSourceBase extends Source
     val offset = latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable())
     lastOffsetForTriggerAvailableNow = offset
     lastOffsetForTriggerAvailableNow.foreach { lastOffset =>
-      logInfo("lastOffset for Trigger.AvailableNow has set to ${lastOffset.json}")
+      logInfo(s"lastOffset for Trigger.AvailableNow has set to ${lastOffset.json}")
     }
   }
 
