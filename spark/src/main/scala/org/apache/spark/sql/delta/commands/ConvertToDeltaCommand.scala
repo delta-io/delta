@@ -94,7 +94,8 @@ abstract class ConvertToDeltaCommandBase(
     }
 
     val targetTable = getTargetTable(spark, convertProperties)
-    val deltaLog = DeltaLog.forTable(spark, deltaPath.getOrElse(convertProperties.targetDir))
+    val deltaPathToUse = new Path(deltaPath.getOrElse(convertProperties.targetDir))
+    val deltaLog = DeltaLog.forTable(spark, deltaPathToUse)
     val txn = deltaLog.startTransaction()
     if (txn.readVersion > -1) {
       handleExistingTransactionLog(spark, txn, convertProperties, targetTable.format)

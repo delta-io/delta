@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
@@ -733,7 +734,7 @@ case class AlterTableSetLocationDeltaCommand(
 
     var updatedTable = catalogTable.withNewStorage(locationUri = Some(locUri))
 
-    val newTable = DeltaLog.forTable(sparkSession, location).update()
+    val (_, newTable) = DeltaLog.forTableWithSnapshot(sparkSession, new Path(location))
     if (newTable.version == -1) {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(location)))
     }
