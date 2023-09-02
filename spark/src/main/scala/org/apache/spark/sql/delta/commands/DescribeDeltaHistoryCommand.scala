@@ -26,8 +26,9 @@ import org.apache.spark.sql.catalyst.analysis.{MultiInstanceRelation, Unresolved
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, Statistics}
+import org.apache.spark.sql.catalyst.trees.UnaryLike
 import org.apache.spark.sql.errors.QueryCompilationErrors
-import org.apache.spark.sql.execution.command.UnaryRunnableCommand
+import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.types.StructType
 
 object DescribeDeltaHistory {
