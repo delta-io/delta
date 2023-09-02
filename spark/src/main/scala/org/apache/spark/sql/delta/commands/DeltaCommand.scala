@@ -21,8 +21,6 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.util.control.NonFatal
 
-import com.databricks.sql.PathBasedDeltaTable
-
 import org.apache.spark.sql.delta.{
   DeltaErrors,
   DeltaLog,

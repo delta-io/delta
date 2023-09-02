@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import com.databricks.sql.acl.CheckPermissions
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistory, DeltaLog, UnresolvedDeltaPathOrIdentifier, UnresolvedPathBasedDeltaTable}
 import org.apache.hadoop.fs.Path
 
@@ -98,7 +97,7 @@ case class DescribeDeltaHistoryCommand(
     limit: Option[Int],
     options: Map[String, String] = Map.empty,
     override val output: Seq[Attribute] = DescribeDeltaHistory.schema.toAttributes)
-  extends UnaryRunnableCommand with DeltaCommand {
+  extends RunnableCommand with UnaryLike[LogicalPlan] with DeltaCommand {
 
   override protected def withNewChildInternal(newChild: LogicalPlan): DescribeDeltaHistoryCommand =
     copy(child = newChild)
@@ -109,9 +108,6 @@ case class DescribeDeltaHistoryCommand(
     val path = getTablePathOrIdentifier(child, commandName)._2
     val basePath = tableMetadata match {
       case Some(metadata) =>
-        if (metadata.isMaterializedView) {
-          throw QueryCompilationErrors.unsupportedCmdForMaterializedViewError(commandName)
-        }
         new Path(metadata.location)
       case _ if path.isDefined => new Path(path.get)
       case _ => throw DeltaErrors.missingTableIdentifierException(commandName)
