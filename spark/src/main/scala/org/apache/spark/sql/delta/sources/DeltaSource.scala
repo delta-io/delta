@@ -678,7 +678,7 @@ case class DeltaSource(
     spark: SparkSession,
     deltaLog: DeltaLog,
     options: DeltaOptions,
-    snapshotAtSourceInit: Snapshot,
+    snapshotAtSourceInit: SnapshotDescriptor,
     metadataPath: String,
     metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog] = None,
     filters: Seq[Expression] = Nil)
