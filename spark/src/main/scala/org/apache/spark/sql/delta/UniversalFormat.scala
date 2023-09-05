@@ -20,6 +20,7 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * Utils to validate the Universal Format (UniForm) Delta feature (NOT a table feature).
@@ -144,8 +145,35 @@ object UniversalFormat extends DeltaLogging {
     }
   }
 
-}
+  val ICEBERG_TABLE_TYPE_KEY = "table_type"
 
+  /**
+   * Update CatalogTable to mark it readable by other table readers (iceberg for now).
+   * This method ensures 'table_type' = 'ICEBERG' when uniform is enabled,
+   * and ensure table_type is not 'ICEBERG' when uniform is not enabled
+   * If the key has other values than 'ICEBERG', this method will not touch it for compatibility
+   *
+   * @param table    catalogTable before change
+   * @param metadata snapshot metadata
+   * @return the converted catalog, or None if no change is made
+   */
+  def enforceSupportInCatalog(table: CatalogTable, metadata: Metadata): Option[CatalogTable] = {
+    val icebergInCatalog = table.properties.get(ICEBERG_TABLE_TYPE_KEY) match {
+      case Some(value) => value.equalsIgnoreCase(ICEBERG_FORMAT)
+      case _ => false
+    }
+
+    (icebergEnabled(metadata), icebergInCatalog) match {
+      case (true, false) =>
+        Some(table.copy(properties = table.properties
+          + (ICEBERG_TABLE_TYPE_KEY -> ICEBERG_FORMAT)))
+      case (false, true) =>
+        Some(table.copy(properties =
+          table.properties - ICEBERG_TABLE_TYPE_KEY))
+      case _ => None
+    }
+  }
+}
 /** Class to facilitate the conversion of Delta into other table formats. */
 abstract class UniversalFormatConverter(spark: SparkSession) {
   /**
@@ -157,12 +185,36 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    */
   def enqueueSnapshotForConversion(
     snapshotToConvert: Snapshot,
-    txn: Option[OptimisticTransactionImpl]): Unit
+    txn: OptimisticTransactionImpl): Unit
 
-  /** Perform a blocking conversion. */
+  /**
+   * Perform a blocking conversion when performing an OptimisticTransaction
+   * on a delta table.
+   *
+   * @param snapshotToConvert the snapshot that needs to be converted to Iceberg
+   * @param txn the transaction that triggers the conversion. Used as a hint to
+   *            avoid recomputing old metadata. It must contain the catalogTable
+   *            this conversion targets.
+   * @return Converted Delta version and commit timestamp
+   */
   def convertSnapshot(
-    snapshotToConvert: Snapshot,
-    txnOpt: Option[OptimisticTransactionImpl]): Option[(Long, Long)]
+    snapshotToConvert: Snapshot, txn: OptimisticTransactionImpl): Option[(Long, Long)]
 
-  def loadLastDeltaVersionConverted(snapshot: Snapshot): Option[Long]
+  /**
+   * Perform a blocking conversion for the given catalogTable
+   *
+   * @param snapshotToConvert the snapshot that needs to be converted to Iceberg
+   * @param catalogTable the catalogTable this conversion targets.
+   * @return Converted Delta version and commit timestamp
+   */
+  def convertSnapshot(
+      snapshotToConvert: Snapshot, catalogTable: CatalogTable): Option[(Long, Long)]
+
+  /**
+   * Fetch the delta version corresponding to the latest conversion.
+   * @param snapshot the snapshot to be converted
+   * @param table the catalogTable with info of previous conversions
+   * @return None if no previous conversion found
+   */
+  def loadLastDeltaVersionConverted(snapshot: Snapshot, table: CatalogTable): Option[Long]
 }
