@@ -193,7 +193,7 @@ case class CreateDeltaTableCommand(
 
 
     if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata)) {
-      deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, None)
+      deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, tableWithLocation)
     }
   }
 

@@ -364,7 +364,8 @@ lazy val iceberg = (project in file("iceberg"))
       // due to legacy scala.
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
       "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.3.0" % "provided",
-      "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3"
+      "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
+      "org.apache.drill.contrib.storage-hive" % "drill-storage-hive-core" % "1.21.1" % "test" classifier "tests"
     ),
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
