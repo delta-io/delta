@@ -45,47 +45,59 @@ object DescribeDeltaHistory {
   def apply(
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
-      limit: Option[Int],
-      unusedOptions: Map[Nothing, Nothing],
-      output: Seq[Attribute] = schema.toAttributes
-    ): DescribeDeltaHistoryCommand = {
+      limit: Option[Int]): DescribeDeltaHistoryCommand = {
     val plan = UnresolvedDeltaPathOrIdentifier(path, tableIdentifier, commandName)
-    DescribeDeltaHistoryCommand(plan, limit, Map.empty[String, String])
+    DescribeDeltaHistoryCommand(plan, limit)
   }
 
   val schema = ScalaReflection.schemaFor[DeltaHistory].dataType.asInstanceOf[StructType]
   val commandName = "DESCRIBE HISTORY"
 }
 
-object DescribeDeltaHistoryCommand {
-  /** Same as above, but for the DescribeDeltaHistoryCommand class instead. */
-  def apply(
-    path: Option[String],
-    tableIdentifier: Option[TableIdentifier],
-    limit: Option[Int],
-    unusedOptions: Map[Nothing, Nothing],
-    output: Seq[Attribute]
-  ): DescribeDeltaHistoryCommand = {
-    val plan = UnresolvedDeltaPathOrIdentifier(
-      path, tableIdentifier, DescribeDeltaHistory.commandName)
-    DescribeDeltaHistoryCommand(plan, limit)
-  }
-}
-
 /**
- * A logical placeholder for describing a Delta table's history. Currently unused, in the future
- * this may be used so that the history can be leveraged in subqueries by replacing with
- * `DescribeDeltaHistoryCommand` during planning.
+ * A logical placeholder for describing a Delta table's history, so that the history can be
+ * leveraged in subqueries. Replaced with `DescribeDeltaHistoryCommand` during planning.
+ *
+ * @param options: Hadoop file system options used for read and write.
  */
 case class DescribeDeltaHistory(
-    path: Option[String],
-    tableIdentifier: Option[TableIdentifier],
+    override val child: LogicalPlan,
     limit: Option[Int],
-    unusedOptions: Map[Nothing, Nothing],
-    output: Seq[Attribute])
-  extends LeafNode with MultiInstanceRelation {
+    options: Map[String, String] = Map.empty,
+    override val output: Seq[Attribute] = DescribeDeltaHistory.schema.toAttributes)
+  extends UnaryNode with MultiInstanceRelation with DeltaCommand {
   override def computeStats(): Statistics = Statistics(sizeInBytes = conf.defaultSizeInBytes)
+
   override def newInstance(): LogicalPlan = copy(output = output.map(_.newInstance()))
+
+  override def withNewChildInternal(newChild: LogicalPlan): LogicalPlan = copy(child = newChild)
+
+  /**
+   * Define this operator as having no attributes provided by children in order to prevent column
+   * pruning from trying to insert projections above the source relation.
+   */
+  override lazy val references: AttributeSet = AttributeSet.empty
+
+  override def inputSet: AttributeSet = AttributeSet.empty
+
+  assert(!child.isInstanceOf[Project],
+    s"The child operator of DescribeDeltaHistory must not contain any projection: $child")
+
+  def toCommand: DescribeDeltaHistoryCommand = {
+    import DescribeDeltaHistory.commandName
+    val tableMetadata: Option[CatalogTable] = getTableCatalogTable(child)
+    val path = getTablePathOrIdentifier(child, commandName)._2
+    val basePath = tableMetadata match {
+      case Some(metadata) =>
+        if (metadata.isMaterializedView) {
+          throw QueryCompilationErrors.unsupportedCmdForMaterializedViewError(commandName)
+        }
+        new Path(metadata.location)
+      case _ if path.isDefined => new Path(path.get)
+      case _ => throw DeltaErrors.missingTableIdentifierException(commandName)
+    }
+    DescribeDeltaHistoryCommand(basePath, limit, options, output)
+  }
 }
 
 /**
@@ -94,26 +106,13 @@ case class DescribeDeltaHistory(
  * @param options: Hadoop file system options used for read and write.
  */
 case class DescribeDeltaHistoryCommand(
-    override val child: LogicalPlan,
+    basePath: Path,
     limit: Option[Int],
     options: Map[String, String] = Map.empty,
     override val output: Seq[Attribute] = DescribeDeltaHistory.schema.toAttributes)
-  extends RunnableCommand with UnaryLike[LogicalPlan] with DeltaCommand {
-
-  override protected def withNewChildInternal(newChild: LogicalPlan): DescribeDeltaHistoryCommand =
-    copy(child = newChild)
+  extends LeafRunnableCommand with DeltaCommand {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    import DescribeDeltaHistory.commandName
-    val tableMetadata: Option[CatalogTable] = getTableCatalogTable(child)
-    val path = getTablePathOrIdentifier(child, commandName)._2
-    val basePath = tableMetadata match {
-      case Some(metadata) =>
-        new Path(metadata.location)
-      case _ if path.isDefined => new Path(path.get)
-      case _ => throw DeltaErrors.missingTableIdentifierException(commandName)
-    }
-
     // Max array size
     if (limit.exists(_ > Int.MaxValue - 8)) {
       throw DeltaErrors.maxArraySizeExceeded()
@@ -122,7 +121,7 @@ case class DescribeDeltaHistoryCommand(
     val deltaLog = DeltaLog.forTable(sparkSession, basePath, options)
     recordDeltaOperation(deltaLog, "delta.ddl.describeHistory") {
       if (!deltaLog.tableExists) {
-        throw DeltaErrors.notADeltaTableException(commandName)
+        throw DeltaErrors.notADeltaTableException(DescribeDeltaHistory.commandName)
       }
       import org.apache.spark.sql.delta.implicits._
       val commits = deltaLog.history.getHistory(limit)
