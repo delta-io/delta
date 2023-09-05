@@ -122,7 +122,7 @@ class DeleteMetricsSuite extends QueryTest
           assert(!resultDf.isEmpty)
           numAffectedRows = resultDf.take(1).head(0).toString.toLong
 
-        val (deltaLog, snapshot) = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
         val changes = deltaLog.getChanges(snapshot.version).flatMap(_._2).toSeq
 
         // To get the expected Added and Removed Bytes we need to filter out files
