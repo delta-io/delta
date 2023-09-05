@@ -696,7 +696,7 @@ lazy val standaloneWithoutParquetUtils = project
   )
 
 lazy val standalone = (project in file("connectors/standalone"))
-  .dependsOn(storage % "compile->compile;test->test;provided->provided")
+  .dependsOn(storage % "compile->compile;provided->provided")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-standalone-original",
