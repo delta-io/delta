@@ -384,7 +384,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       UnresolvedDeltaPathOrIdentifier(
         Option(ctx.path).map(string),
         Option(ctx.table).map(visitTableIdentifier),
-        tableIdentifier, "DESCRIBE HISTORY"),
+        "DESCRIBE HISTORY"),
       Option(ctx.limit).map(_.getText.toInt))
   }
 
