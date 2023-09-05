@@ -24,11 +24,9 @@ import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.{ScalaReflection, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.{MultiInstanceRelation, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, Statistics}
-import org.apache.spark.sql.catalyst.trees.UnaryLike
-import org.apache.spark.sql.errors.QueryCompilationErrors
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeSet}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project, Statistics, UnaryNode}
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types.StructType
 
 object DescribeDeltaHistory {
@@ -45,9 +43,9 @@ object DescribeDeltaHistory {
   def apply(
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
-      limit: Option[Int]): DescribeDeltaHistoryCommand = {
+      limit: Option[Int]): DescribeDeltaHistory = {
     val plan = UnresolvedDeltaPathOrIdentifier(path, tableIdentifier, commandName)
-    DescribeDeltaHistoryCommand(plan, limit)
+    DescribeDeltaHistory(plan, limit)
   }
 
   val schema = ScalaReflection.schemaFor[DeltaHistory].dataType.asInstanceOf[StructType]
@@ -66,8 +64,6 @@ case class DescribeDeltaHistory(
     options: Map[String, String] = Map.empty,
     override val output: Seq[Attribute] = DescribeDeltaHistory.schema.toAttributes)
   extends UnaryNode with MultiInstanceRelation with DeltaCommand {
-  override def computeStats(): Statistics = Statistics(sizeInBytes = conf.defaultSizeInBytes)
-
   override def newInstance(): LogicalPlan = copy(output = output.map(_.newInstance()))
 
   override def withNewChildInternal(newChild: LogicalPlan): LogicalPlan = copy(child = newChild)
@@ -89,9 +85,6 @@ case class DescribeDeltaHistory(
     val path = getTablePathOrIdentifier(child, commandName)._2
     val basePath = tableMetadata match {
       case Some(metadata) =>
-        if (metadata.isMaterializedView) {
-          throw QueryCompilationErrors.unsupportedCmdForMaterializedViewError(commandName)
-        }
         new Path(metadata.location)
       case _ if path.isDefined => new Path(path.get)
       case _ => throw DeltaErrors.missingTableIdentifierException(commandName)
