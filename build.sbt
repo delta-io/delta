@@ -343,6 +343,28 @@ lazy val iceberg = (project in file("iceberg"))
     assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
     assembly / logLevel := Level.Info,
     assembly / test := {},
+    assembly / assemblyExcludedJars := {
+      val excludes = Seq("delta/spark", "delta/storage")
+      val cp = (assembly / fullClasspath).value
+
+      // Return `true` when we want the jar `f` to be excluded from the assembly jar
+      cp.filter { f =>
+        val result = excludes.exists(exclude => f.data.getPath.contains(exclude))
+        println(s"$result :: ${f.data.getName} -> ${f.data}")
+        result
+      }
+    },
+    assembly / assemblyMergeStrategy := {
+      // project iceberg `dependsOn` spark, and accidentally brings in it, along
+      // with its provided dependencies. We want these excluded from the
+      // delta-iceberg jar.
+      case PathList("io", "delta", "storage", xs @ _*) =>
+        MergeStrategy.discard
+      case PathList("org", "apache", "spark", xs @ _*) =>
+        MergeStrategy.discard
+      case x =>
+        (assembly / assemblyMergeStrategy).value(x)
+    },
     assemblyPackageScala / assembleArtifact := false
   )
 
