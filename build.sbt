@@ -874,6 +874,7 @@ def flinkScalaVersion(scalaBinaryVersion: String): String = {
 }
 
 lazy val flink = (project in file("connectors/flink"))
+  .dependsOn(storage % "provided")
   .dependsOn(standaloneCosmetic % "provided")
   .settings (
     name := "delta-flink",
