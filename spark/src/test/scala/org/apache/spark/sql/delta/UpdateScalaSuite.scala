@@ -16,17 +16,40 @@
 
 package org.apache.spark.sql.delta
 
-import java.util.Locale
-
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import io.delta.tables.DeltaTableTestUtils
+import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 
 import org.apache.spark.sql.{functions, Row}
 
 class UpdateScalaSuite extends UpdateSuiteBase
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeltaExcludedTestMixin {
 
   import testImplicits._
+
+  override def excluded: Seq[String] = super.excluded ++ Seq(
+    // Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one can
+    // use them anyway with the Scala API.
+    // scalastyle:off line.size.limit
+    "different variations of column references - TempView",
+    "test update on temp view - basic - Partition=true - SQL TempView",
+    "test update on temp view - basic - Partition=true - Dataset TempView",
+    "test update on temp view - basic - Partition=false - SQL TempView",
+    "test update on temp view - basic - Partition=false - Dataset TempView",
+    "test update on temp view - subset cols - SQL TempView",
+    "test update on temp view - subset cols - Dataset TempView",
+    "test update on temp view - superset cols - SQL TempView",
+    "test update on temp view - superset cols - Dataset TempView",
+    "test update on temp view - nontrivial projection - SQL TempView",
+    "test update on temp view - nontrivial projection - Dataset TempView",
+    "test update on temp view - view with too many internal aliases - SQL TempView",
+    "test update on temp view - view with too many internal aliases - Dataset TempView",
+    "test update on temp view - nontrivial projection with write amplification reduction - SQL TempView",
+    "test update on temp view - nontrivial projection with write amplification reduction - Dataset TempView",
+    "test update on temp view - view with too many internal aliases with write amplification reduction - SQL TempView",
+    "test update on temp view - view with too many internal aliases with write amplification reduction - Dataset TempView",
+    "test update on temp view - view with too many internal aliases with write amplification reduction - Dataset TempView"
+    // scalastyle:on line.size.limit
+  )
 
   test("update usage test - without condition") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
@@ -73,37 +96,9 @@ class UpdateScalaSuite extends UpdateSuiteBase
       set: Seq[String],
       where: String): Unit = {
 
-    def parse(tableNameWithAlias: String): (String, Option[String]) = {
-      tableNameWithAlias.split(" ").toList match {
-        case tableName :: Nil => tableName -> None
-        case tableName :: alias :: Nil =>
-          val ordinary = (('a' to 'z') ++ ('A' to 'Z') ++ ('0' to '9')).toSet
-          if (alias.forall(ordinary.contains(_))) {
-            tableName -> Some(alias)
-          } else {
-            tableName + " " + alias -> None
-          }
-        case list if list.size >= 3 && list(list.size - 2).toLowerCase(Locale.ROOT) == "as" =>
-          list.dropRight(2).mkString(" ").trim() -> Some(list.last)
-        case list if list.size >= 2 =>
-          list.dropRight(1).mkString(" ").trim() -> Some(list.last)
-        case _ =>
-          fail(s"Could not build parse '$tableNameWithAlias' for table and optional alias")
-      }
-    }
-
-    val deltaTable: io.delta.tables.DeltaTable = {
-      val (tableNameOrPath, optionalAlias) = parse(target)
-      val isPath: Boolean = tableNameOrPath.startsWith("delta.")
-      val table = if (isPath) {
-        val path = tableNameOrPath.stripPrefix("delta.`").stripSuffix("`")
-        io.delta.tables.DeltaTable.forPath(spark, path)
-      } else {
-        DeltaTableTestUtils.createTable(spark.table(tableNameOrPath),
-          DeltaLog.forTable(spark, tableNameOrPath))
-      }
-      optionalAlias.map(table.as(_)).getOrElse(table)
-    }
+    val deltaTable = DeltaTestUtils.getDeltaTableForIdentifierOrPath(
+      spark,
+      DeltaTestUtils.getTableIdentifierOrPath(target))
 
     val setColumns = set.map { assign =>
       val kv = assign.split("=")
