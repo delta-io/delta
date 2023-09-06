@@ -26,7 +26,7 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedRelation, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
@@ -593,28 +593,6 @@ object UnresolvedDeltaPathOrIdentifier {
         UnresolvedTable(t.nameParts, cmd, None)
       case _ => throw new IllegalArgumentException(
         s"Exactly one of path or tableIdentifier must be provided to $cmd")
-    }
-  }
-}
-
-/**
- * A helper object with an apply method to transform a path or table identifier to a LogicalPlan.
- * If the tableIdentifier is set, the LogicalPlan will be an [[UnresolvedTable]] regardless of path
- * set or not. If the tableIdentifier is not set but the path is set, it will be resolved to an
- * [[UnresolvedPath]] since we can not tell if a path is for delta table or non delta table at this
- * stage. If the path is for delta table, it will be resolved during analysis as resolved table.
- * If neither of the two are set, throws an exception.
- */
-object UnresolvedPathOrIdentifier {
-  def apply(
-    path: Option[String],
-    tableIdentifier: Option[TableIdentifier],
-    cmd: String): LogicalPlan = {
-    (path, tableIdentifier) match {
-      case (_, Some(t)) => UnresolvedRelation(t.nameParts)
-      case (Some(p), None) => UnresolvedPath(p, cmd)
-      case _ => throw new IllegalArgumentException(
-        s"At least one of path or tableIdentifier must be provided to $cmd")
     }
   }
 }
