@@ -18,15 +18,13 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import scala.util.{Failure, Success, Try}
-
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSourceUtils}
 import org.apache.hadoop.fs.{FileSystem, Path}
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedRelation, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
@@ -569,8 +567,12 @@ case class UnresolvedPathBasedDeltaTableRelation(
 case class UnresolvedPath(
   path: String,
   commandName: String) extends LeafNode {
+  override lazy val resolved: Boolean = false
   override val output: Seq[Attribute] = Nil
 }
+
+/** Represents a Delta table reference that has been resolved to a path. */
+case class ResolvedDeltaPath(basePath: Path, override val output: Seq[Attribute]) extends LeafNode
 
 /**
  * A helper object with an apply method to transform a path or table identifier to a LogicalPlan.
@@ -607,7 +609,7 @@ object UnresolvedPathOrIdentifier {
     tableIdentifier: Option[TableIdentifier],
     cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
-      case (_, Some(t)) => UnresolvedTable(t.nameParts, cmd, None)
+      case (_, Some(t)) => UnresolvedRelation(t.nameParts)
       case (Some(p), None) => UnresolvedPath(p, cmd)
       case _ => throw new IllegalArgumentException(
         s"At least one of path or tableIdentifier must be provided to $cmd")

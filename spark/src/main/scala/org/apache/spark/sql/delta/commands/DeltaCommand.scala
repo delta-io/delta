@@ -339,8 +339,8 @@ trait DeltaCommand extends DeltaLogging {
    * will be represented as UnresolvedPath and pass along here, we extract its path.
    */
   def getTablePathOrIdentifier(
-    target: LogicalPlan,
-    cmd: String): (Option[TableIdentifier], Option[String]) = {
+      target: LogicalPlan,
+      cmd: String): (Option[TableIdentifier], Option[String]) = {
     target match {
       case ResolvedTable(_, _, t: DeltaTableV2, _) => getDeltaTablePathOrIdentifier(target, cmd)
       case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>

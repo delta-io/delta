@@ -17,16 +17,17 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistory, DeltaLog, UnresolvedDeltaPathOrIdentifier, UnresolvedPathBasedDeltaTable}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistory, DeltaLog, ResolvedDeltaPath, UnresolvedDeltaPathOrIdentifier}
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.{ScalaReflection, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.{MultiInstanceRelation, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeSet}
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project, Statistics, UnaryNode}
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project, UnaryNode}
+import org.apache.spark.sql.catalyst.trees.UnaryLike
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.types.StructType
 
 object DescribeDeltaHistory {
@@ -46,6 +47,27 @@ object DescribeDeltaHistory {
       limit: Option[Int]): DescribeDeltaHistory = {
     val plan = UnresolvedDeltaPathOrIdentifier(path, tableIdentifier, commandName)
     DescribeDeltaHistory(plan, limit)
+  }
+
+  /** Returns a ResolvedDeltaPath from the provided child operator of one of the below commands. */
+  def resolvePath(cmd: DeltaCommand, child: LogicalPlan, limit: Option[Int]): ResolvedDeltaPath = {
+    // Max array size
+    if (limit.exists(_ > Int.MaxValue - 8)) {
+      throw DeltaErrors.maxArraySizeExceeded()
+    }
+    assert(!child.isInstanceOf[ResolvedDeltaPath])
+    val deltaTableV2: DeltaTableV2 = cmd.getDeltaTable(child, commandName)
+    val tableMetadata: Option[CatalogTable] = deltaTableV2.catalogTable
+    val path = cmd.getTablePathOrIdentifier(child, commandName)._2
+    val newBasePath: Path = tableMetadata match {
+      case Some(metadata) =>
+        new Path(metadata.location)
+      case _ if path.isDefined =>
+        new Path(path.get)
+      case _ =>
+        throw DeltaErrors.missingTableIdentifierException(commandName)
+    }
+    ResolvedDeltaPath(newBasePath, child.output)
   }
 
   val schema = ScalaReflection.schemaFor[DeltaHistory].dataType.asInstanceOf[StructType]
@@ -73,23 +95,17 @@ case class DescribeDeltaHistory(
    * pruning from trying to insert projections above the source relation.
    */
   override lazy val references: AttributeSet = AttributeSet.empty
-
   override def inputSet: AttributeSet = AttributeSet.empty
-
   assert(!child.isInstanceOf[Project],
     s"The child operator of DescribeDeltaHistory must not contain any projection: $child")
 
+  /** Converts this operator into an executable command. */
   def toCommand: DescribeDeltaHistoryCommand = {
-    import DescribeDeltaHistory.commandName
-    val tableMetadata: Option[CatalogTable] = getTableCatalogTable(child)
-    val path = getTablePathOrIdentifier(child, commandName)._2
-    val basePath = tableMetadata match {
-      case Some(metadata) =>
-        new Path(metadata.location)
-      case _ if path.isDefined => new Path(path.get)
-      case _ => throw DeltaErrors.missingTableIdentifierException(commandName)
-    }
-    DescribeDeltaHistoryCommand(basePath, limit, options, output)
+    DescribeDeltaHistoryCommand(
+      child = DescribeDeltaHistory.resolvePath(cmd = this, child, limit),
+      limit = limit,
+      options = options,
+      output = output)
   }
 }
 
@@ -99,22 +115,31 @@ case class DescribeDeltaHistory(
  * @param options: Hadoop file system options used for read and write.
  */
 case class DescribeDeltaHistoryCommand(
-    basePath: Path,
+    override val child: LogicalPlan,
     limit: Option[Int],
     options: Map[String, String] = Map.empty,
     override val output: Seq[Attribute] = DescribeDeltaHistory.schema.toAttributes)
-  extends LeafRunnableCommand with DeltaCommand {
+  extends RunnableCommand with UnaryLike[LogicalPlan] with DeltaCommand {
+
+  override def withNewChildInternal(newChild: LogicalPlan): LogicalPlan = copy(child = newChild)
+
+  /**
+   * Define this operator as having no attributes provided by children in order to prevent column
+   * pruning from trying to insert projections above the source relation.
+   */
+  override lazy val references: AttributeSet = AttributeSet.empty
+  override def inputSet: AttributeSet = AttributeSet.empty
+  assert(!child.isInstanceOf[Project],
+    s"The child operator of DescribeDeltaHistory must not contain any projection: $child")
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    // Max array size
-    if (limit.exists(_ > Int.MaxValue - 8)) {
-      throw DeltaErrors.maxArraySizeExceeded()
-    }
-
+    assert(child.isInstanceOf[ResolvedDeltaPath])
+    val basePath: Path = child.asInstanceOf[ResolvedDeltaPath].basePath
+    import DescribeDeltaHistory.commandName
     val deltaLog = DeltaLog.forTable(sparkSession, basePath, options)
     recordDeltaOperation(deltaLog, "delta.ddl.describeHistory") {
       if (!deltaLog.tableExists) {
-        throw DeltaErrors.notADeltaTableException(DescribeDeltaHistory.commandName)
+        throw DeltaErrors.notADeltaTableException(commandName)
       }
       import org.apache.spark.sql.delta.implicits._
       val commits = deltaLog.history.getHistory(limit)

@@ -39,11 +39,8 @@
 package io.delta.sql.parser
 
 import java.util.Locale
-
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.catalyst.TimeTravel
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands._
 import io.delta.sql.parser.DeltaSqlBaseParser._
@@ -52,7 +49,6 @@ import org.antlr.v4.runtime._
 import org.antlr.v4.runtime.atn.PredictionMode
 import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}
 import org.antlr.v4.runtime.tree._
-
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
@@ -65,6 +61,7 @@ import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
 import org.apache.spark.sql.errors.QueryParsingErrors
 import org.apache.spark.sql.internal.{SQLConf, VariableSubstitution}
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * A SQL parser that tries to parse Delta commands. If failing to parse the SQL text, it will
@@ -380,13 +377,12 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   override def visitDescribeDeltaHistory(
       ctx: DescribeDeltaHistoryContext): LogicalPlan = withOrigin(ctx) {
-    DescribeDeltaHistory(
+    DescribeDeltaHistoryCommand(
       UnresolvedDeltaPathOrIdentifier(
         Option(ctx.path).map(string),
         Option(ctx.table).map(visitTableIdentifier),
-        "DESCRIBE HISTORY"),
+        DescribeDeltaHistory.commandName),
       Option(ctx.limit).map(_.getText.toInt))
-      .toCommand
   }
 
   override def visitGenerate(ctx: GenerateContext): LogicalPlan = withOrigin(ctx) {
