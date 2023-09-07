@@ -413,7 +413,14 @@ class DeltaAnalysis(session: SparkSession)
       if (!tableExists) {
         u
       } else {
-        val catalog = session.sessionState.catalogManager.currentCatalog.asTableCatalog
+        val catalogName: Option[String] = table.catalogTable match {
+          case Some(ct) if ct.identifier.catalog.isDefined => Some(ct.identifier.catalog.get)
+          case _ => None
+        }
+        val catalog = catalogName match {
+          case Some(c) => session.sessionState.catalogManager.catalog(c).asTableCatalog
+          case None => session.sessionState.catalogManager.currentCatalog.asTableCatalog
+        }
         ResolvedTable.create(
           catalog, Identifier.of(Array(DeltaSourceUtils.ALT_NAME), u.path), table)
       }
