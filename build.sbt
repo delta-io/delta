@@ -634,7 +634,8 @@ lazy val standaloneCosmetic = project
     )
   )
 
-lazy val testStandaloneCosmetic = project.dependsOn(standaloneCosmetic)
+lazy val testStandaloneCosmetic = (project in file("connectors/testStandaloneCosmetic"))
+  .dependsOn(standaloneCosmetic)
   .settings(
     name := "test-standalone-cosmetic",
     commonSettings,
