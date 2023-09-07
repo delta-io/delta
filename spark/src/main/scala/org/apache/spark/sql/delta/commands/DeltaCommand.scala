@@ -327,7 +327,8 @@ trait DeltaCommand extends DeltaLogging {
     cmd: String): (Option[TableIdentifier], Option[String]) = {
     val table = getDeltaTable(target, cmd)
     table.catalogTable match {
-      case Some(catalogTable) => (Some(catalogTable.identifier), None)
+      case Some(catalogTable)
+        => (Some(catalogTable.identifier), None)
       case _ => (None, Some(table.path.toString))
     }
   }
