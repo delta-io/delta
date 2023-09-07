@@ -25,8 +25,7 @@ import org.apache.spark.sql.delta.{
   DeltaLog,
   DeltaTableIdentifier,
   Snapshot,
-  UnresolvedPathOrIdentifier,
-  UnresolvedPathBasedDeltaTable
+  UnresolvedPathOrIdentifier
 }
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
@@ -86,7 +85,7 @@ case class DescribeDeltaDetailCommand(
     copy(child = newChild)
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val tableMetadata = getTableCatalogTable(child)
+    val tableMetadata = getTableCatalogTable(child, DescribeDeltaDetailCommand.CMD_NAME)
     val path = getTablePathOrIdentifier(child, DescribeDeltaDetailCommand.CMD_NAME)._2
     val basePath = tableMetadata match {
       case Some(metadata) => new Path(metadata.location)

@@ -565,8 +565,11 @@ case class UnresolvedPathBasedDeltaTableRelation(
     path: String,
     options: CaseInsensitiveStringMap) extends UnresolvedPathBasedDeltaTableBase(path)
 
-/** Resolves to a [[ResolvedTable]] if the path is for delta table, unchanged if non delta table */
-case class UnresolvedPath(
+/**
+ * This operator represents path-based tables in general including both Delta or non-Delta tables.
+ * It resolves to a [[ResolvedTable]] if the path is for delta table, unchanged if non delta table.
+ */
+case class UnresolvedPathBasedTable(
   path: String,
   commandName: String) extends LeafNode {
   override val output: Seq[Attribute] = Nil

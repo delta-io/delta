@@ -303,13 +303,19 @@ trait DeltaCommand extends DeltaLogging {
   }
 
   /**
-   * Extracts [[CatalogTable]] metadata from a LogicalPlan if the plan is a [[ResolvedTable]].
+   * Extracts [[CatalogTable]] metadata from a LogicalPlan if the plan is a [[ResolvedTable]]. The
+   * table can be a non delta table.
    */
-  def getTableCatalogTable(target: LogicalPlan): Option[CatalogTable] = {
-    target match {
-      case ResolvedTable(_, _, d: DeltaTableV2, _) => d.catalogTable
-      case ResolvedTable(_, _, t: V1Table, _) => Some(t.catalogTable)
-      case _ => None
+  def getTableCatalogTable(target: LogicalPlan, cmd: String): Option[CatalogTable] = {
+    try {
+      val deltaTable = getDeltaTable(target, cmd)
+      deltaTable.catalogTable
+    } catch {
+      case e: DeltaAnalysisException =>
+        target match {
+          case ResolvedTable(_, _, t: V1Table, _) => Some(t.catalogTable)
+          case _ => None
+        }
     }
   }
 
@@ -345,7 +351,7 @@ trait DeltaCommand extends DeltaLogging {
       case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
         getDeltaTablePathOrIdentifier(target, cmd)
       case ResolvedTable(_, _, t: V1Table, _) => (Some(t.catalogTable.identifier), None)
-      case u: UnresolvedPath => (None, Some(u.path))
+      case u: UnresolvedPathBasedDeltaTable => (None, Some(u.path))
       case _ => (None, None)
     }
   }

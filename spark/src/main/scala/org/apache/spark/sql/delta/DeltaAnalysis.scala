@@ -402,8 +402,9 @@ class DeltaAnalysis(session: SparkSession)
       }
 
     // Resolve as a resolved table if the path is for delta table. For non delta table, we keep the
-    // path and pass it along.
-    case u: UnresolvedPath =>
+    // path and pass it along. This is needed as DESCRIBE DETAIL command currently supports both
+    // delta and non delta path.
+    case u: UnresolvedPathBasedTable =>
       val table = getPathBasedDeltaTable(u.path)
       val tableExists = try {
         table.tableExists
