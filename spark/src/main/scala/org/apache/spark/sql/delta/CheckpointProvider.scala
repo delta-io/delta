@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames._
@@ -57,6 +58,19 @@ trait CheckpointProvider extends UninitializedCheckpointProvider {
    * for the checkpoint.
    */
   def allActionsFileIndexes(): Seq[DeltaLogFileIndex]
+}
+
+object CheckpointProvider extends DeltaLogging {
+
+  private[delta] def isV2CheckpointEnabled(protocol: Protocol): Boolean =
+    protocol.isFeatureSupported(V2CheckpointTableFeature)
+
+  /**
+   * Returns whether V2 Checkpoints are enabled or not.
+   * This means an underlying checkpoint in this table could be a V2Checkpoint with sidecar files.
+   */
+  def isV2CheckpointEnabled(snapshotDescriptor: SnapshotDescriptor): Boolean =
+    isV2CheckpointEnabled(snapshotDescriptor.protocol)
 }
 
 /**
