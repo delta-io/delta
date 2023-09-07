@@ -100,7 +100,8 @@ case class WriteIntoDelta(
         mode, Option(partitionColumns),
         options.replaceWhere, options.userMetadata
       )
-      txn.commitIfNeeded(actions, operation)
+      txn.commit(actions, operation)
+
     }
     Seq.empty
   }

@@ -24,7 +24,6 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.Row
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
@@ -35,8 +34,6 @@ import org.apache.spark.util.ManualClock
 class OptimisticTransactionSuite
   extends OptimisticTransactionLegacyTests
   with OptimisticTransactionSuiteBase {
-
-  import testImplicits._
 
   // scalastyle:off: removeFile
   private val addA = createTestAddFile(path = "a")
@@ -643,61 +640,6 @@ class OptimisticTransactionSuite
         txn.commit(addB :: Nil, DeltaOperations.Write(SaveMode.Append), tags = tags2)
       }
       checkLastCommitTags(expectedTags = Some(tags2))
-    }
-  }
-
-
-  test("empty commits are elided on write by default") {
-    withTempDir { tableDir =>
-      val df = Seq((1, 0), (2, 1)).toDF("key", "value")
-      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
-
-      val deltaLog = DeltaLog.forTable(spark, tableDir)
-
-      val expectedSnapshot = deltaLog.update()
-      val expectedDeltaVersion = expectedSnapshot.version
-
-      val emptyDf = Seq.empty[(Integer, Integer)].toDF("key", "value")
-      emptyDf.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
-
-      val actualSnapshot = deltaLog.update()
-      val actualDeltaVersion = actualSnapshot.version
-
-      checkAnswer(spark.read.format("delta").load(tableDir.getCanonicalPath),
-        Row(1, 0) :: Row(2, 1) :: Nil)
-
-      assert(expectedDeltaVersion === actualDeltaVersion)
-    }
-  }
-
-  Seq(true, false).foreach { skip =>
-    test(s"Elide empty commits when requested - skipRecordingEmptyCommits=$skip") {
-      withSQLConf(DeltaSQLConf.DELTA_SKIP_RECORDING_EMPTY_COMMITS.key -> skip.toString) {
-        withTempDir { tableDir =>
-          val df = Seq((1, 0), (2, 1)).toDF("key", "value")
-          df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
-
-          val deltaLog = DeltaLog.forTable(spark, tableDir)
-
-          val expectedSnapshot = deltaLog.update()
-          val expectedDeltaVersion = if (skip) {
-            expectedSnapshot.version
-          } else {
-            expectedSnapshot.version + 1
-          }
-
-          val emptyDf = Seq.empty[(Integer, Integer)].toDF("key", "value")
-          emptyDf.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
-
-          val actualSnapshot = deltaLog.update()
-          val actualDeltaVersion = actualSnapshot.version
-
-          checkAnswer(spark.read.format("delta").load(tableDir.getCanonicalPath),
-            Row(1, 0) :: Row(2, 1) :: Nil)
-
-          assert(expectedDeltaVersion === actualDeltaVersion)
-        }
-      }
     }
   }
 }
