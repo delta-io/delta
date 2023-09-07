@@ -780,7 +780,7 @@ lazy val standalone = (project in file("connectors/standalone"))
       // adding them may conflict with other jackson version used by the user.
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
       // This project `.dependsOn` delta-storage, and its classes will be included by default
-      // in this assembly jar.Manually discard them since it is already a compile-time dependency.
+      // in this assembly jar. Manually discard them since it is already a compile-time dependency.
       case PathList("io", "delta", "storage", xs @ _*) => MergeStrategy.discard
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
