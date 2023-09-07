@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
+import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.catalyst.TimeTravel
@@ -404,10 +405,22 @@ class DeltaAnalysis(session: SparkSession)
     // path and pass it along.
     case u: UnresolvedPath =>
       val table = getPathBasedDeltaTable(u.path)
-      if (!table.tableExists) {
+      val tableExists = try {
+        table.tableExists
+      } catch {
+        case NonFatal(e) => false
+      }
+      if (!tableExists) {
         u
       } else {
-        val catalog = session.sessionState.catalogManager.currentCatalog.asTableCatalog
+        val catalogName: Option[String] = table.catalogTable match {
+          case Some(ct) if ct.identifier.catalog.isDefined => Some(ct.identifier.catalog.get)
+          case _ => None
+        }
+        val catalog = catalogName match {
+          case Some(c) => session.sessionState.catalogManager.catalog(c).asTableCatalog
+          case None => session.sessionState.catalogManager.currentCatalog.asTableCatalog
+        }
         ResolvedTable.create(
           catalog, Identifier.of(Array(DeltaSourceUtils.ALT_NAME), u.path), table)
       }
