@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{
+  DeltaAnalysisException,
   DeltaErrors,
   DeltaLog,
   DeltaOptions,
