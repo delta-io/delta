@@ -17,19 +17,20 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.catalyst.TimeTravel
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
-import org.apache.spark.sql.catalyst.catalog.CatalogTableType
+import org.apache.spark.sql.catalyst.analysis.{AnalysisErrorAt, UnresolvedIdentifier, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTableType, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.quoteIfNeeded
-import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogNotFoundException, CatalogPlugin, Identifier, TableCatalog}
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.{IdentifierHelper, MultipartIdentifierHelper}
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, V2SessionCatalog}
+import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 
 /**
  * Resolves the [[UnresolvedRelation]] in command 's child [[TimeTravel]].
@@ -42,9 +43,13 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
 
   override def conf: SQLConf = sparkSession.sessionState.conf
 
+  private val globalTempDB = conf.getConf(StaticSQLConf.GLOBAL_TEMP_DATABASE)
+
+
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
-    case _ @ RestoreTableStatement(tt @ TimeTravel(ur @ UnresolvedRelation(_, _, _), _, _, _)) =>
-      val sourceRelation = resolveTimeTravelTable(sparkSession, ur)
+    // Since the Delta's TimeTravel is a leaf node, we have to resolve the UnresolvedIdentifier.
+    case _ @ RestoreTableStatement(tt @ TimeTravel(ui: UnresolvedIdentifier, _, _, _)) =>
+      val sourceRelation = resolveTimetravelIdentifier(sparkSession, ui)
       return RestoreTableStatement(
         TimeTravel(
           sourceRelation,
@@ -61,6 +66,51 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
         tt.timestamp,
         tt.version,
         tt.creationSource))
+  }
+
+  private def resolveTimetravelIdentifier(
+      sparkSession: SparkSession,
+      unresolvedIdentifier: UnresolvedIdentifier): DataSourceV2Relation = {
+    val (catalog, identifier) =
+      resolveCatalogAndIdentifier(sparkSession.sessionState.catalogManager,
+        unresolvedIdentifier.nameParts)
+    val tableId = identifier.asTableIdentifier
+    assert(catalog.isInstanceOf[TableCatalog], s"Catalog ${catalog.name()} must implement " +
+      s"TableCatalog to support loading Delta table.")
+    val tableCatalog = catalog.asInstanceOf[TableCatalog]
+    val deltaTableV2 = if (DeltaTableUtils.isDeltaTable(tableCatalog, identifier)) {
+      tableCatalog.loadTable(identifier).asInstanceOf[DeltaTableV2]
+    } else if (DeltaTableUtils.isValidPath(tableId)) {
+      DeltaTableV2(sparkSession, new Path(tableId.table))
+    } else {
+      handleTableNotFound(sparkSession.sessionState.catalog, unresolvedIdentifier, tableId)
+    }
+    DataSourceV2Relation.create(deltaTableV2, None, Some(identifier))
+  }
+
+  private def resolveCatalogAndIdentifier(
+      catalogManager: CatalogManager,
+      nameParts: Seq[String]): (CatalogPlugin, Identifier) = {
+    assert(nameParts.nonEmpty)
+    if (nameParts.length == 1) {
+      (catalogManager.currentCatalog,
+        Identifier.of(catalogManager.currentNamespace, nameParts.head))
+    } else if (nameParts.head.equalsIgnoreCase(globalTempDB)) {
+      // Conceptually global temp views are in a special reserved catalog. However, the v2 catalog
+      // API does not support view yet, and we have to use v1 commands to deal with global temp
+      // views. To simplify the implementation, we put global temp views in a special namespace
+      // in the session catalog. The special namespace has higher priority during name resolution.
+      // For example, if the name of a custom catalog is the same with `GLOBAL_TEMP_DATABASE`,
+      // this custom catalog can't be accessed.
+      (catalogManager.v2SessionCatalog, nameParts.asIdentifier)
+    } else {
+      try {
+        (catalogManager.catalog(nameParts.head), nameParts.tail.asIdentifier)
+      } catch {
+        case _: CatalogNotFoundException =>
+          (catalogManager.currentCatalog, nameParts.asIdentifier)
+      }
+    }
   }
 
   /**
@@ -82,19 +132,26 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
       } else if (DeltaTableUtils.isValidPath(tableId)) {
         DeltaTableV2(sparkSession, new Path(tableId.table))
       } else {
-        if (
-          (catalog.tableExists(tableId) &&
-            catalog.getTableMetadata(tableId).tableType == CatalogTableType.VIEW) ||
-          catalog.isTempView(ur.multipartIdentifier)) {
-          // If table exists and not found to be a view, throw not supported error
-          throw DeltaErrors.notADeltaTableException("RESTORE")
-        } else {
-          ur.tableNotFound(ur.multipartIdentifier)
-        }
+        handleTableNotFound(catalog, ur, tableId)
       }
 
       val identifier = deltaTableV2.getTableIdentifierIfExists.map(
         id => Identifier.of(id.database.toArray, id.table))
       DataSourceV2Relation.create(deltaTableV2, None, identifier)
+  }
+
+  private def handleTableNotFound(
+      catalog: SessionCatalog,
+      inputPlan: LeafNode,
+      tableIdentifier: TableIdentifier): Nothing = {
+    if (
+      (catalog.tableExists(tableIdentifier) &&
+        catalog.getTableMetadata(tableIdentifier).tableType == CatalogTableType.VIEW) ||
+        catalog.isTempView(tableIdentifier)) {
+      // If table exists and not found to be a view, throw not supported error
+      throw DeltaErrors.notADeltaTableException("RESTORE")
+    } else {
+      inputPlan.tableNotFound(tableIdentifier.nameParts)
+    }
   }
 }

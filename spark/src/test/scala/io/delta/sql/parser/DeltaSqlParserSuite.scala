@@ -17,17 +17,16 @@
 package io.delta.sql.parser
 
 import io.delta.tables.execution.VacuumTableCommand
-
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
 import org.apache.spark.sql.delta.UnresolvedPathBasedDeltaTable
-import org.apache.spark.sql.delta.commands.{OptimizeTableCommand, DeltaReorgTable}
+import org.apache.spark.sql.delta.commands.{DeltaReorgTable, OptimizeTableCommand}
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
-import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedIdentifier, UnresolvedRelation, UnresolvedTable}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
-import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
+import org.apache.spark.sql.catalyst.plans.logical.{CloneTableStatement, RestoreTableStatement}
 
 class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
@@ -46,6 +45,17 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
       VacuumTableCommand(None, Some(TableIdentifier("123D_column", Some("a"))), None, false))
     assert(parser.parsePlan("vacuum a.123BD_column") ===
       VacuumTableCommand(None, Some(TableIdentifier("123BD_column", Some("a"))), None, false))
+  }
+
+  test("RESTORE command is parsed as expected") {
+    val parser = new DeltaSqlParser(null)
+    val parsedCmd = parser.parsePlan("RESTORE catalog_foo.db.tbl TO VERSION AS OF 1;")
+    assert(parsedCmd ===
+      RestoreTableStatement(TimeTravel(
+        UnresolvedIdentifier(Seq("catalog_foo", "db", "tbl")),
+        None,
+        Some(1),
+        Some("sql"))))
   }
 
   test("OPTIMIZE command is parsed as expected") {
