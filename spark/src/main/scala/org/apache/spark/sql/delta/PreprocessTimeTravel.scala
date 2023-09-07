@@ -74,7 +74,12 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
     val (catalog, identifier) =
       resolveCatalogAndIdentifier(sparkSession.sessionState.catalogManager,
         unresolvedIdentifier.nameParts)
-    val tableId = identifier.asTableIdentifier
+    // If the identifier is not a multipart identifier, we assume it is a table or view name.
+    val tableId = if (unresolvedIdentifier.nameParts.length == 1) {
+      TableIdentifier(unresolvedIdentifier.nameParts.head)
+    } else {
+      identifier.asTableIdentifier
+    }
     assert(catalog.isInstanceOf[TableCatalog], s"Catalog ${catalog.name()} must implement " +
       s"TableCatalog to support loading Delta table.")
     val tableCatalog = catalog.asInstanceOf[TableCatalog]
