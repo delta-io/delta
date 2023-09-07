@@ -320,13 +320,14 @@ class OptimisticTransactionSuite
   test("every transaction should use a unique identifier in the commit") {
     withTempDir { tempDir =>
       // Initialize delta table.
-      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val clock = new ManualClock()
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+      clock.advance(100)
 
       // Start two transactions which commits at same time with same content.
-      val clock = new ManualClock()
-      val txn1 = new OptimisticTransaction(log)(clock)
-      val txn2 = new OptimisticTransaction(log)(clock)
+      val txn1 = log.startTransaction()
+      val txn2 = log.startTransaction()
       clock.advance(100)
       val version1 = txn1.commit(Seq(), ManualUpdate)
       val version2 = txn2.commit(Seq(), ManualUpdate)
@@ -358,8 +359,7 @@ class OptimisticTransactionSuite
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
 
-      val clock = new ManualClock()
-      val txn = new OptimisticTransaction(log)(clock)
+      val txn = log.startTransaction()
       txn.updateSetTransaction("TestAppId", 1L, None)
       val version = txn.commit(Seq(), ManualUpdate)
 
@@ -380,8 +380,7 @@ class OptimisticTransactionSuite
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
 
-      val clock = new ManualClock()
-      val txn = new OptimisticTransaction(log)(clock)
+      val txn = log.startTransaction()
       txn.updateSetTransaction("TestAppId", 1L, None)
       val e = intercept[IllegalArgumentException] {
         txn.commit(Seq(SetTransaction("TestAppId", 2L, None)), ManualUpdate)
@@ -397,8 +396,7 @@ class OptimisticTransactionSuite
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
 
-      val clock = new ManualClock()
-      val txn = new OptimisticTransaction(log)(clock)
+      val txn = log.startTransaction()
       txn.updateSetTransaction("TestAppId", 1L, None)
       val version = txn.commit(Seq(SetTransaction("TestAppId", 1L, None)), ManualUpdate)
       def readActions(version: Long): Seq[Action] = {
