@@ -692,8 +692,9 @@ abstract class MergeIntoSuiteBase
           update = "key2 = 20 + key1, value = 20 + src.value",
           insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
       }.getMessage
-      // The MERGE Scala API is for Delta only and reports error differently.
       assert(e.contains("does not support MERGE") ||
+        // The MERGE Scala API is for Delta only and reports error differently.
+        e.contains("is not a Delta table") ||
         e.contains("MERGE destination only supports Delta sources"))
     }
   }

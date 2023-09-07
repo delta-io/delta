@@ -27,6 +27,7 @@ import scala.util.matching.Regex
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
@@ -186,12 +187,12 @@ trait DeltaTestUtilsBase {
    * Separate name- from path-based SQL table identifiers.
    */
   def getTableIdentifierOrPath(sqlIdentifier: String): TableIdentifierOrPath = {
-    // Match: delta.`path`[ alias] or tahoe.`path`[ alias]
-    val pathMatcher: Regex = raw"(?:delta|tahoe)\.`([^`]+)`(?: (.+))?".r
-    // Match: db.table[ alias]
-    val qualifiedDbMatcher: Regex = raw"`?([^\.` ]+)`?\.`?([^\.` ]+)`?(?: (.+))?".r
-    // Match: table[ alias]
-    val unqualifiedNameMatcher: Regex = raw"([^ ]+)(?: (.+))?".r
+    // Match: delta.`path`[[ as] alias] or tahoe.`path`[[ as] alias]
+    val pathMatcher: Regex = raw"(?:delta|tahoe)\.`([^`]+)`(?:(?: as)? (.+))?".r
+    // Match: db.table[[ as] alias]
+    val qualifiedDbMatcher: Regex = raw"`?([^\.` ]+)`?\.`?([^\.` ]+)`?(?:(?: as)? (.+))?".r
+    // Match: table[[ as] alias]
+    val unqualifiedNameMatcher: Regex = raw"([^ ]+)(?:(?: as)? (.+))?".r
     sqlIdentifier match {
       case pathMatcher(path, alias) =>
         TableIdentifierOrPath.Path(path, Option(alias))
@@ -199,6 +200,22 @@ trait DeltaTestUtilsBase {
         TableIdentifierOrPath.Identifier(TableIdentifier(tableName, Some(dbName)), Option(alias))
       case unqualifiedNameMatcher(tableName, alias) =>
         TableIdentifierOrPath.Identifier(TableIdentifier(tableName), Option(alias))
+    }
+  }
+
+  /**
+   * Produce a DeltaTable instance given a `TableIdentifierOrPath` instance.
+   */
+  def getDeltaTableForIdentifierOrPath(
+      spark: SparkSession,
+      identifierOrPath: TableIdentifierOrPath): IODeltaTable = {
+    identifierOrPath match {
+      case TableIdentifierOrPath.Identifier(id, optionalAlias) =>
+        val table = IODeltaTable.forName(spark, id.unquotedString)
+        optionalAlias.map(table.as(_)).getOrElse(table)
+      case TableIdentifierOrPath.Path(path, optionalAlias) =>
+        val table = IODeltaTable.forPath(spark, path)
+        optionalAlias.map(table.as(_)).getOrElse(table)
     }
   }
 
