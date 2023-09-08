@@ -98,6 +98,8 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     val ListByStartAfter =
       S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, resolvedPath.getParent)
     val list = fs.listStatus(resolvedPath.getParent)
+    // Ensure that the output of S3LogStoreUtil.s3ListFromArray() does not contain log files,
+    // which is the same as fs.listStatus().
     assert(ListByStartAfter.size == list.size)
     ListByStartAfter.foreach(f => assert(list.contains(f)))
   }
