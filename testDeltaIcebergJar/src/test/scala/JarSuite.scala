@@ -40,7 +40,7 @@ class JarSuite extends AnyFunSuite {
     // Step 2: Verify the JAR has the classes we want it to ahve
     try {
       val set = jarFile.entries().asScala.filter(!_.isDirectory).map(_.toString).toSet
-      println(set.mkString("\n"))
+      println(set.toList.sorted.mkString("\n"))
 
     } finally {
       jarFile.close()
