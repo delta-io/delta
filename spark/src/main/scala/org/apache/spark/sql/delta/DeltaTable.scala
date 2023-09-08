@@ -103,7 +103,8 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /**
-   * Check whether the provided table identifier is a Delta table based on information from the Catalog.
+   * Check whether the provided table identifier is a Delta table based on information
+   * from the Catalog.
    */
   def isDeltaTable(tableCatalog: TableCatalog, identifier: Identifier): Boolean = {
     val tableExists = tableCatalog.tableExists(identifier)
