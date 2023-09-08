@@ -28,6 +28,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 // scalastyle:off println
 class LogReplaySuite extends AnyFunSuite {
+  // TODO: refactor to use TestUtils
 
   private val tableClient = DefaultTableClient.create(new Configuration() {{
       // Set the batch sizes to small so that we get to test the multiple batch scenarios.
