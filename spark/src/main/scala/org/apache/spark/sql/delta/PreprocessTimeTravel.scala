@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{AnalysisErrorAt, UnresolvedIdentifier, UnresolvedRelation}
@@ -27,8 +26,9 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTableType, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.quoteIfNeeded
-import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogNotFoundException, CatalogPlugin, Identifier, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogPlugin, Identifier, TableCatalog}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.{IdentifierHelper, MultipartIdentifierHelper}
+import org.apache.spark.sql.delta.DeltaTableUtils.resolveCatalogAndIdentifier
 import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, V2SessionCatalog}
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 
@@ -42,9 +42,6 @@ import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[LogicalPlan] {
 
   override def conf: SQLConf = sparkSession.sessionState.conf
-
-  private val globalTempDB = conf.getConf(StaticSQLConf.GLOBAL_TEMP_DATABASE)
-
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     // Since the Delta's TimeTravel is a leaf node, we have to resolve the UnresolvedIdentifier.
@@ -91,31 +88,6 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
       handleTableNotFound(sparkSession.sessionState.catalog, unresolvedIdentifier, tableId)
     }
     DataSourceV2Relation.create(deltaTableV2, None, Some(identifier))
-  }
-
-  private def resolveCatalogAndIdentifier(
-      catalogManager: CatalogManager,
-      nameParts: Seq[String]): (CatalogPlugin, Identifier) = {
-    assert(nameParts.nonEmpty)
-    if (nameParts.length == 1) {
-      (catalogManager.currentCatalog,
-        Identifier.of(catalogManager.currentNamespace, nameParts.head))
-    } else if (nameParts.head.equalsIgnoreCase(globalTempDB)) {
-      // Conceptually global temp views are in a special reserved catalog. However, the v2 catalog
-      // API does not support view yet, and we have to use v1 commands to deal with global temp
-      // views. To simplify the implementation, we put global temp views in a special namespace
-      // in the session catalog. The special namespace has higher priority during name resolution.
-      // For example, if the name of a custom catalog is the same with `GLOBAL_TEMP_DATABASE`,
-      // this custom catalog can't be accessed.
-      (catalogManager.v2SessionCatalog, nameParts.asIdentifier)
-    } else {
-      try {
-        (catalogManager.catalog(nameParts.head), nameParts.tail.asIdentifier)
-      } catch {
-        case _: CatalogNotFoundException =>
-          (catalogManager.currentCatalog, nameParts.asIdentifier)
-      }
-    }
   }
 
   /**
