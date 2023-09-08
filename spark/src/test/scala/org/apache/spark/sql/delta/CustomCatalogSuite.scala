@@ -53,6 +53,8 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
         spark.sessionState.catalogManager.catalog("dummy").asInstanceOf[DummyCatalog]
       val tablePath = dummyCatalog.getTablePath(tableName)
       sql(f"CREATE TABLE $tableName (id bigint) USING delta")
+      // Insert some data into the table in the dummy catalog.
+      // To make it simple, here we insert data directly into the table path.
       sql(f"INSERT INTO delta.`$tablePath` VALUES (0)")
       sql(f"INSERT INTO delta.`$tablePath` VALUES (1)")
       sql(f"RESTORE TABLE $tableName VERSION AS OF 0")
