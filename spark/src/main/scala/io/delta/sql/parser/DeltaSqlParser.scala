@@ -39,11 +39,8 @@
 package io.delta.sql.parser
 
 import java.util.Locale
-
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.catalyst.TimeTravel
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands._
 import io.delta.sql.parser.DeltaSqlBaseParser._
@@ -52,16 +49,17 @@ import org.antlr.v4.runtime._
 import org.antlr.v4.runtime.atn.PredictionMode
 import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}
 import org.antlr.v4.runtime.tree._
-
+import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, AlterTableDropFeature, CloneTableStatement, LogicalPlan, RestoreTableStatement}
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, AlterTableDropFeature, CloneTableStatement, LogicalPlan, RestoreTableStatement, VacuumTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
+import org.apache.spark.sql.delta.DeltaTableIdentifier.isDeltaPath
 import org.apache.spark.sql.errors.QueryParsingErrors
 import org.apache.spark.sql.internal.{SQLConf, VariableSubstitution}
 import org.apache.spark.sql.types._
@@ -307,11 +305,18 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    * }}}
    */
   override def visitVacuumTable(ctx: VacuumTableContext): AnyRef = withOrigin(ctx) {
-    VacuumTableCommand(
-      Option(ctx.path).map(string),
-      Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.number).map(_.getText.toDouble),
-      ctx.RUN != null)
+    val horizonHours = Option(ctx.number).map(_.getText.toDouble)
+    val dryRun = ctx.RUN != null
+    if (ctx.path != null) {
+      VacuumTableCommand(new Path(string(ctx.path)), horizonHours, dryRun)
+    } else if (ctx.table != null) {
+      VacuumTableStatement(
+        UnresolvedIdentifier(ctx.table.identifier.asScala.toSeq.map(_.getText)),
+        horizonHours,
+        dryRun)
+    } else {
+      throw DeltaErrors.missingTableIdentifierException("VACUUM")
+    }
   }
 
   /** Provides a list of unresolved attributes for multi dimensional clustering. */

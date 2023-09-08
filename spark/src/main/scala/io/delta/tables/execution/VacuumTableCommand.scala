@@ -32,8 +32,8 @@ import org.apache.spark.sql.types.StringType
  * }}}
  */
 case class VacuumTableCommand(
-    path: Option[String],
-    table: Option[TableIdentifier],
+    pathToVacuum: Path,
+    // table: Option[TableIdentifier],
     horizonHours: Option[Double],
     dryRun: Boolean) extends LeafRunnableCommand {
 
@@ -41,6 +41,7 @@ case class VacuumTableCommand(
     Seq(AttributeReference("path", StringType, nullable = true)())
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
+    /*
     val pathToVacuum =
       if (path.nonEmpty) {
         new Path(path.get)
@@ -54,6 +55,7 @@ case class VacuumTableCommand(
       } else {
         throw DeltaErrors.missingTableIdentifierException("VACUUM")
       }
+     */
     val baseDeltaPath = DeltaTableUtils.findDeltaTableRoot(sparkSession, pathToVacuum)
     if (baseDeltaPath.isDefined) {
       if (baseDeltaPath.get != pathToVacuum) {

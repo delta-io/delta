@@ -400,6 +400,15 @@ class DeltaAnalysis(session: SparkSession)
           throw DeltaErrors.notADeltaTableException("RESTORE")
       }
 
+    case v @ VacuumTableStatement(r: ResolvedIdentifier, _, _) =>
+      val pathToVacuum =
+          DeltaTableIdentifier(sparkSession, table.get) match {
+            case Some(id) if id.path.nonEmpty =>
+              new Path(id.path.get)
+            case _ =>
+              new Path(sparkSession.sessionState.catalog.getTableMetadata(table.get).location)
+        }
+
     case u: UnresolvedPathBasedDeltaTable =>
       val table = getPathBasedDeltaTable(u.path)
       if (!table.tableExists) {
