@@ -49,7 +49,8 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
     val tableName = "table1"
     withTable(tableName) {
       sql("SET CATALOG dummy")
-      val dummyCatalog = spark.sessionState.catalogManager.catalog("dummy").asInstanceOf[DummyCatalog]
+      val dummyCatalog =
+        spark.sessionState.catalogManager.catalog("dummy").asInstanceOf[DummyCatalog]
       val tablePath = dummyCatalog.getTablePath(tableName)
       sql(f"CREATE TABLE $tableName (id bigint) USING delta")
       sql(f"INSERT INTO delta.`$tablePath` VALUES (0)")
@@ -73,7 +74,10 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
 class DummyCatalog extends TableCatalog {
   private val spark: SparkSession = SparkSession.active
   private val tempDir: Path = new Path(Utils.createTempDir().getAbsolutePath)
-  private val fs: FileSystem = tempDir.getFileSystem(spark.sessionState.newHadoopConf())
+  // scalastyle:off deltahadoopconfiguration
+  private val fs: FileSystem =
+    tempDir.getFileSystem(spark.sessionState.newHadoopConf())
+  // scalastyle:on deltahadoopconfiguration
 
   override def name: String = "dummy"
 
@@ -134,5 +138,3 @@ class DummyCatalog extends TableCatalog {
     }
   }
 }
-
-
