@@ -24,8 +24,7 @@ import scala.math.Ordering.Implicits._
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.actions.{Action, CheckpointMetadata, SidecarFile}
-import org.apache.spark.sql.delta.actions.{Metadata, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, CheckpointMetadata, SidecarFile, Metadata, SingleAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
@@ -38,8 +37,7 @@ import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
 
 import org.apache.spark.TaskContext
-import org.apache.spark.sql.{Column, DataFrame, SparkSession}
-import org.apache.spark.sql.{Dataset, Row}
+import org.apache.spark.sql.{Column, DataFrame, SparkSession, Dataset, Row}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.execution.SQLExecution
@@ -432,7 +430,7 @@ object Checkpoints extends DeltaLogging {
       val policy = DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(snapshot.metadata)
       if (policy.needsV2CheckpointSupport) {
         assert(CheckpointProvider.isV2CheckpointEnabled(snapshot))
-        val v2Format = spark.conf.getOption(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key)
+        val v2Format = spark.conf.get(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT)
         // The format of the top level file in V2 checkpoints can be configured through
         // the optional config [[DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT]].
         // If nothing is specified, we use the json format. In the future, we may
@@ -587,7 +585,7 @@ object Checkpoints extends DeltaLogging {
     val v2Checkpoint = if (v2CheckpointEnabled) {
       val (v2CheckpointFileStatus, nonFileActionsWriten, v2Checkpoint, checkpointSchema) =
         Checkpoints.writeTopLevelV2Checkpoint(
-          v2CheckpointFormatOpt,
+          v2CheckpointFormatOpt.get,
           finalCheckpointFiles,
           spark,
           schema,
@@ -668,6 +666,20 @@ object Checkpoints extends DeltaLogging {
    * Writes a top-level V2 Checkpoint file which may point to multiple
    * sidecar files.
    *
+   * @param v2CheckpointFormat The format in which the top-level file should be
+   *                           written. Currently, json and parquet are supported.
+   * @param sidecarCheckpointFiles The list of sidecar files that have already been
+   *                               written. The top-level file will store this list.
+   * @param spark The current spark session
+   * @param sidecarSchema The schema of the sidecar parquet files.
+   * @param snapshot The snapshot for which the checkpoint is being written.
+   * @param deltaLog The deltaLog instance pointing to our tables deltaLog.
+   * @param rowsWrittenInCheckpointJob The number of rows that were written in total
+   *                                   to the sidecar files.
+   * @param parquetFilesSizeInBytes The combined size of all sidecar files in bytes.
+   * @param hadoopConf The hadoopConf to use for the filesystem operation.
+   * @param useRename Whether we should first write to a temporary file and then
+   *                  rename it to the target file name during the write.
    * @return A tuple containing
    *          1. [[FileStatus]] of the newly created top-level V2Checkpoint.
    *          2. The sequence of actions that were written to the top-level file.
@@ -676,30 +688,25 @@ object Checkpoints extends DeltaLogging {
    *          4. Schema of the newly written top-level file (only for parquet files)
    */
   protected[delta] def writeTopLevelV2Checkpoint(
-      v2CheckpointFormatOpt: Option[V2Checkpoint.Format],
+      v2CheckpointFormat: V2Checkpoint.Format,
       sidecarCheckpointFiles: Array[SerializableFileStatus],
       spark: SparkSession,
-      schema: StructType,
+      sidecarSchema: StructType,
       snapshot: Snapshot,
       deltaLog: DeltaLog,
       rowsWrittenInCheckpointJob: Long,
       parquetFilesSizeInBytes: Long,
       hadoopConf: Configuration,
       useRename: Boolean) : (FileStatus, Seq[Action], LastCheckpointV2, Option[StructType]) = {
-    val v2CheckpointFormat = v2CheckpointFormatOpt.get
     // Write the main v2 checkpoint file.
     val sidecarFilesWritten = sidecarCheckpointFiles.map(SidecarFile(_)).toSeq
+    // Filter out the sidecar schema if it is too large.
     val sidecarFileSchemaOpt =
-      Checkpoints.checkpointSchemaToWriteInLastCheckpointFile(spark, schema)
-    val checkpointMetadata = CheckpointMetadata(
-      version = snapshot.version,
-      sidecarNumActions = rowsWrittenInCheckpointJob,
-      sidecarSizeInBytes = parquetFilesSizeInBytes,
-      numOfAddFiles = snapshot.numOfFiles,
-      sidecarFileSchemaOpt = sidecarFileSchemaOpt)
+      Checkpoints.checkpointSchemaToWriteInLastCheckpointFile(spark, sidecarSchema)
+    val checkpointMetadata = CheckpointMetadata(snapshot.version)
+
     val nonFileActionsToWrite =
       (checkpointMetadata +: sidecarFilesWritten) ++ snapshot.nonFileActions
-    // By default, create v2 checkpoints in json format with fileactions in sidecar files
     val (v2CheckpointPath, checkpointSchemaToWriteInLastCheckpoint) =
       if (v2CheckpointFormat == V2Checkpoint.Format.JSON) {
         val v2CheckpointPath = newV2CheckpointJsonFile(deltaLog.logPath, snapshot.version)
