@@ -17,6 +17,8 @@
 package io.delta.sql.parser
 
 import io.delta.tables.execution.VacuumTableCommand
+
+import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.delta.{CloneTableSQLTestUtils, UnresolvedDeltaIdentifier, UnresolvedPathBasedDeltaTable}
 import org.apache.spark.sql.delta.commands.{DeltaReorgTable, OptimizeTableCommand}
 import org.apache.spark.SparkFunSuite
@@ -44,6 +46,12 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
       VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123D_column")), None, false))
     assert(parser.parsePlan("vacuum a.123BD_column") ===
       VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123BD_column")), None, false))
+
+    assert(parser.parsePlan("vacuum delta.`/tmp/table`") ===
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("delta", "/tmp/table")), None, false))
+
+    assert(parser.parsePlan("vacuum \"/tmp/table\"") ===
+      VacuumTableCommand(new Path("/tmp/table"), None, false))
   }
 
   test("RESTORE command is parsed as expected") {
