@@ -407,7 +407,7 @@ class DeltaAnalysis(session: SparkSession)
       VacuumTableCommand(d.path, v.horizonHours, v.dryRun)
 
     case u: UnresolvedDeltaIdentifier =>
-      resolveDeltaIdentifier(session, u).getOrElse(u)
+      resolveDeltaIdentifier(session, u).getOrElse(u.tableNotFound(u.nameParts))
 
     case u: UnresolvedPathBasedDeltaTable =>
       val table = getPathBasedDeltaTable(u.path)

@@ -21,6 +21,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import io.delta.tables.DeltaTable
+import io.delta.tables.execution.VacuumTableCommand
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import java.nio.file.{Files, Paths}
@@ -69,6 +70,25 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
       // Test 3-part identifier when the current catalog is the default catalog
       sql(f"RESTORE TABLE dummy.default.$tableName VERSION AS OF 1")
       checkAnswer(spark.table(f"dummy.default.$tableName"), spark.range(1).toDF())
+    }
+  }
+
+    test("Vacuum a table from DummyCatalog") {
+      val tableName = "table1"
+      withTable(tableName) {
+        sql("SET CATALOG dummy")
+        val dummyCatalog =
+          spark.sessionState.catalogManager.catalog("dummy").asInstanceOf[DummyCatalog]
+        sql(f"CREATE TABLE $tableName (id bigint) USING delta")
+        val tablePath = dummyCatalog.getTablePath(tableName)
+        var plan = sql(s"VACUUM $tableName").queryExecution.analyzed
+        assert(plan.isInstanceOf[VacuumTableCommand])
+        assert(plan.asInstanceOf[VacuumTableCommand].pathToVacuum == tablePath)
+
+        sql("SET CATALOG spark_catalog")
+        plan = sql(s"VACUUM dummy.default.$tableName").queryExecution.analyzed
+        assert(plan.isInstanceOf[VacuumTableCommand])
+        assert(plan.asInstanceOf[VacuumTableCommand].pathToVacuum == tablePath)
     }
   }
 }
