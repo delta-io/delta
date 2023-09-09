@@ -16,6 +16,9 @@
 
 package org.apache.spark.sql.delta
 
+import io.delta.tables.execution.VacuumTableCommand
+import org.apache.spark.sql.delta.DeltaTableUtils.resolveDeltaIdentifier
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
@@ -400,14 +403,11 @@ class DeltaAnalysis(session: SparkSession)
           throw DeltaErrors.notADeltaTableException("RESTORE")
       }
 
-    case v @ VacuumTableStatement(r: ResolvedIdentifier, _, _) =>
-      val pathToVacuum =
-          DeltaTableIdentifier(sparkSession, table.get) match {
-            case Some(id) if id.path.nonEmpty =>
-              new Path(id.path.get)
-            case _ =>
-              new Path(sparkSession.sessionState.catalog.getTableMetadata(table.get).location)
-        }
+    case v @ VacuumTableStatement(DataSourceV2Relation(d: DeltaTableV2, _, _, _, _), _, _) =>
+      VacuumTableCommand(d.path, v.horizonHours, v.dryRun)
+
+    case u: UnresolvedDeltaIdentifier =>
+      resolveDeltaIdentifier(session, u).getOrElse(u)
 
     case u: UnresolvedPathBasedDeltaTable =>
       val table = getPathBasedDeltaTable(u.path)

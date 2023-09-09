@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.util.quoteIfNeeded
 import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogPlugin, Identifier, TableCatalog}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.{IdentifierHelper, MultipartIdentifierHelper}
-import org.apache.spark.sql.delta.DeltaTableUtils.resolveCatalogAndIdentifier
+import org.apache.spark.sql.delta.DeltaTableUtils.{resolveCatalogAndIdentifier, resolveDeltaIdentifier}
 import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, V2SessionCatalog}
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 
@@ -45,8 +45,8 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     // Since the Delta's TimeTravel is a leaf node, we have to resolve the UnresolvedIdentifier.
-    case _ @ RestoreTableStatement(tt @ TimeTravel(ui: UnresolvedIdentifier, _, _, _)) =>
-      val sourceRelation = resolveTimetravelIdentifier(sparkSession, ui)
+    case _ @ RestoreTableStatement(tt @ TimeTravel(udi: UnresolvedDeltaIdentifier, _, _, _)) =>
+      val sourceRelation = resolveIdentifier(sparkSession, udi)
       return RestoreTableStatement(
         TimeTravel(
           sourceRelation,
@@ -65,29 +65,20 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
         tt.creationSource))
   }
 
-  private def resolveTimetravelIdentifier(
+  private def resolveIdentifier(
       sparkSession: SparkSession,
-      unresolvedIdentifier: UnresolvedIdentifier): DataSourceV2Relation = {
-    val (catalog, identifier) =
-      resolveCatalogAndIdentifier(sparkSession.sessionState.catalogManager,
-        unresolvedIdentifier.nameParts)
-    // If the identifier is not a multipart identifier, we assume it is a table or view name.
-    val tableId = if (unresolvedIdentifier.nameParts.length == 1) {
-      TableIdentifier(unresolvedIdentifier.nameParts.head)
+      unresolvedIdentifier: UnresolvedDeltaIdentifier): DataSourceV2Relation = {
+    val relation = resolveDeltaIdentifier(sparkSession, unresolvedIdentifier)
+    if  (relation.isDefined) {
+      relation.get
     } else {
-      identifier.asTableIdentifier
-    }
-    assert(catalog.isInstanceOf[TableCatalog], s"Catalog ${catalog.name()} must implement " +
-      s"TableCatalog to support loading Delta table.")
-    val tableCatalog = catalog.asInstanceOf[TableCatalog]
-    val deltaTableV2 = if (DeltaTableUtils.isDeltaTable(tableCatalog, identifier)) {
-      tableCatalog.loadTable(identifier).asInstanceOf[DeltaTableV2]
-    } else if (DeltaTableUtils.isValidPath(tableId)) {
-      DeltaTableV2(sparkSession, new Path(tableId.table))
-    } else {
+      val tableId = if (unresolvedIdentifier.nameParts.length == 1) {
+        TableIdentifier(unresolvedIdentifier.nameParts.head)
+      } else {
+        unresolvedIdentifier.nameParts.asTableIdentifier
+      }
       handleTableNotFound(sparkSession.sessionState.catalog, unresolvedIdentifier, tableId)
     }
-    DataSourceV2Relation.create(deltaTableV2, None, Some(identifier))
   }
 
   /**

@@ -32,9 +32,11 @@ import org.apache.spark.sql.catalyst.planning.NodeWithOnlyDeterministicProjectAn
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LeafNode, LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.util.CharVarcharCodegenUtils
 import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogNotFoundException, CatalogPlugin, Identifier, TableCatalog}
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.IdentifierHelper
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -142,6 +144,31 @@ object DeltaTableUtils extends PredicateHelper
     } else {
       throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
     }
+  }
+
+  def resolveDeltaIdentifier(
+      sparkSession: SparkSession,
+      unresolvedIdentifier: UnresolvedDeltaIdentifier): Option[DataSourceV2Relation] = {
+    val (catalog, identifier) =
+      resolveCatalogAndIdentifier(sparkSession.sessionState.catalogManager,
+        unresolvedIdentifier.nameParts)
+    // If the identifier is not a multipart identifier, we assume it is a table or view name.
+    val tableId = if (unresolvedIdentifier.nameParts.length == 1) {
+      TableIdentifier(unresolvedIdentifier.nameParts.head)
+    } else {
+      identifier.asTableIdentifier
+    }
+    assert(catalog.isInstanceOf[TableCatalog], s"Catalog ${catalog.name()} must implement " +
+      s"TableCatalog to support loading Delta table.")
+    val tableCatalog = catalog.asInstanceOf[TableCatalog]
+    val deltaTableV2 = if (DeltaTableUtils.isDeltaTable(tableCatalog, identifier)) {
+      Some(tableCatalog.loadTable(identifier).asInstanceOf[DeltaTableV2])
+    } else if (DeltaTableUtils.isValidPath(tableId)) {
+      Some(DeltaTableV2(sparkSession, new Path(tableId.table)))
+    } else {
+      None
+    }
+    deltaTableV2.map(d => DataSourceV2Relation.create(d, None, Some(identifier)))
   }
 
   // Resolve the input name parts to a CatalogPlugin and Identifier.
@@ -603,6 +630,12 @@ case class UnresolvedPathBasedDeltaTable(
 case class UnresolvedPathBasedDeltaTableRelation(
     path: String,
     options: CaseInsensitiveStringMap) extends UnresolvedPathBasedDeltaTableBase(path)
+
+case class UnresolvedDeltaIdentifier(nameParts: Seq[String]) extends LeafNode {
+  override def output: Seq[Attribute] = Nil
+
+  override lazy val resolved: Boolean = false
+}
 
 /**
  * A helper object with an apply method to transform a path or table identifier to a LogicalPlan.

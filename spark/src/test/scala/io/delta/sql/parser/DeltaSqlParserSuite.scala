@@ -17,8 +17,7 @@
 package io.delta.sql.parser
 
 import io.delta.tables.execution.VacuumTableCommand
-import org.apache.spark.sql.delta.CloneTableSQLTestUtils
-import org.apache.spark.sql.delta.UnresolvedPathBasedDeltaTable
+import org.apache.spark.sql.delta.{CloneTableSQLTestUtils, UnresolvedDeltaIdentifier, UnresolvedPathBasedDeltaTable}
 import org.apache.spark.sql.delta.commands.{DeltaReorgTable, OptimizeTableCommand}
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
@@ -26,7 +25,7 @@ import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedId
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
-import org.apache.spark.sql.catalyst.plans.logical.{CloneTableStatement, RestoreTableStatement}
+import org.apache.spark.sql.catalyst.plans.logical.{CloneTableStatement, RestoreTableStatement, VacuumTableStatement}
 
 class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
@@ -34,17 +33,17 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     // Setting `delegate` to `null` is fine. The following tests don't need to touch `delegate`.
     val parser = new DeltaSqlParser(null)
     assert(parser.parsePlan("vacuum 123_") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123_")), None, false))
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("123_")), None, false))
     assert(parser.parsePlan("vacuum 1a.123_") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123_", Some("1a"))), None, false))
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("1a", "123_")), None, false))
     assert(parser.parsePlan("vacuum a.123A") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123A", Some("a"))), None, false))
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123A")), None, false))
     assert(parser.parsePlan("vacuum a.123E3_column") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123E3_column", Some("a"))), None, false))
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123E3_column")), None, false))
     assert(parser.parsePlan("vacuum a.123D_column") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123D_column", Some("a"))), None, false))
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123D_column")), None, false))
     assert(parser.parsePlan("vacuum a.123BD_column") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123BD_column", Some("a"))), None, false))
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123BD_column")), None, false))
   }
 
   test("RESTORE command is parsed as expected") {
