@@ -17,11 +17,10 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import scala.util.{Failure, Success, Try}
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
-import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedTable}
@@ -31,15 +30,16 @@ import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
 import org.apache.spark.sql.catalyst.planning.NodeWithOnlyDeterministicProjectAndFilter
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LeafNode, LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.util.CharVarcharCodegenUtils
-import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogNotFoundException, CatalogPlugin, Identifier, TableCatalog}
-import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.IdentifierHelper
+import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
-import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+
+import scala.util.{Failure, Success, Try}
 
 /**
  * Extractor Object for pulling out the table scan of a Delta table. It could be a full scan
@@ -84,8 +84,6 @@ object DeltaTableUtils extends PredicateHelper
 
   // The valid hadoop prefixes passed through `DeltaTable.forPath` or DataFrame APIs.
   val validDeltaTableHadoopPrefixes: List[String] = List("fs.", "dfs.")
-
-  private val globalTempDB = SQLConf.get.getConf(StaticSQLConf.GLOBAL_TEMP_DATABASE)
 
   /** Check whether this table is a Delta table based on information from the Catalog. */
   def isDeltaTable(table: CatalogTable): Boolean = DeltaSourceUtils.isDeltaTable(table.provider)
@@ -143,60 +141,6 @@ object DeltaTableUtils extends PredicateHelper
       false
     } else {
       throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
-    }
-  }
-
-  def resolveDeltaIdentifier(
-      sparkSession: SparkSession,
-      unresolvedIdentifier: UnresolvedDeltaIdentifier): Option[DataSourceV2Relation] = {
-    val (catalog, identifier) =
-      resolveCatalogAndIdentifier(sparkSession.sessionState.catalogManager,
-        unresolvedIdentifier.nameParts)
-    // If the identifier is not a multipart identifier, we assume it is a table or view name.
-    val tableId = if (unresolvedIdentifier.nameParts.length == 1) {
-      TableIdentifier(unresolvedIdentifier.nameParts.head)
-    } else {
-      identifier.asTableIdentifier
-    }
-    assert(catalog.isInstanceOf[TableCatalog], s"Catalog ${catalog.name()} must implement " +
-      s"TableCatalog to support loading Delta table.")
-    val tableCatalog = catalog.asInstanceOf[TableCatalog]
-    val deltaTableV2 = if (DeltaTableUtils.isDeltaTable(tableCatalog, identifier)) {
-      Some(tableCatalog.loadTable(identifier).asInstanceOf[DeltaTableV2])
-    } else if (DeltaTableUtils.isValidPath(tableId)) {
-      Some(DeltaTableV2(sparkSession, new Path(tableId.table)))
-    } else {
-      None
-    }
-    deltaTableV2.map(d => DataSourceV2Relation.create(d, None, Some(identifier)))
-  }
-
-  // Resolve the input name parts to a CatalogPlugin and Identifier.
-  // The code is from Apache Spark on org.apache.spark.sql.connector.catalog.CatalogAndIdentifier.
-  // We need to use this because the original one is private.
-  def resolveCatalogAndIdentifier(
-      catalogManager: CatalogManager,
-      nameParts: Seq[String]): (CatalogPlugin, Identifier) = {
-    import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.MultipartIdentifierHelper
-    assert(nameParts.nonEmpty)
-    if (nameParts.length == 1) {
-      (catalogManager.currentCatalog,
-        Identifier.of(catalogManager.currentNamespace, nameParts.head))
-    } else if (nameParts.head.equalsIgnoreCase(globalTempDB)) {
-      // Conceptually global temp views are in a special reserved catalog. However, the v2 catalog
-      // API does not support view yet, and we have to use v1 commands to deal with global temp
-      // views. To simplify the implementation, we put global temp views in a special namespace
-      // in the session catalog. The special namespace has higher priority during name resolution.
-      // For example, if the name of a custom catalog is the same with `GLOBAL_TEMP_DATABASE`,
-      // this custom catalog can't be accessed.
-      (catalogManager.v2SessionCatalog, nameParts.asIdentifier)
-    } else {
-      try {
-        (catalogManager.catalog(nameParts.head), nameParts.tail.asIdentifier)
-      } catch {
-        case _: CatalogNotFoundException =>
-          (catalogManager.currentCatalog, nameParts.asIdentifier)
-      }
     }
   }
 
