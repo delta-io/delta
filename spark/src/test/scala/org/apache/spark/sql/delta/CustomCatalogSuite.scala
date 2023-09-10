@@ -15,30 +15,19 @@
  */
 package org.apache.spark.sql.delta
 
-import java.util
-import org.apache.spark.sql.connector.catalog._
-import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.connector.expressions.Transform
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
-import io.delta.tables.DeltaTable
 import io.delta.tables.execution.VacuumTableCommand
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import java.nio.file.{Files, Paths}
-import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, TableChange}
 import org.apache.spark.sql.connector.expressions.Transform
-import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util.Utils
 import org.apache.spark.SparkConf
-
-import java.io.{File, IOException}
-
 
 class CustomCatalogSuite extends QueryTest with SharedSparkSession
   with DeltaSQLCommandTest {
@@ -47,7 +36,7 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
     super.sparkConf.set("spark.sql.catalog.dummy", classOf[DummyCatalog].getName)
 
   test("RESTORE a table from DummyCatalog") {
-    val tableName = "table1"
+    val tableName = "restore_table"
     withTable(tableName) {
       sql("SET CATALOG dummy")
       val dummyCatalog =
@@ -74,7 +63,7 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
   }
 
     test("Vacuum a table from DummyCatalog") {
-      val tableName = "table1"
+      val tableName = "vacuum_table"
       withTable(tableName) {
         sql("SET CATALOG dummy")
         val dummyCatalog =
