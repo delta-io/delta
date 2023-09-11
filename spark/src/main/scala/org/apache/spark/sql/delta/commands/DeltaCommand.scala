@@ -303,13 +303,31 @@ trait DeltaCommand extends DeltaLogging {
    * does not represent a Delta table.
    */
   def getDeltaTablePathOrIdentifier(
-    target: LogicalPlan,
-    cmd: String): (Option[TableIdentifier], Option[String]) = {
+      target: LogicalPlan,
+      cmd: String): (Option[TableIdentifier], Option[String]) = {
     val table = getDeltaTable(target, cmd)
     table.catalogTable match {
       case Some(catalogTable)
         => (Some(catalogTable.identifier), None)
       case _ => (None, Some(table.path.toString))
+    }
+  }
+
+  /**
+   * Helper method to extract the table id or path from a LogicalPlan representing a resolved table
+   * or path. This calls getDeltaTablePathOrIdentifier if the resolved table is a delta table. For
+   * non delta table with identifier, we extract its identifier. For non delta table with path, it
+   * will be represented as UnresolvedPath and pass along here, we extract its path.
+   */
+  def getTablePathOrIdentifier(
+      target: LogicalPlan,
+      cmd: String): (Option[TableIdentifier], Option[String]) = {
+    target match {
+      case ResolvedTable(_, _, t: DeltaTableV2, _) => getDeltaTablePathOrIdentifier(target, cmd)
+      case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
+        getDeltaTablePathOrIdentifier(target, cmd)
+      case ResolvedTable(_, _, t: V1Table, _) => (Some(t.catalogTable.identifier), None)
+      case _ => (None, None)
     }
   }
 

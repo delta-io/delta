@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistory, DeltaLog, ResolvedDeltaPath, UnresolvedDeltaPathOrIdentifier}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistory, DeltaLog, UnresolvedDeltaPathOrIdentifier}
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.{ScalaReflection, TableIdentifier}
@@ -48,13 +48,14 @@ object DescribeDeltaHistory {
     DescribeDeltaHistory(plan, limit)
   }
 
-  /** Returns a ResolvedDeltaPath from the provided child operator of one of the below commands. */
+  /**
+   * Returns a resolved Delta path from the provided child operator of one of the below commands.
+   */
   def resolvePath(cmd: DeltaCommand, child: LogicalPlan, limit: Option[Int]): Path = {
     // Max array size
     if (limit.exists(_ > Int.MaxValue - 8)) {
       throw DeltaErrors.maxArraySizeExceeded()
     }
-    assert(!child.isInstanceOf[ResolvedDeltaPath])
     val deltaTableV2: DeltaTableV2 = cmd.getDeltaTable(child, commandName)
     val tableMetadata: Option[CatalogTable] = deltaTableV2.catalogTable
     val path = cmd.getTablePathOrIdentifier(child, commandName)._2
