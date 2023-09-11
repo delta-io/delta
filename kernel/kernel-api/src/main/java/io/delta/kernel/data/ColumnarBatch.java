@@ -16,6 +16,8 @@
 
 package io.delta.kernel.data;
 
+import java.util.NoSuchElementException;
+
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -118,6 +120,9 @@ public interface ColumnarBatch {
 
             @Override
             public Row next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
                 Row row = new ColumnarBatchRow(batch, rowId);
                 rowId += 1;
                 return row;

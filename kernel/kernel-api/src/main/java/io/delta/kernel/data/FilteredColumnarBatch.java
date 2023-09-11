@@ -13,16 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.data;
 
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.utils.CloseableIterator;
+
+import io.delta.kernel.internal.data.ColumnarBatchRow;
 
 /**
- * Data read from Delta table file. Data is in {@link ColumnarBatch} format with an optional
- * selection vector to select only a subset of rows for this columnar batch.
+ * Represents a filtered version of {@link ColumnarBatch}. Contains original {@link ColumnarBatch}
+ * with an optional selection vector to select only a subset of rows for the original columnar
+ * batch.
  * <p>
  * The selection vector is of type boolean and has the same size as the data in the corresponding
  * {@link ColumnarBatch}. For each row index, a value of true in the selection vector indicates
@@ -32,11 +36,11 @@ import io.delta.kernel.annotation.Evolving;
  * @since 3.0.0
  */
 @Evolving
-public class DataReadResult {
+public class FilteredColumnarBatch {
     private final ColumnarBatch data;
     private final Optional<ColumnVector> selectionVector;
 
-    public DataReadResult(ColumnarBatch data, Optional<ColumnVector> selectionVector) {
+    public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector) {
         this.data = data;
         this.selectionVector = selectionVector;
     }
@@ -64,14 +68,44 @@ public class DataReadResult {
     }
 
     /**
-     * Helper method to rewrite the <i>data</i> in this result by removing the rows that are not
-     * selected.
-     *
-     * @return A {@link ColumnarBatch} with only the selected rows according to the
-     * {@link #getSelectionVector()}
+     * Iterator of rows that survived the filter.
+     * @return Closeable iterator of rows that survived the filter. It is responsibility of the
+     * caller to the close the iterator.
      */
-    public ColumnarBatch rewriteWithoutSelectionVector() {
-        return data;
-        // TODO: implement removing deleted rows.
+    public CloseableIterator<Row> getRows() {
+        if (!selectionVector.isPresent()) {
+            return data.getRows();
+        }
+
+        return new CloseableIterator<Row>() {
+            private int rowId = 0;
+            private int maxRowId = data.getSize();
+            private int nextRowId = -1;
+
+            @Override
+            public boolean hasNext() {
+                for (; rowId < maxRowId && nextRowId == -1; rowId++) {
+                    if (selectionVector.get().getBoolean(rowId)) {
+                        nextRowId = rowId;
+                        rowId++;
+                        break;
+                    }
+                }
+                return nextRowId != -1;
+            }
+
+            @Override
+            public Row next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                Row row = new ColumnarBatchRow(data, nextRowId);
+                nextRowId = -1;
+                return row;
+            }
+
+            @Override
+            public void close() {}
+        };
     }
 }
