@@ -64,6 +64,10 @@ class JarSuite extends AnyFunSuite {
         .filter(_.endsWith(".class")) // let's ignore any .properties or META-INF files for now
         .toSet
 
+      // 2.1: Verify there are no prohibited classes (e.g. io/delta/storage/...)
+      //
+      //      You can test this code path by commenting out the "io/delta" match case of the
+      //      assemblyMergeStrategy config in build.sbt.
       val prohibitedJarClasses = jarClasses
         .filter { clazz => !allowedClassPrefixes.exists(prefix => clazz.startsWith(prefix)) }
 
@@ -71,6 +75,31 @@ class JarSuite extends AnyFunSuite {
         throw new Exception(
             s"Prohibited jar class(es) found:\n- ${prohibitedJarClasses.mkString("\n- ")}"
           )
+      }
+
+      // 2.2: Verify that, for each allowed class prefix, we actually loaded a class for it (instead
+      //      of, say, loading an empty jar).
+      //
+      //      You can test this code path by adding the following code snippet to the delta-iceberg
+      //      assemblyMergeStrategy config in build.sbt:
+      //      case PathList("shadedForDelta", xs @ _*) => MergeStrategy.discard
+
+      // Map of prefix -> # classes with that prefix
+      val allowedClassesCounts = scala.collection.mutable.Map(
+        allowedClassPrefixes.map(prefix => (prefix, 0)) : _*
+      )
+      jarClasses.foreach { clazz =>
+        allowedClassPrefixes.foreach { prefix =>
+          if (clazz.startsWith(prefix)) {
+            allowedClassesCounts(prefix) += 1
+          }
+        }
+      }
+      val missingClasses = allowedClassesCounts.filter(_._2 == 0).keys
+      if (missingClasses.nonEmpty) {
+        throw new Exception(
+          s"No classes found for the following prefix(es):\n- ${missingClasses.mkString("\n- ")}"
+        )
       }
     } finally {
       jarFile.close()
