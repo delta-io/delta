@@ -1065,12 +1065,7 @@ object DeltaRelation extends DeltaLogging {
       } else {
         v2Relation.output
       }
-      val catalogTable = if (d.catalogTable.isDefined) {
-        Some(d.v1Table)
-      } else {
-        None
-      }
-      LogicalRelation(relation, output, catalogTable, isStreaming = false)
+      LogicalRelation(relation, output, d.ttSafeCatalogTable, isStreaming = false)
     }
   }
 }
