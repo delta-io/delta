@@ -60,9 +60,8 @@ case class ResolveDeltaIdentifier(sparkSession: SparkSession) extends Rule[Logic
   private def resolveAsTable(unresolvedId: UnresolvedDeltaIdentifier): Option[DeltaTableV2] = {
     val unresolvedTable =
       UnresolvedTable(unresolvedId.nameParts, unresolvedId.commandName, None)
-    val analyzer = sparkSession.sessionState.analyzer
     try {
-      analyzer.ResolveRelations(unresolvedTable) match {
+      sparkSession.sessionState.analyzer.ResolveRelations(unresolvedTable) match {
         case r: ResolvedTable =>
           r.table match {
             case deltaTableV2: DeltaTableV2 => Some(deltaTableV2)
