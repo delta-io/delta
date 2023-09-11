@@ -19,29 +19,23 @@ package io.delta.kernel.internal.data;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 
 // TODO: check for unsafe access
 
 /**
- * Exposes a POJO object as a {@link Row}
+ * Exposes a given map of values as a {@link Row}
  */
-public class PojoRow<POJO_TYPE> implements Row {
-    private final POJO_TYPE pojoObject;
+public class GenericRow implements Row {
     private final StructType schema;
-    private final Map<Integer, Function<POJO_TYPE, Object>> ordinalToAccessor;
+    private final Map<Integer, Object> ordinalToValue;
 
-    public PojoRow(
-        POJO_TYPE pojoObject,
-        StructType schema,
-        Map<Integer, Function<POJO_TYPE, Object>> ordinalToAccessor) {
-        this.pojoObject = requireNonNull(pojoObject, "pojoObjects is null");
+    public GenericRow(StructType schema, Map<Integer, Object> ordinalToValue) {
         this.schema = requireNonNull(schema, "schema is null");
-        this.ordinalToAccessor = requireNonNull(ordinalToAccessor, "ordinalToAccessor is null");
+        this.ordinalToValue = requireNonNull(ordinalToValue, "ordinalToValue is null");
     }
 
     @Override
@@ -56,70 +50,106 @@ public class PojoRow<POJO_TYPE> implements Row {
 
     @Override
     public boolean getBoolean(int ordinal) {
+        throwIfUnsafeAccess(ordinal, BooleanType.class, "boolean");
         return (boolean) getValue(ordinal);
     }
 
     @Override
     public byte getByte(int ordinal) {
+        throwIfUnsafeAccess(ordinal, ByteType.class, "byte");
         return (byte) getValue(ordinal);
     }
 
     @Override
     public short getShort(int ordinal) {
+        throwIfUnsafeAccess(ordinal, ShortType.class, "short");
         return (short) getValue(ordinal);
     }
 
     @Override
     public int getInt(int ordinal) {
+        throwIfUnsafeAccess(ordinal, IntegerType.class, "integer");
         return (int) getValue(ordinal);
     }
 
     @Override
     public long getLong(int ordinal) {
+        throwIfUnsafeAccess(ordinal, LongType.class, "long");
         return (long) getValue(ordinal);
     }
 
     @Override
     public float getFloat(int ordinal) {
+        throwIfUnsafeAccess(ordinal, FloatType.class, "float");
         return (float) getValue(ordinal);
     }
 
     @Override
     public double getDouble(int ordinal) {
+        throwIfUnsafeAccess(ordinal, DoubleType.class, "double");
         return (double) getValue(ordinal);
     }
 
     @Override
     public String getString(int ordinal) {
+        throwIfUnsafeAccess(ordinal, StringType.class, "string");
         return (String) getValue(ordinal);
     }
 
     @Override
-    public byte[] getBinary(int ordinal) {
-        return (byte[]) getValue(ordinal);
-    }
-
-    @Override
     public BigDecimal getDecimal(int ordinal) {
+        throwIfUnsafeAccess(ordinal, DecimalType.class, "decimal");
         return (BigDecimal) getValue(ordinal);
     }
 
     @Override
+    public byte[] getBinary(int ordinal) {
+        throwIfUnsafeAccess(ordinal, BinaryType.class, "binary");
+        return (byte[]) getValue(ordinal);
+    }
+
+    @Override
     public Row getStruct(int ordinal) {
+        throwIfUnsafeAccess(ordinal, StructType.class, "struct");
         return (Row) getValue(ordinal);
     }
 
     @Override
     public <T> List<T> getArray(int ordinal) {
+        // TODO: not sufficient check, also need to check the element type
+        throwIfUnsafeAccess(ordinal, ArrayType.class, "array");
         return (List<T>) getValue(ordinal);
     }
 
     @Override
     public <K, V> Map<K, V> getMap(int ordinal) {
+        // TODO: not sufficient check, also need to check the element types
+        throwIfUnsafeAccess(ordinal, MapType.class, "map");
         return (Map<K, V>) getValue(ordinal);
     }
 
     private Object getValue(int ordinal) {
-        return ordinalToAccessor.get(ordinal).apply(pojoObject);
+        return ordinalToValue.get(ordinal);
+    }
+
+    private void throwIfUnsafeAccess(
+        int ordinal, Class<? extends DataType> expDataType, String accessType) {
+
+        DataType actualDataType = dataType(ordinal);
+        if (!expDataType.isAssignableFrom(actualDataType.getClass())) {
+            String msg = String.format(
+                "Trying to access a `%s` value from vector of type `%s`",
+                accessType,
+                actualDataType);
+            throw new UnsupportedOperationException(msg);
+        }
+    }
+
+    private DataType dataType(int ordinal) {
+        if (schema.length() <= ordinal) {
+            throw new IllegalArgumentException("invalid ordinal: " + ordinal);
+        }
+
+        return schema.at(ordinal).getDataType();
     }
 }

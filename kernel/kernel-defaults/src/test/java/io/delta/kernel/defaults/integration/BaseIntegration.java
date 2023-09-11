@@ -67,14 +67,14 @@ public abstract class BaseIntegration {
             .build();
 
         Row scanState = scan.getScanState(tableClient);
-        CloseableIterator<ColumnarBatch> scanFileIter = scan.getScanFiles(tableClient);
+        CloseableIterator<FilteredColumnarBatch> scanFileIter = scan.getScanFiles(tableClient);
 
         return readScanFiles(scanState, scanFileIter);
     }
 
     protected List<ColumnarBatch> readScanFiles(
         Row scanState,
-        CloseableIterator<ColumnarBatch> scanFilesBatchIter) throws Exception {
+        CloseableIterator<FilteredColumnarBatch> scanFilesBatchIter) throws Exception {
         List<ColumnarBatch> dataBatches = new ArrayList<>();
         try {
             while (scanFilesBatchIter.hasNext()) {
@@ -86,9 +86,9 @@ public abstract class BaseIntegration {
                         scanFilesBatchIter.next().getRows(),
                         Optional.empty())) {
                     while (data.hasNext()) {
-                        FilteredColumnarBatch dataReadResult = data.next();
-                        assertFalse(dataReadResult.getSelectionVector().isPresent());
-                        dataBatches.add(dataReadResult.getData());
+                        FilteredColumnarBatch filteredColumnarBatch = data.next();
+                        assertFalse(filteredColumnarBatch.getSelectionVector().isPresent());
+                        dataBatches.add(filteredColumnarBatch.getData());
                     }
                 }
             }

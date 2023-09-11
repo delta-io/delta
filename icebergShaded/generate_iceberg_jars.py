@@ -124,7 +124,7 @@ def generate_iceberg_jars():
         # Search for all glob results
         results = glob.glob(compiled_jar_abs_pattern)
         # Compiled jars will include tests, sources, javadocs; exclude them
-        results = list(filter(lambda result: all(x not in result for x in ["test", "source", "javadoc"]), results))
+        results = list(filter(lambda result: all(x not in result for x in ["test", "sources", "javadoc"]), results))
 
         if len(results) == 0:
             raise Exception("Could not find the jar: " + compled_jar_rel_glob_pattern)

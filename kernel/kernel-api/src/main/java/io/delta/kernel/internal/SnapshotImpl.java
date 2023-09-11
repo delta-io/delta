@@ -71,7 +71,7 @@ public class SnapshotImpl implements Snapshot {
             dataPath,
             protocolAndMetadata,
             getSchema(tableClient),
-            logReplay.getAddFiles(),
+            logReplay.getAddFilesAsColumnarBatches(),
             tableClient
         );
     }

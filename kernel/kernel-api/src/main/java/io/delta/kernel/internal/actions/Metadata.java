@@ -32,7 +32,7 @@ import static io.delta.kernel.utils.Utils.requireNonNull;
 
 import io.delta.kernel.internal.types.TableSchemaSerDe;
 
-public class Metadata implements Action {
+public class Metadata {
     public static Metadata fromRow(Row row, TableClient tableClient) {
         if (row == null) {
             return null;

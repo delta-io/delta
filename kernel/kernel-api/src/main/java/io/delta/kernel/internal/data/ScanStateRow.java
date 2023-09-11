@@ -15,28 +15,26 @@
  */
 package io.delta.kernel.internal.data;
 
-import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import static java.util.stream.Collectors.toMap;
 
+import io.delta.kernel.Scan;
+import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.types.TableSchemaSerDe;
 
 /**
- * Expose the common scan state for all scan files.
+ * Encapsulate the scan state (common info for all scan files) as a {@link Row}
  */
-public class ScanStateRow
-    implements Row {
-    private static final Map<Integer, Function<ScanStateRow, Object>>
-        ordinalToAccessor = new HashMap<>();
-    private static final Map<Integer, String> ordinalToColName = new HashMap<>();
-    private static final StructType schema = new StructType()
+public class ScanStateRow extends GenericRow {
+    private static final StructType SCHEMA = new StructType()
         .add("configuration", new MapType(StringType.INSTANCE, StringType.INSTANCE, false))
         .add("logicalSchemaString", StringType.INSTANCE)
         .add("physicalSchemaString", StringType.INSTANCE)
@@ -45,56 +43,10 @@ public class ScanStateRow
         .add("minWriterVersion", IntegerType.INSTANCE)
         .add("tablePath", StringType.INSTANCE);
 
-    static {
-        ordinalToAccessor.put(0, (a) -> a.getConfiguration());
-        ordinalToAccessor.put(1, (a) -> a.getReadSchemaLogicalJson());
-        ordinalToAccessor.put(2, (a) -> a.getReadSchemaPhysicalJson());
-        ordinalToAccessor.put(3, (a) -> a.getPartitionColumns());
-        ordinalToAccessor.put(4, (a) -> a.getMinReaderVersion());
-        ordinalToAccessor.put(5, (a) -> a.getMinWriterVersion());
-        ordinalToAccessor.put(6, (a) -> a.getTablePath());
-
-        ordinalToColName.put(0, "configuration");
-        ordinalToColName.put(1, "logicalSchemaString");
-        ordinalToColName.put(2, "physicalSchemaString");
-        ordinalToColName.put(3, "partitionColumns");
-        ordinalToColName.put(4, "minReaderVersion");
-        ordinalToColName.put(5, "minWriterVersion");
-        ordinalToColName.put(6, "tablePath");
-    }
-
-    private static final Map<String, Integer> colNameToOrdinal = ordinalToColName
-        .entrySet()
-        .stream()
-        .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
-
-    public static int getLogicalSchemaStringColOrdinal() {
-        return getOrdinal("logicalSchemaString");
-    }
-
-    public static int getPhysicalSchemaStringColOrdinal() {
-        return getOrdinal("physicalSchemaString");
-    }
-
-    public static int getPartitionColumnsColOrdinal() {
-        return getOrdinal("partitionColumns");
-    }
-
-    public static int getConfigurationColOrdinal() {
-        return getOrdinal("configuration");
-    }
-
-    public static String getTablePath(Row row) {
-        return row.getString(getOrdinal("tablePath"));
-    }
-
-    private final Map<String, String> configuration;
-    private final List<String> partitionColumns;
-    private final int minReaderVersion;
-    private final int minWriterVersion;
-    private final String readSchemaLogicalJson;
-    private final String readSchemaPhysicalJson;
-    private String tablePath;
+    private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
+        IntStream.range(0, SCHEMA.length())
+            .boxed()
+            .collect(toMap(i -> SCHEMA.at(i).getName(), i -> i));
 
     public ScanStateRow(
         Metadata metadata,
@@ -102,159 +54,79 @@ public class ScanStateRow
         String readSchemaLogicalJson,
         String readSchemaPhysicalJson,
         String tablePath) {
-        this.configuration = metadata.getConfiguration();
-        this.partitionColumns = metadata.getPartitionColumns();
-        this.minReaderVersion = protocol.getMinReaderVersion();
-        this.minWriterVersion = protocol.getMinWriterVersion();
-        this.readSchemaLogicalJson = readSchemaLogicalJson;
-        this.readSchemaPhysicalJson = readSchemaPhysicalJson;
-        this.tablePath = tablePath;
+        super(
+            SCHEMA,
+            new HashMap<Integer, Object>() {
+                {
+                    put(0, metadata.getConfiguration());
+                    put(1, readSchemaLogicalJson);
+                    put(2, readSchemaPhysicalJson);
+                    put(3, metadata.getPartitionColumns());
+                    put(4, protocol.getMinReaderVersion());
+                    put(5, protocol.getMinWriterVersion());
+                    put(6, tablePath);
+                }
+            });
     }
 
-    public Map<String, String> getConfiguration() {
-        return configuration;
+    /**
+     * Utility method to get the logical schema from the scan state {@link Row} returned by
+     * {@link Scan#getScanState(TableClient)}.
+     *
+     * @param tableClient instance of {@link TableClient} to use.
+     * @param scanState   Scan state {@link Row}
+     * @return Logical schema to read from the data files.
+     */
+    public static StructType getLogicalSchema(TableClient tableClient, Row scanState) {
+        String serializedSchema =
+            scanState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
+        return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
     }
 
-    public List<String> getPartitionColumns() {
-        return partitionColumns;
+    /**
+     * Utility method to get the physical schema from the scan state {@link Row} returned by
+     * {@link Scan#getScanState(TableClient)}.
+     *
+     * @param tableClient instance of {@link TableClient} to use.
+     * @param scanState   Scan state {@link Row}
+     * @return Physical schema to read from the data files.
+     */
+    public static StructType getPhysicalSchema(TableClient tableClient, Row scanState) {
+        String serializedSchema =
+            scanState.getString(COL_NAME_TO_ORDINAL.get("physicalSchemaString"));
+        return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
     }
 
-    public int getMinReaderVersion() {
-        return minReaderVersion;
+    /**
+     * Get the list of partition column names from the scan state {@link Row} returned by
+     * {@link Scan#getScanState(TableClient)}.
+     *
+     * @param scanState Scan state {@link Row}
+     * @return List of partition column names according to the scan state.
+     */
+    public static List<String> getPartitionColumns(Row scanState) {
+        return scanState.getArray(COL_NAME_TO_ORDINAL.get("partitionColumns"));
     }
 
-    public int getMinWriterVersion() {
-        return minWriterVersion;
+    /**
+     * Get the column mapping mode from the scan state {@link Row} returned by
+     * {@link Scan#getScanState(TableClient)}.
+     */
+    public static String getColumnMappingMode(Row scanState) {
+        Map<String, String> configuration =
+            scanState.getMap(COL_NAME_TO_ORDINAL.get("configuration"));
+        String cmMode = configuration.get("delta.columnMapping.mode");
+        return cmMode == null ? "none" : cmMode;
     }
 
-    public String getReadSchemaPhysicalJson() {
-        return readSchemaPhysicalJson;
-    }
-
-    public String getReadSchemaLogicalJson() {
-        return readSchemaLogicalJson;
-    }
-
-    public String getTablePath() {
-        return tablePath;
-    }
-
-    @Override
-    public StructType getSchema() {
-        return schema;
-    }
-
-    @Override
-    public boolean isNullAt(int ordinal) {
-        return getValue(ordinal) == null;
-    }
-
-    @Override
-    public boolean getBoolean(int ordinal) {
-        throwIfUnsafeAccess(ordinal, BooleanType.class, "boolean");
-        return (boolean) getValue(ordinal);
-    }
-
-    @Override
-    public byte getByte(int ordinal) {
-        throwIfUnsafeAccess(ordinal, ByteType.class, "byte");
-        return (byte) getValue(ordinal);
-    }
-
-    @Override
-    public short getShort(int ordinal) {
-        throwIfUnsafeAccess(ordinal, ShortType.class, "short");
-        return (short) getValue(ordinal);
-    }
-
-    @Override
-    public int getInt(int ordinal) {
-        throwIfUnsafeAccess(ordinal, IntegerType.class, "integer");
-        return (int) getValue(ordinal);
-    }
-
-    @Override
-    public long getLong(int ordinal) {
-        throwIfUnsafeAccess(ordinal, LongType.class, "long");
-        return (long) getValue(ordinal);
-    }
-
-    @Override
-    public float getFloat(int ordinal) {
-        throwIfUnsafeAccess(ordinal, FloatType.class, "float");
-        return (float) getValue(ordinal);
-    }
-
-    @Override
-    public double getDouble(int ordinal) {
-        throwIfUnsafeAccess(ordinal, DoubleType.class, "double");
-        return (double) getValue(ordinal);
-    }
-
-    @Override
-    public String getString(int ordinal) {
-        throwIfUnsafeAccess(ordinal, StringType.class, "string");
-        return (String) getValue(ordinal);
-    }
-
-    @Override
-    public BigDecimal getDecimal(int ordinal) {
-        throwIfUnsafeAccess(ordinal, DecimalType.class, "decimal");
-        return (BigDecimal) getValue(ordinal);
-    }
-
-    @Override
-    public byte[] getBinary(int ordinal) {
-        throwIfUnsafeAccess(ordinal, BinaryType.class, "binary");
-        return (byte[]) getValue(ordinal);
-    }
-
-    @Override
-    public Row getStruct(int ordinal) {
-        throwIfUnsafeAccess(ordinal, StructType.class, "struct");
-        return (Row) getValue(ordinal);
-    }
-
-    @Override
-    public <T> List<T> getArray(int ordinal) {
-        // TODO: not sufficient check, also need to check the element type
-        throwIfUnsafeAccess(ordinal, ArrayType.class, "array");
-        return (List<T>) getValue(ordinal);
-    }
-
-    @Override
-    public <K, V> Map<K, V> getMap(int ordinal) {
-        // TODO: not sufficient check, also need to check the element types
-        throwIfUnsafeAccess(ordinal, MapType.class, "map");
-        return (Map<K, V>) getValue(ordinal);
-    }
-
-    private Object getValue(int ordinal) {
-        return ordinalToAccessor.get(ordinal).apply(this);
-    }
-
-    private DataType dataType(int ordinal) {
-        if (schema.length() <= ordinal) {
-            throw new IllegalArgumentException("invalid ordinal: " + ordinal);
-        }
-
-        return schema.at(ordinal).getDataType();
-    }
-
-    private void throwIfUnsafeAccess(
-        int ordinal, Class<? extends DataType> expDataType, String accessType) {
-
-        DataType actualDataType = dataType(ordinal);
-        if (!expDataType.isAssignableFrom(actualDataType.getClass())) {
-            String msg = String.format(
-                "Trying to access a `%s` value from vector of type `%s`",
-                accessType,
-                actualDataType);
-            throw new UnsupportedOperationException(msg);
-        }
-    }
-
-    private static int getOrdinal(String columnName) {
-        return colNameToOrdinal.get(columnName);
+    /**
+     * Get the table root from scan state {@link Row} returned by
+     * {@link Scan#getScanState(TableClient)}
+     *
+     * @param scanState Scan state {@link Row}
+     * @return Fully qualified path to the location of the table.
+     */
+    public static String getTableRoot(Row scanState) {
+        return scanState.getString(COL_NAME_TO_ORDINAL.get("tablePath"));
     }
 }

@@ -32,6 +32,7 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
+import io.delta.kernel.ScanFile;
 import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.data.ColumnVector;
@@ -152,8 +153,7 @@ public class DefaultJsonHandler
 
                 if (fileIter.hasNext()) {
                     currentFile = fileIter.next();
-                    FileStatus fileStatus =
-                        Utils.getFileStatus(currentFile.getScanFileRow());
+                    FileStatus fileStatus = ScanFile.getAddFileStatus(currentFile.getScanFileRow());
                     Path filePath = new Path(fileStatus.getPath());
                     FileSystem fs = filePath.getFileSystem(hadoopConf);
                     FSDataInputStream stream = null;

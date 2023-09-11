@@ -32,11 +32,10 @@ import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
-import io.delta.kernel.utils.Utils;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
+import io.delta.kernel.internal.InternalScanFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
-import io.delta.kernel.internal.data.AddFileColumnarBatch;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.data.SelectionColumnVector;
 import io.delta.kernel.internal.deletionvectors.DeletionVectorUtils;
@@ -54,10 +53,10 @@ public interface Scan {
      * Get an iterator of data files to scan.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @return iterator of {@link ColumnarBatch}s where each selected row in
+     * @return iterator of {@link FilteredColumnarBatch}s where each selected row in
      * the batch corresponds to one scan file
      */
-    CloseableIterator<ColumnarBatch> getScanFiles(TableClient tableClient);
+    CloseableIterator<FilteredColumnarBatch> getScanFiles(TableClient tableClient);
 
     /**
      * Get the remaining filter that is not guaranteed to be satisfied for the data Delta Kernel
@@ -97,9 +96,9 @@ public interface Scan {
         Row scanState,
         CloseableIterator<Row> scanFileRowIter,
         Optional<Predicate> predicate) throws IOException {
-        StructType physicalSchema = Utils.getPhysicalSchema(tableClient, scanState);
-        StructType logicalSchema = Utils.getLogicalSchema(tableClient, scanState);
-        List<String> partitionColumns = Utils.getPartitionColumns(scanState);
+        StructType physicalSchema = ScanStateRow.getPhysicalSchema(tableClient, scanState);
+        StructType logicalSchema = ScanStateRow.getLogicalSchema(tableClient, scanState);
+        List<String> partitionColumns = ScanStateRow.getPartitionColumns(scanState);
         Set<String> partitionColumnsSet = new HashSet<>(partitionColumns);
 
         StructType readSchemaWithoutPartitionColumns =
@@ -123,7 +122,7 @@ public interface Scan {
             filesReadContextsIter,
             readSchema);
 
-        String tablePath = ScanStateRow.getTablePath(scanState);
+        String tablePath = ScanStateRow.getTableRoot(scanState);
 
         return new CloseableIterator<FilteredColumnarBatch>() {
             RoaringBitmapArray currBitmap = null;
@@ -144,8 +143,8 @@ public interface Scan {
                 FileDataReadResult fileDataReadResult = data.next();
 
                 Row scanFileRow = fileDataReadResult.getScanFileRow();
-                DeletionVectorDescriptor dv = DeletionVectorDescriptor.fromRow(
-                    scanFileRow.getStruct(AddFileColumnarBatch.getDeletionVectorColOrdinal()));
+                DeletionVectorDescriptor dv =
+                    InternalScanFile.getDeletionVectorDescriptorFromRow(scanFileRow);
 
                 int rowIndexOrdinal = fileDataReadResult.getData().getSchema()
                     .indexOf(StructField.ROW_INDEX_COLUMN_NAME);
@@ -177,12 +176,12 @@ public interface Scan {
                         tableClient.getExpressionHandler(),
                         updatedBatch,
                         readSchemaWithoutPartitionColumns,
-                        Utils.getPartitionValues(fileDataReadResult.getScanFileRow()),
+                        ScanFile.getPartitionValues(fileDataReadResult.getScanFileRow()),
                         physicalSchema
                     );
 
                 // Change back to logical schema
-                String columnMappingMode = Utils.getColumnMappingMode(scanState);
+                String columnMappingMode = ScanStateRow.getColumnMappingMode(scanState);
                 switch (columnMappingMode) {
                     case "name":
                         updatedBatch = updatedBatch.withNewSchema(logicalSchema);

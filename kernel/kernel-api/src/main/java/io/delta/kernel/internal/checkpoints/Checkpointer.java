@@ -31,6 +31,7 @@ import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 
+import io.delta.kernel.internal.InternalScanFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.InternalUtils;
 
@@ -105,7 +106,7 @@ public class Checkpointer {
             try (CloseableIterator<FileReadContext> fileReadContextIter =
                      jsonHandler.contextualizeFileReads(
                          Utils.singletonCloseableIterator(
-                             InternalUtils.getScanFileRow(lastCheckpointFile)),
+                             InternalScanFile.generateScanFileRow(lastCheckpointFile)),
                          AlwaysTrue.ALWAYS_TRUE
                      );
                  CloseableIterator<FileDataReadResult> jsonIter =

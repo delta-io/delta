@@ -43,7 +43,6 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
     val conf = new Configuration()
     // Set the batch size small enough so there will be multiple batches
     conf.setInt("delta.kernel.default.parquet.reader.batch-size", 2)
-    val tableClient = DefaultTableClient.create(conf)
 
     val expectedResult = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
       .filter{ case (_, col1, _) =>
@@ -53,7 +52,7 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
     checkTable(
       path = goldenTablePath("dv-partitioned-with-checkpoint"),
       expectedAnswer = expectedResult.map(TestRow.fromTuple(_)),
-      tableClient = tableClient
+      tableClient = defaultTableClient
     )
   }
 
