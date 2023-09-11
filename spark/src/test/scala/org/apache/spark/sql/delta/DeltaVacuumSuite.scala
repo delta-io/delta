@@ -498,8 +498,8 @@ class DeltaVacuumSuite
         val e = intercept[AnalysisException] {
           vacuumSQLTest(tablePath, viewName)
         }
-        assert(e.getMessage.contains("not found") ||
-          e.getMessage.contains("TABLE_OR_VIEW_NOT_FOUND"))
+        assert(e.getMessage.contains("VACUUM is only supported for Delta tables.") ||
+          e.getMessage.contains("DELTA_ONLY_OPERATION"))
       }
     }
   }
