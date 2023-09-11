@@ -17,11 +17,10 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.hadoop.fs.Path
+
 import java.io.File
 
-import scala.collection.mutable.ArrayBuffer
-
-import org.apache.spark.SparkConf
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -29,12 +28,8 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.scalactic.source.Position
 import org.scalatest.Tag
-
-import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.connector.catalog.{Identifier, Table}
-import org.apache.spark.sql.connector.expressions.Transform
-import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
@@ -1478,54 +1473,3 @@ trait DescribeDeltaHistorySuiteBase
 
 class DescribeDeltaHistorySuite
   extends DescribeDeltaHistorySuiteBase with DeltaSQLCommandTest
-
-/**
- * Represents a custom DSV2 catalog based on Delta tables. We exercise replacing the default Spark
- * session catalog with this in order to make sure that analysis based on looking up tables by name
- * in the session catalog works properly.
- */
-class CustomDeltaCatalog extends DeltaCatalog {
-  override def createTable(
-      ident: Identifier,
-      columns: Array[org.apache.spark.sql.connector.catalog.Column],
-      partitions: Array[Transform],
-      properties: java.util.Map[String, String]): Table = {
-    CustomDeltaCatalog.tables.append(ident)
-    super.createTable(ident, columns, partitions, properties)
-  }
-
-  override def createTable(
-      ident: Identifier,
-      schema: StructType,
-      partitions: Array[Transform],
-      properties: java.util.Map[String, String]): Table = {
-    CustomDeltaCatalog.tables.append(ident)
-    super.createTable(ident, schema, partitions, properties)
-  }
-}
-
-object CustomDeltaCatalog {
-  val tables = ArrayBuffer.empty[Identifier]
-}
-
-class DescribeDeltaHistorySuiteWithCustomCatalog
-  extends DescribeDeltaHistorySuiteBase with DeltaSQLCommandTest {
-  val tblName = "tableName"
-
-  override protected def sparkConf: SparkConf = {
-    super.sparkConf
-      .set(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
-        classOf[CustomDeltaCatalog].getName)
-  }
-
-  test("Delta DESCRIBE HISTORY command with a separate custom DSV2 catalog") {
-    CustomDeltaCatalog.tables.clear()
-    withTable(tblName) {
-      sql(s"CREATE TABLE $tblName(i int) USING DELTA")
-      checkAnswer(
-        sql(s"DESCRIBE HISTORY $tblName").select("operation", "operationParameters.mode"),
-        Row("CREATE TABLE", null))
-      assert(CustomDeltaCatalog.tables.toSet == Set(Identifier.of(Array("default"), tblName)))
-    }
-  }
-}

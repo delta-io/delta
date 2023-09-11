@@ -425,8 +425,8 @@ class DeltaAnalysis(session: SparkSession)
           catalog, Identifier.of(Array(DeltaSourceUtils.ALT_NAME), u.path), table)
       }
 
-    case d: DescribeDeltaHistoryCommand if !d.child.isInstanceOf[ResolvedDeltaPath] =>
-      d.copy(child = DescribeDeltaHistory.resolvePath(d, apply(d.child), d.limit))
+    case d: DescribeDeltaHistory =>
+      d.toCommand
 
     case u: UnresolvedPathBasedDeltaTable =>
       val table = getPathBasedDeltaTable(u.path)
