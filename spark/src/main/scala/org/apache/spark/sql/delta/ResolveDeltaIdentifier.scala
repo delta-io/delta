@@ -56,12 +56,13 @@ case class ResolveDeltaIdentifier(sparkSession: SparkSession) extends Rule[Logic
     assert(catalog.isInstanceOf[TableCatalog], s"Catalog ${catalog.name()} must implement " +
       s"TableCatalog to support loading Delta table.")
     val tableCatalog = catalog.asInstanceOf[TableCatalog]
-    val deltaTableV2 = if (DeltaTableUtils.isDeltaTable(tableCatalog, identifier)) {
-      Some(tableCatalog.loadTable(identifier).asInstanceOf[DeltaTableV2])
-    } else if (DeltaTableUtils.isValidPath(tableId)) {
-      Some(DeltaTableV2(sparkSession, new Path(tableId.table)))
-    } else {
-      None
+    val optionalDeltaTableV2 = loadDeltaTable(tableCatalog, identifier)
+    val deltaTableV2 = optionalDeltaTableV2.orElse {
+      if (DeltaTableUtils.isValidPath(tableId)) {
+        Some(DeltaTableV2(sparkSession, new Path(tableId.table)))
+      } else {
+        None
+      }
     }
     deltaTableV2.map(d => DataSourceV2Relation.create(d, None, Some(identifier)))
   }
@@ -109,6 +110,26 @@ case class ResolveDeltaIdentifier(sparkSession: SparkSession) extends Rule[Logic
       }
       ResolveDeltaIdentifier.handleTableNotFoundInTimeTravel(
         sparkSession.sessionState.catalog, unresolvedIdentifier, tableId)
+    }
+  }
+
+  /**
+   * Return a DeltaTableV2 instance if the table exists and it is a Delta table,
+   * otherwise return None.
+   */
+  private def loadDeltaTable(
+      tableCatalog: TableCatalog,
+      identifier: Identifier): Option[DeltaTableV2] = {
+    val tableExists = tableCatalog.tableExists(identifier)
+    if (tableExists) {
+      tableCatalog.loadTable(identifier) match {
+        case v: DeltaTableV2 =>
+          Some(v)
+        case _ =>
+          None
+      }
+    } else {
+      None
     }
   }
 }

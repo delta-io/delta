@@ -30,9 +30,8 @@ import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
 import org.apache.spark.sql.catalyst.planning.NodeWithOnlyDeterministicProjectAndFilter
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LeafNode, LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.util.CharVarcharCodegenUtils
-import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
+import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
@@ -100,15 +99,6 @@ object DeltaTableUtils extends PredicateHelper
         catalog.tableExists(tableName)
     }
     tableIsNotTemporaryTable && tableExists && isDeltaTable(catalog.getTableMetadata(tableName))
-  }
-
-  /**
-   * Check whether the provided table identifier is a Delta table based on information
-   * from the Catalog.
-   */
-  def isDeltaTable(tableCatalog: TableCatalog, identifier: Identifier): Boolean = {
-    val tableExists = tableCatalog.tableExists(identifier)
-    tableExists && tableCatalog.loadTable(identifier).isInstanceOf[DeltaTableV2]
   }
 
   /** Check if the provided path is the root or the children of a Delta table. */
