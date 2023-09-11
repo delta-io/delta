@@ -73,7 +73,15 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
       } else if (DeltaTableUtils.isValidPath(tableId)) {
         DeltaTableV2(sparkSession, new Path(tableId.table))
       } else {
-        ResolveDeltaIdentifier.handleTableNotFoundInTimeTravel(catalog, ur, tableId)
+        if (
+          (catalog.tableExists(tableId) &&
+            catalog.getTableMetadata(tableId).tableType == CatalogTableType.VIEW) ||
+            catalog.isTempView(ur.multipartIdentifier)) {
+          // If table exists and not found to be a view, throw not supported error
+          throw DeltaErrors.notADeltaTableException("RESTORE")
+        } else {
+          ur.tableNotFound(ur.multipartIdentifier)
+        }
       }
 
       val identifier = deltaTableV2.getTableIdentifierIfExists.map(

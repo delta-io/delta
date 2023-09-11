@@ -30,6 +30,7 @@ import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
 import org.apache.spark.sql.catalyst.planning.NodeWithOnlyDeterministicProjectAndFilter
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LeafNode, LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.util.CharVarcharCodegenUtils
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.{IdentifierHelper, MultipartIdentifierHelper}
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
@@ -565,10 +566,16 @@ case class UnresolvedPathBasedDeltaTableRelation(
     path: String,
     options: CaseInsensitiveStringMap) extends UnresolvedPathBasedDeltaTableBase(path)
 
-case class UnresolvedDeltaIdentifier(nameParts: Seq[String]) extends LeafNode {
+case class UnresolvedDeltaIdentifier(
+    nameParts: Seq[String],
+    commandName: String) extends LeafNode {
   override def output: Seq[Attribute] = Nil
 
   override lazy val resolved: Boolean = false
+
+  def asTableIdentifier: TableIdentifier = nameParts.asTableIdentifier
+
+  def asIdentifier: Identifier = nameParts.asIdentifier
 }
 
 /**

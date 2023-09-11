@@ -311,7 +311,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       VacuumTableCommand(new Path(string(ctx.path)), horizonHours, dryRun)
     } else if (ctx.table != null) {
       VacuumTableStatement(
-        UnresolvedDeltaIdentifier(ctx.table.identifier.asScala.toSeq.map(_.getText)),
+        UnresolvedDeltaIdentifier(ctx.table.identifier.asScala.toSeq.map(_.getText), "VACUUM"),
         horizonHours,
         dryRun)
     } else {
@@ -408,7 +408,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   override def visitRestore(ctx: RestoreContext): LogicalPlan = withOrigin(ctx) {
     val tableRelation =
-      UnresolvedDeltaIdentifier(ctx.table.identifier.asScala.toSeq.map(_.getText))
+      UnresolvedDeltaIdentifier(ctx.table.identifier.asScala.toSeq.map(_.getText), "RESTORE")
     val timeTravelTableRelation = maybeTimeTravelChild(ctx.clause, tableRelation)
     RestoreTableStatement(timeTravelTableRelation.asInstanceOf[TimeTravel])
   }

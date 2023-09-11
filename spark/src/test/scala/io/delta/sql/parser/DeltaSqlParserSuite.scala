@@ -34,20 +34,24 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     // Setting `delegate` to `null` is fine. The following tests don't need to touch `delegate`.
     val parser = new DeltaSqlParser(null)
     assert(parser.parsePlan("vacuum 123_") ===
-      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("123_")), None, false))
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("123_"), "VACUUM"), None, false))
     assert(parser.parsePlan("vacuum 1a.123_") ===
-      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("1a", "123_")), None, false))
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("1a", "123_"), "VACUUM"), None, false))
     assert(parser.parsePlan("vacuum a.123A") ===
-      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123A")), None, false))
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123A"), "VACUUM"), None, false))
     assert(parser.parsePlan("vacuum a.123E3_column") ===
-      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123E3_column")), None, false))
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123E3_column"), "VACUUM"),
+        None, false))
     assert(parser.parsePlan("vacuum a.123D_column") ===
-      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123D_column")), None, false))
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123D_column"), "VACUUM"),
+        None, false))
     assert(parser.parsePlan("vacuum a.123BD_column") ===
-      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123BD_column")), None, false))
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("a", "123BD_column"), "VACUUM"),
+        None, false))
 
     assert(parser.parsePlan("vacuum delta.`/tmp/table`") ===
-      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("delta", "/tmp/table")), None, false))
+      VacuumTableStatement(UnresolvedDeltaIdentifier(Seq("delta", "/tmp/table"), "VACUUM"),
+        None, false))
 
     assert(parser.parsePlan("vacuum \"/tmp/table\"") ===
       VacuumTableCommand(new Path("/tmp/table"), None, false))
@@ -58,7 +62,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     val parsedCmd = parser.parsePlan("RESTORE catalog_foo.db.tbl TO VERSION AS OF 1;")
     assert(parsedCmd ===
       RestoreTableStatement(TimeTravel(
-        UnresolvedDeltaIdentifier(Seq("catalog_foo", "db", "tbl")),
+        UnresolvedDeltaIdentifier(Seq("catalog_foo", "db", "tbl"), "RESTORE"),
         None,
         Some(1),
         Some("sql"))))
