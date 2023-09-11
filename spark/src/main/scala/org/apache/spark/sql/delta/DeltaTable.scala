@@ -565,17 +565,6 @@ case class UnresolvedPathBasedDeltaTableRelation(
     path: String,
     options: CaseInsensitiveStringMap) extends UnresolvedPathBasedDeltaTableBase(path)
 
-/** Resolves to a [[ResolvedTable]] if the path is for delta table, unchanged if non delta table */
-case class UnresolvedPath(
-  path: String,
-  commandName: String) extends LeafNode {
-  override lazy val resolved: Boolean = false
-  override val output: Seq[Attribute] = Nil
-}
-
-/** Represents a Delta table reference that has been resolved to a path. */
-case class ResolvedDeltaPath(basePath: Path, override val output: Seq[Attribute]) extends LeafNode
-
 /**
  * A helper object with an apply method to transform a path or table identifier to a LogicalPlan.
  * If the path is set, it will be resolved to an [[UnresolvedPathBasedDeltaTable]] whereas if the

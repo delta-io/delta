@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, OptimisticTransaction, UnresolvedPath}
+  import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.{DeltaTableV2, IcebergTablePlaceHolder}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
@@ -294,18 +294,6 @@ trait DeltaCommand extends DeltaLogging {
     }
   }
 
-
-  /**
-   * Extracts [[CatalogTable]] metadata from a LogicalPlan if the plan is a [[ResolvedTable]].
-   */
-  def getTableCatalogTable(target: LogicalPlan): Option[CatalogTable] = {
-    target match {
-      case ResolvedTable(_, _, d: DeltaTableV2, _) => d.catalogTable
-      case ResolvedTable(_, _, t: V1Table, _) => Some(t.catalogTable)
-      case _ => None
-    }
-  }
-
   /**
    * Helper method to extract the table id or path from a LogicalPlan representing
    * a Delta table. This uses [[DeltaCommand.getDeltaTable]] to convert the LogicalPlan
@@ -322,25 +310,6 @@ trait DeltaCommand extends DeltaLogging {
       case Some(catalogTable)
         => (Some(catalogTable.identifier), None)
       case _ => (None, Some(table.path.toString))
-    }
-  }
-
-  /**
-   * Helper method to extract the table id or path from a LogicalPlan representing a resolved table
-   * or path. This calls getDeltaTablePathOrIdentifier if the resolved table is a delta table. For
-   * non delta table with identifier, we extract its identifier. For non delta table with path, it
-   * will be represented as UnresolvedPath and pass along here, we extract its path.
-   */
-  def getTablePathOrIdentifier(
-      target: LogicalPlan,
-      cmd: String): (Option[TableIdentifier], Option[String]) = {
-    target match {
-      case ResolvedTable(_, _, t: DeltaTableV2, _) => getDeltaTablePathOrIdentifier(target, cmd)
-      case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
-        getDeltaTablePathOrIdentifier(target, cmd)
-      case ResolvedTable(_, _, t: V1Table, _) => (Some(t.catalogTable.identifier), None)
-      case u: UnresolvedPath => (None, Some(u.path))
-      case _ => (None, None)
     }
   }
 

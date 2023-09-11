@@ -401,30 +401,6 @@ class DeltaAnalysis(session: SparkSession)
           throw DeltaErrors.notADeltaTableException("RESTORE")
       }
 
-    // Resolve as a resolved table if the path is for delta table. For non delta table, we keep the
-    // path and pass it along.
-    case u: UnresolvedPath =>
-      val table = getPathBasedDeltaTable(u.path)
-      val tableExists = try {
-        table.tableExists
-      } catch {
-        case NonFatal(e) => false
-      }
-      if (!tableExists) {
-        u
-      } else {
-        val catalogName: Option[String] = table.catalogTable match {
-          case Some(ct) if ct.identifier.catalog.isDefined => Some(ct.identifier.catalog.get)
-          case _ => None
-        }
-        val catalog = catalogName match {
-          case Some(c) => session.sessionState.catalogManager.catalog(c).asTableCatalog
-          case None => session.sessionState.catalogManager.currentCatalog.asTableCatalog
-        }
-        ResolvedTable.create(
-          catalog, Identifier.of(Array(DeltaSourceUtils.ALT_NAME), u.path), table)
-      }
-
     case d: DescribeDeltaHistory =>
       d.toCommand
 
