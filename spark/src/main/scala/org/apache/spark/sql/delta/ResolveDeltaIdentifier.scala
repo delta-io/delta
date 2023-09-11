@@ -16,7 +16,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.hadoop.fs.Path
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.catalyst.analysis.{AnalysisErrorAt, ResolvedTable, UnresolvedTable}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -38,18 +38,10 @@ case class ResolveDeltaIdentifier(sparkSession: SparkSession) extends Rule[Logic
 
   private def resolveDeltaIdentifier(
       unresolvedId: UnresolvedDeltaIdentifier): DataSourceV2Relation = {
-    val unresolvedTable =
-      UnresolvedTable(unresolvedId.nameParts, unresolvedId.commandName, None)
-    val analyzer = sparkSession.sessionState.analyzer
-    val optionalDeltaTableV2 = analyzer.ResolveRelations(unresolvedTable) match {
-      case r: ResolvedTable =>
-        r.table match {
-          case deltaTableV2: DeltaTableV2 => Some(deltaTableV2)
-          case _ => throw DeltaErrors.notADeltaTableException(unresolvedTable.commandName)
-        }
-      case _ => None
-    }
+    // Resolve the identifier as a Delta table.
+    val optionalDeltaTableV2 = resolveAsTable(unresolvedId)
 
+    // If the identifier is not a Delta table, try to resolve it as a Delta file table.
     val deltaTableV2 = optionalDeltaTableV2.getOrElse {
       val tableId = unresolvedId.asTableIdentifier
       if (DeltaTableUtils.isValidPath(tableId)) {
@@ -59,5 +51,30 @@ case class ResolveDeltaIdentifier(sparkSession: SparkSession) extends Rule[Logic
       }
     }
     DataSourceV2Relation.create(deltaTableV2, None, Some(unresolvedId.asIdentifier))
+  }
+
+  // Resolve the identifier as a table in the Spark catalogs.
+  // Return None if the table doesn't exist.
+  // If the table exists but is not a Delta table, throw an exception.
+  // If the identifier is a view, throw an exception.
+  private def resolveAsTable(unresolvedId: UnresolvedDeltaIdentifier): Option[DeltaTableV2] = {
+    val unresolvedTable =
+      UnresolvedTable(unresolvedId.nameParts, unresolvedId.commandName, None)
+    val analyzer = sparkSession.sessionState.analyzer
+    try {
+      analyzer.ResolveRelations(unresolvedTable) match {
+        case r: ResolvedTable =>
+          r.table match {
+            case deltaTableV2: DeltaTableV2 => Some(deltaTableV2)
+            case _ => throw DeltaErrors.notADeltaTableException(unresolvedTable.commandName)
+          }
+        case _ => None
+      }
+    } catch {
+      // If the resolved result is a view or temp view, Spark will throw exception with error
+      // class _LEGACY_ERROR_TEMP_1013. We need to catch it and throw a Delta specific exception.
+      case e: AnalysisException if e.errorClass.contains("_LEGACY_ERROR_TEMP_1013") =>
+        throw DeltaErrors.notADeltaTableException(unresolvedTable.commandName)
+    }
   }
 }
