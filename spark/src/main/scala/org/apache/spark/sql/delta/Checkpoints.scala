@@ -37,6 +37,7 @@ import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
 
 import org.apache.spark.TaskContext
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
@@ -391,7 +392,9 @@ trait Checkpoints extends DeltaLogging {
   }
 }
 
-object Checkpoints extends DeltaLogging {
+object Checkpoints
+  extends DeltaLogging
+  {
 
   /** The name of the last checkpoint file */
   val LAST_CHECKPOINT_FILE_NAME = "_last_checkpoint"
@@ -495,8 +498,8 @@ object Checkpoints extends DeltaLogging {
         new SerializableConfiguration(job.getConfiguration))
     }
 
-    // Use the string in the closure as Path is not Serializable.
-    val logPath = snapshot.path.toString
+    // Use the SparkPath in the closure as Path is not Serializable.
+    val logSparkPath = SparkPath.fromPath(snapshot.path)
     val version = snapshot.version
 
     // This is a hack to get spark to write directly to a file.
@@ -510,7 +513,7 @@ object Checkpoints extends DeltaLogging {
         val partition = TaskContext.getPartitionId()
         val (writtenPath, finalPath) = Checkpoints.getCheckpointWritePath(
           serConf.value,
-          logPath,
+          logSparkPath.toPath,
           version,
           actualNumParts,
           partition,
@@ -631,7 +634,7 @@ object Checkpoints extends DeltaLogging {
    */
   def getCheckpointWritePath(
       conf: Configuration,
-      logPath: String,
+      logPath: Path,
       version: Long,
       numParts: Int,
       part: Int,
@@ -647,15 +650,14 @@ object Checkpoints extends DeltaLogging {
         path
       }
     }
-    val logPathObj = new Path(logPath)
     val destinationName: Path = if (v2CheckpointEnabled) {
-      newV2CheckpointSidecarFile(logPathObj, version, numParts, part + 1)
+      newV2CheckpointSidecarFile(logPath, version, numParts, part + 1)
     } else {
       if (numParts > 1) {
         assert(part < numParts, s"Asked to create part: $part of max $numParts in checkpoint.")
-        checkpointFileWithParts(logPathObj, version, numParts)(part)
+        checkpointFileWithParts(logPath, version, numParts)(part)
       } else {
-        checkpointFileSingular(logPathObj, version)
+        checkpointFileSingular(logPath, version)
       }
     }
 
@@ -725,7 +727,7 @@ object Checkpoints extends DeltaLogging {
         val dfToWrite = nonFileActionsToWrite.map(_.wrap).toDF()
         val v2CheckpointPath = newV2CheckpointParquetFile(deltaLog.logPath, snapshot.version)
         val schemaOfDfWritten = createCheckpointV2ParquetFile(
-          spark, dfToWrite, v2CheckpointPath.toString, hadoopConf, useRename)
+          spark, dfToWrite, v2CheckpointPath, hadoopConf, useRename)
         (v2CheckpointPath, Some(schemaOfDfWritten))
       } else {
         throw DeltaErrors.assertionFailedError(
@@ -759,7 +761,7 @@ object Checkpoints extends DeltaLogging {
   def createCheckpointV2ParquetFile(
       spark: SparkSession,
       ds: Dataset[Row],
-      finalPathStr: String,
+      finalPath: Path,
       hadoopConf: Configuration,
       useRename: Boolean): StructType = {
     val df = ds.select(
@@ -770,6 +772,7 @@ object Checkpoints extends DeltaLogging {
     val job = Job.getInstance(hadoopConf)
     val factory = format.prepareWrite(spark, job, Map.empty, schema)
     val serConf = new SerializableConfiguration(job.getConfiguration)
+    val finalSparkPath = SparkPath.fromPath(finalPath)
 
     df.repartition(1)
       .queryExecution
@@ -779,7 +782,7 @@ object Checkpoints extends DeltaLogging {
         val actualNumParts = Option(TaskContext.get).map(_.numPartitions()).getOrElse(1)
         require(actualNumParts == 1, "The parquet V2 checkpoint must be written in 1 file")
         val partition = TaskContext.getPartitionId()
-        val finalPath = new Path(finalPathStr)
+        val finalPath = finalSparkPath.toPath
         val writePath = if (useRename) {
           val tempPath =
             new Path(finalPath.getParent, s".${finalPath.getName}.${UUID.randomUUID}.tmp")
