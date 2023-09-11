@@ -79,6 +79,9 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new DeltaSqlParser(parser)
     }
     extensions.injectResolutionRule { session =>
+      ResolveDeltaPathTable(session)
+    }
+    extensions.injectResolutionRule { session =>
       new PreprocessTimeTravel(session)
     }
     extensions.injectResolutionRule { session =>

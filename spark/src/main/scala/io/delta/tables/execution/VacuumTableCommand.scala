@@ -16,13 +16,14 @@
 
 package io.delta.tables.execution
 
-import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.trees.UnaryLike
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, DeltaTableUtils}
 import org.apache.spark.sql.delta.commands.VacuumCommand
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.delta.commands.VacuumCommand.getDeltaTable
+import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.types.StringType
 
 /**
@@ -32,28 +33,15 @@ import org.apache.spark.sql.types.StringType
  * }}}
  */
 case class VacuumTableCommand(
-    path: Option[String],
-    table: Option[TableIdentifier],
+    override val child: LogicalPlan,
     horizonHours: Option[Double],
-    dryRun: Boolean) extends LeafRunnableCommand {
+    dryRun: Boolean) extends RunnableCommand with UnaryLike[LogicalPlan]{
 
   override val output: Seq[Attribute] =
     Seq(AttributeReference("path", StringType, nullable = true)())
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val pathToVacuum =
-      if (path.nonEmpty) {
-        new Path(path.get)
-      } else if (table.nonEmpty) {
-        DeltaTableIdentifier(sparkSession, table.get) match {
-          case Some(id) if id.path.nonEmpty =>
-            new Path(id.path.get)
-          case _ =>
-            new Path(sparkSession.sessionState.catalog.getTableMetadata(table.get).location)
-        }
-      } else {
-        throw DeltaErrors.missingTableIdentifierException("VACUUM")
-      }
+    val pathToVacuum = getDeltaTable(child, "VACUUM").path
     val baseDeltaPath = DeltaTableUtils.findDeltaTableRoot(sparkSession, pathToVacuum)
     if (baseDeltaPath.isDefined) {
       if (baseDeltaPath.get != pathToVacuum) {
@@ -68,4 +56,7 @@ case class VacuumTableCommand(
     }
     VacuumCommand.gc(sparkSession, deltaLog, dryRun, horizonHours).collect()
   }
+
+  override protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan =
+    copy(child = newChild)
 }

@@ -307,9 +307,14 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    * }}}
    */
   override def visitVacuumTable(ctx: VacuumTableContext): AnyRef = withOrigin(ctx) {
-    VacuumTableCommand(
+    val child = UnresolvedDeltaPathOrIdentifier(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
+      "VACUUM"
+    )
+
+    VacuumTableCommand(
+      child,
       Option(ctx.number).map(_.getText.toDouble),
       ctx.RUN != null)
   }
