@@ -18,12 +18,11 @@ package org.apache.spark.sql.delta
 
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.analysis.UnresolvedTable
+import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedTable}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.MultipartIdentifierHelper
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.{CatalogHelper, MultipartIdentifierHelper}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
 /**
  * Replaces [[UnresolvedTable]]s if the plan is for direct query on files.
@@ -39,7 +38,9 @@ case class ResolveDeltaPathTable(sparkSession: SparkSession) extends Rule[Logica
       val tableId = u.multipartIdentifier.asTableIdentifier
       if (DeltaTableUtils.isValidPath(tableId)) {
         val deltaTableV2 = DeltaTableV2(sparkSession, new Path(tableId.table))
-        DataSourceV2Relation.create(deltaTableV2, None, Some(u.multipartIdentifier.asIdentifier))
+        val sessionCatalog =
+          sparkSession.sessionState.catalogManager.v2SessionCatalog.asTableCatalog
+        ResolvedTable.create(sessionCatalog, u.multipartIdentifier.asIdentifier, deltaTableV2)
       } else {
         u
       }

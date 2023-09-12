@@ -45,14 +45,16 @@ case class VacuumTableCommand(
     copy(child = newChild)
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val pathToVacuum = getDeltaTable(child, "VACUUM").path
-    val deltaLog = DeltaLog.forTable(sparkSession, pathToVacuum)
-    if (!deltaLog.tableExists) {
+    val deltaTable = getDeltaTable(child, "VACUUM")
+    if (!deltaTable.tableExists ||
+      // The table path can be of a partition directory and the deltaLog data path is
+      // the actual table path. In such cases, we should not allow vacuuming the table.
+      !deltaTable.path.toUri.getPath.equals(deltaTable.deltaLog.dataPath.toUri.getPath)) {
       throw DeltaErrors.notADeltaTableException(
         "VACUUM",
-        DeltaTableIdentifier(path = Some(pathToVacuum.toString)))
+        DeltaTableIdentifier(path = Some(deltaTable.path.toString)))
     }
-    VacuumCommand.gc(sparkSession, deltaLog, dryRun, horizonHours).collect()
+    VacuumCommand.gc(sparkSession, deltaTable.deltaLog, dryRun, horizonHours).collect()
   }
 }
 
