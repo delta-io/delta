@@ -34,8 +34,15 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 import static io.delta.kernel.defaults.internal.DefaultKernelUtils.daysSinceEpoch;
 
-public class DefaultExpressionHandler
-    implements ExpressionHandler {
+/**
+ * Default implementation of {@link ExpressionHandler}
+ *
+ * @see ExpressionHandler
+ */
+public class DefaultExpressionHandler implements ExpressionHandler {
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ExpressionEvaluator getEvaluator(StructType batchSchema, Expression expression) {
         return new DefaultExpressionEvaluator(expression);

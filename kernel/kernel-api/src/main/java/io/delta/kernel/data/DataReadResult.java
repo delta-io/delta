@@ -18,6 +18,8 @@ package io.delta.kernel.data;
 
 import java.util.Optional;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * Data read from Delta table file. Data is in {@link ColumnarBatch} format with an optional
  * selection vector to select only a subset of rows for this columnar batch.
@@ -26,7 +28,10 @@ import java.util.Optional;
  * {@link ColumnarBatch}. For each row index, a value of true in the selection vector indicates
  * the row at the same index in the data {@link ColumnarBatch} is valid; a value of false
  * indicates the row should be ignored. If there is no selection vector then all the rows are valid.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public class DataReadResult {
     private final ColumnarBatch data;
     private final Optional<ColumnVector> selectionVector;

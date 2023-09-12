@@ -33,6 +33,11 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.utils.Utils;
 
+/**
+ * Default implementation of {@link FileSystemClient} based on Hadoop APIs.
+ *
+ * @see FileSystemClient
+ */
 public class DefaultFileSystemClient
     implements FileSystemClient {
     private final Configuration hadoopConf;
@@ -41,6 +46,9 @@ public class DefaultFileSystemClient
         this.hadoopConf = hadoopConf;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CloseableIterator<FileStatus> listFrom(String filePath) {
         try {
@@ -71,6 +79,9 @@ public class DefaultFileSystemClient
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public CloseableIterator<ByteArrayInputStream> readFiles(
         CloseableIterator<Tuple2<String, Tuple2<Integer, Integer>>> iter) {

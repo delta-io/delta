@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.ParquetHandler;
 import io.delta.kernel.client.TableClient;
@@ -48,7 +49,10 @@ import io.delta.kernel.internal.util.PartitionUtils;
 
 /**
  * Represents a scan of a Delta table.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface Scan {
     /**
      * Get an iterator of data files to scan.

@@ -20,11 +20,15 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.StructType;
 
 /**
  * Represent a single record
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface Row {
 
     /**

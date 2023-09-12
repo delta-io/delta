@@ -13,20 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.types;
+package io.delta.kernel.annotation;
 
-import io.delta.kernel.annotation.Evolving;
+import java.lang.annotation.*;
 
 /**
- * The data type representing {@code double} type values.
- *
- * @since 3.0.0
+ * APIs that are meant to evolve towards becoming stable APIs, but are not stable APIs yet.
+ * Evolving interfaces can change from one feature release to another release (i.e. 3.0 to 3.1).
  */
-@Evolving
-public class DoubleType extends BasePrimitiveType {
-    public static final DoubleType INSTANCE = new DoubleType();
-
-    private DoubleType() {
-        super("double");
-    }
-}
+@Documented
+@Retention(RetentionPolicy.RUNTIME)
+@Target({ElementType.TYPE, ElementType.FIELD, ElementType.METHOD, ElementType.PARAMETER,
+    ElementType.CONSTRUCTOR, ElementType.LOCAL_VARIABLE, ElementType.PACKAGE})
+public @interface Evolving {}

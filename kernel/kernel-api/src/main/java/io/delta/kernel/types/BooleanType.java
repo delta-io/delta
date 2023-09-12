@@ -15,9 +15,14 @@
  */
 package io.delta.kernel.types;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * Data type representing {@code boolean} type values.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public class BooleanType extends BasePrimitiveType {
     public static final BooleanType INSTANCE = new BooleanType();
 

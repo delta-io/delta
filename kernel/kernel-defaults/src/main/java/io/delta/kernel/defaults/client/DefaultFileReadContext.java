@@ -20,6 +20,11 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.data.Row;
 
+/**
+ * Default implementation of {@link FileReadContext}.
+ *
+ * @see FileReadContext
+ */
 public class DefaultFileReadContext
     implements FileReadContext {
     private final Row scanFileRow;

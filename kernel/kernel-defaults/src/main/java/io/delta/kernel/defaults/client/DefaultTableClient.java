@@ -17,12 +17,13 @@ package io.delta.kernel.defaults.client;
 
 import org.apache.hadoop.conf.Configuration;
 
-import io.delta.kernel.client.ExpressionHandler;
-import io.delta.kernel.client.FileSystemClient;
-import io.delta.kernel.client.JsonHandler;
-import io.delta.kernel.client.ParquetHandler;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.client.*;
 
+/**
+ * Default implementation of {@link TableClient} based on Hadoop APIs.
+ *
+ * @see TableClient
+ */
 public class DefaultTableClient
     implements TableClient {
     private final Configuration hadoopConf;
@@ -31,21 +32,33 @@ public class DefaultTableClient
         this.hadoopConf = hadoopConf;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ExpressionHandler getExpressionHandler() {
         return new DefaultExpressionHandler();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public JsonHandler getJsonHandler() {
         return new DefaultJsonHandler(hadoopConf);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public FileSystemClient getFileSystemClient() {
         return new DefaultFileSystemClient(hadoopConf);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public ParquetHandler getParquetHandler() {
         return new DefaultParquetHandler(hadoopConf);
