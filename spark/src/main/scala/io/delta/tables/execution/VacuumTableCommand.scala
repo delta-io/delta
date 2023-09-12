@@ -40,14 +40,11 @@ case class VacuumTableCommand(
   override val output: Seq[Attribute] =
     Seq(AttributeReference("path", StringType, nullable = true)())
 
+  override protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan =
+    copy(child = newChild)
+
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val pathToVacuum = getDeltaTable(child, "VACUUM").path
-    val baseDeltaPath = DeltaTableUtils.findDeltaTableRoot(sparkSession, pathToVacuum)
-    if (baseDeltaPath.isDefined) {
-      if (baseDeltaPath.get != pathToVacuum) {
-        throw DeltaErrors.vacuumBasePathMissingException(baseDeltaPath.get)
-      }
-    }
     val deltaLog = DeltaLog.forTable(sparkSession, pathToVacuum)
     if (!deltaLog.tableExists) {
       throw DeltaErrors.notADeltaTableException(
@@ -56,7 +53,4 @@ case class VacuumTableCommand(
     }
     VacuumCommand.gc(sparkSession, deltaLog, dryRun, horizonHours).collect()
   }
-
-  override protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan =
-    copy(child = newChild)
 }
