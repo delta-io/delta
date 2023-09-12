@@ -21,7 +21,7 @@ import io.delta.tables.execution.VacuumTableCommand
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.UnresolvedPathBasedDeltaTable
-import org.apache.spark.sql.delta.commands.{OptimizeTableCommand, DeltaReorgTable}
+import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, OptimizeTableCommand, DeltaReorgTable}
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
@@ -137,6 +137,15 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (optimize, zorder)") ===
       OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(
         Seq(unresolvedAttr("optimize"), unresolvedAttr("zorder"))))
+  }
+
+  test("DESCRIBE DETAIL command is parsed as expected") {
+    val parser = new DeltaSqlParser(null)
+    val parsedCmd = parser.parsePlan("DESCRIBE DETAIL catalog_foo.db.tbl")
+    assert(parsedCmd ===
+      DescribeDeltaDetailCommand(
+        UnresolvedTable(Seq("catalog_foo", "db", "tbl"), DescribeDeltaDetailCommand.CMD_NAME, None),
+        Map.empty))
   }
 
   private def targetPlanForTable(tableParts: String*): UnresolvedTable =
