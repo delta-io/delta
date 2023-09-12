@@ -49,8 +49,6 @@ import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument
 
 /**
  * Default implementation of {@link JsonHandler} based on Hadoop APIs.
- *
- * @see JsonHandler
  */
 public class DefaultJsonHandler
     extends DefaultFileHandler
@@ -67,9 +65,6 @@ public class DefaultJsonHandler
         checkArgument(maxBatchSize > 0, "invalid JSON reader batch size: " + maxBatchSize);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public ColumnarBatch parseJson(ColumnVector jsonStringVector, StructType outputSchema) {
         List<Row> rows = new ArrayList<>();
@@ -79,9 +74,6 @@ public class DefaultJsonHandler
         return new DefaultRowBasedColumnarBatch(outputSchema, rows);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public CloseableIterator<FileDataReadResult> readJsonFiles(
         CloseableIterator<FileReadContext> fileIter,

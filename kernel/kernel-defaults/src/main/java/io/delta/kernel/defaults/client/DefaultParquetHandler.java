@@ -33,8 +33,6 @@ import io.delta.kernel.defaults.internal.parquet.ParquetBatchReader;
 
 /**
  * Default implementation of {@link ParquetHandler} based on Hadoop APIs.
- *
- * @see ParquetHandler
  */
 public class DefaultParquetHandler extends DefaultFileHandler implements ParquetHandler {
     private final Configuration hadoopConf;
@@ -48,9 +46,6 @@ public class DefaultParquetHandler extends DefaultFileHandler implements Parquet
         this.hadoopConf = hadoopConf;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public CloseableIterator<FileDataReadResult> readParquetFiles(
         CloseableIterator<FileReadContext> fileIter, StructType physicalSchema) throws IOException {

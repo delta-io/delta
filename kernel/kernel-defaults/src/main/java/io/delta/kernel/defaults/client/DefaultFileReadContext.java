@@ -22,8 +22,6 @@ import io.delta.kernel.data.Row;
 
 /**
  * Default implementation of {@link FileReadContext}.
- *
- * @see FileReadContext
  */
 public class DefaultFileReadContext
     implements FileReadContext {

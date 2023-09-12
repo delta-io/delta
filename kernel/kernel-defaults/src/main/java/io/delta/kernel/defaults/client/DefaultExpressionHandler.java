@@ -36,13 +36,8 @@ import static io.delta.kernel.defaults.internal.DefaultKernelUtils.daysSinceEpoc
 
 /**
  * Default implementation of {@link ExpressionHandler}
- *
- * @see ExpressionHandler
  */
 public class DefaultExpressionHandler implements ExpressionHandler {
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public ExpressionEvaluator getEvaluator(StructType batchSchema, Expression expression) {
         return new DefaultExpressionEvaluator(expression);

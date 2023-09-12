@@ -21,8 +21,6 @@ import io.delta.kernel.client.*;
 
 /**
  * Default implementation of {@link TableClient} based on Hadoop APIs.
- *
- * @see TableClient
  */
 public class DefaultTableClient
     implements TableClient {
@@ -32,33 +30,21 @@ public class DefaultTableClient
         this.hadoopConf = hadoopConf;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public ExpressionHandler getExpressionHandler() {
         return new DefaultExpressionHandler();
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public JsonHandler getJsonHandler() {
         return new DefaultJsonHandler(hadoopConf);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public FileSystemClient getFileSystemClient() {
         return new DefaultFileSystemClient(hadoopConf);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public ParquetHandler getParquetHandler() {
         return new DefaultParquetHandler(hadoopConf);
