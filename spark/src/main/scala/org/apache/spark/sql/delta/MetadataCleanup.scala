@@ -21,11 +21,17 @@ import java.util.{Calendar, TimeZone}
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
+import org.apache.spark.sql.delta.TruncationGranularity.{DAY, HOUR, TruncationGranularity}
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames.{checkpointVersion, listingPrefix, CheckpointFile, DeltaFile}
 import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, Path}
+
+private[delta] object TruncationGranularity extends Enumeration {
+  type TruncationGranularity = Value
+  val DAY, HOUR = Value
+}
 
 /** Cleans up expired Delta table metadata. */
 trait MetadataCleanup extends DeltaLogging {
@@ -51,10 +57,15 @@ trait MetadataCleanup extends DeltaLogging {
   }
 
   /** Clean up expired delta and checkpoint logs. Exposed for testing. */
-  private[delta] def cleanUpExpiredLogs(snapshotToCleanup: Snapshot): Unit = {
+  private[delta] def cleanUpExpiredLogs(
+      snapshotToCleanup: Snapshot,
+      deltaRetentionMillisOpt: Option[Long] = None,
+      cutoffTruncationGranularity: TruncationGranularity = DAY): Unit = {
     recordDeltaOperation(this, "delta.log.cleanup") {
-      val retentionMillis = deltaRetentionMillis(snapshot.metadata)
-      val fileCutOffTime = truncateDay(clock.getTimeMillis() - retentionMillis).getTime
+      val retentionMillis =
+        deltaRetentionMillisOpt.getOrElse(deltaRetentionMillis(snapshot.metadata))
+      val fileCutOffTime =
+        truncateDate(clock.getTimeMillis() - retentionMillis, cutoffTruncationGranularity).getTime
       val formattedDate = fileCutOffTime.toGMTString
       logInfo(s"Starting the deletion of log files older than $formattedDate")
 
@@ -93,13 +104,26 @@ trait MetadataCleanup extends DeltaLogging {
     new BufferingLogDeletionIterator(files, fileCutOffTime, threshold, getVersion)
   }
 
-  /** Truncates a timestamp down to the previous midnight and returns the time and a log string */
-  private[delta] def truncateDay(timeMillis: Long): Calendar = {
+  /**
+   * Truncates a timestamp down to a given unit. The unit can be either DAY or HOUR.
+   * - DAY: The timestamp it truncated to the previous midnight.
+   * - HOUR: The timestamp it truncated to the last hour.
+   */
+  private[delta] def truncateDate(timeMillis: Long, unit: TruncationGranularity): Calendar = {
     val date = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
     date.setTimeInMillis(timeMillis)
-    DateUtils.truncate(
-      date,
-      Calendar.DAY_OF_MONTH)
+
+    val calendarUnit = unit match {
+      case DAY => Calendar.DAY_OF_MONTH
+      case HOUR => Calendar.HOUR_OF_DAY
+    }
+
+    DateUtils.truncate(date, calendarUnit)
+  }
+
+  /** Truncates a timestamp down to the previous midnight and returns the time. */
+  private[delta] def truncateDay(timeMillis: Long): Calendar = {
+    truncateDate(timeMillis, TruncationGranularity.DAY)
   }
 
   /**

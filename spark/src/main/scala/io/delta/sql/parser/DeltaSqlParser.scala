@@ -513,10 +513,12 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    * Parse an ALTER TABLE DROP FEATURE command.
    */
   override def visitAlterTableDropFeature(ctx: AlterTableDropFeatureContext): LogicalPlan = {
+    val truncateHistory = ctx.TRUNCATE != null && ctx.HISTORY != null
     AlterTableDropFeature(
       createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
         "ALTER TABLE ... DROP FEATURE"),
-      visitFeatureNameValue(ctx.featureName))
+      visitFeatureNameValue(ctx.featureName),
+      truncateHistory)
   }
 
   /**

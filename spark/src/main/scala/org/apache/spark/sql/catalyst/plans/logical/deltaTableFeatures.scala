@@ -24,8 +24,9 @@ import org.apache.spark.sql.connector.catalog.TableChange
  * The logical plan of the ALTER TABLE ... DROP FEATURE command.
  */
 case class AlterTableDropFeature(
-    table: LogicalPlan, featureName: String) extends AlterTableCommand {
-  override def changes: Seq[TableChange] = Seq(DropFeature(featureName))
-
+    table: LogicalPlan,
+    featureName: String,
+    truncateHistory: Boolean) extends AlterTableCommand {
+  override def changes: Seq[TableChange] = Seq(DropFeature(featureName, truncateHistory))
   protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan = copy(table = newChild)
 }
