@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 import scala.util.control.NonFatal
 
@@ -188,7 +189,7 @@ case class AlterTableUnsetPropertiesDeltaCommand(
  *
  * The syntax of the command is:
  * {{{
- *   ALTER TABLE t DROP FEATURE f
+ *   ALTER TABLE t DROP FEATURE f [TRUNCATE HISTORY]
  * }}}
  *
  * The operation consists of two stages (see [[RemovableFeature]]):
@@ -206,18 +207,33 @@ case class AlterTableUnsetPropertiesDeltaCommand(
  *     and the retention period must pass before a protocol downgrade is possible.
  *  2) The user runs again the command after the retention period is over. The command checks the
  *     current state again and the history. If everything is clean, it proceeds with the protocol
- *     downgrade. Note, the retention period is always rounded up so that the cutoff is at a
- *     midnight UTC boundary.
+ *     downgrade. The TRUNCATE HISTORY option may be used here to automatically set
+ *     the log retention period to a minimum of 24 hours before clearing the logs. The minimum
+ *     value is based on the expected duration of the longest running transaction. This is the
+ *     lowest retention period we can set without endangering concurrent transactions.
+ *     If transactions do run for longer than this period while this command is run, then this
+ *     can lead to data corruption.
  *
- *  Note, legacy features can be removed as well, as soon as the protocol supports Table Features.
+ *  Note, legacy features can be removed as well, as long as the protocol supports Table Features.
  *  This will not downgrade protocol versions but only remove the feature from the
  *  supported features list. For example, removing legacyRWFeature from
  *  (3, 7, [legacyRWFeature], [legacyRWFeature]) will result in (3, 7, [], []) and not (1, 1).
  */
 case class AlterTableDropFeatureDeltaCommand(
     table: DeltaTableV2,
-    featureName: String)
+    featureName: String,
+    truncateHistory: Boolean = false)
   extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+
+  def truncateHistoryLogRetentionMillis(txn: OptimisticTransaction): Option[Long] = {
+    if (!truncateHistory) return None
+
+    val truncateHistoryLogRetention = DeltaConfigs
+      .TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION
+      .fromMetaData(txn.metadata)
+
+    Some(DeltaConfigs.getMilliSeconds(truncateHistoryLogRetention))
+  }
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
@@ -235,6 +251,10 @@ case class AlterTableDropFeatureDeltaCommand(
       // the reader+writer features list.
       if (!table.snapshot.protocol.readerAndWriterFeatureNames.contains(featureName)) {
         throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
+      }
+
+      if (truncateHistory && !removableFeature.isReaderWriterFeature) {
+        throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
       }
 
       // The removableFeature.preDowngradeCommand needs to adhere to the following requirements:
@@ -274,9 +294,14 @@ case class AlterTableDropFeatureDeltaCommand(
       // Therefore, we do not need to check again for historical versions during conflict
       // resolution.
       if (isReaderWriterFeature) {
-        // Run a log cleanup first to make sure there is no concurrent metadataCleanup during
-        // findEarliestReliableCheckpoint.
-        deltaLog.cleanUpExpiredLogs(snapshot)
+        // Clean up expired logs before checking history. This also makes sure there is no
+        // concurrent metadataCleanup during findEarliestReliableCheckpoint. Note, this
+        // cleanUpExpiredLogs call truncates the cutoff at an hour granularity.
+        deltaLog.cleanUpExpiredLogs(
+          snapshot,
+          truncateHistoryLogRetentionMillis(txn),
+          TruncationGranularity.HOUR)
+
         val historyContainsFeature = removableFeature.historyContainsFeature(
           spark = sparkSession,
           downgradeTxnReadSnapshot = snapshot)
@@ -286,7 +311,7 @@ case class AlterTableDropFeatureDeltaCommand(
       }
 
       txn.updateProtocol(txn.protocol.removeFeature(removableFeature))
-      txn.commit(Nil, DeltaOperations.DropTableFeature(featureName))
+      txn.commit(Nil, DeltaOperations.DropTableFeature(featureName, truncateHistory))
       Nil
     }
   }

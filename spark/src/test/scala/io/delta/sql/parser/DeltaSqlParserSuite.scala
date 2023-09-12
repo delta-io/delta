@@ -19,6 +19,7 @@ package io.delta.sql.parser
 import io.delta.tables.execution.VacuumTableCommand
 
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.UnresolvedPathBasedDeltaTable
 import org.apache.spark.sql.delta.commands.{OptimizeTableCommand, DeltaReorgTable}
 import org.apache.spark.SparkFunSuite
@@ -27,7 +28,7 @@ import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRe
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
-import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableDropFeature, CloneTableStatement}
 
 class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
@@ -271,6 +272,21 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     // Custom source format with path
     checkCloneStmt(parser, source = "/path/to/iceberg", target = "t1", sourceFormat = "iceberg",
       sourceIsTable = false)
+  }
+
+  for (truncateHistory <- Seq(true, false))
+  test(s"DROP FEATURE command is parsed as expected - truncateHistory: $truncateHistory") {
+    val parser = new DeltaSqlParser(null)
+    val table = "tbl"
+    val featureName = "feature_name"
+    val sql = s"ALTER TABLE $table DROP FEATURE $featureName " +
+      (if (truncateHistory) "TRUNCATE HISTORY" else "")
+    val parsedCmd = parser.parsePlan(sql)
+    assert(parsedCmd ===
+      AlterTableDropFeature(
+        UnresolvedTable(Seq(table), "ALTER TABLE ... DROP FEATURE", None),
+        featureName,
+        truncateHistory))
   }
 
   private def unresolvedAttr(colName: String*): UnresolvedAttribute = {
