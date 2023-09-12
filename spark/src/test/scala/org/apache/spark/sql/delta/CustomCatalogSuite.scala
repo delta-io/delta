@@ -63,8 +63,7 @@ class DummyCatalog extends TableCatalog {
   private val spark: SparkSession = SparkSession.active
   private val tempDir: Path = new Path(Utils.createTempDir().getAbsolutePath)
   // scalastyle:off deltahadoopconfiguration
-  private val fs: FileSystem =
-    tempDir.getFileSystem(spark.sessionState.newHadoopConf())
+  private val fs: FileSystem = tempDir.getFileSystem(spark.sessionState.newHadoopConf())
   // scalastyle:on deltahadoopconfiguration
 
   override def name: String = "dummy"

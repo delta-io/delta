@@ -38,7 +38,7 @@ case class ResolveDeltaPathTable(sparkSession: SparkSession) extends Rule[Logica
     case u: UnresolvedTable if maybeSQLFile(u) =>
       val tableId = u.multipartIdentifier.asTableIdentifier
       if (DeltaTableUtils.isValidPath(tableId)) {
-         val deltaTableV2 = DeltaTableV2(sparkSession, new Path(tableId.table))
+        val deltaTableV2 = DeltaTableV2(sparkSession, new Path(tableId.table))
         DataSourceV2Relation.create(deltaTableV2, None, Some(u.multipartIdentifier.asIdentifier))
       } else {
         u
