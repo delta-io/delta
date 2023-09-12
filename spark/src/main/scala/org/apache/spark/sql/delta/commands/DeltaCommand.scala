@@ -308,15 +308,10 @@ trait DeltaCommand extends DeltaLogging {
    * table can be a non delta table.
    */
   def getTableCatalogTable(target: LogicalPlan, cmd: String): Option[CatalogTable] = {
-    try {
-      val deltaTable = getDeltaTable(target, cmd)
-      deltaTable.catalogTable
-    } catch {
-      case e: DeltaAnalysisException =>
-        target match {
-          case ResolvedTable(_, _, t: V1Table, _) => Some(t.catalogTable)
-          case _ => None
-        }
+    target match {
+      case ResolvedTable(_, _, d: DeltaTableV2, _) => d.catalogTable
+      case ResolvedTable(_, _, t: V1Table, _) => Some(t.catalogTable)
+      case _ => None
     }
   }
 

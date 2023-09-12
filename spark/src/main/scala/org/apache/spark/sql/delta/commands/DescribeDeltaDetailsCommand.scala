@@ -86,7 +86,7 @@ case class DescribeDeltaDetailCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val tableMetadata = getTableCatalogTable(child, DescribeDeltaDetailCommand.CMD_NAME)
-    val path = getTablePathOrIdentifier(child, DescribeDeltaDetailCommand.CMD_NAME)._2
+    val (_, path) = getTablePathOrIdentifier(child, DescribeDeltaDetailCommand.CMD_NAME)
     val basePath = tableMetadata match {
       case Some(metadata) => new Path(metadata.location)
       case _ if path.isDefined => new Path(path.get)
