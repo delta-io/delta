@@ -94,6 +94,12 @@ class Snapshot(
   override def columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
 
 
+  private[delta] lazy val nonFileActions: Seq[Action] = {
+    Seq(protocol, metadata) ++
+      setTransactions ++
+      domainMetadata
+  }
+
   @volatile private[delta] var stateReconstructionTriggered = false
 
   /**

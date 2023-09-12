@@ -603,6 +603,26 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val LAST_CHECKPOINT_NON_FILE_ACTIONS_THRESHOLD =
+    buildConf("lastCheckpoint.nonFileActions.threshold")
+      .internal()
+      .doc("""
+          |Threshold for total number of non file-actions to store in the last_checkpoint
+          | corresponding to the checkpoint v2.
+          |""".stripMargin)
+      .intConf
+      .createWithDefault(30)
+
+  val LAST_CHECKPOINT_SIDECARS_THRESHOLD =
+    buildConf("lastCheckpoint.sidecars.threshold")
+      .internal()
+      .doc("""
+          |Threshold for total number of sidecar files to store in the last_checkpoint
+          | corresponding to the checkpoint v2.
+          |""".stripMargin)
+      .intConf
+      .createWithDefault(30)
+
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
       .doc("Whether the checksum file can be written.")
