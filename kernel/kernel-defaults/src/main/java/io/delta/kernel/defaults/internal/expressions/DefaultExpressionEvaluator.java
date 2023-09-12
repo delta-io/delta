@@ -42,13 +42,12 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     private final Expression expression;
 
     /**
-     * Create a {@link DefaultExpressionEvaluator} instance.
+     * Create a {@link DefaultExpressionEvaluator} instance bound to the given expression and
+     * <i>inputSchem</i>.
      *
      * @param inputSchema Input data schema
      * @param expression  Expression to evaluate.
      * @param outputType  Expected result data type.
-     * @return An {@link ExpressionEvaluator} instance bound to the given expression and
-     * <i>inputSchem</i>.
      */
     public DefaultExpressionEvaluator(
         StructType inputSchema,
