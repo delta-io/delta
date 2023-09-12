@@ -15,38 +15,44 @@
  */
 package io.delta.kernel.expressions;
 
-import java.util.Collections;
-import java.util.List;
+import java.util.Arrays;
 
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * An expression type that refers to a column by name (case-sensitive) in the input.
+ * {@code OR} expression
+ * <p>
+ * Definition:
+ * <p><ul>
+ *     <li>Logical {@code expr1} OR {@code expr2} on two inputs.</li>
+ *     <li>Requires both left and right input expressions of type {@link Predicate}.</li>
+ *     <li>Result is null at least one of the inputs is null.</li>
+ * </ul>
  *
  * @since 3.0.0
  */
 @Evolving
-public final class Column implements Expression {
-    private final String name;
-
-    public Column(String name) {
-        this.name = name;
+public final class Or extends Predicate {
+    public Or(Predicate left, Predicate right) {
+        super("OR", Arrays.asList(left, right));
     }
 
     /**
-     * @return the column name.
+     * @return Left side operand.
      */
-    public String getName() {
-        return name;
+    public Predicate getLeft() {
+        return (Predicate) getChildren().get(0);
     }
 
-    @Override
-    public List<Expression> getChildren() {
-        return Collections.emptyList();
+    /**
+     * @return Right side operand.
+     */
+    public Predicate getRight() {
+        return (Predicate) getChildren().get(1);
     }
 
     @Override
     public String toString() {
-        return "column(" + name + ")";
+        return "(" + getLeft() + " OR " + getRight() + ")";
     }
 }

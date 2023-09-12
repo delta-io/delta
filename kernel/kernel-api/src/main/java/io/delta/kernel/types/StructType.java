@@ -114,19 +114,7 @@ public final class StructType extends DataType {
      */
     public Column column(int ordinal) {
         final StructField field = at(ordinal);
-        return new Column(ordinal, field.getName(), field.getDataType());
-    }
-
-    /**
-     * Creates a {@link Column} expression for the field with the given {@code fieldName}.
-     *
-     * @param fieldName the name of the {@link StructField} to create a column for
-     * @return a {@link Column} expression for the {@link StructField} with name {@code fieldName}
-     */
-    public Column column(String fieldName) {
-        Tuple2<StructField, Integer> fieldAndOrdinal = nameToFieldAndOrdinal.get(fieldName);
-        System.out.println("Created column " + fieldName + " with ordinal " + fieldAndOrdinal._2);
-        return new Column(fieldAndOrdinal._2, fieldName, fieldAndOrdinal._1.getDataType());
+        return new Column(field.getName());
     }
 
     @Override
@@ -146,8 +134,7 @@ public final class StructType extends DataType {
     @Override
     public String toString() {
         return String.format(
-            "%s(%s)",
-            getClass().getSimpleName(),
+            "struct(%s)",
             fields.stream().map(StructField::toString).collect(Collectors.joining(", "))
         );
     }

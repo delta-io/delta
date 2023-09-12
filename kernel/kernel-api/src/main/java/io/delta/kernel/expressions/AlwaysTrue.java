@@ -13,31 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.expressions;
 
 import java.util.Collections;
-import java.util.List;
-import java.util.Set;
+
+import io.delta.kernel.annotation.Evolving;
 
 /**
- * An {@link Expression} with no children.
+ * Predicate which always evaluates to {@code true}.
+ *
+ * @since 3.0.0
  */
-public abstract class LeafExpression implements Expression {
+@Evolving
+public final class AlwaysTrue extends Predicate {
+    public static final AlwaysTrue ALWAYS_TRUE = new AlwaysTrue();
 
-    protected LeafExpression() {}
-
-    @Override
-    public List<Expression> children() {
-        return Collections.emptyList();
+    private AlwaysTrue() {
+        super("ALWAYS_TRUE", Collections.emptyList());
     }
-
-    @Override
-    public Set<String> references() {
-        return Collections.emptySet();
-    }
-
-    public abstract boolean equals(Object o);
-
-    public abstract int hashCode();
 }

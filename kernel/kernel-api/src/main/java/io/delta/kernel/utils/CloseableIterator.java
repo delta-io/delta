@@ -25,7 +25,7 @@ import java.util.function.Function;
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * Closeable extension of {@link Iterator<T>}
+ * Closeable extension of {@link Iterator}
  *
  * @param <T> the type of elements returned by this iterator
  * @since 3.0.0

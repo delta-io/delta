@@ -18,7 +18,7 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 
 /**
@@ -34,10 +34,10 @@ public interface ScanBuilder {
      * the given filter.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @param filter      an {@link Expression} which evaluates to boolean.
+     * @param predicate   a {@link Predicate} to prune the metadata or data.
      * @return A {@link ScanBuilder} with filter applied.
      */
-    ScanBuilder withFilter(TableClient tableClient, Expression filter);
+    ScanBuilder withFilter(TableClient tableClient, Predicate predicate);
 
     /**
      * Apply the given <i>readSchema</i>. If the builder already has a projection applied, calling

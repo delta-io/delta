@@ -22,7 +22,7 @@ import java.util.Optional;
 import io.delta.kernel.Scan;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -47,7 +47,7 @@ public class ScanBuilderImpl
     private final Path dataPath;
 
     private StructType readSchema;
-    private Optional<Expression> filter;
+    private Optional<Predicate> predicate;
 
     public ScanBuilderImpl(
         Path dataPath,
@@ -62,15 +62,15 @@ public class ScanBuilderImpl
         this.tableClient = tableClient;
 
         this.readSchema = snapshotSchema;
-        this.filter = Optional.empty();
+        this.predicate = Optional.empty();
     }
 
     @Override
-    public ScanBuilder withFilter(TableClient tableClient, Expression filter) {
-        if (this.filter.isPresent()) {
+    public ScanBuilder withFilter(TableClient tableClient, Predicate predicate) {
+        if (this.predicate.isPresent()) {
             throw new IllegalArgumentException("There already exists a filter in current builder");
         }
-        this.filter = Optional.of(filter);
+        this.predicate = Optional.of(predicate);
         return this;
     }
 
@@ -104,7 +104,7 @@ public class ScanBuilderImpl
             readSchema,
             protocolAndMetadata,
             filesIter,
-            filter,
+            predicate,
             dataPath);
     }
 }

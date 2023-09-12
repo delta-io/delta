@@ -13,21 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.expressions;
 
+import java.util.Collections;
+
+import io.delta.kernel.annotation.Evolving;
+
 /**
- * Evaluates {@code expr1} = {@code expr2} for {@code new EqualTo(expr1, expr2)}.
+ * Predicate which always evaluates to {@code false}.
+ *
+ * @since 3.0.0
  */
-public final class EqualTo extends BinaryComparison implements Predicate {
+@Evolving
+public final class AlwaysFalse extends Predicate {
+    public static final AlwaysFalse ALWAYS_FALSE = new AlwaysFalse();
 
-    public EqualTo(Expression left, Expression right) {
-        super(left, right, "=");
-    }
-
-    @Override
-    protected Object nullSafeEval(Object leftResult, Object rightResult) {
-        return compare(leftResult, rightResult) == 0;
+    private AlwaysFalse() {
+        super("ALWAYS_FALSE", Collections.emptyList());
     }
 }
-

@@ -30,12 +30,12 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.types.*;
+import static io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch;
 
 import io.delta.kernel.defaults.client.DefaultTableClient;
 import io.delta.kernel.defaults.integration.DataBuilderUtils.TestColumnBatchBuilder;
 import static io.delta.kernel.defaults.integration.DataBuilderUtils.row;
 import static io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getTestResourceFilePath;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.daysSinceEpoch;
 
 /**
  * Test reading Delta lake tables end to end using the Kernel APIs and default {@link TableClient}
