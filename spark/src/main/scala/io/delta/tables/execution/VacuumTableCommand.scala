@@ -46,10 +46,9 @@ case class VacuumTableCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaTable = getDeltaTable(child, "VACUUM")
-    if (!deltaTable.tableExists ||
-      // The table path can be of a partition directory and the deltaLog data path is
-      // the actual table path. In such cases, we should not allow vacuuming the table.
-      !deltaTable.path.toUri.getPath.equals(deltaTable.deltaLog.dataPath.toUri.getPath)) {
+    // The VACUUM command is only supported on existing delta tables. If the target table doesn't
+    // exist or it is based on a partition directory, an exception will be thrown.
+    if (!deltaTable.tableExists || deltaTable.hasPartitionFilters) {
       throw DeltaErrors.notADeltaTableException(
         "VACUUM",
         DeltaTableIdentifier(path = Some(deltaTable.path.toString)))
