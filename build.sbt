@@ -636,6 +636,7 @@ lazy val standaloneCosmetic = project
 
 lazy val testStandaloneCosmetic = (project in file("connectors/testStandaloneCosmetic"))
   .dependsOn(standaloneCosmetic)
+  .dependsOn(goldenTables % "test")
   .settings(
     name := "test-standalone-cosmetic",
     commonSettings,
