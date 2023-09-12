@@ -16,10 +16,14 @@
 
 package io.delta.kernel.data;
 
+import io.delta.kernel.annotation.Evolving;
 
 /**
  * Data read from a Delta table file and the corresponding scan file information.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface FileDataReadResult {
     /**
      * Get the data read from the file.

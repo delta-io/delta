@@ -24,12 +24,16 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.utils.Tuple2;
 
 /**
  * Struct type which contains one or more columns.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public final class StructType extends DataType {
 
     private final Map<String, Tuple2<StructField, Integer>> nameToFieldAndOrdinal;

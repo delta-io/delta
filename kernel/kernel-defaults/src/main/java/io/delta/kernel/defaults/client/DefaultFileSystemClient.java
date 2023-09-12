@@ -33,6 +33,9 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.utils.Utils;
 
+/**
+ * Default implementation of {@link FileSystemClient} based on Hadoop APIs.
+ */
 public class DefaultFileSystemClient
     implements FileSystemClient {
     private final Configuration hadoopConf;

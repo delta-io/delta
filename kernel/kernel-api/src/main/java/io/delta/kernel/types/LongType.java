@@ -15,9 +15,14 @@
  */
 package io.delta.kernel.types;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * The data type representing {@code long} type values.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public class LongType extends BasePrimitiveType {
     public static final LongType INSTANCE = new LongType();
 

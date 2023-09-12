@@ -26,8 +26,7 @@ import io.delta.kernel.utils.CloseableIterator;
 /**
  * Default client implementation of {@link FileHandler}. It splits file as one split.
  */
-public class DefaultFileHandler
-    implements FileHandler {
+public class DefaultFileHandler implements FileHandler {
     @Override
     public CloseableIterator<FileReadContext> contextualizeFileReads(
         CloseableIterator<Row> fileIter, Expression filter) {

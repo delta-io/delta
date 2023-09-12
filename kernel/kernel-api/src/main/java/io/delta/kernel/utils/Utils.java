@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 
 import io.delta.kernel.Scan;
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
@@ -34,6 +35,12 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
 
+/**
+ * Various utility methods to help the connectors work with data objects returned by Kernel
+ *
+ * @since 3.0.0
+ */
+@Evolving
 public class Utils {
     /**
      * Utility method to create a singleton {@link CloseableIterator}.

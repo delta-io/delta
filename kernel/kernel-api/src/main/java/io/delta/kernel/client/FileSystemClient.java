@@ -20,6 +20,7 @@ import java.io.ByteArrayInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
@@ -29,7 +30,10 @@ import io.delta.kernel.utils.Tuple2;
  * whenever it needs to access the underlying file system where the Delta table is present.
  * Connector implementation of this interface can hide filesystem specific details from Delta
  * Kernel.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface FileSystemClient {
     /**
      * List the paths in the same directory that are lexicographically greater or equal to

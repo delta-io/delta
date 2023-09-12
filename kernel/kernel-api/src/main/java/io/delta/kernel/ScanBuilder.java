@@ -16,13 +16,17 @@
 
 package io.delta.kernel;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.types.StructType;
 
 /**
  * Builder to construct {@link Scan} object.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface ScanBuilder {
 
     /**
