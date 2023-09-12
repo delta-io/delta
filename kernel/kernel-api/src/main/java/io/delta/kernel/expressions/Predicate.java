@@ -20,6 +20,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.ExpressionHandler;
 
 /**
@@ -84,7 +85,10 @@ import io.delta.kernel.client.ExpressionHandler;
  *   </ul>
  *  </li>
  * </ol>
+ *
+ * @since 3.0.0
  */
+@Evolving
 public class Predicate extends ScalarExpression {
     public Predicate(String name, List<Expression> children) {
         super(name, children);

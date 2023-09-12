@@ -17,9 +17,14 @@ package io.delta.kernel.expressions;
 
 import java.util.List;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * Base interface for all Kernel expressions.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface Expression {
     /**
      * @return a list of expressions that are input to this expression.

@@ -18,9 +18,14 @@ package io.delta.kernel.expressions;
 import java.util.Collections;
 import java.util.List;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * An expression type that refers to a column by name (case-sensitive) in the input.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public final class Column implements Expression {
     private final String name;
 

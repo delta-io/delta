@@ -17,6 +17,8 @@ package io.delta.kernel.expressions;
 
 import java.util.Arrays;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * {@code OR} expression
  * <p>
@@ -26,7 +28,10 @@ import java.util.Arrays;
  *     <li>Requires both left and right input expressions of type {@link Predicate}.</li>
  *     <li>Result is null at least one of the inputs is null.</li>
  * </ul>
+ *
+ * @since 3.0.0
  */
+@Evolving
 public final class Or extends Predicate {
     public Or(Predicate left, Predicate right) {
         super("OR", Arrays.asList(left, right));

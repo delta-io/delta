@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.*;
 
 import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
@@ -36,7 +37,10 @@ import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
  * depends on the type of the literal data type. See the {@link #getValue()} for further
  * details.</li>
  * </ul>
+ *
+ * @since 3.0.0
  */
+@Evolving
 public final class Literal implements Expression {
     /**
      * Create a {@code boolean} type literal expression.

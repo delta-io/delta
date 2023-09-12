@@ -22,6 +22,8 @@ import java.util.Locale;
 import java.util.stream.Collectors;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * Scalar SQL expressions which take zero or more inputs and for each input row generate one
  * output value. A subclass of these expressions are of type {@link Predicate} whose result type is
@@ -36,7 +38,10 @@ import static java.util.Objects.requireNonNull;
  *     </ul>
  *   </li>
  * </ol>
+ *
+ * @since 3.0.0
  */
+@Evolving
 public class ScalarExpression implements Expression {
     protected final String name;
     protected final List<Expression> children;

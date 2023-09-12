@@ -17,9 +17,14 @@ package io.delta.kernel.expressions;
 
 import java.util.Collections;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * Predicate which always evaluates to {@code false}.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public final class AlwaysFalse extends Predicate {
     public static final AlwaysFalse ALWAYS_FALSE = new AlwaysFalse();
 
