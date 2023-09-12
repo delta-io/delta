@@ -498,8 +498,7 @@ class DeltaVacuumSuite
         val e = intercept[AnalysisException] {
           vacuumSQLTest(tablePath, viewName)
         }
-        assert(e.getMessage.contains("not found") ||
-          e.getMessage.contains("TABLE_OR_VIEW_NOT_FOUND"))
+        assert(e.getMessage.contains("v is a temp view. 'VACUUM' expects a table."))
       }
     }
   }
@@ -788,7 +787,7 @@ class DeltaVacuumSuite
         sql(s"vacuum '$path/v2=a' retain 0 hours")
       }
       assert(ex.getMessage.contains(
-        s"Please provide the base path ($path) when Vacuuming Delta tables."))
+        s"`$path/v2=a` is not a Delta table. VACUUM is only supported for Delta tables."))
     }
   }
 
@@ -993,9 +992,7 @@ class DeltaVacuumSuite
         val e = intercept[AnalysisException] {
           sql(s"vacuum $table")
         }
-        Seq("VACUUM", "only supported for Delta tables").foreach { msg =>
-          assert(e.getMessage.contains(msg))
-        }
+        assert(e.getMessage.contains("is not a Delta table."))
       }
     }
     withTempPath { tempDir =>
