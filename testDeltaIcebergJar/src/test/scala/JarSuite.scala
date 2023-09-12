@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
-
 import java.io.File
 import java.net.JarURLConnection
 import java.util.jar.JarFile
