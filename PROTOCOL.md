@@ -1864,4 +1864,4 @@ string| `binary` | `string (UTF-8)`
 binary| `binary` |
 array| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists) for further details | `LIST`
 map| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps) for further details | `MAP`
-struct| `group`. | 
+struct| `group` | 
