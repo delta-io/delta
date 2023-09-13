@@ -175,12 +175,9 @@ trait MergeIntoScalaTestUtils extends MergeIntoTestUtils {
         }
       }
 
-    val deltaTable = {
-      val (tableNameOrPath, optionalAlias) = DeltaTestUtils.parseTableAndAlias(tgt)
-      var table = makeDeltaTable(tableNameOrPath)
-      optionalAlias.foreach { alias => table = table.as(alias) }
-      table
-    }
+    val deltaTable = DeltaTestUtils.getDeltaTableForIdentifierOrPath(
+      spark,
+      DeltaTestUtils.getTableIdentifierOrPath(tgt))
 
     val sourceDataFrame: DataFrame = {
       val (tableOrQuery, optionalAlias) = DeltaTestUtils.parseTableAndAlias(src)
@@ -196,16 +193,6 @@ trait MergeIntoScalaTestUtils extends MergeIntoTestUtils {
     }
     mergeBuilder.execute()
     deltaTable.toDF
-  }
-
-  protected def makeDeltaTable(nameOrPath: String): DeltaTable = {
-    val isPath: Boolean = nameOrPath.startsWith("delta.")
-    if (isPath) {
-      val path = nameOrPath.stripPrefix("delta.`").stripSuffix("`")
-      io.delta.tables.DeltaTable.forPath(spark, path)
-    } else {
-      DeltaTableTestUtils.createTable(spark.table(nameOrPath), DeltaLog.forTable(spark, nameOrPath))
-    }
   }
 
   protected def parseUpdate(update: Seq[String]): Map[String, String] = {

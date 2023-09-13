@@ -88,8 +88,6 @@ class DeltaLog private(
   import org.apache.spark.sql.delta.util.FileNames._
 
 
-  private lazy implicit val _clock = clock
-
   protected def spark = SparkSession.active
 
   checkRequiredConfigurations()
@@ -197,7 +195,7 @@ class DeltaLog private(
   def startTransaction(): OptimisticTransaction = startTransaction(None)
 
   def startTransaction(snapshotOpt: Option[Snapshot]): OptimisticTransaction = {
-    new OptimisticTransaction(this, snapshotOpt)
+    new OptimisticTransaction(this, snapshotOpt.getOrElse(update()))
   }
 
   /**

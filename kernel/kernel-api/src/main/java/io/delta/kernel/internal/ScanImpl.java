@@ -26,7 +26,7 @@ import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
@@ -60,7 +60,7 @@ public class ScanImpl
     private final StructType readSchema;
     private final CloseableIterator<AddFile> filesIter;
     private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
-    private final Optional<Expression> filter;
+    private final Optional<Predicate> filter;
 
     private boolean accessedScanFiles;
 
@@ -69,7 +69,7 @@ public class ScanImpl
         StructType readSchema,
         Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
         CloseableIterator<AddFile> filesIter,
-        Optional<Expression> filter,
+        Optional<Predicate> filter,
         Path dataPath) {
         this.snapshotSchema = snapshotSchema;
         this.readSchema = readSchema;
@@ -159,7 +159,7 @@ public class ScanImpl
     }
 
     @Override
-    public Optional<Expression> getRemainingFilter() {
+    public Optional<Predicate> getRemainingFilter() {
         return filter;
     }
 }

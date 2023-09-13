@@ -18,11 +18,15 @@ package io.delta.kernel.fs;
 
 import java.util.Objects;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * Class for encapsulating metadata about a file in Delta Lake table.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public class FileStatus {
-
     private final String path;
     private final long size;
     private final long modificationTime;
@@ -66,8 +70,8 @@ public class FileStatus {
     /**
      * Create a {@link FileStatus} with the given path, size and modification time.
      *
-     * @param path             Fully qualified file path.
-     * @param size             File size in bytes
+     * @param path Fully qualified file path.
+     * @param size File size in bytes
      * @param modificationTime Modification time of the file in epoch millis
      */
     public static FileStatus of(String path, long size, long modificationTime) {

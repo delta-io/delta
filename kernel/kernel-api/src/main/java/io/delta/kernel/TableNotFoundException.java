@@ -16,9 +16,14 @@
 
 package io.delta.kernel;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * Thrown when there is no Delta table at the given location.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public class TableNotFoundException
     extends Exception {
 }

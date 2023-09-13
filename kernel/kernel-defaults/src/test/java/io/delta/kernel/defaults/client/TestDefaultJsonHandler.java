@@ -15,11 +15,7 @@
  */
 package io.delta.kernel.defaults.client;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -33,17 +29,14 @@ import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.fs.FileStatus;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
+import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
+
 import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 
 public class TestDefaultJsonHandler {
@@ -60,7 +53,7 @@ public class TestDefaultJsonHandler {
         throws Exception {
         try (CloseableIterator<Row> inputScanFiles = testFiles();
             CloseableIterator<FileReadContext> fileReadContexts =
-                JSON_HANDLER.contextualizeFileReads(testFiles(), Literal.TRUE)) {
+                JSON_HANDLER.contextualizeFileReads(testFiles(), ALWAYS_TRUE)) {
             while (inputScanFiles.hasNext() || fileReadContexts.hasNext()) {
                 assertEquals(inputScanFiles.hasNext(), fileReadContexts.hasNext());
                 Row inputScanFile = inputScanFiles.next();
@@ -76,7 +69,7 @@ public class TestDefaultJsonHandler {
         try (
             CloseableIterator<FileDataReadResult> data =
                 JSON_HANDLER.readJsonFiles(
-                    JSON_HANDLER.contextualizeFileReads(testFiles(), Literal.TRUE),
+                    JSON_HANDLER.contextualizeFileReads(testFiles(), ALWAYS_TRUE),
                     new StructType()
                         .add("path", StringType.INSTANCE)
                         .add("size", LongType.INSTANCE)

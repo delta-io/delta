@@ -27,7 +27,6 @@ import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
-import org.scalatest.exceptions.TestFailedException
 import org.scalatest.Assertions
 
 trait TestUtils extends Assertions {
@@ -134,6 +133,29 @@ trait TestUtils extends Assertions {
       TimeZone.setDefault(currentDefault)
     }
   }
+
+  /** All simple data type used in parameterized tests where type is one of the test dimensions. */
+  val SIMPLE_TYPES = Seq(
+    BooleanType.INSTANCE,
+    ByteType.INSTANCE,
+    ShortType.INSTANCE,
+    IntegerType.INSTANCE,
+    LongType.INSTANCE,
+    FloatType.INSTANCE,
+    DoubleType.INSTANCE,
+    DateType.INSTANCE,
+    TimestampType.INSTANCE,
+    StringType.INSTANCE,
+    BinaryType.INSTANCE,
+    new DecimalType(10, 5)
+  )
+
+  /** All types. Used in parameterized tests where type is one of the test dimensions. */
+  val ALL_TYPES = SIMPLE_TYPES ++ Seq(
+    new ArrayType(BooleanType.INSTANCE, true),
+    new MapType(IntegerType.INSTANCE, LongType.INSTANCE, true),
+    new StructType().add("s1", BooleanType.INSTANCE).add("s2", IntegerType.INSTANCE)
+  )
 
   /**
    * Compares the rows in the tables latest snapshot with the expected answer and fails if they

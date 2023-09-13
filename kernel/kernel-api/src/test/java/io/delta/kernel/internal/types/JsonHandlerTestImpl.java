@@ -33,7 +33,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
@@ -56,7 +56,7 @@ public class JsonHandlerTestImpl
 
     @Override
     public CloseableIterator<FileReadContext> contextualizeFileReads(
-        CloseableIterator<Row> fileIter, Expression predicate) {
+        CloseableIterator<Row> fileIter, Predicate predicate) {
         throw new UnsupportedOperationException("not yet implemented");
     }
 
