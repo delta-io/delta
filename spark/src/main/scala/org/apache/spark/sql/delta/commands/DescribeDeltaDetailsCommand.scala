@@ -20,7 +20,13 @@ package org.apache.spark.sql.delta.commands
 import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, Snapshot}
+import org.apache.spark.sql.delta.{
+  DeltaErrors,
+  DeltaLog,
+  DeltaTableIdentifier,
+  Snapshot,
+  UnresolvedPathOrIdentifier
+}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
@@ -30,7 +36,9 @@ import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, T
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.trees.UnaryLike
+import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.types.StructType
 
 /** The result returned by the `describe detail` command. */
@@ -67,15 +75,24 @@ object TableDetail {
  * A command for describing the details of a table such as the format, name, and size.
  */
 case class DescribeDeltaDetailCommand(
-    path: Option[String],
-    tableIdentifier: Option[TableIdentifier],
-    hadoopConf: Map[String, String]) extends LeafRunnableCommand with DeltaLogging {
+    override val child: LogicalPlan,
+    hadoopConf: Map[String, String])
+  extends RunnableCommand with UnaryLike[LogicalPlan] with DeltaLogging with DeltaCommand {
 
   override val output: Seq[Attribute] = TableDetail.schema.toAttributes
 
-  override def run(sparkSession: SparkSession): Seq[Row] = {
-    val (basePath, tableMetadata) = getPathAndTableMetadata(sparkSession, path, tableIdentifier)
+  override protected def withNewChildInternal(newChild: LogicalPlan): DescribeDeltaDetailCommand =
+    copy(child = newChild)
 
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    val tableMetadata = getTableCatalogTable(child, DescribeDeltaDetailCommand.CMD_NAME)
+    val path = getTablePathOrIdentifier(child, DescribeDeltaDetailCommand.CMD_NAME)._2
+    val basePath = tableMetadata match {
+      case Some(metadata) => new Path(metadata.location)
+      case _ if path.isDefined => new Path(path.get)
+      case _ =>
+        throw DeltaErrors.missingTableIdentifierException(DescribeDeltaDetailCommand.CMD_NAME)
+    }
     val deltaLog = DeltaLog.forTable(sparkSession, basePath, hadoopConf)
     recordDeltaOperation(deltaLog, "delta.ddl.describeDetails") {
       val snapshot = deltaLog.update()
@@ -93,44 +110,6 @@ case class DescribeDeltaDetailCommand(
       } else {
         describeDeltaTable(sparkSession, deltaLog, snapshot, tableMetadata)
       }
-    }
-  }
-
-  /**
-   * Resolve `path` and `tableIdentifier` to get the underlying storage path, and its `CatalogTable`
-   * if it's a table.
-   *
-   * If `tableIdentifier` is set and it is not a Delta data source path (such as `delta.<path>`)
-   * we will resolve the identifier using the `SessionCatalog`. Otherwise, we will return the path
-   * and empty catalog table.
-   */
-  protected def getPathAndTableMetadata(
-      spark: SparkSession,
-      path: Option[String],
-      tableIdentifier: Option[TableIdentifier]): (Path, Option[CatalogTable]) = {
-    tableIdentifier.map { i =>
-      DeltaTableIdentifier(spark, tableIdentifier.get) match {
-        case Some(id) if id.path.isDefined => new Path(id.path.get) -> None
-        case _ =>
-          // This should be a catalog table.
-          try {
-            val metadata = spark.sessionState.catalog.getTableMetadata(i)
-            val isView = metadata.tableType == CatalogTableType.VIEW
-            if (isView) {
-              throw DeltaErrors.viewInDescribeDetailException(i)
-            }
-            new Path(metadata.location) -> Some(metadata)
-          } catch {
-            // Better error message if the user tried to DESCRIBE DETAIL a temp view.
-            case _: NoSuchTableException | _: NoSuchDatabaseException
-                if spark.sessionState.catalog.getTempView(i.table).isDefined =>
-              throw DeltaErrors.viewInDescribeDetailException(i)
-          }
-      }
-    }
-    .orElse(path.map(p => new Path(p) -> None))
-    .getOrElse {
-      throw DeltaErrors.missingTableIdentifierException("DESCRIBE DETAIL")
     }
   }
 
@@ -203,5 +182,21 @@ case class DescribeDeltaDetailCommand(
         minWriterVersion = snapshot.protocol.minWriterVersion,
         tableFeatures = featureNames
       ))
+  }
+}
+
+object DescribeDeltaDetailCommand {
+  val CMD_NAME = "DESCRIBE DETAIL"
+  def apply(
+    path: Option[String],
+    tableIdentifier: Option[TableIdentifier],
+    hadoopConf: Map[String, String]
+  ): DescribeDeltaDetailCommand = {
+    val plan = UnresolvedPathOrIdentifier(
+      path,
+      tableIdentifier,
+      CMD_NAME
+    )
+    DescribeDeltaDetailCommand(plan, hadoopConf)
   }
 }

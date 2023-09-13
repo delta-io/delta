@@ -20,9 +20,17 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, DeltaTableUtils}
-import org.apache.spark.sql.delta.commands.VacuumCommand
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.trees.UnaryLike
+import org.apache.spark.sql.delta.{
+  DeltaErrors,
+  DeltaLog,
+  DeltaTableIdentifier,
+  DeltaTableUtils,
+  UnresolvedDeltaPathOrIdentifier
+}
+import org.apache.spark.sql.delta.commands.{DeltaCommand, VacuumCommand}
+import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.types.StringType
 
 /**
@@ -32,25 +40,24 @@ import org.apache.spark.sql.types.StringType
  * }}}
  */
 case class VacuumTableCommand(
-    path: Option[String],
-    table: Option[TableIdentifier],
+    override val child: LogicalPlan,
     horizonHours: Option[Double],
-    dryRun: Boolean) extends LeafRunnableCommand {
+    dryRun: Boolean) extends RunnableCommand with UnaryLike[LogicalPlan] with DeltaCommand {
 
   override val output: Seq[Attribute] =
     Seq(AttributeReference("path", StringType, nullable = true)())
 
+  override protected def withNewChildInternal(newChild: LogicalPlan): VacuumTableCommand =
+    copy(child = newChild)
+
   override def run(sparkSession: SparkSession): Seq[Row] = {
+    val tableMetadata = getDeltaTable(child, VacuumTableCommand.CMD_NAME).catalogTable
+    val path = getDeltaTablePathOrIdentifier(child, "VACUUM")._2
     val pathToVacuum =
       if (path.nonEmpty) {
         new Path(path.get)
-      } else if (table.nonEmpty) {
-        DeltaTableIdentifier(sparkSession, table.get) match {
-          case Some(id) if id.path.nonEmpty =>
-            new Path(id.path.get)
-          case _ =>
-            new Path(sparkSession.sessionState.catalog.getTableMetadata(table.get).location)
-        }
+      } else if (tableMetadata.nonEmpty) {
+        new Path(tableMetadata.get.location)
       } else {
         throw DeltaErrors.missingTableIdentifierException("VACUUM")
       }
@@ -69,3 +76,21 @@ case class VacuumTableCommand(
     VacuumCommand.gc(sparkSession, deltaLog, dryRun, horizonHours).collect()
   }
 }
+
+object VacuumTableCommand {
+  val CMD_NAME = "VACUUM"
+  def apply(
+    path: Option[String],
+    tableIdentifier: Option[TableIdentifier],
+    horizonHours: Option[Double],
+    dryRun: Boolean
+  ): VacuumTableCommand = {
+    val plan = UnresolvedDeltaPathOrIdentifier(
+      path,
+      tableIdentifier,
+      CMD_NAME
+    )
+    VacuumTableCommand(plan, horizonHours, dryRun)
+  }
+}
+
