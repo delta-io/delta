@@ -15,13 +15,18 @@
  */
 package io.delta.kernel.types;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * A timestamp type, supporting [0001-01-01T00:00:00.000000Z, 9999-12-31T23:59:59.999999Z]
  * where the left/right-bound is a date and time of the proleptic Gregorian
  * calendar in UTC+00:00.
  * Internally, this is represented as the number of microseconds since the Unix epoch,
  * 1970-01-01 00:00:00 UTC..
+ *
+ * @since 3.0.0
  */
+@Evolving
 public class TimestampType extends BasePrimitiveType {
     public static final TimestampType INSTANCE = new TimestampType();
 

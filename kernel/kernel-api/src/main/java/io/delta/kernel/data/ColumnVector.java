@@ -20,11 +20,15 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.DataType;
 
 /**
  * Represents zero or more values of a single column.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface ColumnVector extends AutoCloseable {
     /**
      * @return the data type of this column vector.

@@ -17,9 +17,14 @@ package io.delta.kernel.types;
 
 import java.util.Objects;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
- * Data type representing a map type.
+ * Data type representing a {@code map} type.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public class MapType extends DataType {
 
     private final DataType keyType;
@@ -82,6 +87,6 @@ public class MapType extends DataType {
 
     @Override
     public String toString() {
-        return String.format("Map[%s, %s]", keyType, valueType);
+        return String.format("map[%s, %s]", keyType, valueType);
     }
 }

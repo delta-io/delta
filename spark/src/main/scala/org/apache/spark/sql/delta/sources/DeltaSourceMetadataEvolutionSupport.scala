@@ -318,17 +318,20 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
 
   /**
    * Initialize the schema tracking log if an empty schema tracking log is provided.
+   * This method also checks the range between batchStartVersion and batchEndVersion to ensure we
+   * a safe schema to be initialized in the log.
    * @param batchStartVersion Start version of the batch of data to be proceed, it should typically
    *                          be the schema that is safe to process incoming data.
    * @param batchEndVersionOpt Optionally, if we are looking at a constructed batch with existing
    *                           end offset, we need to double verify to ensure no read-incompatible
    *                           within the batch range.
-   * @param alwaysFail Whether we should always fail with the schema evolution exception.
+   * @param alwaysFailUponLogInitialized Whether we should always fail with the schema evolution
+   *                                     exception.
    */
   protected def initializeMetadataTrackingAndExitStream(
       batchStartVersion: Long,
       batchEndVersionOpt: Option[Long] = None,
-      alwaysFail: Boolean = false): Unit = {
+      alwaysFailUponLogInitialized: Boolean = false): Unit = {
     // If possible, initialize the metadata log with the desired start metadata instead of failing.
     // If a `batchEndVersion` is provided, we also need to verify if there are no incompatible
     // schema changes in a constructed batch, if so, we cannot find a proper schema to init the
@@ -347,7 +350,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
     // Always initialize the metadata log
     metadataTrackingLog.get.writeNewMetadata(newMetadata)
     if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
-        Some(metadata), Some(protocol), version) || alwaysFail) {
+        Some(metadata), Some(protocol), version) || alwaysFailUponLogInitialized) {
       // But trigger evolution exception when there's a difference
       throw DeltaErrors.streamingMetadataEvolutionException(
         newMetadata.dataSchema,

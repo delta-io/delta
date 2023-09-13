@@ -572,6 +572,37 @@ trait DeltaSQLConfBase {
         .checkValue(_ > 0, "partSize has to be positive")
         .createOptional
 
+  ////////////////////////////////////
+  // Checkpoint V2 Specific Configs
+  ////////////////////////////////////
+
+  val CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT =
+    buildConf("checkpointV2.topLevelFileFormat")
+      .internal()
+      .doc(
+        """
+          |The file format to use for the top level checkpoint file in V2 Checkpoints.
+          | This can be set to either json or parquet. The appropriate format will be
+          | picked automatically if this config is not specified.
+          |""".stripMargin)
+      .stringConf
+      .checkValues(Set("json", "parquet"))
+      .createOptional
+
+  // This is temporary conf to make sure v2 checkpoints are not used by anyone other than devs as
+  // the feature is not fully ready.
+  val EXPOSE_CHECKPOINT_V2_TABLE_FEATURE_FOR_TESTING =
+    buildConf("checkpointV2.exposeTableFeatureForTesting")
+      .internal()
+      .doc(
+        """
+          |This conf controls whether v2 checkpoints table feature is exposed or not. Note that
+          | v2 checkpoints are in development and this should config should be used only for
+          | testing/benchmarking.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
       .doc("Whether the checksum file can be written.")

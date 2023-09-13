@@ -19,16 +19,22 @@ package io.delta.kernel.internal.replay;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.*;
+import java.util.Iterator;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.Optional;
 
-import io.delta.kernel.client.*;
+import io.delta.kernel.client.FileReadContext;
+import io.delta.kernel.client.JsonHandler;
+import io.delta.kernel.client.ParquetHandler;
+import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.FileDataReadResult;
-import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.utils.Utils;
+import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.util.InternalUtils;
 
@@ -37,16 +43,15 @@ import io.delta.kernel.internal.util.InternalUtils;
  * iterator of (FileDataReadResult, isFromCheckpoint) tuples, where the schema of the
  * FileDataReadResult semantically represents actions (or, a subset of action fields) parsed from
  * the Delta Log.
- *
+ * <p>
  * Users must pass in a `readSchema` to select which actions and sub-fields they want to consume.
  */
 class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Boolean>> {
-
     private final TableClient tableClient;
 
     /**
      * Iterator over the files.
-     *
+     * <p>
      * Each file will be split (by 1, or more) to yield an iterator of FileDataReadResults.
      */
     private final Iterator<FileStatus> filesIter;
@@ -56,7 +61,7 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
     /**
      * The current (FileDataReadResult, isFromCheckpoint) tuple. Whenever this iterator
      * is exhausted, we will try and fetch the next one from the `filesIter`.
-     *
+     * <p>
      * If it is ever empty, that means there are no more batches to produce.
      */
     private Optional<CloseableIterator<Tuple2<FileDataReadResult, Boolean>>>
@@ -65,9 +70,9 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
     private boolean closed;
 
     ActionsIterator(
-            TableClient tableClient,
-            List<FileStatus> files,
-            StructType readSchema) {
+        TableClient tableClient,
+        List<FileStatus> files,
+        StructType readSchema) {
         this.tableClient = tableClient;
         this.filesIter = files.iterator();
         this.readSchema = readSchema;
@@ -90,7 +95,7 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
 
     /**
      * @return a tuple of (FileDataReadResult, isFromCheckpoint), where FileDataReadResult conforms
-     *         to the instance {@link #readSchema}.
+     * to the instance {@link #readSchema}.
      */
     @Override
     public Tuple2<FileDataReadResult, Boolean> next() {
@@ -98,7 +103,9 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
             throw new IllegalStateException("Can't call `next` on a closed iterator.");
         }
 
-        if (!hasNext()) throw new NoSuchElementException("No next element");
+        if (!hasNext()) {
+            throw new NoSuchElementException("No next element");
+        }
 
         return actionsIter.get().next();
     }
@@ -151,7 +158,7 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
      * Get the next file from `filesIter` (.json or .checkpoint.parquet), contextualize it
      * (allow the connector to split it), and then read it + inject the `isFromCheckpoint`
      * information.
-     *
+     * <p>
      * Requires that `filesIter.hasNext` is true.
      */
     private CloseableIterator<Tuple2<FileDataReadResult, Boolean>> getNextActionsIter() {
@@ -171,7 +178,7 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
                     jsonHandler.contextualizeFileReads(
                         Utils.singletonCloseableIterator(
                             InternalUtils.getScanFileRow(nextFile)),
-                        Literal.TRUE
+                        ALWAYS_TRUE
                     );
 
                 iteratorsToClose[0] = fileReadContextIter;
@@ -197,7 +204,7 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
                     parquetHandler.contextualizeFileReads(
                         Utils.singletonCloseableIterator(
                             InternalUtils.getScanFileRow(nextFile)),
-                        Literal.TRUE);
+                        ALWAYS_TRUE);
 
                 iteratorsToClose[0] = fileReadContextIter;
 
@@ -232,8 +239,8 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
      * Take input (iterator<T>, boolean) and produce an iterator<T, boolean>.
      */
     private CloseableIterator<Tuple2<FileDataReadResult, Boolean>> combine(
-            CloseableIterator<FileDataReadResult> fileReadDataIter,
-            boolean isFromCheckpoint) {
+        CloseableIterator<FileDataReadResult> fileReadDataIter,
+        boolean isFromCheckpoint) {
         return new CloseableIterator<Tuple2<FileDataReadResult, Boolean>>() {
             @Override
             public boolean hasNext() {

@@ -16,6 +16,7 @@
 
 package io.delta.kernel.expressions;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 
@@ -24,7 +25,10 @@ import io.delta.kernel.data.ColumnarBatch;
  * It contains one {@link Expression} which can be evaluated on multiple {@link ColumnarBatch}es
  * Connectors can implement this interface to optimize the evaluation using the
  * connector specific capabilities.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface ExpressionEvaluator extends AutoCloseable {
     /**
      * Evaluate the expression on given {@link ColumnarBatch} data.

@@ -145,10 +145,9 @@ class DeltaSourceMetadataTrackingLog private(
   protected val schemaSerializer =
     new JsonSchemaSerializer[PersistedMetadata](PersistedMetadata.VERSION) {
       override def deserialize(in: InputStream): PersistedMetadata =
-        convertException(
-          FailedToDeserializeException,
-          DeltaErrors.failToDeserializeSchemaLog(rootMetadataLocation)) {
-          super.deserialize(in)
+        try super.deserialize(in) catch {
+          case FailedToDeserializeException =>
+            throw DeltaErrors.failToDeserializeSchemaLog(rootMetadataLocation)
         }
     }
 
@@ -205,14 +204,16 @@ class DeltaSourceMetadataTrackingLog private(
   def writeNewMetadata(
       newMetadata: PersistedMetadata,
       replaceCurrent: Boolean = false): PersistedMetadata = {
-    convertException(FailedToEvolveSchema,
-      DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
-        rootMetadataLocation, sourceSnapshot.deltaLog.dataPath.toString)) {
+    try {
       trackingLog.addSchemaToLog(
         if (replaceCurrent && getCurrentTrackedMetadata.isDefined) {
           newMetadata.copy(previousMetadataSeqNum = Some(getPreviousTrackedSeqNum))
         } else newMetadata
       )
+    } catch {
+      case FailedToEvolveSchema =>
+        throw DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
+          rootMetadataLocation, sourceSnapshot.deltaLog.dataPath.toString)
     }
   }
 }

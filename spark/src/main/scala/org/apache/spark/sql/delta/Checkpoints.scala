@@ -458,7 +458,8 @@ object Checkpoints extends DeltaLogging {
         action
       }
       // commitInfo, cdc, remove.tags and remove.stats are not included in the checkpoint
-      .drop("commitInfo", "cdc")
+      // TODO: Add support for V2 Checkpoints here.
+      .drop("commitInfo", "cdc", "checkpointMetadata", "sidecar")
       .withColumn("remove", col("remove").dropFields("tags", "stats"))
 
     val chk = buildCheckpoint(base, snapshot)
@@ -682,5 +683,66 @@ object Checkpoints extends DeltaLogging {
     if (partitionValues.isEmpty) {
       None
     } else Some(struct(partitionValues: _*).as(STRUCT_PARTITIONS_COL_NAME))
+  }
+}
+
+object V2Checkpoint {
+  /** Format for V2 Checkpoints */
+  sealed abstract class Format(val name: String) {
+    def fileFormat: FileFormat
+  }
+
+  def toFormat(fileName: String): Format = fileName match {
+    case _ if fileName.endsWith(Format.JSON.name) => Format.JSON
+    case _ if fileName.endsWith(Format.PARQUET.name) => Format.PARQUET
+    case _ => throw new IllegalStateException(s"Unknown v2 checkpoint file format: ${fileName}")
+  }
+
+  object Format {
+    /** json v2 checkpoint */
+    object JSON extends Format("json") {
+      override def fileFormat: FileFormat = DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_JSON
+    }
+
+    /** parquet v2 checkpoint */
+    object PARQUET extends Format("parquet") {
+      override def fileFormat: FileFormat = DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET
+    }
+
+    /** All valid formats for the top level file of v2 checkpoints. */
+    val ALL: Set[Format] = Set(Format.JSON, Format.PARQUET)
+
+    /** The string representations of all the valid formats. */
+    val ALL_AS_STRINGS: Set[String] = ALL.map(_.name)
+  }
+}
+
+object CheckpointPolicy {
+
+  sealed abstract class Policy(val name: String) {
+    override def toString: String = name
+    def needsV2CheckpointSupport: Boolean = true
+  }
+
+  /**
+   * Write classic single file/multi-part checkpoints when this policy is enabled.
+   * Note that [[V2CheckpointTableFeature]] is not required for this checkpoint policy.
+   */
+  case object Classic extends Policy("classic") {
+    override def needsV2CheckpointSupport: Boolean = false
+  }
+
+  /**
+   * Write V2 checkpoints when this policy is enabled.
+   * This needs [[V2CheckpointTableFeature]] to be enabled on the table.
+   */
+  case object V2 extends Policy("v2")
+
+  /** ALl checkpoint policies */
+  val ALL: Seq[Policy] = Seq(Classic, V2)
+
+  /** Converts a `name` String into a [[Policy]] */
+  def fromName(name: String): Policy = ALL.find(_.name == name).getOrElse {
+    throw new IllegalArgumentException(s"Invalid policy $name")
   }
 }

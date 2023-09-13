@@ -16,11 +16,16 @@
 
 package io.delta.kernel.client;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * Interface encapsulating all clients needed by the Delta Kernel in order to read the
  * Delta table. Connectors are expected to pass an implementation of this interface when reading
  * a Delta table.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface TableClient {
 
     /**

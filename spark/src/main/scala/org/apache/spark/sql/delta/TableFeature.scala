@@ -324,7 +324,8 @@ object TableFeature {
       ColumnMappingTableFeature,
       TimestampNTZTableFeature,
       IcebergCompatV1TableFeature,
-      DeletionVectorsTableFeature)
+      DeletionVectorsTableFeature,
+      V2CheckpointTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
@@ -512,6 +513,25 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }
 
+
+/**
+ * V2 Checkpoint table feature is for checkpoints with sidecars and the new format and
+ * file naming scheme.
+ * This is still WIP feature.
+ */
+object V2CheckpointTableFeature
+  extends ReaderWriterFeature(name = "v2Checkpoint-under-development")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  private def isV2CheckpointSupportNeededByMetadata(metadata: Metadata): Boolean =
+    DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(metadata).needsV2CheckpointSupport
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = isV2CheckpointSupportNeededByMetadata(metadata)
+}
 
 /**
  * Features below are for testing only, and are being registered to the system only in the testing

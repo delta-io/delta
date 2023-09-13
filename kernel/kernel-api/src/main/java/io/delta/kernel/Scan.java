@@ -22,21 +22,18 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.ParquetHandler;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.DataReadResult;
-import io.delta.kernel.data.FileDataReadResult;
-import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.Expression;
-import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.data.*;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.utils.Utils;
+import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.AddFileColumnarBatch;
@@ -48,7 +45,10 @@ import io.delta.kernel.internal.util.PartitionUtils;
 
 /**
  * Represents a scan of a Delta table.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface Scan {
     /**
      * Get an iterator of data files to scan.
@@ -63,9 +63,9 @@ public interface Scan {
      * Get the remaining filter that is not guaranteed to be satisfied for the data Delta Kernel
      * returns. This filter is used by Delta Kernel to do data skipping when possible.
      *
-     * @return the remaining filter as an {@link Expression}.
+     * @return the remaining filter as a {@link Predicate}.
      */
-    Optional<Expression> getRemainingFilter();
+    Optional<Predicate> getRemainingFilter();
 
     /**
      * Get the scan state associated with the current scan. This state is common across all
@@ -84,9 +84,8 @@ public interface Scan {
      * @param scanFileRowIter an iterator of {@link Row}s. Each {@link Row} represents one scan file
      *                        from the {@link ColumnarBatch} returned by
      *                        {@link Scan#getScanFiles(TableClient)}
-     * @param filter          An optional filter that can be used for data skipping while reading
-     *                       the
-     *                        scan files.
+     * @param predicate       An optional predicate that can be used for data skipping while reading
+     *                        the scan files.
      * @return Data read from the input scan files as an iterator of {@link DataReadResult}s. Each
      * {@link DataReadResult} instance contains the data read and an optional selection
      * vector that indicates data rows as valid or invalid. It is the responsibility of the
@@ -97,7 +96,7 @@ public interface Scan {
         TableClient tableClient,
         Row scanState,
         CloseableIterator<Row> scanFileRowIter,
-        Optional<Expression> filter) throws IOException {
+        Optional<Predicate> predicate) throws IOException {
         StructType physicalSchema = Utils.getPhysicalSchema(tableClient, scanState);
         StructType logicalSchema = Utils.getLogicalSchema(tableClient, scanState);
         List<String> partitionColumns = Utils.getPartitionColumns(scanState);
@@ -118,7 +117,7 @@ public interface Scan {
         CloseableIterator<FileReadContext> filesReadContextsIter =
             parquetHandler.contextualizeFileReads(
                 scanFileRowIter,
-                filter.orElse(Literal.TRUE));
+                predicate.orElse(ALWAYS_TRUE));
 
         CloseableIterator<FileDataReadResult> data = parquetHandler.readParquetFiles(
             filesReadContextsIter,

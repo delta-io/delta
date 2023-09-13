@@ -39,7 +39,8 @@ import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, 
 import org.apache.spark.sql.types.StructType
 
 trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
-  with DeltaSourceSuiteBase with DeltaColumnMappingTestUtils {
+  with DeltaSourceSuiteBase
+  with DeltaColumnMappingTestUtils {
 
   import testImplicits._
   import io.delta.implicits._

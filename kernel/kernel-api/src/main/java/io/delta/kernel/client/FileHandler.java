@@ -16,8 +16,9 @@
 
 package io.delta.kernel.client;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
 
@@ -25,7 +26,10 @@ import io.delta.kernel.utils.CloseableIterator;
  * Provides file handling functionality to Delta Kernel. Connectors can implement this client to
  * provide Delta Kernel their own custom implementation of file splitting, additional predicate
  * pushdown or any other connector-specific capabilities.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface FileHandler {
     /**
      * Associates a connector specific {@link FileReadContext} for each scan file represented by a
@@ -45,5 +49,5 @@ public interface FileHandler {
      */
     CloseableIterator<FileReadContext> contextualizeFileReads(
         CloseableIterator<Row> fileIter,
-        Expression predicate);
+        Predicate predicate);
 }

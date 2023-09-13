@@ -88,7 +88,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           "DELTA_STREAMING_SCHEMA_LOG_INIT_FAILED_INCOMPATIBLE_METADATA" &&
           // Does NOT come from the stream start check which is for lazy initialization ...
           !e.getStackTrace.exists(
-            _.toString.contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"))
+            _.toString.contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce")) &&
+          // Coming from the check against constructed batches
+          e.getStackTrace.exists(
+            _.toString.contains("validateAndInitMetadataLogForPlannedBatchesDuringStreamStart"))
       )
     )
 
@@ -423,11 +426,12 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
    * @param checkpoint Checkpoint location
    * @param version Target version
    * @param index Target index fle.
+   * @return The raw content for the updated offset file
    */
-  protected def manuallyCreateStreamingBatchUntilReservoirVersion(
+  protected def manuallyCreateLatestStreamingOffsetUntilReservoirVersion(
       checkpoint: String,
       version: Long,
-      index: Long = DeltaSourceOffset.BASE_INDEX): Unit = {
+      index: Long = DeltaSourceOffset.BASE_INDEX): String = {
     // manually create another offset to latest version
     val offsetDir = new File(checkpoint.stripPrefix("file:") + "/offsets")
     val previousOffset = offsetDir.listFiles().filter(!_.getName.endsWith(".crc"))
@@ -444,6 +448,21 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     val newOffsetFile = new File(previousOffset.getParent,
       (previousOffset.getName.toInt + 1).toString)
     FileUtils.writeStringToFile(newOffsetFile, updated, Charset.defaultCharset())
+    updated
+  }
+
+  /**
+   * Write serialized offset content as a batch id for a particular checkpoint.
+   * @param checkpoint Checkpoint location
+   * @param batchId Target batch ID to write to
+   * @param offsetContent Offset content
+   */
+  protected def manuallyCreateStreamingOffsetAtBatchId(
+      checkpoint: String, batchId: Long, offsetContent: String): Unit = {
+    // manually create another offset to latest version
+    val offsetDir = new File(checkpoint.stripPrefix("file:") + "/offsets")
+    val newOffsetFile = new File(offsetDir, batchId.toString)
+    FileUtils.writeStringToFile(newOffsetFile, offsetContent, Charset.defaultCharset())
   }
 
   /**
@@ -530,12 +549,12 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       CheckAnswer((-1 until 10).map(i => (i.toString, i.toString)): _*),
       // This new rename should throw the legacy error because we have not provided a schema
       // location
-      Execute {_ =>
+      Execute { _ =>
         renameColumn("c", "d")
         schemaChangeDeltaVersion = log.update().version
       },
       // Add some data in new schema
-      Execute {_ => addData(10 until 15) },
+      Execute { _ => addData(10 until 15) },
       ProcessAllAvailableIgnoreError,
       // No more data should've been processed
       CheckAnswer((-1 until 10).map(i => (i.toString, i.toString)): _*),
@@ -696,6 +715,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       expectedLogInitException: StreamAction)(implicit log: DeltaLog): Unit = {
     // start a stream to initialize checkpoint
     val ckpt = getDefaultCheckpoint.toString
+    val schemaLoc = getDefaultSchemaLocation.toString
     val df = readStream(startingVersion = Some(1))
     testStream(df)(
       StartStream(checkpointLocation = ckpt),
@@ -719,6 +739,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       renameColumn("c", "b")
     } else if (invalidAction == "drop") {
       dropColumn("c")
+    } else {
+      assert(false, s"unexpected action ${invalidAction}")
     }
     // write more data
     addData(Seq(8))
@@ -728,9 +750,44 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     // super old version that did not have the block logic, and is left with a constructed
     // batch that bypasses a schema change.
     // There should be at MOST one such trailing batch as of today's streaming engine semantics.
-    manuallyCreateStreamingBatchUntilReservoirVersion(ckpt, latestVersion)
+    val offsetContent =
+      manuallyCreateLatestStreamingOffsetUntilReservoirVersion(ckpt, latestVersion)
 
     // rerun the stream should detect that and fail, even with schema location
+    testStream(readStreamWithSchemaLocation)(
+      StartStream(checkpointLocation = ckpt),
+      ProcessAllAvailableIgnoreError,
+      CheckAnswer(Nil: _*),
+      expectedLogInitException
+    )
+
+    // Let's also test the case when we only have one offset in the checkpoint without any committed
+    // Clear existing checkpoint dir and schema log dir
+    FileUtils.deleteDirectory(new File(ckpt.stripPrefix("file:")))
+    new File(ckpt.stripPrefix("file:")).mkdirs()
+    FileUtils.deleteDirectory(new File(schemaLoc.stripPrefix("file:")))
+
+    // Create a single offset that points to the latest version of the table.
+    manuallyCreateStreamingOffsetAtBatchId(ckpt, 0, offsetContent)
+
+    // One more non additive schema change
+    if (invalidAction == "rename") {
+      renameColumn("a", "x")
+    } else if (invalidAction == "drop") {
+      dropColumn("b")
+    }
+
+    addData(Seq(9))
+
+    val latestVersion2 = log.update().version
+
+    // Create another offset point to the updated latest version
+    manuallyCreateLatestStreamingOffsetUntilReservoirVersion(ckpt, latestVersion2)
+
+    // This should also fail because it crossed the new non-additive schema change above, note that
+    // since we didn't have a committed offset nor a user specified startingVersion, the first
+    // offset will re-read using latestVersion2 - 1 as the initial snapshot now.
+    // Without this new non-additive schema change the validation would actually pass.
     testStream(readStreamWithSchemaLocation)(
       StartStream(checkpointLocation = ckpt),
       ProcessAllAvailableIgnoreError,
@@ -782,7 +839,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     val v1 = log.update().version
 
     // Manually create another offset ending on [v1, -100]
-    manuallyCreateStreamingBatchUntilReservoirVersion(ckpt, v1)
+    manuallyCreateLatestStreamingOffsetUntilReservoirVersion(ckpt, v1)
 
     // Start stream again would attempt to run the constructed batch first.
     // Since the ending offset does not yet contain the metadata action, we won't need to block
@@ -839,7 +896,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     // v2 should include the two add column change but not the renamed version
     val v2 = v1 + 5
     // manually create another offset to latest version
-    manuallyCreateStreamingBatchUntilReservoirVersion(ckpt, v2, -1)
+    manuallyCreateLatestStreamingOffsetUntilReservoirVersion(ckpt, v2, -1)
     // rerun the stream should detect rename with the stream start check, but since within the
     // offsets the schema changes are all additive, we could use the encompassing schema <a,b,c,d>.
     val schemaLocation = getDefaultSchemaLocation.toString
@@ -1298,7 +1355,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       ProcessAllAvailableIgnoreError,
       AssertOnQuery { q =>
         // initialization does not generate any more offsets
-        q.availableOffsets.size == 1
+        q.availableOffsets.size <= 1
       },
       ExpectMetadataEvolutionExceptionFromInitialization
     )

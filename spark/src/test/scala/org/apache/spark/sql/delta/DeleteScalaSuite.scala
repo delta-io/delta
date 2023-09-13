@@ -16,12 +16,36 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import io.delta.tables.DeltaTableTestUtils
+import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 
 import org.apache.spark.sql.{functions, Row}
 
-class DeleteScalaSuite extends DeleteSuiteBase with DeltaSQLCommandTest {
+class DeleteScalaSuite extends DeleteSuiteBase
+  with DeltaSQLCommandTest
+  with DeltaExcludedTestMixin {
+
+  override def excluded: Seq[String] = super.excluded ++ Seq(
+    // Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one can
+    // use them anyway with the Scala API.
+    // scalastyle:off line.size.limit
+    "test delete on temp view - basic - Partition=true - SQL TempView",
+    "test delete on temp view - basic - Partition=true - Dataset TempView",
+    "test delete on temp view - basic - Partition=false - SQL TempView",
+    "test delete on temp view - basic - Partition=false - Dataset TempView",
+    "test delete on temp view - subset cols - SQL TempView",
+    "test delete on temp view - subset cols - Dataset TempView",
+    "test delete on temp view - superset cols - SQL TempView",
+    "test delete on temp view - superset cols - Dataset TempView",
+    "test delete on temp view - nontrivial projection - SQL TempView",
+    "test delete on temp view - nontrivial projection - Dataset TempView",
+    "test delete on temp view - view with too many internal aliases - SQL TempView",
+    "test delete on temp view - view with too many internal aliases - Dataset TempView",
+    "test delete on temp view - nontrivial projection with write amplification reduction - SQL TempView",
+    "test delete on temp view - nontrivial projection with write amplification reduction - Dataset TempView",
+    "test delete on temp view - view with too many internal aliases with write amplification reduction - SQL TempView",
+    "test delete on temp view - view with too many internal aliases with write amplification reduction - Dataset TempView"
+    // scalastyle:on line.size.limit
+  )
 
   import testImplicits._
 
@@ -47,18 +71,10 @@ class DeleteScalaSuite extends DeleteSuiteBase with DeltaSQLCommandTest {
   }
 
   override protected def executeDelete(target: String, where: String = null): Unit = {
-    import DeltaTestUtils.TableIdentifierOrPath
     val deltaTable: io.delta.tables.DeltaTable =
-      DeltaTestUtils.getTableIdentifierOrPath(target) match {
-        case TableIdentifierOrPath.Identifier(id, optionalAlias) =>
-          val table = DeltaTableTestUtils.createTable(
-            spark.table(id.unquotedString),
-            DeltaLog.forTable(spark, id.unquotedString))
-          optionalAlias.map(table.as(_)).getOrElse(table)
-        case TableIdentifierOrPath.Path(path, optionalAlias) =>
-          val table = io.delta.tables.DeltaTable.forPath(spark, path)
-          optionalAlias.map(table.as(_)).getOrElse(table)
-      }
+      DeltaTestUtils.getDeltaTableForIdentifierOrPath(
+        spark,
+        DeltaTestUtils.getTableIdentifierOrPath(target))
 
     if (where != null) {
       deltaTable.delete(where)

@@ -16,6 +16,9 @@
 package io.delta.kernel.internal.util;
 
 import java.io.IOException;
+import java.sql.Date;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.Optional;
 
@@ -28,6 +31,8 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.AddFileColumnarBatch;
 
 public class InternalUtils {
+    private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
+
     private InternalUtils() {}
 
     public static Row getScanFileRow(FileStatus fileStatus) {
@@ -115,5 +120,29 @@ public class InternalUtils {
         if (!isValid) {
             throw new IllegalArgumentException(message);
         }
+    }
+
+    /**
+     * Precondition-style validation that throws {@link IllegalArgumentException}.
+     *
+     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
+     * @param message A String message for the exception.
+     * @param args    Objects used to fill in {@code %s} placeholders in the message
+     * @throws IllegalArgumentException if {@code isValid} is false
+     */
+    public static void checkArgument(boolean isValid, String message, Object... args)
+        throws IllegalArgumentException {
+        if (!isValid) {
+            throw new IllegalArgumentException(
+                String.format(String.valueOf(message), args));
+        }
+    }
+
+    /**
+     * Utility method to get the number of days since epoch this given date is.
+     */
+    public static int daysSinceEpoch(Date date) {
+        LocalDate localDate = date.toLocalDate();
+        return (int) ChronoUnit.DAYS.between(EPOCH, localDate);
     }
 }

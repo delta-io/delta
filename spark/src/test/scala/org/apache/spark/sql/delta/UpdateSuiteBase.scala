@@ -28,6 +28,7 @@ import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 
@@ -266,6 +267,54 @@ abstract class UpdateSuiteBase
     }
   }
 
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values)
+  test("upcast int source type into long target, storeAssignmentPolicy = " +
+    s"$storeAssignmentPolicy") {
+    append(Seq((99, 2L), (100, 4L), (101, 3L)).toDF("key", "value"))
+    withSQLConf(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
+      checkUpdate(
+        condition = None,
+        setClauses = "value = 4",
+        expectedResults = Row(100, 4) :: Row(101, 4) :: Row(99, 4) :: Nil)
+    }
+  }
+
+  // Casts that are not valid implicit casts (e.g. string -> boolean) are allowed only when
+  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLSuite]] only due to
+  // limitations when using the Scala API.
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
+  test("invalid implicit cast string source type into boolean target, " +
+    s"storeAssignmentPolicy = $storeAssignmentPolicy") {
+    append(Seq((99, true), (100, false), (101, true)).toDF("key", "value"))
+    withSQLConf(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
+      checkUpdate(
+        condition = None,
+        setClauses = "value = 'false'",
+        expectedResults = Row(100, false) :: Row(101, false) :: Row(99, false) :: Nil)
+    }
+  }
+
+  // Valid implicit casts that are not upcasts (e.g. string -> int) are allowed only when
+  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLSuite]] only due to
+  // limitations when using the Scala API.
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
+  test("valid implicit cast string source type into int target, " +
+     s"storeAssignmentPolicy = ${storeAssignmentPolicy}") {
+    append(Seq((99, 2), (100, 4), (101, 3)).toDF("key", "value"))
+    withSQLConf(
+        SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+        DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
+      checkUpdate(
+        condition = None,
+        setClauses = "value = '5'",
+        expectedResults = Row(100, 5) :: Row(101, 5) :: Row(99, 5) :: Nil)
+    }
+  }
+
   test("update cached table") {
     Seq((2, 2), (1, 4)).toDF("key", "value")
       .write.mode("overwrite").format("delta").save(tempPath)
@@ -282,14 +331,31 @@ abstract class UpdateSuiteBase
 
     spark.read.format("delta").load(tempPath).createOrReplaceTempView("tblName")
 
-    checkUpdate(condition = Some("key = 99"), setClauses = "value = -1",
-      Row(99, -1) :: Row(100, 4) :: Row(101, 3) :: Row(102, 5) :: Nil)
-    checkUpdate(condition = Some("`key` = 100"), setClauses = "`value` = -1",
-      Row(99, -1) :: Row(100, -1) :: Row(101, 3) :: Row(102, 5) :: Nil)
-    checkUpdate(condition = Some("tblName.key = 101"), setClauses = "tblName.value = -1",
-      Row(99, -1) :: Row(100, -1) :: Row(101, -1) :: Row(102, 5) :: Nil, Some("tblName"))
-    checkUpdate(condition = Some("`tblName`.`key` = 102"), setClauses = "`tblName`.`value` = -1",
-      Row(99, -1) :: Row(100, -1) :: Row(101, -1) :: Row(102, -1) :: Nil, Some("tblName"))
+    checkUpdate(
+      condition = Some("key = 99"),
+      setClauses = "value = -1",
+      expectedResults = Row(99, -1) :: Row(100, 4) :: Row(101, 3) :: Row(102, 5) :: Nil)
+    checkUpdate(
+      condition = Some("`key` = 100"),
+      setClauses = "`value` = -1",
+      expectedResults = Row(99, -1) :: Row(100, -1) :: Row(101, 3) :: Row(102, 5) :: Nil)
+  }
+
+  test("different variations of column references - TempView") {
+    append(Seq((99, 2), (100, 4), (101, 3), (102, 5)).toDF("key", "value"))
+
+    spark.read.format("delta").load(tempPath).createOrReplaceTempView("tblName")
+
+    checkUpdate(
+      condition = Some("tblName.key = 101"),
+      setClauses = "tblName.value = -1",
+      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, 5) :: Nil,
+      tableName = Some("tblName"))
+    checkUpdate(
+      condition = Some("`tblName`.`key` = 102"),
+      setClauses = "`tblName`.`value` = -1",
+      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, -1) :: Nil,
+      tableName = Some("tblName"))
   }
 
   test("target columns can have db and table qualifiers") {

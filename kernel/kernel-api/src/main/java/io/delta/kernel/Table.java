@@ -15,13 +15,17 @@
  */
 package io.delta.kernel;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
 
 import io.delta.kernel.internal.TableImpl;
 
 /**
  * Represents the Delta Lake table for a given path.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface Table {
     /**
      * Instantiate a table object for the Delta Lake table at the given path.

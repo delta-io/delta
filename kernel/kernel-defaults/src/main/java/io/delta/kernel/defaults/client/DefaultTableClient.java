@@ -17,12 +17,11 @@ package io.delta.kernel.defaults.client;
 
 import org.apache.hadoop.conf.Configuration;
 
-import io.delta.kernel.client.ExpressionHandler;
-import io.delta.kernel.client.FileSystemClient;
-import io.delta.kernel.client.JsonHandler;
-import io.delta.kernel.client.ParquetHandler;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.client.*;
 
+/**
+ * Default implementation of {@link TableClient} based on Hadoop APIs.
+ */
 public class DefaultTableClient
     implements TableClient {
     private final Configuration hadoopConf;
