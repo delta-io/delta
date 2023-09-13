@@ -33,7 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, ResolvedTable, UnresolvedAttribute, UnresolvedRelation}
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -291,43 +291,6 @@ trait DeltaCommand extends DeltaLogging {
       case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
         DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table))
       case _ => throw DeltaErrors.notADeltaTableException(cmd)
-    }
-  }
-
-  /**
-   * Helper method to extract the table id or path from a LogicalPlan representing
-   * a Delta table. This uses [[DeltaCommand.getDeltaTable]] to convert the LogicalPlan
-   * to a [[DeltaTableV2]] and then extracts either the path or identifier from it. If
-   * the [[DeltaTableV2]] has a [[CatalogTable]], the table identifier will be returned.
-   * Otherwise, the table's path will be returned. Throws an exception if the LogicalPlan
-   * does not represent a Delta table.
-   */
-  def getDeltaTablePathOrIdentifier(
-      target: LogicalPlan,
-      cmd: String): (Option[TableIdentifier], Option[String]) = {
-    val table = getDeltaTable(target, cmd)
-    table.catalogTable match {
-      case Some(catalogTable)
-        => (Some(catalogTable.identifier), None)
-      case _ => (None, Some(table.path.toString))
-    }
-  }
-
-  /**
-   * Helper method to extract the table id or path from a LogicalPlan representing a resolved table
-   * or path. This calls getDeltaTablePathOrIdentifier if the resolved table is a delta table. For
-   * non delta table with identifier, we extract its identifier. For non delta table with path, it
-   * will be represented as UnresolvedPath and pass along here, we extract its path.
-   */
-  def getTablePathOrIdentifier(
-      target: LogicalPlan,
-      cmd: String): (Option[TableIdentifier], Option[String]) = {
-    target match {
-      case ResolvedTable(_, _, t: DeltaTableV2, _) => getDeltaTablePathOrIdentifier(target, cmd)
-      case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
-        getDeltaTablePathOrIdentifier(target, cmd)
-      case ResolvedTable(_, _, t: V1Table, _) => (Some(t.catalogTable.identifier), None)
-      case _ => (None, None)
     }
   }
 
