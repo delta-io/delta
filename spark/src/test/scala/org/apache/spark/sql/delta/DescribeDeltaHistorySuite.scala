@@ -21,14 +21,16 @@ import org.apache.hadoop.fs.Path
 
 import java.io.File
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.scalactic.source.Position
+
 import org.scalatest.Tag
-import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
