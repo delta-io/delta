@@ -1837,11 +1837,6 @@ uppercase and lowercase as part of percent-encoding. Thus, we require a stricter
 4. Never percent-encode non-reserved octets
 5. A percent-encoded octet consists of three characters: `%` followed by its 2-digit hexadecimal value in uppercase letters, e.g. `>` encodes to `%3E`
 
-## Schema Serialization Format
-
-Delta uses a subset of Spark SQL's JSON Schema representation to record the schema of a table in the transaction log.
-A reference implementation can be found in [the catalyst package of the Apache Spark repository](https://github.com/apache/spark/tree/master/sql/catalyst/src/main/scala/org/apache/spark/sql/types).
-
 ### Delta Data Type to Parquet Type Mappings
 Below table captures how each Delta data type is stored physically in Parquet files. Parquet files are used for storing the table data or metadata ([checkpoints](#checkpoints)). Parquet has a limited number of [physical types](https://parquet.apache.org/docs/file-format/types/). Parquet [logical types](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md) are used to extend the types by specifying how the physical types should be interpreted.
 
