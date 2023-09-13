@@ -225,6 +225,14 @@ case class AlterTableDropFeatureDeltaCommand(
     truncateHistory: Boolean = false)
   extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
+  def createEmptyCommitAndCheckpoint(snapshotRefreshStartTime: Long): Unit = {
+    val log = table.deltaLog
+    val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTime))
+    val emptyCommitTS = System.nanoTime()
+    log.startTransaction(Some(snapshot)).commit(Nil, DeltaOperations.EmptyCommit)
+    log.checkpoint(log.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
+  }
+
   def truncateHistoryLogRetentionMillis(txn: OptimisticTransaction): Option[Long] = {
     if (!truncateHistory) return None
 
@@ -267,9 +275,16 @@ case class AlterTableDropFeatureDeltaCommand(
       // Note, for features that cannot be disabled we solely rely for correctness on
       // validateRemoval.
       val isReaderWriterFeature = removableFeature.isReaderWriterFeature
+      val startTimeNs = System.nanoTime()
       val preDowngradeMadeChanges =
         removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded()
       if (preDowngradeMadeChanges && isReaderWriterFeature) {
+        // Generate a checkpoint after the cleanup that is based on commits that do not use
+        // the feature. This intends to help slow-moving tables to qualify for history truncation
+        // asap. The checkpoint is based on a new commit to avoid creating a checkpoint
+        // on a commit that still contains traces of the removed feature.
+        createEmptyCommitAndCheckpoint(startTimeNs)
+
         // If the pre-downgrade command made changes, then the table's historical versions
         // certainly still contain traces of the feature. We don't have to run an expensive
         // explicit check, but instead we fail straight away.

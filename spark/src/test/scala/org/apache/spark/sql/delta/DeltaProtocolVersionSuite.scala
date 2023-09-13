@@ -2148,11 +2148,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             "logRetentionPeriod" -> "30 days",
             "truncateHistoryLogRetentionPeriod" -> truncateHistoryRetention.toString))
 
-        deltaLog.checkpoint(deltaLog.update())
-
         // Generate commit.
         spark.range(120, 140).write.format("delta").mode("append").save(dir.getCanonicalPath)
-        deltaLog.checkpoint(deltaLog.update())
 
         // Pretend retention period has passed.
         if (advanceClockPastRetentionPeriod) {
@@ -2221,6 +2218,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       TestRemovableLegacyWriterFeature,
       TestRemovableLegacyWriterFeature.TABLE_PROP_KEY)
   }
+
 
   for {
     advanceClockPastRetentionPeriod <- BOOLEAN_DOMAIN
@@ -2478,8 +2476,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             "logRetentionPeriod" -> "30 days",
             "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
 
-        deltaLog.checkpoint(deltaLog.update())
-
         val deltaRetentionMillis = deltaLog.deltaRetentionMillis(deltaLog.update().metadata)
         require(deltaRetentionMillis === TimeUnit.DAYS.toMillis(30))
 
@@ -2488,7 +2484,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
         // Generate commit.
         spark.range(120, 140).write.format("delta").mode("append").save(dir.getCanonicalPath)
-        deltaLog.checkpoint(deltaLog.update())
 
         // Add feature property again.
         val v2Table = DeltaTableV2(spark, deltaLog.dataPath)
@@ -2589,12 +2584,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             "logRetentionPeriod" -> "1 days",
             "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
 
-        deltaLog.checkpoint(deltaLog.update())
         spark.range(1, 100).write.format("delta").mode("append").save(dir.getCanonicalPath)
-        deltaLog.checkpoint(deltaLog.update())
 
         // Pretend retention period has passed.
-        clock.advance(deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
+        clock.advance(
+          deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
           TimeUnit.HOURS.toMillis(1))
 
         // History is now clean. We should be able to remove the feature.
@@ -2701,16 +2695,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         spark.range(0, 100).write.format("delta").mode("append").save(dir.getCanonicalPath)
         spark.range(100, 120).write.format("delta").mode("append").save(dir.getCanonicalPath)
 
-        deltaLog.checkpoint(deltaLog.update())
-
         // Pretend retention period has passed.
         clock.advance(deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
           TimeUnit.HOURS.toMillis(1))
 
         // Perform an unrelated metadata change.
         sql(s"ALTER TABLE delta.`${deltaLog.dataPath}` ADD COLUMN (value INT)")
-
-        deltaLog.checkpoint(deltaLog.update())
 
         // The unrelated metadata change should not interfere with validation and we should
         // be able to downgrade the protocol.

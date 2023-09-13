@@ -408,6 +408,11 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map.empty
   }
 
+  /** A commit without any actions. Could be used to force creation of new checkpoints. */
+  object EmptyCommit extends Operation("Empty Commit") {
+    override val parameters: Map[String, Any] = Map.empty
+  }
+
   case class UpdateColumnMetadata(
       operationName: String,
       columns: Seq[(Seq[String], StructField)])
