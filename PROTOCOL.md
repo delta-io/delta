@@ -91,6 +91,7 @@
   - [Checkpoint Schema](#checkpoint-schema)
   - [JSON checksum](#json-checksum)
     - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
+  - [Delta Data Type to Parquet Type Mappings](#delta-data-types-to-parquet-physical-type-mappings)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -1841,7 +1842,7 @@ uppercase and lowercase as part of percent-encoding. Thus, we require a stricter
 Delta uses a subset of Spark SQL's JSON Schema representation to record the schema of a table in the transaction log.
 A reference implementation can be found in [the catalyst package of the Apache Spark repository](https://github.com/apache/spark/tree/master/sql/catalyst/src/main/scala/org/apache/spark/sql/types).
 
-### Delta Data Types to Parquet Physical Type Mappings
+### Delta Data Type to Parquet Type Mappings
 Below table captures how each Delta data type is stored physically in Parquet files. Parquet files are used for storing the table data or metadata ([checkpoints](#checkpoints)). Parquet has a limited number of [physical types](https://parquet.apache.org/docs/file-format/types/). Parquet [logical types](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md) are used to extend the types by specifying how the physical types should be interpreted.
 
 For some of the Delta data types, there are multiple ways store the values physically in Parquet file. For example, `timestamp` can be stored either as `int96` or `int64`. The exact physical type depends on the engine that is writing the Parquet file and/or engine specific configuration options. For a Delta lake table reader, it is recommended that the Parquet file reader support at least the Parquet physical and logical types mentioned in the below table.
