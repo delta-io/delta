@@ -61,6 +61,14 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
                 raise
 
 
+def get_artifact_name(version):
+    """
+    version: string representation, e.g. 2.3.0 or 3.0.0.rc1
+    return: either "core" or "spark"
+    """
+    return "spark" if int(version[0]) >= 3 else "core"
+
+
 def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo, use_local):
     print("\n\n##### Running Python tests on version %s #####" % str(version))
     clear_artifact_cache()
@@ -77,7 +85,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    package = "io.delta:delta-core_2.12:" + version
+    package = "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)
 
     repo = extra_maven_repo if extra_maven_repo else ""
 
@@ -117,11 +125,12 @@ def test_missing_delta_storage_jar(root_dir, version, use_local):
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     test_file = path.join(root_dir, path.join("examples", "python", "missing_delta_storage_jar.py"))
+    artifact_name = get_artifact_name(version)
     jar = path.join(
         os.path.expanduser("~/.m2/repository/io/delta/"),
-        "delta-core_2.12",
+        "delta-%s_2.12" % artifact_name,
         version,
-        "delta-core_2.12-%s.jar" % str(version))
+        "delta-%s_2.12-%s.jar" % (artifact_name, str(version)))
 
     try:
         cmd = ["spark-submit",
@@ -151,7 +160,7 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    packages = "io.delta:delta-core_2.12:" + version
+    packages = "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)
     packages += "," + "io.delta:delta-storage-s3-dynamodb:" + version
     if extra_packages:
         packages += "," + extra_packages
@@ -211,7 +220,7 @@ def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_vers
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     package = ','.join([
-        "io.delta:delta-core_2.12:" + version,
+        "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version),
         "io.delta:delta-iceberg_2.12:" + version,
         "org.apache.iceberg:iceberg-spark-runtime-{}_2.12:{}".format(spark_version, iceberg_version)])
 
