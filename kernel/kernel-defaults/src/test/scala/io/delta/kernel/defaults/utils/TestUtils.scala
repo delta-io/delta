@@ -32,7 +32,8 @@ import org.scalatest.Assertions
 
 trait TestUtils extends Assertions {
 
-  lazy val defaultTableClient = DefaultTableClient.create(new Configuration())
+  lazy val configuration = new Configuration()
+  lazy val defaultTableClient = DefaultTableClient.create(configuration)
 
   implicit class CloseableIteratorOps[T](private val iter: CloseableIterator[T]) {
 
@@ -128,6 +129,17 @@ trait TestUtils extends Assertions {
     }
   }
 
+  /**
+   * Compares the rows in the tables latest snapshot with the expected answer and fails if they
+   * do not match. The comparison is order independent. If expectedSchema is provided, checks
+   * that the latest snapshot's schema is equivalent.
+   *
+   * @param path fully qualified path of the table to check
+   * @param expectedAnswer expected rows
+   * @param readCols subset of columns to read; if null then all columns will be read
+   * @param tableClient table client to use to read the table
+   * @param expectedSchema expected schema to check for; if null then no check is performed
+   */
   def checkTable(
     path: String,
     expectedAnswer: Seq[TestRow],
@@ -172,7 +184,7 @@ trait TestUtils extends Assertions {
     }
   }
 
-  def prepareAnswer(answer: Seq[TestRow]): Seq[TestRow] = {
+  private def prepareAnswer(answer: Seq[TestRow]): Seq[TestRow] = {
     // Converts data to types that we can do equality comparison using Scala collections.
     // For BigDecimal type, the Scala type has a better definition of equality test (similar to
     // Java's java.math.BigDecimal.compareTo).
@@ -183,7 +195,7 @@ trait TestUtils extends Assertions {
   }
 
   // We need to call prepareRow recursively to handle schemas with struct types.
-  def prepareRow(row: TestRow): TestRow = {
+  private def prepareRow(row: TestRow): TestRow = {
     TestRow.fromSeq(row.toSeq.map {
       case null => null
       case bd: java.math.BigDecimal => BigDecimal(bd)
@@ -204,7 +216,7 @@ trait TestUtils extends Assertions {
     })
   }
 
-  def compare(obj1: Any, obj2: Any): Boolean = (obj1, obj2) match {
+  private def compare(obj1: Any, obj2: Any): Boolean = (obj1, obj2) match {
       case (null, null) => true
       case (null, _) => false
       case (_, null) => false
@@ -228,7 +240,7 @@ trait TestUtils extends Assertions {
       case (a, b) => a.equals(b) // In scala == does not call equals for boxed numeric classes?
     }
 
-  def genErrorMessage(expectedAnswer: Seq[TestRow], result: Seq[TestRow]): String = {
+  private def genErrorMessage(expectedAnswer: Seq[TestRow], result: Seq[TestRow]): String = {
     // TODO: improve to include schema or Java type information to help debugging
     s"""
        |== Results ==

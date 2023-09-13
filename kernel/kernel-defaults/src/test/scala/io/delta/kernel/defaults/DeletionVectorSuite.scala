@@ -18,7 +18,8 @@ package io.delta.kernel.defaults
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 
 import io.delta.kernel.defaults.client.DefaultTableClient
-import io.delta.kernel.defaults.utils.{DefaultKernelTestUtils, TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getTestResourceFilePath
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -26,14 +27,14 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
 
   test("end-to-end usage: reading a table with dv") {
     checkTable(
-      path = DefaultKernelTestUtils.getTestResourceFilePath("basic-dv-no-checkpoint"),
+      path = getTestResourceFilePath("basic-dv-no-checkpoint"),
       expectedAnswer = (2L until 10L).map(TestRow(_))
     )
   }
 
   test("end-to-end usage: reading a table with dv with checkpoint") {
     checkTable(
-      path = DefaultKernelTestUtils.getTestResourceFilePath("basic-dv-with-checkpoint"),
+      path = getTestResourceFilePath("basic-dv-with-checkpoint"),
       expectedAnswer = (0L until 500L).filter(_ % 11 != 0).map(TestRow(_))
     )
   }
@@ -64,7 +65,7 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
         !(col1 % 2 == 0 && col1 < 30)
       }
     checkTable(
-      path = DefaultKernelTestUtils.getTestResourceFilePath("dv-with-columnmapping"),
+      path = getTestResourceFilePath("dv-with-columnmapping"),
       expectedAnswer = expectedResult.map(TestRow.fromTuple(_))
     )
   }
