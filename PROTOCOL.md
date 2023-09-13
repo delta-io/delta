@@ -1837,7 +1837,7 @@ uppercase and lowercase as part of percent-encoding. Thus, we require a stricter
 4. Never percent-encode non-reserved octets
 5. A percent-encoded octet consists of three characters: `%` followed by its 2-digit hexadecimal value in uppercase letters, e.g. `>` encodes to `%3E`
 
-### Delta Data Type to Parquet Type Mappings
+## Delta Data Type to Parquet Type Mappings
 Below table captures how each Delta data type is stored physically in Parquet files. Parquet files are used for storing the table data or metadata ([checkpoints](#checkpoints)). Parquet has a limited number of [physical types](https://parquet.apache.org/docs/file-format/types/). Parquet [logical types](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md) are used to extend the types by specifying how the physical types should be interpreted.
 
 For some of the Delta data types, there are multiple ways store the values physically in Parquet file. For example, `timestamp` can be stored either as `int96` or `int64`. The exact physical type depends on the engine that is writing the Parquet file and/or engine specific configuration options. For a Delta lake table reader, it is recommended that the Parquet file reader support at least the Parquet physical and logical types mentioned in the below table.
