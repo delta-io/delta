@@ -1554,7 +1554,7 @@ An array stores a variable length collection of items of some type.
 Field Name | Description
 -|-
 type| Always the string "array"
-elementType| The type of element stored in this array represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
+elementType| The type of element stored in this array is represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 containsNull| Boolean denoting whether this array can contain one or more null values
 
 ### Map Type
@@ -1835,3 +1835,32 @@ uppercase and lowercase as part of percent-encoding. Thus, we require a stricter
 3. Always [percent-encode](https://datatracker.ietf.org/doc/html/rfc3986#section-2) reserved octets
 4. Never percent-encode non-reserved octets
 5. A percent-encoded octet consists of three characters: `%` followed by its 2-digit hexadecimal value in uppercase letters, e.g. `>` encodes to `%3E`
+
+## Schema Serialization Format
+
+Delta uses a subset of Spark SQL's JSON Schema representation to record the schema of a table in the transaction log.
+A reference implementation can be found in [the catalyst package of the Apache Spark repository](https://github.com/apache/spark/tree/master/sql/catalyst/src/main/scala/org/apache/spark/sql/types).
+
+### Delta Data Types to Parquet Physical Type Mappings
+Below table captures how each Delta data type is stored physically in Parquet files. Parquet files are used for storing the table data or metadata ([checkpoints](#checkpoints)). Parquet has a limited number of [physical types](https://parquet.apache.org/docs/file-format/types/). Parquet [logical types](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md) are used to extend the types by specifying how the physical types should be interpreted.
+
+For some of the Delta data types, there are multiple ways store the values physically in Parquet file. For example, `timestamp` can be stored either as `int96` or `int64`. The exact physical type depends on the engine that is writing the Parquet file and/or engine specific configuration options. For a Delta lake table reader, it is recommended that the Parquet file reader support at least the Parquet physical and logical types mentioned in the below table.
+
+Delta Type Name | Parquet Physical Type | Parquet Logical Type 
+-|-|-
+boolean| `boolean` |
+byte| `int32` | `INT(bitwidth = 8, signed = true)`
+short| `int32` | `INT(bitwidth = 16, signed = true)`
+int| `int32` | `INT(bitwidth = 32, signed = true)`
+long| `int64` | `INT(bitwidth = 64, signed = true)`
+date| `int32` | `DATE`
+timestamp| `int96` or `int64` | `TIMESTAMP(isAdjustedToUTC = true, units = microseconds)`
+timestamp without time zone| `int96` or `int64` | `TIMESTAMP(isAdjustedToUTC = false, units = microseconds)`
+float| `float` |
+double| `double` |
+decimal| `int32`, `int64` or `fixed_length_binary` | `DECIMALe(scale, precision)` 
+string| `binary` | `string (UTF-8)`
+binary| `binary` |
+array| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists) for further details | `LIST`
+map| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps) for further details | `MAP`
+struct| `group`. | 
