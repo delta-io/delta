@@ -401,9 +401,6 @@ class DeltaAnalysis(session: SparkSession)
           throw DeltaErrors.notADeltaTableException("RESTORE")
       }
 
-    case d: DescribeDeltaHistory =>
-      d.toCommand
-
     case u: UnresolvedPathBasedDeltaTable =>
       val table = getPathBasedDeltaTable(u.path)
       if (!table.tableExists) {

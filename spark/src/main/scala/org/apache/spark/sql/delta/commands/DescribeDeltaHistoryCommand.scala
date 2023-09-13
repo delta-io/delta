@@ -48,27 +48,6 @@ object DescribeDeltaHistory {
     DescribeDeltaHistory(plan, limit)
   }
 
-  /**
-   * Returns a resolved Delta path from the provided child operator of one of the below commands.
-   */
-  def resolvePath(cmd: DeltaCommand, child: LogicalPlan, limit: Option[Int]): Path = {
-    // Max array size
-    if (limit.exists(_ > Int.MaxValue - 8)) {
-      throw DeltaErrors.maxArraySizeExceeded()
-    }
-    val deltaTableV2: DeltaTableV2 = cmd.getDeltaTable(child, commandName)
-    val tableMetadata: Option[CatalogTable] = deltaTableV2.catalogTable
-    val path = cmd.getTablePathOrIdentifier(child, commandName)._2
-    tableMetadata match {
-      case Some(metadata) =>
-        new Path(metadata.location)
-      case _ if path.isDefined =>
-        new Path(path.get)
-      case _ =>
-        throw DeltaErrors.missingTableIdentifierException(commandName)
-    }
-  }
-
   val schema = ScalaReflection.schemaFor[DeltaHistory].dataType.asInstanceOf[StructType]
   val commandName = "DESCRIBE HISTORY"
 }
@@ -84,7 +63,10 @@ case class DescribeDeltaHistory(
     limit: Option[Int],
     options: Map[String, String] = Map.empty,
     override val output: Seq[Attribute] = DescribeDeltaHistory.schema.toAttributes)
-  extends UnaryNode with MultiInstanceRelation with DeltaCommand {
+  extends UnaryNode
+    with MultiInstanceRelation
+    with DeltaCommand
+{
   override def newInstance(): LogicalPlan = copy(output = output.map(_.newInstance()))
 
   override def withNewChildInternal(newChild: LogicalPlan): LogicalPlan = copy(child = newChild)
@@ -100,8 +82,25 @@ case class DescribeDeltaHistory(
 
   /** Converts this operator into an executable command. */
   def toCommand: DescribeDeltaHistoryCommand = {
+    // Max array size
+    if (limit.exists(_ > Int.MaxValue - 8)) {
+      throw DeltaErrors.maxArraySizeExceeded()
+    }
+    // Get a ResolvedDeltaPath from the provided child operator.
+    import DescribeDeltaHistory.commandName
+    val deltaTableV2: DeltaTableV2 = getDeltaTable(child, commandName)
+    val tableMetadata: Option[CatalogTable] = deltaTableV2.catalogTable
+    val path = getTablePathOrIdentifier(child, commandName)._2
+    val resolvePath: Path = tableMetadata match {
+      case Some(metadata) =>
+        new Path(metadata.location)
+      case _ if path.isDefined =>
+        new Path(path.get)
+      case _ =>
+        throw DeltaErrors.missingTableIdentifierException(commandName)
+    }
     DescribeDeltaHistoryCommand(
-      basePath = DescribeDeltaHistory.resolvePath(cmd = this, child, limit),
+      basePath = resolvePath,
       limit = limit,
       options = options,
       output = output)
@@ -118,7 +117,12 @@ case class DescribeDeltaHistoryCommand(
     limit: Option[Int],
     options: Map[String, String] = Map.empty,
     override val output: Seq[Attribute] = DescribeDeltaHistory.schema.toAttributes)
-  extends LeafRunnableCommand with DeltaCommand {
+  extends LeafRunnableCommand
+    with MultiInstanceRelation
+    with DeltaCommand
+{
+
+  override def newInstance(): LogicalPlan = copy(output = output.map(_.newInstance()))
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     import DescribeDeltaHistory.commandName

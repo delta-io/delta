@@ -447,12 +447,12 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
   test("history - with filesystem options") {
     withTempDir { dir =>
-      val path = fakeFileSystemPath(dir)
+      val tempDir = dir.getCanonicalPath
       val fsOptions = fakeFileSystemOptions
 
-      Seq(1, 2, 3).toDF().write.options(fsOptions).format("delta").save(path)
+      Seq(1, 2, 3).toDF().write.options(fsOptions).format("delta").save(tempDir)
 
-      val table = io.delta.tables.DeltaTable.forPath(spark, path, fsOptions)
+      val table = io.delta.tables.DeltaTable.forPath(spark, tempDir, fsOptions)
       table.history().collect()
     }
   }

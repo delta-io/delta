@@ -381,10 +381,8 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   override def visitDescribeDeltaHistory(
       ctx: DescribeDeltaHistoryContext): LogicalPlan = withOrigin(ctx) {
     DescribeDeltaHistory(
-      UnresolvedDeltaPathOrIdentifier(
-        Option(ctx.path).map(string),
-        Option(ctx.table).map(visitTableIdentifier),
-        DescribeDeltaHistory.commandName),
+      Option(ctx.path).map(string),
+      Option(ctx.table).map(visitTableIdentifier),
       Option(ctx.limit).map(_.getText.toInt))
   }
 

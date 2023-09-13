@@ -1472,4 +1472,5 @@ trait DescribeDeltaHistorySuiteBase
 }
 
 class DescribeDeltaHistorySuite
-  extends DescribeDeltaHistorySuiteBase with DeltaSQLCommandTest
+  extends DescribeDeltaHistorySuiteBase
+    with DeltaSQLCommandTest
