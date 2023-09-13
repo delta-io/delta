@@ -119,6 +119,12 @@ trait TestUtils extends Assertions {
     result
   }
 
+  /**
+   * Execute {@code f} with {@code TimeZone.getDefault()} set to the time zone provided.
+   *
+   * @param zoneId the ID for a TimeZone, either an abbreviation such as "PST", a full name such as
+   *               "America/Los_Angeles", or a custom ID such as "GMT-8:00".
+   */
   def withTimeZone(zoneId: String)(f: => Unit): Unit = {
     val currentDefault = TimeZone.getDefault
     try {

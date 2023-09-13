@@ -71,10 +71,18 @@ class TestRow(val values: Array[Any]) {
 }
 
 object TestRow {
+
+  /**
+   * Construct a [[TestRow]] with the given values. See the docs for [[TestRow]] for
+   * the scala type corresponding to each Kernel data type.
+   */
   def apply(values: Any*): TestRow = {
     new TestRow(values.toArray)
   }
 
+  /**
+   * Construct a [[TestRow]] with the same values as a Kernel [[Row]].
+   */
   def apply(row: Row): TestRow = {
     TestRow.fromSeq(row.getSchema.fields().asScala.zipWithIndex.map { case (field, i) =>
       field.getDataType match {
@@ -101,9 +109,17 @@ object TestRow {
     })
   }
 
+  /**
+   * Construct a [[TestRow]] from the given seq of values. See the docs for [[TestRow]] for
+   * the scala type corresponding to each Kernel data type.
+   */
   def fromSeq(values: Seq[Any]): TestRow = {
     new TestRow(values.toArray)
   }
 
+  /**
+   * Construct a [[TestRow]] with the elements of the given tuple. See the docs for
+   * [[TestRow]] for the scala type corresponding to each Kernel data type.
+   */
   def fromTuple(tuple: Product): TestRow = fromSeq(tuple.productIterator.toSeq)
 }
