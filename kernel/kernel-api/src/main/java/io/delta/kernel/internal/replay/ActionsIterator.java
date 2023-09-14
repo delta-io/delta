@@ -226,12 +226,9 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
                 );
             }
         } catch (IOException ex) {
+            // Close the opened iterators to avoid resource leak
+            Utils.closeCloseablesSilently(iteratorsToClose);
             throw new UncheckedIOException(ex);
-        } finally {
-            // We don't know if this is normal operation, or if `readJsonFiles` or
-            // `readParquetFiles` above have thrown an exception. Luckily, it doesn't matter:
-            // closing a closeable that is already closed is safe.
-            Utils.closeCloseables(iteratorsToClose);
         }
     }
 
