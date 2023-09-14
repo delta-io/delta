@@ -25,6 +25,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata => MetadataAction, Protocol, SetTransaction}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -1587,8 +1588,8 @@ class DeltaColumnMappingSuite extends QueryTest
           "t1",
           props = Map(DeltaConfigs.CHANGE_DATA_FEED.key -> cdfEnabled.toString))
 
-        val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
-        val currMetadata = log.snapshot.metadata
+        val table = DeltaTableV2(spark, TableIdentifier("t1"))
+        val currMetadata = table.snapshot.metadata
         val upgradeMetadata = currMetadata.copy(
           configuration = currMetadata.configuration ++ Map(
             DeltaConfigs.MIN_READER_VERSION.key -> "2",
@@ -1597,7 +1598,7 @@ class DeltaColumnMappingSuite extends QueryTest
           )
         )
 
-        val txn = log.startTransaction()
+        val txn = table.startTransactionWithInitialSnapshot()
         txn.updateMetadata(upgradeMetadata)
 
         if (shouldBlock) {

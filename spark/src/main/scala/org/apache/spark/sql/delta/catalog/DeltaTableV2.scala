@@ -22,7 +22,7 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, DeltaTimeTravelSpec, GeneratedColumn, Snapshot}
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -32,10 +32,13 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
+import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.errors.QueryCompilationErrors
@@ -190,6 +193,23 @@ case class DeltaTableV2(
   }
 
   /**
+   * Starts a transaction for this table, using the snapshot captured during table resolution.
+   *
+   * WARNING: Caller is responsible to ensure that table resolution was recent (e.g. if working with
+   * [[DataFrame]] or [[DeltaTable]] API, where the table could have been resolved long ago).
+   */
+  def startTransactionWithInitialSnapshot(): OptimisticTransaction =
+    startTransaction(Some(snapshot))
+
+  /**
+   * Starts a transaction for this table, using Some provided snapshot, or a fresh snapshot if None
+   * was provided.
+   */
+  def startTransaction(snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
+    deltaLog.startTransaction(snapshotOpt)
+  }
+
+  /**
    * Creates a V1 BaseRelation from this Table to allow read APIs to go through V1 DataSource code
    * paths.
    */
@@ -263,6 +283,31 @@ case class DeltaTableV2(
     } else {
       catalogTable.get
     }
+  }
+}
+
+object DeltaTableV2 {
+  /** Resolves a path into a DeltaTableV2, leveraging standard v2 table resolution. */
+  def apply(spark: SparkSession, tablePath: Path, cmd: String): DeltaTableV2 =
+    resolve(spark, UnresolvedPathBasedDeltaTable(tablePath.toString, cmd), cmd)
+
+  /** Resolves a table identifier into a DeltaTableV2, leveraging standard v2 table resolution. */
+  def apply(spark: SparkSession, tableId: TableIdentifier, cmd: String): DeltaTableV2 =
+    resolve(spark, UnresolvedTable(tableId.nameParts, cmd, None), cmd)
+
+  /** Applies standard v2 table resolution to an unresolved Delta table plan node */
+  def resolve(spark: SparkSession, unresolved: LogicalPlan, cmd: String): DeltaTableV2 =
+    extractFrom(spark.sessionState.analyzer.ResolveRelations(unresolved), cmd)
+
+  /**
+   * Extracts the DeltaTableV2 from a resolved Delta table plan node, throwing "table not found" if
+   * the node does not actually represent a resolved Delta table.
+   */
+  def extractFrom(plan: LogicalPlan, cmd: String): DeltaTableV2 = plan match {
+    case ResolvedTable(_, _, d: DeltaTableV2, _) => d
+    case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
+      DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table))
+    case _ => throw DeltaErrors.notADeltaTableException(cmd)
   }
 }
 

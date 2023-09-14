@@ -286,12 +286,8 @@ trait DeltaCommand extends DeltaLogging {
    * other cases this method will throw a "Table not found" exception.
    */
   def getDeltaTable(target: LogicalPlan, cmd: String): DeltaTableV2 = {
-    target match {
-      case ResolvedTable(_, _, d: DeltaTableV2, _) => d
-      case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
-        DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table))
-      case _ => throw DeltaErrors.notADeltaTableException(cmd)
-    }
+    // TODO: Remove this wrapper and let former callers invoke DeltaTableV2.extractFrom directly.
+    DeltaTableV2.extractFrom(target, cmd)
   }
 
   /**
