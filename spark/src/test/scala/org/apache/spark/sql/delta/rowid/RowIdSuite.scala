@@ -45,9 +45,9 @@ class RowIdSuite extends QueryTest
              |'$rowTrackingFeatureName' = 'supported',
              |'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION)""".stripMargin)
 
-        val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-        assert(RowId.isSupported(log.update().protocol))
-        assert(!RowId.isEnabled(log.update().protocol, log.update().metadata))
+        val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("tbl"))
+        assert(RowId.isSupported(snapshot.protocol))
+        assert(!RowId.isEnabled(snapshot.protocol, snapshot.metadata))
       }
     }
   }
@@ -249,8 +249,8 @@ class RowIdSuite extends QueryTest
         DeltaConfigs.ISOLATION_LEVEL.defaultTablePropertyKey -> prevIsolationLevel.toString) {
         // Create two files that will be picked up by OPTIMIZE
         spark.range(10).repartition(2).write.format("delta").saveAsTable("table")
-        val log = DeltaLog.forTable(spark, TableIdentifier("table"))
-        val versionBeforeOptimize = log.update().version
+        val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("table"))
+        val versionBeforeOptimize = snapshot.version
 
         spark.sql("OPTIMIZE table").collect()
 
@@ -269,8 +269,8 @@ class RowIdSuite extends QueryTest
       withTable("tbl") {
         spark.range(10).write.format("delta").saveAsTable("tbl")
 
-        val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-        assert(!RowId.isEnabled(log.update().protocol, log.update().metadata))
+        val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("tbl"))
+        assert(!RowId.isEnabled(snapshot.protocol, snapshot.metadata))
 
         val err = intercept[UnsupportedOperationException] {
           sql(s"ALTER TABLE tbl " +

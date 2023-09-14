@@ -547,7 +547,7 @@ trait CloneTableSuiteBase extends QueryTest
       spark.range(5).write.format("delta").mode("append").saveAsTable(tableName)
       spark.range(5).write.format("delta").mode("append").saveAsTable(tableName)
       spark.range(5).write.format("delta").mode("append").saveAsTable(tableName)
-      assert(DeltaLog.forTable(spark, TableIdentifier(tableName)).snapshot.version === 3)
+      assert(DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))._2.version === 3)
 
       runAndValidateClone(
         tableName,
@@ -613,8 +613,8 @@ trait CloneTableSuiteBase extends QueryTest
           isCreate = isCreate,
           isReplaceOperation = true)()
 
-        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tbl))
-        val allFiles = deltaLog.snapshot.allFiles.collect()
+        val allFiles =
+          DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tbl))._2.allFiles.collect()
         allFiles.foreach { file =>
           assert(!file.pathAsUri.isAbsolute, "File paths should not be absolute")
         }
