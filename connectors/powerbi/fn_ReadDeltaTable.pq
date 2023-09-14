@@ -349,7 +349,7 @@ let
         Documentation.Description = "Takes the file/folder list of a Delta Lake table and returns the content as a table object in Power Query.",
         Documentation.LongDescription = "Takes the file/folder list of a Delta Lake table and returns the content as a table object in Power Query. An optional 2nd parameter can be used to for special features like Time Travel, Partition Elimination, etc.",
         Documentation.Category = "Table",
-        Documentation.Source = "https://github.com/delta-io/delta/blob/master/connectors/powerbi/fn_ReadDeltaTable.pq",
+        Documentation.Source = "https://github.com/delta-io/connectors/blob/master/powerbi/fn_ReadDeltaTable.pq",
         Documentation.Version = "1.0",
         Documentation.Author = "Gerhard Brueckl, paiqo GmbH",
         Documentation.Examples = {[Description =  "Reading Delta Lake table from Azure Blob Storage with Time-Travel",
