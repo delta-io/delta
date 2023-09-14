@@ -177,7 +177,7 @@ trait CloneTableSuiteBase extends QueryTest
       val sourceData = Dataset.ofRows(
         spark,
         LogicalRelation(sourceLog.createRelation(
-          snapshotToUseOpt = Some(deltaTable.snapshot),
+          snapshotToUseOpt = Some(deltaTable.initialSnapshot),
           isTimeTravelQuery = sourceVersion.isDefined || sourceTimestamp.isDefined)))
       (new CloneDeltaSource(deltaTable), sourceData)
     }

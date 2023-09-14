@@ -103,7 +103,18 @@ case class DeltaTableV2(
 
   private lazy val caseInsensitiveOptions = new CaseInsensitiveStringMap(options.asJava)
 
-  lazy val snapshot: Snapshot = {
+  /**
+   * The snapshot initially associated with this table. It is captured on first access, usually (but
+   * not always) shortly after the table was first created, and is immutable once captured.
+   *
+   * WARNING: This snapshot could be arbitrarily stale for long-lived [[DeltaTableV2]] instances,
+   * such as the ones [[DeltaTable]] uses internally. Callers who cannot tolerate this potential
+   * staleness should use [[getFreshSnapshot]] instead.
+   *
+   * WARNING: Because the snapshot is captured lazily, callers should explicitly access the snapshot
+   * if they want to be certain it has been captured.
+   */
+  lazy val initialSnapshot: Snapshot = {
     timeTravelSpec.map { spec =>
       // By default, block using CDF + time-travel
       if (CDCReader.isCDCRead(caseInsensitiveOptions) &&
@@ -136,7 +147,8 @@ case class DeltaTableV2(
       recordDeltaEvent(deltaLog, "delta.cdf.read",
         data = caseInsensitiveOptions.asCaseSensitiveMap())
       Some(CDCReader.getCDCRelation(
-        spark, snapshot, timeTravelSpec.nonEmpty, spark.sessionState.conf, caseInsensitiveOptions))
+        spark, initialSnapshot, timeTravelSpec.nonEmpty, spark.sessionState.conf,
+        caseInsensitiveOptions))
     } else {
       None
     }
@@ -144,7 +156,7 @@ case class DeltaTableV2(
 
   private lazy val tableSchema: StructType = {
     val baseSchema = cdcRelation.map(_.schema).getOrElse {
-      DeltaTableUtils.removeInternalMetadata(spark, snapshot.schema)
+      DeltaTableUtils.removeInternalMetadata(spark, initialSnapshot.schema)
     }
     DeltaColumnMapping.dropColumnMappingMetadata(baseSchema)
   }
@@ -152,13 +164,13 @@ case class DeltaTableV2(
   override def schema(): StructType = tableSchema
 
   override def partitioning(): Array[Transform] = {
-    snapshot.metadata.partitionColumns.map { col =>
+    initialSnapshot.metadata.partitionColumns.map { col =>
       new IdentityTransform(new FieldReference(Seq(col)))
     }.toArray
   }
 
   override def properties(): ju.Map[String, String] = {
-    val base = snapshot.getProperties
+    val base = initialSnapshot.getProperties
     base.put(TableCatalog.PROP_PROVIDER, "delta")
     base.put(TableCatalog.PROP_LOCATION, CatalogUtils.URIToString(path.toUri))
     catalogTable.foreach { table =>
@@ -172,7 +184,7 @@ case class DeltaTableV2(
         base.put(TableCatalog.PROP_EXTERNAL, "true")
       }
     }
-    Option(snapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
+    Option(initialSnapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
     base.asJava
   }
 
@@ -195,7 +207,7 @@ case class DeltaTableV2(
    */
   def toBaseRelation: BaseRelation = {
     // force update() if necessary in DataFrameReader.load code
-    snapshot
+    initialSnapshot
     if (!tableExists) {
       // special error handling for path based tables
       if (catalogTable.isEmpty
@@ -208,11 +220,11 @@ case class DeltaTableV2(
       throw DeltaErrors.nonExistentDeltaTable(id)
     }
     val partitionPredicates = DeltaDataSource.verifyAndCreatePartitionFilters(
-      path.toString, snapshot, partitionFilters)
+      path.toString, initialSnapshot, partitionFilters)
 
     cdcRelation.getOrElse {
       deltaLog.createRelation(
-        partitionPredicates, Some(snapshot), timeTravelSpec.isDefined)
+        partitionPredicates, Some(initialSnapshot), timeTravelSpec.isDefined)
     }
   }
 

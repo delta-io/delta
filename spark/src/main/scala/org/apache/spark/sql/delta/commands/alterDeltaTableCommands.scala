@@ -257,7 +257,7 @@ case class AlterTableDropFeatureDeltaCommand(
 
       // Check whether the protocol contains the feature in either the writer features list or
       // the reader+writer features list.
-      if (!table.snapshot.protocol.readerAndWriterFeatureNames.contains(featureName)) {
+      if (!table.initialSnapshot.protocol.readerAndWriterFeatureNames.contains(featureName)) {
         throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
       }
 
@@ -289,7 +289,7 @@ case class AlterTableDropFeatureDeltaCommand(
         // certainly still contain traces of the feature. We don't have to run an expensive
         // explicit check, but instead we fail straight away.
         throw DeltaErrors.dropTableFeatureWaitForRetentionPeriod(
-          featureName, table.snapshot.metadata)
+          featureName, table.initialSnapshot.metadata)
       }
 
       val txn = startTransaction(sparkSession)

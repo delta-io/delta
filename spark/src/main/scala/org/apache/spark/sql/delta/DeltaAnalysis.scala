@@ -145,8 +145,9 @@ class DeltaAnalysis(session: SparkSession)
           // used on the source delta table, then the corresponding fields would be set for the
           // sourceTable and needs to be removed from the targetTable's configuration. The fields
           // will then be set in the targetTable's configuration internally after.
+          val sourceMetadata = deltaLogSrc.initialSnapshot.metadata
           val config =
-            deltaLogSrc.snapshot.metadata.configuration.-("delta.columnMapping.maxColumnId")
+            sourceMetadata.configuration.-("delta.columnMapping.maxColumnId")
               .-(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
               .-(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
 
@@ -154,11 +155,11 @@ class DeltaAnalysis(session: SparkSession)
             identifier = targetTableIdentifier,
             tableType = tblType,
             storage = newStorage,
-            schema = deltaLogSrc.snapshot.metadata.schema,
+            schema = sourceMetadata.schema,
             properties = config,
-            partitionColumnNames = deltaLogSrc.snapshot.metadata.partitionColumns,
+            partitionColumnNames = sourceMetadata.partitionColumns,
             provider = Some("delta"),
-            comment = Option(deltaLogSrc.snapshot.metadata.description)
+            comment = Option(sourceMetadata.description)
           )
         } else { // Source table is not delta format
             new CatalogTable(
@@ -181,7 +182,7 @@ class DeltaAnalysis(session: SparkSession)
 
       val protocol =
         if (src.provider.exists(DeltaSourceUtils.isDeltaDataSourceName)) {
-          Some(DeltaTableV2(session, new Path(src.location)).snapshot.protocol)
+          Some(DeltaTableV2(session, new Path(src.location)).initialSnapshot.protocol)
         } else {
           None
         }
@@ -368,7 +369,7 @@ class DeltaAnalysis(session: SparkSession)
           }
           // restoring to same version as latest should be a no-op.
           val sourceSnapshot = try {
-            traveledTable.snapshot
+            traveledTable.initialSnapshot
           } catch {
             case v: VersionNotFoundException =>
               throw DeltaErrors.restoreVersionNotExistException(v.userVersion, v.earliest, v.latest)
@@ -439,8 +440,7 @@ class DeltaAnalysis(session: SparkSession)
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
       DeltaRelation.fromV2Relation(d, dsv2, options)
 
-    case ResolvedTable(_, _, d: DeltaTableV2, _)
-        if d.catalogTable.isEmpty && d.snapshot.version < 0 =>
+    case ResolvedTable(_, _, d: DeltaTableV2, _) if d.catalogTable.isEmpty && !d.tableExists =>
       // This is DDL on a path based table that doesn't exist. CREATE will not hit this path, most
       // SHOW / DESC code paths will hit this
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(d.path.toString)))
@@ -716,7 +716,7 @@ class DeltaAnalysis(session: SparkSession)
         val cloneSourceTable = sourceTbl match {
           case source: CloneIcebergSource =>
             // Reuse the existing schema so that the physical name of columns are consistent
-            source.copy(tableSchema = Some(deltaTableV2.snapshot.metadata.schema))
+            source.copy(tableSchema = Some(deltaTableV2.initialSnapshot.metadata.schema))
           case other => other
         }
         val catalogTable = createCatalogTableForCloneCommand(
@@ -868,17 +868,17 @@ class DeltaAnalysis(session: SparkSession)
       } else {
         CaseInsensitiveMap(query.output.map(a => (a.name, a)).toMap)
       }
-      val tableSchema = deltaTable.snapshot.metadata.schema
+      val tableSchema = deltaTable.initialSnapshot.metadata.schema
       if (tableSchema.length != targetAttrs.length) {
         // The target attributes may contain the metadata columns by design. Throwing an exception
         // here in case target attributes may have the metadata columns for Delta in future.
         throw DeltaErrors.schemaNotConsistentWithTarget(s"$tableSchema", s"$targetAttrs")
       }
       val nullAsDefault = deltaTable.spark.sessionState.conf.useNullsForMissingDefaultColumnValues
-      deltaTable.snapshot.metadata.schema.foreach { col =>
+      deltaTable.initialSnapshot.metadata.schema.foreach { col =>
         if (!userSpecifiedNames.contains(col.name) &&
           !ColumnWithDefaultExprUtils.columnHasDefaultExpr(
-            deltaTable.snapshot.protocol, col, nullAsDefault)) {
+            deltaTable.initialSnapshot.protocol, col, nullAsDefault)) {
           throw DeltaErrors.missingColumnsInInsertInto(col.name)
         }
       }
