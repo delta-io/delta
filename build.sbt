@@ -691,7 +691,7 @@ lazy val hive2Tez = (project in file("connectors/hive2-tez"))
  * -- .m2/repository/io/delta/delta-standalone_2.12/0.2.1-SNAPSHOT/delta-standalone_2.12-0.2.1-SNAPSHOT-javadoc.jar
  */
 lazy val standaloneCosmetic = project
-  .dependsOn(storage)
+  .dependsOn(storage) // this doesn't impact the output artifact (jar), only the pom.xml dependencies
   .settings(
     name := "delta-standalone",
     commonSettings,
@@ -708,7 +708,9 @@ lazy val standaloneCosmetic = project
     )
   )
 
-lazy val testStandaloneCosmetic = project.dependsOn(standaloneCosmetic)
+lazy val testStandaloneCosmetic = (project in file("connectors/testStandaloneCosmetic"))
+  .dependsOn(standaloneCosmetic)
+  .dependsOn(goldenTables % "test")
   .settings(
     name := "test-standalone-cosmetic",
     commonSettings,
@@ -771,7 +773,7 @@ lazy val standaloneWithoutParquetUtils = project
   )
 
 lazy val standalone = (project in file("connectors/standalone"))
-  .dependsOn(storage)
+  .dependsOn(storage % "compile->compile;provided->provided")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-standalone-original",
@@ -824,7 +826,8 @@ lazy val standalone = (project in file("connectors/standalone"))
     assembly / logLevel := Level.Info,
     assembly / test := {},
     assembly / assemblyJarName := s"${name.value}-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
-    // we exclude jars first, and then we shade what is remaining
+    // We exclude jars first, and then we shade what is remaining. Note: the input here is only
+    // `libraryDependencies` jars, not `.dependsOn(_)` jars.
     assembly / assemblyExcludedJars := {
       val cp = (assembly / fullClasspath).value
       val allowedPrefixes = Set("META_INF", "io", "json4s", "jackson", "paranamer",
@@ -852,6 +855,9 @@ lazy val standalone = (project in file("connectors/standalone"))
       // Discard the jackson service configs that we don't need. These files are not shaded so
       // adding them may conflict with other jackson version used by the user.
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
+      // This project `.dependsOn` delta-storage, and its classes will be included by default
+      // in this assembly jar. Manually discard them since it is already a compile-time dependency.
+      case PathList("io", "delta", "storage", xs @ _*) => MergeStrategy.discard
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
