@@ -962,10 +962,10 @@ lazy val flink = (project in file("connectors/flink"))
     autoScalaLibrary := false, // exclude scala-library from dependencies
     Test / publishArtifact := false,
     pomExtra :=
-      <url>https://github.com/delta-io/connectors</url>
+      <url>https://github.com/delta-io/delta</url>
         <scm>
-          <url>git@github.com:delta-io/connectors.git</url>
-          <connection>scm:git:git@github.com:delta-io/connectors.git</connection>
+          <url>git@github.com:delta-io/delta.git</url>
+          <connection>scm:git:git@github.com:delta-io/delta.git</connection>
         </scm>
         <developers>
           <developer>
