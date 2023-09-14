@@ -578,7 +578,8 @@ object DeltaLog extends DeltaLogging {
   private[delta] def logPathFor(dataPath: String): Path = logPathFor(new Path(dataPath))
   private[delta] def logPathFor(dataPath: Path): Path =
     DeltaTableUtils.safeConcatPaths(dataPath, LOG_DIR_NAME)
-  private[delta] def logPathFor(dataPath: File): Path = logPathFor(dataPath.getAbsolutePath)
+  private[delta] def logPathFor(dataPath: File): Path =
+    logPathFor(new Path(dataPath.getCanonicalPath))
 
   /**
    * We create only a single [[DeltaLog]] for any given `DeltaLogCacheKey` to avoid wasted work
@@ -657,11 +658,6 @@ object DeltaLog extends DeltaLogging {
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
-  def forTable(spark: SparkSession, dataPath: String, clock: Clock): DeltaLog = {
-    apply(spark, logPathFor(dataPath), clock)
-  }
-
-  /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
     apply(spark, logPathFor(dataPath), clock)
   }
@@ -703,7 +699,7 @@ object DeltaLog extends DeltaLogging {
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, deltaTable: DeltaTableIdentifier, clock: Clock): DeltaLog = {
     if (deltaTable.path.isDefined) {
-      forTable(spark, deltaTable.path.get, clock)
+      forTable(spark, new Path(deltaTable.path.get), clock)
     } else {
       forTable(spark, deltaTable.table.get, clock)
     }
@@ -715,7 +711,7 @@ object DeltaLog extends DeltaLogging {
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(spark: SparkSession, dataPath: String): (DeltaLog, Snapshot) =
-    withFreshSnapshot { forTable(spark, dataPath, _) }
+    withFreshSnapshot { forTable(spark, new Path(dataPath), _) }
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(spark: SparkSession, dataPath: Path): (DeltaLog, Snapshot) =
