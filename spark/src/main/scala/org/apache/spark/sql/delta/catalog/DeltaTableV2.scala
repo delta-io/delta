@@ -72,6 +72,8 @@ case class DeltaTableV2(
   }
 
 
+  def hasPartitionFilters: Boolean = partitionFilters.nonEmpty
+
   // This MUST be initialized before the deltaLog object is created, in order to accurately
   // bound the creation time of the table.
   private val creationTimeMs = {
