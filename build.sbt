@@ -698,6 +698,7 @@ lazy val standaloneCosmetic = project
     releaseSettings,
     exportJars := true,
     Compile / packageBin := (standaloneParquet / assembly).value,
+    Compile / packageSrc := (standalone / Compile / packageSrc).value,
     libraryDependencies ++= scalaCollectionPar(scalaVersion.value) ++ Seq(
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
       "org.apache.parquet" % "parquet-hadoop" % "1.12.0" % "provided",
