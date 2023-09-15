@@ -54,8 +54,8 @@ public interface Scan {
      * Get an iterator of data files to scan.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @return iterator of {@link ColumnarBatch}s where each row in each batch corresponds to one
-     * scan file
+     * @return iterator of {@link ColumnarBatch}s where each selected row in
+     * the batch corresponds to one scan file
      */
     CloseableIterator<ColumnarBatch> getScanFiles(TableClient tableClient);
 
@@ -82,17 +82,17 @@ public interface Scan {
      * @param tableClient     Connector provided {@link TableClient} implementation.
      * @param scanState       Scan state returned by {@link Scan#getScanState(TableClient)}
      * @param scanFileRowIter an iterator of {@link Row}s. Each {@link Row} represents one scan file
-     *                        from the {@link ColumnarBatch} returned by
+     *                        from the {@link FilteredColumnarBatch} returned by
      *                        {@link Scan#getScanFiles(TableClient)}
      * @param predicate       An optional predicate that can be used for data skipping while reading
      *                        the scan files.
-     * @return Data read from the input scan files as an iterator of {@link DataReadResult}s. Each
-     * {@link DataReadResult} instance contains the data read and an optional selection
+     * @return Data read from the input scan files as an iterator of {@link FilteredColumnarBatch}s.
+     * Each {@link FilteredColumnarBatch} instance contains the data read and an optional selection
      * vector that indicates data rows as valid or invalid. It is the responsibility of the
      * caller to close this iterator.
      * @throws IOException when error occurs while reading the data.
      */
-    static CloseableIterator<DataReadResult> readData(
+    static CloseableIterator<FilteredColumnarBatch> readData(
         TableClient tableClient,
         Row scanState,
         CloseableIterator<Row> scanFileRowIter,
@@ -125,7 +125,7 @@ public interface Scan {
 
         String tablePath = ScanStateRow.getTablePath(scanState);
 
-        return new CloseableIterator<DataReadResult>() {
+        return new CloseableIterator<FilteredColumnarBatch>() {
             RoaringBitmapArray currBitmap = null;
             DeletionVectorDescriptor currDV = null;
 
@@ -140,7 +140,7 @@ public interface Scan {
             }
 
             @Override
-            public DataReadResult next() {
+            public FilteredColumnarBatch next() {
                 FileDataReadResult fileDataReadResult = data.next();
 
                 Row scanFileRow = fileDataReadResult.getScanFileRow();
@@ -194,7 +194,7 @@ public interface Scan {
                             "Column mapping mode is not yet supported: " + columnMappingMode);
                 }
 
-                return new DataReadResult(updatedBatch, selectionVector);
+                return new FilteredColumnarBatch(updatedBatch, selectionVector);
             }
         };
     }

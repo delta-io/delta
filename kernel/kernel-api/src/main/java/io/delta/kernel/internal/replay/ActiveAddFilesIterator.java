@@ -35,11 +35,11 @@ import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 /**
  * This class takes an iterator of ({@link FileDataReadResult}, isFromCheckpoint), where the
  * columnar data inside the FileDataReadResult represents {@link LogReplay#ADD_REMOVE_READ_SCHEMA},
- * and produces an iterator of {@link DataReadResult} with schema
+ * and produces an iterator of {@link FilteredColumnarBatch} with schema
  * {@link LogReplay#ADD_ONLY_DATA_SCHEMA}, and with a selection vector indicating which AddFiles are
  * still active in the table (have not been tombstoned).
  */
-class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
+class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch> {
     private static class UniqueFileActionTuple extends Tuple2<URI, Optional<String>> {
         UniqueFileActionTuple(URI fileURI, Optional<String> deletionVectorId) {
             super(fileURI, deletionVectorId);
@@ -50,11 +50,10 @@ class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
     private final Set<UniqueFileActionTuple> tombstonesFromJson;
     private final Set<UniqueFileActionTuple> addFilesFromJson;
 
-    private Optional<DataReadResult> next;
+    private Optional<FilteredColumnarBatch> next;
     private boolean closed;
 
-    ActiveAddFilesIterator(
-            CloseableIterator<Tuple2<FileDataReadResult, Boolean>> iter) {
+    ActiveAddFilesIterator(CloseableIterator<Tuple2<FileDataReadResult, Boolean>> iter) {
         this.iter = iter;
         this.tombstonesFromJson = new HashSet<>();
         this.addFilesFromJson = new HashSet<>();
@@ -73,7 +72,7 @@ class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
     }
 
     @Override
-    public DataReadResult next() {
+    public FilteredColumnarBatch next() {
         if (closed) {
             throw new IllegalStateException("Can't call `next` on a closed iterator.");
         }
@@ -83,7 +82,7 @@ class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
 
         // By the definition of `hasNext`, we know that `next` is non-empty
 
-        final DataReadResult ret = next.get();
+        final FilteredColumnarBatch ret = next.get();
         next = Optional.empty();
         return ret;
     }
@@ -196,7 +195,7 @@ class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
         // Step 3: Drop the RemoveFile column and use the selection vector to build a new
         //         DataReadResult
         next = Optional.of(
-            new DataReadResult(
+            new FilteredColumnarBatch(
                 addRemoveColumnarBatch.withDeletedColumnAt(1),
                 atLeastOneUnselected ?
                     Optional.of(boolArrayToColumnVector(selectionVector)) :
