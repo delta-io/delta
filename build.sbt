@@ -256,6 +256,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.11" % "test",
+      "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
     ),
 
