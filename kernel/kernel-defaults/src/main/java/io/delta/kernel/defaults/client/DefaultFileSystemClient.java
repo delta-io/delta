@@ -77,6 +77,7 @@ public class DefaultFileSystemClient
         Path resolvedPath = fs.resolvePath(pathObject);
         return fs.makeQualified(resolvedPath).toString();
     }
+
     @Override
     public CloseableIterator<ByteArrayInputStream> readFiles(
         CloseableIterator<Tuple2<String, Tuple2<Integer, Integer>>> iter) {

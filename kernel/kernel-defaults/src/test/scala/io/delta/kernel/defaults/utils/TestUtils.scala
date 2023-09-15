@@ -183,7 +183,7 @@ trait TestUtils extends Assertions {
     // version
   ): Unit = {
 
-    val snapshot = Table.forPath(tableClient, path).getLatestSnapshot(tableClient)
+    val snapshot = latestSnapshot(path)
 
     val readSchema = if (readCols == null) {
       null
