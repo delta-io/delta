@@ -15,7 +15,6 @@
  */
 package org.apache.spark.sql.delta
 
-import io.delta.tables.execution.VacuumTableCommand
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql.{QueryTest, SparkSession}
@@ -28,6 +27,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util.Utils
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 
 class CustomCatalogSuite extends QueryTest with SharedSparkSession
   with DeltaSQLCommandTest {
@@ -36,17 +36,23 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
     super.sparkConf.set("spark.sql.catalog.dummy", classOf[DummyCatalog].getName)
 
   test("RESTORE a table from DummyCatalog") {
+    val dummyCatalog =
+      spark.sessionState.catalogManager.catalog("dummy").asInstanceOf[DummyCatalog]
     val tableName = "restore_table"
+    val tablePath = dummyCatalog.getTablePath(tableName)
     withTable(tableName) {
       sql("SET CATALOG dummy")
-      val dummyCatalog =
-        spark.sessionState.catalogManager.catalog("dummy").asInstanceOf[DummyCatalog]
-      val tablePath = dummyCatalog.getTablePath(tableName)
       sql(f"CREATE TABLE $tableName (id bigint) USING delta")
+      sql("SET CATALOG spark_catalog")
       // Insert some data into the table in the dummy catalog.
       // To make it simple, here we insert data directly into the table path.
       sql(f"INSERT INTO delta.`$tablePath` VALUES (0)")
       sql(f"INSERT INTO delta.`$tablePath` VALUES (1)")
+      // Test 3-part identifier when the current catalog is the default catalog
+      sql(f"RESTORE TABLE dummy.default.$tableName VERSION AS OF 1")
+      checkAnswer(spark.table(f"dummy.default.$tableName"), spark.range(1).toDF())
+
+      sql("SET CATALOG dummy")
       sql(f"RESTORE TABLE $tableName VERSION AS OF 0")
       checkAnswer(spark.table(tableName), Nil)
       sql(f"RESTORE TABLE $tableName VERSION AS OF 1")
@@ -54,11 +60,9 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
       // Test 3-part identifier
       sql(f"RESTORE TABLE dummy.default.$tableName VERSION AS OF 2")
       checkAnswer(spark.table(tableName), spark.range(2).toDF())
-
-      sql("SET CATALOG spark_catalog")
-      // Test 3-part identifier when the current catalog is the default catalog
-      sql(f"RESTORE TABLE dummy.default.$tableName VERSION AS OF 1")
-      checkAnswer(spark.table(f"dummy.default.$tableName"), spark.range(1).toDF())
+      // Test file path table
+      sql(f"RESTORE TABLE delta.`$tablePath` VERSION AS OF 1")
+      checkAnswer(spark.table(tableName), spark.range(1).toDF())
     }
   }
 }
@@ -74,7 +78,7 @@ class DummyCatalog extends TableCatalog {
   override def name: String = "dummy"
 
   def getTablePath(tableName: String): Path = {
-    new Path(tempDir, tableName)
+    new Path(tempDir.toString + "/" + tableName)
   }
   override def defaultNamespace(): Array[String] = Array("default")
 
@@ -90,6 +94,9 @@ class DummyCatalog extends TableCatalog {
     fs.exists(tablePath)
   }
   override def loadTable(ident: Identifier): Table = {
+    if (!tableExists(ident)) {
+      throw new NoSuchTableException("")
+    }
     val tablePath = getTablePath(ident.name())
     DeltaTableV2(spark, tablePath)
   }
