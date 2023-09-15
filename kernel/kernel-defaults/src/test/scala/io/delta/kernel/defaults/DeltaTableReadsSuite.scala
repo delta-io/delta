@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults
 
+import java.io.File
 import java.math.BigDecimal
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -22,6 +23,7 @@ import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
@@ -161,5 +163,22 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       Table.forPath(defaultTableClient, invalidPath)
     }
     assert(ex.getMessage().contains(s"Table at path `$invalidPath` is not found"))
+  }
+
+  test("table deleted after the `Table` creation") {
+    withTempDir { temp =>
+      val source = new File(goldenTablePath("data-reader-primitives"))
+      val target = new File(temp.getCanonicalPath)
+      FileUtils.copyDirectory(source, target)
+
+      val table = Table.forPath(defaultTableClient, target.getCanonicalPath)
+      // delete the table and try to get the snapshot. Expect a failure.
+      FileUtils.deleteDirectory(target)
+      val ex = intercept[TableNotFoundException] {
+        table.getLatestSnapshot(defaultTableClient)
+      }
+      assert(ex.getMessage.contains(
+        s"Table at path `file:${target.getCanonicalPath}` is not found"))
+    }
   }
 }
