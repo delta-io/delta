@@ -70,18 +70,17 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
       ur: UnresolvedRelation): LogicalPlan = {
     EliminateSubqueryAliases(sparkSession.sessionState.analyzer.ResolveRelations(ur)) match {
       case _: View =>
-        // If table exists and not found to be a view, throw not supported error
+        // If the identifier is a view, throw not supported error
         throw DeltaErrors.notADeltaTableException("RESTORE")
-      case tableRelation =>
-        if (tableRelation.resolved) {
-          tableRelation
-        } else {
-          ResolveDeltaPathTable.resolveAsPathTable(sparkSession, ur.multipartIdentifier) match {
-            case Some(r: ResolvedTable) =>
-              DataSourceV2Relation.create(r.table, Some(r.catalog), Some(r.identifier))
-            case None =>
-              ur.tableNotFound(ur.multipartIdentifier)
-          }
+      case tableRelation if tableRelation.resolved =>
+        tableRelation
+      case unresolved =>
+        // If the identifier doesn't exist as a table, try resolving it as a path table.
+        ResolveDeltaPathTable.resolveAsPathTable(sparkSession, ur.multipartIdentifier) match {
+          case Some(r: ResolvedTable) =>
+            DataSourceV2Relation.create(r.table, Some(r.catalog), Some(r.identifier))
+          case None =>
+            ur.tableNotFound(ur.multipartIdentifier)
         }
     }
   }

@@ -35,16 +35,6 @@ case class ResolveDeltaPathTable(sparkSession: SparkSession) extends Rule[Logica
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case u: UnresolvedTable =>
       ResolveDeltaPathTable.resolveAsPathTable(sparkSession, u.multipartIdentifier).getOrElse(u)
-
-    /*
-    case tt @ TimeTravel(u: UnresolvedRelation, _, _, _) if maybeSQLFile(u.multipartIdentifier) =>
-      resolveAsPathTable(u.multipartIdentifier) match {
-        case Some(r: ResolvedTable) =>
-          val relation = DataSourceV2Relation.create(r.table, Some(r.catalog), Some(r.identifier))
-          tt.copy(relation = relation)
-        case None => tt
-      }
-     */
   }
 }
 
