@@ -303,7 +303,9 @@ object Protocol {
    */
   def minProtocolComponentsFromMetadata(
       spark: SparkSession,
-      metadata: Metadata): (Int, Int, Set[TableFeature]) = {
+      metadata: Metadata,
+      considerProtocolVersionProps: Boolean = true): (Int, Int, Set[TableFeature]) = {
+
     val tableConf = metadata.configuration
     // There might be features enabled by the table properties aka
     // `CREATE TABLE ... TBLPROPERTIES ...`.
@@ -342,9 +344,11 @@ object Protocol {
     }
 
     // Protocol version provided in table properties can upgrade the protocol, but only when they
-    // are higher than which required by the enabled features.
-    val (readerVersionFromTableConfOpt, writerVersionFromTableConfOpt) =
-      getProtocolVersionsFromTableConf(tableConf)
+    // are being considered and higher than which required by the enabled features.
+    val (readerVersionFromTableConfOpt, writerVersionFromTableConfOpt) = {
+      if (considerProtocolVersionProps) getProtocolVersionsFromTableConf(tableConf)
+      else (None, None)
+    }
 
     // Decide the final protocol version:
     //   a. 1, aka the lowest version possible

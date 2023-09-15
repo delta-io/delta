@@ -1067,7 +1067,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
         val propString = props.map(kv => s"'${kv._1}'='${kv._2}'").mkString(",")
         if (expectedExceptionClass.isDefined) {
-          assert(intercept[DeltaTableFeatureException] {
+          assert(intercept[SparkThrowable] {
             sql(
               s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
                 s"TBLPROPERTIES ($propString)")
@@ -1269,7 +1269,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
         val propString = props.map(kv => s"'${kv._1}'='${kv._2}'").mkString(",")
         if (expectedExceptionClass.isDefined) {
-          assert(intercept[DeltaTableFeatureException] {
+          assert(intercept[SparkThrowable] {
             sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES ($propString)")
           }.getErrorClass === expectedExceptionClass.get)
         } else {
@@ -1370,6 +1370,73 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     expectedFinalProtocol = Some(
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
         .withFeature(TestReaderWriterMetadataAutoUpdateFeature)))
+
+  testAlterTable(
+    name = "legacy protocol with unsupported version props, legacy feature, feature property",
+    tableProtocol = Protocol(2, 2),
+    props = Map(
+      DeltaConfigs.MIN_READER_VERSION.key -> "1",
+      DeltaConfigs.MIN_WRITER_VERSION.key -> "1",
+      TableFeatureProtocolUtils.propertyKey(TestLegacyReaderWriterFeature) -> "enabled"),
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestLegacyReaderWriterFeature)
+        .merge(Protocol(2, 2))))
+
+  testAlterTable(
+    name = "legacy protocol with unsupported version props, native feature, feature property",
+    tableProtocol = Protocol(2, 2),
+    props = Map(
+      DeltaConfigs.MIN_READER_VERSION.key -> "1",
+      DeltaConfigs.MIN_WRITER_VERSION.key -> "1",
+      TableFeatureProtocolUtils.propertyKey(TestReaderWriterMetadataAutoUpdateFeature) ->
+        "enabled"),
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestReaderWriterMetadataAutoUpdateFeature).merge(Protocol(2, 2))))
+
+  testAlterTable(
+    name = "legacy protocol with unsupported version props, native feature, metadata",
+    tableProtocol = Protocol(2, 2),
+    props = Map(
+      DeltaConfigs.MIN_READER_VERSION.key -> "1",
+      DeltaConfigs.MIN_WRITER_VERSION.key -> "1",
+      TestReaderWriterMetadataAutoUpdateFeature.TABLE_PROP_KEY -> "true"),
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(TestReaderWriterMetadataAutoUpdateFeature).merge(Protocol(2, 2))))
+
+  testAlterTable(
+    name = "table feature protocol with unsupported version props, non-auto-update feature",
+    tableProtocol = Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION),
+    props = Map(
+      DeltaConfigs.MIN_READER_VERSION.key -> "1",
+      DeltaConfigs.MIN_WRITER_VERSION.key -> "1",
+      TestReaderWriterMetadataNoAutoUpdateFeature.TABLE_PROP_KEY -> "true"),
+    expectedExceptionClass = Some("DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT"))
+
+  // CDF is a writer feature, so specifying reader version 1 causes downgrade.
+  testAlterTable(
+    name = "legacy protocol with unsupported version props, writer feature",
+    tableProtocol = Protocol(2, 2),
+    props = Map(
+      DeltaConfigs.MIN_READER_VERSION.key -> "1",
+      DeltaConfigs.MIN_WRITER_VERSION.key -> "1",
+      DeltaConfigs.CHANGE_DATA_FEED.key -> "true"),
+    expectedExceptionClass = Some("DELTA_INVALID_PROTOCOL_DOWNGRADE"))
+
+  // DV is a reader-writer feature, so the bad reader and writer versions will be ignored.
+  testAlterTable(
+    name = "legacy feature protocol with unsupported version props, reader-writer feature",
+    tableProtocol = Protocol(2, 2),
+    props = Map(
+      DeltaConfigs.MIN_READER_VERSION.key -> "1",
+      DeltaConfigs.MIN_WRITER_VERSION.key -> "1",
+      DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "true"),
+    expectedFinalProtocol = Some(
+      Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeature(DeletionVectorsTableFeature)
+        .merge(Protocol(2, 2))))
 
   testAlterTable(
     "table features protocol, legacy feature, metadata",

@@ -455,16 +455,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       //
       // Collect new reader and writer versions from table properties, which could be provided by
       // the user in `ALTER TABLE TBLPROPERTIES` or copied over from session defaults.
-      val readerVersionInNewMetadataTmp =
+      val readerVersionAsTableProp =
         Protocol.getReaderVersionFromTableConf(newMetadataTmp.configuration)
           .getOrElse(protocolBeforeUpdate.minReaderVersion)
-      val writerVersionInNewMetadataTmp =
+      val writerVersionAsTableProp =
         Protocol.getWriterVersionFromTableConf(newMetadataTmp.configuration)
           .getOrElse(protocolBeforeUpdate.minWriterVersion)
 
-      // If the collected reader and writer versions are provided by the user, we must use them,
-      // and throw ProtocolDowngradeException when they are lower than what the table have before
-      // this transaction.
+      // Collect reader and writer versions provided by the user and set new protocol.
       // If they are copied over from session defaults (this code path is for existing table, the
       // only case this can happen is therefore during `REPLACE`), we will update the target table
       // protocol when the session defaults are higher, and not throw ProtocolDowngradeException
@@ -472,16 +470,29 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val (isReaderVersionUserProvided, isWriterVersionUserProvided) = (
         proposedNewMetadata.configuration.contains(Protocol.MIN_READER_VERSION_PROP),
         proposedNewMetadata.configuration.contains(Protocol.MIN_WRITER_VERSION_PROP))
-      val newReaderVersion = if (isReaderVersionUserProvided) {
-        readerVersionInNewMetadataTmp
-      } else {
-        readerVersionInNewMetadataTmp.max(protocolBeforeUpdate.minReaderVersion)
+      // If the manually-specified protocol versions are "bad" (lower than the current versions)
+      // and there are some new features enabled in this txn, we will ignore the "bad" versions
+      // as if the user has never specified them.
+      val (readerVersionRequiredByMetadataChanged, writerVersionRequiredByMetadataChanged) = {
+        val (_, _, orgEnabledFeatures) = Protocol.minProtocolComponentsFromMetadata(
+          spark, snapshot.metadata, considerProtocolVersionProps = false)
+        val (_, _, newEnabledFeatures) = Protocol.minProtocolComponentsFromMetadata(
+          spark, proposedNewMetadata, considerProtocolVersionProps = false)
+        val featuresEnabledInTxn = newEnabledFeatures.diff(orgEnabledFeatures)
+        (featuresEnabledInTxn.exists(_.isReaderWriterFeature), featuresEnabledInTxn.nonEmpty)
       }
-      val newWriterVersion = if (isWriterVersionUserProvided) {
-        writerVersionInNewMetadataTmp
-      } else {
-        writerVersionInNewMetadataTmp.max(protocolBeforeUpdate.minWriterVersion)
-      }
+      val newReaderVersion =
+        if (isReaderVersionUserProvided && !readerVersionRequiredByMetadataChanged) {
+          readerVersionAsTableProp
+        } else {
+          readerVersionAsTableProp.max(protocolBeforeUpdate.minReaderVersion)
+        }
+      val newWriterVersion =
+        if (isWriterVersionUserProvided && !writerVersionRequiredByMetadataChanged) {
+          writerVersionAsTableProp
+        } else {
+          writerVersionAsTableProp.max(protocolBeforeUpdate.minWriterVersion)
+        }
       val newProtocolForLatestMetadata = Protocol(newReaderVersion, newWriterVersion)
 
       if (newReaderVersion < protocolBeforeUpdate.minReaderVersion ||
