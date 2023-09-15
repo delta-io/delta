@@ -402,7 +402,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   }
 
   override def visitRestore(ctx: RestoreContext): LogicalPlan = withOrigin(ctx) {
-    val tableRelation = UnresolvedRelation(visitTableIdentifier(ctx.table))
+    val tableRelation = UnresolvedRelation(ctx.table.identifier.asScala.toSeq.map(_.getText))
     val timeTravelTableRelation = maybeTimeTravelChild(ctx.clause, tableRelation)
     RestoreTableStatement(timeTravelTableRelation.asInstanceOf[TimeTravel])
   }
