@@ -2080,7 +2080,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // Writer feature is removed from the writer features set.
       val snapshot = deltaLog.update()
-      assert(snapshot.protocol === emptyProtocolWithReaderFeatures)
+      assert(snapshot.protocol === Protocol(1, 1))
       assert(!snapshot.metadata.configuration.contains(featurePropertyKey))
       assertPropertiesAndShowTblProperties(deltaLog)
     }
@@ -2172,7 +2172,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
           // Reader+writer feature is removed from the features set.
           val snapshot = deltaLog.update()
-          assert(snapshot.protocol === emptyProtocolWithReaderFeatures)
+          assert(snapshot.protocol === Protocol(1, 1))
           assert(!snapshot.metadata.configuration.contains(featurePropertyKey))
           assertPropertiesAndShowTblProperties(deltaLog)
         } else {
@@ -2247,11 +2247,13 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val deltaLog = DeltaLog.forTable(spark, dir)
       sql(s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
              |TBLPROPERTIES (
+             |delta.feature.${TestWriterFeature.name} = 'supported',
              |delta.feature.${TestRemovableWriterFeature.name} = 'supported'
              |)""".stripMargin)
 
       val protocol = deltaLog.update().protocol
-      assert(protocol === protocolWithWriterFeature(TestRemovableWriterFeature))
+      assert(protocol === protocolWithFeatures(
+        writerFeatures = Seq(TestWriterFeature, TestRemovableWriterFeature)))
 
       withSQLConf(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED.key -> true.toString) {
         val command = AlterTableDropFeatureDeltaCommand(
@@ -2264,7 +2266,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             minReaderVersion = 1,
             minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
             readerFeatures = None,
-            writerFeatures = Some(Set.empty)))
+            writerFeatures = Some(Set(TestWriterFeature.name))))
       }
     }
   }
@@ -2404,7 +2406,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableWriterFeature.name)
         command.run(spark)
       }
-      assert(deltaLog.update().protocol === emptyProtocolWithWriterFeatures)
+      assert(deltaLog.update().protocol === Protocol(1, 1))
 
       sql(s"""ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES (
              |delta.feature.${TestRemovableWriterFeature.name} = 'supported'
@@ -2603,7 +2605,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // Reader+writer feature is removed from the features set.
       val snapshot = deltaLog.update()
-      assert(snapshot.protocol === emptyProtocolWithReaderFeatures)
+      assert(snapshot.protocol === Protocol(1, 1))
       assert(!snapshot.metadata.configuration
         .contains(TestRemovableReaderWriterFeature.TABLE_PROP_KEY))
       assertPropertiesAndShowTblProperties(deltaLog)
@@ -2751,7 +2753,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           sql(s"ALTER TABLE $table DROP FEATURE $featureName")
         }
 
-        assert(deltaLog.update().protocol === emptyProtocolWithWriterFeatures)
+        assert(deltaLog.update().protocol === Protocol(1, 1))
       }
       // Test that the write downgrade command was invoked.
       val expectedOpType = "delta.test.TestWriterFeaturePreDowngradeCommand"
@@ -2761,6 +2763,173 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       }
       assert(blob.nonEmpty, s"Expecting an '$expectedOpType' event but didn't see any.")
     }
+  }
+
+  protected def testProtocolVersionDowngrade(
+      initialMinReaderVersion: Int,
+      initialMinWriterVersion: Int,
+      featuresToAdd: Seq[TableFeature],
+      featuresToRemove: Seq[TableFeature],
+      expectedDowngradedProtocol: Protocol): Unit = {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+
+      spark.sql(s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+                   |TBLPROPERTIES (
+                   |delta.minReaderVersion = $initialMinReaderVersion,
+                   |delta.minWriterVersion = $initialMinWriterVersion
+                   |)""".stripMargin)
+
+      // Upgrade protocol to table features.
+      val newTBLProperties = featuresToAdd
+        .map(f => s"delta.feature.${f.name}='supported'")
+        .reduce(_ + ", " + _)
+      spark.sql(
+        s"""ALTER TABLE delta.`${dir.getPath}`
+           |SET TBLPROPERTIES (
+           |$newTBLProperties
+           |)""".stripMargin)
+
+      withSQLConf(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED.key -> true.toString) {
+        for (feature <- featuresToRemove) {
+          AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), feature.name)
+            .run(spark)
+        }
+      }
+
+      assert(deltaLog.update().protocol === expectedDowngradedProtocol)
+    }
+  }
+
+  test("Downgrade protocol version (1, 4)") {
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 1,
+      initialMinWriterVersion = 4,
+      featuresToAdd = Seq(TestRemovableWriterFeature),
+      featuresToRemove = Seq(TestRemovableWriterFeature),
+      expectedDowngradedProtocol = Protocol(1, 4))
+  }
+
+  // Initial minReader version is (2, 4), however, there are no legacy features that require
+  // reader version 2. Therefore, the protocol version is downgraded to (1, 4).
+  test("Downgrade protocol version (2, 4)") {
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 2,
+      initialMinWriterVersion = 4,
+      featuresToAdd = Seq(TestRemovableWriterFeature),
+      featuresToRemove = Seq(TestRemovableWriterFeature),
+      expectedDowngradedProtocol = Protocol(1, 4))
+  }
+
+  // Version (2, 5) enables column mapping which is a reader+writer feature and requires (2, 5).
+  // Therefore, to downgrade from table features we need at least (2, 5).
+  test("Downgrade protocol version (2, 5)") {
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 2,
+      initialMinWriterVersion = 5,
+      featuresToAdd = Seq(TestRemovableWriterFeature),
+      featuresToRemove = Seq(TestRemovableWriterFeature),
+      expectedDowngradedProtocol = Protocol(2, 5))
+  }
+
+
+  test("Downgrade protocol version (1, 1)") {
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 1,
+      initialMinWriterVersion = 1,
+      featuresToAdd = Seq(TestRemovableWriterFeature),
+      featuresToRemove = Seq(TestRemovableWriterFeature),
+      expectedDowngradedProtocol = Protocol(1, 1))
+  }
+
+  test("Downgrade protocol version on table created with table features") {
+    // When the table is initialized with table features there are no active (implicit) legacy
+    // features. After removing the last table feature we downgrade back to (1, 1).
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 3,
+      initialMinWriterVersion = 7,
+      featuresToAdd = Seq(TestRemovableWriterFeature),
+      featuresToRemove = Seq(TestRemovableWriterFeature),
+      expectedDowngradedProtocol = Protocol(1, 1))
+  }
+
+  test("Downgrade protocol version on table created with writer features") {
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 1,
+      initialMinWriterVersion = 7,
+      featuresToAdd = Seq(TestRemovableWriterFeature),
+      featuresToRemove = Seq(TestRemovableWriterFeature),
+      expectedDowngradedProtocol = Protocol(1, 1))
+  }
+
+  test("Protocol version downgrade on a table with table features and added legacy feature") {
+    // Added legacy feature should be removed and protocol version should be downgraded to the
+    // appropriate version.
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 1,
+      initialMinWriterVersion = 7,
+      featuresToAdd = Seq(TestRemovableWriterFeature, TestRemovableLegacyWriterFeature),
+      featuresToRemove = Seq(TestRemovableWriterFeature),
+      expectedDowngradedProtocol = Protocol(1, 5))
+
+    // Legacy feature was manually removed. Protocol should be downgraded to (1, 1).
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 1,
+      initialMinWriterVersion = 7,
+      featuresToAdd = Seq(TestRemovableWriterFeature, TestRemovableLegacyWriterFeature),
+      featuresToRemove = Seq(TestRemovableLegacyWriterFeature, TestRemovableWriterFeature),
+      expectedDowngradedProtocol = Protocol(1, 1))
+
+    // Start with writer table features and add a legacy reader+writer feature.
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 1,
+      initialMinWriterVersion = 7,
+      featuresToAdd = Seq(TestRemovableWriterFeature, ColumnMappingTableFeature),
+      featuresToRemove = Seq(TestRemovableWriterFeature),
+      expectedDowngradedProtocol = Protocol(2, 5))
+
+    // Remove reader+writer legacy feature as well.
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 1,
+      initialMinWriterVersion = 7,
+      featuresToAdd = Seq(TestRemovableLegacyReaderWriterFeature, TestRemovableWriterFeature),
+      featuresToRemove = Seq(TestRemovableLegacyReaderWriterFeature, TestRemovableWriterFeature),
+      expectedDowngradedProtocol = Protocol(1, 1))
+  }
+
+  test("Protocol version is not downgraded when writer features exist") {
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 1,
+      initialMinWriterVersion = 7,
+      featuresToAdd = Seq(TestRemovableWriterFeature, DomainMetadataTableFeature),
+      featuresToRemove = Seq(TestRemovableWriterFeature),
+      expectedDowngradedProtocol = protocolWithWriterFeature(DomainMetadataTableFeature))
+  }
+
+  test("Protocol version is not downgraded when reader+writer features exist") {
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 3,
+      initialMinWriterVersion = 7,
+      featuresToAdd = Seq(TestRemovableReaderWriterFeature, DeletionVectorsTableFeature),
+      featuresToRemove = Seq(TestRemovableReaderWriterFeature),
+      expectedDowngradedProtocol = protocolWithReaderFeature(DeletionVectorsTableFeature))
+  }
+
+  test("Protocol version is not downgraded when both reader+writer and writer features exist") {
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 3,
+      initialMinWriterVersion = 7,
+      featuresToAdd = Seq(TestRemovableReaderWriterFeature, TestRemovableWriterFeature),
+      featuresToRemove = Seq(TestRemovableReaderWriterFeature),
+      expectedDowngradedProtocol =
+        Protocol(3, 7, Some(Set.empty), Some(Set(TestRemovableWriterFeature.name))))
+
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 3,
+      initialMinWriterVersion = 7,
+      featuresToAdd = Seq(TestRemovableReaderWriterFeature, TestRemovableWriterFeature),
+      featuresToRemove = Seq(TestRemovableWriterFeature),
+      expectedDowngradedProtocol = protocolWithReaderFeature(TestRemovableReaderWriterFeature))
   }
 
   private def assertPropertiesAndShowTblProperties(
