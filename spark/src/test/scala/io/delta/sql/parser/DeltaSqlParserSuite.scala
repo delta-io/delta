@@ -17,18 +17,17 @@
 package io.delta.sql.parser
 
 import io.delta.tables.execution.VacuumTableCommand
-
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.UnresolvedPathBasedDeltaTable
-import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, OptimizeTableCommand, DeltaReorgTable}
+import org.apache.spark.sql.delta.commands.{DeltaReorgTable, DescribeDeltaDetailCommand, OptimizeTableCommand}
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTableDropFeature, CloneTableStatement}
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableDropFeature, CloneTableStatement, RestoreTableStatement}
 
 class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
@@ -56,6 +55,25 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
     assert(parser.parsePlan("vacuum \"/tmp/table\"") ===
       VacuumTableCommand(UnresolvedPathBasedDeltaTable("/tmp/table", "VACUUM"), None, false))
+  }
+
+  test("Restore command is parsed as expected") {
+    val parser = new DeltaSqlParser(null)
+    var parsedCmd = parser.parsePlan("RESTORE catalog_foo.db.tbl TO VERSION AS OF 1;")
+    assert(parsedCmd ===
+      RestoreTableStatement(TimeTravel(
+        UnresolvedRelation(Seq("catalog_foo", "db", "tbl")),
+        None,
+        Some(1),
+        Some("sql"))))
+
+    parsedCmd = parser.parsePlan("RESTORE delta.`/tmp` TO VERSION AS OF 1;")
+    assert(parsedCmd ===
+      RestoreTableStatement(TimeTravel(
+        UnresolvedRelation(Seq("delta", "/tmp")),
+        None,
+        Some(1),
+        Some("sql"))))
   }
 
   test("OPTIMIZE command is parsed as expected") {
@@ -290,6 +308,13 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     // Custom source format with path
     checkCloneStmt(parser, source = "/path/to/iceberg", target = "t1", sourceFormat = "iceberg",
       sourceIsTable = false)
+
+    // Target table with 3L name
+    checkCloneStmt(parser, source = "/path/to/iceberg", target = "a.b.t1", sourceFormat = "iceberg",
+      sourceIsTable = false)
+    checkCloneStmt(
+      parser, source = "spark_catalog.tmp.table", target = "a.b.t1", sourceIs3LTable = true)
+    checkCloneStmt(parser, source = "t2", target = "a.b.t1")
   }
 
   for (truncateHistory <- Seq(true, false))
