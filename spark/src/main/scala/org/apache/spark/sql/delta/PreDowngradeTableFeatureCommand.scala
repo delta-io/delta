@@ -42,7 +42,7 @@ case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   // To remove the feature we only need to remove the table property.
   override def removeFeatureTracesIfNeeded(): Boolean = {
     // Make sure feature data/metadata exist before proceeding.
-    if (TestRemovableWriterFeature.validateRemoval(table.snapshot)) return false
+    if (TestRemovableWriterFeature.validateRemoval(table.initialSnapshot)) return false
 
     recordDeltaEvent(table.deltaLog, "delta.test.TestWriterFeaturePreDowngradeCommand")
     val properties = Seq(TestRemovableWriterFeature.TABLE_PROP_KEY)
@@ -56,7 +56,7 @@ case class TestReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   // To remove the feature we only need to remove the table property.
   override def removeFeatureTracesIfNeeded(): Boolean = {
     // Make sure feature data/metadata exist before proceeding.
-    if (TestRemovableReaderWriterFeature.validateRemoval(table.snapshot)) return false
+    if (TestRemovableReaderWriterFeature.validateRemoval(table.initialSnapshot)) return false
 
     val properties = Seq(TestRemovableReaderWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
@@ -68,7 +68,7 @@ case class TestLegacyWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand {
   /** Return true if we removed the property, false if no action was needed. */
   override def removeFeatureTracesIfNeeded(): Boolean = {
-    if (TestRemovableLegacyWriterFeature.validateRemoval(table.snapshot)) return false
+    if (TestRemovableLegacyWriterFeature.validateRemoval(table.initialSnapshot)) return false
 
     val properties = Seq(TestRemovableLegacyWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
@@ -80,7 +80,7 @@ case class TestLegacyReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand {
   /** Return true if we removed the property, false if no action was needed. */
   override def removeFeatureTracesIfNeeded(): Boolean = {
-    if (TestRemovableLegacyReaderWriterFeature.validateRemoval(table.snapshot)) return false
+    if (TestRemovableLegacyReaderWriterFeature.validateRemoval(table.initialSnapshot)) return false
 
     val properties = Seq(TestRemovableLegacyReaderWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)

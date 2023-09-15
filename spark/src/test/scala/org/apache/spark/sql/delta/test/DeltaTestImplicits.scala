@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.test
 import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
 
@@ -87,5 +88,10 @@ object DeltaTestImplicits {
     def enableExpiredLogCleanup(): Boolean = {
       deltaLog.enableExpiredLogCleanup(snapshot.metadata)
     }
+  }
+
+  implicit class DeltaTableV2TestHelper(deltaTable: DeltaTableV2) {
+    /** For backward compatibility with existing unit tests */
+    def snapshot: Snapshot = deltaTable.initialSnapshot
   }
 }
