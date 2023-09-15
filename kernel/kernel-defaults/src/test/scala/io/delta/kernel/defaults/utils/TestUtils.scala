@@ -15,7 +15,9 @@
  */
 package io.delta.kernel.defaults.utils
 
-import java.util.{Optional, TimeZone}
+import java.io.File
+import java.nio.file.Files
+import java.util.{Optional, TimeZone, UUID}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
@@ -27,6 +29,7 @@ import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.scalatest.Assertions
 
 trait TestUtils extends Assertions {
@@ -66,6 +69,11 @@ trait TestUtils extends Assertions {
         .filter(_.getName != name).asJava
       new StructType(newFields)
     }
+  }
+
+  def latestSnapshot(path: String): Snapshot = {
+    Table.forPath(defaultTableClient, path)
+      .getLatestSnapshot(defaultTableClient)
   }
 
   def readSnapshot(
@@ -178,7 +186,7 @@ trait TestUtils extends Assertions {
     // version
   ): Unit = {
 
-    val snapshot = Table.forPath(path).getLatestSnapshot(tableClient)
+    val snapshot = latestSnapshot(path)
 
     val readSchema = if (readCols == null) {
       null
@@ -280,5 +288,16 @@ trait TestUtils extends Assertions {
        |${prepareAnswer(result).map(_.toString()).mkString("(", ",", ")")}
        |
        |""".stripMargin
+  }
+
+  /**
+   * Creates a temporary directory, which is then passed to `f` and will be deleted after `f`
+   * returns.
+   */
+  protected def withTempDir(f: File => Unit): Unit = {
+    val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
+    try f(tempDir) finally {
+      FileUtils.deleteDirectory(tempDir)
+    }
   }
 }

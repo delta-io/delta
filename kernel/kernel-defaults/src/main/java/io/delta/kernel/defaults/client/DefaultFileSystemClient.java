@@ -45,33 +45,37 @@ public class DefaultFileSystemClient
     }
 
     @Override
-    public CloseableIterator<FileStatus> listFrom(String filePath) {
-        try {
-            Iterator<org.apache.hadoop.fs.FileStatus> iter;
+    public CloseableIterator<FileStatus> listFrom(String filePath) throws IOException {
+        Iterator<org.apache.hadoop.fs.FileStatus> iter;
 
-            Path path = new Path(filePath);
-            FileSystem fs = path.getFileSystem(hadoopConf);
-            if (!fs.exists(path.getParent())) {
-                throw new FileNotFoundException(
-                    String.format("No such file or directory: %s", path.getParent())
-                );
-            }
-            org.apache.hadoop.fs.FileStatus[] files = fs.listStatus(path.getParent());
-            iter = Arrays.stream(files)
-                .filter(f -> f.getPath().getName().compareTo(path.getName()) >= 0)
-                .sorted(Comparator.comparing(o -> o.getPath().getName()))
-                .iterator();
-
-            return Utils.toCloseableIterator(iter)
-                .map(hadoopFileStatus ->
-                    FileStatus.of(
-                        hadoopFileStatus.getPath().toString(),
-                        hadoopFileStatus.getLen(),
-                        hadoopFileStatus.getModificationTime())
-                );
-        } catch (Exception ex) {
-            throw new RuntimeException("Could not resolve the FileSystem", ex);
+        Path path = new Path(filePath);
+        FileSystem fs = path.getFileSystem(hadoopConf);
+        if (!fs.exists(path.getParent())) {
+            throw new FileNotFoundException(
+                String.format("No such file or directory: %s", path.getParent())
+            );
         }
+        org.apache.hadoop.fs.FileStatus[] files = fs.listStatus(path.getParent());
+        iter = Arrays.stream(files)
+            .filter(f -> f.getPath().getName().compareTo(path.getName()) >= 0)
+            .sorted(Comparator.comparing(o -> o.getPath().getName()))
+            .iterator();
+
+        return Utils.toCloseableIterator(iter)
+            .map(hadoopFileStatus ->
+                FileStatus.of(
+                    hadoopFileStatus.getPath().toString(),
+                    hadoopFileStatus.getLen(),
+                    hadoopFileStatus.getModificationTime())
+            );
+    }
+
+    @Override
+    public String resolvePath(String path) throws IOException {
+        Path pathObject = new Path(path);
+        FileSystem fs = pathObject.getFileSystem(hadoopConf);
+        Path resolvedPath = fs.resolvePath(pathObject);
+        return fs.makeQualified(resolvedPath).toString();
     }
 
     @Override

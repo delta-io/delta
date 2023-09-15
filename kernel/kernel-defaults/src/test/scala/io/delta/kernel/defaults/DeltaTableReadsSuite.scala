@@ -15,15 +15,15 @@
  */
 package io.delta.kernel.defaults
 
+import java.io.File
 import java.math.BigDecimal
 
 import org.scalatest.funsuite.AnyFunSuite
-
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-
-import io.delta.kernel.Table
+import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
@@ -34,8 +34,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   // TODO: for now we do not support timestamp partition columns, make sure it's blocked
   test("cannot read partition column of timestamp type") {
     // kernel expects a fully qualified path
-    val path = "file:" + goldenTablePath("kernel-timestamp-TIMESTAMP_MICROS")
-    val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
+    val path = goldenTablePath("kernel-timestamp-TIMESTAMP_MICROS")
+    val snapshot = latestSnapshot(path);
 
     val e = intercept[UnsupportedOperationException] {
       readSnapshot(snapshot) // request entire schema
@@ -87,7 +87,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     expectedResult: Seq[TestRow]): Unit = {
     withTimeZone(timeZone) {
       checkTable(
-        path = "file:" + goldenTablePath(goldenTableName),
+        path = goldenTablePath(goldenTableName),
         expectedAnswer = expectedResult,
         // for now omit "part" column since we don't support reading timestamp partition values
         readCols = Seq("id", "time")
@@ -140,7 +140,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
 
       checkTable(
-        path = "file:" + goldenTablePath(tablePath),
+        path = goldenTablePath(tablePath),
         expectedAnswer = expectedResult.map(TestRow.fromTuple(_))
       )
     }
@@ -152,8 +152,33 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
   test("end to end: multi-part checkpoint") {
     checkTable(
-      path = "file:" + goldenTablePath("multi-part-checkpoint"),
+      path = goldenTablePath("multi-part-checkpoint"),
       expectedAnswer = (Seq(0L) ++ (0L until 30L)).map(TestRow(_))
     )
+  }
+
+  test("invalid path") {
+    val invalidPath = "/path/to/non-existent-directory"
+    val ex = intercept[TableNotFoundException] {
+      Table.forPath(defaultTableClient, invalidPath)
+    }
+    assert(ex.getMessage().contains(s"Table at path `$invalidPath` is not found"))
+  }
+
+  test("table deleted after the `Table` creation") {
+    withTempDir { temp =>
+      val source = new File(goldenTablePath("data-reader-primitives"))
+      val target = new File(temp.getCanonicalPath)
+      FileUtils.copyDirectory(source, target)
+
+      val table = Table.forPath(defaultTableClient, target.getCanonicalPath)
+      // delete the table and try to get the snapshot. Expect a failure.
+      FileUtils.deleteDirectory(target)
+      val ex = intercept[TableNotFoundException] {
+        table.getLatestSnapshot(defaultTableClient)
+      }
+      assert(ex.getMessage.contains(
+        s"Table at path `file:${target.getCanonicalPath}` is not found"))
+    }
   }
 }

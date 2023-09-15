@@ -17,6 +17,7 @@
 package io.delta.kernel.internal.snapshot;
 
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -104,7 +105,7 @@ public class SnapshotManager
         Path logPath,
         TableClient tableClient,
         long startVersion)
-        throws FileNotFoundException {
+        throws IOException {
         logDebug(String.format("startVersion: %s", startVersion));
         return tableClient
             .getFileSystemClient()
@@ -144,6 +145,8 @@ public class SnapshotManager
             }
         } catch (FileNotFoundException e) {
             return Optional.empty();
+        } catch (IOException io) {
+            throw new RuntimeException("Failed to list the files in delta log", io);
         }
     }
 
@@ -220,7 +223,7 @@ public class SnapshotManager
                 logPath,
                 dataPath,
                 tableClient))
-            .orElseThrow(TableNotFoundException::new);
+            .orElseThrow(() -> new TableNotFoundException(dataPath.toString()));
     }
 
     private SnapshotImpl createSnapshot(

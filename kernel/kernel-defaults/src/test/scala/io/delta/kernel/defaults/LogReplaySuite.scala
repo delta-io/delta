@@ -68,7 +68,7 @@ class LogReplaySuite extends AnyFunSuite {
 
   test("simple end to end with inserts and deletes and checkpoint") {
     val unresolvedPath = GoldenTableUtils.goldenTablePath("basic-with-inserts-deletes-checkpoint")
-    val table = io.delta.kernel.Table.forPath(s"file:$unresolvedPath")
+    val table = io.delta.kernel.Table.forPath(tableClient, unresolvedPath)
     val conf = new Configuration()
     val client = DefaultTableClient.create(conf)
     val snapshot = table.getLatestSnapshot(client)
