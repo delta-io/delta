@@ -951,7 +951,8 @@ case class DeltaSource(
       version: Long,
       batchStartVersion: Long,
       batchEndVersionOpt: Option[Long] = None,
-      verifyMetadataAction: Boolean = true): (Boolean, Option[Metadata], Option[Protocol]) = {
+      verifyMetadataAction: Boolean = true
+  ): (Boolean, Option[Metadata], Option[Protocol]) = {
     /** A check on the source table that disallows changes on the source data. */
     val shouldAllowChanges = options.ignoreChanges || ignoreFileDeletion || skipChangeCommits
     /** A check on the source table that disallows commits that only include deletes to the data. */
