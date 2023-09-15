@@ -30,9 +30,10 @@ import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
@@ -186,14 +187,14 @@ case class DeltaTableV2(
 
   override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
     new WriteIntoDeltaBuilder(
-      deltaLog, info.options, spark.sessionState.conf.useNullsForMissingDefaultColumnValues)
+      this, info.options, spark.sessionState.conf.useNullsForMissingDefaultColumnValues)
   }
 
   /**
    * Creates a V1 BaseRelation from this Table to allow read APIs to go through V1 DataSource code
    * paths.
    */
-  def toBaseRelation: BaseRelation = {
+  lazy val toBaseRelation: BaseRelation = {
     // force update() if necessary in DataFrameReader.load code
     snapshot
     if (!tableExists) {
@@ -215,6 +216,24 @@ case class DeltaTableV2(
         partitionPredicates, Some(snapshot), timeTravelSpec.isDefined)
     }
   }
+
+  /** Creates a [[LogicalRelation]] that represents this table */
+  lazy val toLogicalRelation: LogicalRelation = {
+    val relation = this.toBaseRelation
+    LogicalRelation(relation, relation.schema.toAttributes, ttSafeCatalogTable, isStreaming = false)
+  }
+
+  /** Creates a [[DataFrame]] that uses the requested spark session to read from this table */
+  def toDf(sparkSession: SparkSession): DataFrame = {
+    val plan = catalogTable.foldLeft[LogicalPlan](toLogicalRelation) { (child, ct) =>
+      // Catalog based tables need a SubqueryAlias that carries their fully-qualified name
+      SubqueryAlias(ct.identifier.nameParts, child)
+    }
+    Dataset.ofRows(sparkSession, plan)
+  }
+
+  /** Creates a [[DataFrame]] that reads from this table */
+  lazy val toDf: DataFrame = toDf(spark)
 
   /**
    * Check the passed in options and existing timeTravelOpt, set new time travel by options.
@@ -254,20 +273,19 @@ case class DeltaTableV2(
     }
   }
 
-  override def v1Table: CatalogTable = {
-    if (catalogTable.isEmpty) {
-      throw DeltaErrors.invalidV1TableCall("v1Table", "DeltaTableV2")
-    }
-    if (timeTravelSpec.isDefined) {
-      catalogTable.get.copy(stats = None)
-    } else {
-      catalogTable.get
-    }
+  /** A "clean" version of the catalog table, safe for use with or without time travel. */
+  lazy val ttSafeCatalogTable: Option[CatalogTable] = catalogTable match {
+    case Some(ct) if timeTravelSpec.isDefined => Some(ct.copy(stats = None))
+    case other => other
+  }
+
+  override def v1Table: CatalogTable = ttSafeCatalogTable.getOrElse {
+    throw DeltaErrors.invalidV1TableCall("v1Table", "DeltaTableV2")
   }
 }
 
 private class WriteIntoDeltaBuilder(
-    log: DeltaLog,
+    table: DeltaTableV2,
     writeOptions: CaseInsensitiveStringMap,
     nullAsDefault: Boolean)
   extends WriteBuilder with SupportsOverwrite with SupportsTruncate with SupportsDynamicOverwrite {
@@ -315,18 +333,17 @@ private class WriteIntoDeltaBuilder(
           }
           // TODO: Get the config from WriteIntoDelta's txn.
           WriteIntoDelta(
-            log,
+            table.deltaLog,
             if (forceOverwrite) SaveMode.Overwrite else SaveMode.Append,
             new DeltaOptions(options.toMap, session.sessionState.conf),
             Nil,
-            log.unsafeVolatileSnapshot.metadata.configuration,
+            table.deltaLog.unsafeVolatileSnapshot.metadata.configuration,
             data).run(session)
 
           // TODO: Push this to Apache Spark
           // Re-cache all cached plans(including this relation itself, if it's cached) that refer
           // to this data source relation. This is the behavior for InsertInto
-          session.sharedState.cacheManager.recacheByPlan(
-            session, LogicalRelation(log.createRelation()))
+          session.sharedState.cacheManager.recacheByPlan(session, table.toLogicalRelation)
         }
       }
     }
