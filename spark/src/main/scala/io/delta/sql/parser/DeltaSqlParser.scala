@@ -284,7 +284,8 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     // could revert back to that.
     val sourceRelation = new UnresolvedRelation(visitMultipartIdentifier(ctx.source))
     val maybeTimeTravelSource = maybeTimeTravelChild(ctx.clause, sourceRelation)
-    val targetRelation = UnresolvedRelation(target)
+    val targetRelation =
+      UnresolvedRelation(target.catalog.toSeq ++ target.database.toSeq :+ target.table)
 
     val tablePropertyOverrides = Option(ctx.tableProps)
       .map(visitPropertyKeyValues)
