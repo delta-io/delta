@@ -610,7 +610,8 @@ object UnresolvedPathOrIdentifier {
       tableIdentifier: Option[TableIdentifier],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
-      case (_, Some(t)) => UnresolvedTable(t.nameParts, cmd, None)
+      case (_, Some(t)) =>
+        UnresolvedTable(t.nameParts, cmd, None)
       case (Some(p), None) => UnresolvedPathBasedTable(p, cmd)
       case _ => throw new IllegalArgumentException(
         s"At least one of path or tableIdentifier must be provided to $cmd")
