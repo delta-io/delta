@@ -65,6 +65,40 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
       checkAnswer(spark.table(tableName), spark.range(1).toDF())
     }
   }
+
+  test("Shallow Clone a table with time travel") {
+    val srcTable = "shallow_clone_src_table"
+    val destTableOne = "spark_catalog.default.shallow_clone_dest_table_1"
+    val destTableTwo = "spark_catalog.default.shallow_clone_dest_table_2"
+    val destTableThree = "spark_catalog.default.shallow_clone_dest_table_3"
+    val destTableFour = "spark_catalog.default.shallow_clone_dest_table_4"
+    val dummyCatalog =
+      spark.sessionState.catalogManager.catalog("dummy").asInstanceOf[DummyCatalog]
+    val tablePath = dummyCatalog.getTablePath(srcTable)
+    withTable(srcTable, destTableOne, destTableTwo, destTableThree, destTableFour) {
+      sql("SET CATALOG dummy")
+      sql(f"CREATE TABLE $srcTable (id bigint) USING delta")
+      sql("SET CATALOG spark_catalog")
+      // Insert some data into the table in the dummy catalog.
+      // To make it simple, here we insert data directly into the table path.
+      sql(f"INSERT INTO delta.`$tablePath` VALUES (0)")
+      sql(f"INSERT INTO delta.`$tablePath` VALUES (1)")
+      // Test 3-part identifier when the current catalog is the default catalog
+      sql(f"CREATE TABLE $destTableFour SHALLOW CLONE dummy.default.$srcTable VERSION AS OF 1")
+      checkAnswer(spark.table(destTableFour), spark.range(1).toDF())
+
+      sql("SET CATALOG dummy")
+      // Test simple shallow clone command under the dummy catalog
+      sql(f"CREATE TABLE $destTableOne SHALLOW CLONE $srcTable")
+      checkAnswer(spark.table(destTableOne), spark.range(2).toDF())
+      // Test time travel on the src table
+      sql(f"CREATE TABLE $destTableTwo SHALLOW CLONE dummy.default.$srcTable VERSION AS OF 1")
+      checkAnswer(spark.table(destTableTwo), spark.range(1).toDF())
+      // Test time travel on the src table delta path
+      sql(f"CREATE TABLE $destTableThree SHALLOW CLONE delta.`$tablePath` VERSION AS OF 1")
+      checkAnswer(spark.table(destTableThree), spark.range(1).toDF())
+    }
+  }
 }
 
 class DummyCatalog extends TableCatalog {
