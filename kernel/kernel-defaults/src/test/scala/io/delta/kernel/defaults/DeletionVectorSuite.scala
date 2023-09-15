@@ -17,76 +17,58 @@ package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 
-import io.delta.kernel.Table
 import io.delta.kernel.defaults.client.DefaultTableClient
-import io.delta.kernel.defaults.utils.DefaultKernelTestUtils
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getTestResourceFilePath
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
 class DeletionVectorSuite extends AnyFunSuite with TestUtils {
 
   test("end-to-end usage: reading a table with dv") {
-    val path = DefaultKernelTestUtils.getTestResourceFilePath("basic-dv-no-checkpoint")
-    val expectedResult = Seq.range(start = 2, end = 10).toSet
-
-    val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
-    val result = readSnapshot(snapshot).map { row =>
-      row.getLong(0)
-    }
-
-    assert(result.toSet === expectedResult)
+    checkTable(
+      path = getTestResourceFilePath("basic-dv-no-checkpoint"),
+      expectedAnswer = (2L until 10L).map(TestRow(_))
+    )
   }
 
   test("end-to-end usage: reading a table with dv with checkpoint") {
-    val path = DefaultKernelTestUtils.getTestResourceFilePath("basic-dv-with-checkpoint")
-    val expectedResult = Seq.range(start = 0, end = 500).filter(_ % 11 != 0).toSet
-
-    val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
-    val result = readSnapshot(snapshot).map  { row =>
-      row.getLong(0)
-    }
-
-    assert(result.toSet === expectedResult)
+    checkTable(
+      path = getTestResourceFilePath("basic-dv-with-checkpoint"),
+      expectedAnswer = (0L until 500L).filter(_ % 11 != 0).map(TestRow(_))
+    )
   }
 
   test("end-to-end usage: reading partitioned dv table with checkpoint") {
-    // kernel expects a fully qualified path
-    val path = "file:" + goldenTablePath("dv-partitioned-with-checkpoint")
-    val expectedResult = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
-      .filter{ case (_, col1, _) =>
-        !(col1 % 2 == 0 && col1 < 30)
-      }.toSet
-
     val conf = new Configuration()
     // Set the batch size small enough so there will be multiple batches
     conf.setInt("delta.kernel.default.parquet.reader.batch-size", 2)
     val tableClient = DefaultTableClient.create(conf)
 
-    val snapshot = Table.forPath(path).getLatestSnapshot(tableClient)
-    val result = readSnapshot(snapshot, tableClient = tableClient).map { row =>
-      (row.getInt(0), row.getInt(1), row.getString(2))
-    }
+    val expectedResult = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
+      .filter{ case (_, col1, _) =>
+        !(col1 % 2 == 0 && col1 < 30)
+      }
 
-    assert (result.toSet == expectedResult)
+    checkTable(
+      path = "file:" + goldenTablePath("dv-partitioned-with-checkpoint"),
+      expectedAnswer = expectedResult.map(TestRow.fromTuple(_)),
+      tableClient = tableClient
+    )
   }
 
   // TODO: update to use goldenTables once bug is fixed in delta-spark see issue #1886
   test(
     "end-to-end usage: reading partitioned dv table with checkpoint with columnMappingMode=name") {
-    val path = DefaultKernelTestUtils.getTestResourceFilePath("dv-with-columnmapping")
     val expectedResult = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
       .filter{ case (_, col1, _) =>
         !(col1 % 2 == 0 && col1 < 30)
-      }.toSet
-
-    val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
-    val result = readSnapshot(snapshot).map { row =>
-      (row.getInt(0), row.getInt(1), row.getString(2))
-    }
-
-    assert (result.toSet == expectedResult)
+      }
+    checkTable(
+      path = getTestResourceFilePath("dv-with-columnmapping"),
+      expectedAnswer = expectedResult.map(TestRow.fromTuple(_))
+    )
   }
-
 
   // TODO detect corrupted DV checksum
   // TODO detect corrupted dv size
