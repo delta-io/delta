@@ -37,9 +37,43 @@ import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
+trait CheckpointsSuiteBase extends QueryTest with SharedSparkSession {
+  def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
+    for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
+      test(s"$testName [v2CheckpointFormat: $checkpointFormat]") {
+        withSQLConf(
+          DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+          DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> checkpointFormat
+        ) {
+          f
+        }
+      }
+    }
+  }
 
-class CheckpointsSuite extends QueryTest
-  with SharedSparkSession
+  /** Get V2 [[CheckpointProvider]] from the underlying deltalog snapshot */
+  def getV2CheckpointProvider(
+      deltaLog: DeltaLog,
+      update: Boolean = true): V2CheckpointProvider = {
+    val snapshot = if (update) deltaLog.update() else deltaLog.unsafeVolatileSnapshot
+    snapshot.checkpointProvider match {
+      case v2CheckpointProvider: V2CheckpointProvider =>
+        v2CheckpointProvider
+      case lzProvider : LazyCompleteCheckpointProvider
+          if lzProvider.underlyingCheckpointProvider.isInstanceOf[V2CheckpointProvider] =>
+        lzProvider.underlyingCheckpointProvider.asInstanceOf[V2CheckpointProvider]
+      case EmptyCheckpointProvider =>
+        throw new Exception("underlying snapshot doesn't have a checkpoint")
+      case other =>
+        throw new Exception(s"The underlying checkpoint is not a v2 checkpoint. " +
+          s"It is: ${other.getClass.getName}")
+    }
+  }
+}
+
+class CheckpointsSuite
+  extends CheckpointsSuiteBase
+  with DeltaCheckpointTestUtils
   with DeltaSQLCommandTest {
 
   protected override def sparkConf = {
@@ -68,19 +102,6 @@ class CheckpointsSuite extends QueryTest
         val lastCheckpointOpt = deltaLog.readLastCheckpointFile()
         assert(lastCheckpointOpt.nonEmpty)
         assert(lastCheckpointOpt.get.checkpointSchema.isEmpty)
-      }
-    }
-  }
-
-  def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
-    for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
-      test(s"$testName [v2CheckpointFormat: $checkpointFormat]") {
-        withSQLConf(
-          DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
-          DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> checkpointFormat
-        ) {
-          f
-        }
       }
     }
   }
@@ -268,6 +289,65 @@ class CheckpointsSuite extends QueryTest
     }
   }
 
+  testDifferentV2Checkpoints("multipart v2 checkpoint") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+
+      withSQLConf(
+        DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "10",
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "1") {
+        // 1 file actions
+        spark.range(1).repartition(1).write.format("delta").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+
+        def getNumFilesInSidecarDirectory(): Int = {
+          val fs = deltaLog.sidecarDirPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+          fs.listStatus(deltaLog.sidecarDirPath).size
+        }
+
+        // 2 file actions, 1 new file
+        spark.range(1).repartition(1).write.format("delta").mode("append").save(path)
+        assert(getV2CheckpointProvider(deltaLog).version == 1)
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 1)
+        assert(getNumFilesInSidecarDirectory() == 1)
+
+        // 11 total file actions, 9 new files
+        spark.range(30).repartition(9).write.format("delta").mode("append").save(path)
+        assert(getV2CheckpointProvider(deltaLog).version == 2)
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 2)
+        assert(getNumFilesInSidecarDirectory() == 3)
+
+        // 20 total actions, 9 new files
+        spark.range(100).repartition(9).write.format("delta").mode("append").save(path)
+        assert(getV2CheckpointProvider(deltaLog).version == 3)
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 2)
+        assert(getNumFilesInSidecarDirectory() == 5)
+
+        // 31 total actions, 11 new files
+        spark.range(100).repartition(11).write.format("delta").mode("append").save(path)
+        assert(getV2CheckpointProvider(deltaLog).version == 4)
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 4)
+        assert(getNumFilesInSidecarDirectory() == 9)
+
+        // Increase max actions
+        withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "100") {
+          // 100 total actions, 69 new files
+          spark.range(1000).repartition(69).write.format("delta").mode("append").save(path)
+          assert(getV2CheckpointProvider(deltaLog).version == 5)
+          assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 1)
+          assert(getNumFilesInSidecarDirectory() == 10)
+
+          // 101 total actions, 1 new file
+          spark.range(1).repartition(1).write.format("delta").mode("append").save(path)
+          assert(getV2CheckpointProvider(deltaLog).version == 6)
+          assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 2)
+          assert(getNumFilesInSidecarDirectory() == 12)
+        }
+      }
+    }
+  }
+
   test("checkpoint does not contain CDC field") {
     withSQLConf(
         DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true"
@@ -303,6 +383,75 @@ class CheckpointsSuite extends QueryTest
               "protocol",
               "domainMetadata")
           assert(checkpointSchema.fieldNames.toSeq == expectedCheckpointSchema)
+        }
+      }
+    }
+  }
+
+  testDifferentV2Checkpoints("v2 checkpoint contains only addfile and removefile and" +
+      " remove file does not contain remove.tags and remove.numRecords") {
+    withSQLConf(
+      DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true"
+    ) {
+      val expectedCheckpointSchema = Seq("add", "remove")
+      val expectedRemoveFileSchema = Seq(
+        "path",
+        "deletionTimestamp",
+        "dataChange",
+        "extendedFileMetadata",
+        "partitionValues",
+        "size",
+        "deletionVector",
+        "baseRowId",
+        "defaultRowCommitVersion")
+      withTempDir { tempDir =>
+        withTempView("src") {
+          val tablePath = tempDir.getAbsolutePath
+          // Append rows [0, 9] to table and merge tablePath.
+          spark.range(end = 10).write.format("delta").mode("overwrite").save(tablePath)
+          spark.range(5, 15).createOrReplaceTempView("src")
+          sql(
+            s"""
+               |MERGE INTO delta.`$tempDir` t USING src s ON t.id = s.id
+               |WHEN MATCHED THEN DELETE
+               |WHEN NOT MATCHED THEN INSERT *
+               |""".stripMargin)
+          checkAnswer(
+            spark.read.format("delta").load(tempDir.getAbsolutePath),
+            Seq(0, 1, 2, 3, 4, 10, 11, 12, 13, 14).map { i => Row(i) })
+
+          // CDC should exist in the log as seen through getChanges, but it shouldn't be in the
+          // snapshots and the checkpoint file shouldn't have a CDC column.
+          val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+          assert(deltaLog.getChanges(1).next()._2.exists(_.isInstanceOf[AddCDCFile]))
+          assert(deltaLog.snapshot.stateDS.collect().forall { sa => sa.cdc == null })
+          deltaLog.checkpoint()
+          var sidecarCheckpointFiles = getV2CheckpointProvider(deltaLog).sidecarFileStatuses
+          assert(sidecarCheckpointFiles.size == 1)
+          var sidecarFile = sidecarCheckpointFiles.head.getPath.toString
+          var checkpointSchema = spark.read.format("parquet").load(sidecarFile).schema
+          var removeSchemaName =
+            checkpointSchema("remove").dataType.asInstanceOf[StructType].fieldNames
+          assert(checkpointSchema.fieldNames.toSeq == expectedCheckpointSchema)
+          assert(removeSchemaName.toSeq === expectedRemoveFileSchema)
+
+          // Append rows [0, 9] to table and merge one more time.
+          spark.range(end = 10).write.format("delta").mode("append").save(tablePath)
+          sql(
+            s"""
+               |MERGE INTO delta.`$tempDir` t USING src s ON t.id = s.id
+               |WHEN MATCHED THEN DELETE
+               |WHEN NOT MATCHED THEN INSERT *
+               |""".stripMargin)
+          deltaLog.checkpoint()
+          sidecarCheckpointFiles = getV2CheckpointProvider(deltaLog).sidecarFileStatuses
+          sidecarFile = sidecarCheckpointFiles.head.getPath.toString
+          checkpointSchema = spark.read.format(source = "parquet").load(sidecarFile).schema
+          removeSchemaName = checkpointSchema("remove").dataType.asInstanceOf[StructType].fieldNames
+          assert(removeSchemaName.toSeq === expectedRemoveFileSchema)
+          checkAnswer(
+            spark.sql(s"select * from delta.`$tablePath`"),
+            Seq(0, 0, 1, 1, 2, 2, 3, 3, 4, 4).map { i => Row(i) })
         }
       }
     }
@@ -360,12 +509,18 @@ class CheckpointsSuite extends QueryTest
   }
 
   test("checkpoint with DVs") {
+    for (v2Checkpoint <- Seq(true, false))
     withTempDir { tempDir =>
       val source = new File(DeletionVectorsSuite.table1Path) // this table has DVs in two versions
       val target = new File(tempDir, "insertTest")
 
       // Copy the source2 DV table to a temporary directory, so that we do updates to it
       FileUtils.copyDirectory(source, target)
+
+      if (v2Checkpoint) {
+        spark.sql(s"ALTER TABLE delta.`${target.getAbsolutePath}` SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.CHECKPOINT_POLICY.key}' = 'v2')")
+      }
 
       sql(s"ALTER TABLE delta.`${target.getAbsolutePath}` " +
         s"SET TBLPROPERTIES (${DeltaConfigs.CHECKPOINT_INTERVAL.key} = 10)")
@@ -391,6 +546,111 @@ class CheckpointsSuite extends QueryTest
       checkAnswer(
         spark.sql(s"SELECT * FROM delta.`${target.getAbsolutePath}`"),
         (DeletionVectorsSuite.expectedTable1DataV4 ++ newData).toSeq.toDF())
+    }
+  }
+
+  testDifferentCheckpoints("last checkpoint contains checkpoint schema for v1Checkpoints" +
+    " and not for v2Checkpoints") { (checkpointPolicy, v2CheckpointFormatOpt) =>
+    withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+      deltaLog.checkpoint()
+      val lastCheckpointOpt = deltaLog.readLastCheckpointFile()
+      assert(lastCheckpointOpt.nonEmpty)
+      if (checkpointPolicy.needsV2CheckpointSupport) {
+        if (v2CheckpointFormatOpt.contains(V2Checkpoint.Format.JSON)) {
+          assert(lastCheckpointOpt.get.checkpointSchema.isEmpty)
+        } else {
+          assert(lastCheckpointOpt.get.checkpointSchema.nonEmpty)
+          assert(lastCheckpointOpt.get.checkpointSchema.get.fieldNames.toSeq ===
+            Seq("txn", "add", "remove", "metaData", "protocol",
+              "domainMetadata", "checkpointMetadata", "sidecar"))
+        }
+      } else {
+        assert(lastCheckpointOpt.get.checkpointSchema.nonEmpty)
+        assert(lastCheckpointOpt.get.checkpointSchema.get.fieldNames.toSeq ===
+          Seq("txn", "add", "remove", "metaData", "protocol", "domainMetadata"))
+      }
+    }
+  }
+
+  test("last checkpoint - v2 checkpoint fields threshold") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      spark.range(1).write.format("delta").save(tablePath)
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      // Enable v2Checkpoint table feature.
+      spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.CHECKPOINT_POLICY.key}' = 'v2')")
+
+      def writeCheckpoint(
+        adds: Int,
+        nonFileActionThreshold: Int,
+        sidecarActionThreshold: Int): LastCheckpointInfo = {
+        withSQLConf(
+          DeltaSQLConf.LAST_CHECKPOINT_NON_FILE_ACTIONS_THRESHOLD.key -> s"$nonFileActionThreshold",
+          DeltaSQLConf.LAST_CHECKPOINT_SIDECARS_THRESHOLD.key -> s"$sidecarActionThreshold"
+        ) {
+          val addFiles = (1 to adds).map(_ =>
+            AddFile(
+              path = java.util.UUID.randomUUID.toString,
+              partitionValues = Map(),
+              size = 128L,
+              modificationTime = 1L,
+              dataChange = true
+            ))
+          deltaLog.startTransaction().commit(addFiles, DeltaOperations.ManualUpdate)
+          deltaLog.checkpoint()
+        }
+        val lastCheckpointInfoOpt = deltaLog.readLastCheckpointFile()
+        assert(lastCheckpointInfoOpt.nonEmpty)
+        lastCheckpointInfoOpt.get
+      }
+
+      // Append 1 AddFile [AddFile-2]
+      val lc1 = writeCheckpoint(adds = 1, nonFileActionThreshold = 10, sidecarActionThreshold = 10)
+      assert(lc1.v2Checkpoint.nonEmpty)
+      // 3 non file actions - protocol/metadata/checkpointMetadata, 1 sidecar
+      assert(lc1.v2Checkpoint.get.nonFileActions.get.size === 3)
+      assert(lc1.v2Checkpoint.get.sidecarFiles.get.size === 1)
+
+      // Append 1 SetTxn, 8 more AddFiles [SetTxn-1, AddFile-10]
+      deltaLog.startTransaction()
+        .commit(Seq(SetTransaction("app-1", 2, None)), DeltaOperations.ManualUpdate)
+      val lc2 = writeCheckpoint(adds = 8, nonFileActionThreshold = 4, sidecarActionThreshold = 10)
+      assert(lc2.v2Checkpoint.nonEmpty)
+      // 4 non file actions - protocol/metadata/checkpointMetadata/setTxn, 1 sidecar
+      assert(lc2.v2Checkpoint.get.nonFileActions.get.size === 4)
+      assert(lc2.v2Checkpoint.get.sidecarFiles.get.size === 1)
+
+      // Append 10 more AddFiles [SetTxn-1, AddFile-20]
+      val lc3 = writeCheckpoint(adds = 10, nonFileActionThreshold = 3, sidecarActionThreshold = 10)
+      assert(lc3.v2Checkpoint.nonEmpty)
+      // non-file actions exceeded threshold, 1 sidecar
+      assert(lc3.v2Checkpoint.get.nonFileActions.isEmpty)
+      assert(lc3.v2Checkpoint.get.sidecarFiles.get.size === 1)
+
+      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "5") {
+        // Append 10 more AddFiles [SetTxn-1, AddFile-30]
+        val lc4 =
+          writeCheckpoint(adds = 10, nonFileActionThreshold = 3, sidecarActionThreshold = 10)
+        assert(lc4.v2Checkpoint.nonEmpty)
+        // non-file actions exceeded threshold
+        // total 30 file actions, across 6 sidecar files (5 actions per file)
+        assert(lc4.v2Checkpoint.get.nonFileActions.isEmpty)
+        assert(lc4.v2Checkpoint.get.sidecarFiles.get.size === 6)
+      }
+
+      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "2") {
+        // Append 0 AddFiles [SetTxn-1, AddFile-30]
+        val lc5 =
+          writeCheckpoint(adds = 0, nonFileActionThreshold = 10, sidecarActionThreshold = 10)
+        assert(lc5.v2Checkpoint.nonEmpty)
+        // 4 non file actions - protocol/metadata/checkpointMetadata/setTxn
+        // total 30 file actions, across 15 sidecar files (2 actions per file)
+        assert(lc5.v2Checkpoint.get.nonFileActions.get.size === 4)
+        assert(lc5.v2Checkpoint.get.sidecarFiles.isEmpty)
+      }
     }
   }
 }

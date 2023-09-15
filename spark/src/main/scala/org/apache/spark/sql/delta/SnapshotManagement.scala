@@ -813,6 +813,14 @@ trait SnapshotManagement { self: DeltaLog =>
 }
 
 object SnapshotManagement {
+  // A thread pool for reading checkpoint files and collecting checkpoint v2 actions like
+  // checkpointMetadata, sidecarFiles.
+  private[delta] lazy val checkpointV2ThreadPool = {
+    val numThreads = SparkSession.active.sessionState.conf.getConf(
+      DeltaSQLConf.CHECKPOINT_V2_DRIVER_THREADPOOL_PARALLELISM)
+    DeltaThreadPool("checkpointV2-threadpool", numThreads)
+  }
+
   protected[delta] lazy val deltaLogAsyncUpdateThreadPool = {
     val tpe = ThreadUtils.newDaemonCachedThreadPool("delta-state-update", 8)
     new DeltaThreadPool(tpe)

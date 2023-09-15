@@ -59,6 +59,7 @@ class InMemoryLogReplay(
         domainMetadatas.remove(a.domain)
       case a: DomainMetadata if !a.removed =>
         domainMetadatas(a.domain) = a
+      case _: CheckpointOnlyAction => // Ignore this while doing LogReplay
       case a: Metadata =>
         currentMetaData = a
       case a: Protocol =>
