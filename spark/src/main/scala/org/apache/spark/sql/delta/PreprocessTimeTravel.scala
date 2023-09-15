@@ -68,8 +68,7 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
   private def resolveTimeTravelTable(
       sparkSession: SparkSession,
       ur: UnresolvedRelation): LogicalPlan = {
-    val relation = EliminateSubqueryAliases(sparkSession.sessionState.analyzer.ResolveRelations(ur))
-    relation match {
+    EliminateSubqueryAliases(sparkSession.sessionState.analyzer.ResolveRelations(ur)) match {
       case _: View =>
         // If table exists and not found to be a view, throw not supported error
         throw DeltaErrors.notADeltaTableException("RESTORE")
