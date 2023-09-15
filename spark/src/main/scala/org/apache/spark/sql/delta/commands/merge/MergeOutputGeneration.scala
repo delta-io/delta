@@ -64,27 +64,28 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // Rewrite clause condition into a simple lookup of precomputed column
     def rewriteCondition[T <: DeltaMergeIntoClause](clause: T): T = {
       clause.condition match {
-        case Some(clauseCondition) =>
+        case Some(conditionExpr) =>
           val colName =
             s"""_${clause.clauseType}${PRECOMPUTED_CONDITION_COL}
             |${preComputedClauseConditions.length}_
             |""".stripMargin.replaceAll("\n", "") // ex: _update_condition_0_
-          preComputedClauseConditions += ((colName, clauseCondition))
+          preComputedClauseConditions += ((colName, conditionExpr))
           clause.makeCopy(Array(Some(UnresolvedAttribute(colName)), clause.actions)).asInstanceOf[T]
         case None => clause
       }
     }
 
-    // Get the clauses with possible rewritten clause conditions.
+    // Get the clauses with possibly rewritten clause conditions.
     // This will automatically populate the `preComputedClauseConditions`
+    // (as part of `rewriteCondition`)
     val clausesWithPrecompConditions = clauses.map(rewriteCondition)
 
-    // Add the columns to precompute clause conditions
+    // Add the columns to the given `sourceDF` to precompute clause conditions
     val sourceWithPrecompConditions = {
       val newCols = preComputedClauseConditions.map { case (colName, conditionExpr) =>
-        new Column(conditionExpr).as(colName)
-      }
-      sourceDF.select(Seq(col("*"))  ++ newCols : _*)
+        Column(conditionExpr).as(colName)
+      }.toSeq
+      sourceDF.select(col("*") +: newCols: _*)
     }
     (sourceWithPrecompConditions, clausesWithPrecompConditions)
   }
@@ -92,7 +93,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
   /**
    * Generate the expressions to process full-outer join output and generate target rows.
    *
-   * To generate these N + 2 columns, we will be generate N + 2 expressions and apply them
+   * To generate these N + 2 columns, we generate N + 2 expressions and apply them
    * on the joinedDF. The CDC column will be either used for CDC generation or dropped before
    * performing the final write, and the other column will always be dropped after executing the
    * increment metric expression and filtering on ROW_DROPPED_COL.
@@ -103,15 +104,14 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       noopCopyExprs: Seq[Expression],
       clausesWithPrecompConditions: Seq[DeltaMergeIntoClause],
       cdcEnabled: Boolean,
-      shouldCountDeletedRows: Boolean = true)
-    : IndexedSeq[Column] = {
+      shouldCountDeletedRows: Boolean = true): IndexedSeq[Column] = {
 
     val numOutputCols = outputColNames.size
 
     // ==== Generate N + 2 (N + 4 preserving Row Tracking) expressions for MATCHED clauses ====
     val processedMatchClauses: Seq[ProcessedClause] = generateAllActionExprs(
       targetOutputCols,
-      clausesWithPrecompConditions.collect{ case c: DeltaMergeIntoMatchedClause => c },
+      clausesWithPrecompConditions.collect { case c: DeltaMergeIntoMatchedClause => c },
       cdcEnabled,
       shouldCountDeletedRows)
     val matchedExprs: Seq[Expression] = generateClauseOutputExprs(
@@ -122,15 +122,13 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // N + 1 (or N + 2 with CDC, N + 4 preserving Row Tracking and CDC) expressions to delete the
     // unmatched source row when it should not be inserted. `target.output` will produce NULLs
     // which will get deleted eventually.
-    val deleteSourceRowExprs =
-      (targetOutputCols ++
-        Seq(Literal(true))) ++
-        (if (cdcEnabled) Seq(CDC_TYPE_NOT_CDC) else Seq())
+    val deleteSourceRowExprs = (targetOutputCols :+ Literal.TrueLiteral) ++
+      (if (cdcEnabled) Seq(CDC_TYPE_NOT_CDC) else Nil)
 
     // ==== Generate N + 2 (N + 4 preserving Row Tracking) expressions for NOT MATCHED clause ====
     val processedNotMatchClauses: Seq[ProcessedClause] = generateAllActionExprs(
       targetOutputCols,
-      clausesWithPrecompConditions.collect{ case c: DeltaMergeIntoNotMatchedClause => c },
+      clausesWithPrecompConditions.collect { case c: DeltaMergeIntoNotMatchedClause => c },
       cdcEnabled,
       shouldCountDeletedRows)
     val notMatchedExprs: Seq[Expression] = generateClauseOutputExprs(
@@ -141,7 +139,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // === Generate N + 2 (N + 4 with Row Tracking) expressions for NOT MATCHED BY SOURCE clause ===
     val processedNotMatchBySourceClauses: Seq[ProcessedClause] = generateAllActionExprs(
       targetOutputCols,
-      clausesWithPrecompConditions.collect{ case c: DeltaMergeIntoNotMatchedBySourceClause => c },
+      clausesWithPrecompConditions.collect { case c: DeltaMergeIntoNotMatchedBySourceClause => c },
       cdcEnabled,
       shouldCountDeletedRows)
     val notMatchedBySourceExprs: Seq[Expression] = generateClauseOutputExprs(
@@ -157,7 +155,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     val ifSourceRowNull = col(SOURCE_ROW_PRESENT_COL).isNull.expr
     val ifTargetRowNull = col(TARGET_ROW_PRESENT_COL).isNull.expr
 
-    val outputCols = (0 until numOutputCols).map { i =>
+    val outputCols = outputColNames.zipWithIndex.map { case (name, i) =>
       // Coupled with the clause conditions, the resultant possibly-nested CaseWhens can
       // be the following for every i-th column. (In the case with single matched/not-matched
       // clauses, instead of nested CaseWhens, there will be If/Else.)
@@ -191,8 +189,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         ifSourceRowNull -> notMatchedBySourceExprs(i),
         ifTargetRowNull -> notMatchedExprs(i)),
         /*  otherwise  */ matchedExprs(i))
-      new Column(Alias(caseWhen, outputColNames(i))())
-    }
+      Column(Alias(caseWhen, name)())
+    }.toIndexedSeq
     logDebug("writeAllChanges: join output expressions\n\t" + seqToString(outputCols.map(_.expr)))
     outputCols
   }
@@ -215,7 +213,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
    * @param cdcEnabled Whether the generated expressions should include CDC information.
    * @param shouldCountDeletedRows Whether metrics for number of deleted rows should be incremented
    *                               here.
-   * @return For each merge clause, a list of [[ProcessedClause] each with a precomputed
+   * @return For each merge clause, a list of [[ProcessedClause]] each with a precomputed
    *         condition and N+2 action expressions (N output columns + [[ROW_DROPPED_COL]] +
    *         [[CDC_TYPE_COLUMN_NAME]]) to apply on a row when that clause matches.
    */
@@ -223,61 +221,68 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       targetOutputCols: Seq[Expression],
       clausesWithPrecompConditions: Seq[DeltaMergeIntoClause],
       cdcEnabled: Boolean,
-      shouldCountDeletedRows: Boolean)
-    : Seq[ProcessedClause] = clausesWithPrecompConditions.map (clause => {
-    val incrUpdatedCountExpr =
-      incrementMetricAndReturnBool(name = "numTargetRowsUpdated", valueToReturn = false)
-    val incrDeletedCountExpr =
-      incrementMetricAndReturnBool(name = "numTargetRowsDeleted", valueToReturn = true)
-
-    val actions = clause match {
-      // Seq of up to N+3 expressions to generate output rows based on the UPDATE, DELETE and/or
-      // INSERT action(s)
-      case u: DeltaMergeIntoMatchedUpdateClause =>
-        val incrCountExpr =
-          IncrementMetric(incrUpdatedCountExpr, metrics("numTargetRowsMatchedUpdated"))
-        // Generate update expressions and set ROW_DROPPED_COL = false
-        u.resolvedActions.map(_.expr) ++
-          Seq(incrCountExpr) ++
-          (if (cdcEnabled) Seq(Literal(CDC_TYPE_UPDATE_POSTIMAGE)) else Seq())
-      case u: DeltaMergeIntoNotMatchedBySourceUpdateClause =>
-        val incrCountExpr =
-          IncrementMetric(incrUpdatedCountExpr, metrics("numTargetRowsNotMatchedBySourceUpdated"))
-        // Generate update expressions and set ROW_DROPPED_COL = false
-        u.resolvedActions.map(_.expr) ++
-          Seq(incrCountExpr) ++
-          (if (cdcEnabled) Seq(Literal(CDC_TYPE_UPDATE_POSTIMAGE)) else Seq())
-      case _: DeltaMergeIntoMatchedDeleteClause =>
-        val incrCountExpr =
-          if (shouldCountDeletedRows) {
-            IncrementMetric(incrDeletedCountExpr, metrics("numTargetRowsMatchedDeleted"))
-          } else {
-            lit(true).expr
+      shouldCountDeletedRows: Boolean): Seq[ProcessedClause] = {
+    clausesWithPrecompConditions.map { clause =>
+      val actions = clause match {
+        // Seq of up to N+3 expressions to generate output rows based on the UPDATE, DELETE and/or
+        // INSERT action(s)
+        case u: DeltaMergeIntoMatchedUpdateClause =>
+          val incrCountExpr = incrementMetricsAndReturnBool(
+            names = Seq("numTargetRowsUpdated", "numTargetRowsMatchedUpdated"),
+            valueToReturn = false)
+          // Generate update expressions and set ROW_DROPPED_COL = false
+          u.resolvedActions.map(_.expr) ++
+            Seq(incrCountExpr) ++
+            (if (cdcEnabled) Some(Literal(CDC_TYPE_UPDATE_POSTIMAGE)) else None)
+        case u: DeltaMergeIntoNotMatchedBySourceUpdateClause =>
+          val incrCountExpr = incrementMetricsAndReturnBool(
+            names = Seq("numTargetRowsUpdated", "numTargetRowsNotMatchedBySourceUpdated"),
+            valueToReturn = false)
+          // Generate update expressions and set ROW_DROPPED_COL = false
+          u.resolvedActions.map(_.expr) ++
+            Seq(incrCountExpr) ++
+            (if (cdcEnabled) Some(Literal(CDC_TYPE_UPDATE_POSTIMAGE)) else None)
+        case _: DeltaMergeIntoMatchedDeleteClause =>
+          val incrCountExpr = {
+            if (shouldCountDeletedRows) {
+              incrementMetricsAndReturnBool(
+                names = Seq("numTargetRowsDeleted", "numTargetRowsMatchedDeleted"),
+                valueToReturn = true)
+            } else {
+              Literal.TrueLiteral
+            }
           }
-        // Generate expressions to set the ROW_DROPPED_COL = true and mark as a DELETE
-        targetOutputCols ++
-          Seq(incrCountExpr) ++
-          (if (cdcEnabled) Seq(CDC_TYPE_DELETE) else Seq())
-      case _: DeltaMergeIntoNotMatchedBySourceDeleteClause =>
-        val incrCountExpr =
-          if (shouldCountDeletedRows) {
-            IncrementMetric(incrDeletedCountExpr, metrics("numTargetRowsNotMatchedBySourceDeleted"))
-          } else {
-            lit(true).expr
+          // Generate expressions to set the ROW_DROPPED_COL = true and mark as a DELETE
+          targetOutputCols ++
+            Seq(incrCountExpr) ++
+            (if (cdcEnabled) Some(CDC_TYPE_DELETE) else None)
+        case _: DeltaMergeIntoNotMatchedBySourceDeleteClause =>
+          val incrCountExpr = {
+            if (shouldCountDeletedRows) {
+              incrementMetricsAndReturnBool(
+                names = Seq("numTargetRowsDeleted", "numTargetRowsNotMatchedBySourceDeleted"),
+                valueToReturn = true)
+            } else {
+              Literal.TrueLiteral
+            }
           }
-        // Generate expressions to set the ROW_DROPPED_COL = true and mark as a DELETE
-        targetOutputCols ++
-          Seq(incrCountExpr) ++
-          (if (cdcEnabled) Seq(CDC_TYPE_DELETE) else Seq())
-      case i: DeltaMergeIntoNotMatchedInsertClause =>
-        val incrInsertedCountExpr =
-          incrementMetricAndReturnBool("numTargetRowsInserted", valueToReturn = false)
-        i.resolvedActions.map(_.expr) ++
-          Seq(incrInsertedCountExpr) ++
-          (if (cdcEnabled) Seq(Literal(CDC_TYPE_INSERT)) else Seq())
+          // Generate expressions to set the ROW_DROPPED_COL = true and mark as a DELETE
+          targetOutputCols ++
+            Seq(incrCountExpr) ++
+            (if (cdcEnabled) Some(CDC_TYPE_DELETE) else None)
+        case i: DeltaMergeIntoNotMatchedInsertClause =>
+          val incrInsertedCountExpr = {
+            incrementMetricsAndReturnBool(
+              names = Seq("numTargetRowsInserted"),
+              valueToReturn = false)
+          }
+          i.resolvedActions.map(_.expr) ++
+            Seq(incrInsertedCountExpr) ++
+            (if (cdcEnabled) Some(Literal(CDC_TYPE_INSERT)) else None)
+      }
+      ProcessedClause(clause.condition, actions)
     }
-    ProcessedClause(clause.condition, actions)
-  })
+  }
 
   /**
    * Generate the output expression for each output column to apply the correct action for a type of
@@ -289,10 +294,9 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
    * @return A list of one expression per output column to apply for a type of merge clause.
    */
   protected def generateClauseOutputExprs(
-      numOutputCols: Integer,
+      numOutputCols: Int,
       clauses: Seq[ProcessedClause],
-      noopExprs: Seq[Expression])
-  : Seq[Expression] = {
+      noopExprs: Seq[Expression]): Seq[Expression] = {
     val clauseExprs = if (clauses.isEmpty) {
       // Nothing to update or delete
       noopExprs
@@ -316,7 +320,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       } else {
         // There are multiple clauses. Use `CaseWhen` to conditionally evaluate the right
         // action expressions to output columns
-        (0 until numOutputCols).map { i =>
+        Seq.range(0, numOutputCols).map { i =>
           // For the i-th output column, generate
           // CASE
           //     WHEN <condition 1> THEN <execute i-th expression of action 1>
@@ -324,9 +328,9 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
           //                        ...
           //                        ELSE <execute i-th expression to noop-copy>
           //
-          val conditionalBranches = clauses.map(precomp => {
-            precomp.condition.getOrElse(Literal(true)) -> precomp.actions(i)
-          })
+          val conditionalBranches = clauses.map { precomp =>
+            precomp.condition.getOrElse(Literal.TrueLiteral) -> precomp.actions(i)
+          }
           CaseWhen(conditionalBranches, Some(noopExprs(i)))
         }
       }
@@ -353,7 +357,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     import org.apache.spark.sql.delta.commands.cdc.CDCReader._
     // The main partition just needs to swap in the CDC_TYPE_NOT_CDC value.
     val mainDataOutput =
-      outputCols.dropRight(1) :+ new Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
+      outputCols.dropRight(1) :+ Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
 
     // Deleted rows are sent to the CDC partition instead of the main partition. These rows are
     // marked as dropped, we need to retain them while incrementing the original metric column
@@ -366,9 +370,9 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // transformation for cdcOutputCols, but we have to transform the noop exprs to columns
     // ourselves because it hasn't already been done.
     val cdcNoopExprs = noopCopyExprs.dropRight(2) :+
-      Literal(false) :+ Literal(CDC_TYPE_UPDATE_PREIMAGE)
+      Literal.FalseLiteral :+ Literal(CDC_TYPE_UPDATE_PREIMAGE)
     val updatePreimageCdcOutput = cdcNoopExprs.zipWithIndex.map {
-      case (e, i) => new Column(Alias(e, outputColNames(i))())
+      case (e, i) => Column(Alias(e, outputColNames(i))())
     }
 
     // To avoid duplicate evaluation of nondeterministic column values such as
@@ -380,7 +384,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // main data rows stay the same.
 
     val cdcTypeCol = outputCols.last
-    val cdcArray = new Column(CaseWhen(Seq(
+    val cdcArray = Column(CaseWhen(Seq(
       EqualNullSafe(cdcTypeCol.expr, Literal(CDC_TYPE_INSERT)) -> array(
         struct(outputCols: _*)).expr,
 
@@ -396,7 +400,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       array(struct(mainDataOutput: _*)).expr
     ))
 
-    val cdcToMainDataArray = new Column(If(
+    val cdcToMainDataArray = Column(If(
       Or(
         EqualNullSafe(col(s"packedCdc.$CDC_TYPE_COLUMN_NAME").expr,
           Literal(CDC_TYPE_INSERT)),
@@ -404,9 +408,9 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
           Literal(CDC_TYPE_UPDATE_POSTIMAGE))),
       array(
         col("packedCdc"),
-        struct(outputColNames.dropRight(1).map { n => col(s"packedCdc.`$n`") } :+
-          new Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
-          : _*)
+        struct(
+          outputColNames.dropRight(1).map { n => col(s"packedCdc.`$n`") } :+
+          Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME): _*)
       ).expr,
       array(col("packedCdc")).expr
     ))
@@ -460,7 +464,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       .select(cdcArray.as("projectedCDC") +: dedupColumns: _*)
       .select(explode(col("projectedCDC")).as("packedCdc") +: dedupColumns: _*)
       .select(explode(cdcToMainDataArray).as("packedData") +: dedupColumns: _*)
-      .select(unpackedCols++ dedupColumns: _*)
+      .select(unpackedCols ++ dedupColumns: _*)
   }
 
   /**
@@ -482,11 +486,11 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       cdcArray: Column,
       cdcToMainDataArray: Column,
       outputColNames: Seq[String]): DataFrame = {
-    val dedupColumns = (if (deduplicateDeletes.includesInserts) {
+    val dedupColumns = if (deduplicateDeletes.includesInserts) {
       Seq(col(TARGET_ROW_INDEX_COL), col(SOURCE_ROW_INDEX_COL))
     } else {
       Seq(col(TARGET_ROW_INDEX_COL))
-    })
+    }
 
     val cdcDf = packAndExplodeCDCOutput(
       df,

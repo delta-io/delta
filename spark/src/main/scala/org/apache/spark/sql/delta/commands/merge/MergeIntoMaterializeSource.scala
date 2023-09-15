@@ -18,15 +18,13 @@ package org.apache.spark.sql.delta.commands.merge
 
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
-
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
-
 import org.apache.spark.SparkException
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{Dataset, Row, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{AttributeSet, Expression, Literal}
 import org.apache.spark.sql.catalyst.optimizer.EliminateResolvedHint
@@ -58,7 +56,7 @@ import org.apache.spark.storage.StorageLevel
  * we record the failure for tracking purposes.
  *
  * 3rd concern is that executors run out of disk space with the extra materialization.
- * We record such failures for tracking purpuses.
+ * We record such failures for tracking purposes.
  */
 trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
 
@@ -68,7 +66,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
    * Prepared Dataframe with source data.
    * If needed, it is materialized, @see prepareSourceDFAndReturnMaterializeReason
    */
-  private var sourceDF: Option[Dataset[Row]] = None
+  private var sourceDF: Option[DataFrame] = None
 
   /**
    * If the source was materialized, reference to the checkpointed RDD.
@@ -102,7 +100,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
       } catch {
         case NonFatal(ex) =>
           val isLastAttempt =
-            (attempt == spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS))
+            attempt == spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS)
           handleExceptionDuringAttempt(ex, isLastAttempt, deltaLog) match {
             case RetryHandling.Retry =>
               logInfo(s"Retrying MERGE with materialized source. Attempt $attempt failed.")
@@ -122,7 +120,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
           rdd.unpersist()
         }
         materializedSourceRDD = None
-        sourceDF = null
+        sourceDF = None
       }
     } while (doRetry)
 
@@ -209,12 +207,13 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     spark: SparkSession, source: LogicalPlan, isInsertOnly: Boolean
   ): (Boolean, MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason) = {
     val materializeType = spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE)
+    import DeltaSQLConf.MergeMaterializeSource._
     materializeType match {
-      case DeltaSQLConf.MergeMaterializeSource.ALL =>
+      case ALL =>
         (true, MergeIntoMaterializeSourceReason.MATERIALIZE_ALL)
-      case DeltaSQLConf.MergeMaterializeSource.NONE =>
+      case NONE =>
         (false, MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_NONE)
-      case DeltaSQLConf.MergeMaterializeSource.AUTO =>
+      case AUTO =>
         if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
           (false, MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO_INSERT_ONLY)
         } else if (!planContainsOnlyDeltaScans(source)) {
@@ -300,12 +299,12 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
       assert(rdd.isCheckpointed)
     }
 
-    logDebug(s"Materializing MERGE with pruned columns $referencedSourceColumns. ")
-    logDebug(s"Materialized MERGE source plan:\n${sourceDF.get.queryExecution}")
+    logDebug(s"Materializing MERGE with pruned columns $referencedSourceColumns.")
+    logDebug(s"Materialized MERGE source plan:\n${getSourceDF.queryExecution}")
     materializeReason
   }
 
-  protected def getSourceDF(): Dataset[Row] = {
+  protected def getSourceDF: DataFrame = {
     if (sourceDF.isEmpty) {
       throw new IllegalStateException(
         "sourceDF was not initialized! Call prepareSourceDFAndReturnMaterializeReason before.")
@@ -328,39 +327,36 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
       plan
     }
   }
-
-  /**
-   * Return columns from the source plan that are used in the MERGE
-   */
-  private def getReferencedSourceColumns(
-      source: LogicalPlan,
-      condition: Expression,
-      matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-      notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause]) = {
-    val conditionCols = condition.references
-    val matchedCondCols = matchedClauses.flatMap { clause =>
-      clause.condition.getOrElse(Literal(true)).flatMap(_.references)
-    }
-    val notMatchedCondCols = notMatchedClauses.flatMap { clause =>
-      clause.condition.getOrElse(Literal(true)).flatMap(_.references)
-    }
-    val matchedActionsCols = matchedClauses.flatMap { clause =>
-      clause.resolvedActions.flatMap(_.expr.references)
-    }
-    val notMatchedActionsCols = notMatchedClauses.flatMap { clause =>
-      clause.resolvedActions.flatMap(_.expr.references)
-    }
-    val allCols = AttributeSet(conditionCols ++ matchedCondCols ++ notMatchedCondCols ++
-      matchedActionsCols ++ notMatchedActionsCols)
-
-    source.output.filter(allCols.contains(_))
-  }
 }
 
 object MergeIntoMaterializeSource {
   // This depends on SparkCoreErrors.checkpointRDDBlockIdNotFoundError msg
   def mergeMaterializedSourceRddBlockLostErrorRegex(rddId: Int): String =
     s"(?s).*Checkpoint block rdd_${rddId}_[0-9]+ not found!.*"
+
+  /**
+   * @return The columns of the source plan that are used in this MERGE
+   */
+  private def getReferencedSourceColumns(
+    source: LogicalPlan,
+    condition: Expression,
+    matchedClauses: Seq[DeltaMergeIntoMatchedClause],
+    notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause]) = {
+    val conditionCols = condition.references
+    val matchedCondCols = matchedClauses.flatMap(_.condition).flatMap(_.references)
+    val notMatchedCondCols = notMatchedClauses.flatMap(_.condition).flatMap(_.references)
+    val matchedActionsCols = matchedClauses
+      .flatMap(_.resolvedActions)
+      .flatMap(_.expr.references)
+    val notMatchedActionsCols = notMatchedClauses
+      .flatMap(_.resolvedActions)
+      .flatMap(_.expr.references)
+    val allCols = AttributeSet(
+      conditionCols ++ matchedCondCols ++ notMatchedCondCols ++
+        matchedActionsCols ++ notMatchedActionsCols)
+
+    source.output.filter(allCols.contains)
+  }
 }
 
 /**

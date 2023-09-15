@@ -236,7 +236,7 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   }
 
   /**
-   * Build a new logical plan to read the given `files` instead of the whole target table.
+   * Builds a new logical plan to read the given `files` instead of the whole target table.
    * The plan returned has the same output columns (exprIds) as the `target` logical plan, so that
    * existing update/insert expressions can be applied on this new plan. Unneeded non-partition
    * columns may be dropped.
@@ -264,10 +264,11 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   }
 
   /**
-   * Build a new logical plan to read the target table using the given `fileIndex`.
+   * Builds a new logical plan to read the target table using the given `fileIndex`.
    * The plan returned has the same output columns (exprIds) as the `target` logical plan, so that
-   * existing update/insert expressions can be applied on this new plan. Unneeded non-partition
-   * columns may be dropped.
+   * existing update/insert expressions can be applied on this new plan.
+   *
+   * @param columnsToDrop unneeded non-partition columns to be dropped
    */
   protected def buildTargetPlanWithIndex(
     spark: SparkSession,
@@ -334,9 +335,22 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
     }
   }
 
-  /** Expressions to increment SQL metrics */
-  protected def incrementMetricAndReturnBool(name: String, valueToReturn: Boolean): Expression =
+  /** @return An `Expression` to increment a SQL metric */
+  protected def incrementMetricAndReturnBool(
+      name: String,
+      valueToReturn: Boolean): Expression = {
     IncrementMetric(Literal(valueToReturn), metrics(name))
+  }
+
+  /** @return An `Expression` to increment SQL metrics */
+  protected def incrementMetricsAndReturnBool(
+      names: Seq[String],
+      valueToReturn: Boolean): Expression = {
+    val incExpr = incrementMetricAndReturnBool(names.head, valueToReturn)
+    names.foldLeft(incExpr) { case (expr, name) =>
+      IncrementMetric(expr, metrics(name))
+    }
+  }
 
   protected def getTargetOnlyPredicates(spark: SparkSession): Seq[Expression] = {
     val targetOnlyPredicatesOnCondition =
@@ -346,12 +360,12 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       targetOnlyPredicatesOnCondition
     } else {
       val targetOnlyMatchedPredicate = matchedClauses
-        .map(clause => clause.condition.getOrElse(Literal(true)))
+        .map(_.condition.getOrElse(Literal.TrueLiteral))
         .map { condition =>
           splitConjunctivePredicates(condition)
             .filter(_.references.subsetOf(target.outputSet))
             .reduceOption(And)
-            .getOrElse(Literal(true))
+            .getOrElse(Literal.TrueLiteral)
         }
         .reduceOption(Or)
       targetOnlyPredicatesOnCondition ++ targetOnlyMatchedPredicate
