@@ -19,10 +19,9 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
+import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, ResolvedTable, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
@@ -68,33 +67,23 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
    */
   private def resolveTimeTravelTable(
       sparkSession: SparkSession,
-      ur: UnresolvedRelation): DataSourceV2Relation = {
-      val tableId = ur.multipartIdentifier match {
-        case Seq(tbl) => TableIdentifier(tbl)
-        case Seq(db, tbl) => TableIdentifier(tbl, Some(db))
-        case _ => throw new AnalysisException(s"Illegal table name ${ur.multipartIdentifier}")
-      }
-
-      val catalog = sparkSession.sessionState.catalog
-      val deltaTableV2 = if (DeltaTableUtils.isDeltaTable(sparkSession, tableId)) {
-        val tbl = catalog.getTableMetadata(tableId)
-        DeltaTableV2(sparkSession, new Path(tbl.location), Some(tbl))
-      } else if (DeltaTableUtils.isValidPath(tableId)) {
-        DeltaTableV2(sparkSession, new Path(tableId.table))
-      } else {
-        if (
-          (catalog.tableExists(tableId) &&
-            catalog.getTableMetadata(tableId).tableType == CatalogTableType.VIEW) ||
-          catalog.isTempView(ur.multipartIdentifier)) {
-          // If table exists and not found to be a view, throw not supported error
-          throw DeltaErrors.notADeltaTableException("RESTORE")
+      ur: UnresolvedRelation): LogicalPlan = {
+    val relation = EliminateSubqueryAliases(sparkSession.sessionState.analyzer.ResolveRelations(ur))
+    relation match {
+      case _: View =>
+        // If table exists and not found to be a view, throw not supported error
+        throw DeltaErrors.notADeltaTableException("RESTORE")
+      case tableRelation =>
+        if (tableRelation.resolved) {
+          tableRelation
         } else {
-          ur.tableNotFound(ur.multipartIdentifier)
+          ResolveDeltaPathTable.resolveAsPathTable(sparkSession, ur.multipartIdentifier) match {
+            case Some(r: ResolvedTable) =>
+              DataSourceV2Relation.create(r.table, Some(r.catalog), Some(r.identifier))
+            case None =>
+              ur.tableNotFound(ur.multipartIdentifier)
+          }
         }
-      }
-
-      val identifier = deltaTableV2.getTableIdentifierIfExists.map(
-        id => Identifier.of(id.database.toArray, id.table))
-      DataSourceV2Relation.create(deltaTableV2, None, identifier)
+    }
   }
 }
