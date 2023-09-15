@@ -69,7 +69,7 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
   test("Shallow Clone a table with time travel") {
     val srcTable = "shallow_clone_src_table"
     val destTable1 = "spark_catalog.default.shallow_clone_dest_table_1"
-    val destTable2 = "shallow_clone_dest_table_2"
+    val destTable2 = "spark_catalog.default.shallow_clone_dest_table_2"
     val destTable3 = "spark_catalog.default.shallow_clone_dest_table_3"
     val destTable4 = "spark_catalog.default.shallow_clone_dest_table_4"
     val dummyCatalog =
@@ -78,6 +78,14 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
     withTable(srcTable, destTable1, destTable2, destTable3, destTable4) {
       sql("SET CATALOG dummy")
       sql(f"CREATE TABLE $srcTable (id bigint) USING delta")
+      sql("SET CATALOG spark_catalog")
+      // Insert some data into the table in the dummy catalog.
+      // To make it simple, here we insert data directly into the table path.
+      sql(f"INSERT INTO delta.`$tablePath` VALUES (0)")
+      sql(f"INSERT INTO delta.`$tablePath` VALUES (1)")
+      // Test 3-part identifier when the current catalog is the default catalog
+      sql(f"CREATE TABLE $destTable1 SHALLOW CLONE dummy.default.$srcTable VERSION AS OF 1")
+      checkAnswer(spark.table(destTable1), spark.range(1).toDF())
 
       sql("SET CATALOG dummy")
       // Test simple shallow clone command under the dummy catalog
