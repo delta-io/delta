@@ -53,7 +53,7 @@ public abstract class BaseIntegration {
         });
 
     protected Table table(String path) throws Exception {
-        return Table.forPath(path);
+        return Table.forPath(tableClient, path);
     }
 
     protected Snapshot snapshot(String path) throws Exception {

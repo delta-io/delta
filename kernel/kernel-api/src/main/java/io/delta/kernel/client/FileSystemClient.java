@@ -43,9 +43,18 @@ public interface FileSystemClient {
      * @return Closeable iterator of files. It is the responsibility of the caller to close the
      * iterator.
      * @throws FileNotFoundException if the file at the given path is not found
+     * @throws IOException for any other IO error.
      */
-    CloseableIterator<FileStatus> listFrom(String filePath)
-        throws FileNotFoundException;
+    CloseableIterator<FileStatus> listFrom(String filePath) throws IOException;
+
+    /**
+     * Resolve the given path to a fully qualified path.
+     * @param path Input path
+     * @return Fully qualified path.
+     * @throws FileNotFoundException If the given path doesn't exist.
+     * @throws IOException for any other IO error.
+     */
+    String resolvePath(String path) throws IOException;
 
     // TODO: solidify input type; need some combination of path, offset, size
 

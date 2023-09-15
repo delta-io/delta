@@ -68,6 +68,11 @@ trait TestUtils extends Assertions {
     }
   }
 
+  def latestSnapshot(path: String): Snapshot = {
+    Table.forPath(defaultTableClient, path)
+      .getLatestSnapshot(defaultTableClient)
+  }
+
   def readSnapshot(
     snapshot: Snapshot,
     readSchema: StructType = null,
@@ -178,7 +183,7 @@ trait TestUtils extends Assertions {
     // version
   ): Unit = {
 
-    val snapshot = Table.forPath(path).getLatestSnapshot(tableClient)
+    val snapshot = Table.forPath(tableClient, path).getLatestSnapshot(tableClient)
 
     val readSchema = if (readCols == null) {
       null
