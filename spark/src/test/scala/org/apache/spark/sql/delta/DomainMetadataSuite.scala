@@ -23,8 +23,10 @@ import scala.util.{Failure, Success, Try}
 
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.actions.{DomainMetadata, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.junit.Assert._
 
@@ -64,12 +66,13 @@ class DomainMetadataSuite
              |""".stripMargin)
         (1 to 100).toDF("id").write.format("delta").mode("append").saveAsTable(table)
 
-        var deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
-        assert(deltaLog.unsafeVolatileSnapshot.domainMetadata.isEmpty)
+        var deltaTable = DeltaTableV2(spark, TableIdentifier(table))
+        def deltaLog = deltaTable.deltaLog
+        assert(deltaTable.snapshot.domainMetadata.isEmpty)
 
         val domainMetadata = DomainMetadata("testDomain1", "", false) ::
           DomainMetadata("testDomain2", "{\"key1\":\"value1\"", false) :: Nil
-        deltaLog.startTransaction().commit(domainMetadata, Truncate())
+        deltaTable.startTransactionWithInitialSnapshot().commit(domainMetadata, Truncate())
         assertEquals(sortByDomain(domainMetadata), sortByDomain(deltaLog.update().domainMetadata))
         assert(deltaLog.update().logSegment.checkpointProvider.version === -1)
 
@@ -78,12 +81,12 @@ class DomainMetadataSuite
           // Clear the DeltaLog cache to force creating a new DeltaLog instance which will build
           // the Snapshot from the checkpoint file.
           DeltaLog.clearCache()
-          deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
-          assert(!deltaLog.unsafeVolatileSnapshot.logSegment.checkpointProvider.isEmpty)
+          deltaTable = DeltaTableV2(spark, TableIdentifier(table))
+          assert(!deltaTable.snapshot.logSegment.checkpointProvider.isEmpty)
 
           assertEquals(
             sortByDomain(domainMetadata),
-            sortByDomain(deltaLog.unsafeVolatileSnapshot.domainMetadata))
+            sortByDomain(deltaTable.snapshot.domainMetadata))
         }
 
       }
@@ -106,18 +109,19 @@ class DomainMetadataSuite
         (1 to 100).toDF("id").write.format("delta").mode("append").saveAsTable(table)
 
         DeltaLog.clearCache()
-        var deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
-        assert(deltaLog.unsafeVolatileSnapshot.domainMetadata.isEmpty)
+        val deltaTable = DeltaTableV2(spark, TableIdentifier(table))
+        val deltaLog = deltaTable.deltaLog
+        assert(deltaTable.snapshot.domainMetadata.isEmpty)
 
         val domainMetadata = DomainMetadata("testDomain1", "", false) ::
           DomainMetadata("testDomain2", "{\"key1\":\"value1\"}", false) :: Nil
 
-        deltaLog.startTransaction().commit(domainMetadata, Truncate())
+        deltaTable.startTransactionWithInitialSnapshot().commit(domainMetadata, Truncate())
         assertEquals(sortByDomain(domainMetadata), sortByDomain(deltaLog.update().domainMetadata))
         assert(deltaLog.update().logSegment.checkpointProvider.version === -1)
 
         // Delete testDomain1.
-        deltaLog.startTransaction().commit(
+        deltaTable.startTransaction().commit(
           DomainMetadata("testDomain1", "", true) :: Nil, Truncate())
         val domainMetadatasAfterDeletion = DomainMetadata(
           "testDomain2",
@@ -128,13 +132,11 @@ class DomainMetadataSuite
 
         // Create a new commit and validate the incrementally built snapshot state respects the
         // DomainMetadata deletion.
-        deltaLog.startTransaction().commit(Nil, ManualUpdate)
-        deltaLog.update()
-        assertEquals(
-          sortByDomain(domainMetadatasAfterDeletion),
-          deltaLog.unsafeVolatileSnapshot.domainMetadata)
+        deltaTable.startTransaction().commit(Nil, ManualUpdate)
+        var snapshot = deltaLog.update()
+        assertEquals(sortByDomain(domainMetadatasAfterDeletion), snapshot.domainMetadata)
         if (doCheckpoint) {
-          deltaLog.checkpoint(deltaLog.unsafeVolatileSnapshot)
+          deltaLog.checkpoint(snapshot)
           assertEquals(
             sortByDomain(domainMetadatasAfterDeletion),
             deltaLog.update().domainMetadata)
@@ -142,7 +144,7 @@ class DomainMetadataSuite
 
         // force state reconstruction and validate it respects the DomainMetadata retention.
         DeltaLog.clearCache()
-        val snapshot = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))._2
+        snapshot = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))._2
         assertEquals(sortByDomain(domainMetadatasAfterDeletion), snapshot.domainMetadata)
       }
     }
@@ -191,12 +193,12 @@ class DomainMetadataSuite
            | ('${TableFeatureProtocolUtils.propertyKey(DomainMetadataTableFeature)}' = 'enabled')
            |""".stripMargin)
       (1 to 100).toDF("id").write.format("delta").mode("append").saveAsTable(table)
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
+      val deltaTable = DeltaTableV2(spark, TableIdentifier(table))
       val domainMetadata =
         DomainMetadata("testDomain1", "", false) ::
           DomainMetadata("testDomain1", "", false) :: Nil
       val e = intercept[DeltaIllegalArgumentException] {
-        deltaLog.startTransaction().commit(domainMetadata, Truncate())
+        deltaTable.startTransactionWithInitialSnapshot().commit(domainMetadata, Truncate())
       }
       assertEquals(e.getMessage,
         "Internal error: two DomainMetadata actions within the same transaction have " +

@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
 
 /**
  * Additional method definitions for Delta classes that are intended for use only in testing.
@@ -88,6 +89,12 @@ object DeltaTestImplicits {
     def enableExpiredLogCleanup(): Boolean = {
       deltaLog.enableExpiredLogCleanup(snapshot.metadata)
     }
+  }
+
+  implicit class DeltaTableV2ObjectTestHelper(dt: DeltaTableV2.type) {
+    /** Convenience overload that omits the cmd arg (which is not helpful in tests). */
+    def apply(spark: SparkSession, id: TableIdentifier): DeltaTableV2 =
+      dt.apply(spark, id, "test")
   }
 
   implicit class DeltaTableV2TestHelper(deltaTable: DeltaTableV2) {
