@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.{inlineInLog,
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.tables.DeltaTable

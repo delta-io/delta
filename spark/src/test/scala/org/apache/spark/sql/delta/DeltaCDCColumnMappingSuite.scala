@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.functions._

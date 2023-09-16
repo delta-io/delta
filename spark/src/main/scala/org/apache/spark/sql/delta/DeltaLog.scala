@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.File
 import java.lang.ref.WeakReference
 import java.net.URI
 import java.util.concurrent.TimeUnit
@@ -578,8 +577,6 @@ object DeltaLog extends DeltaLogging {
   private[delta] def logPathFor(dataPath: String): Path = logPathFor(new Path(dataPath))
   private[delta] def logPathFor(dataPath: Path): Path =
     DeltaTableUtils.safeConcatPaths(dataPath, LOG_DIR_NAME)
-  private[delta] def logPathFor(dataPath: File): Path =
-    logPathFor(new Path(dataPath.getCanonicalPath))
 
   /**
    * We create only a single [[DeltaLog]] for any given `DeltaLogCacheKey` to avoid wasted work
@@ -643,11 +640,6 @@ object DeltaLog extends DeltaLogging {
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
-  def forTable(spark: SparkSession, dataPath: File): DeltaLog = {
-    apply(spark, logPathFor(dataPath), new SystemClock)
-  }
-
-  /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path): DeltaLog = {
     apply(spark, logPathFor(dataPath), new SystemClock)
   }
@@ -655,11 +647,6 @@ object DeltaLog extends DeltaLogging {
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path, options: Map[String, String]): DeltaLog = {
     apply(spark, logPathFor(dataPath), options, new SystemClock)
-  }
-
-  /** Helper for creating a log when it stored at the root of the data. */
-  def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
-    apply(spark, logPathFor(dataPath), clock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
