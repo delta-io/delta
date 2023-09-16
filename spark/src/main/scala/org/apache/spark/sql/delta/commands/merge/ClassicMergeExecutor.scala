@@ -107,7 +107,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       .filterNot { field =>
         targetColsNeeded.exists { name => columnComparator(name, field) }
       }
-    val incrSourceRowCountExpr = incrementMetricAndReturnBool("numSourceRows", true)
+    val incrSourceRowCountExpr = incrementMetricAndReturnBool("numSourceRows", valueToReturn = true)
     // We can't use filter() directly on the expression because that will prevent
     // column pruning. We don't need the SOURCE_ROW_PRESENT_COL so we immediately drop it.
     val sourceDF = getSourceDF
@@ -170,8 +170,8 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     logTrace(s"findTouchedFiles: matched files:\n\t${touchedFileNames.mkString("\n\t")}")
 
     val nameToAddFileMap = generateCandidateFileMap(targetDeltaLog.dataPath, dataSkippedFiles)
-    val touchedAddFiles = touchedFileNames.map(f =>
-      getTouchedFile(targetDeltaLog.dataPath, f, nameToAddFileMap))
+    val touchedAddFiles = touchedFileNames.map(
+      getTouchedFile(targetDeltaLog.dataPath, _, nameToAddFileMap))
 
     if (metrics("numSourceRows").value == 0 && (dataSkippedFiles.isEmpty ||
       dataSkippedFiles.forall(_.numLogicalRecords.getOrElse(0) == 0))) {

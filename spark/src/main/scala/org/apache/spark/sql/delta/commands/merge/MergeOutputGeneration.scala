@@ -271,11 +271,9 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             Seq(incrCountExpr) ++
             (if (cdcEnabled) Some(CDC_TYPE_DELETE) else None)
         case i: DeltaMergeIntoNotMatchedInsertClause =>
-          val incrInsertedCountExpr = {
-            incrementMetricsAndReturnBool(
-              names = Seq("numTargetRowsInserted"),
-              valueToReturn = false)
-          }
+          val incrInsertedCountExpr = incrementMetricsAndReturnBool(
+            names = Seq("numTargetRowsInserted"),
+            valueToReturn = false)
           i.resolvedActions.map(_.expr) ++
             Seq(incrInsertedCountExpr) ++
             (if (cdcEnabled) Some(Literal(CDC_TYPE_INSERT)) else None)
@@ -301,12 +299,10 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       // Nothing to update or delete
       noopExprs
     } else {
-
       if (clauses.head.condition.isEmpty) {
         // Only one clause without any condition, so the corresponding action expressions
         // can be evaluated directly to generate the output columns.
         clauses.head.actions
-
       } else if (clauses.length == 1) {
         // Only one clause _with_ a condition, so generate IF/THEN instead of CASE WHEN.
         //
@@ -316,7 +312,6 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         //
         val condition = clauses.head.condition.get
         clauses.head.actions.zip(noopExprs).map { case (a, noop) => If(condition, a, noop) }
-
       } else {
         // There are multiple clauses. Use `CaseWhen` to conditionally evaluate the right
         // action expressions to output columns
@@ -409,8 +404,10 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       array(
         col("packedCdc"),
         struct(
-          outputColNames.dropRight(1).map { n => col(s"packedCdc.`$n`") } :+
-          Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME): _*)
+          outputColNames
+            .dropRight(1)
+            .map { n => col(s"packedCdc.`$n`") }
+            :+ Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME): _*)
       ).expr,
       array(col("packedCdc")).expr
     ))

@@ -347,7 +347,7 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       names: Seq[String],
       valueToReturn: Boolean): Expression = {
     val incExpr = incrementMetricAndReturnBool(names.head, valueToReturn)
-    names.foldLeft(incExpr) { case (expr, name) =>
+    names.tail.foldLeft(incExpr) { case (expr, name) =>
       IncrementMetric(expr, metrics(name))
     }
   }

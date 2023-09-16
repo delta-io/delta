@@ -338,10 +338,10 @@ object MergeIntoMaterializeSource {
    * @return The columns of the source plan that are used in this MERGE
    */
   private def getReferencedSourceColumns(
-    source: LogicalPlan,
-    condition: Expression,
-    matchedClauses: Seq[DeltaMergeIntoMatchedClause],
-    notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause]) = {
+      source: LogicalPlan,
+      condition: Expression,
+      matchedClauses: Seq[DeltaMergeIntoMatchedClause],
+      notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause]) = {
     val conditionCols = condition.references
     val matchedCondCols = matchedClauses.flatMap(_.condition).flatMap(_.references)
     val notMatchedCondCols = notMatchedClauses.flatMap(_.condition).flatMap(_.references)
@@ -352,8 +352,11 @@ object MergeIntoMaterializeSource {
       .flatMap(_.resolvedActions)
       .flatMap(_.expr.references)
     val allCols = AttributeSet(
-      conditionCols ++ matchedCondCols ++ notMatchedCondCols ++
-        matchedActionsCols ++ notMatchedActionsCols)
+      conditionCols ++
+        matchedCondCols ++
+        notMatchedCondCols ++
+        matchedActionsCols ++
+        notMatchedActionsCols)
 
     source.output.filter(allCols.contains)
   }
