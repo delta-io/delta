@@ -48,8 +48,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
    */
   protected def generatePrecomputedConditionsAndDF(
       sourceDF: DataFrame,
-      clauses: Seq[DeltaMergeIntoClause])
-  : (DataFrame, Seq[DeltaMergeIntoClause]) = {
+      clauses: Seq[DeltaMergeIntoClause]): (DataFrame, Seq[DeltaMergeIntoClause]) = {
     //
     // ==== Precompute conditions in MATCHED and NOT MATCHED clauses ====
     // If there are conditions in the clauses, each condition will be computed once for every

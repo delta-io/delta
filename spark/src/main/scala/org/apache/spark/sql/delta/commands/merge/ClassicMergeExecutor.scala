@@ -247,8 +247,10 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
        """.stripMargin)
 
     // Expressions to update metrics
-    val incrSourceRowCountExpr = incrementMetricAndReturnBool("numSourceRowsInSecondScan", true)
-    val incrNoopCountExpr = incrementMetricAndReturnBool("numTargetRowsCopied", false)
+    val incrSourceRowCountExpr = incrementMetricAndReturnBool(
+      "numSourceRowsInSecondScan", valueToReturn = true)
+    val incrNoopCountExpr = incrementMetricAndReturnBool(
+      "numTargetRowsCopied", valueToReturn = false)
 
     // Apply an outer join to find both, matches and non-matches. We are adding two boolean fields
     // with value `true`, one to each side of the join. Whether this field is null or not after
@@ -269,7 +271,9 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
       val right = if (deduplicateCDFDeletes.enabled) {
         targetDF.withColumn(TARGET_ROW_INDEX_COL, monotonically_increasing_id())
-      } else targetDF
+      } else {
+        targetDF
+      }
       left.join(right, Column(condition), joinType)
     }
 
@@ -293,13 +297,13 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     val outputColNames =
       targetOutputCols.map(_.name) ++
         Seq(ROW_DROPPED_COL) ++
-        (if (cdcEnabled) Seq(CDC_TYPE_COLUMN_NAME) else Seq())
+        (if (cdcEnabled) Some(CDC_TYPE_COLUMN_NAME) else None)
 
     // Copy expressions to copy the existing target row and not drop it (ROW_DROPPED_COL=false),
     // and in case CDC is enabled, set it to CDC_TYPE_NOT_CDC.
     // (N+1 or N+2 or N+3 columns depending on CDC disabled / enabled and if Row IDs are preserved)
     val noopCopyExprs = (targetOutputCols :+ incrNoopCountExpr) ++
-      (if (cdcEnabled) Seq(CDC_TYPE_NOT_CDC) else Nil)
+      (if (cdcEnabled) Some(CDC_TYPE_NOT_CDC) else None)
 
     // Generate output columns.
     val outputCols = generateWriteAllChangesOutputCols(
