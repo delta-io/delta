@@ -168,7 +168,7 @@ let
         #"Latest Log Files" = 
         let
             Source = #"_delta_log Folder",
-            #"Filtered Rows" = Table.SelectRows(Source, each ([Extension] = ".json") and not (Text.EndsWith([Name], ".compacted.json"))),
+            #"Filtered Rows" = Table.SelectRows(Source, each (Text.Middle([Name], 20, 5) = ".json")),
             #"Filtered Rows1" = Table.SelectRows(#"Filtered Rows", each [Version] > Record.Field(_last_checkpoint, "version"))
         in
             #"Filtered Rows1",
