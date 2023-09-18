@@ -60,11 +60,8 @@ public class ParquetBatchReader {
         try {
             FileSystem fs = filePath.getFileSystem(configuration);
             FileStatus fileStatus = fs.getFileStatus(filePath);
-            reader.initialize(
-                new FileSplit(filePath, 0, fileStatus.getLen(), new String[0]),
-                configuration,
-                Reporter.NULL
-            );
+            FileSplit fileSplit = new FileSplit(filePath, 0, fileStatus.getLen(), new String[0]);
+            reader.initialize(fileSplit, configuration, Reporter.NULL);
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }
@@ -101,7 +98,7 @@ public class ParquetBatchReader {
                     hasNotConsumedNextElement = false;
                     // hasNext reads to row to confirm there is a next element.
                     try {
-                        batchReadSupport.moveToNextRow(reader.getCurrentRowIndex());
+                        batchReadSupport.finalizeCurrentRow(reader.getCurrentRowIndex());
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     }
@@ -152,8 +149,8 @@ public class ParquetBatchReader {
         /**
          * @param fileRowIndex the file row index of the row just processed
          */
-        public void moveToNextRow(long fileRowIndex) {
-            rowRecordCollector.moveToNextRow(fileRowIndex);
+        public void finalizeCurrentRow(long fileRowIndex) {
+            rowRecordCollector.finalizeCurrentRow(fileRowIndex);
         }
     }
 
@@ -171,8 +168,7 @@ public class ParquetBatchReader {
         private final RowConverter rowRecordGroupConverter;
 
         public RowRecordCollector(int maxBatchSize, StructType readSchema, MessageType fileSchema) {
-            this.rowRecordGroupConverter =
-                new RowConverter(maxBatchSize, readSchema, fileSchema);
+            this.rowRecordGroupConverter = new RowConverter(maxBatchSize, readSchema, fileSchema);
         }
 
         @Override
@@ -202,10 +198,11 @@ public class ParquetBatchReader {
         }
 
         /**
+         * Finalize the current row.
          * @param fileRowIndex the file row index of the row just processed
          */
-        public void moveToNextRow(long fileRowIndex) {
-            rowRecordGroupConverter.moveToNextRow(fileRowIndex);
+        public void finalizeCurrentRow(long fileRowIndex) {
+            rowRecordGroupConverter.finalizeCurrentRow(fileRowIndex);
         }
     }
 }

@@ -63,3 +63,27 @@ case class TestReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     true
   }
 }
+
+case class TestLegacyWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+  /** Return true if we removed the property, false if no action was needed. */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    if (TestRemovableLegacyWriterFeature.validateRemoval(table.snapshot)) return false
+
+    val properties = Seq(TestRemovableLegacyWriterFeature.TABLE_PROP_KEY)
+    AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    true
+  }
+}
+
+case class TestLegacyReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+  /** Return true if we removed the property, false if no action was needed. */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    if (TestRemovableLegacyReaderWriterFeature.validateRemoval(table.snapshot)) return false
+
+    val properties = Seq(TestRemovableLegacyReaderWriterFeature.TABLE_PROP_KEY)
+    AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    true
+  }
+}

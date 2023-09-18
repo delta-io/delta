@@ -249,7 +249,7 @@ trait DeltaSourceBase extends Source
     val offset = latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable())
     lastOffsetForTriggerAvailableNow = offset
     lastOffsetForTriggerAvailableNow.foreach { lastOffset =>
-      logInfo("lastOffset for Trigger.AvailableNow has set to ${lastOffset.json}")
+      logInfo(s"lastOffset for Trigger.AvailableNow has set to ${lastOffset.json}")
     }
   }
 
@@ -526,7 +526,7 @@ trait DeltaSourceBase extends Source
     if (hasCheckedReadIncompatibleSchemaChangesOnStreamStart) return
 
     lazy val (startVersionSnapshotOpt, errOpt) =
-      Try(getSnapshotFromDeltaLog(batchStartVersion)) match {
+      Try(deltaLog.getSnapshotAt(batchStartVersion)) match {
         case Success(snapshot) => (Some(snapshot), None)
         case Failure(exception) => (None, Some(exception))
       }
@@ -678,7 +678,7 @@ case class DeltaSource(
     spark: SparkSession,
     deltaLog: DeltaLog,
     options: DeltaOptions,
-    snapshotAtSourceInit: Snapshot,
+    snapshotAtSourceInit: SnapshotDescriptor,
     metadataPath: String,
     metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog] = None,
     filters: Seq[Expression] = Nil)
@@ -1006,63 +1006,8 @@ case class DeltaSource(
     val endOffset = toDeltaSourceOffset(end)
     val startDeltaOffsetOption = startOffsetOption.map(toDeltaSourceOffset)
 
-    val (startVersion, startIndex, isStartingVersion) = if (startOffsetOption.isEmpty) {
-      getStartingVersion match {
-        case Some(v) =>
-          (v, DeltaSourceOffset.BASE_INDEX, false)
-
-        case _ =>
-          if (endOffset.isStartingVersion) {
-            (endOffset.reservoirVersion, DeltaSourceOffset.BASE_INDEX, true)
-          } else {
-            assert(
-              endOffset.reservoirVersion > 0, s"invalid reservoirVersion in endOffset: $endOffset")
-            // Load from snapshot `endOffset.reservoirVersion - 1L` so that `index` in `endOffset`
-            // is still valid.
-            (endOffset.reservoirVersion - 1L, DeltaSourceOffset.BASE_INDEX, true)
-          }
-      }
-    } else {
-      val startOffset = startDeltaOffsetOption.get
-      if (!startOffset.isStartingVersion) {
-        // unpersist `snapshot` because it won't be used any more.
-        cleanUpSnapshotResources()
-      }
-      (startOffset.reservoirVersion, startOffset.index, startOffset.isStartingVersion)
-    }
-
-    // Initialize schema tracking log if possible, no-op if already initialized.
-    // This is one of the two places can initialize schema tracking.
-    // This case specifically handles initialization when we are already working with an initialized
-    // stream.
-    // Here we may have two conditions:
-    // 1. We are dealing with the recovery getBatch() that gives us the previous committed offset.
-    // In this case, we should initialize the schema at the previous committed offset (endOffset).
-    // This also means we are caught up with the stream and we can start schema tracking in the
-    // next latestOffset call.
-    // 2. We are running an already-constructed batch, we need the schema to be compatible
-    // with the entire batch, so we also pass the batch end offset. The schema tracking log will
-    // only be initialized if there exists a consistent read schema for the entire batch. If such
-    // a consistent schema does not exist, the stream will be broken. This case will be rare: it can
-    // only happen for streams where the schema tracking log was added after the stream has already
-    // been running, *and* the stream was running on an older version of the DeltaSource that did
-    // not detect non-additive schema changes, *and* it was stopped while processing a batch that
-    // contained such a schema change.
-    // In either world, the initialization logic would find the superset compatible schema for this
-    // batch by scanning Delta log.
-    // We don't have to include the end reservoir version when the end offset is a base index, i.e.
-    // no data commit has been marked within a constructed batch, we can simply ignore end offset
-    // version. This can help us avoid overblocking a potential ending offset right at a schema
-    // change.
-    val endVersionForMetadataLogInit = if (endOffset.index == DeltaSourceOffset.BASE_INDEX) {
-      endOffset.reservoirVersion - 1
-    } else {
-      endOffset.reservoirVersion
-    }
-    // For eager initialization, we initialize the log right now.
-    if (readyToInitializeMetadataTrackingEagerly) {
-      initializeMetadataTrackingAndExitStream(startVersion, Some(endVersionForMetadataLogInit))
-    }
+    val (startVersion, startIndex, isStartingVersion) =
+      extractStartingState(startDeltaOffsetOption, endOffset)
 
     if (startOffsetOption.contains(endOffset)) {
       // This happens only if we recover from a failure and `MicroBatchExecution` tries to call
@@ -1079,6 +1024,109 @@ case class DeltaSource(
       logDebug(offsetRangeInfo)
     }
 
+    // Initialize schema tracking log if possible, no-op if already initialized.
+    // This is one of the two places can initialize schema tracking.
+    // This case specifically handles initialization when we are already working with an initialized
+    // stream.
+    // Here we may have two conditions:
+    // 1. We are dealing with the recovery getBatch() that gives us the previous committed offset
+    // where start and end corresponds to the previous batch.
+    // In this case, we should initialize the schema at the previous committed offset (endOffset),
+    // which can be done using the same `initializeMetadataTrackingAndExitStream` method.
+    // This also means we are caught up with the stream and we can start schema tracking in the
+    // next latestOffset call.
+    // 2. We are running an already-constructed batch, we need the schema to be compatible
+    // with the entire batch, so we also pass the batch end offset. The schema tracking log will
+    // only be initialized if there exists a consistent read schema for the entire batch. If such
+    // a consistent schema does not exist, the stream will be broken. This case will be rare: it can
+    // only happen for streams where the schema tracking log was added after the stream has already
+    // been running, *and* the stream was running on an older version of the DeltaSource that did
+    // not detect non-additive schema changes, *and* it was stopped while processing a batch that
+    // contained such a schema change.
+    // In either world, the initialization logic would find the superset compatible schema for this
+    // batch by scanning Delta log.
+    validateAndInitMetadataLogForPlannedBatchesDuringStreamStart(startVersion, endOffset)
+
+    val createdDf = createDataFrameBetweenOffsets(
+      startVersion, startIndex, isStartingVersion, startDeltaOffsetOption, endOffset)
+
+    createdDf
+  }
+
+  /**
+   * Extracts the start state for a scan given an optional start offset and an end offset, so we
+   * know exactly where we should scan from for a batch end at the `endOffset`, invoked when:
+   *
+   * 1. We are in `getBatch` given a startOffsetOption and endOffset from streaming engine.
+   * 2. We are in the `init` method for every stream (re)start given a start offset for all pending
+   *    batches and the latest planned offset, and trying to figure out if this range contains any
+   *    non-additive schema changes.
+   *
+   * @param startOffsetOption Optional start offset, if not defined. This means we are trying to
+   *                          scan the very first batch where endOffset is the very first offset
+   *                          generated by `latestOffsets`, specifically `getStartingOffset`
+   * @param endOffset The end offset for a batch.
+   * @return (start commit version to scan from,
+   *         start offset index to scan from,
+   *         whether this version is still considered part of initial snapshot)
+   */
+  private def extractStartingState(
+      startOffsetOption: Option[DeltaSourceOffset],
+      endOffset: DeltaSourceOffset): (Long, Long, Boolean) = {
+    val (startVersion, startIndex, isStartingVersion) = if (startOffsetOption.isEmpty) {
+      getStartingVersion match {
+        case Some(v) =>
+          (v, DeltaSourceOffset.BASE_INDEX, false)
+
+        case None =>
+          if (endOffset.isStartingVersion) {
+            (endOffset.reservoirVersion, DeltaSourceOffset.BASE_INDEX, true)
+          } else {
+            assert(
+              endOffset.reservoirVersion > 0, s"invalid reservoirVersion in endOffset: $endOffset")
+            // Load from snapshot `endOffset.reservoirVersion - 1L` so that `index` in `endOffset`
+            // is still valid.
+            // It's OK to use the previous version as the updated initial snapshot, even if the
+            // initial snapshot might have been different from the last time when this starting
+            // offset was computed.
+            (endOffset.reservoirVersion - 1L, DeltaSourceOffset.BASE_INDEX, true)
+          }
+      }
+    } else {
+      val startOffset = startOffsetOption.get
+      if (!startOffset.isStartingVersion) {
+        // unpersist `snapshot` because it won't be used any more.
+        cleanUpSnapshotResources()
+      }
+      (startOffset.reservoirVersion, startOffset.index, startOffset.isStartingVersion)
+    }
+    (startVersion, startIndex, isStartingVersion)
+  }
+
+  /**
+   * Centralized place for validating and initializing schema log for all pending batch(es).
+   * This is called only during stream start.
+   *
+   * @param startVersion Start version of the pending batch range
+   * @param endOffset End offset for the pending batch range. end offset >= start offset
+   */
+  private def validateAndInitMetadataLogForPlannedBatchesDuringStreamStart(
+      startVersion: Long,
+      endOffset: DeltaSourceOffset): Unit = {
+    // We don't have to include the end reservoir version when the end offset is a base index, i.e.
+    // no data commit has been marked within a constructed batch, we can simply ignore end offset
+    // version. This can help us avoid overblocking a potential ending offset right at a schema
+    // change.
+    val endVersionForMetadataLogInit = if (endOffset.index == DeltaSourceOffset.BASE_INDEX) {
+      endOffset.reservoirVersion - 1
+    } else {
+      endOffset.reservoirVersion
+    }
+    // For eager initialization, we initialize the log right now.
+    if (readyToInitializeMetadataTrackingEagerly) {
+      initializeMetadataTrackingAndExitStream(startVersion, Some(endVersionForMetadataLogInit))
+    }
+
     // Check for column mapping + streaming incompatible schema changes
     // Note for initial snapshot, the startVersion should be the same as the latestOffset's
     // version and therefore this check won't have any effect.
@@ -1088,11 +1136,6 @@ case class DeltaSource(
       startVersion,
       Some(endVersionForMetadataLogInit)
     )
-
-    val createdDf = createDataFrameBetweenOffsets(
-      startVersion, startIndex, isStartingVersion, startDeltaOffsetOption, endOffset)
-
-    createdDf
   }
 
   override def stop(): Unit = {
@@ -1253,6 +1296,7 @@ case class DeltaSource(
       None
     }
   }
+
 }
 
 object DeltaSource {

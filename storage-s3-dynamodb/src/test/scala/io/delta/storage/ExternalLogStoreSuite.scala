@@ -136,7 +136,7 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
       val e = intercept[java.nio.file.FileSystemException] {
         store.write(delta1, Iterator("one"), overwrite = false, sessionHadoopConf)
       }
-      assert(e.getMessage == s"previous commit $delta0 doesn't exist")
+      assert(e.getMessage == s"previous commit $delta0 doesn't exist on the file system but does in the external log store")
     }
   }
 
@@ -154,7 +154,7 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
       val e = intercept[java.nio.file.FileSystemException] {
         store.write(delta1, Iterator("one"), overwrite = false, sessionHadoopConf)
       }
-      assert(e.getMessage == s"previous commit $delta0 doesn't exist")
+      assert(e.getMessage == s"previous commit $delta0 doesn't exist on the file system but does in the external log store")
     }
   }
 
@@ -236,7 +236,7 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
       }.getMessage
 
       val tablePath = path.getParent.getParent
-      assert(e == s"Old entries for table $tablePath still exist in the external store")
+      assert(e == s"Old entries for table $tablePath still exist in the external log store")
     }
   }
 

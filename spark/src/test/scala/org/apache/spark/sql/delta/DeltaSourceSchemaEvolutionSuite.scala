@@ -56,6 +56,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     // Enable for testing
     conf.set(DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING.key, "true")
     conf.set(
+      DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING_MERGE_CONSECUTIVE_CHANGES.key, "true")
+    conf.set(
       s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.allowSourceColumnRenameAndDrop", "always")
     if (isCdcTest) {
       conf.set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
@@ -64,12 +66,16 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     }
   }
 
+  protected def withoutAllowStreamRestart(f: => Unit): Unit = {
+    withSQLConf(s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming" +
+      s".allowSourceColumnRenameAndDrop" -> "false") {
+      f
+    }
+  }
+
   protected def testWithoutAllowStreamRestart(testName: String)(f: => Unit): Unit = {
     test(testName) {
-      withSQLConf(s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming" +
-        s".allowSourceColumnRenameAndDrop" -> "false") {
-        f
-      }
+      withoutAllowStreamRestart(f)
     }
   }
 
@@ -82,7 +88,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           "DELTA_STREAMING_SCHEMA_LOG_INIT_FAILED_INCOMPATIBLE_METADATA" &&
           // Does NOT come from the stream start check which is for lazy initialization ...
           !e.getStackTrace.exists(
-            _.toString.contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"))
+            _.toString.contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce")) &&
+          // Coming from the check against constructed batches
+          e.getStackTrace.exists(
+            _.toString.contains("validateAndInitMetadataLogForPlannedBatchesDuringStreamStart"))
       )
     )
 
@@ -417,11 +426,12 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
    * @param checkpoint Checkpoint location
    * @param version Target version
    * @param index Target index fle.
+   * @return The raw content for the updated offset file
    */
-  protected def manuallyCreateStreamingBatchUntilReservoirVersion(
+  protected def manuallyCreateLatestStreamingOffsetUntilReservoirVersion(
       checkpoint: String,
       version: Long,
-      index: Long = DeltaSourceOffset.BASE_INDEX): Unit = {
+      index: Long = DeltaSourceOffset.BASE_INDEX): String = {
     // manually create another offset to latest version
     val offsetDir = new File(checkpoint.stripPrefix("file:") + "/offsets")
     val previousOffset = offsetDir.listFiles().filter(!_.getName.endsWith(".crc"))
@@ -438,6 +448,21 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     val newOffsetFile = new File(previousOffset.getParent,
       (previousOffset.getName.toInt + 1).toString)
     FileUtils.writeStringToFile(newOffsetFile, updated, Charset.defaultCharset())
+    updated
+  }
+
+  /**
+   * Write serialized offset content as a batch id for a particular checkpoint.
+   * @param checkpoint Checkpoint location
+   * @param batchId Target batch ID to write to
+   * @param offsetContent Offset content
+   */
+  protected def manuallyCreateStreamingOffsetAtBatchId(
+      checkpoint: String, batchId: Long, offsetContent: String): Unit = {
+    // manually create another offset to latest version
+    val offsetDir = new File(checkpoint.stripPrefix("file:") + "/offsets")
+    val newOffsetFile = new File(offsetDir, batchId.toString)
+    FileUtils.writeStringToFile(newOffsetFile, offsetContent, Charset.defaultCharset())
   }
 
   /**
@@ -524,12 +549,12 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       CheckAnswer((-1 until 10).map(i => (i.toString, i.toString)): _*),
       // This new rename should throw the legacy error because we have not provided a schema
       // location
-      Execute {_ =>
+      Execute { _ =>
         renameColumn("c", "d")
         schemaChangeDeltaVersion = log.update().version
       },
       // Add some data in new schema
-      Execute {_ => addData(10 until 15) },
+      Execute { _ => addData(10 until 15) },
       ProcessAllAvailableIgnoreError,
       // No more data should've been processed
       CheckAnswer((-1 until 10).map(i => (i.toString, i.toString)): _*),
@@ -550,6 +575,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     // We should've updated the schema to the version just before the schema change version
     // because that's the previous version's schema we left with. To be safe and in case there
     // are more file actions to process, we saved that schema instead of the renamed schema.
+    // Also, since the previous batch was still on initial snapshot, the last file action was not
+    // bumped to the next version, so the schema initialization effectively did not consider the
+    // rename column schema change's version.
     assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion ==
       schemaChangeDeltaVersion - 1)
     // Start the stream again with the same schema location
@@ -687,6 +715,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       expectedLogInitException: StreamAction)(implicit log: DeltaLog): Unit = {
     // start a stream to initialize checkpoint
     val ckpt = getDefaultCheckpoint.toString
+    val schemaLoc = getDefaultSchemaLocation.toString
     val df = readStream(startingVersion = Some(1))
     testStream(df)(
       StartStream(checkpointLocation = ckpt),
@@ -710,6 +739,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       renameColumn("c", "b")
     } else if (invalidAction == "drop") {
       dropColumn("c")
+    } else {
+      assert(false, s"unexpected action ${invalidAction}")
     }
     // write more data
     addData(Seq(8))
@@ -719,9 +750,44 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     // super old version that did not have the block logic, and is left with a constructed
     // batch that bypasses a schema change.
     // There should be at MOST one such trailing batch as of today's streaming engine semantics.
-    manuallyCreateStreamingBatchUntilReservoirVersion(ckpt, latestVersion)
+    val offsetContent =
+      manuallyCreateLatestStreamingOffsetUntilReservoirVersion(ckpt, latestVersion)
 
     // rerun the stream should detect that and fail, even with schema location
+    testStream(readStreamWithSchemaLocation)(
+      StartStream(checkpointLocation = ckpt),
+      ProcessAllAvailableIgnoreError,
+      CheckAnswer(Nil: _*),
+      expectedLogInitException
+    )
+
+    // Let's also test the case when we only have one offset in the checkpoint without any committed
+    // Clear existing checkpoint dir and schema log dir
+    FileUtils.deleteDirectory(new File(ckpt.stripPrefix("file:")))
+    new File(ckpt.stripPrefix("file:")).mkdirs()
+    FileUtils.deleteDirectory(new File(schemaLoc.stripPrefix("file:")))
+
+    // Create a single offset that points to the latest version of the table.
+    manuallyCreateStreamingOffsetAtBatchId(ckpt, 0, offsetContent)
+
+    // One more non additive schema change
+    if (invalidAction == "rename") {
+      renameColumn("a", "x")
+    } else if (invalidAction == "drop") {
+      dropColumn("b")
+    }
+
+    addData(Seq(9))
+
+    val latestVersion2 = log.update().version
+
+    // Create another offset point to the updated latest version
+    manuallyCreateLatestStreamingOffsetUntilReservoirVersion(ckpt, latestVersion2)
+
+    // This should also fail because it crossed the new non-additive schema change above, note that
+    // since we didn't have a committed offset nor a user specified startingVersion, the first
+    // offset will re-read using latestVersion2 - 1 as the initial snapshot now.
+    // Without this new non-additive schema change the validation would actually pass.
     testStream(readStreamWithSchemaLocation)(
       StartStream(checkpointLocation = ckpt),
       ProcessAllAvailableIgnoreError,
@@ -773,7 +839,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     val v1 = log.update().version
 
     // Manually create another offset ending on [v1, -100]
-    manuallyCreateStreamingBatchUntilReservoirVersion(ckpt, v1)
+    manuallyCreateLatestStreamingOffsetUntilReservoirVersion(ckpt, v1)
 
     // Start stream again would attempt to run the constructed batch first.
     // Since the ending offset does not yet contain the metadata action, we won't need to block
@@ -830,7 +896,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     // v2 should include the two add column change but not the renamed version
     val v2 = v1 + 5
     // manually create another offset to latest version
-    manuallyCreateStreamingBatchUntilReservoirVersion(ckpt, v2, -1)
+    manuallyCreateLatestStreamingOffsetUntilReservoirVersion(ckpt, v2, -1)
     // rerun the stream should detect rename with the stream start check, but since within the
     // offsets the schema changes are all additive, we could use the encompassing schema <a,b,c,d>.
     val schemaLocation = getDefaultSchemaLocation.toString
@@ -1289,7 +1355,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       ProcessAllAvailableIgnoreError,
       AssertOnQuery { q =>
         // initialization does not generate any more offsets
-        q.availableOffsets.size == 1
+        q.availableOffsets.size <= 1
       },
       ExpectMetadataEvolutionExceptionFromInitialization
     )
@@ -1615,7 +1681,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       val se = e.asInstanceOf[DeltaRuntimeException]
       assert {
         se.getErrorClass == "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION" &&
-          se.messageParameters(0) == opType && se.messageParameters(1) == ver.toString &&
+          se.messageParameters(0) == opType && se.messageParameters(2) == ver.toString &&
           se.messageParameters.exists(_.contains(checkpointHash.toString))
       }
     }
@@ -1847,7 +1913,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       StructType.fromDDL("a INT").json,
       sourceMetadataPath = "",
       tableConfigurations = None,
-      protocolJson = None
+      protocolJson = None,
+      previousMetadataSeqNum = None
     ))
   }
 
@@ -1859,7 +1926,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       StructType.fromDDL("a INT").json,
       sourceMetadataPath = "/path",
       tableConfigurations = Some(Map("a" -> "b")),
-      protocolJson = Some(Protocol(1, 2).json)
+      protocolJson = Some(Protocol(1, 2).json),
+      previousMetadataSeqNum = Some(1L)
     )
 
     assert {
@@ -1920,6 +1988,58 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       ExpectMetadataEvolutionException
     )
     assert(getDefaultSchemaLog().getLatestMetadata.exists(_.deltaCommitVersion == v1))
+  }
+
+  testSchemaEvolution("schema log replace current", columnMapping = false) { implicit log =>
+    withSQLConf(
+      DeltaSQLConf.DELTA_STREAMING_SCHEMA_TRACKING_METADATA_PATH_CHECK_ENABLED.key -> "false") {
+      // Schema log's schema is respected
+      val schemaLog = getDefaultSchemaLog()
+      val s0 = PersistedMetadata(log.tableId, 0,
+        makeMetadata(
+          new StructType().add("a", StringType, true)
+            .add("b", StringType, true)
+            .add("c", StringType, true),
+          partitionSchema = new StructType()
+        ),
+        log.update().protocol,
+        sourceMetadataPath = ""
+      )
+      // The `replaceCurrent` is noop because there is no previous schema.
+      schemaLog.writeNewMetadata(s0, replaceCurrent = true)
+      assert(schemaLog.getCurrentTrackedMetadata.contains(s0))
+      assert(schemaLog.getPreviousTrackedMetadata.isEmpty)
+
+      val s1 = s0.copy(deltaCommitVersion = 1L)
+      schemaLog.writeNewMetadata(s1)
+      assert(schemaLog.getCurrentTrackedMetadata.contains(s1))
+      assert(schemaLog.getPreviousTrackedMetadata.contains(s0))
+
+      val s2 = s1.copy(deltaCommitVersion = 2L)
+      schemaLog.writeNewMetadata(s2, replaceCurrent = true)
+      assert(schemaLog.getCurrentTrackedMetadata.contains(
+        s2.copy(previousMetadataSeqNum = Some(0L))))
+      assert(schemaLog.getPreviousTrackedMetadata.contains(s0))
+
+      val s3 = s2.copy(deltaCommitVersion = 3L)
+      schemaLog.writeNewMetadata(s3, replaceCurrent = true)
+      assert(schemaLog.getCurrentTrackedMetadata.contains(
+        s3.copy(previousMetadataSeqNum = Some(0L))))
+      assert(schemaLog.getPreviousTrackedMetadata.contains(s0))
+
+      val s4 = s3.copy(deltaCommitVersion = 4L)
+      schemaLog.writeNewMetadata(s4)
+      assert(schemaLog.getCurrentTrackedMetadata.contains(s4))
+      assert(schemaLog.getPreviousTrackedMetadata.contains(
+        s3.copy(previousMetadataSeqNum = Some(0L))))
+
+      val s5 = s4.copy(deltaCommitVersion = 5L)
+      schemaLog.writeNewMetadata(s5, replaceCurrent = true)
+      assert(schemaLog.getCurrentTrackedMetadata.contains(
+        s5.copy(previousMetadataSeqNum = Some(3L))))
+      assert(schemaLog.getPreviousTrackedMetadata.contains(
+        s3.copy(previousMetadataSeqNum = Some(0L))))
+    }
   }
 }
 

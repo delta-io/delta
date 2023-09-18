@@ -45,7 +45,8 @@ import org.apache.spark.util.Utils
 
 trait DeltaTableCreationTests
   extends QueryTest
-  with SharedSparkSession  with DeltaColumnMappingTestUtils {
+  with SharedSparkSession
+  with DeltaColumnMappingTestUtils {
 
   import testImplicits._
 

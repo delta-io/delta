@@ -142,10 +142,8 @@ class DomainMetadataSuite
 
         // force state reconstruction and validate it respects the DomainMetadata retention.
         DeltaLog.clearCache()
-        deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
-        assertEquals(
-          sortByDomain(domainMetadatasAfterDeletion),
-          deltaLog.update().domainMetadata)
+        val snapshot = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))._2
+        assertEquals(sortByDomain(domainMetadatasAfterDeletion), snapshot.domainMetadata)
       }
     }
   }

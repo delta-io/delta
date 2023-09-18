@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
+import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.catalyst.TimeTravel
@@ -398,6 +399,24 @@ class DeltaAnalysis(session: SparkSession)
 
         case _ =>
           throw DeltaErrors.notADeltaTableException("RESTORE")
+      }
+
+    // Resolve as a resolved table if the path is for delta table. For non delta table, we keep the
+    // path and pass it along. This is needed as DESCRIBE DETAIL command currently supports both
+    // delta and non delta path.
+    case u: UnresolvedPathBasedTable =>
+      val table = getPathBasedDeltaTable(u.path)
+      val tableExists = try {
+        table.tableExists
+      } catch {
+        case NonFatal(e) => false
+      }
+      if (!tableExists) {
+        u
+      } else {
+        val catalog = session.sessionState.catalogManager.currentCatalog.asTableCatalog
+        ResolvedTable.create(
+          catalog, Identifier.of(Array(DeltaSourceUtils.ALT_NAME), u.path), table)
       }
 
     case u: UnresolvedPathBasedDeltaTable =>

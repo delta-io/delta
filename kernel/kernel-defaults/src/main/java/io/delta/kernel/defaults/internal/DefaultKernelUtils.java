@@ -15,9 +15,7 @@
  */
 package io.delta.kernel.defaults.internal;
 
-import java.sql.Date;
 import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -74,6 +72,8 @@ public class DefaultKernelUtils {
         return null;
     }
 
+    // TODO: Move these precondition checks into a separate utility class.
+
     /**
      * Precondition-style validation that throws {@link IllegalArgumentException}.
      *
@@ -117,30 +117,6 @@ public class DefaultKernelUtils {
         }
     }
 
-    /**
-     * Precondition-style validation that throws {@link IllegalStateException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @param message A String message for the exception.
-     * @throws IllegalStateException if {@code isValid} is false
-     */
-    public static void checkState(boolean isValid, String message)
-        throws IllegalStateException {
-        if (!isValid) {
-            throw new IllegalStateException(message);
-        }
-    }
-
-    /**
-     * Utility method to get the number of days since epoch this given date is.
-     *
-     * @param date
-     */
-    public static int daysSinceEpoch(Date date) {
-        LocalDate localDate = date.toLocalDate();
-        return (int) ChronoUnit.DAYS.between(EPOCH, localDate);
-    }
-
     private static List<Type> pruneFields(GroupType type, StructType deltaDataType) {
         // prune fields including nested pruning like in pruneSchema
         return deltaDataType.fields().stream()
@@ -164,5 +140,56 @@ public class DefaultKernelUtils {
         } else {
             return type;
         }
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////
+    // Below utils are adapted from org.apache.spark.sql.catalyst.util.DateTimeUtils
+    //////////////////////////////////////////////////////////////////////////////////
+
+    // See http://stackoverflow.com/questions/466321/convert-unix-timestamp-to-julian
+    // It's 2440587.5, rounding up to be compatible with Hive.
+    static int JULIAN_DAY_OF_EPOCH = 2440588;
+
+    /**
+     * Returns the number of microseconds since epoch from Julian day and nanoseconds in a day.
+     */
+    public static long fromJulianDay(int days, long nanos) {
+        // use Long to avoid rounding errors
+        return ((long) (days - JULIAN_DAY_OF_EPOCH)) * DateTimeConstants.MICROS_PER_DAY +
+            nanos / DateTimeConstants.NANOS_PER_MICROS;
+    }
+
+    public static long millisToMicros(long millis) {
+        return Math.multiplyExact(millis, DateTimeConstants.MICROS_PER_MILLIS);
+    }
+
+    public static class DateTimeConstants {
+
+        public static final int MONTHS_PER_YEAR = 12;
+
+        public static final byte DAYS_PER_WEEK = 7;
+
+        public static final long HOURS_PER_DAY = 24L;
+
+        public static final long MINUTES_PER_HOUR = 60L;
+
+        public static final long SECONDS_PER_MINUTE = 60L;
+        public static final long SECONDS_PER_HOUR = MINUTES_PER_HOUR * SECONDS_PER_MINUTE;
+        public static final long SECONDS_PER_DAY = HOURS_PER_DAY * SECONDS_PER_HOUR;
+
+        public static final long MILLIS_PER_SECOND = 1000L;
+        public static final long MILLIS_PER_MINUTE = SECONDS_PER_MINUTE * MILLIS_PER_SECOND;
+        public static final long MILLIS_PER_HOUR = MINUTES_PER_HOUR * MILLIS_PER_MINUTE;
+        public static final long MILLIS_PER_DAY = HOURS_PER_DAY * MILLIS_PER_HOUR;
+
+        public static final long MICROS_PER_MILLIS = 1000L;
+        public static final long MICROS_PER_SECOND = MILLIS_PER_SECOND * MICROS_PER_MILLIS;
+        public static final long MICROS_PER_MINUTE = SECONDS_PER_MINUTE * MICROS_PER_SECOND;
+        public static final long MICROS_PER_HOUR = MINUTES_PER_HOUR * MICROS_PER_MINUTE;
+        public static final long MICROS_PER_DAY = HOURS_PER_DAY * MICROS_PER_HOUR;
+
+        public static final long NANOS_PER_MICROS = 1000L;
+        public static final long NANOS_PER_MILLIS = MICROS_PER_MILLIS * NANOS_PER_MICROS;
+        public static final long NANOS_PER_SECOND = MILLIS_PER_SECOND * NANOS_PER_MILLIS;
     }
 }

@@ -698,8 +698,10 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
       case (t, dropFeature) if t == classOf[DropFeature] =>
         // Only single feature removal is supported.
-        val featureName = dropFeature.head.asInstanceOf[DropFeature].featureName
-        AlterTableDropFeatureDeltaCommand(table, featureName).run(spark)
+        val dropFeatureTableChange = dropFeature.head.asInstanceOf[DropFeature]
+        val featureName = dropFeatureTableChange.featureName
+        val truncateHistory = dropFeatureTableChange.truncateHistory
+        AlterTableDropFeatureDeltaCommand(table, featureName, truncateHistory).run(spark)
 
     }
 

@@ -20,19 +20,12 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
-import java.sql.Date;
-import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import org.apache.hadoop.conf.Configuration;
 import org.junit.Test;
+import static io.delta.golden.GoldenTableUtils.goldenTableFile;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -47,16 +40,19 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
+import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 
 public class TestParquetBatchReader {
     /**
      * Test reads data from a Parquet file with data of various combinations of data types supported
-     * byt Delta Lake table protocol. Code for generating the golden parquet files is located:
-     * https://gist.github.com/vkorukanti/238bad726545e466202278966989f02b (TODO: Move this a better
-     * place).
+     * by the Delta Lake table protocol.
      */
     private static final String ALL_TYPES_FILE =
-        DefaultKernelTestUtils.getTestResourceFilePath("parquet/all_types.parquet");
+        Arrays.stream(goldenTableFile("parquet-all-types").listFiles())
+            .filter(file -> file.getName().endsWith(".parquet"))
+            .map(File::getAbsolutePath)
+            .findFirst()
+            .get();
 
     private static final StructType ALL_TYPES_FILE_SCHEMA = new StructType()
         .add("byteType", ByteType.INSTANCE)
@@ -70,22 +66,26 @@ public class TestParquetBatchReader {
         .add("stringType", StringType.INSTANCE)
         .add("binaryType", BinaryType.INSTANCE)
         .add("dateType", DateType.INSTANCE)
-        // .add("timestampType", TimestampType.INSTANCE) // TODO
+        .add("timestampType", TimestampType.INSTANCE)
         .add("nested_struct",
             new StructType()
                 .add("aa", StringType.INSTANCE)
                 .add("ac", new StructType().add("aca", IntegerType.INSTANCE)))
         .add("array_of_prims",
             new ArrayType(IntegerType.INSTANCE, true))
+        .add("array_of_arrays",
+            new ArrayType(new ArrayType(IntegerType.INSTANCE, true), true))
         .add("array_of_structs",
             new ArrayType(new StructType().add("ab", LongType.INSTANCE), true))
         .add("map_of_prims", new MapType(IntegerType.INSTANCE, LongType.INSTANCE, true))
-        .add("map_of_complex", new MapType(
+        .add("map_of_rows", new MapType(
             IntegerType.INSTANCE,
             new StructType().add("ab", LongType.INSTANCE),
+            true))
+        .add("map_of_arrays", new MapType(
+            LongType.INSTANCE,
+            new ArrayType(IntegerType.INSTANCE, true),
             true));
-
-    private static final LocalDate EPOCH = new Date(0).toLocalDate().ofEpochDay(0);
 
     @Test
     public void readAllTypesOfData()
@@ -104,10 +104,9 @@ public class TestParquetBatchReader {
             .add("nested_struct",
                 new StructType()
                     .add("aa", StringType.INSTANCE)
-                    .add("ac", new StructType().add("aca", IntegerType.INSTANCE))
-            ).add("array_of_prims",
-                new ArrayType(IntegerType.INSTANCE, true)
-            );
+                    .add("ac", new StructType().add("aca", IntegerType.INSTANCE)))
+            .add("array_of_prims",
+                new ArrayType(IntegerType.INSTANCE, true));
 
         readAndVerify(readSchema, 73 /* readBatchSize */);
     }
@@ -249,15 +248,14 @@ public class TestParquetBatchReader {
                     break;
                 }
                 case "datetype": {
-                    // Set `-Duser.timezone="UTC"` as JVM arg to pass this test in computers
-                    // whose local timezone is non-UTC zone.
-                    LocalDate expValue = (rowId % 61 != 0) ?
-                        new Date(rowId * 20000000L).toLocalDate() : null;
+                    Integer expValue = (rowId % 61 != 0) ?
+                        (int) Math.floorDiv(
+                            rowId * 20000000L,
+                            DefaultKernelUtils.DateTimeConstants.MILLIS_PER_DAY) : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
                     } else {
-                        long numDaysSinceEpoch = ChronoUnit.DAYS.between(EPOCH, expValue);
-                        assertEquals(numDaysSinceEpoch, vector.getInt(batchWithIdx._2));
+                        assertEquals(expValue.intValue(), vector.getInt(batchWithIdx._2));
                     }
                     break;
                 }
@@ -317,12 +315,20 @@ public class TestParquetBatchReader {
                     break;
                 }
                 case "timestamptype": {
-                    throw new UnsupportedOperationException("not yet implemented: " + name);
+                    // Tests only for spark.sql.parquet.outputTimestampTyp = INT96, other formats
+                    // are tested in end-to-end tests in DeltaTableReadsSuite
+                    Long expValue = (rowId % 62 != 0) ? 23423523L * rowId * 1000 : null;
+                    if (expValue == null) {
+                        assertTrue(vector.isNullAt(batchWithIdx._2));
+                    } else {
+                        assertEquals(expValue.longValue(), vector.getLong(batchWithIdx._2));
+                    }
+                    break;
                 }
                 case "decimal": {
                     BigDecimal expValue = (rowId % 67 != 0) ?
-                            // Value is rounded to scale=2 when written
-                            new BigDecimal(rowId * 123.52).setScale(2, RoundingMode.HALF_UP) : null;
+                        // Value is rounded to scale=2 when written
+                        new BigDecimal(rowId * 123.52).setScale(2, RoundingMode.HALF_UP) : null;
                     if (expValue == null) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
                     } else {
@@ -330,33 +336,15 @@ public class TestParquetBatchReader {
                     }
                     break;
                 }
-                case "nested_struct": {
-                    Row struct = vector.getStruct(batchWithIdx._2);
-                    assertFalse(vector.isNullAt(batchWithIdx._2));
-                    String aaVal = struct.getString(0);
-                    assertEquals(Integer.toString(rowId), aaVal);
-
-                    boolean expAcValNull = rowId % 23 == 0;
-                    Row acVal = struct.getStruct(1);
-                    if (expAcValNull) {
-                        assertTrue(struct.isNullAt(1));
-                        assertNull(acVal);
-                    } else {
-                        int actAcaVal = acVal.getInt(0);
-                        assertEquals(rowId, actAcaVal);
-                    }
+                case "nested_struct":
+                    validateNestedStructColumn(vector, batchWithIdx._2, rowId);
                     break;
-                }
                 case "array_of_prims": {
                     boolean expIsNull = rowId % 25 == 0;
                     if (expIsNull) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
                     } else if (rowId % 29 == 0) {
-                        // TODO: Parquet group converters calls to start/end don't differentiate
-                        // between empty array or null array. The current reader always treats both
-                        // of them nulls.
-                        // assertEquals(Collections.emptyList(), vector.getArray(batchWithIdx._2));
-                        assertTrue(vector.isNullAt(batchWithIdx._2));
+                        assertEquals(Collections.emptyList(), vector.getArray(batchWithIdx._2));
                     } else {
                         List<Integer> expArray = Arrays.asList(rowId, null, rowId + 1);
                         List<Integer> actArray = vector.getArray(batchWithIdx._2);
@@ -364,6 +352,9 @@ public class TestParquetBatchReader {
                     }
                     break;
                 }
+                case "array_of_arrays":
+                    validateArrayOfArraysColumn(vector, batchWithIdx._2, rowId);
+                    break;
                 case "array_of_structs": {
                     assertFalse(vector.isNullAt(batchWithIdx._2));
                     List<Row> actArray = vector.getArray(batchWithIdx._2);
@@ -378,11 +369,7 @@ public class TestParquetBatchReader {
                     if (expIsNull) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
                     } else if (rowId % 30 == 0) {
-                        // TODO: Parquet group converters calls to start/end don't differentiate
-                        // between empty map or null map. The current reader always treats both
-                        // of them nulls.
-                        // assertEquals(Collections.emptyList(), vector.getMap(batchWithIdx._2));
-                        assertTrue(vector.isNullAt(batchWithIdx._2));
+                        assertEquals(Collections.emptyMap(), vector.getMap(batchWithIdx._2));
                     } else {
                         Map<Integer, Long> actValue = vector.getMap(batchWithIdx._2);
                         assertTrue(actValue.size() == 2);
@@ -393,19 +380,15 @@ public class TestParquetBatchReader {
                         Long expValue0 = (rowId % 29 == 0) ? null : (rowId + 2L);
                         assertEquals(expValue0, actValue0);
 
-                        // entry 1: key = if (rowId % 27 != 0) rowId + 2 else null
-                        // TODO: Not sure if this is a bug or expected behavior. In Delta-Spark,
-                        // whenever the map key value is null - it is stored as 0. Not sure
-                        // what happens for non-integer keys.
-                        // Integer key1 = (rowId % 27 == 0) ? null : rowId + 2;
-                        Integer key1 = (rowId % 27 == 0) ? 0 : rowId + 2;
+                        // entry 1
+                        Integer key1 = (rowId % 27 != 0) ? (rowId + 2) : (rowId + 3);
                         Long actValue1 = actValue.get(key1);
                         Long expValue1 = rowId + 9L;
                         assertEquals(expValue1, actValue1);
                     }
                     break;
                 }
-                case "map_of_complex": {
+                case "map_of_rows": {
                     // Map(i + 1 -> (if (i % 10 == 0) Row((i*20).longValue()) else null))
                     assertFalse(vector.isNullAt(batchWithIdx._2));
                     Map<Integer, Row> actValue = vector.getMap(batchWithIdx._2);
@@ -423,6 +406,9 @@ public class TestParquetBatchReader {
                     }
                     break;
                 }
+                case "map_of_arrays":
+                    validateMapOfArraysColumn(vector, batchWithIdx._2, rowId);
+                    break;
                 case "missing_column_primitive":
                 case "missing_column_struct": {
                     assertTrue(vector.isNullAt(batchWithIdx._2));
@@ -433,6 +419,113 @@ public class TestParquetBatchReader {
             }
             ordinal++;
         }
+    }
+
+    private static void validateNestedStructColumn(
+        ColumnVector vector, int batchRowId, int tableRowId) {
+        boolean expNull = tableRowId % 63 == 0;
+        if (expNull) {
+            assertTrue(vector.isNullAt(batchRowId));
+            return;
+        }
+
+        Row struct = vector.getStruct(batchRowId);
+        boolean expAaValNull = tableRowId % 19 == 0;
+        boolean expAcValNull = tableRowId % 19 == 0 || tableRowId % 23 == 0;
+        final int aaColOrdinal = 0;
+        final int acColOrdinal = 1;
+
+        assertEquals(struct.isNullAt(aaColOrdinal), expAaValNull);
+        assertEquals(struct.isNullAt(acColOrdinal), expAcValNull);
+
+        if (!expAaValNull) {
+            String aaVal = struct.getString(aaColOrdinal);
+            assertEquals(Integer.toString(tableRowId), aaVal);
+        }
+        if (!expAcValNull) {
+            Row acVal = struct.getStruct(acColOrdinal);
+            if (expAcValNull) {
+                assertTrue(struct.isNullAt(1));
+                assertNull(acVal);
+            } else {
+                int actAcaVal = acVal.getInt(0);
+                assertEquals(tableRowId, actAcaVal);
+            }
+        }
+    }
+
+    private static void validateArrayOfArraysColumn(
+        ColumnVector vector, int batchRowId, int tableRowId) {
+        boolean expIsNull = tableRowId % 8 == 0;
+        if (expIsNull) {
+            assertTrue(vector.isNullAt(batchRowId));
+            return;
+        }
+
+        List<Integer> singleElemArray = Arrays.asList(tableRowId);
+        List<Integer> doubleElemArray = Arrays.asList(tableRowId + 10, tableRowId + 20);
+        List<Integer> arrayWithNulls = Arrays.asList(null, tableRowId + 200);
+        List<Integer> singleElemNullArray = Collections.singletonList(null);
+        List<Integer> emptyArray = Collections.emptyList();
+
+        List<List<Integer>> expArray = null;
+        switch (tableRowId % 7) {
+            case 0:
+                expArray = Arrays.asList(singleElemArray, singleElemArray, arrayWithNulls);
+                break;
+            case 1:
+                expArray = Arrays.asList(singleElemArray, doubleElemArray, emptyArray);
+                break;
+            case 2:
+                expArray = Arrays.asList(arrayWithNulls);
+                break;
+            case 3:
+                expArray = Arrays.asList(singleElemNullArray);
+                break;
+            case 4:
+                expArray = Collections.singletonList(null);
+                break;
+            case 5:
+                expArray = Collections.singletonList(emptyArray);
+                break;
+            case 6:
+                expArray = Collections.emptyList();
+                break;
+        }
+        assertEquals(expArray, vector.getArray(batchRowId));
+    }
+
+    private static void validateMapOfArraysColumn(
+        ColumnVector vector, int batchRowId, int tableRowId) {
+        boolean expIsNull = tableRowId % 30 == 0;
+        if (expIsNull) {
+            assertTrue(vector.isNullAt(batchRowId));
+            return;
+        }
+
+        final List<Integer> val1;
+        if (tableRowId % 4 == 0) {
+            val1 = Arrays.asList(tableRowId, null, tableRowId + 1);
+        } else {
+            val1 = Collections.emptyList();
+        }
+        final List<Integer> val2;
+        if (tableRowId % 7 == 0) {
+            val2 = Collections.emptyList();
+        } else {
+            val2 = Collections.singletonList(null);
+        }
+
+        Map<Long, List<Integer>> expMap = Collections.emptyMap();
+        if (tableRowId % 24 != 0) {
+            expMap = new HashMap<Long, List<Integer>>() {
+                {
+                    put((long) tableRowId, val1);
+                    put(tableRowId + 1L, val2);
+                }
+            };
+        }
+        assertEquals(expMap, vector.getMap(batchRowId));
     }
 
     private static Tuple2<ColumnarBatch, Integer> getBatchForRowId(

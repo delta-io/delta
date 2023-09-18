@@ -34,7 +34,8 @@ import org.apache.spark.sql.types.StructType
 
 class DeltaTableFeatureSuite
   extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   private lazy val testTableSchema = spark.range(1).schema
 
@@ -145,7 +146,9 @@ class DeltaTableFeatureSuite
         ChangeDataFeedTableFeature,
         GeneratedColumnsTableFeature,
         TestLegacyWriterFeature,
-        TestLegacyReaderWriterFeature))
+        TestLegacyReaderWriterFeature,
+        TestRemovableLegacyWriterFeature,
+        TestRemovableLegacyReaderWriterFeature))
     assert(
       Protocol(2, 5).implicitlySupportedFeatures === Set(
         AppendOnlyTableFeature,
@@ -155,7 +158,9 @@ class DeltaTableFeatureSuite
         ChangeDataFeedTableFeature,
         GeneratedColumnsTableFeature,
         TestLegacyWriterFeature,
-        TestLegacyReaderWriterFeature))
+        TestLegacyReaderWriterFeature,
+        TestRemovableLegacyWriterFeature,
+        TestRemovableLegacyReaderWriterFeature))
     assert(Protocol(2, TABLE_FEATURES_MIN_WRITER_VERSION).implicitlySupportedFeatures === Set())
     assert(
       Protocol(
@@ -210,7 +215,9 @@ class DeltaTableFeatureSuite
           CheckConstraintsTableFeature,
           GeneratedColumnsTableFeature,
           TestLegacyWriterFeature,
-          TestLegacyReaderWriterFeature)))
+          TestLegacyReaderWriterFeature,
+          TestRemovableLegacyWriterFeature,
+          TestRemovableLegacyReaderWriterFeature)))
   }
 
   test("protocol upgrade compatibility") {
@@ -237,7 +244,9 @@ class DeltaTableFeatureSuite
               GeneratedColumnsTableFeature,
               ColumnMappingTableFeature,
               TestLegacyWriterFeature,
-              TestLegacyReaderWriterFeature))))
+              TestLegacyReaderWriterFeature,
+              TestRemovableLegacyWriterFeature,
+              TestRemovableLegacyReaderWriterFeature))))
     assert(
       Protocol(2, 6).canUpgradeTo(
         Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
@@ -249,7 +258,9 @@ class DeltaTableFeatureSuite
             GeneratedColumnsTableFeature,
             ColumnMappingTableFeature,
             TestLegacyWriterFeature,
-            TestLegacyReaderWriterFeature))))
+            TestLegacyReaderWriterFeature,
+            TestRemovableLegacyWriterFeature,
+            TestRemovableLegacyReaderWriterFeature))))
     // Features are identical but protocol versions are lower, thus `canUpgradeTo` is `false`.
     assert(
       !Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
@@ -426,7 +437,9 @@ class DeltaTableFeatureSuite
             GeneratedColumnsTableFeature.name,
             TestWriterFeature.name,
             TestLegacyWriterFeature.name,
-            TestLegacyReaderWriterFeature.name))
+            TestLegacyReaderWriterFeature.name,
+            TestRemovableLegacyWriterFeature.name,
+            TestRemovableLegacyReaderWriterFeature.name))
         }
       }
     }

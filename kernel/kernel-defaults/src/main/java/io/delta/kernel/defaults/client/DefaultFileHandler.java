@@ -20,17 +20,16 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.client.FileHandler;
 import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.utils.CloseableIterator;
 
 /**
  * Default client implementation of {@link FileHandler}. It splits file as one split.
  */
-public class DefaultFileHandler
-    implements FileHandler {
+public class DefaultFileHandler implements FileHandler {
     @Override
     public CloseableIterator<FileReadContext> contextualizeFileReads(
-        CloseableIterator<Row> fileIter, Expression filter) {
+        CloseableIterator<Row> fileIter, Predicate filter) {
         requireNonNull(fileIter, "fileIter is null");
         requireNonNull(filter, "filter is null");
         // TODO: we are not using the filter now, will be used later.

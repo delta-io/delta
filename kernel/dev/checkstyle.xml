@@ -71,6 +71,10 @@
 
     <module name="NewlineAtEndOfFile"/>
 
+    <module name="RegexpHeader">
+        <property name="headerFile" value="kernel/dev/copyrightHeader"/>
+    </module>
+
     <module name="TreeWalker">
         <!--
         If you wish to turn off checking for a section of code, you can put a comment in the source

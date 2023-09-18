@@ -18,6 +18,14 @@ package io.delta.kernel.types;
 
 import java.util.Objects;
 
+import io.delta.kernel.annotation.Evolving;
+
+/**
+ * Represent {@code array} data type
+ *
+ * @since 3.0.0
+ */
+@Evolving
 public class ArrayType extends DataType {
     private final DataType elementType;
     private final boolean containsNull;

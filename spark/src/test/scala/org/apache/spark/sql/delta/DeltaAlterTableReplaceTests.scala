@@ -51,7 +51,7 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
              |      v2:string COMMENT 'a comment for m.value.v2'>> COMMENT 'a comment for m'
              |)""".stripMargin)
 
-      val deltaLog = getDeltaLog(tableName)
+      val (deltaLog, snapshot) = getDeltaLogWithSnapshot(tableName)
       val expectedSchema = new StructType()
         .add("v1", "integer", true, "a comment for v1")
         .add("v2", "string", true, "a comment for v2")
@@ -68,7 +68,7 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
           new StructType()
             .add("v1", "integer", true, "a comment for m.value.v1")
             .add("v2", "string", true, "a comment for m.value.v2")), true, "a comment for m")
-      assertEqual(deltaLog.snapshot.schema, expectedSchema)
+      assertEqual(snapshot.schema, expectedSchema)
 
       implicit val ordering = Ordering.by[
         (Int, String, (Int, String), Seq[(Int, String)], Map[(Int, String), (Int, String)]), Int] {
@@ -109,8 +109,8 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
              |  s STRUCT<v2:string, v1:int>
              |)""".stripMargin)
 
-      val deltaLog = getDeltaLog(tableName)
-      assertEqual(deltaLog.snapshot.schema, new StructType()
+      val (deltaLog, snapshot) = getDeltaLogWithSnapshot(tableName)
+      assertEqual(snapshot.schema, new StructType()
         .add("m", MapType(
           new StructType().add("v2", "string").add("v1", "integer"),
           new StructType().add("v2", "string").add("v1", "integer")))
@@ -148,8 +148,8 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
              |  m MAP<STRUCT<v1:int, v2:string, v3:long>, STRUCT<v1:int, v2:string, v3:long>>
              |)""".stripMargin)
 
-      val deltaLog = getDeltaLog(tableName)
-      assertEqual(deltaLog.snapshot.schema, new StructType()
+      val (deltaLog, snapshot) = getDeltaLogWithSnapshot(tableName)
+      assertEqual(snapshot.schema, new StructType()
         .add("v1", "integer")
         .add("v2", "string")
         .add("v3", "long")
@@ -197,8 +197,8 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
              |  `s.s` STRUCT<`y.y`:string, `x.x`:int>
              |)""".stripMargin)
 
-      val deltaLog = getDeltaLog(tableName)
-      assertEqual(deltaLog.snapshot.schema, new StructType()
+      val (deltaLog, snapshot) = getDeltaLogWithSnapshot(tableName)
+      assertEqual(snapshot.schema, new StructType()
         .add("m.m", MapType(
           new StructType().add("y.y", "string").add("x.x", "integer"),
           new StructType().add("y.y", "string").add("x.x", "integer")))
@@ -218,9 +218,8 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
         messages: String*): Unit = {
       if (columnMappingEnabled) {
         spark.sql(text)
-        val deltaLog = getDeltaLog(tableName)
-        val field = deltaLog.snapshot.schema
-          .findNestedField(columnDropped, includeCollections = true)
+        val (deltaLog, snapshot) = getDeltaLogWithSnapshot(tableName)
+        val field = snapshot.schema.findNestedField(columnDropped, includeCollections = true)
         assert(field.isEmpty, "Column was not deleted")
       } else {
         assertNotSupported(text, messages: _*)
@@ -360,7 +359,7 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
         .withColumn("m", map(col("s"), col("s")))
       withDeltaTable(df) { tableName =>
 
-        val deltaLog = getDeltaLog(tableName)
+        val (deltaLog, _) = getDeltaLogWithSnapshot(tableName)
         def checkSchema(command: String): Unit = {
           sql(command)
 
@@ -572,8 +571,8 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
              |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
              |)""".stripMargin)
 
-        val deltaLog = getDeltaLog(tableName)
-        assertEqual(deltaLog.snapshot.schema, new StructType()
+        val (deltaLog, snapshot) = getDeltaLogWithSnapshot(tableName)
+        assertEqual(snapshot.schema, new StructType()
           .add("v1", "integer")
           .add("v2", "string")
           .add("s", new StructType()
@@ -607,8 +606,8 @@ trait DeltaAlterTableReplaceTests extends DeltaAlterTableTestBase {
              |  m MAP<STRUCT<v1:int, v2:string>, STRUCT<v1:int, v2:string>>
              |)""".stripMargin)
 
-      val deltaLog = getDeltaLog(tableName)
-      assertEqual(deltaLog.snapshot.schema, new StructType()
+      val (deltaLog, snapshot) = getDeltaLogWithSnapshot(tableName)
+      assertEqual(snapshot.schema, new StructType()
         .add("v1", "integer")
         .add("v2", "string")
         .add("s", new StructType()

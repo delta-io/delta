@@ -21,7 +21,7 @@ This table was generated using scala/spark code:
 ```
 park.range(0, 5)
 .map(x => (
-    x.toByte, x.toShort, x.toInt, x.toDouble, x.toFloat, BigInt(x), BigDecimal(x), Timestamp.valueOf(java.time.LocalDateTime.now), x.toString, true)
+    x.toByte, x.toShort, x.toInt, x.toDouble, x.toFloat, BigInt(x), BigDecimal(x), Timestamp.valueOf(java.time.LocalDateTime.now), s"test-${x}", true)
     )
 .toDF("col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8", "col9", "col10")
 .write

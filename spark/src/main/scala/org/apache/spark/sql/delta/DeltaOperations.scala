@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaOperationMetrics.MetricsTransformer
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -59,6 +60,19 @@ object DeltaOperations {
 
     /** Whether this operation changes data */
     def changesData: Boolean = false
+
+    /**
+     * Manually transform the deletion vector metrics, because they are not part of
+     * `operationMetrics` and are filtered out by the super.transformMetrics() call.
+     */
+    def transformDeletionVectorMetrics(
+        allMetrics: Map[String, SQLMetric],
+        dvMetrics: Map[String, MetricsTransformer] = DeltaOperationMetrics.DELETION_VECTORS)
+    : Map[String, String] = {
+      dvMetrics.flatMap { case (metric, transformer) =>
+        transformer.transformToString(metric, allMetrics)
+      }
+    }
   }
 
   abstract class OperationWithPredicates(name: String, val predicates: Seq[Expression])
@@ -150,7 +164,8 @@ object DeltaOperations {
         strMetrics -= "numAddedFiles"
       }
 
-      strMetrics
+      val dvMetrics = transformDeletionVectorMetrics(metrics)
+      strMetrics ++ dvMetrics
     }
     override def changesData: Boolean = true
   }
@@ -322,8 +337,12 @@ object DeltaOperations {
       "ifExists" -> ifExists)
   }
   /** Recorded when dropping a table feature. */
-  case class DropTableFeature(featureName: String) extends Operation("DROP FEATURE") {
-    override val parameters: Map[String, Any] = Map("featureName" -> featureName)
+  case class DropTableFeature(
+      featureName: String,
+      truncateHistory: Boolean) extends Operation("DROP FEATURE") {
+    override val parameters: Map[String, Any] = Map(
+      "featureName" -> featureName,
+      "truncateHistory" -> truncateHistory)
   }
   /** Recorded when columns are added. */
   case class AddColumns(
@@ -386,6 +405,11 @@ object DeltaOperations {
   }
 
   object ManualUpdate extends Operation("Manual Update") {
+    override val parameters: Map[String, Any] = Map.empty
+  }
+
+  /** A commit without any actions. Could be used to force creation of new checkpoints. */
+  object EmptyCommit extends Operation("Empty Commit") {
     override val parameters: Map[String, Any] = Map.empty
   }
 
@@ -677,6 +701,14 @@ private[delta] object DeltaOperationMetrics {
       }
     }
   }
+
+  val DELETION_VECTORS: Map[String, MetricsTransformer] = Map(
+    // Adding "numDeletionVectorsUpdated" here makes the values line up with how
+    // "numFilesAdded"/"numFilesRemoved" behave.
+    "numDeletionVectorsAdded" -> SumMetrics("numDeletionVectorsAdded", "numDeletionVectorsUpdated"),
+    "numDeletionVectorsRemoved" ->
+      SumMetrics("numDeletionVectorsRemoved", "numDeletionVectorsUpdated")
+  )
 
   val TRUNCATE = Set(
     "numRemovedFiles", // number of files removed

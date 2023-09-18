@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.types;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.ColumnVector;
 
 /**
@@ -56,7 +57,10 @@ import io.delta.kernel.data.ColumnVector;
  * Whenever this type is specified, reader should expect either a `string` value or `struct` value.
  * The implementation of reader should convert the `string` or `struct` value to `string` type.
  * Reader implementations can expect this type only for JSON format data reading cases only.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public class MixedDataType extends DataType {
     public static final MixedDataType INSTANCE = new MixedDataType();
 

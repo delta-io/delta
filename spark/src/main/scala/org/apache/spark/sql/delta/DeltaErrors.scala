@@ -25,6 +25,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -2206,27 +2207,41 @@ trait DeltaErrorsBase
         supportedFeatures.map(_.name).toSeq.sorted.mkString(", ")))
   }
 
-  private def logRetentionPeriodKeyValuePair(metadata: Metadata): (String, String) = {
+  case class LogRetentionConfig(key: String, value: String, truncateHistoryRetention: String)
+
+  private def logRetentionConfig(metadata: Metadata): LogRetentionConfig = {
     val logRetention = DeltaConfigs.LOG_RETENTION
-    (logRetention.key, logRetention.fromMetaData(metadata).toString)
+    val truncateHistoryRetention = DeltaConfigs.TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION
+    LogRetentionConfig(
+      logRetention.key,
+      logRetention.fromMetaData(metadata).toString,
+      truncateHistoryRetention.fromMetaData(metadata).toString)
   }
 
   def dropTableFeatureHistoricalVersionsExist(
       feature: String,
       metadata: Metadata): DeltaTableFeatureException = {
-    val (logRetentionPeriodKey, logRetentionPeriod) = logRetentionPeriodKeyValuePair(metadata)
+    val config = logRetentionConfig(metadata)
     new DeltaTableFeatureException(
       errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
-      messageParameters = Array(feature, logRetentionPeriodKey, logRetentionPeriod))
+      messageParameters = Array(feature, config.key, config.value, config.truncateHistoryRetention)
+    )
   }
 
   def dropTableFeatureWaitForRetentionPeriod(
       feature: String,
       metadata: Metadata): DeltaTableFeatureException = {
-    val (logRetentionPeriodKey, logRetentionPeriod) = logRetentionPeriodKeyValuePair(metadata)
+    val config = logRetentionConfig(metadata)
     new DeltaTableFeatureException(
       errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
-      messageParameters = Array(feature, logRetentionPeriodKey, logRetentionPeriod))
+      messageParameters = Array(feature, config.key, config.value, config.truncateHistoryRetention)
+    )
+  }
+
+  def tableFeatureDropHistoryTruncationNotAllowed(): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED",
+      messageParameters = Array.empty)
   }
 
   def dropTableFeatureNonRemovableFeature(feature: String): DeltaTableFeatureException = {
@@ -2242,12 +2257,6 @@ trait DeltaErrorsBase
     new DeltaTableFeatureException(
       errorClass = "DELTA_FEATURE_DROP_CONFLICT_REVALIDATION_FAIL",
       messageParameters = Array(concurrentCommit))
-  }
-
-  def dropTableFeatureLegacyFeature(feature: String): DeltaTableFeatureException = {
-    new DeltaTableFeatureException(
-      errorClass = "DELTA_FEATURE_DROP_LEGACY_FEATURE",
-      messageParameters = Array(feature))
   }
 
   def dropTableFeatureFeatureNotSupportedByClient(
@@ -2835,7 +2844,8 @@ trait DeltaErrorsBase
 
   def cannotContinueStreamingPostSchemaEvolution(
       nonAdditiveSchemaChangeOpType: String,
-      schemaChangeVersion: Long,
+      previousSchemaChangeVersion: Long,
+      currentSchemaChangeVersion: Long,
       checkpointHash: Int,
       allowAllMode: String,
       opTypeSpecificAllowMode: String): Throwable = {
@@ -2843,14 +2853,21 @@ trait DeltaErrorsBase
     new DeltaRuntimeException(
       errorClass = "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION",
       messageParameters = Array(
-        nonAdditiveSchemaChangeOpType, schemaChangeVersion.toString,
+        nonAdditiveSchemaChangeOpType,
+        previousSchemaChangeVersion.toString,
+        currentSchemaChangeVersion.toString,
+        currentSchemaChangeVersion.toString,
         // Allow this stream to pass for this particular version
-        s"$allowAllSqlConfKey.ckpt_$checkpointHash", schemaChangeVersion.toString,
+        s"$allowAllSqlConfKey.ckpt_$checkpointHash",
+        currentSchemaChangeVersion.toString,
         // Allow this stream to pass
-        s"$allowAllSqlConfKey.ckpt_$checkpointHash", "always",
+        s"$allowAllSqlConfKey.ckpt_$checkpointHash",
+        "always",
         // Allow all streams to pass
-        allowAllSqlConfKey, "always",
-        allowAllMode, opTypeSpecificAllowMode
+        allowAllSqlConfKey,
+        "always",
+        allowAllMode,
+        opTypeSpecificAllowMode
       )
     )
   }

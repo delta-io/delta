@@ -42,7 +42,9 @@ import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile
 class DeltaLogSuite extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest  with SQLTestUtils {
+  with SharedSparkSession
+  with DeltaSQLCommandTest
+  with SQLTestUtils {
 
   protected val testOp = Truncate()
 

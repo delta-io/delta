@@ -26,7 +26,7 @@ import scala.sys.process.Process
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
-import org.apache.spark.sql.delta.actions.{Action, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
@@ -59,7 +59,8 @@ import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, In
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
-    with SharedSparkSession    with GivenWhenThen
+    with SharedSparkSession
+    with GivenWhenThen
     with DeltaSQLCommandTest
     with SQLTestUtils
     with QueryErrorsBase {
@@ -1534,6 +1535,40 @@ trait DeltaErrorsSuiteBase
       assert(e.getSqlState == "0AKDC")
       assert(e.getMessage == "Creating a bloom filter index on a column with type date is " +
         "unsupported: col1")
+    }
+    {
+      val e = intercept[DeltaTableFeatureException] {
+        throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
+      }
+      assert(e.getErrorClass == "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED")
+      assert(e.getSqlState == "0AKDE")
+      assert(e.getMessage == "History truncation is only relevant for reader features.")
+    }
+    {
+      val logRetention = DeltaConfigs.LOG_RETENTION
+      val e = intercept[DeltaTableFeatureException] {
+        throw DeltaErrors.dropTableFeatureWaitForRetentionPeriod(
+          "test_feature",
+          Metadata(configuration = Map(logRetention.key -> "30 days")))
+      }
+      assert(e.getErrorClass == "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD")
+      assert(e.getSqlState == "0AKDE")
+
+      val expectedMessage =
+        """Dropping test_feature was partially successful.
+          |
+          |The feature is now no longer used in the current version of the table. However, the feature
+          |is still present in historical versions of the table. The table feature cannot be dropped
+          |from the table protocol until these historical versions have expired.
+          |
+          |To drop the table feature from the protocol, please wait for the historical versions to
+          |expire, and then repeat this command. The retention period for historical versions is
+          |currently configured as delta.logRetentionDuration=30 days.
+          |
+          |Alternatively, please wait for the TRUNCATE HISTORY retention period to expire (24 hours)
+          |and then run:
+          |    ALTER TABLE table_name DROP FEATURE feature_name TRUNCATE HISTORY""".stripMargin
+      assert(e.getMessage == expectedMessage)
     }
   }
 

@@ -1,3 +1,18 @@
+/*
+ * Copyright (2023) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.delta.kernel.defaults.internal.parquet;
 
 import java.util.Arrays;
@@ -36,18 +51,23 @@ class RowConverter
     private final Map<Integer, Integer> parquetOrdinalToConverterOrdinal;
 
     // Working state
+    private boolean isCurrentValueNull = true;
     private int currentRowIndex;
     private boolean[] nullability;
 
     /**
-     * We have some necessary requirements here:
-     * - the fields in fileSchema are a subset of readSchema (parquet schema has been pruned)
-     * - the fields in fileSchema are in the same order as the corresponding fields in readSchema
+     * Create converter for {@link StructType} column.
+     *
+     * @param initialBatchSize Estimate of initial row batch size. Used in memory allocations.
+     * @param readSchema       Schem of the columns to read from the file.
+     * @param fileSchema       Schema of the pruned columns from the file schema We have some
+     *                         necessary requirements here: (1) the fields in fileSchema are a
+     *                         subset of readSchema (parquet schema has been pruned). (2) the
+     *                         fields in fileSchema are in the same order as the corresponding
+     *                         fields in readSchema.
      */
-    RowConverter(
-        int initialBatchSize,
-        StructType readSchema,
-        GroupType fileSchema) {
+    RowConverter(int initialBatchSize, StructType readSchema, GroupType fileSchema) {
+        checkArgument(initialBatchSize > 0, "invalid initialBatchSize: %s", initialBatchSize);
         this.readSchema = requireNonNull(readSchema, "readSchema is not null");
         List<StructField> fields = readSchema.fields();
         this.converters = new Converter[fields.size()];
@@ -89,20 +109,11 @@ class RowConverter
 
     @Override
     public void start() {
-        for (int i = 0; i < converters.length; i++) {
-            if (!converters[i].isPrimitive()) {
-                ((GroupConverter) converters[i]).start();
-            }
-        }
+        isCurrentValueNull = false;
     }
 
     @Override
     public void end() {
-        for (int i = 0; i < converters.length; i++) {
-            if (!converters[i].isPrimitive()) {
-                ((GroupConverter) converters[i]).end();
-            }
-        }
     }
 
     public ColumnarBatch getDataAsColumnarBatch(int batchSize) {
@@ -113,27 +124,13 @@ class RowConverter
     }
 
     @Override
-    public boolean moveToNextRow() {
+    public void finalizeCurrentRow(long currentRowIndex) {
         resizeIfNeeded();
-        boolean isNull = moveConvertersToNextRow(Optional.empty());
-        nullability[currentRowIndex] = isNull;
-        currentRowIndex++;
+        finalizeLastRowInConverters(currentRowIndex);
+        nullability[this.currentRowIndex] = isCurrentValueNull;
+        isCurrentValueNull = true;
 
-        return isNull;
-    }
-
-    /**
-     * @param fileRowIndex the file row index of the row processed
-     */
-    public boolean moveToNextRow(long fileRowIndex) {
-        resizeIfNeeded();
-
-        boolean isNull = moveConvertersToNextRow(Optional.of(fileRowIndex));
-        nullability[currentRowIndex] = isNull;
-
-        currentRowIndex++;
-
-        return isNull;
+        this.currentRowIndex++;
     }
 
     public ColumnVector getDataColumnVector(int batchSize) {
@@ -160,32 +157,14 @@ class RowConverter
     @Override
     public void resetWorkingState() {
         this.currentRowIndex = 0;
+        this.isCurrentValueNull = true;
         this.nullability = ParquetConverters.initNullabilityVector(this.nullability.length);
     }
 
-    /**
-     * @return true if all members were null
-     */
-    private boolean moveConvertersToNextRow(Optional<Long> fileRowIndex) {
-        long memberNullCount = 0;
-
+    private void finalizeLastRowInConverters(long prevRowIndex) {
         for (int i = 0; i < converters.length; i++) {
-            final ParquetConverters.BaseConverter baseConverter =
-                (ParquetConverters.BaseConverter) converters[i];
-
-            if (fileRowIndex.isPresent() &&
-                baseConverter instanceof ParquetConverters.FileRowIndexColumnConverter) {
-                final ParquetConverters.FileRowIndexColumnConverter fileRowIndexColumnConverter =
-                    (ParquetConverters.FileRowIndexColumnConverter) baseConverter;
-                if (fileRowIndexColumnConverter.moveToNextRow(fileRowIndex.get())) {
-                    memberNullCount++;
-                }
-            } else if (baseConverter.moveToNextRow()) {
-                memberNullCount++;
-            }
+            ((ParquetConverters.BaseConverter) converters[i]).finalizeCurrentRow(prevRowIndex);
         }
-
-        return memberNullCount == converters.length;
     }
 
     private ColumnVector[] collectMemberVectors(int batchSize) {

@@ -763,13 +763,17 @@
     "message" : [
       "Cannot drop <feature> because the Delta log contains historical versions that use the feature.",
       "Please wait until the history retention period (<logRetentionPeriodKey>=<logRetentionPeriod>) ",
-      "has passed since the feature was last active."
+      "has passed since the feature was last active.",
+      "",
+      "Alternatively, please wait for the TRUNCATE HISTORY retention period to expire (<truncateHistoryLogRetentionPeriod>)",
+      "and then run:",
+      "    ALTER TABLE table_name DROP FEATURE feature_name TRUNCATE HISTORY"
     ],
     "sqlState" : "0AKDE"
   },
-  "DELTA_FEATURE_DROP_LEGACY_FEATURE" : {
+  "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED" : {
     "message" : [
-      "Cannot drop <feature> because it is implicitly supported by the table protocol version."
+      "History truncation is only relevant for reader features."
     ],
     "sqlState" : "0AKDE"
   },
@@ -796,7 +800,11 @@
       "",
       "To drop the table feature from the protocol, please wait for the historical versions to",
       "expire, and then repeat this command. The retention period for historical versions is",
-      "currently configured as <logRetentionPeriodKey>=<logRetentionPeriod>."
+      "currently configured as <logRetentionPeriodKey>=<logRetentionPeriod>.",
+      "",
+      "Alternatively, please wait for the TRUNCATE HISTORY retention period to expire (<truncateHistoryLogRetentionPeriod>)",
+      "and then run:",
+      "    ALTER TABLE table_name DROP FEATURE feature_name TRUNCATE HISTORY"
     ],
     "sqlState" : "0AKDE"
   },
@@ -1775,9 +1783,10 @@
   },
   "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION" : {
     "message" : [
-      "We've detected a non-additive schema change (<opType>) at Delta version <schemaChangeVersion> in the Delta streaming source. Please check if you want to manually propagate this schema change to the sink table before we proceed with stream processing.",
-      "Once you have fixed the schema of the sink table or have decided there is no need to fix, you can set (one of) the following SQL configurations to unblock this non-additive schema change and continue stream processing.",
-      "To unblock for this particular stream just for this single schema change: set `<allowCkptVerKey> = <allowCkptVerValue>`.",
+      "We've detected one or more non-additive schema change(s) (<opType>) between Delta version <previousSchemaChangeVersion> and <currentSchemaChangeVersion> in the Delta streaming source.",
+      "Please check if you want to manually propagate the schema change(s) to the sink table before we proceed with stream processing using the finalized schema at <currentSchemaChangeVersion>.",
+      "Once you have fixed the schema of the sink table or have decided there is no need to fix, you can set (one of) the following SQL configurations to unblock the non-additive schema change(s) and continue stream processing.",
+      "To unblock for this particular stream just for this series of schema change(s): set `<allowCkptVerKey> = <allowCkptVerValue>`.",
       "To unblock for this particular stream: set `<allowCkptKey> = <allowCkptValue>`",
       "To unblock for all streams: set `<allowAllKey> = <allowAllValue>`.",
       "Alternatively if applicable, you may replace the `<allowAllMode>` with `<opSpecificMode>` in the SQL conf to unblock stream for just this schema change type."

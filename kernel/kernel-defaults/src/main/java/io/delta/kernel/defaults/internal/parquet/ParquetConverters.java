@@ -64,7 +64,7 @@ class ParquetConverters {
         } else if (typeFromClient instanceof ShortType) {
             return new ShortColumnConverter(initialBatchSize);
         } else if (typeFromClient instanceof LongType) {
-            return new LongColumnConverter(initialBatchSize);
+            return new LongColumnConverter(typeFromClient, initialBatchSize);
         } else if (typeFromClient instanceof FloatType) {
             return new FloatColumnConverter(initialBatchSize);
         } else if (typeFromClient instanceof DoubleType) {
@@ -72,9 +72,9 @@ class ParquetConverters {
         } else if (typeFromClient instanceof DecimalType) {
             return DecimalConverters.createDecimalConverter(
                 initialBatchSize, (DecimalType) typeFromClient, typeFromFile);
+        } else if (typeFromClient instanceof TimestampType) {
+            return TimestampConverters.createTimestampConverter(initialBatchSize, typeFromFile);
         }
-        // else if (typeFromClient instanceof TimestampType) {
-        // }
 
         throw new UnsupportedOperationException(typeFromClient + " is not supported");
     }
@@ -94,15 +94,28 @@ class ParquetConverters {
         Arrays.fill(nullability, start, end, true);
     }
 
+    /**
+     * Base converter for all implementations of Parquet {@link Converter} to return data in
+     * columnar batch. General operation flow is:
+     *  - each converter implementation allocates state to receive a fixed number of column values
+     *  - before accepting a new value the state is resized if it is not of sufficient size
+     *  - after each row, {@link #finalizeCurrentRow(long)} is called to finalize the state of
+     *    the last read row column value.
+     */
     public interface BaseConverter {
         ColumnVector getDataColumnVector(int batchSize);
 
         /**
-         * Move the converter to accept the next row value.
+         * Finalize the current row:
+         *  - close the state of the row that was read most recently.
+         *  - reallocate the state to be of sufficient size for the current batch size. Generally
+         *    the state value arrays are resized as part of setting the value, but method doesn't
+         *    get called for null values which results in the state value arrays are not sufficient
+         *    size for the current batch size.
          *
-         * @return True if the last converted value is null, false otherwise
+         * @param currentRowIndex Row index of the current row in the Parquet file.
          */
-        boolean moveToNextRow();
+        void finalizeCurrentRow(long currentRowIndex);
 
         default void resizeIfNeeded() {}
 
@@ -124,9 +137,7 @@ class ParquetConverters {
         }
 
         @Override
-        public boolean moveToNextRow() {
-            return true;
-        }
+        public void finalizeCurrentRow(long currentRowIndex) {}
     }
 
     public abstract static class BasePrimitiveColumnConverter
@@ -137,22 +148,19 @@ class ParquetConverters {
         protected boolean[] nullability;
 
         BasePrimitiveColumnConverter(int initialBatchSize) {
-            checkArgument(initialBatchSize >= 0, "invalid initialBatchSize: %s", initialBatchSize);
-
+            checkArgument(initialBatchSize > 0, "invalid initialBatchSize: %s", initialBatchSize);
             // Initialize the working state
             this.nullability = initNullabilityVector(initialBatchSize);
         }
 
         @Override
-        public boolean moveToNextRow() {
+        public void finalizeCurrentRow(long currentRowIndex) {
             resizeIfNeeded();
-            currentRowIndex++;
-            return this.nullability[currentRowIndex - 1];
+            this.currentRowIndex++;
         }
     }
 
-    public static class BooleanColumnConverter
-        extends BasePrimitiveColumnConverter {
+    public static class BooleanColumnConverter extends BasePrimitiveColumnConverter {
         // working state
         private boolean[] values;
 
@@ -189,9 +197,7 @@ class ParquetConverters {
         }
     }
 
-    public static class ByteColumnConverter
-        extends BasePrimitiveColumnConverter {
-
+    public static class ByteColumnConverter extends BasePrimitiveColumnConverter {
         // working state
         private byte[] values;
 
@@ -228,9 +234,7 @@ class ParquetConverters {
         }
     }
 
-    public static class ShortColumnConverter
-        extends BasePrimitiveColumnConverter {
-
+    public static class ShortColumnConverter extends BasePrimitiveColumnConverter {
         // working state
         private short[] values;
 
@@ -267,8 +271,7 @@ class ParquetConverters {
         }
     }
 
-    public static class IntColumnConverter
-        extends BasePrimitiveColumnConverter {
+    public static class IntColumnConverter extends BasePrimitiveColumnConverter {
         private final DataType dataType;
         // working state
         private int[] values;
@@ -308,14 +311,15 @@ class ParquetConverters {
         }
     }
 
-    public static class LongColumnConverter
-        extends BasePrimitiveColumnConverter {
-
+    public static class LongColumnConverter extends BasePrimitiveColumnConverter {
+        private final DataType dataType;
         // working state
         private long[] values;
 
-        LongColumnConverter(int initialBatchSize) {
+        LongColumnConverter(DataType dataType, int initialBatchSize) {
             super(initialBatchSize);
+            checkArgument(dataType instanceof LongType || dataType instanceof TimestampType);
+            this.dataType = dataType;
             this.values = new long[initialBatchSize];
         }
 
@@ -329,7 +333,7 @@ class ParquetConverters {
         @Override
         public ColumnVector getDataColumnVector(int batchSize) {
             ColumnVector vector =
-                new DefaultLongVector(batchSize, Optional.of(nullability), values);
+                new DefaultLongVector(dataType, batchSize, Optional.of(nullability), values);
             this.nullability = initNullabilityVector(nullability.length);
             this.values = new long[values.length];
             this.currentRowIndex = 0;
@@ -347,8 +351,7 @@ class ParquetConverters {
         }
     }
 
-    public static class FloatColumnConverter
-        extends BasePrimitiveColumnConverter {
+    public static class FloatColumnConverter extends BasePrimitiveColumnConverter {
         // working state
         private float[] values;
 
@@ -385,9 +388,7 @@ class ParquetConverters {
         }
     }
 
-    public static class DoubleColumnConverter
-        extends BasePrimitiveColumnConverter {
-
+    public static class DoubleColumnConverter extends BasePrimitiveColumnConverter {
         // working state
         private double[] values;
 
@@ -425,8 +426,7 @@ class ParquetConverters {
         }
     }
 
-    public static class BinaryColumnConverter
-        extends BasePrimitiveColumnConverter {
+    public static class BinaryColumnConverter extends BasePrimitiveColumnConverter {
         private final DataType dataType;
 
         // working state
@@ -466,11 +466,9 @@ class ParquetConverters {
         }
     }
 
-    public static class FileRowIndexColumnConverter
-        extends LongColumnConverter {
-
+    public static class FileRowIndexColumnConverter extends LongColumnConverter {
         FileRowIndexColumnConverter(int initialBatchSize) {
-            super(initialBatchSize);
+            super(LongType.INSTANCE, initialBatchSize);
         }
 
         @Override
@@ -478,14 +476,11 @@ class ParquetConverters {
             throw new UnsupportedOperationException("cannot add long to metadata column");
         }
 
-        /**
-         * @param fileRowIndex the file row index of the row processed
-         */
-        // If moveToNextRow() is called instead the value will be null
-        public boolean moveToNextRow(long fileRowIndex) {
-            super.values[currentRowIndex] = fileRowIndex;
-            this.nullability[currentRowIndex] = false;
-            return moveToNextRow();
+        @Override
+        public void finalizeCurrentRow(long currentRowIndex) {
+            // Set the previous row index value as the value
+            super.addLong(currentRowIndex);
+            super.finalizeCurrentRow(currentRowIndex);
         }
     }
 }

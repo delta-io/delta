@@ -29,7 +29,7 @@ import io.delta.kernel.Table;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.DataReadResult;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
@@ -53,7 +53,7 @@ public abstract class BaseIntegration {
         });
 
     protected Table table(String path) throws Exception {
-        return Table.forPath(path);
+        return Table.forPath(tableClient, path);
     }
 
     protected Snapshot snapshot(String path) throws Exception {
@@ -79,14 +79,14 @@ public abstract class BaseIntegration {
         try {
             while (scanFilesBatchIter.hasNext()) {
                 // Read data
-                try (CloseableIterator<DataReadResult> data =
+                try (CloseableIterator<FilteredColumnarBatch> data =
                     Scan.readData(
                         tableClient,
                         scanState,
                         scanFilesBatchIter.next().getRows(),
                         Optional.empty())) {
                     while (data.hasNext()) {
-                        DataReadResult dataReadResult = data.next();
+                        FilteredColumnarBatch dataReadResult = data.next();
                         assertFalse(dataReadResult.getSelectionVector().isPresent());
                         dataBatches.add(dataReadResult.getData());
                     }

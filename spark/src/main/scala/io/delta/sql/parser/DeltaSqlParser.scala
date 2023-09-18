@@ -427,6 +427,8 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     ctx.identifier.asScala.toSeq match {
       case Seq(tbl) => TableIdentifier(tbl.getText)
       case Seq(db, tbl) => TableIdentifier(tbl.getText, Some(db.getText))
+      case Seq(catalog, db, tbl) =>
+        TableIdentifier(tbl.getText, Some(db.getText), Some(catalog.getText))
       case _ => throw new DeltaParseException(s"Illegal table name ${ctx.getText}", ctx)
     }
   }
@@ -511,10 +513,12 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    * Parse an ALTER TABLE DROP FEATURE command.
    */
   override def visitAlterTableDropFeature(ctx: AlterTableDropFeatureContext): LogicalPlan = {
+    val truncateHistory = ctx.TRUNCATE != null && ctx.HISTORY != null
     AlterTableDropFeature(
       createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
         "ALTER TABLE ... DROP FEATURE"),
-      visitFeatureNameValue(ctx.featureName))
+      visitFeatureNameValue(ctx.featureName),
+      truncateHistory)
   }
 
   /**

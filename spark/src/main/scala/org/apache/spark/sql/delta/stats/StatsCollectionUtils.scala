@@ -33,7 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.ParquetFileReader
 import org.apache.parquet.hadoop.metadata.{BlockMetaData, ParquetMetadata}
 import org.apache.parquet.io.api.Binary
-import org.apache.parquet.schema.LogicalTypeAnnotation.{DateLogicalTypeAnnotation, StringLogicalTypeAnnotation}
+import org.apache.parquet.schema.LogicalTypeAnnotation.{DateLogicalTypeAnnotation, StringLogicalTypeAnnotation, TimestampLogicalTypeAnnotation}
 import org.apache.parquet.schema.PrimitiveType
 
 import org.apache.spark.internal.Logging
@@ -385,10 +385,12 @@ abstract class StatsCollector(
   private def aggMaxOrMin(isMax: Boolean)(blocks: Seq[BlockMetaData], index: Int): Any = {
     val columnMetadata = blocks.head.getColumns.get(index)
     val primitiveType = columnMetadata.getPrimitiveType
+    val logicalType = primitiveType.getLogicalTypeAnnotation
     // Physical type of timestamp is INT96 in both Parquet and Delta.
-    if (primitiveType.getPrimitiveTypeName == PrimitiveType.PrimitiveTypeName.INT96) {
+    if (primitiveType.getPrimitiveTypeName == PrimitiveType.PrimitiveTypeName.INT96 ||
+        logicalType.isInstanceOf[TimestampLogicalTypeAnnotation]) {
       throw new UnsupportedOperationException(
-        s"max/min stats is not supported for INT96 timestamp: ${columnMetadata.getPath}")
+        s"max/min stats is not supported for timestamp: ${columnMetadata.getPath}")
     }
 
     var aggregatedValue: Any = None
@@ -415,7 +417,6 @@ abstract class StatsCollector(
       }
     }
 
-    val logicalType = primitiveType.getLogicalTypeAnnotation
     aggregatedValue match {
       case bytes: Binary if logicalType.isInstanceOf[StringLogicalTypeAnnotation] =>
         val rawString = bytes.toStringUsingUTF8

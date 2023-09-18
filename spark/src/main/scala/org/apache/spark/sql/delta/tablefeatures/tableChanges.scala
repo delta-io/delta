@@ -20,6 +20,7 @@ import org.apache.spark.sql.connector.catalog.TableChange
 
 /**
  * Change to remove a feature from a table.
-  * @param featureName The name of the feature
+ * @param featureName The name of the feature
+ * @param truncateHistory When true we set the minimum log retention period and clean up metadata.
  */
-case class DropFeature(featureName: String) extends TableChange {}
+case class DropFeature(featureName: String, truncateHistory: Boolean) extends TableChange {}

@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.actions.{Action, FileAction, Metadata, Protoco
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
@@ -53,6 +54,12 @@ import org.apache.spark.sql.types.{DataType, StructType}
  *                            Default to None for backward compatibility.
  * @param protocolJson JSON of the protocol change if any.
  *                     Default to None for backward compatibility.
+ * @param previousMetadataSeqNum When defined, it points to the batch ID / seq num for the previous
+ *                           metadata in the log sequence. It is used when we could not reliably
+ *                           tell if the currentBatchId - 1 is indeed the previous schema evolution,
+ *                           e.g. when we are merging consecutive schema changes during the analysis
+ *                           phase and we are appending an extra schema after the merge to the log.
+ *                           Default to None for backward compatibility.
  */
 case class PersistedMetadata(
     tableId: String,
@@ -61,7 +68,9 @@ case class PersistedMetadata(
     partitionSchemaJson: String,
     sourceMetadataPath: String,
     tableConfigurations: Option[Map[String, String]] = None,
-    protocolJson: Option[String] = None) extends PartitionAndDataSchema {
+    protocolJson: Option[String] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    previousMetadataSeqNum: Option[Long] = None) extends PartitionAndDataSchema {
 
   private def parseSchema(schemaJson: String): StructType = {
     try {
@@ -136,10 +145,9 @@ class DeltaSourceMetadataTrackingLog private(
   protected val schemaSerializer =
     new JsonSchemaSerializer[PersistedMetadata](PersistedMetadata.VERSION) {
       override def deserialize(in: InputStream): PersistedMetadata =
-        convertException(
-          FailedToDeserializeException,
-          DeltaErrors.failToDeserializeSchemaLog(rootMetadataLocation)) {
-          super.deserialize(in)
+        try super.deserialize(in) catch {
+          case FailedToDeserializeException =>
+            throw DeltaErrors.failToDeserializeSchemaLog(rootMetadataLocation)
         }
     }
 
@@ -164,35 +172,50 @@ class DeltaSourceMetadataTrackingLog private(
   def getCurrentTrackedMetadata: Option[PersistedMetadata] =
     trackingLog.getCurrentTrackedSchema
 
-
   /**
-   * Get the previously tracked schema entry by this schema log.
-   * DeltaSource requires it to compare the previous schema with the latest schema to determine if
-   * an automatic stream restart is allowed.
+   * Get the logically-previous tracked seq num by this schema log.
+   * Considering the prev pointer from the latest entry if defined.
    */
-  def getPreviousTrackedMetadata: Option[PersistedMetadata] =
-    trackingLog.getPreviousTrackedSchema
-
-  /**
-   * Track a new schema to the log.
-   */
-  def writeNewMetadata(newSchema: PersistedMetadata): PersistedMetadata = {
-    convertException(FailedToEvolveSchema,
-      DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
-        rootMetadataLocation, sourceSnapshot.deltaLog.dataPath.toString)) {
-      trackingLog.addSchemaToLog(newSchema)
+  private def getPreviousTrackedSeqNum: Long = {
+    getCurrentTrackedMetadata.flatMap(_.previousMetadataSeqNum) match {
+      case Some(previousSeqNum) => previousSeqNum
+      case None => trackingLog.getCurrentTrackedSeqNum - 1
     }
   }
 
   /**
-   * Replace the latest/current tracked schema in the log
+   * Get the logically-previous tracked schema entry by this schema log.
+   * DeltaSource requires it to compare the previous schema with the latest schema to determine if
+   * an automatic stream restart is allowed.
    */
-  def replaceCurrentMetadata(newSchema: PersistedMetadata): Unit =
-    convertException(FailedToEvolveSchema,
-      DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
-        rootMetadataLocation, sourceSnapshot.deltaLog.dataPath.toString)) {
-      trackingLog.replaceCurrentSchemaInLog(newSchema)
+  def getPreviousTrackedMetadata: Option[PersistedMetadata] =
+    trackingLog.getTrackedSchemaAtSeqNum(getPreviousTrackedSeqNum)
+
+  /**
+   * Track a new schema to the log.
+   *
+   * @param newMetadata The incoming new metadata with schema.
+   * @param replaceCurrent If true, we will set a previous seq num pointer on the incoming metadata
+   *                       change pointing to the previous seq num of the current latest metadata.
+   *                       So that once the new metadata is written, getPreviousTrackedMetadata()
+   *                       will return the updated reference.
+   *                       If a previous metadata does not exist, this is noop.
+   */
+  def writeNewMetadata(
+      newMetadata: PersistedMetadata,
+      replaceCurrent: Boolean = false): PersistedMetadata = {
+    try {
+      trackingLog.addSchemaToLog(
+        if (replaceCurrent && getCurrentTrackedMetadata.isDefined) {
+          newMetadata.copy(previousMetadataSeqNum = Some(getPreviousTrackedSeqNum))
+        } else newMetadata
+      )
+    } catch {
+      case FailedToEvolveSchema =>
+        throw DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
+          rootMetadataLocation, sourceSnapshot.deltaLog.dataPath.toString)
     }
+  }
 }
 
 object DeltaSourceMetadataTrackingLog extends Logging {
@@ -209,6 +232,9 @@ object DeltaSourceMetadataTrackingLog extends Logging {
    * Create a schema log instance for a schema location.
    * The schema location is constructed as `$rootMetadataLocation/_schema_log_$tableId`
    * a suffix of `_$sourceTrackingId` is appended if provided to further differentiate the sources.
+   *
+   * @param mergeConsecutiveSchemaChanges Defined during analysis phase.
+   * @param sourceMetadataPathOpt Defined during execution phase.
    */
   def create(
       sparkSession: SparkSession,
@@ -247,20 +273,24 @@ object DeltaSourceMetadataTrackingLog extends Logging {
       }
     }
 
-    // The consecutive schema merging logic is run in the analysis phase, when we figure the final
+    // The consecutive schema merging logic is run in the *analysis* phase, when we figure the final
     // schema to read for the streaming dataframe.
     if (mergeConsecutiveSchemaChanges && log.getCurrentTrackedMetadata.isDefined) {
       // If enable schema merging, skim ahead on consecutive schema changes and use the latest one
       // to update the log again if possible.
-      // We use `replaceCurrentSchema` so that SQL conf validation logic can reliably tell the
-      // previous read schema and the latest schema simply based on batch id / seq num in the log,
-      // and then be able to determine if it's OK for the stream to proceed.
+      // We add the prev pointer to the merged schema so that SQL conf validation logic later can
+      // reliably fetch the previous read schema and the latest schema and then be able to determine
+      // if it's OK for the stream to proceed.
       getMergedConsecutiveMetadataChanges(
-        sparkSession, sourceSnapshot.deltaLog, log.getCurrentTrackedMetadata.get
-      ).foreach(log.replaceCurrentMetadata)
+        sparkSession,
+        sourceSnapshot.deltaLog,
+        log.getCurrentTrackedMetadata.get
+      ).foreach { mergedSchema =>
+        log.writeNewMetadata(mergedSchema, replaceCurrent = true)
+      }
     }
 
-    // The validation is ran in execution phase where the metadata path becomes available.
+    // The validation is ran in *execution* phase where the metadata path becomes available.
     // While loading the current persisted schema, validate against previous persisted schema
     // to check if the stream can move ahead with the custom SQL conf.
     (log.getPreviousTrackedMetadata, log.getCurrentTrackedMetadata, sourceMetadataPathOpt) match {

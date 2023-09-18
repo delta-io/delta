@@ -1,3 +1,18 @@
+/*
+ * Copyright (2023) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.delta.kernel.defaults.internal.parquet;
 
 import java.math.BigDecimal;
@@ -18,6 +33,7 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.DecimalType;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultDecimalVector;
+import io.delta.kernel.defaults.internal.parquet.ParquetConverters.BasePrimitiveColumnConverter;
 import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 
 public class DecimalConverters {
@@ -44,7 +60,6 @@ public class DecimalConverters {
                 return new IntDictionaryAwareDecimalConverter(typeFromClient,
                     10, 0, initialBatchSize);
             }
-
         } else if (primType.getPrimitiveTypeName() == INT64) {
             // For INT64 backed decimals
             if (typeAnnotation instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) {
@@ -58,7 +73,6 @@ public class DecimalConverters {
                 return new LongDictionaryAwareDecimalConverter(typeFromClient,
                     20, 0, initialBatchSize);
             }
-
         } else if (primType.getPrimitiveTypeName() == FIXED_LEN_BYTE_ARRAY ||
             primType.getPrimitiveTypeName() == BINARY) {
             // For BINARY and FIXED_LEN_BYTE_ARRAY backed decimals
@@ -73,7 +87,6 @@ public class DecimalConverters {
                         "type is %s without decimal metadata.",
                     typeFromFile));
             }
-
         } else {
             throw new RuntimeException(String.format(
                 "Unable to create Parquet converter for DecimalType whose Parquet type " +
@@ -83,9 +96,7 @@ public class DecimalConverters {
         }
     }
 
-    public abstract static class BaseDecimalConverter extends
-        ParquetConverters.BasePrimitiveColumnConverter {
-
+    public abstract static class BaseDecimalConverter extends BasePrimitiveColumnConverter {
         // working state
         private BigDecimal[] values;
 
@@ -156,9 +167,7 @@ public class DecimalConverters {
         }
     }
 
-    public static class IntDictionaryAwareDecimalConverter extends
-        BaseDecimalConverter {
-
+    public static class IntDictionaryAwareDecimalConverter extends BaseDecimalConverter {
         IntDictionaryAwareDecimalConverter(
             DataType dataType, int precision, int scale, int initialBatchSize) {
             super(dataType, precision, scale, initialBatchSize);
@@ -179,9 +188,7 @@ public class DecimalConverters {
         }
     }
 
-    public static class LongDictionaryAwareDecimalConverter extends
-        BaseDecimalConverter {
-
+    public static class LongDictionaryAwareDecimalConverter extends BaseDecimalConverter {
         LongDictionaryAwareDecimalConverter(
             DataType dataType, int precision, int scale, int initialBatchSize) {
             super(dataType, precision, scale, initialBatchSize);
@@ -202,9 +209,7 @@ public class DecimalConverters {
         }
     }
 
-    public static class BinaryDictionaryAwareDecimalConverter extends
-        BaseDecimalConverter {
-
+    public static class BinaryDictionaryAwareDecimalConverter extends BaseDecimalConverter {
         BinaryDictionaryAwareDecimalConverter(
             DataType dataType, int precision, int scale, int initialBatchSize) {
             super(dataType, precision, scale, initialBatchSize);

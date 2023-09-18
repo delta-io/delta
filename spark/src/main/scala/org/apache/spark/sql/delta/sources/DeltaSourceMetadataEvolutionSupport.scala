@@ -318,17 +318,20 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
 
   /**
    * Initialize the schema tracking log if an empty schema tracking log is provided.
+   * This method also checks the range between batchStartVersion and batchEndVersion to ensure we
+   * a safe schema to be initialized in the log.
    * @param batchStartVersion Start version of the batch of data to be proceed, it should typically
    *                          be the schema that is safe to process incoming data.
    * @param batchEndVersionOpt Optionally, if we are looking at a constructed batch with existing
    *                           end offset, we need to double verify to ensure no read-incompatible
    *                           within the batch range.
-   * @param alwaysFail Whether we should always fail with the schema evolution exception.
+   * @param alwaysFailUponLogInitialized Whether we should always fail with the schema evolution
+   *                                     exception.
    */
   protected def initializeMetadataTrackingAndExitStream(
       batchStartVersion: Long,
       batchEndVersionOpt: Option[Long] = None,
-      alwaysFail: Boolean = false): Unit = {
+      alwaysFailUponLogInitialized: Boolean = false): Unit = {
     // If possible, initialize the metadata log with the desired start metadata instead of failing.
     // If a `batchEndVersion` is provided, we also need to verify if there are no incompatible
     // schema changes in a constructed batch, if so, we cannot find a proper schema to init the
@@ -347,7 +350,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
     // Always initialize the metadata log
     metadataTrackingLog.get.writeNewMetadata(newMetadata)
     if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
-        Some(metadata), Some(protocol), version) || alwaysFail) {
+        Some(metadata), Some(protocol), version) || alwaysFailUponLogInitialized) {
       // But trigger evolution exception when there's a difference
       throw DeltaErrors.streamingMetadataEvolutionException(
         newMetadata.dataSchema,
@@ -409,7 +412,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
       )
       // Update schema log
       if (replace) {
-        metadataTrackingLog.get.replaceCurrentMetadata(schemaToPersist)
+        metadataTrackingLog.get.writeNewMetadata(schemaToPersist, replaceCurrent = true)
       } else {
         metadataTrackingLog.get.writeNewMetadata(schemaToPersist)
       }
@@ -453,6 +456,12 @@ object DeltaSourceMetadataEvolutionSupport {
     }
   }
 
+  def getCheckpointHash(path: String): Int = path.hashCode
+
+  final val SQL_CONF_UNBLOCK_ALL = "allowSourceColumnRenameAndDrop"
+  final val SQL_CONF_UNBLOCK_RENAME = "allowSourceColumnRename"
+  final val SQL_CONF_UNBLOCK_DROP = "allowSourceColumnDrop"
+
   // scalastyle:off
   /**
    * Given a non-additive operation type from a previous schema evolution, check we can process
@@ -482,10 +491,7 @@ object DeltaSourceMetadataEvolutionSupport {
       currentSchema: PersistedMetadata,
       previousSchema: PersistedMetadata): Unit = {
     val sqlConfPrefix = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming"
-    val checkpointHash = metadataPath.hashCode
-    val allowAll = "allowSourceColumnRenameAndDrop"
-    val allowRename = "allowSourceColumnRename"
-    val allowDrop = "allowSourceColumnDrop"
+    val checkpointHash = getCheckpointHash(metadataPath)
 
     def getConf(key: String): Option[String] =
       Option(spark.sessionState.conf.getConfString(key, null))
@@ -499,35 +505,42 @@ object DeltaSourceMetadataEvolutionSupport {
         (s"$sqlConfPrefix.$allowSchemaChange.ckpt_$checkpointHash", schemaChangeVersion.toString)
       )
 
-    val schemaChangeVersion = currentSchema.deltaCommitVersion
+    // The start version of a possible series of consecutive schema changes.
+    val previousSchemaChangeVersion = previousSchema.deltaCommitVersion
+    // The end version of a possible series of consecutive schema changes.
+    val currentSchemaChangeVersion = currentSchema.deltaCommitVersion
     val confPairsToAllowAllSchemaChange =
-      getConfPairsToAllowSchemaChange(allowAll, schemaChangeVersion)
+      getConfPairsToAllowSchemaChange(SQL_CONF_UNBLOCK_ALL, currentSchemaChangeVersion)
 
     determineNonAdditiveSchemaChangeType(
       currentSchema.dataSchema, previousSchema.dataSchema).foreach {
       case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP =>
         val validConfKeysValuePair =
-          getConfPairsToAllowSchemaChange(allowDrop, schemaChangeVersion) ++
+          getConfPairsToAllowSchemaChange(SQL_CONF_UNBLOCK_DROP, currentSchemaChangeVersion) ++
             confPairsToAllowAllSchemaChange
         if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
           // Throw error to prompt user to set the correct confs
           throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
             NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP,
-            schemaChangeVersion,
+            previousSchemaChangeVersion,
+            currentSchemaChangeVersion,
             checkpointHash,
-            allowAll, allowDrop)
+            SQL_CONF_UNBLOCK_ALL,
+            SQL_CONF_UNBLOCK_DROP)
         }
       case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME =>
         val validConfKeysValuePair =
-          getConfPairsToAllowSchemaChange(allowRename, schemaChangeVersion) ++
+          getConfPairsToAllowSchemaChange(SQL_CONF_UNBLOCK_RENAME, currentSchemaChangeVersion) ++
             confPairsToAllowAllSchemaChange
         if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
           // Throw error to prompt user to set the correct confs
           throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
             NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME,
-            schemaChangeVersion,
+            previousSchemaChangeVersion,
+            currentSchemaChangeVersion,
             checkpointHash,
-            allowAll, allowRename)
+            SQL_CONF_UNBLOCK_ALL,
+            SQL_CONF_UNBLOCK_RENAME)
         }
       case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP =>
         val validConfKeysValuePair = confPairsToAllowAllSchemaChange
@@ -535,9 +548,11 @@ object DeltaSourceMetadataEvolutionSupport {
           // Throw error to prompt user to set the correct confs
           throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
             NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP,
-            schemaChangeVersion,
+            previousSchemaChangeVersion,
+            currentSchemaChangeVersion,
             checkpointHash,
-            allowAll, allowAll)
+            SQL_CONF_UNBLOCK_ALL,
+            SQL_CONF_UNBLOCK_ALL)
         }
     }
   }

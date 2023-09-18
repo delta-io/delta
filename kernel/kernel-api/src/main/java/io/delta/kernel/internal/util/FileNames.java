@@ -88,7 +88,7 @@ public final class FileNames {
                 new Path(
                     path,
                     String.format(
-                        "%020d.checkpoint.%010d.%010d.parquet", i, numParts, version)
+                        "%020d.checkpoint.%010d.%010d.parquet", version, i, numParts)
                 )
             );
         }

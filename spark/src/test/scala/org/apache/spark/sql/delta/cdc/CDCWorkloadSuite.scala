@@ -25,7 +25,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 /**
  * Small end to end tests of workloads using CDC from Delta.
  */
-class CDCWorkloadSuite extends QueryTest with SharedSparkSession  with DeltaSQLCommandTest {
+class CDCWorkloadSuite extends QueryTest with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   test("replication workload") {
     withSQLConf((DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")) {

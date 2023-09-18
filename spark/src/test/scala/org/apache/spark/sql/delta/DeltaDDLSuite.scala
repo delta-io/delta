@@ -33,7 +33,8 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
 
-class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession  with DeltaSQLCommandTest {
+class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   override protected def verifyNullabilityFailure(exception: AnalysisException): Unit = {
     exception.getMessage.contains("Cannot change nullable column to non-nullable")

@@ -28,8 +28,7 @@ public class DefaultKernelTestUtils {
      * @return
      */
     public static String getTestResourceFilePath(String resourcePath) {
-        return "file:" +
-            DefaultKernelTestUtils.class.getClassLoader().getResource(resourcePath).getFile();
+        return DefaultKernelTestUtils.class.getClassLoader().getResource(resourcePath).getFile();
     }
 
     public static Object getValueAsObject(Row row, int columnOrdinal) {

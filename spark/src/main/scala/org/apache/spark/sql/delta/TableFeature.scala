@@ -187,11 +187,6 @@ sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
  *    action that adds support for that feature since it is already supported.
  */
 sealed trait RemovableFeature { self: TableFeature =>
-  // Legacy feature removal is not supported.
-  if (this.isLegacyFeature) {
-    throw DeltaErrors.dropTableFeatureLegacyFeature(this.name)
-  }
-
   def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand
   def validateRemoval(snapshot: Snapshot): Boolean
   def actionUsesFeature(action: Action): Boolean
@@ -329,7 +324,8 @@ object TableFeature {
       ColumnMappingTableFeature,
       TimestampNTZTableFeature,
       IcebergCompatV1TableFeature,
-      DeletionVectorsTableFeature)
+      DeletionVectorsTableFeature,
+      V2CheckpointTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
@@ -340,7 +336,9 @@ object TableFeature {
         TestReaderWriterMetadataAutoUpdateFeature,
         TestReaderWriterMetadataNoAutoUpdateFeature,
         TestRemovableWriterFeature,
+        TestRemovableLegacyWriterFeature,
         TestRemovableReaderWriterFeature,
+        TestRemovableLegacyReaderWriterFeature,
         TestFeatureWithDependency,
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency,
@@ -517,6 +515,25 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
 
 
 /**
+ * V2 Checkpoint table feature is for checkpoints with sidecars and the new format and
+ * file naming scheme.
+ * This is still WIP feature.
+ */
+object V2CheckpointTableFeature
+  extends ReaderWriterFeature(name = "v2Checkpoint-under-development")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  private def isV2CheckpointSupportNeededByMetadata(metadata: Metadata): Boolean =
+    DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(metadata).needsV2CheckpointSupport
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = isV2CheckpointSupportNeededByMetadata(metadata)
+}
+
+/**
  * Features below are for testing only, and are being registered to the system only in the testing
  * environment. See [[TableFeature.allSupportedFeaturesMap]] for the registration.
  */
@@ -613,6 +630,56 @@ private[sql] object TestRemovableReaderWriterFeature
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     TestReaderWriterFeaturePreDowngradeCommand(table)
+}
+
+object TestRemovableLegacyWriterFeature
+  extends LegacyWriterFeature(name = "testRemovableLegacyWriter", minWriterVersion = 5)
+  with FeatureAutomaticallyEnabledByMetadata
+  with RemovableFeature {
+
+  val TABLE_PROP_KEY = "_123TestRemovableLegacyWriter321_"
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+  }
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    !snapshot.metadata.configuration.contains(TABLE_PROP_KEY)
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestLegacyWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+object TestRemovableLegacyReaderWriterFeature
+  extends LegacyReaderWriterFeature(
+      name = "testRemovableLegacyReaderWriter", minReaderVersion = 2, minWriterVersion = 5)
+  with FeatureAutomaticallyEnabledByMetadata
+  with RemovableFeature {
+
+  val TABLE_PROP_KEY = "_123TestRemovableLegacyReaderWriter321_"
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+  }
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    !snapshot.metadata.configuration.contains(TABLE_PROP_KEY)
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = {
+    action match {
+      case m: Metadata => m.configuration.contains(TABLE_PROP_KEY)
+      case _ => false
+    }
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestLegacyReaderWriterFeaturePreDowngradeCommand(table)
 }
 
 object TestFeatureWithDependency

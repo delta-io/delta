@@ -20,7 +20,7 @@ import java.io.File
 import java.net.URI
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.actions.AddCDCFile
+import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FSDataOutputStream, Path, RawLocalFileSystem}
+import org.apache.hadoop.fs.{FileStatus, FSDataOutputStream, Path, RawLocalFileSystem}
 import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
@@ -39,7 +39,8 @@ import org.apache.spark.sql.types.StructType
 
 
 class CheckpointsSuite extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   protected override def sparkConf = {
     // Set the gs LogStore impl to `LocalLogStore` so that it will work with `FakeGCSFileSystem`.
@@ -68,6 +69,91 @@ class CheckpointsSuite extends QueryTest
         assert(lastCheckpointOpt.nonEmpty)
         assert(lastCheckpointOpt.get.checkpointSchema.isEmpty)
       }
+    }
+  }
+
+  def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
+    for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
+      test(s"$testName [v2CheckpointFormat: $checkpointFormat]") {
+        withSQLConf(
+          DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+          DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> checkpointFormat
+        ) {
+          f
+        }
+      }
+    }
+  }
+
+  testDifferentV2Checkpoints("checkpoint metadata - checkpoint schema not persisted in" +
+      " json v2 checkpoints but persisted in parquet v2 checkpoints") {
+    withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+      deltaLog.checkpoint()
+      val lastCheckpointOpt = deltaLog.readLastCheckpointFile()
+      assert(lastCheckpointOpt.nonEmpty)
+      val expectedFormat =
+        spark.conf.getOption(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key)
+      assert(lastCheckpointOpt.get.checkpointSchema.isEmpty ===
+        (expectedFormat.contains(V2Checkpoint.Format.JSON.name)))
+    }
+  }
+
+  testDifferentV2Checkpoints(s"V2 Checkpoint write test" +
+      s" - metadata, protocol, sidecar, checkpoint metadata actions") {
+    withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+      deltaLog.checkpoint()
+      val checkpointFiles = deltaLog.listFrom(0).filter(FileNames.isCheckpointFile).toList
+      assert(checkpointFiles.length == 1)
+      val checkpoint = checkpointFiles.head
+      val fileNameParts = checkpoint.getPath.getName.split("\\.")
+      // The file name should be <version>.checkpoint.<uniqueStr>.parquet.
+      assert(fileNameParts.length == 4)
+      fileNameParts match {
+        case Array(version, checkpointLiteral, _, format) =>
+          val expectedFormat =
+            spark.conf.getOption(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key).get
+          assert(format == expectedFormat)
+          assert(version.toLong == 0)
+          assert(checkpointLiteral == "checkpoint")
+      }
+
+      def getCheckpointFileActions(checkpoint: FileStatus) : Seq[Action] = {
+        if (checkpoint.getPath.toString.endsWith("json")) {
+          deltaLog.store.read(checkpoint.getPath).map(Action.fromJson)
+        } else {
+          val fileIndex =
+            DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Seq(checkpoint)).get
+          deltaLog.loadIndex(fileIndex, Action.logSchema)
+            .as[SingleAction].collect().map(_.unwrap).toSeq
+        }
+      }
+      val actions = getCheckpointFileActions(checkpoint)
+      // V2 Checkpoints should contain exactly one action each of types
+      // Metadata, CheckpointMetadata, and Protocol
+      // In this particular case, we should only have one sidecar file
+      val sidecarActions = actions.collect{ case s: SidecarFile => s}
+      assert(sidecarActions.length == 1)
+      val sidecarPath = sidecarActions.head.path
+      assert(sidecarPath.endsWith("parquet"))
+
+      val metadataActions = actions.collect { case m: Metadata => m }
+      assert(metadataActions.length == 1)
+
+      val checkpointMetadataActions = actions.collect { case cm: CheckpointMetadata => cm }
+      assert(checkpointMetadataActions.length == 1)
+
+      assert(
+        DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(metadataActions.head)
+        .needsV2CheckpointSupport
+      )
+
+      val protocolActions = actions.collect { case p: Protocol => p }
+      assert(protocolActions.length == 1)
+      assert(CheckpointProvider.isV2CheckpointEnabled(protocolActions.head))
     }
   }
 

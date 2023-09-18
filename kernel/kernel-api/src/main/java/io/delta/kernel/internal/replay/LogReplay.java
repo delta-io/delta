@@ -102,11 +102,10 @@ public class LogReplay implements Logging {
     }
 
     /**
-     * Returns an iterator of {@link DataReadResult} with schema {@link #ADD_ONLY_DATA_SCHEMA}
-     * representing all the active AddFiles in the table (passing the DataReadResult's selection
-     * vector means it is active).
+     * Returns an iterator of {@link FilteredColumnarBatch} with schema
+     * {@link #ADD_ONLY_DATA_SCHEMA} representing all the active AddFiles in the table
      */
-    public CloseableIterator<DataReadResult> getAddFilesAsColumnarBatches() {
+    public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches() {
         final CloseableIterator<Tuple2<FileDataReadResult, Boolean>> addRemoveIter =
             new ActionsIterator(
                 tableClient,
@@ -128,7 +127,7 @@ public class LogReplay implements Logging {
      */
     public CloseableIterator<AddFile> getAddFiles() {
         return new CloseableIterator<AddFile>() {
-            private final CloseableIterator<DataReadResult> batchesIter =
+            private final CloseableIterator<FilteredColumnarBatch> batchesIter =
                 getAddFilesAsColumnarBatches();
 
             // empty - not yet initialized
@@ -190,7 +189,7 @@ public class LogReplay implements Logging {
 
                         // even if this next `currBatchIter` doesn't have any rows, the while loop
                         // will check for it and keep searching
-                        final DataReadResult dataReadResult = batchesIter.next();
+                        final FilteredColumnarBatch dataReadResult = batchesIter.next();
                         assert(dataReadResult.getData().getSchema().equals(ADD_ONLY_DATA_SCHEMA));
                         currBatchIter = Optional.of(dataReadResult.getData().getRows());
                         currBatchSelectionVector = dataReadResult.getSelectionVector();

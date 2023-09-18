@@ -206,7 +206,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                     } else {
                         if (!fs.exists(prevPath)) {
                             throw new java.nio.file.FileSystemException(
-                                String.format("previous commit %s doesn't exist", prevPath)
+                                String.format("previous commit %s doesn't exist on the file system but does in the external log store", prevPath)
                             );
                         }
                     }
@@ -220,7 +220,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                         if (entry.get().complete && !fs.exists(path)) {
                             throw new java.nio.file.FileSystemException(
                                 String.format(
-                                    "Old entries for table %s still exist in the external store",
+                                    "Old entries for table %s still exist in the external log store",
                                     tablePath
                                 )
                             );

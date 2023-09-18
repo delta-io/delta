@@ -28,6 +28,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 // scalastyle:off println
 class LogReplaySuite extends AnyFunSuite {
+  // TODO: refactor to use TestUtils
 
   private val tableClient = DefaultTableClient.create(new Configuration() {{
       // Set the batch sizes to small so that we get to test the multiple batch scenarios.
@@ -67,7 +68,7 @@ class LogReplaySuite extends AnyFunSuite {
 
   test("simple end to end with inserts and deletes and checkpoint") {
     val unresolvedPath = GoldenTableUtils.goldenTablePath("basic-with-inserts-deletes-checkpoint")
-    val table = io.delta.kernel.Table.forPath(s"file:$unresolvedPath")
+    val table = io.delta.kernel.Table.forPath(tableClient, unresolvedPath)
     val conf = new Configuration()
     val client = DefaultTableClient.create(conf)
     val snapshot = table.getLatestSnapshot(client)

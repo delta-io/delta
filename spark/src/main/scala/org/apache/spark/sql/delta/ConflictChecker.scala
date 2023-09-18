@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
@@ -126,7 +127,7 @@ private[delta] class ConflictChecker(
 
   protected var currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
 
-  protected val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
+  protected lazy val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
   /**
    * This function checks conflict of the `initialCurrentTransactionInfo` against the
