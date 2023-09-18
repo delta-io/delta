@@ -16,6 +16,10 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.connector.expressions.Expressions.bucket
+import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
+import org.apache.spark.sql.types.StringType
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
@@ -623,7 +627,10 @@ class DeltaAnalysis(session: SparkSession)
     val isReplace = statement.isReplaceCommand
     val isCreate = statement.isCreateCommand
 
-    import session.sessionState.analyzer.SessionCatalogAndIdentifier
+    import session.sessionState.analyzer.{
+      SessionCatalogAndIdentifier,
+      NonSessionCatalogAndIdentifier
+    }
     val targetLocation = statement.targetLocation
     val saveMode = if (isReplace) {
       SaveMode.Overwrite
@@ -642,6 +649,44 @@ class DeltaAnalysis(session: SparkSession)
     }
     // We don't use information in the catalog if the table is time travelled
     val sourceCatalogTable = if (sourceTbl.timeTravelOpt.isDefined) None else sourceTbl.catalogTable
+
+    def cloneExistingDeltaTable(
+        deltaTableV2: DeltaTableV2,
+        tableSaveMode: SaveMode): CreateDeltaTableCommand = {
+      val path = deltaTableV2.path
+      val existingTable = deltaTableV2.catalogTable
+      val tblIdent = existingTable match {
+        case Some(existingCatalog) => existingCatalog.identifier
+        case None => TableIdentifier(path.toString, Some("delta"))
+      }
+      // Reuse the existing schema so that the physical name of columns are consistent
+      val cloneSourceTable = sourceTbl match {
+        case source: CloneIcebergSource =>
+          // Reuse the existing schema so that the physical name of columns are consistent
+          source.copy(tableSchema = Some(deltaTableV2.snapshot.metadata.schema))
+        case other => other
+      }
+      val catalogTable = createCatalogTableForCloneCommand(
+        path,
+        byPath = existingTable.isEmpty,
+        tblIdent,
+        targetLocation,
+        sourceCatalogTable,
+        cloneSourceTable)
+
+      CreateDeltaTableCommand(
+        catalogTable,
+        existingTable,
+        tableSaveMode,
+        Some(CloneTableCommand(
+          cloneSourceTable,
+          tblIdent,
+          statement.tablePropertyOverrides,
+          path)),
+        tableByPath = existingTable.isEmpty,
+        operation = tableCreationMode,
+        output = CloneTableCommand.output)
+    }
 
     EliminateSubqueryAliases(targetPlan) match {
       // Target is a path based table
@@ -704,41 +749,35 @@ class DeltaAnalysis(session: SparkSession)
           operation = tableCreationMode,
           output = CloneTableCommand.output)
 
+      case UnresolvedRelation(NonSessionCatalogAndIdentifier(catalog, ident), _, _) =>
+        if (!isCreate) {
+          throw DeltaErrors.cannotReplaceMissingTableException(ident)
+        }
+        assert(catalog.isInstanceOf[TableCatalog], "External catalog must be a TableCatalog")
+        val tableCatalog = catalog.asInstanceOf[TableCatalog]
+        // convert sourceTbl.metadata.partitionSchema to Array[Transform]
+        val partitions: Array[Transform] = sourceTbl.metadata.partitionColumns.map { col =>
+          new IdentityTransform(new FieldReference(Seq(col)))
+        }.toArray
+        try {
+          // HACK ALERT: since there is no DSV2 API for getting table path before creation,
+          //             here we create a table to get the path, then overwrite it with the
+          //             cloned table.
+          val targetTable = tableCatalog.createTable(
+            ident, sourceTbl.schema, partitions, sourceTbl.metadata.configuration.asJava)
+          if (!targetTable.isInstanceOf[DeltaTableV2]) {
+            throw DeltaErrors.notADeltaSourceException("CREATE TABLE CLONE", Some(statement))
+          }
+          cloneExistingDeltaTable(targetTable.asInstanceOf[DeltaTableV2], SaveMode.Overwrite)
+        } catch {
+          case e: Exception =>
+            tableCatalog.dropTable(ident)
+            throw e
+        }
+
       // Delta metastore table already exists at target
       case DataSourceV2Relation(deltaTableV2: DeltaTableV2, _, _, _, _) =>
-        val path = deltaTableV2.path
-        val existingTable = deltaTableV2.catalogTable
-        val tblIdent = existingTable match {
-          case Some(existingCatalog) => existingCatalog.identifier
-          case None => TableIdentifier(path.toString, Some("delta"))
-        }
-        // Reuse the existing schema so that the physical name of columns are consistent
-        val cloneSourceTable = sourceTbl match {
-          case source: CloneIcebergSource =>
-            // Reuse the existing schema so that the physical name of columns are consistent
-            source.copy(tableSchema = Some(deltaTableV2.snapshot.metadata.schema))
-          case other => other
-        }
-        val catalogTable = createCatalogTableForCloneCommand(
-          path,
-          byPath = existingTable.isEmpty,
-          tblIdent,
-          targetLocation,
-          sourceCatalogTable,
-          cloneSourceTable)
-
-        CreateDeltaTableCommand(
-          catalogTable,
-          existingTable,
-          saveMode,
-          Some(CloneTableCommand(
-            cloneSourceTable,
-            tblIdent,
-            statement.tablePropertyOverrides,
-            path)),
-          tableByPath = existingTable.isEmpty,
-          operation = tableCreationMode,
-          output = CloneTableCommand.output)
+        cloneExistingDeltaTable(deltaTableV2, saveMode)
 
       // Non-delta metastore table already exists at target
       case LogicalRelation(_, _, existingCatalogTable @ Some(catalogTable), _) =>

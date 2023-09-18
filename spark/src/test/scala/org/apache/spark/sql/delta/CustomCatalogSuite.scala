@@ -68,14 +68,14 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
 
   test("Shallow Clone a table with time travel") {
     val srcTable = "shallow_clone_src_table"
-    val destTable1 = "spark_catalog.default.shallow_clone_dest_table_1"
-    val destTable2 = "spark_catalog.default.shallow_clone_dest_table_2"
-    val destTable3 = "spark_catalog.default.shallow_clone_dest_table_3"
-    val destTable4 = "spark_catalog.default.shallow_clone_dest_table_4"
+    val destTable1 = "shallow_clone_dest_table_1"
+    val destTable2 = "shallow_clone_dest_table_2"
+    val destTable3 = "shallow_clone_dest_table_3"
+    val destTable4 = "shallow_clone_dest_table_4"
     val dummyCatalog =
       spark.sessionState.catalogManager.catalog("dummy").asInstanceOf[DummyCatalog]
     val tablePath = dummyCatalog.getTablePath(srcTable)
-    withTable(srcTable, destTable1, destTable2, destTable3, destTable4) {
+    withTable(srcTable) {
       sql("SET CATALOG dummy")
       sql(f"CREATE TABLE $srcTable (id bigint) USING delta")
       sql("SET CATALOG spark_catalog")
@@ -83,20 +83,32 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
       // To make it simple, here we insert data directly into the table path.
       sql(f"INSERT INTO delta.`$tablePath` VALUES (0)")
       sql(f"INSERT INTO delta.`$tablePath` VALUES (1)")
-      // Test 3-part identifier when the current catalog is the default catalog
-      sql(f"CREATE TABLE $destTable1 SHALLOW CLONE dummy.default.$srcTable VERSION AS OF 1")
-      checkAnswer(spark.table(destTable1), spark.range(1).toDF())
+      withTable(destTable1) {
+        // Test 3-part identifier when the current catalog is the default catalog
+        sql(f"CREATE TABLE $destTable1 SHALLOW CLONE dummy.default.$srcTable VERSION AS OF 1")
+        checkAnswer(spark.table(destTable1), spark.range(1).toDF())
+      }
 
       sql("SET CATALOG dummy")
-      // Test simple shallow clone command under the dummy catalog
-      sql(f"CREATE TABLE $destTable2 SHALLOW CLONE $srcTable")
-      checkAnswer(spark.table(destTable2), spark.range(2).toDF())
-      // Test time travel on the src table
-      sql(f"CREATE TABLE $destTable3 SHALLOW CLONE dummy.default.$srcTable VERSION AS OF 1")
-      checkAnswer(spark.table(destTable3), spark.range(1).toDF())
-      // Test time travel on the src table delta path
-      sql(f"CREATE TABLE $destTable4 SHALLOW CLONE delta.`$tablePath` VERSION AS OF 1")
-      checkAnswer(spark.table(destTable4), spark.range(1).toDF())
+      Seq(true, false).foreach { createTableInDummy =>
+        val (dest2, dest3, dest4) = if (createTableInDummy) {
+          (destTable2, destTable3, destTable4)
+        } else {
+          val prefix = "spark_catalog.default"
+          (s"$prefix.$destTable2", s"$prefix.$destTable3", s"$prefix.$destTable4")
+        }
+        withTable(dest2, dest3, dest4) {
+          // Test simple shallow clone command under the dummy catalog
+          sql(f"CREATE TABLE $dest2 SHALLOW CLONE $srcTable")
+          checkAnswer(spark.table(dest2), spark.range(2).toDF())
+          // Test time travel on the src table
+          sql(f"CREATE TABLE $dest3 SHALLOW CLONE dummy.default.$srcTable VERSION AS OF 1")
+          checkAnswer(spark.table(dest3), spark.range(1).toDF())
+          // Test time travel on the src table delta path
+          sql(f"CREATE TABLE $dest4 SHALLOW CLONE delta.`$tablePath` VERSION AS OF 1")
+          checkAnswer(spark.table(dest4), spark.range(1).toDF())
+        }
+      }
     }
   }
 }
