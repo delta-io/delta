@@ -637,9 +637,11 @@ trait DeltaConfigsBase extends DeltaLogging {
     "must be Serializable"
   )
 
+  val CHECKPOINT_POLICY_CONFIG_KEY = "checkpointPolicy-dev"
+
   /** Policy to decide what kind of checkpoint to write to a table. */
   val CHECKPOINT_POLICY = buildConfig[CheckpointPolicy.Policy](
-    key = "checkpointPolicy-dev",
+    key = CHECKPOINT_POLICY_CONFIG_KEY,
     defaultValue = CheckpointPolicy.Classic.name,
     fromString = str => CheckpointPolicy.fromName(str),
     validationFunction = (v => CheckpointPolicy.ALL.exists(_.name == v.name)),
