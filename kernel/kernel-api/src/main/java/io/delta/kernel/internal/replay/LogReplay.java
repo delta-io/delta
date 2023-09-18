@@ -112,7 +112,7 @@ public class LogReplay implements Logging {
                 logSegment.allLogFilesReversed(),
                 ADD_REMOVE_READ_SCHEMA);
 
-        return new ActiveAddFilesIterator(addRemoveIter);
+        return new ActiveAddFilesIterator(tableClient, addRemoveIter);
     }
 
     /**

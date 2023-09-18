@@ -16,6 +16,7 @@
 package io.delta.kernel.client;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.ExpressionEvaluator;
@@ -45,4 +46,17 @@ public interface ExpressionHandler {
         StructType inputSchema,
         Expression expression,
         DataType outputType);
+
+    /**
+     * Create a selection vector, a boolean type {@link ColumnVector}, on top of the range of values
+     * given in <i>values</i> array.
+     *
+     * @param values Array of initial boolean values for the selection vector. The ownership of
+     *               this array is with the caller and this method shouldn't depend on it after the
+     *               call is complete.
+     * @param from   start index of the range, inclusive.
+     * @param to     end index of the range, exclusive.
+     * @return A {@link ColumnVector} of {@code boolean} type values.
+     */
+    ColumnVector createSelectionVector(boolean[] values, int from, int to);
 }
