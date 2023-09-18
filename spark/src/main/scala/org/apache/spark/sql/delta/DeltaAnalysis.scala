@@ -16,9 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.connector.expressions.Expressions.bucket
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
-import org.apache.spark.sql.types.StringType
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
