@@ -17,17 +17,20 @@ package io.delta.kernel.defaults.internal.expressions
 
 import java.lang.{Boolean => BooleanJ}
 import java.math.{BigDecimal => BigDecimalJ}
+import java.sql.Date
 import java.util
 import java.util.Optional
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultStructVector}
+import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultMapVector, DefaultStructVector}
 import io.delta.kernel.defaults.internal.data.vector.VectorUtils.getValueAsObject
+import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.expressions._
 import io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE
 import io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE
 import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -386,9 +389,154 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val right = literals(4)
     Seq.range(5, literals.length).foreach { idx =>
       comparatorToExpResults.foreach { comparator =>
-          testComparator(comparator, right, literals(idx), null)
+        testComparator(comparator, right, literals(idx), null)
       }
     }
+  }
+
+  test("evaluate expression: element_at") {
+    import scala.collection.JavaConverters._
+    val nullStr = null.asInstanceOf[String]
+    val testMapValues = Seq(
+      Map("k0" -> "v00", "k1" -> "v01", "k3" -> nullStr, nullStr -> "v04").asJava,
+      Map("k0" -> "v10", "k1" -> nullStr, "k3" -> "v13", nullStr -> "v14").asJava,
+      Map("k0" -> nullStr, "k1" -> "v21", "k3" -> "v23", nullStr -> "v24").asJava,
+      null
+    )
+    val testMapVector = new ColumnVector {
+      override def getDataType: DataType =
+        new MapType(StringType.INSTANCE, StringType.INSTANCE, true)
+
+      override def getSize: Int = testMapValues.size
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = testMapValues(rowId) == null
+
+      override def getMap[K, V](rowId: Int): util.Map[K, V] =
+        testMapValues(rowId).asInstanceOf[util.Map[K, V]]
+    }
+    val inputBatch = new DefaultColumnarBatch(
+      testMapVector.getSize,
+      new StructType().add("partitionValues", testMapVector.getDataType),
+      Seq(testMapVector).toArray
+    )
+    Seq("k0", "k1", "k2", null).foreach { lookupKey =>
+      val expOutput = testMapValues.map(map => {
+        if (map == null) null
+        else map.get(lookupKey)
+      })
+
+      val lookupKeyExpr = if (lookupKey == null) {
+        Literal.ofNull(StringType.INSTANCE)
+      } else {
+        Literal.ofString(lookupKey)
+      }
+      val elementAtExpr = new ScalarExpression(
+        "element_at",
+        util.Arrays.asList(new Column("partitionValues"), lookupKeyExpr))
+
+      val outputVector = evaluator(inputBatch.getSchema, elementAtExpr, StringType.INSTANCE)
+        .eval(inputBatch)
+      assert(outputVector.getSize === testMapValues.size)
+      assert(outputVector.getDataType === StringType.INSTANCE)
+      Seq.range(0, testMapValues.size).foreach { rowId =>
+        val expNull = expOutput(rowId) == null
+        assert(outputVector.isNullAt(rowId) == expNull)
+        if (!expNull) {
+          assert(outputVector.getString(rowId) === expOutput(rowId))
+        }
+      }
+    }
+  }
+
+  test("evaluate expression: element_at - unsupported map type input") {
+    val inputSchema = new StructType()
+      .add("as_map", new MapType(IntegerType.INSTANCE, BooleanType.INSTANCE, true))
+    val elementAtExpr = new ScalarExpression(
+      "element_at",
+      util.Arrays.asList(new Column("as_map"), Literal.ofString("empty")))
+
+    val ex = intercept[UnsupportedOperationException] {
+      evaluator(inputSchema, elementAtExpr, StringType.INSTANCE)
+    }
+    assert(ex.getMessage.contains(
+      "ELEMENT_AT(column(`as_map`), empty): Supported only on type map(string, string) input data"))
+  }
+
+  test("evaluate expression: element_at - unsupported lookup type input") {
+    val inputSchema = new StructType()
+      .add("as_map", new MapType(StringType.INSTANCE, StringType.INSTANCE, true))
+    val elementAtExpr = new ScalarExpression(
+      "element_at",
+      util.Arrays.asList(new Column("as_map"), Literal.ofShort(24)))
+
+    val ex = intercept[UnsupportedOperationException] {
+      evaluator(inputSchema, elementAtExpr, StringType.INSTANCE)
+    }
+    assert(ex.getMessage.contains("ELEMENT_AT(column(`as_map`), 24): " +
+      "lookup key type (short) is different from the map key type (string)"))
+  }
+
+  test("evaluate expression: partition_value") {
+    // (serialized partition value, partition col type, expected deserialized partition value)
+    val testCases = Seq(
+      ("true", BooleanType.INSTANCE, true),
+      ("false", BooleanType.INSTANCE, false),
+      (null, BooleanType.INSTANCE, null),
+      ("24", ByteType.INSTANCE, 24.toByte),
+      ("null", ByteType.INSTANCE, null),
+      ("876", ShortType.INSTANCE, 876.toShort),
+      ("null", ShortType.INSTANCE, null),
+      ("2342342", IntegerType.INSTANCE, 2342342),
+      ("null", IntegerType.INSTANCE, null),
+      ("234234223", LongType.INSTANCE, 234234223L),
+      ("null", LongType.INSTANCE, null),
+      ("23423.4223", FloatType.INSTANCE, 23423.4223f),
+      ("null", FloatType.INSTANCE, null),
+      ("23423.422233", DoubleType.INSTANCE, 23423.422233d),
+      ("null", DoubleType.INSTANCE, null),
+      ("234.422233", new DecimalType(10, 6), new BigDecimalJ("234.422233")),
+      ("null", DoubleType.INSTANCE, null),
+      ("string_val", StringType.INSTANCE, "string_val"),
+      ("null", StringType.INSTANCE, null),
+      ("binary_val", BinaryType.INSTANCE, "binary_val".getBytes()),
+      ("null", BinaryType.INSTANCE, null),
+      ("2021-11-18", DateType.INSTANCE, InternalUtils.daysSinceEpoch(Date.valueOf("2021-11-18"))),
+      ("null", DateType.INSTANCE, null),
+      ("2021-11-18", DateType.INSTANCE, InternalUtils.daysSinceEpoch(Date.valueOf("2021-11-18"))),
+      ("null", DateType.INSTANCE, null)
+      // TODO: timestamp partition value types are not yet supported in reading
+    )
+
+    val inputBatch = zeroColumnBatch(rowCount = 1)
+    testCases.foreach { testCase =>
+      val (serializedPartVal, partType, deserializedPartVal) = testCase
+      val literalSerializedPartVal = if (serializedPartVal == "null") {
+        Literal.ofNull(StringType.INSTANCE)
+      } else {
+        Literal.ofString(serializedPartVal)
+      }
+      val expr = new PartitionValueExpression(literalSerializedPartVal, partType)
+      val outputVector = evaluator(inputBatch.getSchema, expr, partType).eval(inputBatch)
+      assert(outputVector.getSize === 1)
+      assert(outputVector.getDataType === partType)
+      assert(outputVector.isNullAt(0) === (deserializedPartVal == null))
+      if (deserializedPartVal != null) {
+        assert(getValueAsObject(outputVector, 0) === deserializedPartVal)
+      }
+    }
+  }
+
+  test("evaluate expression: partition_value - invalid serialize value") {
+    val inputBatch = zeroColumnBatch(rowCount = 1)
+    val (serializedPartVal, partType) = ("23423sdfsdf", IntegerType.INSTANCE)
+    val expr = new PartitionValueExpression(Literal.ofString(serializedPartVal), partType)
+    val ex = intercept[IllegalArgumentException] {
+      val outputVector = evaluator(inputBatch.getSchema, expr, partType).eval(inputBatch)
+      outputVector.getInt(0)
+    }
+    assert(ex.getMessage.contains(serializedPartVal))
   }
 
   /**
