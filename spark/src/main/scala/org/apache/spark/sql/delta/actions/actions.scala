@@ -26,6 +26,9 @@ import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
+import com.databricks.spark.util.MetricDefinitions.EVENT_TAHOE
+import com.databricks.spark.util.TagDefinitions.TAG_OP_TYPE
+import com.databricks.spark.util.UsageLogging
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -737,7 +740,20 @@ case class AddFile(
     val removeFileWithOldDv = this.removeWithTimestamp(dataChange = dataChange)
 
     // Sanity check for incremental DV updates.
-    require(addFileWithNewDv.numDeletedRecords >= removeFileWithOldDv.numDeletedRecords)
+    if (addFileWithNewDv.numDeletedRecords < removeFileWithOldDv.numDeletedRecords) {
+      UsageLogging.recordProductUsage(
+        metric = EVENT_TAHOE,
+        quantity = 1,
+        additionalTags = Map(TAG_OP_TYPE -> "delta.assertions.deletionVectorNonIncrementalUpdate"),
+        blob = JsonUtils.toJson(Map(
+          "addFile" -> addFileWithNewDv,
+          "removeFile" -> removeFileWithOldDv)),
+        forceSample = false,
+        trimBlob = false,
+        silent = false
+      )
+      throw DeltaErrors.deletionVectorSizeMismatch()
+    }
 
     (addFileWithNewDv, removeFileWithOldDv)
   }
