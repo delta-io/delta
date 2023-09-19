@@ -567,9 +567,23 @@ case class UnresolvedPathBasedDeltaTableRelation(
 
 /**
  * This operator represents path-based tables in general including both Delta or non-Delta tables.
- * It resolves to a [[ResolvedTable]] if the path is for delta table, unchanged if non delta table.
+ * It resolves to a [[ResolvedTable]] if the path is for delta table,
+ * [[ResolvedPathBasedNonDeltaTable]] if the path is for a non-Delta table.
  */
 case class UnresolvedPathBasedTable(
+    path: String,
+    commandName: String) extends LeafNode {
+  override lazy val resolved: Boolean = false
+  override val output: Seq[Attribute] = Nil
+}
+
+/**
+ * This operator is a placeholder that identifies a non-Delta path-based table. Given the fact
+ * that some Delta commands (e.g. DescribeDeltaDetail) support non-Delta table, we introduced
+ * ResolvedPathBasedNonDeltaTable as the resolved placeholder after analysis on a non delta path
+ * from UnresolvedPathBasedTable.
+ */
+case class ResolvedPathBasedNonDeltaTable(
     path: String,
     commandName: String) extends LeafNode {
   override val output: Seq[Attribute] = Nil

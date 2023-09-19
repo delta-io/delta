@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, OptimisticTransaction, UnresolvedPathBasedTable}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, OptimisticTransaction, ResolvedPathBasedNonDeltaTable}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.{DeltaTableV2, IcebergTablePlaceHolder}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
@@ -329,7 +329,7 @@ trait DeltaCommand extends DeltaLogging {
    * Helper method to extract the table id or path from a LogicalPlan representing a resolved table
    * or path. This calls getDeltaTablePathOrIdentifier if the resolved table is a delta table. For
    * non delta table with identifier, we extract its identifier. For non delta table with path, it
-   * expects the path to be wrapped in an UnresolvedPathBasedTable and extracts it from there.
+   * expects the path to be wrapped in an ResolvedPathBasedNonDeltaTable and extracts it from there.
    */
   def getTablePathOrIdentifier(
       target: LogicalPlan,
@@ -339,7 +339,7 @@ trait DeltaCommand extends DeltaLogging {
       case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
         getDeltaTablePathOrIdentifier(target, cmd)
       case ResolvedTable(_, _, t: V1Table, _) => (Some(t.catalogTable.identifier), None)
-      case u: UnresolvedPathBasedTable => (None, Some(u.path))
+      case p: ResolvedPathBasedNonDeltaTable => (None, Some(p.path))
       case _ => (None, None)
     }
   }

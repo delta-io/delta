@@ -20,7 +20,7 @@ import io.delta.tables.execution.VacuumTableCommand
 
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.UnresolvedPathBasedDeltaTable
+import org.apache.spark.sql.delta.{UnresolvedPathBasedDeltaTable, UnresolvedPathBasedTable}
 import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, OptimizeTableCommand, DeltaReorgTable}
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
@@ -150,10 +150,23 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
   test("DESCRIBE DETAIL command is parsed as expected") {
     val parser = new DeltaSqlParser(null)
-    val parsedCmd = parser.parsePlan("DESCRIBE DETAIL catalog_foo.db.tbl")
-    assert(parsedCmd ===
+
+    // Desc detail on a table
+    assert(parser.parsePlan("DESCRIBE DETAIL catalog_foo.db.tbl") ===
       DescribeDeltaDetailCommand(
         UnresolvedTable(Seq("catalog_foo", "db", "tbl"), DescribeDeltaDetailCommand.CMD_NAME, None),
+        Map.empty))
+
+    // Desc detail on a raw path
+    assert(parser.parsePlan("DESCRIBE DETAIL \"/tmp/table\"") ===
+      DescribeDeltaDetailCommand(
+        UnresolvedPathBasedTable("/tmp/table", DescribeDeltaDetailCommand.CMD_NAME),
+        Map.empty))
+
+    // Desc detail on a delta raw path
+    assert(parser.parsePlan("DESCRIBE DETAIL delta.`dummy_raw_path`") ===
+      DescribeDeltaDetailCommand(
+        UnresolvedTable(Seq("delta", "dummy_raw_path"), DescribeDeltaDetailCommand.CMD_NAME, None),
         Map.empty))
   }
 
