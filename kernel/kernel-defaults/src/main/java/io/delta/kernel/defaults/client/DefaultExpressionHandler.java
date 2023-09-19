@@ -24,11 +24,14 @@ import io.delta.kernel.client.ExpressionHandler;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.ExpressionEvaluator;
+import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.expressions.PredicateEvaluator;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.expressions.DefaultExpressionEvaluator;
+import io.delta.kernel.defaults.internal.expressions.DefaultPredicateEvaluator;
 import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 
 /**
@@ -41,6 +44,11 @@ public class DefaultExpressionHandler implements ExpressionHandler {
         Expression expression,
         DataType outputType) {
         return new DefaultExpressionEvaluator(inputSchema, expression, outputType);
+    }
+
+    @Override
+    public PredicateEvaluator getPredicateEvaluator(StructType inputSchema, Predicate predicate) {
+        return new DefaultPredicateEvaluator(inputSchema, predicate);
     }
 
     @Override
