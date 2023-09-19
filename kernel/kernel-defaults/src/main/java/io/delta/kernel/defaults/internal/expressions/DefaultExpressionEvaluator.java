@@ -386,10 +386,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
 
     private static void assertColumnExists(boolean condition, StructType schema, Column column) {
         if (!condition) {
-            throw new IllegalArgumentException(format(
-                "Column `%s` doesn't exist in input data schema: %s",
-                Arrays.stream(column.getNames()).collect(joining(".")),
-                schema));
+            throw new IllegalArgumentException(
+                format("%s doesn't exist in input data schema: %s", column, schema));
         }
     }
 }

@@ -20,6 +20,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import static java.lang.String.format;
+
 import io.delta.kernel.annotation.Evolving;
 
 /**
@@ -60,6 +62,13 @@ public final class Column implements Expression {
 
     @Override
     public String toString() {
-        return "column(" + Arrays.stream(names).collect(Collectors.joining(".")) + ")";
+
+        return "column(" + quoteColumnPath(names)  + ")";
+    }
+
+    private static String quoteColumnPath(String names[]) {
+        return Arrays.stream(names)
+            .map(s -> format("`%s`", s.replace("`", "``")))
+            .collect(Collectors.joining("."));
     }
 }

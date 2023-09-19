@@ -162,6 +162,13 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
     val col1Ref = new Column(Array("col1"))
     val col1RefResult = evaluator(batchSchema, col1Ref, col1Type).eval(batch)
     assertTypeAndNullability(col1RefResult, col1Type, col1Nullability)
+
+    // try to reference non-existent nested column
+    val colNotValid = new Column(Array("col1", "colX`X"))
+    val ex = intercept[IllegalArgumentException] {
+      evaluator(batchSchema, colNotValid, col1Type).eval(batch)
+    }
+    assert(ex.getMessage.contains("column(`col1`.`colX``X`) doesn't exist in input data schema"))
   }
 
   test("evaluate expression: always true, always false") {
