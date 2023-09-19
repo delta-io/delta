@@ -29,6 +29,7 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
+import io.delta.kernel.utils.VectorUtils;
 
 /**
  * Encapsulate the scan state (common info for all scan files) as a {@link Row}
@@ -105,7 +106,8 @@ public class ScanStateRow extends GenericRow {
      * @return List of partition column names according to the scan state.
      */
     public static List<String> getPartitionColumns(Row scanState) {
-        return scanState.getArray(COL_NAME_TO_ORDINAL.get("partitionColumns"));
+        return VectorUtils.toJavaList(
+                scanState.getArray(COL_NAME_TO_ORDINAL.get("partitionColumns")));
     }
 
     /**

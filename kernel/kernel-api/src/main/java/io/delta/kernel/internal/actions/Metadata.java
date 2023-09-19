@@ -16,12 +16,12 @@
 package io.delta.kernel.internal.actions;
 
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.client.TableClient;
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.LongType;
@@ -33,6 +33,7 @@ import static io.delta.kernel.utils.Utils.requireNonNull;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
 
 public class Metadata {
+
     public static Metadata fromRow(Row row, TableClient tableClient) {
         if (row == null) {
             return null;
@@ -74,7 +75,7 @@ public class Metadata {
     private final Format format;
     private final String schemaString;
     private final StructType schema;
-    private final List<String> partitionColumns;
+    private final ArrayValue partitionColumns;
     private final Optional<Long> createdTime;
     private final Map<String, String> configuration;
 
@@ -85,7 +86,7 @@ public class Metadata {
         Format format,
         String schemaString,
         StructType schema,
-        List<String> partitionColumns,
+        ArrayValue partitionColumns,
         Optional<Long> createdTime,
         Map<String, String> configuration) {
         this.id = requireNonNull(id, "id is null");
@@ -94,8 +95,7 @@ public class Metadata {
         this.format = requireNonNull(format, "format is null");
         this.schemaString = requireNonNull(schemaString, "schemaString is null");
         this.schema = schema;
-        this.partitionColumns =
-            partitionColumns == null ? Collections.emptyList() : partitionColumns;
+        this.partitionColumns = partitionColumns;
         this.createdTime = createdTime;
         this.configuration = configuration == null ? Collections.emptyMap() : configuration;
     }
@@ -108,7 +108,7 @@ public class Metadata {
         return schema;
     }
 
-    public List<String> getPartitionColumns() {
+    public ArrayValue getPartitionColumns() {
         return partitionColumns;
     }
 

@@ -32,6 +32,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -344,11 +345,15 @@ public class TestParquetBatchReader {
                     if (expIsNull) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
                     } else if (rowId % 29 == 0) {
-                        assertEquals(Collections.emptyList(), vector.getArray(batchWithIdx._2));
+                        assertEquals(0, vector.getArray(batchWithIdx._2).getSize());
                     } else {
-                        List<Integer> expArray = Arrays.asList(rowId, null, rowId + 1);
-                        List<Integer> actArray = vector.getArray(batchWithIdx._2);
-                        assertEquals(expArray, actArray);
+                        ArrayValue arrayValue = vector.getArray(batchWithIdx._2);
+                        assertEquals(3, arrayValue.getSize());
+                        ColumnVector elementVector = arrayValue.getElements();
+                        assertTrue(elementVector.getDataType() instanceof IntegerType);
+                        assertEquals(elementVector.getInt(0), rowId);
+                        assertTrue(elementVector.isNullAt(1));
+                        assertEquals(elementVector.getInt(2), rowId+  1);
                     }
                     break;
                 }
@@ -357,11 +362,13 @@ public class TestParquetBatchReader {
                     break;
                 case "array_of_structs": {
                     assertFalse(vector.isNullAt(batchWithIdx._2));
-                    List<Row> actArray = vector.getArray(batchWithIdx._2);
-                    assertTrue(actArray.size() == 2);
-                    Row item0 = actArray.get(0);
+                    ArrayValue arrayValue = vector.getArray(batchWithIdx._2);
+                    assertEquals(2, arrayValue.getSize());
+                    ColumnVector elementVector = arrayValue.getElements();
+                    assertTrue(elementVector.getDataType() instanceof StructType);
+                    Row item0 = elementVector.getStruct(0);
                     assertEquals(rowId, item0.getLong(0));
-                    assertNull(actArray.get(1));
+                    assertTrue(elementVector.isNullAt(1));
                     break;
                 }
                 case "map_of_prims": {
@@ -497,6 +504,7 @@ public class TestParquetBatchReader {
 
     private static void validateMapOfArraysColumn(
         ColumnVector vector, int batchRowId, int tableRowId) {
+        // TODO
         boolean expIsNull = tableRowId % 30 == 0;
         if (expIsNull) {
             assertTrue(vector.isNullAt(batchRowId));

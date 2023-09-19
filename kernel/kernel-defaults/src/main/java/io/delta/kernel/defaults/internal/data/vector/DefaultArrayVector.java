@@ -15,11 +15,10 @@
  */
 package io.delta.kernel.defaults.internal.data.vector;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.DataType;
 
@@ -64,19 +63,24 @@ public class DefaultArrayVector
      * @return
      */
     @Override
-    public <T> List<T> getArray(int rowId) {
+    public ArrayValue getArray(int rowId) {
+        checkValidRowId(rowId);
         if (isNullAt(rowId)) {
             return null;
         }
-        checkValidRowId(rowId);
         int start = offsets[rowId];
         int end = offsets[rowId + 1];
+        return new ArrayValue() {
 
-        List<T> values = new ArrayList<>();
-        for (int entry = start; entry < end; entry++) {
-            Object key = VectorUtils.getValueAsObject(elementVector, entry);
-            values.add((T) key);
-        }
-        return values;
+            @Override
+            public int getSize() {
+                return end - start;
+            }
+
+            @Override
+            public ColumnVector getElements() {
+                return new DefaultViewVector(elementVector, start, end);
+            }
+        };
     }
 }

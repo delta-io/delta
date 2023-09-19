@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults.integration;
 
 import java.math.BigDecimal;
-import java.sql.Date;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -30,7 +29,6 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.types.*;
-import static io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch;
 
 import io.delta.kernel.defaults.client.DefaultTableClient;
 import io.delta.kernel.defaults.integration.DataBuilderUtils.TestColumnBatchBuilder;
@@ -76,89 +74,6 @@ public class TestDeltaTableReads
                 new BigDecimal(i)
             );
         }
-
-        ColumnarBatch expData = builder.build();
-        compareEqualUnorderd(expData, actualData);
-    }
-
-    @Test
-    public void partitionedTable()
-        throws Exception {
-        String tablePath = goldenTablePath("data-reader-partition-values");
-        Snapshot snapshot = snapshot(tablePath);
-        StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
-
-        List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
-
-        TestColumnBatchBuilder builder = DataBuilderUtils.builder(readSchema);
-
-        for (int i = 0; i < 2; i++) {
-            builder = builder.addRow(
-                i,
-                (long) i,
-                (byte) i,
-                (short) i,
-                i % 2 == 0,
-                (float) i,
-                (double) i,
-                String.valueOf(i),
-                "null",
-                daysSinceEpoch(Date.valueOf("2021-09-08")),
-                new BigDecimal(i),
-                Arrays.asList(
-                    row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), i),
-                    row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), i),
-                    row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), i)
-                ),
-                row(
-                    structTypeOf(readSchema, "as_nested_struct"),
-                    String.valueOf(i),
-                    String.valueOf(i),
-                    row(
-                        structTypeOf(
-                            structTypeOf(readSchema, "as_nested_struct"),
-                            "ac"
-                        ),
-                        i,
-                        (long) i
-                    )
-                ),
-                String.valueOf(i)
-            );
-        }
-
-        builder = builder.addRow(
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            Arrays.asList(
-                row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), 2),
-                row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), 2),
-                row(arrayElemStructTypeOf(readSchema, "as_list_of_records"), 2)
-            ),
-            row(
-                structTypeOf(readSchema, "as_nested_struct"),
-                "2",
-                "2",
-                row(
-                    structTypeOf(
-                        structTypeOf(readSchema, "as_nested_struct"),
-                        "ac"
-                    ),
-                    2,
-                    2L
-                )
-            ),
-            "2"
-        );
 
         ColumnarBatch expData = builder.build();
         compareEqualUnorderd(expData, actualData);

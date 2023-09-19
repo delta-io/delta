@@ -17,6 +17,9 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import java.math.BigDecimal
+import java.sql.Date
+
+import scala.collection.JavaConverters._
 
 import org.scalatest.funsuite.AnyFunSuite
 import io.delta.golden.GoldenTableUtils.goldenTablePath
@@ -24,6 +27,7 @@ import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
+import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
@@ -179,5 +183,57 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       assert(ex.getMessage.contains(
         s"Table at path `file:${target.getCanonicalPath}` is not found"))
     }
+  }
+
+  test("read partitioned table") {
+    val path = "file:" + goldenTablePath("data-reader-partition-values")
+
+    // for now we don't support timestamp type partition columns so remove from read columns
+    val readCols = Table.forPath(defaultTableClient, path).getLatestSnapshot(defaultTableClient)
+      .getSchema(defaultTableClient)
+      .withoutField("as_timestamp")
+      .fields()
+      .asScala
+      .map(_.getName)
+
+    val expectedAnswer = Seq(0, 1).map { i =>
+      TestRow(
+        i,
+        i.toLong,
+        i.toByte,
+        i.toShort,
+        i % 2 == 0,
+        i.toFloat,
+        i.toDouble,
+        i.toString,
+        "null",
+        daysSinceEpoch(Date.valueOf("2021-09-08")),
+        new BigDecimal(i),
+        Seq(TestRow(i), TestRow(i), TestRow(i)),
+        TestRow(i.toString, i.toString, TestRow(i, i.toLong)),
+        i.toString
+      )
+    } ++ (TestRow(
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      Seq(TestRow(2), TestRow(2), TestRow(2)),
+      TestRow("2", "2", TestRow(2, 2L)),
+      "2"
+    ) :: Nil)
+
+    checkTable(
+      path = path,
+      expectedAnswer = expectedAnswer,
+      readCols = readCols
+    )
   }
 }

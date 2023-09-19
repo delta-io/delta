@@ -31,6 +31,7 @@ public class DefaultKernelTestUtils {
         return DefaultKernelTestUtils.class.getClassLoader().getResource(resourcePath).getFile();
     }
 
+    // todo why is this duplicated here with VectorUtils
     public static Object getValueAsObject(Row row, int columnOrdinal) {
         // TODO: may be it is better to just provide a `getObject` on the `Row` to
         // avoid the nested if-else statements.

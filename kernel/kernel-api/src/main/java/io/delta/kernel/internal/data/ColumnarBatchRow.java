@@ -16,10 +16,10 @@
 package io.delta.kernel.internal.data;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -33,6 +33,7 @@ public class ColumnarBatchRow
     private final ColumnarBatch columnarBatch;
     private final int rowId;
 
+    // TODO: document the accessor must return *ArrayValue* for ArrayType
     public ColumnarBatchRow(ColumnarBatch columnarBatch, int rowId) {
         this.columnarBatch = Objects.requireNonNull(columnarBatch, "columnarBatch is null");
         this.rowId = rowId;
@@ -104,7 +105,7 @@ public class ColumnarBatchRow
     }
 
     @Override
-    public <T> List<T> getArray(int ordinal) {
+    public ArrayValue getArray(int ordinal) {
         return columnVector(ordinal).getArray(rowId);
     }
 

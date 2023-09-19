@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.IntStream;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
@@ -155,8 +156,9 @@ public class DataBuilderUtils {
         }
 
         @Override
-        public <T> List<T> getArray(int ordinal) {
-            return (List<T>) values.get(ordinal);
+        // TODO! Move all tests over that use this?
+        public ArrayValue getArray(int ordinal) {
+            return (ArrayValue) values.get(ordinal);
         }
 
         @Override

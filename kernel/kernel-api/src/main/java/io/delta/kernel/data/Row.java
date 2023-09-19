@@ -17,7 +17,6 @@
 package io.delta.kernel.data;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Map;
 
 import io.delta.kernel.annotation.Evolving;
@@ -112,7 +111,7 @@ public interface Row {
      * Return array value of the column located at the given ordinal.
      * Throws error if the column at given ordinal is not of array type,
      */
-    <T> List<T> getArray(int ordinal);
+    ArrayValue getArray(int ordinal);
 
     /**
      * Return map value of the column located at the given ordinal.

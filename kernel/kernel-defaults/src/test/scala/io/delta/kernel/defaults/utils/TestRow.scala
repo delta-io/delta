@@ -17,7 +17,7 @@ package io.delta.kernel.defaults.utils
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.data.Row
+import io.delta.kernel.data.{ColumnVector, Row}
 import io.delta.kernel.types._
 
 /**
@@ -34,6 +34,8 @@ import io.delta.kernel.types._
  * - TimestampType --> long (number of microseconds since the unix epoch)
  * - DecimalType --> java.math.BigDecimal
  * - BinaryType --> Array[Byte]
+ * - ArrayType --> Seq[Any]
+ * - StructType --> TestRow
  *
  * TODO: complex types
  * - StructType?
@@ -85,6 +87,7 @@ object TestRow {
    */
   def apply(row: Row): TestRow = {
     TestRow.fromSeq(row.getSchema.fields().asScala.zipWithIndex.map { case (field, i) =>
+
       field.getDataType match {
         case _ if row.isNullAt(i) => null
         case _: BooleanType => row.getBoolean(i)
@@ -99,14 +102,49 @@ object TestRow {
         case _: StringType => row.getString(i)
         case _: BinaryType => row.getBinary(i)
         case _: DecimalType => row.getDecimal(i)
-
+        case _: ArrayType =>
+          val arrayValue = row.getArray(i)
+          val elemVector = arrayValue.getElements()
+          (0 until arrayValue.getSize).map { i =>
+            getAsTestObject(elemVector, i)
+          }
         // TODO complex types
-        // case _: StructType => row.getStruct(i)
+         case _: StructType => TestRow(row.getStruct(i))
         // case _: MapType => row.getMap(i)
-        // case _: ArrayType => row.getArray(i)
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     })
+  }
+
+  /**
+   * TODO
+   */
+  private def getAsTestObject(vector: ColumnVector, rowId: Int): Any = {
+    vector.getDataType match {
+      case _ if vector.isNullAt(rowId) => null
+      case _: BooleanType => vector.getBoolean(rowId)
+      case _: ByteType => vector.getByte(rowId)
+      case _: IntegerType => vector.getInt(rowId)
+      case _: LongType => vector.getLong(rowId)
+      case _: ShortType => vector.getShort(rowId)
+      case _: DateType => vector.getInt(rowId)
+      case _: TimestampType => vector.getLong(rowId)
+      case _: FloatType => vector.getFloat(rowId)
+      case _: DoubleType => vector.getDouble(rowId)
+      case _: StringType => vector.getString(rowId)
+      case _: BinaryType => vector.getBinary(rowId)
+      case _: DecimalType => vector.getDecimal(rowId)
+      case _: ArrayType =>
+        val arrayValue = vector.getArray(rowId)
+        val elemVector = arrayValue.getElements
+        (0 until arrayValue.getSize).map { i =>
+          getAsTestObject(elemVector, i)
+        }
+      // TODO complex types
+       case _: StructType => TestRow(vector.getStruct(rowId))
+      // case _: MapType => row.getMap(i)
+      case _ => throw new UnsupportedOperationException("unrecognized data type")
+    }
   }
 
   /**

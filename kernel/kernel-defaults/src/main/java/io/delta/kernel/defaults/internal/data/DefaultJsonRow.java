@@ -16,16 +16,16 @@
 package io.delta.kernel.defaults.internal.data;
 
 import java.math.BigDecimal;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import io.delta.kernel.data.ArrayValue;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
@@ -110,8 +110,9 @@ public class DefaultJsonRow implements Row {
     }
 
     @Override
-    public <T> List<T> getArray(int ordinal) {
-        return (List<T>) parsedValues[ordinal];
+    // TODO?
+    public ArrayValue getArray(int ordinal) {
+        return (ArrayValue) parsedValues[ordinal];
     }
 
     @Override
@@ -171,21 +172,32 @@ public class DefaultJsonRow implements Row {
         }
 
         if (dataType instanceof ArrayType) {
+            // todo make sure this works for nested arrays
+
             throwIfTypeMismatch("array", jsonValue.isArray(), jsonValue);
             final ArrayType arrayType = ((ArrayType) dataType);
             final ArrayNode jsonArray = (ArrayNode) jsonValue;
-            final List<Object> output = new ArrayList<>();
-
-            for (Iterator<JsonNode> it = jsonArray.elements(); it.hasNext(); ) {
-                final JsonNode element = it.next();
+            final Object[] elements = new Object[jsonArray.size()];
+            for (int i = 0; i < jsonArray.size(); i++) {
+                final JsonNode element = jsonArray.get(i);
                 final Object parsedElement = decodeElement(element, arrayType.getElementType());
                 if (parsedElement == null && !arrayType.containsNull()) {
                     throw new RuntimeException("Array type expects no nulls as elements, but " +
-                        "received `null` as array element");
+                            "received `null` as array element");
                 }
-                output.add(parsedElement);
+                elements[i] = parsedElement;
             }
-            return output;
+            return new ArrayValue() {
+                @Override
+                public int getSize() {
+                    return elements.length;
+                }
+
+                @Override
+                public ColumnVector getElements() {
+                    return new DefaultJsonVector(arrayType.getElementType(), elements);
+                }
+            };
         }
 
         if (dataType instanceof MapType) {
@@ -231,4 +243,102 @@ public class DefaultJsonRow implements Row {
 
         return decodeElement(rootNode.get(field.getName()), field.getDataType());
     }
+
+    // TODO: throw on unsafe access
+    private static class DefaultJsonVector implements ColumnVector {
+
+        private final DataType dataType;
+        private final Object[] values;
+
+        DefaultJsonVector(DataType dataType, Object[] values) {
+            this.dataType = dataType;
+            this.values = values;
+        }
+
+        @Override
+        public DataType getDataType() {
+            return dataType;
+        }
+
+        @Override
+        public int getSize() {
+            return values.length;
+        }
+
+        @Override
+        public void close() {
+
+        }
+
+        @Override
+        public boolean isNullAt(int rowId) {
+            return values[rowId] == null;
+        }
+
+        @Override
+        public boolean getBoolean(int rowId) {
+            return (boolean) values[rowId];
+        }
+
+        @Override
+        public byte getByte(int rowId) {
+            throw new UnsupportedOperationException("not yet implemented");
+        }
+
+        @Override
+        public short getShort(int rowId) {
+            throw new UnsupportedOperationException("not yet implemented");
+        }
+
+        @Override
+        public int getInt(int rowId) {
+            return (int) values[rowId];
+        }
+
+        @Override
+        public long getLong(int rowId) {
+            return (long) values[rowId];
+        }
+
+        @Override
+        public float getFloat(int rowId) {
+            throw new UnsupportedOperationException("not yet implemented");
+        }
+
+        @Override
+        public double getDouble(int rowId) {
+            throw new UnsupportedOperationException("not yet implemented");
+        }
+
+        @Override
+        public String getString(int rowId) {
+            return (String) values[rowId];
+        }
+
+        @Override
+        public BigDecimal getDecimal(int rowId) {
+            throw new UnsupportedOperationException("not yet implemented");
+        }
+
+        @Override
+        public byte[] getBinary(int rowId) {
+            throw new UnsupportedOperationException("not yet implemented");
+        }
+
+        @Override
+        public Row getStruct(int rowId) {
+            return (Row) values[rowId];
+        }
+
+        @Override
+        public ArrayValue getArray(int rowId) {
+            return (ArrayValue) values[rowId];
+        }
+
+        @Override
+        public <K, V> Map<K, V> getMap(int rowId) {
+            return (Map<K, V>) values[rowId];
+        }
+    }
+
 }

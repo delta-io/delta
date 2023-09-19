@@ -17,7 +17,6 @@
 package io.delta.kernel.data;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Map;
 
 import io.delta.kernel.annotation.Evolving;
@@ -186,14 +185,10 @@ public interface ColumnVector extends AutoCloseable {
     }
 
     /**
-     * Return the array value located at {@code rowId}. The return value is undefined and can be
-     * anything, if the slot for {@code rowId} is null.
-     *
-     * @param rowId
-     * @param <T>   Array element type
-     * @return
+     * Return the array value located at {@code rowId}. Returns null if the slot for {@code rowId}
+     * is null
      */
-    default <T> List<T> getArray(int rowId) {
+    default ArrayValue getArray(int rowId) {
         throw new UnsupportedOperationException("Invalid value request for data type");
     }
 

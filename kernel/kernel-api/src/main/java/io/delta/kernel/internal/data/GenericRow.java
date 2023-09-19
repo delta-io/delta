@@ -17,10 +17,10 @@
 package io.delta.kernel.internal.data;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Map;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
@@ -30,6 +30,8 @@ import io.delta.kernel.types.*;
 public class GenericRow implements Row {
     private final StructType schema;
     private final Map<Integer, Object> ordinalToValue;
+
+    // TODO document accessors must return the right complex type??
 
     public GenericRow(StructType schema, Map<Integer, Object> ordinalToValue) {
         this.schema = requireNonNull(schema, "schema is null");
@@ -113,13 +115,13 @@ public class GenericRow implements Row {
     }
 
     @Override
-    public <T> List<T> getArray(int ordinal) {
-        // TODO: not sufficient check, also need to check the element type
-        throwIfUnsafeAccess(ordinal, ArrayType.class, "array");
-        return (List<T>) getValue(ordinal);
+    // TODO document
+    public ArrayValue getArray(int ordinal) {
+        return (ArrayValue) getValue(ordinal);
     }
 
     @Override
+    // TODO
     public <K, V> Map<K, V> getMap(int ordinal) {
         // TODO: not sufficient check, also need to check the element types
         throwIfUnsafeAccess(ordinal, MapType.class, "map");

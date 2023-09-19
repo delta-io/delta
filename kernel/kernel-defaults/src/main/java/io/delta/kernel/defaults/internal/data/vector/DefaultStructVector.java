@@ -16,11 +16,11 @@
 package io.delta.kernel.defaults.internal.data.vector;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
@@ -157,7 +157,7 @@ public class DefaultStructVector
         }
 
         @Override
-        public <T> List<T> getArray(int ordinal) {
+        public ArrayValue getArray(int ordinal) {
             return structVector.memberVectors[ordinal].getArray(rowId);
         }
 
