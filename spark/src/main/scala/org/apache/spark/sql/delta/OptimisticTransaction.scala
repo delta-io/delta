@@ -42,6 +42,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.types.StructType
@@ -138,9 +139,15 @@ private[delta] case class DeltaTableReadPredicate(
  */
 class OptimisticTransaction(
     override val deltaLog: DeltaLog,
+    override val catalogTable: Option[CatalogTable],
     override val snapshot: Snapshot)
   extends OptimisticTransactionImpl
   with DeltaLogging {
+  def this(
+      deltaLog: DeltaLog,
+      catalogTable: Option[CatalogTable],
+      snapshotOpt: Option[Snapshot] = None) =
+    this(deltaLog, catalogTable, snapshotOpt.getOrElse(deltaLog.update()))
 }
 
 object OptimisticTransaction {
@@ -206,6 +213,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   import org.apache.spark.sql.delta.util.FileNames._
 
   val deltaLog: DeltaLog
+  val catalogTable: Option[CatalogTable]
   val snapshot: Snapshot
   def clock: Clock = deltaLog.clock
 

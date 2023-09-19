@@ -185,17 +185,33 @@ class DeltaLog private(
    * ------------------ */
 
   /**
-   * Returns a new [[OptimisticTransaction]] that can be used to read the current state of the
-   * log and then commit updates. The reads and updates will be checked for logical conflicts
-   * with any concurrent writes to the log.
+   * Returns a new [[OptimisticTransaction]] that can be used to read the current state of the log
+   * and then commit updates. The reads and updates will be checked for logical conflicts with any
+   * concurrent writes to the log, and post-commit hooks can be used to notify the table's catalog
+   * of schema changes, etc.
    *
    * Note that all reads in a transaction must go through the returned transaction object, and not
    * directly to the [[DeltaLog]] otherwise they will not be checked for conflicts.
+   *
+   * @param catalogTableOpt The [[CatalogTable]] for the table this transaction updates. Passing
+   * None asserts this is a path-based table with no catalog entry.
+   *
+   * @param snapshotOpt THe [[Snapshot]] this transaction should use, if not latest.
    */
-  def startTransaction(): OptimisticTransaction = startTransaction(None)
+  def startTransaction(
+      catalogTableOpt: Option[CatalogTable],
+      snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
+    new OptimisticTransaction(this, catalogTableOpt, snapshotOpt)
+  }
 
+  /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
+  @deprecated("Please use the CatalogTable overload instead", "3.0")
+  def startTransaction(): OptimisticTransaction = startTransaction(snapshotOpt = None)
+
+  /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
+  @deprecated("Please use the CatalogTable overload instead", "3.0")
   def startTransaction(snapshotOpt: Option[Snapshot]): OptimisticTransaction = {
-    new OptimisticTransaction(this, snapshotOpt.getOrElse(update()))
+    startTransaction(catalogTableOpt = None, snapshotOpt)
   }
 
   /**
