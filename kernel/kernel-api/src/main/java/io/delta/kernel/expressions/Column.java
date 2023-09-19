@@ -66,7 +66,7 @@ public final class Column implements Expression {
         return "column(" + quoteColumnPath(names)  + ")";
     }
 
-    private static String quoteColumnPath(String names[]) {
+    private static String quoteColumnPath(String[] names) {
         return Arrays.stream(names)
             .map(s -> format("`%s`", s.replace("`", "``")))
             .collect(Collectors.joining("."));
