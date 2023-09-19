@@ -737,7 +737,9 @@ case class AddFile(
     val removeFileWithOldDv = this.removeWithTimestamp(dataChange = dataChange)
 
     // Sanity check for incremental DV updates.
-    require(addFileWithNewDv.numDeletedRecords >= removeFileWithOldDv.numDeletedRecords)
+    if (addFileWithNewDv.numDeletedRecords < removeFileWithOldDv.numDeletedRecords) {
+      throw DeltaErrors.deletionVectorSizeMismatch()
+    }
 
     (addFileWithNewDv, removeFileWithOldDv)
   }
