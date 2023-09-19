@@ -18,18 +18,23 @@ package io.delta.kernel.internal.util;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import static java.util.Arrays.asList;
 
 import io.delta.kernel.client.ExpressionHandler;
+import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.expressions.ExpressionEvaluator;
-import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.Tuple2;
+import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
+
+import io.delta.kernel.internal.InternalScanFileUtils;
 
 public class PartitionUtils {
     private PartitionUtils() {}
@@ -98,6 +103,108 @@ public class PartitionUtils {
         }
 
         return dataBatch;
+    }
+
+    /**
+     * Split the given predicate into predicate on partition columns and predicate on data columns.
+     *
+     * @param predicate
+     * @param partitionColNames
+     * @return Tuple of partition column predicate and data column predicate.
+     */
+    public static Tuple2<Predicate, Predicate> splitMetadataAndDataPredicates(
+        Predicate predicate,
+        Set<String> partitionColNames) {
+        String predicateName = predicate.getName();
+        List<Expression> children = predicate.getChildren();
+        if ("AND".equalsIgnoreCase(predicateName)) {
+            Predicate left = (Predicate) children.get(0);
+            Predicate right = (Predicate) children.get(1);
+            Tuple2<Predicate, Predicate> leftResult =
+                splitMetadataAndDataPredicates(left, partitionColNames);
+            Tuple2<Predicate, Predicate> rightResult =
+                splitMetadataAndDataPredicates(right, partitionColNames);
+
+            return new Tuple2<>(
+                combineWithAndOp(leftResult._1, rightResult._1),
+                combineWithAndOp(leftResult._2, rightResult._2));
+        }
+        if (hasNonPartitionColumns(children, partitionColNames)) {
+            return new Tuple2(ALWAYS_TRUE, predicate);
+        } else {
+            return new Tuple2<>(predicate, ALWAYS_TRUE);
+        }
+    }
+
+    /**
+     * Utility method to rewrite the partition predicate referring to the table schema as predicate
+     * referring to the {@code partitionValues} in scan files read from Delta log. The scan file
+     * batch is returned by the {@link io.delta.kernel.Scan#getScanFiles(TableClient)}.
+     *
+     * @param predicate             Predicate containing filters only on partition columns.
+     * @param partitionColNameTypes Map of partition columns and their types.
+     * @return
+     */
+    public static Predicate rewritePartitionPredicateOnScanFileSchema(
+        Predicate predicate, Map<String, DataType> partitionColNameTypes) {
+        return new Predicate(
+            predicate.getName(),
+            predicate.getChildren().stream()
+                .map(child -> rewritePartitionColumnRef(child, partitionColNameTypes))
+                .collect(Collectors.toList()));
+    }
+
+    private static Expression rewritePartitionColumnRef(
+        Expression expression, Map<String, DataType> partitionColNameTypes) {
+        Column scanFilePartitionValuesRef = InternalScanFileUtils.ADD_FILE_PARTITION_COL_REF;
+        if (expression instanceof Column) {
+            Column column = (Column) expression;
+            String partColName = column.getNames()[0];
+            DataType partColType = partitionColNameTypes.get(partColName);
+
+            Expression elementAt =
+                new ScalarExpression(
+                    "element_at",
+                    asList(scanFilePartitionValuesRef, Literal.ofString(partColName)));
+
+            if (partColType instanceof StringType) {
+                return elementAt;
+            }
+
+            // Add expression to decode the partition value based on the partition column type.
+            return new PartitionValueExpression(elementAt, partColType);
+        } else if (expression instanceof Predicate) {
+            return rewritePartitionPredicateOnScanFileSchema(
+                (Predicate) expression, partitionColNameTypes);
+        }
+
+        return expression;
+    }
+
+    private static boolean hasNonPartitionColumns(
+        List<Expression> children,
+        Set<String> partitionColNames) {
+        for (Expression child : children) {
+            if (child instanceof Column) {
+                String[] names = ((Column) child).getNames();
+                if (names.length != 1 || !partitionColNames.contains(names[0])) {
+                    return true;
+                }
+            } else {
+                return hasNonPartitionColumns(child.getChildren(), partitionColNames);
+            }
+        }
+        return false;
+    }
+
+    private static Predicate combineWithAndOp(Predicate left, Predicate right) {
+        if (left.getName().equalsIgnoreCase("ALWAYS_TRUE")) {
+            return right;
+        }
+        if (right.getName().equalsIgnoreCase("ALWAYS_TRUE")) {
+            return left;
+        }
+        return new And(left, right);
     }
 
     private static Literal literalForPartitionValue(DataType dataType, String partitionValue) {

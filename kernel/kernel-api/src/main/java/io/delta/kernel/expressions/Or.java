@@ -50,9 +50,4 @@ public final class Or extends Predicate {
     public Predicate getRight() {
         return (Predicate) getChildren().get(1);
     }
-
-    @Override
-    public String toString() {
-        return "(" + getLeft() + " OR " + getRight() + ")";
-    }
 }

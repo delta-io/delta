@@ -22,6 +22,7 @@ import java.util.Map;
 import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
@@ -42,6 +43,11 @@ public class InternalScanFileUtils {
 
     private static final String TABLE_ROOT_COL_NAME = "tableRoot";
     private static final DataType TABLE_ROOT_DATA_TYPE = StringType.INSTANCE;
+    /**
+     * {@link Column} expression referring to the `partitionValues` in scan `add` file.
+     */
+    public static final Column ADD_FILE_PARTITION_COL_REF =
+        new Column(new String[] {"add", "partitionValues"});
 
     public static StructField TABLE_ROOT_STRUCT_FIELD = new StructField(
         TABLE_ROOT_COL_NAME,
