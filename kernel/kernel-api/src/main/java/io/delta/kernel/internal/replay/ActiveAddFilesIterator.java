@@ -49,6 +49,10 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
     private final Set<UniqueFileActionTuple> addFilesFromJson;
 
     private Optional<FilteredColumnarBatch> next;
+    /**
+     * This buffer is reused across batches to keep the memory allocations minimal. It is resized
+     * as required and the array entries are reset between batches.
+     */
     private boolean[] selectionVectorBuffer;
     private boolean closed;
 
