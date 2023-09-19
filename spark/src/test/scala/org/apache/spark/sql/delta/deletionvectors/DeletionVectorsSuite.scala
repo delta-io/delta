@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.File
 
-import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.{inlineInLog, EMPTY}
@@ -656,7 +656,7 @@ class DeletionVectorsSuite extends QueryTest
 
     // Updating with a DV with lower cardinality should throw.
     for (dv <- Seq(dv0, dv3)) {
-      assertThrows[IllegalArgumentException] {
+      assertThrows[DeltaChecksumException] {
         removeRows(addFileWithDV1, dv)
       }
     }
