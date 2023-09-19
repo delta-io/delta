@@ -18,9 +18,11 @@ package io.delta.kernel.defaults.internal.expressions
 import java.lang.{Boolean => BooleanJ}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.util
+import java.util.Optional
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultStructVector}
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.defaults.internal.data.vector.VectorUtils.getValueAsObject
 import io.delta.kernel.expressions._
@@ -113,6 +115,53 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
         }
       }
     }
+  }
+
+  test("evaluate expression: nested column reference") {
+    val col3Type = IntegerType.INSTANCE
+    val col2Type = new StructType().add("col3", col3Type)
+    val col1Type = new StructType().add("col2", col2Type)
+    val batchSchema = new StructType().add("col1", col1Type)
+
+    val numRows = 5
+    val col3Nullability = Seq(false, true, false, true, false).toArray
+    val col3Values = Seq(27, 24, 29, 100, 125).toArray
+    val col3Vector =
+      new DefaultIntVector(col3Type, numRows, Optional.of(col3Nullability), col3Values)
+
+    val col2Nullability = Seq(false, true, true, true, false).toArray
+    val col2Vector =
+      new DefaultStructVector(numRows, col2Type, Optional.of(col2Nullability), Array(col3Vector))
+
+    val col1Nullability = Seq(false, false, false, true, false).toArray
+    val col1Vector =
+      new DefaultStructVector(numRows, col1Type, Optional.of(col1Nullability), Array(col2Vector))
+
+    val batch = new DefaultColumnarBatch(numRows, batchSchema, Array(col1Vector))
+
+    def assertTypeAndNullability(
+      actVector: ColumnVector, expType: DataType, expNullability: Array[Boolean]): Unit = {
+      assert(actVector.getDataType === expType)
+      assert(actVector.getSize === numRows)
+      Seq.range(0, numRows).foreach { rowId =>
+        assert(actVector.isNullAt(rowId) === expNullability(rowId))
+      }
+    }
+
+    val col3Ref = new Column(Array("col1", "col2", "col3"))
+    val col3RefResult = evaluator(batchSchema, col3Ref, col3Type).eval(batch)
+    assertTypeAndNullability(col3RefResult, col3Type, col3Nullability);
+    Seq.range(0, numRows).foreach { rowId =>
+      assert(col3RefResult.getInt(rowId) === col3Values(rowId))
+    }
+
+    val col2Ref = new Column(Array("col1", "col2"))
+    val col2RefResult = evaluator(batchSchema, col2Ref, col2Type).eval(batch)
+    assertTypeAndNullability(col2RefResult, col2Type, col2Nullability)
+
+    val col1Ref = new Column(Array("col1"))
+    val col1RefResult = evaluator(batchSchema, col1Ref, col1Type).eval(batch)
+    assertTypeAndNullability(col1RefResult, col1Type, col1Nullability)
   }
 
   test("evaluate expression: always true, always false") {

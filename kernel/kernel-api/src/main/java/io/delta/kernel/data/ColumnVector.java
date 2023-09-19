@@ -196,4 +196,15 @@ public interface ColumnVector extends AutoCloseable {
     default <T> List<T> getArray(int rowId) {
         throw new UnsupportedOperationException("Invalid value request for data type");
     }
+
+    /**
+     * Get the child vector associated with the given ordinal. This method is applicable only to the
+     * {@code struct} type columns.
+     *
+     * @param ordinal Ordinal of the child vector to return.
+     * @return
+     */
+    default ColumnVector getChild(int ordinal) {
+        throw new UnsupportedOperationException("Child vectors are not available.");
+    }
 }
