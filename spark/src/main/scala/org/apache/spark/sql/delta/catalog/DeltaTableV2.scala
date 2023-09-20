@@ -218,7 +218,7 @@ case class DeltaTableV2(
    * was provided.
    */
   def startTransaction(snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    deltaLog.startTransaction(snapshotOpt)
+    deltaLog.startTransaction(catalogTable, snapshotOpt)
   }
 
   /**
