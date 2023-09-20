@@ -16,6 +16,9 @@
 
 package org.apache.spark.sql.delta
 
+import scala.collection.mutable.ArrayBuffer
+
+import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, CommitInfo, RemoveFile}
 import org.scalatest.Assertions._
 
 /**
@@ -114,5 +117,77 @@ object DeltaMetricsUtils
         .valuesIterator.max
       assert(executionTimeMs == maxTimeMs)
     }
+  }
+
+  /**
+   * Computes the expected operation metrics from the actions in a Delta commit.
+   *
+   * @param deltaLog The Delta log of the table.
+   * @param version The version of the commit.
+   * @return A map with the expected operation metrics.
+   */
+  def getOperationMetricsFromCommitActions(
+      deltaLog: DeltaLog,
+      version: Long): Map[String, Long] = {
+    val (_, changes) = deltaLog.getChanges(version).next()
+    val commitInfo = changes.collect { case ci: CommitInfo => ci }.head
+    val operationName = commitInfo.operation
+
+    var filesAdded = ArrayBuffer.empty[AddFile]
+    var filesRemoved = ArrayBuffer.empty[RemoveFile]
+    val changeFilesAdded = ArrayBuffer.empty[AddCDCFile]
+    changes.foreach {
+      case a: AddFile => filesAdded.append(a)
+      case r: RemoveFile => filesRemoved.append(r)
+      case c: AddCDCFile => changeFilesAdded.append(c)
+      case _ => // Nothing
+    }
+
+    // Filter-out DV updates from files added and removed.
+    val pathsWithDvUpdate = filesAdded.map(_.path).toSet & filesRemoved.map(_.path).toSet
+    filesAdded = filesAdded.filter(a => !pathsWithDvUpdate.contains(a.path))
+    val numFilesAdded = filesAdded.size
+    val numBytesAdded = filesAdded.map(_.size).sum
+
+    filesRemoved = filesRemoved.filter(r => !pathsWithDvUpdate.contains(r.path))
+    val numFilesRemoved = filesRemoved.size
+    val numBytesRemoved = filesRemoved.map(_.size.getOrElse(0L)).sum
+
+    val numChangeFilesAdded = changeFilesAdded.size
+
+    operationName match {
+      case "MERGE" => Map(
+        "numTargetFilesAdded" -> numFilesAdded,
+        "numTargetFilesRemoved" -> numFilesRemoved,
+        "numTargetBytesAdded" -> numBytesAdded,
+        "numTargetBytesRemoved" -> numBytesRemoved,
+        "numTargetChangeFilesAdded" -> numChangeFilesAdded
+      )
+      case "UPDATE" | "DELETE" => Map(
+        "numAddedFiles" -> numFilesAdded,
+        "numRemovedFiles" -> numFilesRemoved,
+        "numAddedBytes" -> numBytesAdded,
+        "numRemovedBytes" -> numBytesRemoved,
+        "numAddedChangeFiles" -> numChangeFilesAdded
+      )
+      case _ =>
+        throw new UnsupportedOperationException(s"Unsupported operation: $operationName")
+    }
+  }
+
+  /**
+   * Checks the provided operation metrics against the actions in a Delta commit.
+   *
+   * @param deltaLog The Delta log of the table.
+   * @param version The version of the commit.
+   * @param operationMetrics The operation metrics that were collected from Delta log.
+   */
+  def checkOperationMetricsAgainstCommitActions(
+      deltaLog: DeltaLog,
+      version: Long,
+      operationMetrics: Map[String, Long]): Unit = {
+    checkOperationMetrics(
+      expectedMetrics = getOperationMetricsFromCommitActions(deltaLog, version),
+      operationMetrics = operationMetrics)
   }
 }

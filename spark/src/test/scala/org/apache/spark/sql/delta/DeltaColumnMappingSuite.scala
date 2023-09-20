@@ -25,6 +25,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata => MetadataAction, Protocol, SetTransaction}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -95,7 +96,8 @@ trait DeltaColumnMappingSuiteUtils extends SharedSparkSession with DeltaSQLComma
 }
 
 class DeltaColumnMappingSuite extends QueryTest
-  with GivenWhenThen  with DeltaColumnMappingSuiteUtils {
+  with GivenWhenThen
+  with DeltaColumnMappingSuiteUtils {
 
   import testImplicits._
 
@@ -1090,8 +1092,7 @@ class DeltaColumnMappingSuite extends QueryTest
         withColumnIds = true,
         randomIds = true)
 
-      val metadata =
-        DeltaLog.forTable(spark, TableIdentifier("t1")).update().metadata
+      val metadata = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("t1"))._2.metadata
 
       assertEqual(metadata.schema, schemaWithId)
       assertEqual(metadata.schema, StructType(metadata.partitionSchema ++ metadata.dataSchema))
@@ -1157,7 +1158,7 @@ class DeltaColumnMappingSuite extends QueryTest
       Seq(true, false).foreach { isPartitioned =>
         spark.sql(s"drop table if exists $tableName")
         createFunc(isPartitioned)
-        val snapshot = DeltaLog.forTable(spark, TableIdentifier(tableName)).update()
+        val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
         val prefixLen = DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(snapshot.metadata)
         Seq(("str3", 3), ("str4", 4)).toDF(schema.fieldNames: _*)
           .write.format("delta").mode("append").saveAsTable(tableName)
@@ -1249,7 +1250,7 @@ class DeltaColumnMappingSuite extends QueryTest
         withIdAndPhysicalName(2, "b"))
 
     assertEqual(
-      DeltaLog.forTable(spark, TableIdentifier(tableName)).update().schema,
+      DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))._2.schema,
       expectedSchema,
       ignorePhysicalName = false)
 
@@ -1267,7 +1268,7 @@ class DeltaColumnMappingSuite extends QueryTest
       spark.table(tableName),
       dfWithoutIdsNested(spark).withColumn("e", lit(null)).union(newNestedData))
 
-    val newTableSchema = DeltaLog.forTable(spark, TableIdentifier(tableName)).update().schema
+    val newTableSchema = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))._2.schema
     val newPhysicalName = DeltaColumnMapping.getPhysicalName(newTableSchema("e"))
 
     // physical name of new column should be GUID, not display name
@@ -1396,7 +1397,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
     withTable("t1") {
       def getMetadata(): MetadataAction = {
-        DeltaLog.forTable(spark, TableIdentifier("t1")).update().metadata
+        DeltaLog.forTableWithSnapshot(spark, TableIdentifier("t1"))._2.metadata
       }
 
       createStrictSchemaTableWithDeltaTableApi(
@@ -1587,8 +1588,8 @@ class DeltaColumnMappingSuite extends QueryTest
           "t1",
           props = Map(DeltaConfigs.CHANGE_DATA_FEED.key -> cdfEnabled.toString))
 
-        val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
-        val currMetadata = log.snapshot.metadata
+        val table = DeltaTableV2(spark, TableIdentifier("t1"))
+        val currMetadata = table.snapshot.metadata
         val upgradeMetadata = currMetadata.copy(
           configuration = currMetadata.configuration ++ Map(
             DeltaConfigs.MIN_READER_VERSION.key -> "2",
@@ -1597,7 +1598,7 @@ class DeltaColumnMappingSuite extends QueryTest
           )
         )
 
-        val txn = log.startTransaction()
+        val txn = table.startTransactionWithInitialSnapshot()
         txn.updateMetadata(upgradeMetadata)
 
         if (shouldBlock) {

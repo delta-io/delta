@@ -21,22 +21,21 @@ import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 
-public class InternalSchemaUtils
-{
+public class InternalSchemaUtils {
     private InternalSchemaUtils() {}
 
     /**
      * Helper method that converts the logical schema (requested by the connector) to physical
      * schema of the data stored in data files.
-     * @param logicalSchema Logical schema of the scan
-     * @param physicalSchema Physical schema of the scan
+     *
+     * @param logicalSchema     Logical schema of the scan
+     * @param physicalSchema    Physical schema of the scan
      * @param columnMappingMode Column mapping mode
      */
     public static StructType convertToPhysicalSchema(
         StructType logicalSchema,
         StructType physicalSchema,
-        String columnMappingMode)
-    {
+        String columnMappingMode) {
         switch (columnMappingMode) {
             case "none":
                 return logicalSchema;
@@ -54,14 +53,11 @@ public class InternalSchemaUtils
                             (StructType) field.getDataType(),
                             (StructType) fieldFromMetadata.getDataType(),
                             columnMappingMode);
-                    }
-                    else if (oldType instanceof ArrayType) {
+                    } else if (oldType instanceof ArrayType) {
                         throw new UnsupportedOperationException("NYI");
-                    }
-                    else if (oldType instanceof MapType) {
+                    } else if (oldType instanceof MapType) {
                         throw new UnsupportedOperationException("NYI");
-                    }
-                    else {
+                    } else {
                         newType = oldType;
                     }
                     String physicalName = fieldFromMetadata

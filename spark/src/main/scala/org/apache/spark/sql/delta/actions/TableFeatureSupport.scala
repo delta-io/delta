@@ -292,9 +292,23 @@ trait TableFeatureSupport { this: Protocol =>
    * Remove writer feature from protocol. To remove a writer feature we only need to
    * remove it from the writerFeatures set.
    */
-  private[delta] def removeWriterFeature(targetWriterFeature: WriterFeature): Protocol = {
+  private[delta] def removeWriterFeature(targetWriterFeature: TableFeature): Protocol = {
     require(targetWriterFeature.isRemovable)
+    require(!targetWriterFeature.isReaderWriterFeature)
     copy(writerFeatures = writerFeatures.map(_ - targetWriterFeature.name))
+  }
+
+  /**
+   * Remove reader+writer feature from protocol. To remove a reader+writer feature we need to
+   * remove it from the readerFeatures set and the writerFeatures set.
+   */
+  private[delta] def removeReaderWriterFeature(
+      targetReaderWriterFeature: TableFeature): Protocol = {
+    require(targetReaderWriterFeature.isRemovable)
+    require(targetReaderWriterFeature.isReaderWriterFeature)
+    val newReaderFeatures = readerFeatures.map(_ - targetReaderWriterFeature.name)
+    val newWriterFeatures = writerFeatures.map(_ - targetReaderWriterFeature.name)
+    copy(readerFeatures = newReaderFeatures, writerFeatures = newWriterFeatures)
   }
 
   /**
@@ -307,8 +321,9 @@ trait TableFeatureSupport { this: Protocol =>
   def removeFeature(targetFeature: TableFeature): Protocol = {
     require(targetFeature.isRemovable)
     targetFeature match {
-      // Support for reader+writer and legacy features is going to be added in follow up PRs.
-      case f: WriterFeature =>
+      case f@(_: ReaderWriterFeature | _: LegacyReaderWriterFeature) =>
+        removeReaderWriterFeature(f)
+      case f@(_: WriterFeature | _: LegacyWriterFeature) =>
         removeWriterFeature(f)
       case f =>
         throw DeltaErrors.dropTableFeatureNonRemovableFeature(f.name)

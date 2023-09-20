@@ -39,7 +39,8 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 
 class CDCReaderSuite
-  extends QueryTest  with CheckCDCAnswer
+  extends QueryTest
+  with CheckCDCAnswer
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaColumnMappingTestUtils {

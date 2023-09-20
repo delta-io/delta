@@ -27,7 +27,6 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.expressions.codegen.GenerateUnsafeProjection
 import org.apache.spark.sql.catalyst.optimizer.ReplaceExpressions
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
@@ -75,7 +74,7 @@ case class DeltaInvariantCheckerExec(
     val boundRefs = invariantChecks.map(_.withBoundReferences(child.output))
 
     child.execute().mapPartitionsInternal { rows =>
-      val assertions = GenerateUnsafeProjection.generate(boundRefs)
+      val assertions = UnsafeProjection.create(boundRefs)
       rows.map { row =>
         assertions(row)
         row

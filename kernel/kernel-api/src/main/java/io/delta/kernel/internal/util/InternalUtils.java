@@ -16,6 +16,9 @@
 package io.delta.kernel.internal.util;
 
 import java.io.IOException;
+import java.sql.Date;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.Optional;
 
@@ -27,12 +30,12 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.AddFileColumnarBatch;
 
-public class InternalUtils
-{
+public class InternalUtils {
+    private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
+
     private InternalUtils() {}
 
-    public static Row getScanFileRow(FileStatus fileStatus)
-    {
+    public static Row getScanFileRow(FileStatus fileStatus) {
         AddFile addFile = new AddFile(
             fileStatus.getPath(),
             Collections.emptyMap(),
@@ -55,8 +58,7 @@ public class InternalUtils
      * @return
      */
     public static Optional<Row> getSingularRow(CloseableIterator<FileDataReadResult> dataIter)
-        throws IOException
-    {
+        throws IOException {
         Row row = null;
         while (dataIter.hasNext()) {
             try (CloseableIterator<Row> rows = dataIter.next().getData().getRows()) {
@@ -77,14 +79,13 @@ public class InternalUtils
      * If there is more than element row, an exception will be thrown.
      */
     public static <T> Optional<T> getSingularElement(CloseableIterator<T> iter)
-        throws IOException
-    {
+        throws IOException {
         try {
             T result = null;
             while (iter.hasNext()) {
                 if (result != null) {
                     throw new IllegalArgumentException(
-                            "Iterator contains more than one element");
+                        "Iterator contains more than one element");
                 }
                 result = iter.next();
             }
@@ -101,8 +102,7 @@ public class InternalUtils
      * @throws IllegalArgumentException if {@code isValid} is false
      */
     public static void checkArgument(boolean isValid)
-            throws IllegalArgumentException
-    {
+        throws IllegalArgumentException {
         if (!isValid) {
             throw new IllegalArgumentException();
         }
@@ -116,10 +116,33 @@ public class InternalUtils
      * @throws IllegalArgumentException if {@code isValid} is false
      */
     public static void checkArgument(boolean isValid, String message)
-            throws IllegalArgumentException
-    {
+        throws IllegalArgumentException {
         if (!isValid) {
             throw new IllegalArgumentException(message);
         }
+    }
+
+    /**
+     * Precondition-style validation that throws {@link IllegalArgumentException}.
+     *
+     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
+     * @param message A String message for the exception.
+     * @param args    Objects used to fill in {@code %s} placeholders in the message
+     * @throws IllegalArgumentException if {@code isValid} is false
+     */
+    public static void checkArgument(boolean isValid, String message, Object... args)
+        throws IllegalArgumentException {
+        if (!isValid) {
+            throw new IllegalArgumentException(
+                String.format(String.valueOf(message), args));
+        }
+    }
+
+    /**
+     * Utility method to get the number of days since epoch this given date is.
+     */
+    public static int daysSinceEpoch(Date date) {
+        LocalDate localDate = date.toLocalDate();
+        return (int) ChronoUnit.DAYS.between(EPOCH, localDate);
     }
 }

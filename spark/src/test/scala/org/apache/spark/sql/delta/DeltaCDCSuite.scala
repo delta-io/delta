@@ -41,7 +41,8 @@ import org.apache.spark.sql.types.{LongType, StringType, StructType}
 
 abstract class DeltaCDCSuiteBase
   extends QueryTest
-  with SharedSparkSession  with CheckCDCAnswer
+  with SharedSparkSession
+  with CheckCDCAnswer
   with DeltaSQLCommandTest {
 
   import testImplicits._

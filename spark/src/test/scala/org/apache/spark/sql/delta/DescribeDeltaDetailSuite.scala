@@ -32,7 +32,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
 trait DescribeDeltaDetailSuiteBase extends QueryTest
-  with SharedSparkSession  with DeltaTestUtilsForTempViews {
+  with SharedSparkSession
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -198,7 +199,8 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
         sql(s"DESCRIBE DETAIL $viewName")
       }
       assert(e.getMessage.contains(
-        s"`$viewName` is a view. DESCRIBE DETAIL is only supported for tables."))
+        s"$viewName is a temp view. 'DESCRIBE DETAIL' expects a table.") ||
+        e.getMessage.contains("does not support DESCRIBE DETAIL"))
     }
   }
 
@@ -208,7 +210,8 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
       sql(s"CREATE VIEW $view AS SELECT 1")
       val e = intercept[AnalysisException] { sql(s"DESCRIBE DETAIL $view") }
       assert(e.getMessage.contains(
-        "`detailTestView` is a view. DESCRIBE DETAIL is only supported for tables."))
+        "detailtestview is a view. 'DESCRIBE DETAIL' expects a table.") ||
+        e.getMessage.contains("does not support DESCRIBE DETAIL"))
     }
   }
 

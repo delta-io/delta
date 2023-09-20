@@ -33,7 +33,8 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
 
-class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession  with DeltaSQLCommandTest {
+class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   override protected def verifyNullabilityFailure(exception: AnalysisException): Unit = {
     exception.getMessage.contains("Cannot change nullable column to non-nullable")
@@ -502,14 +503,11 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
             |USING delta
             |AS SELECT 1 as a, 'a' as b
            """.stripMargin)
-
-
       sql(s"ALTER TABLE tbl RENAME TO newTbl")
-      checkDatasetUnorderly(
-        sql("SELECT * FROM newTbl").as[(Long, String)],
-        1L -> "a")
+      checkDatasetUnorderly(sql("SELECT * FROM newTbl").as[(Long, String)], 1L -> "a")
     }
   }
+
 
   /**
    * Although Spark 3.2 adds the support for SHOW CREATE TABLE for v2 tables, it doesn't work

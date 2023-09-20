@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.util;
 
+import java.math.BigDecimal;
 import java.sql.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -30,8 +31,7 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.Tuple2;
 
-public class PartitionUtils
-{
+public class PartitionUtils {
     private PartitionUtils() {}
 
     /**
@@ -39,21 +39,20 @@ public class PartitionUtils
      * given {@code physicalSchema}.
      *
      * @param physicalSchema
-     * @param logicalSchema To create a logical name to physical name map. Partition column names
-     * are in logical space and we need to identify the equivalent physical column name.
+     * @param logicalSchema   To create a logical name to physical name map. Partition column names
+     *                        are in logical space and we need to identify the equivalent
+     *                        physical column name.
      * @param columnsToRemove
      * @return
      */
     public static StructType physicalSchemaWithoutPartitionColumns(
-        StructType logicalSchema, StructType physicalSchema, Set<String> columnsToRemove)
-    {
+        StructType logicalSchema, StructType physicalSchema, Set<String> columnsToRemove) {
         if (columnsToRemove == null || columnsToRemove.size() == 0) {
             return physicalSchema;
         }
 
         // Partition columns are top-level only
-        Map<String, String> physicalToLogical = new HashMap<String, String>()
-        {
+        Map<String, String> physicalToLogical = new HashMap<String, String>() {
             {
                 IntStream.range(0, logicalSchema.length())
                     .mapToObj(i -> new Tuple2<>(logicalSchema.at(i), physicalSchema.at(i)))
@@ -73,8 +72,7 @@ public class PartitionUtils
         ColumnarBatch dataBatch,
         StructType dataBatchSchema,
         Map<String, String> partitionValues,
-        StructType schemaWithPartitionCols)
-    {
+        StructType schemaWithPartitionCols) {
         if (partitionValues == null || partitionValues.size() == 0) {
             // no partition column vectors to attach to.
             return dataBatch;
@@ -90,8 +88,8 @@ public class PartitionUtils
                     dataBatchSchema,
                     literalForPartitionValue(
                         structField.getDataType(),
-                        partitionValues.get(structField.getName())
-                    )
+                        partitionValues.get(structField.getName())),
+                    structField.getDataType()
                 );
 
                 ColumnVector partitionVector = evaluator.eval(dataBatch);
@@ -102,41 +100,45 @@ public class PartitionUtils
         return dataBatch;
     }
 
-    private static Literal literalForPartitionValue(DataType dataType, String partitionValue)
-    {
+    private static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
         if (partitionValue == null) {
             return Literal.ofNull(dataType);
         }
 
         if (dataType instanceof BooleanType) {
-            return Literal.of(Boolean.parseBoolean(partitionValue));
+            return Literal.ofBoolean(Boolean.parseBoolean(partitionValue));
         }
         if (dataType instanceof ByteType) {
-            return Literal.of(Byte.parseByte(partitionValue));
+            return Literal.ofByte(Byte.parseByte(partitionValue));
         }
         if (dataType instanceof ShortType) {
-            return Literal.of(Short.parseShort(partitionValue));
+            return Literal.ofShort(Short.parseShort(partitionValue));
         }
         if (dataType instanceof IntegerType) {
-            return Literal.of(Integer.parseInt(partitionValue));
+            return Literal.ofInt(Integer.parseInt(partitionValue));
         }
         if (dataType instanceof LongType) {
-            return Literal.of(Long.parseLong(partitionValue));
+            return Literal.ofLong(Long.parseLong(partitionValue));
         }
         if (dataType instanceof FloatType) {
-            return Literal.of(Float.parseFloat(partitionValue));
+            return Literal.ofFloat(Float.parseFloat(partitionValue));
         }
         if (dataType instanceof DoubleType) {
-            return Literal.of(Double.parseDouble(partitionValue));
+            return Literal.ofDouble(Double.parseDouble(partitionValue));
         }
         if (dataType instanceof StringType) {
-            return Literal.of(partitionValue);
+            return Literal.ofString(partitionValue);
         }
         if (dataType instanceof BinaryType) {
-            return Literal.of(partitionValue.getBytes());
+            return Literal.ofBinary(partitionValue.getBytes());
         }
         if (dataType instanceof DateType) {
-            return Literal.of(Date.valueOf(partitionValue));
+            return Literal.ofDate(InternalUtils.daysSinceEpoch(Date.valueOf(partitionValue)));
+        }
+        if (dataType instanceof DecimalType) {
+            DecimalType decimalType = (DecimalType) dataType;
+            return Literal.ofDecimal(
+                new BigDecimal(partitionValue), decimalType.getPrecision(), decimalType.getScale());
         }
 
         throw new UnsupportedOperationException("Unsupported partition column: " + dataType);

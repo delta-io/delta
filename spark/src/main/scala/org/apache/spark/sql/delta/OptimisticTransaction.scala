@@ -136,21 +136,11 @@ private[delta] case class DeltaTableReadPredicate(
  * @param deltaLog The Delta Log for the table this transaction is modifying.
  * @param snapshot The snapshot that this transaction is reading at.
  */
-class OptimisticTransaction
-    (override val deltaLog: DeltaLog, override val snapshot: Snapshot)
-    (implicit override val clock: Clock)
+class OptimisticTransaction(
+    override val deltaLog: DeltaLog,
+    override val snapshot: Snapshot)
   extends OptimisticTransactionImpl
   with DeltaLogging {
-
-  /** Creates a new OptimisticTransaction.
-   *
-   * @param deltaLog The Delta Log for the table this transaction is modifying.
-   * @param snapshotOpt The most recent snapshot of the table, if available.
-   */
-  // TODO: The deltaLog object already has a clock; an implicit clock shouldn't be needed
-  def this(deltaLog: DeltaLog, snapshotOpt: Option[Snapshot] = None)(implicit clock: Clock) {
-    this(deltaLog, snapshotOpt.getOrElse(deltaLog.update()))
-  }
 }
 
 object OptimisticTransaction {
@@ -217,7 +207,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   val deltaLog: DeltaLog
   val snapshot: Snapshot
-  implicit val clock: Clock
+  def clock: Clock = deltaLog.clock
 
   protected def spark = SparkSession.active
 
@@ -737,13 +727,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   ): DeltaScan = {
     val scan = snapshot.filesForScan(filters, keepNumRecords)
     trackReadPredicates(filters)
-    trackFilesRead(scan.files)
-    scan
-  }
-
-  /** Returns a[[DeltaScan]] based on the limit clause when there are no filters or projections. */
-  override def filesForScan(limit: Long): DeltaScan = {
-    val scan = snapshot.filesForScan(limit)
     trackFilesRead(scan.files)
     scan
   }

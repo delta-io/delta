@@ -21,9 +21,11 @@ import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
@@ -34,6 +36,8 @@ import org.apache.spark.util.ManualClock
 class OptimisticTransactionSuite
   extends OptimisticTransactionLegacyTests
   with OptimisticTransactionSuiteBase {
+
+  import testImplicits._
 
   // scalastyle:off: removeFile
   private val addA = createTestAddFile(path = "a")
@@ -317,13 +321,14 @@ class OptimisticTransactionSuite
   test("every transaction should use a unique identifier in the commit") {
     withTempDir { tempDir =>
       // Initialize delta table.
-      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val clock = new ManualClock()
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
+      clock.advance(100)
 
       // Start two transactions which commits at same time with same content.
-      val clock = new ManualClock()
-      val txn1 = new OptimisticTransaction(log)(clock)
-      val txn2 = new OptimisticTransaction(log)(clock)
+      val txn1 = log.startTransaction()
+      val txn2 = log.startTransaction()
       clock.advance(100)
       val version1 = txn1.commit(Seq(), ManualUpdate)
       val version2 = txn2.commit(Seq(), ManualUpdate)
@@ -333,14 +338,14 @@ class OptimisticTransactionSuite
         log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
           .map(Action.fromJson)
       }
-      def removeTxnIdFromActions(actions: Seq[Action]): Seq[Action] = actions.map {
-        case c: CommitInfo => c.copy(txnId = None)
+      def removeTxnIdAndMetricsFromActions(actions: Seq[Action]): Seq[Action] = actions.map {
+        case c: CommitInfo => c.copy(txnId = None, operationMetrics = None)
         case other => other
       }
       val actions1 = readActions(version1)
       val actions2 = readActions(version2)
-      val actionsWithoutTxnId1 = removeTxnIdFromActions(actions1)
-      val actionsWithoutTxnId2 = removeTxnIdFromActions(actions2)
+      val actionsWithoutTxnId1 = removeTxnIdAndMetricsFromActions(actions1)
+      val actionsWithoutTxnId2 = removeTxnIdAndMetricsFromActions(actions2)
       assert(actions1 !== actions2)
       // Without the txn id, the actions are same as of today but they need not be in future. In
       // future we might have other fields which may make these actions from two different
@@ -355,8 +360,7 @@ class OptimisticTransactionSuite
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
 
-      val clock = new ManualClock()
-      val txn = new OptimisticTransaction(log)(clock)
+      val txn = log.startTransaction()
       txn.updateSetTransaction("TestAppId", 1L, None)
       val version = txn.commit(Seq(), ManualUpdate)
 
@@ -377,8 +381,7 @@ class OptimisticTransactionSuite
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
 
-      val clock = new ManualClock()
-      val txn = new OptimisticTransaction(log)(clock)
+      val txn = log.startTransaction()
       txn.updateSetTransaction("TestAppId", 1L, None)
       val e = intercept[IllegalArgumentException] {
         txn.commit(Seq(SetTransaction("TestAppId", 2L, None)), ManualUpdate)
@@ -394,8 +397,7 @@ class OptimisticTransactionSuite
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       log.startTransaction().commit(Seq(Metadata()), ManualUpdate)
 
-      val clock = new ManualClock()
-      val txn = new OptimisticTransaction(log)(clock)
+      val txn = log.startTransaction()
       txn.updateSetTransaction("TestAppId", 1L, None)
       val version = txn.commit(Seq(SetTransaction("TestAppId", 1L, None)), ManualUpdate)
       def readActions(version: Long): Seq[Action] = {
@@ -640,6 +642,61 @@ class OptimisticTransactionSuite
         txn.commit(addB :: Nil, DeltaOperations.Write(SaveMode.Append), tags = tags2)
       }
       checkLastCommitTags(expectedTags = Some(tags2))
+    }
+  }
+
+
+  test("empty commits are elided on write by default") {
+    withTempDir { tableDir =>
+      val df = Seq((1, 0), (2, 1)).toDF("key", "value")
+      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+
+      val expectedSnapshot = deltaLog.update()
+      val expectedDeltaVersion = expectedSnapshot.version
+
+      val emptyDf = Seq.empty[(Integer, Integer)].toDF("key", "value")
+      emptyDf.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+      val actualSnapshot = deltaLog.update()
+      val actualDeltaVersion = actualSnapshot.version
+
+      checkAnswer(spark.read.format("delta").load(tableDir.getCanonicalPath),
+        Row(1, 0) :: Row(2, 1) :: Nil)
+
+      assert(expectedDeltaVersion === actualDeltaVersion)
+    }
+  }
+
+  Seq(true, false).foreach { skip =>
+    test(s"Elide empty commits when requested - skipRecordingEmptyCommits=$skip") {
+      withSQLConf(DeltaSQLConf.DELTA_SKIP_RECORDING_EMPTY_COMMITS.key -> skip.toString) {
+        withTempDir { tableDir =>
+          val df = Seq((1, 0), (2, 1)).toDF("key", "value")
+          df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+          val deltaLog = DeltaLog.forTable(spark, tableDir)
+
+          val expectedSnapshot = deltaLog.update()
+          val expectedDeltaVersion = if (skip) {
+            expectedSnapshot.version
+          } else {
+            expectedSnapshot.version + 1
+          }
+
+          val emptyDf = Seq.empty[(Integer, Integer)].toDF("key", "value")
+          emptyDf.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+          val actualSnapshot = deltaLog.update()
+          val actualDeltaVersion = actualSnapshot.version
+
+          checkAnswer(spark.read.format("delta").load(tableDir.getCanonicalPath),
+            Row(1, 0) :: Row(2, 1) :: Nil)
+
+          assert(expectedDeltaVersion === actualDeltaVersion)
+        }
+      }
     }
   }
 }

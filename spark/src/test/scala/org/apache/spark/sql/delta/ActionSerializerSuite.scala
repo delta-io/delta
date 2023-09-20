@@ -21,8 +21,10 @@ import java.util.UUID
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
@@ -357,12 +359,14 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
            | tblproperties
            | ('${TableFeatureProtocolUtils.propertyKey(DomainMetadataTableFeature)}' = 'enabled')
            |""".stripMargin)
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
+      val deltaTable = DeltaTableV2(spark, TableIdentifier(table))
+      val deltaLog = deltaTable.deltaLog
       val domainMetadatas = DomainMetadata(
         domain = "testDomain",
         configuration = JsonUtils.toJson(Map("key1" -> "value1")),
         removed = false) :: Nil
-      val version = deltaLog.startTransaction().commit(domainMetadatas, ManualUpdate)
+      val version = deltaTable.startTransactionWithInitialSnapshot()
+        .commit(domainMetadatas, ManualUpdate)
       val committedActions = deltaLog.store.read(
         FileNames.deltaFile(deltaLog.logPath, version),
         deltaLog.newDeltaHadoopConf())
@@ -382,6 +386,45 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     }
   }
 
+  test("CheckpointMetadata - serialize/deserialize") {
+    val m1 = CheckpointMetadata(version = 1, tags = null) // tags are null
+    val m2 = m1.copy(tags = Map()) // tags are empty
+    val m3 = m1.copy( // tags are non empty
+      tags = Map("k1" -> "v1", "schema" -> """{"type":"struct","fields":[]}""")
+    )
+
+    assert(m1.json === """{"checkpointMetadata":{"version":1}}""")
+    assert(m2.json === """{"checkpointMetadata":{"version":1,"tags":{}}}""")
+    assert(m3.json ===
+      """{"checkpointMetadata":{"version":1,""" +
+        """"tags":{"k1":"v1","schema":"{\"type\":\"struct\",\"fields\":[]}"}}}""")
+
+    Seq(m1, m2, m3).foreach { metadata =>
+      assert(metadata === JsonUtils.fromJson[SingleAction](metadata.json).unwrap)
+    }
+  }
+
+  test("SidecarFile - serialize/deserialize") {
+    val f1 = // tags are null
+      SidecarFile(path = "/t1/p1", sizeInBytes = 1L, modificationTime = 3, tags = null)
+    val f2 = f1.copy(tags = Map()) // tags are empty
+    val f3 = f2.copy( // tags are non empty
+      tags = Map("k1" -> "v1", "schema" -> """{"type":"struct","fields":[]}""")
+    )
+
+    assert(f1.json ===
+      """{"sidecar":{"path":"/t1/p1","sizeInBytes":1,"modificationTime":3}}""")
+    assert(f2.json ===
+      """{"sidecar":{"path":"/t1/p1","sizeInBytes":1,""" +
+        """"modificationTime":3,"tags":{}}}""")
+    assert(f3.json ===
+      """{"sidecar":{"path":"/t1/p1","sizeInBytes":1,"modificationTime":3,""" +
+        """"tags":{"k1":"v1","schema":"{\"type\":\"struct\",\"fields\":[]}"}}}""".stripMargin)
+
+    Seq(f1, f2, f3).foreach { file =>
+      assert(file === JsonUtils.fromJson[SingleAction](file.json).unwrap)
+    }
+  }
 
   testActionSerDe(
     "AddCDCFile (without tags) - json serialization/deserialization",

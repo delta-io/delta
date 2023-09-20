@@ -25,7 +25,9 @@ import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -45,7 +47,8 @@ import org.apache.spark.util.Utils
 
 trait DeltaTableCreationTests
   extends QueryTest
-  with SharedSparkSession  with DeltaColumnMappingTestUtils {
+  with SharedSparkSession
+  with DeltaColumnMappingTestUtils {
 
   import testImplicits._
 
@@ -2331,6 +2334,37 @@ class DeltaTableCreationSuite
       }
     }
   }
+
+  test("create table using varchar at the same location should succeed") {
+    withTempDir { location =>
+      withTable("t1", "t2") {
+        sql(s"""
+               |create table t1
+               |(colourID string, colourName varchar(128), colourGroupID string)
+               |USING delta LOCATION '$location'""".stripMargin)
+        sql(
+          s"""
+             |insert into t1 (colourID, colourName, colourGroupID)
+             |values ('1', 'RED', 'a'), ('2', 'BLUE', 'b')
+             |""".stripMargin)
+        sql(s"""
+               |create table t2
+               |(colourID string, colourName varchar(128), colourGroupID string)
+               |USING delta LOCATION '$location'""".stripMargin)
+        // Verify that select from the second table should be the same as inserted
+        val readout = sql(
+          s"""
+             |select * from t2 order by colourID
+             |""".stripMargin).collect()
+        assert(readout.length == 2)
+        assert(readout(0).get(0) == "1")
+        assert(readout(0).get(1) == "RED")
+        assert(readout(1).get(0) == "2")
+        assert(readout(1).get(1) == "BLUE")
+      }
+    }
+  }
+
 }
 
 trait DeltaTableCreationColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {

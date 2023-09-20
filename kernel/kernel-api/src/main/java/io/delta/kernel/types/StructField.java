@@ -21,8 +21,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
-public class StructField
-{
+import io.delta.kernel.annotation.Evolving;
+
+/**
+ * Represents a subfield of {@link StructType} with additional properties and metadata.
+ *
+ * @since 3.0.0
+ */
+@Evolving
+public class StructField {
 
     ////////////////////////////////////////////////////////////////////////////////
     // Static Fields / Methods
@@ -40,10 +47,10 @@ public class StructField
      */
     public static String ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
     public static StructField ROW_INDEX_COLUMN = new StructField(
-            ROW_INDEX_COLUMN_NAME,
-            LongType.INSTANCE,
-            false,
-            Collections.singletonMap(IS_METADATA_COLUMN_KEY, "true"));
+        ROW_INDEX_COLUMN_NAME,
+        LongType.INSTANCE,
+        false,
+        Collections.singletonMap(IS_METADATA_COLUMN_KEY, "true"));
 
 
     ////////////////////////////////////////////////////////////////////////////////
@@ -59,8 +66,7 @@ public class StructField
         String name,
         DataType dataType,
         boolean nullable,
-        Map<String, String> metadata)
-    {
+        Map<String, String> metadata) {
         this.name = name;
         this.dataType = dataType;
         this.nullable = nullable;
@@ -70,38 +76,34 @@ public class StructField
     /**
      * @return the name of this field
      */
-    public String getName()
-    {
+    public String getName() {
         return name;
     }
 
     /**
      * @return the data type of this field
      */
-    public DataType getDataType()
-    {
+    public DataType getDataType() {
         return dataType;
     }
 
     /**
      * @return the metadata for this field
      */
-    public Map<String, String> getMetadata()
-    {
+    public Map<String, String> getMetadata() {
         return metadata;
     }
 
     /**
      * @return whether this field allows to have a {@code null} value.
      */
-    public boolean isNullable()
-    {
+    public boolean isNullable() {
         return nullable;
     }
 
     public boolean isMetadataColumn() {
         return metadata.containsKey(IS_METADATA_COLUMN_KEY) &&
-                Boolean.parseBoolean(metadata.get(IS_METADATA_COLUMN_KEY));
+            Boolean.parseBoolean(metadata.get(IS_METADATA_COLUMN_KEY));
     }
 
     public boolean isDataColumn() {
@@ -109,14 +111,12 @@ public class StructField
     }
 
     @Override
-    public String toString()
-    {
+    public String toString() {
         return String.format("StructField(name=%s,type=%s,nullable=%s,metadata=%s)",
             name, dataType, nullable, "empty(fix - this)");
     }
 
-    public String toJson()
-    {
+    public String toJson() {
         String metadataAsJson = metadata.entrySet().stream()
             .map(e -> String.format("\"%s\" : \"%s\"", e.getKey(), e.getValue()))
             .collect(Collectors.joining(",\n"));
@@ -131,8 +131,7 @@ public class StructField
     }
 
     @Override
-    public boolean equals(Object o)
-    {
+    public boolean equals(Object o) {
         if (this == o) {
             return true;
         }
@@ -146,8 +145,7 @@ public class StructField
     }
 
     @Override
-    public int hashCode()
-    {
+    public int hashCode() {
         return Objects.hash(name, dataType, nullable, metadata);
     }
 }

@@ -21,10 +21,8 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructType;
 
-public class CheckpointMetaData
-{
-    public static CheckpointMetaData fromRow(Row row)
-    {
+public class CheckpointMetaData {
+    public static CheckpointMetaData fromRow(Row row) {
         return new CheckpointMetaData(
             row.getLong(0),
             row.getLong(1),
@@ -42,16 +40,14 @@ public class CheckpointMetaData
     public final long size;
     public final Optional<Long> parts;
 
-    public CheckpointMetaData(long version, long size, Optional<Long> parts)
-    {
+    public CheckpointMetaData(long version, long size, Optional<Long> parts) {
         this.version = version;
         this.size = size;
         this.parts = parts;
     }
 
     @Override
-    public String toString()
-    {
+    public String toString() {
         return "CheckpointMetaData{" +
             "version=" + version +
             ", size=" + size +

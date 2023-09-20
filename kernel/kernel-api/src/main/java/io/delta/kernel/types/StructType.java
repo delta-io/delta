@@ -24,26 +24,27 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.utils.Tuple2;
 
 /**
  * Struct type which contains one or more columns.
+ *
+ * @since 3.0.0
  */
-public final class StructType extends DataType
-{
+@Evolving
+public final class StructType extends DataType {
 
     private final Map<String, Tuple2<StructField, Integer>> nameToFieldAndOrdinal;
     private final List<StructField> fields;
     private final List<String> fieldNames;
 
-    public StructType()
-    {
+    public StructType() {
         this(new ArrayList<>());
     }
 
-    public StructType(List<StructField> fields)
-    {
+    public StructType(List<StructField> fields) {
         this.fields = fields;
         this.fieldNames = fields.stream().map(f -> f.getName()).collect(Collectors.toList());
 
@@ -53,65 +54,55 @@ public final class StructType extends DataType
         }
     }
 
-    public StructType add(StructField field)
-    {
+    public StructType add(StructField field) {
         final List<StructField> fieldsCopy = new ArrayList<>(fields);
         fieldsCopy.add(field);
 
         return new StructType(fieldsCopy);
     }
 
-    public StructType add(String name, DataType dataType)
-    {
+    public StructType add(String name, DataType dataType) {
         return add(new StructField(name, dataType, true /* nullable */, new HashMap<>()));
     }
 
-    public StructType add(String name, DataType dataType, boolean nullable)
-    {
+    public StructType add(String name, DataType dataType, boolean nullable) {
         return add(new StructField(name, dataType, nullable, new HashMap<>()));
     }
 
-    public StructType add(String name, DataType dataType, Map<String, String> metadata)
-    {
+    public StructType add(String name, DataType dataType, Map<String, String> metadata) {
         return add(new StructField(name, dataType, true /* nullable */, metadata));
     }
 
     /**
      * @return array of fields
      */
-    public List<StructField> fields()
-    {
+    public List<StructField> fields() {
         return Collections.unmodifiableList(fields);
     }
 
     /**
      * @return array of field names
      */
-    public List<String> fieldNames()
-    {
+    public List<String> fieldNames() {
         return fieldNames;
     }
 
     /**
      * @return the number of fields
      */
-    public int length()
-    {
+    public int length() {
         return fields.size();
     }
 
-    public int indexOf(String fieldName)
-    {
+    public int indexOf(String fieldName) {
         return fieldNames.indexOf(fieldName);
     }
 
-    public StructField get(String fieldName)
-    {
+    public StructField get(String fieldName) {
         return nameToFieldAndOrdinal.get(fieldName)._1;
     }
 
-    public StructField at(int index)
-    {
+    public StructField at(int index) {
         return fields.get(index);
     }
 
@@ -121,28 +112,13 @@ public final class StructType extends DataType
      * @param ordinal the ordinal of the {@link StructField} to create a column for
      * @return a {@link Column} expression for the {@link StructField} with ordinal {@code ordinal}
      */
-    public Column column(int ordinal)
-    {
+    public Column column(int ordinal) {
         final StructField field = at(ordinal);
-        return new Column(ordinal, field.getName(), field.getDataType());
-    }
-
-    /**
-     * Creates a {@link Column} expression for the field with the given {@code fieldName}.
-     *
-     * @param fieldName the name of the {@link StructField} to create a column for
-     * @return a {@link Column} expression for the {@link StructField} with name {@code fieldName}
-     */
-    public Column column(String fieldName)
-    {
-        Tuple2<StructField, Integer> fieldAndOrdinal = nameToFieldAndOrdinal.get(fieldName);
-        System.out.println("Created column " + fieldName + " with ordinal " + fieldAndOrdinal._2);
-        return new Column(fieldAndOrdinal._2, fieldName, fieldAndOrdinal._1.getDataType());
+        return new Column(field.getName());
     }
 
     @Override
-    public boolean equivalent(DataType dataType)
-    {
+    public boolean equivalent(DataType dataType) {
         if (!(dataType instanceof StructType)) {
             return false;
         }
@@ -156,18 +132,15 @@ public final class StructType extends DataType
     }
 
     @Override
-    public String toString()
-    {
+    public String toString() {
         return String.format(
-            "%s(%s)",
-            getClass().getSimpleName(),
+            "struct(%s)",
             fields.stream().map(StructField::toString).collect(Collectors.joining(", "))
         );
     }
 
     @Override
-    public String toJson()
-    {
+    public String toJson() {
         String fieldsAsJson = fields.stream()
             .map(e -> e.toJson())
             .collect(Collectors.joining(",\n"));
@@ -181,8 +154,7 @@ public final class StructType extends DataType
     }
 
     @Override
-    public boolean equals(Object o)
-    {
+    public boolean equals(Object o) {
         if (this == o) {
             return true;
         }
@@ -196,8 +168,7 @@ public final class StructType extends DataType
     }
 
     @Override
-    public int hashCode()
-    {
+    public int hashCode() {
         return Objects.hash(nameToFieldAndOrdinal, fields, fieldNames);
     }
 }

@@ -16,32 +16,35 @@
 
 package io.delta.kernel;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 
 /**
  * Builder to construct {@link Scan} object.
+ *
+ * @since 3.0.0
  */
-public interface ScanBuilder
-{
+@Evolving
+public interface ScanBuilder {
 
     /**
      * Apply the given filter expression to prune any files that do not contain data satisfying
      * the given filter.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @param filter an {@link Expression} which evaluates to boolean.
+     * @param predicate   a {@link Predicate} to prune the metadata or data.
      * @return A {@link ScanBuilder} with filter applied.
      */
-    ScanBuilder withFilter(TableClient tableClient, Expression filter);
+    ScanBuilder withFilter(TableClient tableClient, Predicate predicate);
 
     /**
      * Apply the given <i>readSchema</i>. If the builder already has a projection applied, calling
      * this again replaces the existing projection.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @param readSchema Subset of columns to read from the Delta table.
+     * @param readSchema  Subset of columns to read from the Delta table.
      * @return A {@link ScanBuilder} with projection pruning.
      */
     ScanBuilder withReadSchema(TableClient tableClient, StructType readSchema);

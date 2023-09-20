@@ -18,6 +18,5 @@ package io.delta.kernel.internal.actions;
 /**
  * Base interface for all Delta log actions.
  */
-public interface Action
-{
+public interface Action {
 }

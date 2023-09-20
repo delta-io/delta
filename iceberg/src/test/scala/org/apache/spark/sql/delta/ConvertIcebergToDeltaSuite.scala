@@ -39,7 +39,7 @@ import org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row, SparkSession, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.functions.{col, from_json}
+import org.apache.spark.sql.functions.{col, expr, from_json}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, TestSparkSession}
 import org.apache.spark.sql.types._
@@ -156,6 +156,7 @@ trait ConvertIcebergToDeltaSuiteBase
         assert(history.count == 1)
       }
   }
+
 
   test("table with deleted files") {
     withTable(table) {

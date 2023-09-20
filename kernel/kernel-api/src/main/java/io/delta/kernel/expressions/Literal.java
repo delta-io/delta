@@ -13,190 +13,227 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.expressions;
 
-import java.sql.Date;
-import java.sql.Timestamp;
-import java.util.Objects;
+import java.math.BigDecimal;
+import java.util.Collections;
+import java.util.List;
 
-import io.delta.kernel.data.Row;
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.*;
+
+import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
 /**
  * A literal value.
  * <p>
- * Only supports primitive data types, see
- * <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types">Delta Transaction Log Protocol: Primitive Types</a>.
+ * Definition:
+ * <ul>
+ * <li>Represents literal of primitive types as defined in the protocol
+ * <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types">
+ *     Delta Transaction Log Protocol: Primitive Types</a>
+ * </li>
+ * <li>Use {@link #getValue()} to fetch the literal value. Returned value type
+ * depends on the type of the literal data type. See the {@link #getValue()} for further
+ * details.</li>
+ * </ul>
+ *
+ * @since 3.0.0
  */
-public final class Literal extends LeafExpression
-{
-    public static final Literal TRUE = Literal.of(true);
-    public static final Literal FALSE = Literal.of(false);
-
+@Evolving
+public final class Literal implements Expression {
     /**
-     * Create a boolean {@link Literal} object
+     * Create a {@code boolean} type literal expression.
      *
-     * @param value boolean value
-     * @return a {@link Literal} with data type {@link BooleanType}
+     * @param value literal value
+     * @return a {@link Literal} of type {@link BooleanType}
      */
-    public static Literal of(boolean value)
-    {
+    public static Literal ofBoolean(boolean value) {
         return new Literal(value, BooleanType.INSTANCE);
     }
 
     /**
-     * @return a {@link Literal} with data type {@link ByteType}
+     * Create a {@code byte} type literal expression.
+     *
+     * @param value literal value
+     * @return a {@link Literal} of type {@link ByteType}
      */
-    public static Literal of(byte value)
-    {
+    public static Literal ofByte(byte value) {
         return new Literal(value, ByteType.INSTANCE);
     }
 
     /**
-     * @return a {@link Literal} with data type {@link ShortType}
+     * Create a {@code short} type literal expression.
+     *
+     * @param value literal value
+     * @return a {@link Literal} of type {@link ShortType}
      */
-    public static Literal of(short value)
-    {
+    public static Literal ofShort(short value) {
         return new Literal(value, ShortType.INSTANCE);
     }
 
     /**
-     * Create an integer {@link Literal} object
+     * Create a {@code integer} type literal expression.
      *
-     * @param value integer value
-     * @return a {@link Literal} with data type {@link IntegerType}
+     * @param value literal value
+     * @return a {@link Literal} of type {@link IntegerType}
      */
-    public static Literal of(int value)
-    {
+    public static Literal ofInt(int value) {
         return new Literal(value, IntegerType.INSTANCE);
     }
 
     /**
-     * Create a long {@link Literal} object
+     * Create a {@code long} type literal expression.
      *
-     * @param value long value
-     * @return a {@link Literal} with data type {@link LongType}
+     * @param value literal value
+     * @return a {@link Literal} of type {@link LongType}
      */
-    public static Literal of(long value)
-    {
+    public static Literal ofLong(long value) {
         return new Literal(value, LongType.INSTANCE);
     }
 
     /**
-     * @return a {@link Literal} with data type {@link FloatType}
+     * Create a {@code float} type literal expression.
+     *
+     * @param value literal value
+     * @return a {@link Literal} of type {@link FloatType}
      */
-    public static Literal of(float value)
-    {
+    public static Literal ofFloat(float value) {
         return new Literal(value, FloatType.INSTANCE);
     }
 
     /**
-     * @return a {@link Literal} with data type {@link DoubleType}
+     * Create a {@code double} type literal expression.
+     *
+     * @param value literal value
+     * @return a {@link Literal} of type {@link DoubleType}
      */
-    public static Literal of(double value)
-    {
+    public static Literal ofDouble(double value) {
         return new Literal(value, DoubleType.INSTANCE);
     }
 
     /**
-     * Create a string {@link Literal} object
+     * Create a {@code string} type literal expression.
      *
-     * @param value string value
-     * @return a {@link Literal} with data type {@link StringType}
+     * @param value literal value
+     * @return a {@link Literal} of type {@link StringType}
      */
-    public static Literal of(String value)
-    {
+    public static Literal ofString(String value) {
         return new Literal(value, StringType.INSTANCE);
     }
 
     /**
-     * @return a {@link Literal} with data type {@link BinaryType}
+     * Create a {@code binary} type literal expression.
+     *
+     * @param value binary literal value as an array of bytes
+     * @return a {@link Literal} of type {@link BinaryType}
      */
-    public static Literal of(byte[] value)
-    {
+    public static Literal ofBinary(byte[] value) {
         return new Literal(value, BinaryType.INSTANCE);
     }
 
     /**
-     * @return a {@link Literal} with data type {@link DateType}
+     * Create a {@code date} type literal expression.
+     *
+     * @param daysSinceEpochUTC number of days since the epoch in UTC timezone.
+     * @return a {@link Literal} of type {@link DateType}
      */
-    public static Literal of(Date value)
-    {
-        return new Literal(value, DateType.INSTANCE);
+    public static Literal ofDate(int daysSinceEpochUTC) {
+        return new Literal(daysSinceEpochUTC, DateType.INSTANCE);
     }
 
     /**
+     * Create a {@code timestamp} type literal expression.
+     *
+     * @param microsSinceEpochUTC microseconds since epoch time in UTC timezone.
      * @return a {@link Literal} with data type {@link TimestampType}
      */
-    public static Literal of(Timestamp value)
-    {
-        return new Literal(value, TimestampType.INSTANCE);
+    public static Literal ofTimestamp(long microsSinceEpochUTC) {
+        return new Literal(microsSinceEpochUTC, TimestampType.INSTANCE);
     }
 
     /**
+     * Create a {@code decimal} type literal expression.
+     *
+     * @param value     decimal literal value
+     * @param precision precision of the decimal literal
+     * @param scale     scale of the decimal literal
+     * @return a {@link Literal} with data type {@link DecimalType} with given {@code precision}
+     * and {@code scale}.
+     */
+    public static Literal ofDecimal(BigDecimal value, int precision, int scale) {
+        // throws an error if rounding is required to set the specified scale
+        BigDecimal valueToStore = value.setScale(scale);
+        checkArgument(valueToStore.precision() <= precision, String.format(
+            "Decimal precision=%s for decimal %s exceeds max precision %s",
+            valueToStore.precision(), valueToStore, precision));
+        return new Literal(valueToStore, new DecimalType(precision, scale));
+    }
+
+    /**
+     * Create {@code null} value literal.
+     *
+     * @param dataType {@link DataType} of the null literal.
      * @return a null {@link Literal} with the given data type
      */
-    public static Literal ofNull(DataType dataType)
-    {
-        if (dataType instanceof ArrayType
-            || dataType instanceof MapType
-            || dataType instanceof StructType) {
-            throw new IllegalArgumentException(
-                dataType + " is an invalid data type for Literal.");
-        }
+    public static Literal ofNull(DataType dataType) {
         return new Literal(null, dataType);
     }
 
     private final Object value;
     private final DataType dataType;
 
-    private Literal(Object value, DataType dataType)
-    {
+    private Literal(Object value, DataType dataType) {
+        if (dataType instanceof ArrayType
+            || dataType instanceof MapType
+            || dataType instanceof StructType) {
+            throw new IllegalArgumentException(dataType + " is an invalid data type for Literal.");
+        }
         this.value = value;
         this.dataType = dataType;
     }
 
-    public Object value()
-    {
+    /**
+     * Get the literal value. If the value is null a {@code null} is returned. For non-null
+     * literal the returned value is one of the following types based on the literal data type.
+     *
+     * <ul>
+     * <li>BOOLEAN: {@link Boolean}</li>
+     * <li>BYTE: {@link Byte}</li>
+     * <li>SHORT: {@link Short}</li>
+     * <li>INTEGER: {@link Integer}</li>
+     * <li>LONG: {@link Long}</li>
+     * <li>FLOAT: {@link Float}</li>
+     * <li>DOUBLE: {@link Double}</li>
+     * <li>DATE: {@link Integer} represents the number of days since epoch in UTC</li>
+     * <li>TIMESTAMP: {@link Long} represents the microseconds since epoch in UTC</li>
+     * <li>DECIMAL: {@link BigDecimal}.Use {@link #getDataType()} to find the precision and
+     * scale</li>
+     * </ul>
+     *
+     * @return Literal value.
+     */
+    public Object getValue() {
         return value;
     }
 
-    @Override
-    public Object eval(Row record)
-    {
-        return value;
-    }
-
-    @Override
-    public DataType dataType()
-    {
+    /**
+     * Get the datatype of the literal object. Datatype lets the caller interpret the value of the
+     * literal object returned by {@link #getValue()}
+     *
+     * @return Datatype of the literal object.
+     */
+    public DataType getDataType() {
         return dataType;
     }
 
     @Override
-    public String toString()
-    {
+    public String toString() {
         return String.valueOf(value);
     }
 
     @Override
-    public boolean equals(Object o)
-    {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
-            return false;
-        }
-        Literal literal = (Literal) o;
-        return Objects.equals(value, literal.value) &&
-            Objects.equals(dataType, literal.dataType);
-    }
-
-    @Override
-    public int hashCode()
-    {
-        return Objects.hash(value, dataType);
+    public List<Expression> getChildren() {
+        return Collections.emptyList();
     }
 }

@@ -29,10 +29,12 @@ import static io.delta.kernel.utils.Utils.requireNonNull;
 
 import io.delta.kernel.internal.fs.Path;
 
-public class RemoveFile extends FileAction
-{
-    public static RemoveFile fromRow(Row row)
-    {
+/**
+ * Delta log action representing a `RemoveFile`
+ */
+public class RemoveFile extends FileAction {
+
+    public static RemoveFile fromRow(Row row) {
         if (row == null) {
             return null;
         }
@@ -43,7 +45,7 @@ public class RemoveFile extends FileAction
         final long size = row.getLong(3);
         final boolean dataChange = requireNonNull(row, 4, "dataChange").getBoolean(4);
         final DeletionVectorDescriptor deletionVector =
-                DeletionVectorDescriptor.fromRow(row.getStruct(5));
+            DeletionVectorDescriptor.fromRow(row.getStruct(5));
 
         return new RemoveFile(
             path,
@@ -76,8 +78,7 @@ public class RemoveFile extends FileAction
         Map<String, String> partitionValues,
         long size,
         boolean dataChange,
-        DeletionVectorDescriptor deletionVector)
-    {
+        DeletionVectorDescriptor deletionVector) {
         super(path, dataChange);
 
         this.deletionTimestamp = deletionTimestamp;
@@ -87,8 +88,7 @@ public class RemoveFile extends FileAction
     }
 
     @Override
-    public RemoveFile copyWithDataChange(boolean dataChange)
-    {
+    public RemoveFile copyWithDataChange(boolean dataChange) {
         if (this.dataChange == dataChange) {
             return this;
         }
@@ -106,8 +106,7 @@ public class RemoveFile extends FileAction
         return Optional.ofNullable(deletionVector).map(dv -> dv.getUniqueId());
     }
 
-    public RemoveFile withAbsolutePath(Path dataPath)
-    {
+    public RemoveFile withAbsolutePath(Path dataPath) {
         Path filePath = new Path(path);
         if (filePath.isAbsolute()) {
             return this;

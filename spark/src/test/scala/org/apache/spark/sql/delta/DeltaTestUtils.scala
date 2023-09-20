@@ -16,9 +16,9 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 
 import scala.collection.JavaConverters._
 import scala.collection.concurrent
@@ -27,16 +27,20 @@ import scala.util.matching.Regex
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import io.delta.tables.{DeltaTable => IODeltaTable}
+import org.apache.hadoop.fs.Path
+import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.SparkContext
 import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd, SparkListenerJobStart}
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.util.QueryExecutionListener
+import org.apache.spark.util.Utils
 
 trait DeltaTestUtilsBase {
   import DeltaTestUtils.TableIdentifierOrPath
@@ -183,12 +187,12 @@ trait DeltaTestUtilsBase {
    * Separate name- from path-based SQL table identifiers.
    */
   def getTableIdentifierOrPath(sqlIdentifier: String): TableIdentifierOrPath = {
-    // Match: delta.`path`[ alias] or tahoe.`path`[ alias]
-    val pathMatcher: Regex = raw"(?:delta|tahoe)\.`([^`]+)`(?: (.+))?".r
-    // Match: db.table[ alias]
-    val qualifiedDbMatcher: Regex = raw"`?([^\.` ]+)`?\.`?([^\.` ]+)`?(?: (.+))?".r
-    // Match: table[ alias]
-    val unqualifiedNameMatcher: Regex = raw"([^ ]+)(?: (.+))?".r
+    // Match: delta.`path`[[ as] alias] or tahoe.`path`[[ as] alias]
+    val pathMatcher: Regex = raw"(?:delta|tahoe)\.`([^`]+)`(?:(?: as)? (.+))?".r
+    // Match: db.table[[ as] alias]
+    val qualifiedDbMatcher: Regex = raw"`?([^\.` ]+)`?\.`?([^\.` ]+)`?(?:(?: as)? (.+))?".r
+    // Match: table[[ as] alias]
+    val unqualifiedNameMatcher: Regex = raw"([^ ]+)(?:(?: as)? (.+))?".r
     sqlIdentifier match {
       case pathMatcher(path, alias) =>
         TableIdentifierOrPath.Path(path, Option(alias))
@@ -197,6 +201,27 @@ trait DeltaTestUtilsBase {
       case unqualifiedNameMatcher(tableName, alias) =>
         TableIdentifierOrPath.Identifier(TableIdentifier(tableName), Option(alias))
     }
+  }
+
+  /**
+   * Produce a DeltaTable instance given a `TableIdentifierOrPath` instance.
+   */
+  def getDeltaTableForIdentifierOrPath(
+      spark: SparkSession,
+      identifierOrPath: TableIdentifierOrPath): IODeltaTable = {
+    identifierOrPath match {
+      case TableIdentifierOrPath.Identifier(id, optionalAlias) =>
+        val table = IODeltaTable.forName(spark, id.unquotedString)
+        optionalAlias.map(table.as(_)).getOrElse(table)
+      case TableIdentifierOrPath.Path(path, optionalAlias) =>
+        val table = IODeltaTable.forPath(spark, path)
+        optionalAlias.map(table.as(_)).getOrElse(table)
+    }
+  }
+
+  @deprecated("Use checkError() instead")
+  protected def errorContains(errMsg: String, str: String): Unit = {
+    assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
   }
 }
 
@@ -288,7 +313,8 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
 
 trait DeltaTestUtilsForTempViews
   extends SharedSparkSession
-{
+  with DeltaTestUtilsBase {
+
   def testWithTempView(testName: String)(testFun: Boolean => Any): Unit = {
     Seq(true, false).foreach { isSQLTempView =>
       val tempViewUsed = if (isSQLTempView) "SQL TempView" else "Dataset TempView"
@@ -330,10 +356,6 @@ trait DeltaTestUtilsForTempViews
     }
   }
 
-  protected def errorContains(errMsg: String, str: String): Unit = {
-    assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
-  }
-
   def testErrorMessageAndClass(
       isSQLTempView: Boolean,
       ex: AnalysisException,
@@ -357,4 +379,50 @@ trait DeltaTestUtilsForTempViews
       }
     }
   }
+}
+
+/**
+ * Trait collecting helper methods for DML tests e.p. creating a test table for each test and
+ * cleaning it up after each test.
+ */
+trait DeltaDMLTestUtils
+  extends DeltaTestUtilsBase
+  with BeforeAndAfterEach {
+  self: SharedSparkSession =>
+
+  protected var tempDir: File = _
+
+  protected var deltaLog: DeltaLog = _
+
+  protected def tempPath: String = tempDir.getCanonicalPath
+
+  override protected def beforeEach(): Unit = {
+    super.beforeEach()
+    // Using a space in path to provide coverage for special characters.
+    tempDir = Utils.createTempDir(namePrefix = "spark test")
+    deltaLog = DeltaLog.forTable(spark, new Path(tempPath))
+  }
+
+  override protected def afterEach(): Unit = {
+    try {
+      Utils.deleteRecursively(tempDir)
+      DeltaLog.clearCache()
+    } finally {
+      super.afterEach()
+    }
+  }
+
+  protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
+    val dfw = df.write.format("delta").mode("append")
+    if (partitionBy.nonEmpty) {
+      dfw.partitionBy(partitionBy: _*)
+    }
+    dfw.save(tempPath)
+  }
+
+  protected def readDeltaTable(path: String): DataFrame = {
+    spark.read.format("delta").load(path)
+  }
+
+  protected def getDeltaFileStmt(path: String): String = s"SELECT * FROM delta.`$path`"
 }

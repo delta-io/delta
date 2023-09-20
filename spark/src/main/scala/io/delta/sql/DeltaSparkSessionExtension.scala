@@ -79,6 +79,9 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new DeltaSqlParser(parser)
     }
     extensions.injectResolutionRule { session =>
+      ResolveDeltaPathTable(session)
+    }
+    extensions.injectResolutionRule { session =>
       new PreprocessTimeTravel(session)
     }
     extensions.injectResolutionRule { session =>
@@ -106,6 +109,11 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     }
     extensions.injectPostHocResolutionRule { session =>
       new PreprocessTableDelete(session.sessionState.conf)
+    }
+    // Resolve new UpCast expressions that might have been introduced by [[PreprocessTableUpdate]]
+    // and [[PreprocessTableMerge]].
+    extensions.injectPostHocResolutionRule { session =>
+      PostHocResolveUpCast(session)
     }
     // We don't use `injectOptimizerRule` here as we won't want to apply further optimizations after
     // `PrepareDeltaScan`.

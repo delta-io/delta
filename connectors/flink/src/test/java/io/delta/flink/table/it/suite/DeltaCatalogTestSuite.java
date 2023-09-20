@@ -671,11 +671,11 @@ public abstract class DeltaCatalogTestSuite {
 
         // column name; column type; is nullable; primary key; comments; watermark
         assertThat(describeRows).containsExactly(
-            "name;VARCHAR(1);true;null;null;null",
-            "surname;VARCHAR(1);true;null;null;null",
+            "name;STRING;true;null;null;null",
+            "surname;STRING;true;null;null;null",
             "age;INT;true;null;null;null",
-            "col1;VARCHAR(1);true;null;null;null",
-            "col2;VARCHAR(1);true;null;null;null"
+            "col1;STRING;true;null;null;null",
+            "col2;STRING;true;null;null;null"
         );
     }
 

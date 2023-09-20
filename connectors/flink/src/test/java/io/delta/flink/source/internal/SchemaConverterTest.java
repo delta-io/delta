@@ -41,7 +41,7 @@ public class SchemaConverterTest {
         return Stream.of(
             Arguments.of(new io.delta.standalone.types.FloatType(), new FloatType()),
             Arguments.of(new io.delta.standalone.types.IntegerType(), new IntType()),
-            Arguments.of(new io.delta.standalone.types.StringType(), new VarCharType()),
+            Arguments.of(new io.delta.standalone.types.StringType(), new VarCharType(VarCharType.MAX_LENGTH)),
             Arguments.of(new io.delta.standalone.types.DoubleType(), new DoubleType()),
             Arguments.of(
                 new io.delta.standalone.types.MapType(
@@ -49,7 +49,7 @@ public class SchemaConverterTest {
                     new io.delta.standalone.types.IntegerType(),
                     true // valueContainsNull
                 ),
-                new MapType(new VarCharType(), new IntType())),
+                new MapType(new VarCharType(VarCharType.MAX_LENGTH), new IntType())),
             Arguments.of(
                 new io.delta.standalone.types.ArrayType(
                     new io.delta.standalone.types.ByteType(),
@@ -61,8 +61,8 @@ public class SchemaConverterTest {
                     new io.delta.standalone.types.StringType(),
                     true // containsNull
                 ),
-                new ArrayType(new VarCharType())),
-            Arguments.of(new io.delta.standalone.types.StringType(), new VarCharType()),
+                new ArrayType(new VarCharType(VarCharType.MAX_LENGTH))),
+            Arguments.of(new io.delta.standalone.types.StringType(), new VarCharType(VarCharType.MAX_LENGTH)),
             Arguments.of(new io.delta.standalone.types.BooleanType(), new BooleanType()),
             Arguments.of(new io.delta.standalone.types.ByteType(), new TinyIntType()),
             Arguments.of(new io.delta.standalone.types.ShortType(), new SmallIntType()),
@@ -70,7 +70,7 @@ public class SchemaConverterTest {
             Arguments.of(new io.delta.standalone.types.BinaryType(), new BinaryType()),
             Arguments.of(new io.delta.standalone.types.TimestampType(), new TimestampType()),
             Arguments.of(new io.delta.standalone.types.DateType(), new DateType()),
-            Arguments.of(new io.delta.standalone.types.StringType(), new VarCharType()),
+            Arguments.of(new io.delta.standalone.types.StringType(), new VarCharType(VarCharType.MAX_LENGTH)),
             Arguments.of(new io.delta.standalone.types.DecimalType(10, 0), new DecimalType(10, 0)),
             Arguments.of(new io.delta.standalone.types.DecimalType(2, 0), new DecimalType(2)),
             Arguments.of(new io.delta.standalone.types.DecimalType(2, 2), new DecimalType(2, 2)),
@@ -82,7 +82,7 @@ public class SchemaConverterTest {
                     new StructField("f02", new io.delta.standalone.types.IntegerType()),
                 }),
                 new RowType(Arrays.asList(
-                    new RowType.RowField("f01", new VarCharType()),
+                    new RowType.RowField("f01", new VarCharType(VarCharType.MAX_LENGTH)),
                     new RowType.RowField("f02", new IntType()))
                 ))
         );
@@ -116,7 +116,7 @@ public class SchemaConverterTest {
                     new io.delta.standalone.types.IntegerType(),
                     true
                 ),
-                new MapType(new VarCharType(), new IntType())),
+                new MapType(new VarCharType(VarCharType.MAX_LENGTH), new IntType())),
             Arguments.of(
                 new io.delta.standalone.types.MapType(
                     new io.delta.standalone.types.IntegerType(),
@@ -138,7 +138,7 @@ public class SchemaConverterTest {
                 ),
                 new MapType(new BigIntType(),
                     new RowType(Arrays.asList(
-                        new RowType.RowField("f01", new VarCharType()),
+                        new RowType.RowField("f01", new VarCharType(VarCharType.MAX_LENGTH)),
                         new RowType.RowField("f02", new IntType())
                     )))),
             Arguments.of(
@@ -154,7 +154,7 @@ public class SchemaConverterTest {
                     new io.delta.standalone.types.IntegerType(),
                     true
                 ),
-                new MapType(new VarCharType(), new IntType()))
+                new MapType(new VarCharType(VarCharType.MAX_LENGTH), new IntType()))
         );
     }
 

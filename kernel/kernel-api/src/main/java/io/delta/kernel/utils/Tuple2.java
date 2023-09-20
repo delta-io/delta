@@ -18,20 +18,34 @@ package io.delta.kernel.utils;
 
 import java.util.Objects;
 
+import io.delta.kernel.annotation.Evolving;
+
+/**
+ * Represents tuple of objects.
+ *
+ * @param <K> Type of the first element in the tuple
+ * @param <V> Type of the second element in the tuple
+ * @since 3.0.0
+ */
+@Evolving
 public class Tuple2<K, V> {
 
     public final K _1;
     public final V _2;
 
-    public Tuple2(K _1, V _2){
+    public Tuple2(K _1, V _2) {
         this._1 = _1;
         this._2 = _2;
     }
 
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
         Tuple2<?, ?> tuple2 = (Tuple2<?, ?>) o;
         return Objects.equals(_1, tuple2._1) && Objects.equals(_2, tuple2._2);
     }

@@ -119,7 +119,7 @@ class DeltaSourceBuilderBaseTest {
         assertThat(sourceSchema.getSnapshotVersion(), equalTo(SNAPSHOT_VERSION));
         assertArrayEquals(new String[]{"col1", "col2"}, sourceSchema.getColumnNames());
         assertArrayEquals(
-            new LogicalType[]{new VarCharType(), new IntType()},
+            new LogicalType[]{new VarCharType(VarCharType.MAX_LENGTH), new IntType()},
             sourceSchema.getColumnTypes()
         );
     }
@@ -140,7 +140,7 @@ class DeltaSourceBuilderBaseTest {
         assertThat(sourceSchema.getSnapshotVersion(), equalTo(SNAPSHOT_VERSION));
         assertArrayEquals(new String[]{"col1"}, sourceSchema.getColumnNames());
         assertArrayEquals(
-            new LogicalType[]{new VarCharType()},
+            new LogicalType[]{new VarCharType(VarCharType.MAX_LENGTH)},
             sourceSchema.getColumnTypes()
         );
     }

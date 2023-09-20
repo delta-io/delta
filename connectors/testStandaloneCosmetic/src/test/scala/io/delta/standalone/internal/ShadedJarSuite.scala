@@ -70,8 +70,7 @@ class ShadedJarSuite extends FunSuite {
   test("basic read and write to verify the final delta-standalone jar is working") {
     val dir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
     try {
-      val tablePath = new File("../golden-tables/src/test/resources/golden/data-reader-primitives")
-        .getCanonicalFile
+      val tablePath = io.delta.golden.GoldenTableUtils.goldenTableFile("data-reader-primitives")
       FileUtils.copyDirectory(tablePath, dir)
       val log = DeltaLog.forTable(new Configuration(), dir.getCanonicalPath)
       log.asInstanceOf[DeltaLogImpl].checkpoint()
