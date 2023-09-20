@@ -98,8 +98,7 @@ public class ScanImpl
                 InternalSchemaUtils.convertToPhysicalSchema(
                     readSchema,
                     snapshotSchema,
-                    protocolAndMetadata.get()._2.getConfiguration()
-                        .getOrDefault("delta.columnMapping.mode", "none")
+                    protocolAndMetadata.get()._2.getColumnMappingMode()
                 )
             ),
             dataPath.toUri().toString());

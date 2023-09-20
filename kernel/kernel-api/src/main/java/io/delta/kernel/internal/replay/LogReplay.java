@@ -226,7 +226,7 @@ public class LogReplay implements Logging {
 
     private void verifySupportedColumnMappingMode(Metadata metadata) {
         // Check if the mode is name. Id mode is not yet supported
-        String cmMode = metadata.getConfiguration().get("delta.columnMapping.mode");
+        String cmMode = metadata.getColumnMappingMode();
         if (!"none".equalsIgnoreCase(cmMode) &&
             !"name".equalsIgnoreCase(cmMode)) {
             throw new UnsupportedOperationException(

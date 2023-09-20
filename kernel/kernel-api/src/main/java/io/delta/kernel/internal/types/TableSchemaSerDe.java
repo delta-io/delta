@@ -97,7 +97,7 @@ public class TableSchemaSerDe {
         String serializedDataType = row.getString(1);
         DataType type = parseDataType(jsonHandler, serializedDataType);
         boolean nullable = row.getBoolean(2);
-        Map<String, String> metadata = row.getMap(3);
+        Map<String, String> metadata = VectorUtils.toJavaMap(row.getMap(3));
 
         return new StructField(name, type, nullable, metadata);
     }

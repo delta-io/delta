@@ -25,11 +25,11 @@ import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
+import io.delta.kernel.utils.VectorUtils;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
-import io.delta.kernel.utils.VectorUtils;
 
 /**
  * Encapsulate the scan state (common info for all scan files) as a {@link Row}
@@ -115,10 +115,9 @@ public class ScanStateRow extends GenericRow {
      * {@link Scan#getScanState(TableClient)}.
      */
     public static String getColumnMappingMode(Row scanState) {
-        Map<String, String> configuration =
-            scanState.getMap(COL_NAME_TO_ORDINAL.get("configuration"));
-        String cmMode = configuration.get("delta.columnMapping.mode");
-        return cmMode == null ? "none" : cmMode;
+        Map<String, String> configuration = VectorUtils.toJavaMap(
+                scanState.getMap(COL_NAME_TO_ORDINAL.get("configuration")));
+        return configuration.getOrDefault("delta.columnMapping.mode", "none");
     }
 
     /**

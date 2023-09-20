@@ -38,7 +38,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   // TODO: for now we do not support timestamp partition columns, make sure it's blocked
   test("cannot read partition column of timestamp type") {
     val path = goldenTablePath("kernel-timestamp-TIMESTAMP_MICROS")
-    val snapshot = latestSnapshot(path);
+    val snapshot = latestSnapshot(path)
 
     val e = intercept[UnsupportedOperationException] {
       readSnapshot(snapshot) // request entire schema
@@ -234,6 +234,52 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       path = path,
       expectedAnswer = expectedAnswer,
       readCols = readCols
+    )
+  }
+
+  test("table with complex array types") {
+    val path = "file:" + goldenTablePath("data-reader-array-complex-objects")
+
+    val expectedAnswer = (0 until 10).map { i =>
+      TestRow(
+        i,
+        Seq(Seq(Seq(i, i, i), Seq(i, i, i)), Seq(Seq(i, i, i), Seq(i, i, i))),
+        Seq(
+          Seq(Seq(Seq(i, i, i), Seq(i, i, i)), Seq(Seq(i, i, i), Seq(i, i, i))),
+          Seq(Seq(Seq(i, i, i), Seq(i, i, i)), Seq(Seq(i, i, i), Seq(i, i, i)))
+        ),
+        Seq(
+          Map[String, Long](i.toString -> i.toLong),
+          Map[String, Long](i.toString -> i.toLong)
+        ),
+        Seq(TestRow(i), TestRow(i), TestRow(i))
+      )
+    }
+
+    checkTable(
+      path = path,
+      expectedAnswer = expectedAnswer
+    )
+  }
+
+  test("table with complex map types") {
+    val path = "file:" + goldenTablePath("data-reader-map")
+
+    val expectedAnswer = (0 until 10).map { i =>
+      TestRow(
+        i,
+        Map(i -> i),
+        Map(i.toLong -> i.toByte),
+        Map(i.toShort -> (i % 2 == 0)),
+        Map(i.toFloat -> i.toDouble),
+        Map(i.toString -> new BigDecimal(i)),
+        Map(i -> Seq(TestRow(i), TestRow(i), TestRow(i)))
+      )
+    }
+
+    checkTable(
+      path = path,
+      expectedAnswer = expectedAnswer
     )
   }
 }

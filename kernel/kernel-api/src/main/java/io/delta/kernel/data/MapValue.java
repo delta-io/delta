@@ -13,30 +13,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.utils;
+package io.delta.kernel.data;
 
-import java.util.List;
+/**
+ * Abstraction to represent a single map value in a {@link ColumnVector}.
+ */
+public interface MapValue {
+    /**
+     * The number of elements in the map
+     */
+    int getSize();
 
-import io.delta.kernel.data.ArrayValue;
-import io.delta.kernel.internal.lang.Lazy;
+    /**
+     * A {@link ColumnVector} containing the keys.
+     */
+    ColumnVector getKeys();
 
-public class ArrayValueWrapper<T> {
+    /**
+     * A {@link ColumnVector} containing the values.
+     */
+    ColumnVector getValues();
 
-    private final ArrayValue arrayValue;
-    private final Lazy<List<T>> asJavaList;
-
-    public ArrayValueWrapper(ArrayValue arrayValue) {
-        this.arrayValue = arrayValue;
-        this.asJavaList = new Lazy<>(() ->
-                VectorUtils.toJavaList(arrayValue)
-        );
-    }
-
-    public ArrayValue asArrayValue() {
-        return arrayValue;
-    }
-
-    public List<T> asJavaList() {
-        return asJavaList.get();
-    }
 }

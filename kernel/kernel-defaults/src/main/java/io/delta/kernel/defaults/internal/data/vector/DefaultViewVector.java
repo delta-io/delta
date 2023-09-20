@@ -16,10 +16,10 @@
 package io.delta.kernel.defaults.internal.data.vector;
 
 import java.math.BigDecimal;
-import java.util.Map;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
 import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
@@ -120,7 +120,7 @@ public class DefaultViewVector implements ColumnVector {
     }
 
     @Override
-    public <K, V> Map<K, V> getMap(int rowId) {
+    public MapValue getMap(int rowId) {
         checkValidRowId(rowId);
         return underlyingVector.getMap(offset + rowId);
     }

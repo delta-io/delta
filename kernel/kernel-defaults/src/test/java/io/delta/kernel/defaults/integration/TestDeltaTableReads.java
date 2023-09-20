@@ -16,8 +16,6 @@
 package io.delta.kernel.defaults.integration;
 
 import java.math.BigDecimal;
-import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 
 import org.junit.Rule;
@@ -32,7 +30,6 @@ import io.delta.kernel.types.*;
 
 import io.delta.kernel.defaults.client.DefaultTableClient;
 import io.delta.kernel.defaults.integration.DataBuilderUtils.TestColumnBatchBuilder;
-import static io.delta.kernel.defaults.integration.DataBuilderUtils.row;
 import static io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getTestResourceFilePath;
 
 /**
@@ -72,137 +69,6 @@ public class TestDeltaTableReads
                 String.valueOf(i),
                 new byte[] {(byte) i, (byte) i,},
                 new BigDecimal(i)
-            );
-        }
-
-        ColumnarBatch expData = builder.build();
-        compareEqualUnorderd(expData, actualData);
-    }
-
-    @Test
-    public void tableWithComplexArrayTypes()
-        throws Exception {
-        String tablePath = goldenTablePath("data-reader-array-complex-objects");
-        Snapshot snapshot = snapshot(tablePath);
-        StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
-
-        List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
-
-        TestColumnBatchBuilder builder = DataBuilderUtils.builder(readSchema);
-
-        for (int i = 0; i < 10; i++) {
-            final int index = i;
-            builder.addRow(
-                i,
-                Arrays.asList(
-                    Arrays.asList(
-                        Arrays.asList(i, i, i),
-                        Arrays.asList(i, i, i)
-                    ),
-                    Arrays.asList(
-                        Arrays.asList(i, i, i),
-                        Arrays.asList(i, i, i)
-                    )
-                ),
-                Arrays.asList(
-                    Arrays.asList(
-                        Arrays.asList(
-                            Arrays.asList(i, i, i),
-                            Arrays.asList(i, i, i)),
-                        Arrays.asList(
-                            Arrays.asList(i, i, i),
-                            Arrays.asList(i, i, i))
-                    ),
-                    Arrays.asList(
-                        Arrays.asList(
-                            Arrays.asList(i, i, i),
-                            Arrays.asList(i, i, i)),
-                        Arrays.asList(
-                            Arrays.asList(i, i, i),
-                            Arrays.asList(i, i, i)))
-                ),
-                Arrays.asList(
-                    new HashMap() {
-                        {
-                            put(String.valueOf(index), (long) index);
-                        }
-                    },
-                    new HashMap() {
-                        {
-                            put(String.valueOf(index), (long) index);
-                        }
-                    }
-                ),
-                Arrays.asList(
-                    row(arrayElemStructTypeOf(readSchema, "list_of_records"), i),
-                    row(arrayElemStructTypeOf(readSchema, "list_of_records"), i),
-                    row(arrayElemStructTypeOf(readSchema, "list_of_records"), i)
-                )
-            );
-        }
-
-        ColumnarBatch expData = builder.build();
-        compareEqualUnorderd(expData, actualData);
-    }
-
-    @Test
-    public void tableWithComplexMapTypes()
-        throws Exception {
-        String tablePath = goldenTablePath("data-reader-map");
-        Snapshot snapshot = snapshot(tablePath);
-        StructType readSchema = new StructType()
-            .add("i", IntegerType.INSTANCE)
-            .add("a", new MapType(IntegerType.INSTANCE, IntegerType.INSTANCE, true))
-            .add("b", new MapType(LongType.INSTANCE, ByteType.INSTANCE, true))
-            .add("c", new MapType(ShortType.INSTANCE, BooleanType.INSTANCE, true))
-            .add("d", new MapType(FloatType.INSTANCE, DoubleType.INSTANCE, true))
-            .add("f", new MapType(
-                IntegerType.INSTANCE,
-                new ArrayType(new StructType().add("val", IntegerType.INSTANCE), true),
-                true)
-            );
-
-        List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
-
-        TestColumnBatchBuilder builder = DataBuilderUtils.builder(readSchema);
-
-        for (int i = 0; i < 10; i++) {
-            final int index = i;
-            builder.addRow(
-                i,
-                new HashMap() {
-                    {
-                        put(index, index);
-                    }
-                },
-                new HashMap() {
-                    {
-                        put((long) index, (byte) index);
-                    }
-                },
-                new HashMap() {
-                    {
-                        put((short) index, index % 2 == 0);
-                    }
-                },
-                new HashMap() {
-                    {
-                        put((float) index, (double) index);
-                    }
-                },
-                new HashMap() {
-                    {
-                        StructType elemType = new StructType().add("val", IntegerType.INSTANCE);
-                        put(
-                            index,
-                            Arrays.asList(
-                                row(elemType, index),
-                                row(elemType, index),
-                                row(elemType, index)
-                            )
-                        );
-                    }
-                }
             );
         }
 

@@ -16,12 +16,12 @@
 package io.delta.kernel.defaults.internal.data.vector;
 
 import java.math.BigDecimal;
-import java.util.Map;
 import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
@@ -162,7 +162,7 @@ public class DefaultStructVector
         }
 
         @Override
-        public <K, V> Map<K, V> getMap(int ordinal) {
+        public MapValue getMap(int ordinal) {
             return structVector.memberVectors[ordinal].getMap(rowId);
         }
     }

@@ -17,7 +17,7 @@ package io.delta.kernel.defaults.utils
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.data.{ColumnVector, Row}
+import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
 import io.delta.kernel.types._
 
 /**
@@ -35,16 +35,10 @@ import io.delta.kernel.types._
  * - DecimalType --> java.math.BigDecimal
  * - BinaryType --> Array[Byte]
  * - ArrayType --> Seq[Any]
+ * - MapType --> Map[Any, Any]
  * - StructType --> TestRow
- *
- * TODO: complex types
- * - StructType?
- * - ArrayType?
- * - MapType?
  */
 class TestRow(val values: Array[Any]) {
-  // TODO: we could make this extend Row and create a way to generate Seq(Any) from Rows but it
-  //  would complicate a lot of the code for not much benefit
 
   def length: Int = values.length
 
@@ -102,15 +96,9 @@ object TestRow {
         case _: StringType => row.getString(i)
         case _: BinaryType => row.getBinary(i)
         case _: DecimalType => row.getDecimal(i)
-        case _: ArrayType =>
-          val arrayValue = row.getArray(i)
-          val elemVector = arrayValue.getElements()
-          (0 until arrayValue.getSize).map { i =>
-            getAsTestObject(elemVector, i)
-          }
-        // TODO complex types
-         case _: StructType => TestRow(row.getStruct(i))
-        // case _: MapType => row.getMap(i)
+        case _: ArrayType => arrayValueToScalaSeq(row.getArray(i))
+        case _: MapType => mapValueToScalaMap(row.getMap(i))
+        case _: StructType => TestRow(row.getStruct(i))
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     })
@@ -134,17 +122,26 @@ object TestRow {
       case _: StringType => vector.getString(rowId)
       case _: BinaryType => vector.getBinary(rowId)
       case _: DecimalType => vector.getDecimal(rowId)
-      case _: ArrayType =>
-        val arrayValue = vector.getArray(rowId)
-        val elemVector = arrayValue.getElements
-        (0 until arrayValue.getSize).map { i =>
-          getAsTestObject(elemVector, i)
-        }
-      // TODO complex types
+      case _: ArrayType => arrayValueToScalaSeq(vector.getArray(rowId))
+      case _: MapType => mapValueToScalaMap(vector.getMap(rowId))
        case _: StructType => TestRow(vector.getStruct(rowId))
-      // case _: MapType => row.getMap(i)
       case _ => throw new UnsupportedOperationException("unrecognized data type")
     }
+  }
+
+  private def arrayValueToScalaSeq(arrayValue: ArrayValue): Seq[Any] = {
+    val elemVector = arrayValue.getElements
+    (0 until arrayValue.getSize).map { i =>
+      getAsTestObject(elemVector, i)
+    }
+  }
+
+  private def mapValueToScalaMap(mapValue: MapValue): Map[Any, Any] = {
+    val keyVector = mapValue.getKeys()
+    val valueVector = mapValue.getValues()
+    (0 until mapValue.getSize).map { i =>
+      getAsTestObject(keyVector, i) -> getAsTestObject(valueVector, i)
+    }.toMap
   }
 
   /**

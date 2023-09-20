@@ -16,9 +16,7 @@
 package io.delta.kernel.defaults.internal.data;
 
 import java.math.BigDecimal;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
+import java.util.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -26,6 +24,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
@@ -116,8 +115,8 @@ public class DefaultJsonRow implements Row {
     }
 
     @Override
-    public <K, V> Map<K, V> getMap(int ordinal) {
-        return (Map<K, V>) parsedValues[ordinal];
+    public MapValue getMap(int ordinal) {
+        return (MapValue) parsedValues[ordinal];
     }
 
     private static void throwIfTypeMismatch(String expType, boolean hasExpType, JsonNode jsonNode) {
@@ -201,14 +200,17 @@ public class DefaultJsonRow implements Row {
         }
 
         if (dataType instanceof MapType) {
+            // todo make sure this works for nested maps
+
             throwIfTypeMismatch("map", jsonValue.isObject(), jsonValue);
             final MapType mapType = (MapType) dataType;
             if (!(mapType.getKeyType() instanceof StringType)) {
                 throw new RuntimeException("MapType with a key type of `String` is supported, " +
-                    "received a key type: " + mapType.getKeyType());
+                        "received a key type: " + mapType.getKeyType());
             }
+            List<String> keys = new ArrayList<>(jsonValue.size());
+            List<Object> values = new ArrayList<>(jsonValue.size());
             final Iterator<Map.Entry<String, JsonNode>> iter = jsonValue.fields();
-            final Map<Object, Object> output = new HashMap<>();
 
             while (iter.hasNext()) {
                 Map.Entry<String, JsonNode> entry = iter.next();
@@ -216,12 +218,27 @@ public class DefaultJsonRow implements Row {
                 Object valueParsed = decodeElement(entry.getValue(), mapType.getValueType());
                 if (valueParsed == null && !mapType.isValueContainsNull()) {
                     throw new RuntimeException("Map type expects no nulls in values, but " +
-                        "received `null` as value");
+                            "received `null` as value");
                 }
-                output.put(keyParsed, valueParsed);
+                keys.add(keyParsed);
+                values.add(valueParsed);
             }
+            return new MapValue() {
+                @Override
+                public int getSize() {
+                    return jsonValue.size();
+                }
 
-            return output;
+                @Override
+                public ColumnVector getKeys() {
+                    return new DefaultJsonVector(mapType.getKeyType(), keys.toArray());
+                }
+
+                @Override
+                public ColumnVector getValues() {
+                    return new DefaultJsonVector(mapType.getValueType(), values.toArray());
+                }
+            };
         }
 
         throw new UnsupportedOperationException(
@@ -336,8 +353,8 @@ public class DefaultJsonRow implements Row {
         }
 
         @Override
-        public <K, V> Map<K, V> getMap(int rowId) {
-            return (Map<K, V>) values[rowId];
+        public MapValue getMap(int rowId) {
+            return (MapValue) values[rowId];
         }
     }
 

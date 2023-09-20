@@ -21,6 +21,7 @@ import java.util.Map;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ArrayValue;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
@@ -121,11 +122,11 @@ public class GenericRow implements Row {
     }
 
     @Override
-    // TODO
-    public <K, V> Map<K, V> getMap(int ordinal) {
+    // TODO document
+    public MapValue getMap(int ordinal) {
         // TODO: not sufficient check, also need to check the element types
         throwIfUnsafeAccess(ordinal, MapType.class, "map");
-        return (Map<K, V>) getValue(ordinal);
+        return (MapValue) getValue(ordinal);
     }
 
     private Object getValue(int ordinal) {

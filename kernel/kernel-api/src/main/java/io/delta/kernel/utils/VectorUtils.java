@@ -16,10 +16,13 @@
 package io.delta.kernel.utils;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.types.*;
 
 public final class VectorUtils {
@@ -35,18 +38,39 @@ public final class VectorUtils {
 
         List<T> elements = new ArrayList<>();
         for (int i = 0; i < arrayValue.getSize(); i ++) {
-
-            // TODO factor out and support more types
-            if (elementVector.isNullAt(i)) {
-                elements.add(null);
-            } else if (dataType instanceof StringType) {
-                elements.add((T) elementVector.getString(i));
-            } else if (dataType instanceof StructType) {
-                elements.add((T) elementVector.getStruct(i));
-            } else {
-                throw new UnsupportedOperationException("unsupported data type");
-            }
+            elements.add((T) getValueAsObject(elementVector, dataType, i));
         }
         return elements;
+    }
+
+    public static <K, V> Map<K, V> toJavaMap(MapValue mapValue) {
+        ColumnVector keyVector = mapValue.getKeys();
+        DataType keyDataType = keyVector.getDataType();
+        ColumnVector valueVector = mapValue.getValues();
+        DataType valueDataType = valueVector.getDataType();
+
+        Map<K, V> values = new HashMap<>();
+
+        for (int i = 0; i < mapValue.getSize(); i ++) {
+            Object key = getValueAsObject(keyVector, keyDataType, i);
+            Object value = getValueAsObject(valueVector, valueDataType, i);
+            values.put((K) key, (V) value);
+        }
+        return values;
+    }
+
+    private static Object getValueAsObject(
+            ColumnVector columnVector, DataType dataType, int rowId) {
+        // TODO support more types
+        // TODO combine with other utils?
+        if (columnVector.isNullAt(rowId)) {
+            return null;
+        } else if (dataType instanceof StringType) {
+            return columnVector.getString(rowId);
+        } else if (dataType instanceof StructType) {
+            return columnVector.getStruct(rowId);
+        } else {
+            throw new UnsupportedOperationException("unsupported data type");
+        }
     }
 }

@@ -15,21 +15,22 @@
  */
 package io.delta.kernel.internal.actions;
 
-import java.util.Collections;
-import java.util.Map;
 import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ArrayValue;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.VectorUtils;
 import static io.delta.kernel.utils.Utils.requireNonNull;
 
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
 
 public class Metadata {
@@ -77,7 +78,8 @@ public class Metadata {
     private final StructType schema;
     private final ArrayValue partitionColumns;
     private final Optional<Long> createdTime;
-    private final Map<String, String> configuration;
+    private final MapValue configuration;
+    private final Lazy<String> columnMappingMode;
 
     public Metadata(
         String id,
@@ -88,7 +90,7 @@ public class Metadata {
         StructType schema,
         ArrayValue partitionColumns,
         Optional<Long> createdTime,
-        Map<String, String> configuration) {
+        MapValue configuration) {
         this.id = requireNonNull(id, "id is null");
         this.name = name;
         this.description = requireNonNull(description, "description is null");
@@ -97,7 +99,12 @@ public class Metadata {
         this.schema = schema;
         this.partitionColumns = partitionColumns;
         this.createdTime = createdTime;
-        this.configuration = configuration == null ? Collections.emptyMap() : configuration;
+        this.configuration = configuration;
+        this.columnMappingMode = new Lazy<>(() ->
+                VectorUtils.<String, String>toJavaMap(configuration)
+                        .getOrDefault("delta.columnMapping.mode", "none")
+        );
+
     }
 
     public String getSchemaString() {
@@ -132,7 +139,11 @@ public class Metadata {
         return createdTime;
     }
 
-    public Map<String, String> getConfiguration() {
+    public MapValue getConfiguration() {
         return configuration;
+    }
+
+    public String getColumnMappingMode() {
+        return columnMappingMode.get();
     }
 }

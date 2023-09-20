@@ -20,7 +20,7 @@ package io.delta.kernel.data;
  */
 public interface ArrayValue {
     /**
-     * The number of elements in the map
+     * The number of elements in the array
      */
     int getSize();
 

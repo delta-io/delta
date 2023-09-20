@@ -32,10 +32,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-import io.delta.kernel.data.ArrayValue;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.*;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
@@ -376,9 +373,14 @@ public class TestParquetBatchReader {
                     if (expIsNull) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
                     } else if (rowId % 30 == 0) {
-                        assertEquals(Collections.emptyMap(), vector.getMap(batchWithIdx._2));
+                        assertEquals(0, vector.getMap(batchWithIdx._2).getSize());
                     } else {
-                        Map<Integer, Long> actValue = vector.getMap(batchWithIdx._2);
+                        MapValue mapValue = vector.getMap(batchWithIdx._2);
+                        Map<Integer, Long> actValue = new HashMap<>();
+                        for (int i = 0; i < mapValue.getSize(); i ++) {
+                            actValue.put(mapValue.getKeys().getInt(i),
+                                    mapValue.getValues().getLong(i));
+                        }
                         assertTrue(actValue.size() == 2);
 
                         // entry 0: key = rowId
@@ -398,7 +400,12 @@ public class TestParquetBatchReader {
                 case "map_of_rows": {
                     // Map(i + 1 -> (if (i % 10 == 0) Row((i*20).longValue()) else null))
                     assertFalse(vector.isNullAt(batchWithIdx._2));
-                    Map<Integer, Row> actValue = vector.getMap(batchWithIdx._2);
+                    MapValue mapValue = vector.getMap(batchWithIdx._2);
+                    Map<Integer, Row> actValue = new HashMap<>();
+                    for (int i = 0; i < mapValue.getSize(); i ++) {
+                        actValue.put(mapValue.getKeys().getInt(i),
+                                mapValue.getValues().getStruct(i));
+                    }
 
                     // entry 0: key = rowId
                     Integer key0 = rowId + 1;
@@ -463,6 +470,7 @@ public class TestParquetBatchReader {
 
     private static void validateArrayOfArraysColumn(
         ColumnVector vector, int batchRowId, int tableRowId) {
+        // TODO
         boolean expIsNull = tableRowId % 8 == 0;
         if (expIsNull) {
             assertTrue(vector.isNullAt(batchRowId));

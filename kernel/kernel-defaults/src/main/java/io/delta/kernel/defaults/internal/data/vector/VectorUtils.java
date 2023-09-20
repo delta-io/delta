@@ -34,6 +34,7 @@ public class VectorUtils {
      */
     public static Object getValueAsObject(ColumnVector vector, int rowId) {
         // todo anywhere that uses this with an ArrayType vector?
+        // todo anywhere that uses this with an MapType vector?
 
         // TODO: may be it is better to just provide a `getObject` on the `ColumnVector` to
         // avoid the nested if-else statements.

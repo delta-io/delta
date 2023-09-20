@@ -17,7 +17,6 @@ package io.delta.kernel.internal.types;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -171,19 +170,40 @@ public class JsonHandlerTestImpl
             }
 
             if (dataType instanceof MapType) {
+                // TODO standardize the map type and array type here and in defaults package
+
                 throwIfTypeMismatch("map", jsonValue.isObject(), jsonValue);
                 final MapType mapType = (MapType) dataType;
+                final List<Object> keys = new ArrayList<>();
+                final List<Object> values = new ArrayList<>();
                 final Iterator<Map.Entry<String, JsonNode>> iter = jsonValue.fields();
-                final Map<Object, Object> output = new HashMap<>();
 
                 while (iter.hasNext()) {
                     Map.Entry<String, JsonNode> entry = iter.next();
                     String keyParsed = entry.getKey();
                     Object valueParsed = decodeElement(entry.getValue(), mapType.getValueType());
-                    output.put(keyParsed, valueParsed);
+                    keys.add(keyParsed);
+                    values.add(valueParsed);
                 }
 
-                return output;
+                return new MapValue() {
+
+                    @Override
+                    public int getSize() {
+                        return keys.size();
+                    }
+
+                    @Override
+                    public ColumnVector getKeys() {
+                        // todo check is string?
+                        return new TestColumnVector(mapType.getKeyType(), keys);
+                    }
+
+                    @Override
+                    public ColumnVector getValues() {
+                        return new TestColumnVector(mapType.getValueType(), values);
+                    }
+                };
             }
 
             throw new UnsupportedOperationException(
@@ -291,8 +311,8 @@ public class JsonHandlerTestImpl
         }
 
         @Override
-        public <K, V> Map<K, V> getMap(int ordinal) {
-            return (Map<K, V>) parsedValues[ordinal];
+        public MapValue getMap(int ordinal) {
+            return (MapValue) parsedValues[ordinal];
         }
     }
 
@@ -387,8 +407,8 @@ public class JsonHandlerTestImpl
         }
 
         @Override
-        public <K, V> Map<K, V> getMap(int rowId) {
-            return (Map<K, V>) values.get(rowId);
+        public MapValue getMap(int rowId) {
+            return (MapValue) values.get(rowId);
         }
     }
 }

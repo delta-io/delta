@@ -15,12 +15,11 @@
  */
 package io.delta.kernel.defaults.internal.data.vector;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.types.DataType;
 
 import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
@@ -68,20 +67,29 @@ public class DefaultMapVector
      * @return
      */
     @Override
-    public <K, V> Map<K, V> getMap(int rowId) {
+    public MapValue getMap(int rowId) {
+        checkValidRowId(rowId);
         if (isNullAt(rowId)) {
             return null;
         }
-        checkValidRowId(rowId);
         int start = offsets[rowId];
         int end = offsets[rowId + 1];
+        return new MapValue() {
 
-        Map<K, V> values = new HashMap<>();
-        for (int entry = start; entry < end; entry++) {
-            Object key = VectorUtils.getValueAsObject(keyVector, entry);
-            Object value = VectorUtils.getValueAsObject(valueVector, entry);
-            values.put((K) key, (V) value);
-        }
-        return values;
+            @Override
+            public int getSize() {
+                return end - start;
+            }
+
+            @Override
+            public ColumnVector getKeys() {
+                return new DefaultViewVector(keyVector, start, end);
+            }
+
+            @Override
+            public ColumnVector getValues() {
+                return new DefaultViewVector(valueVector, start, end);
+            }
+        };
     }
 }

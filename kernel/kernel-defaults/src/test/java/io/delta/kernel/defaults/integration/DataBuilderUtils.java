@@ -24,6 +24,7 @@ import java.util.stream.IntStream;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
 
@@ -162,8 +163,9 @@ public class DataBuilderUtils {
         }
 
         @Override
-        public <K, V> Map<K, V> getMap(int ordinal) {
-            return (Map<K, V>) values.get(ordinal);
+        // todo move over any tests that use this and then make an unsupported error
+        public MapValue getMap(int ordinal) {
+            return (MapValue) values.get(ordinal);
         }
     }
 }

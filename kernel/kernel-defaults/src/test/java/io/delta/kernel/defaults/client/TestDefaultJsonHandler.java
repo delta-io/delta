@@ -142,6 +142,7 @@ public class TestDefaultJsonHandler {
                     put("p2", "str");
                 }
             };
+            // TODO
             assertEquals(expPartitionValues, row.getMap(1));
             assertEquals(348L, row.getLong(2));
             assertEquals(true, row.getBoolean(3));
