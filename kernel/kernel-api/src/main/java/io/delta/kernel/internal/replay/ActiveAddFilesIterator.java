@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.internal.replay;
 
 import java.io.IOException;
@@ -21,16 +20,14 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.*;
 
+import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.DataType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 import static io.delta.kernel.utils.Utils.requireNonNull;
 
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
 /**
  * This class takes an iterator of ({@link FileDataReadResult}, isFromCheckpoint), where the
@@ -46,14 +43,23 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
         }
     }
 
+    private final TableClient tableClient;
     private final CloseableIterator<Tuple2<FileDataReadResult, Boolean>> iter;
     private final Set<UniqueFileActionTuple> tombstonesFromJson;
     private final Set<UniqueFileActionTuple> addFilesFromJson;
 
     private Optional<FilteredColumnarBatch> next;
+    /**
+     * This buffer is reused across batches to keep the memory allocations minimal. It is resized
+     * as required and the array entries are reset between batches.
+     */
+    private boolean[] selectionVectorBuffer;
     private boolean closed;
 
-    ActiveAddFilesIterator(CloseableIterator<Tuple2<FileDataReadResult, Boolean>> iter) {
+    ActiveAddFilesIterator(
+        TableClient tableClient,
+        CloseableIterator<Tuple2<FileDataReadResult, Boolean>> iter) {
+        this.tableClient = tableClient;
         this.iter = iter;
         this.tombstonesFromJson = new HashSet<>();
         this.addFilesFromJson = new HashSet<>();
@@ -153,7 +159,7 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
         // Step 2: Iterate over all the AddFiles in this columnar batch in order to build up the
         //         selection vector. We unselect an AddFile when it was removed by a RemoveFile
         final ColumnVector addsVector = addRemoveColumnarBatch.getColumnVector(0);
-        boolean[] selectionVector = new boolean[addsVector.getSize()];
+        prepareSelectionVectorBuffer(addsVector.getSize());
         boolean atLeastOneUnselected = false;
 
         for (int rowId = 0; rowId < addsVector.getSize(); rowId++) {
@@ -183,7 +189,7 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
 
                 if (!alreadyDeleted) {
                     doSelect = true;
-                    selectionVector[rowId] = true;
+                    selectionVectorBuffer[rowId] = true;
                 }
             }
 
@@ -194,48 +200,23 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
 
         // Step 3: Drop the RemoveFile column and use the selection vector to build a new
         //         DataReadResult
+        Optional<ColumnVector> selectionColumnVector = atLeastOneUnselected ?
+            Optional.of(tableClient.getExpressionHandler()
+                .createSelectionVector(selectionVectorBuffer, 0, addsVector.getSize())) :
+            Optional.empty();
         next = Optional.of(
             new FilteredColumnarBatch(
                 addRemoveColumnarBatch.withDeletedColumnAt(1),
-                atLeastOneUnselected ?
-                    Optional.of(boolArrayToColumnVector(selectionVector)) :
-                    Optional.empty()
-            )
-        );
+                selectionColumnVector));
     }
 
-    private ColumnVector boolArrayToColumnVector(boolean[] arr) {
-        return new ColumnVector() {
-            @Override
-            public DataType getDataType() {
-                return BooleanType.INSTANCE;
-            }
-
-            @Override
-            public int getSize() {
-                return arr.length;
-            }
-
-            @Override
-            public void close() { }
-
-            @Override
-            public boolean isNullAt(int rowId) {
-                assertValidRowId(rowId);
-                return false;
-            }
-
-            @Override
-            public boolean getBoolean(int rowId) {
-                assertValidRowId(rowId);
-                return arr[rowId];
-            }
-
-            private void assertValidRowId(int rowId) {
-                checkArgument(rowId < getSize(),
-                    "Invalid rowId: " + rowId + ", max allowed rowId is: " + (getSize() - 1));
-            }
-        };
+    private void prepareSelectionVectorBuffer(int size) {
+        if (selectionVectorBuffer == null || selectionVectorBuffer.length < size) {
+            selectionVectorBuffer = new boolean[size];
+        } else {
+            // reset the array - if we are reusing the same buffer.
+            Arrays.fill(selectionVectorBuffer, false);
+        }
     }
 
     private URI pathToUri(String path) {

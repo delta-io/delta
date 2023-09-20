@@ -73,7 +73,10 @@ public abstract class AbstractColumnVector
     @Override
     public boolean isNullAt(int rowId) {
         checkValidRowId(rowId);
-        return !nullability.isPresent() || nullability.get()[rowId];
+        if (!nullability.isPresent()) {
+            return false; // if there is no-nullability vector, every value is a non-null value
+        }
+        return nullability.get()[rowId];
     }
 
     @Override
