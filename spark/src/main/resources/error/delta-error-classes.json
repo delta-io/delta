@@ -1553,7 +1553,7 @@
   },
   "DELTA_PATH_DOES_NOT_EXIST" : {
     "message" : [
-      "<path> doesn't exist"
+      "<path> doesn't exist, or is not a Delta table."
     ],
     "sqlState" : "42K03"
   },

@@ -1074,7 +1074,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.pathNotExistsException("path")
       }
       assert(e.getErrorClass == "DELTA_PATH_DOES_NOT_EXIST")
-      assert(e.getMessage == "path doesn't exist")
+      assert(e.getMessage.contains("path doesn't exist"))
     }
     {
       val e = intercept[DeltaIllegalStateException] {
