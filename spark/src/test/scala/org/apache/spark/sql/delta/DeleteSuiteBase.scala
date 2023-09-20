@@ -17,60 +17,22 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.File
-
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.hadoop.fs.Path
-import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
-import org.apache.spark.util.Utils
+import org.apache.spark.sql.types.StructType
 
 abstract class DeleteSuiteBase extends QueryTest
   with SharedSparkSession
-  with BeforeAndAfterEach  with DeltaTestUtilsForTempViews {
+  with DeltaDMLTestUtils
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
-  var tempDir: File = _
-
-  var deltaLog: DeltaLog = _
-
-  protected def tempPath: String = tempDir.getCanonicalPath
-
-  protected def readDeltaTable(path: String): DataFrame = {
-    spark.read.format("delta").load(path)
-  }
-
-  override def beforeEach() {
-    super.beforeEach()
-    // Using a space in path to provide coverage for special characters.
-    tempDir = Utils.createTempDir(namePrefix = "spark test")
-    deltaLog = DeltaLog.forTable(spark, new Path(tempPath))
-  }
-
-  override def afterEach() {
-    try {
-      Utils.deleteRecursively(tempDir)
-      DeltaLog.clearCache()
-    } finally {
-      super.afterEach()
-    }
-  }
-
   protected def executeDelete(target: String, where: String = null): Unit
-
-  protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
-    val writer = df.write.format("delta").mode("append")
-    if (partitionBy.nonEmpty) {
-      writer.partitionBy(partitionBy: _*)
-    }
-    writer.save(deltaLog.dataPath.toString)
-  }
 
   protected def checkDelete(
       condition: Option[String],

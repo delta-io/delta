@@ -274,6 +274,14 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "maxSnapshotLineageLength must be positive.")
       .createWithDefault(50)
 
+  val DELTA_REPLACE_COLUMNS_SAFE =
+    buildConf("alter.replaceColumns.safe.enabled")
+      .internal()
+      .doc("Prevents an ALTER TABLE REPLACE COLUMNS method from dropping all columns, which " +
+        "leads to losing all data. It will only allow safe, unambiguous column changes.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_HISTORY_PAR_SEARCH_THRESHOLD =
     buildConf("history.maxKeysPerList")
       .internal()
@@ -563,6 +571,57 @@ trait DeltaSQLConfBase {
         .longConf
         .checkValue(_ > 0, "partSize has to be positive")
         .createOptional
+
+  ////////////////////////////////////
+  // Checkpoint V2 Specific Configs
+  ////////////////////////////////////
+
+  val CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT =
+    buildConf("checkpointV2.topLevelFileFormat")
+      .internal()
+      .doc(
+        """
+          |The file format to use for the top level checkpoint file in V2 Checkpoints.
+          | This can be set to either json or parquet. The appropriate format will be
+          | picked automatically if this config is not specified.
+          |""".stripMargin)
+      .stringConf
+      .checkValues(Set("json", "parquet"))
+      .createOptional
+
+  // This is temporary conf to make sure v2 checkpoints are not used by anyone other than devs as
+  // the feature is not fully ready.
+  val EXPOSE_CHECKPOINT_V2_TABLE_FEATURE_FOR_TESTING =
+    buildConf("checkpointV2.exposeTableFeatureForTesting")
+      .internal()
+      .doc(
+        """
+          |This conf controls whether v2 checkpoints table feature is exposed or not. Note that
+          | v2 checkpoints are in development and this should config should be used only for
+          | testing/benchmarking.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val LAST_CHECKPOINT_NON_FILE_ACTIONS_THRESHOLD =
+    buildConf("lastCheckpoint.nonFileActions.threshold")
+      .internal()
+      .doc("""
+          |Threshold for total number of non file-actions to store in the last_checkpoint
+          | corresponding to the checkpoint v2.
+          |""".stripMargin)
+      .intConf
+      .createWithDefault(30)
+
+  val LAST_CHECKPOINT_SIDECARS_THRESHOLD =
+    buildConf("lastCheckpoint.sidecars.threshold")
+      .internal()
+      .doc("""
+          |Threshold for total number of sidecar files to store in the last_checkpoint
+          | corresponding to the checkpoint v2.
+          |""".stripMargin)
+      .intConf
+      .createWithDefault(30)
 
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
@@ -1218,7 +1277,7 @@ trait DeltaSQLConfBase {
              |Table feature removal is currently a feature in development.
              |This is a dev only config.""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE =
     buildConf("columnMapping.reuseColumnMetadataDuringOverwrite")
@@ -1257,8 +1316,8 @@ trait DeltaSQLConfBase {
     buildConf("updateAndMergeCastingFollowsAnsiEnabledFlag")
       .internal()
       .doc("""If false, casting behaviour in implicit casts in UPDATE and MERGE follows
-             |'spark.sql.storeAssignmentPolicy'. If true, these casts follow 'ansi.enabled'. This
-             |was the default before Delta 3.5.""".stripMargin)
+             |'spark.sql.storeAssignmentPolicy'. If true, these casts follow 'ansi.enabled'.
+             |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
 

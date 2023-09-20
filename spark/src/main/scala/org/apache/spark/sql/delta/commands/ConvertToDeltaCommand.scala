@@ -94,7 +94,8 @@ abstract class ConvertToDeltaCommandBase(
     }
 
     val targetTable = getTargetTable(spark, convertProperties)
-    val deltaLog = DeltaLog.forTable(spark, deltaPath.getOrElse(convertProperties.targetDir))
+    val deltaPathToUse = new Path(deltaPath.getOrElse(convertProperties.targetDir))
+    val deltaLog = DeltaLog.forTable(spark, deltaPathToUse)
     val txn = deltaLog.startTransaction()
     if (txn.readVersion > -1) {
       handleExistingTransactionLog(spark, txn, convertProperties, targetTable.format)
@@ -275,7 +276,7 @@ abstract class ConvertToDeltaCommandBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       addFiles: Seq[AddFile]): Iterator[AddFile] = {
-    val initialSnapshot = new InitialSnapshot(txn.deltaLog.dataPath, txn.deltaLog, txn.metadata)
+    val initialSnapshot = new InitialSnapshot(txn.deltaLog.logPath, txn.deltaLog, txn.metadata)
     ConvertToDeltaCommand.computeStats(txn.deltaLog, initialSnapshot, addFiles)
   }
 

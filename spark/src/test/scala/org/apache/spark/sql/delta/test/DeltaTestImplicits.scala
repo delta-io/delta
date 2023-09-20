@@ -16,11 +16,17 @@
 
 package org.apache.spark.sql.delta.test
 
+import java.io.File
+
 import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.util.Clock
 
 /**
  * Additional method definitions for Delta classes that are intended for use only in testing.
@@ -64,6 +70,17 @@ object DeltaTestImplicits {
     }
   }
 
+  /** Add test-only File overloads for DeltaTable.forPath */
+  implicit class DeltaLogObjectTestHelper(deltaLog: DeltaLog.type) {
+    def forTable(spark: SparkSession, dataPath: File): DeltaLog = {
+      DeltaLog.forTable(spark, new Path(dataPath.getCanonicalPath))
+    }
+
+    def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
+      DeltaLog.forTable(spark, new Path(dataPath.getCanonicalPath), clock)
+    }
+  }
+
   /**
    * Helper class for working with the most recent snapshot in the deltaLog
    */
@@ -87,5 +104,16 @@ object DeltaTestImplicits {
     def enableExpiredLogCleanup(): Boolean = {
       deltaLog.enableExpiredLogCleanup(snapshot.metadata)
     }
+  }
+
+  implicit class DeltaTableV2ObjectTestHelper(dt: DeltaTableV2.type) {
+    /** Convenience overload that omits the cmd arg (which is not helpful in tests). */
+    def apply(spark: SparkSession, id: TableIdentifier): DeltaTableV2 =
+      dt.apply(spark, id, "test")
+  }
+
+  implicit class DeltaTableV2TestHelper(deltaTable: DeltaTableV2) {
+    /** For backward compatibility with existing unit tests */
+    def snapshot: Snapshot = deltaTable.initialSnapshot
   }
 }

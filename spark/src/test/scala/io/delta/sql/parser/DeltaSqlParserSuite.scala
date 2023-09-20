@@ -19,15 +19,16 @@ package io.delta.sql.parser
 import io.delta.tables.execution.VacuumTableCommand
 
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.UnresolvedPathBasedDeltaTable
-import org.apache.spark.sql.delta.commands.{OptimizeTableCommand, DeltaReorgTable}
+import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, OptimizeTableCommand, DeltaReorgTable}
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
-import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableDropFeature, CloneTableStatement}
 
 class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
@@ -35,17 +36,26 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     // Setting `delegate` to `null` is fine. The following tests don't need to touch `delegate`.
     val parser = new DeltaSqlParser(null)
     assert(parser.parsePlan("vacuum 123_") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123_")), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("123_"), "VACUUM", None), None, false))
     assert(parser.parsePlan("vacuum 1a.123_") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123_", Some("1a"))), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("1a", "123_"), "VACUUM", None), None, false))
     assert(parser.parsePlan("vacuum a.123A") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123A", Some("a"))), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("a", "123A"), "VACUUM", None), None, false))
     assert(parser.parsePlan("vacuum a.123E3_column") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123E3_column", Some("a"))), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("a", "123E3_column"), "VACUUM", None), None, false))
     assert(parser.parsePlan("vacuum a.123D_column") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123D_column", Some("a"))), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("a", "123D_column"), "VACUUM", None),
+        None, false))
     assert(parser.parsePlan("vacuum a.123BD_column") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123BD_column", Some("a"))), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("a", "123BD_column"), "VACUUM", None),
+        None, false))
+
+    assert(parser.parsePlan("vacuum delta.`/tmp/table`") ===
+      VacuumTableCommand(UnresolvedTable(Seq("delta", "/tmp/table"), "VACUUM", None),
+        None, false))
+
+    assert(parser.parsePlan("vacuum \"/tmp/table\"") ===
+      VacuumTableCommand(UnresolvedPathBasedDeltaTable("/tmp/table", "VACUUM"), None, false))
   }
 
   test("OPTIMIZE command is parsed as expected") {
@@ -61,6 +71,12 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
       OptimizeTableCommand(None, Some(tblId("tbl", "db")), Nil)(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
       UnresolvedTable(Seq("db", "tbl"), "OPTIMIZE", None))
+
+    parsedCmd = parser.parsePlan("OPTIMIZE catalog_foo.db.tbl")
+    assert(parsedCmd ===
+      OptimizeTableCommand(None, Some(tblId("tbl", "db", "catalog_foo")), Nil)(Nil))
+    assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
+      UnresolvedTable(Seq("catalog_foo", "db", "tbl"), "OPTIMIZE", None))
 
     assert(parser.parsePlan("OPTIMIZE tbl_${system:spark.testing}") ===
       OptimizeTableCommand(None, Some(tblId("tbl_true")), Nil)(Nil))
@@ -130,6 +146,15 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (optimize, zorder)") ===
       OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(
         Seq(unresolvedAttr("optimize"), unresolvedAttr("zorder"))))
+  }
+
+  test("DESCRIBE DETAIL command is parsed as expected") {
+    val parser = new DeltaSqlParser(null)
+    val parsedCmd = parser.parsePlan("DESCRIBE DETAIL catalog_foo.db.tbl")
+    assert(parsedCmd ===
+      DescribeDeltaDetailCommand(
+        UnresolvedTable(Seq("catalog_foo", "db", "tbl"), DescribeDeltaDetailCommand.CMD_NAME, None),
+        Map.empty))
   }
 
   private def targetPlanForTable(tableParts: String*): UnresolvedTable =
@@ -230,7 +255,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
               versionAsOf,
               Some("sql"))
           },
-          UnresolvedRelation(tblId(target)),
+          new UnresolvedRelation(target.split('.')),
           ifNotExists = false,
           isReplaceCommand = isReplace,
           isCreateCommand = isCreate,
@@ -260,22 +285,42 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     checkCloneStmt(parser, source = "t1", target = "t1", versionAsOf = Some(1L))
     // Clone with 3L table (only useful for Iceberg table now)
     checkCloneStmt(parser, source = "local.iceberg.table", target = "t1", sourceIs3LTable = true)
-    // Yet target cannot be a 3L table yet
-    intercept[ParseException] {
-      checkCloneStmt(parser, source = "local.iceberg.table", target = "catalog.delta.table",
-        sourceIs3LTable = true)
-    }
+    checkCloneStmt(parser, source = "local.iceberg.table", target = "delta.table",
+      sourceIs3LTable = true)
     // Custom source format with path
     checkCloneStmt(parser, source = "/path/to/iceberg", target = "t1", sourceFormat = "iceberg",
       sourceIsTable = false)
+  }
+
+  for (truncateHistory <- Seq(true, false))
+  test(s"DROP FEATURE command is parsed as expected - truncateHistory: $truncateHistory") {
+    val parser = new DeltaSqlParser(null)
+    val table = "tbl"
+    val featureName = "feature_name"
+    val sql = s"ALTER TABLE $table DROP FEATURE $featureName " +
+      (if (truncateHistory) "TRUNCATE HISTORY" else "")
+    val parsedCmd = parser.parsePlan(sql)
+    assert(parsedCmd ===
+      AlterTableDropFeature(
+        UnresolvedTable(Seq(table), "ALTER TABLE ... DROP FEATURE", None),
+        featureName,
+        truncateHistory))
   }
 
   private def unresolvedAttr(colName: String*): UnresolvedAttribute = {
     new UnresolvedAttribute(colName)
   }
 
-  private def tblId(tblName: String, schema: String = null): TableIdentifier = {
-    if (schema == null) new TableIdentifier(tblName)
-    else new TableIdentifier(tblName, Some(schema))
+  private def tblId(
+      tblName: String,
+      schema: String = null,
+      catalog: String = null): TableIdentifier = {
+    if (catalog == null) {
+      if (schema == null) new TableIdentifier(tblName)
+      else new TableIdentifier(tblName, Some(schema))
+    } else {
+      assert(schema != null)
+      new TableIdentifier(tblName, Some(schema), Some(catalog))
+    }
   }
 }

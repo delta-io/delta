@@ -21,6 +21,7 @@ import java.util.Locale
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
+import scala.language.existentials
 
 import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, DeltaUDF, NoMapping}
 import org.apache.spark.sql.delta.DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY
@@ -724,6 +725,7 @@ object StatisticsCollection extends DeltaCommand {
 
     // Use the stats collector to recompute stats
     val dataPath = deltaLog.dataPath
+    val snapshot = txn.snapshot
     val newAddFiles = {
       // Throw error when the table contains DVs, because existing method of stats
       // recomputation doesn't work on tables with DVs. It needs to take into consideration of
@@ -732,9 +734,13 @@ object StatisticsCollection extends DeltaCommand {
         throw DeltaErrors.statsRecomputeNotSupportedOnDvTables()
       }
       {
-        val newStats = deltaLog.createDataFrame(txn.snapshot, addFiles = files, isStreaming = false)
-          .groupBy(col("_metadata.file_path").as("path")).agg(to_json(txn.statsCollector))
-
+        val fileDataFrame = deltaLog
+          .createDataFrame(txn.snapshot, addFiles = files, isStreaming = false)
+          .withColumn("path", col("_metadata.file_path"))
+        val newStats =
+          {
+            fileDataFrame.groupBy(col("path")).agg(to_json(txn.statsCollector))
+          }
         // Use the new stats to update the AddFiles and commit back to the DeltaLog
         newStats.collect().map { r =>
           val add = getTouchedFile(dataPath, r.getString(0), pathToAddFileMap)
@@ -765,4 +771,3 @@ object StatisticsCollection extends DeltaCommand {
     }
   }
 }
-

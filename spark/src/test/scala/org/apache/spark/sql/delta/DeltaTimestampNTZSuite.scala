@@ -29,7 +29,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
 class DeltaTimestampNTZSuite extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   private def getProtocolForTable(table: String): Protocol = {
     val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))

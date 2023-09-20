@@ -43,10 +43,10 @@ public class DeletionVectorStoredBitmap {
     private final Optional<String> tableDataPath;
 
     public DeletionVectorStoredBitmap(
-            DeletionVectorDescriptor dvDescriptor,
-            Optional<String> tableDataPath) {
+        DeletionVectorDescriptor dvDescriptor,
+        Optional<String> tableDataPath) {
         checkArgument(tableDataPath.isPresent() || !dvDescriptor.isOnDisk(),
-                "Table path is required for on-disk deletion vectors");
+            "Table path is required for on-disk deletion vectors");
         this.dvDescriptor = dvDescriptor;
         this.tableDataPath = tableDataPath;
     }
@@ -62,20 +62,20 @@ public class DeletionVectorStoredBitmap {
 
             // TODO: this type is TBD
             Tuple2<String, Tuple2<Integer, Integer>> dvToRead =
+                new Tuple2(
+                    onDiskPath, // filePath
                     new Tuple2(
-                            onDiskPath, // filePath
-                            new Tuple2(
-                                    dvDescriptor.getOffset().orElse(0), // offset
-                                    // we pad 4 bytes in the front for the size
-                                    // and 4 bytes at the end for CRC-32 checksum
-                                    dvDescriptor.getSizeInBytes() + 8 // size
-                            )
-                    );
+                        dvDescriptor.getOffset().orElse(0), // offset
+                        // we pad 4 bytes in the front for the size
+                        // and 4 bytes at the end for CRC-32 checksum
+                        dvDescriptor.getSizeInBytes() + 8 // size
+                    )
+                );
 
             CloseableIterator<ByteArrayInputStream> streamIter = fileSystemClient.readFiles(
-                    Utils.singletonCloseableIterator(dvToRead));
+                Utils.singletonCloseableIterator(dvToRead));
             ByteArrayInputStream stream = InternalUtils.getSingularElement(streamIter).orElseThrow(
-                    () -> new IllegalStateException("Iterator should not be empty")
+                () -> new IllegalStateException("Iterator should not be empty")
             );
             return loadFromStream(stream);
         }

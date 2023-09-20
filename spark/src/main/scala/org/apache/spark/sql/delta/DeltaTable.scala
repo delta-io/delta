@@ -566,6 +566,16 @@ case class UnresolvedPathBasedDeltaTableRelation(
     options: CaseInsensitiveStringMap) extends UnresolvedPathBasedDeltaTableBase(path)
 
 /**
+ * This operator represents path-based tables in general including both Delta or non-Delta tables.
+ * It resolves to a [[ResolvedTable]] if the path is for delta table, unchanged if non delta table.
+ */
+case class UnresolvedPathBasedTable(
+    path: String,
+    commandName: String) extends LeafNode {
+  override val output: Seq[Attribute] = Nil
+}
+
+/**
  * A helper object with an apply method to transform a path or table identifier to a LogicalPlan.
  * If the path is set, it will be resolved to an [[UnresolvedPathBasedDeltaTable]] whereas if the
  * tableIdentifier is set, the LogicalPlan will be an [[UnresolvedTable]]. If neither of the two
@@ -582,6 +592,29 @@ object UnresolvedDeltaPathOrIdentifier {
         UnresolvedTable(t.nameParts, cmd, None)
       case _ => throw new IllegalArgumentException(
         s"Exactly one of path or tableIdentifier must be provided to $cmd")
+    }
+  }
+}
+
+/**
+ * A helper object with an apply method to transform a path or table identifier to a LogicalPlan.
+ * This is required by Delta commands that can also run against non-Delta tables, e.g. DESC DETAIL,
+ * VACUUM command. If the tableIdentifier is set, the LogicalPlan will be an [[UnresolvedTable]].
+ * If the tableIdentifier is not set but the path is set, it will be resolved to an
+ * [[UnresolvedPathBasedTable]] since we can not tell if the path is for delta table or non delta
+ * table at this stage. If neither of the two are set, throws an exception.
+ */
+object UnresolvedPathOrIdentifier {
+  def apply(
+      path: Option[String],
+      tableIdentifier: Option[TableIdentifier],
+      cmd: String): LogicalPlan = {
+    (path, tableIdentifier) match {
+      case (_, Some(t)) =>
+        UnresolvedTable(t.nameParts, cmd, None)
+      case (Some(p), None) => UnresolvedPathBasedTable(p, cmd)
+      case _ => throw new IllegalArgumentException(
+        s"At least one of path or tableIdentifier must be provided to $cmd")
     }
   }
 }

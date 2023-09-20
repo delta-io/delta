@@ -26,7 +26,7 @@ Notice that there two sets of public APIs to build connectors.
 # Project setup with Delta Kernel 
 The Delta Kernel project provides the following two Maven artifacts:
 - `delta-kernel-api`: This is a must-have dependency and contains all the public `Table` and `TableClient` APIs discussed earlier.
-- `delta-kernel-default`: This is an optional dependency that contains *default* implementations of the `TableClient` interfaces using Hadoop libraries. Developers can optionally use these default implementations to speed up the development of their Delta connector.
+- `delta-kernel-defaults`: This is an optional dependency that contains *default* implementations of the `TableClient` interfaces using Hadoop libraries. Developers can optionally use these default implementations to speed up the development of their Delta connector.
 ```xml
 <!-- Must have dependency -->
 <dependency>
@@ -38,7 +38,7 @@ The Delta Kernel project provides the following two Maven artifacts:
 <!-- Optional dependency -->
 <dependency>
   <groupId>io.delta</groupId>
-  <artifactId>delta-kernel-default</artifactId>
+  <artifactId>delta-kernel-defaults</artifactId>
   <version>VERSION</version>
 </dependency>
 ```

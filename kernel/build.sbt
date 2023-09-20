@@ -76,10 +76,10 @@ val scalaTestVersion = "3.2.15"
 val deltaSparkVersion = deltaStorageVersion
 val sparkVersion = "3.3.2"
 
-lazy val kernelDefault = (project in file("kernel-default"))
+lazy val kernelDefaults = (project in file("kernel-defaults"))
   .dependsOn(kernelApi)
   .settings(
-    name := "delta-kernel-default",
+    name := "delta-kernel-defaults",
     commonSettings,
     scalaStyleSettings,
     releaseSettings,

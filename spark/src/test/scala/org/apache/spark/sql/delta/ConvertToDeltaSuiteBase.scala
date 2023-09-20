@@ -80,8 +80,10 @@ trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 }
 
 trait ConvertToDeltaSuiteBaseCommons extends ConvertToDeltaTestUtils
-  with SharedSparkSession  with SQLTestUtils
-  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews
+  with SharedSparkSession
+  with SQLTestUtils
+  with DeltaSQLCommandTest
+  with DeltaTestUtilsForTempViews
 
 /** Tests for CONVERT TO DELTA that can be leveraged across SQL and Scala APIs. */
 trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
@@ -213,11 +215,12 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
 
           convertToDelta(tableName)
 
-          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName, Some("default")))
+          val tableId = TableIdentifier(tableName, Some("default"))
+          val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableId)
           val expectedSchema = StructType(
             StructField("id", IntegerType, true) :: StructField("part", StringType, true) :: Nil)
           // Schema is inferred from the data
-          assert(deltaLog.update().schema.equals(expectedSchema))
+          assert(snapshot.schema.equals(expectedSchema))
         }
       }
     }
@@ -1090,7 +1093,8 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
 
             convertToDelta(tableName)
 
-            val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName, Some("default")))
+          val tableId = TableIdentifier(tableName, Some("default"))
+          val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableId)
             val catalog_columns = Seq[StructField](
               StructField("key1", LongType, true),
               StructField("key2", StringType, true)
@@ -1098,11 +1102,10 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
 
             if (useCatalogSchema) {
               // Catalog schema is used, column id is excluded.
-              assert(deltaLog.snapshot.metadata.schema
-                .equals(StructType(catalog_columns)))
+              assert(snapshot.metadata.schema.equals(StructType(catalog_columns)))
             } else {
               // Schema is inferred from the data, all 3 columns are included.
-              assert(deltaLog.snapshot.metadata.schema
+              assert(snapshot.metadata.schema
                 .equals(StructType(StructField("id", LongType, true) +: catalog_columns)))
             }
           }
@@ -1256,12 +1259,12 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
         TableIdentifier(tableName, Some("default"))).provider.contains("delta"))
 
       // Check the partition schema in the transaction log
-      assert(DeltaLog.forTable(spark, TableIdentifier(tableName, Some("default")))
-        .snapshot.metadata.partitionSchema.equals(
-            (new StructType())
-              .add(StructField("key1", LongType, true))
-              .add(StructField("key2", StringType, true))
-          ))
+      val tableId = TableIdentifier(tableName, Some("default"))
+      assert(DeltaLog.forTableWithSnapshot(spark, tableId)._2.metadata.partitionSchema.equals(
+        (new StructType())
+          .add(StructField("key1", LongType, true))
+          .add(StructField("key2", StringType, true))
+      ))
 
       // Check data in the converted delta table.
       checkAnswer(

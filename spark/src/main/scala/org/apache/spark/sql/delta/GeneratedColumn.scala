@@ -224,7 +224,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     } catch {
       case e: AnalysisException if e.getMessage != null =>
         val regexCandidates = Seq(
-          ("A column or function parameter with name .*?cannot be resolved. " +
+          ("A column, variable, or function parameter with name .*?cannot be resolved. " +
             "Did you mean one of the following?.*?").r,
           "cannot resolve.*?given input columns:.*?".r,
           "Column.*?does not exist.".r

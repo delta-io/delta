@@ -48,7 +48,7 @@ case class ShowTableColumnsCommand(tableID: DeltaTableIdentifier)
     val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(sparkSession, tableID)
     recordDeltaOperation(deltaLog, "delta.ddl.showColumns") {
       if (snapshot.version < 0) {
-        throw DeltaErrors.notADeltaTableException("SHOW COLUMNS")
+        throw DeltaErrors.notADeltaTableException(tableID)
       } else {
         snapshot.schema.fieldNames.map { x => Row(x) }.toSeq
       }

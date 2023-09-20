@@ -17,11 +17,16 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.errors.QueryExecutionErrors.toSQLType
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 
-class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
+class UpdateSQLSuite extends UpdateSuiteBase
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -32,7 +37,7 @@ class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
     assert(outputs.contains("Delta"))
     assert(!outputs.contains("index") && !outputs.contains("ActionLog"))
     // no change should be made by explain
-    checkAnswer(readDeltaTableByPath(tempPath), Row(2, 2))
+    checkAnswer(readDeltaTable(tempPath), Row(2, 2))
   }
 
   test("SC-11376: Update command should check target columns during analysis, same key") {
@@ -93,6 +98,55 @@ class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
             s"Invalid _change_type for id=${row.get(0)}")
         }
       }
+    }
+  }
+
+  // The following two tests are run only against the SQL API because using the Scala API
+  // incorrectly triggers the analyzer rule [[ResolveRowLevelCommandAssignments]] which allows
+  // the casts without respecting the value of `storeAssignmentPolicy`.
+
+  // Casts that are not valid upcasts (e.g. string -> boolean) are not allowed with
+  // storeAssignmentPolicy = STRICT.
+  test("invalid implicit cast string source type into boolean target, " +
+   s"storeAssignmentPolicy = ${StoreAssignmentPolicy.STRICT}") {
+    append(Seq((99, true), (100, false), (101, true)).toDF("key", "value"))
+    withSQLConf(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
+    checkError(
+      exception = intercept[AnalysisException] {
+        executeUpdate(target = s"delta.`$tempPath`", set = "value = 'false'")
+      },
+      errorClass = "CANNOT_UP_CAST_DATATYPE",
+      parameters = Map(
+        "expression" -> "'false'",
+        "sourceType" -> toSQLType("STRING"),
+        "targetType" -> toSQLType("BOOLEAN"),
+        "details" -> ("The type path of the target object is:\n\nYou can either add an explicit " +
+          "cast to the input data or choose a higher precision type of the field in the target " +
+          "object")))
+    }
+  }
+
+  // Implicit casts that are not upcasts are not allowed with storeAssignmentPolicy = STRICT.
+  test("valid implicit cast string source type into int target, " +
+     s"storeAssignmentPolicy = ${StoreAssignmentPolicy.STRICT}") {
+    append(Seq((99, 2), (100, 4), (101, 3)).toDF("key", "value"))
+    withSQLConf(
+        SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+        DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
+    checkError(
+      exception = intercept[AnalysisException] {
+        executeUpdate(target = s"delta.`$tempPath`", set = "value = '5'")
+      },
+      errorClass = "CANNOT_UP_CAST_DATATYPE",
+        parameters = Map(
+        "expression" -> "'5'",
+        "sourceType" -> toSQLType("STRING"),
+        "targetType" -> toSQLType("INT"),
+        "details" -> ("The type path of the target object is:\n\nYou can either add an explicit " +
+          "cast to the input data or choose a higher precision type of the field in the target " +
+          "object")))
     }
   }
 

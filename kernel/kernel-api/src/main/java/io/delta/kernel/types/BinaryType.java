@@ -15,15 +15,18 @@
  */
 package io.delta.kernel.types;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * The data type representing {@code byte[]} values.
+ *
+ * @since 3.0.0
  */
-public class BinaryType extends BasePrimitiveType
-{
+@Evolving
+public class BinaryType extends BasePrimitiveType {
     public static final BinaryType INSTANCE = new BinaryType();
 
-    private BinaryType()
-    {
+    private BinaryType() {
         super("binary");
     }
 }

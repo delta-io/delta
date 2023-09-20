@@ -828,7 +828,7 @@ class DeltaTableTestsMixin:
             with self.assertRaises(AnalysisException) as error_ctx:
                 self.__replace_table(False, tableName="testTable")
             msg = str(error_ctx.exception)
-            self.assertIn("testTable", msg)
+            self.assertIn("testtable", msg.lower())
             self.assertTrue("did not exist" in msg or "cannot be found" in msg)
             deltaTable = self.__replace_table(True, tableName="testTable")
             self.__verify_table_schema("testTable",

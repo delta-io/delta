@@ -873,10 +873,10 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
    * write correct table metadata into the transaction logs.
    */
   protected def verifyDefaultTestTableMetadata(table: String): Unit = {
-    val deltaLog = if (table.startsWith("delta.")) {
-      DeltaLog.forTable(spark, table.stripPrefix("delta.`").stripSuffix("`"))
+    val (deltaLog, snapshot) = if (table.startsWith("delta.")) {
+      DeltaLog.forTableWithSnapshot(spark, table.stripPrefix("delta.`").stripSuffix("`"))
     } else {
-      DeltaLog.forTable(spark, TableIdentifier(table))
+      DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))
     }
     val schema = StructType.fromDDL(defaultTestTableSchema)
     val expectedSchema = StructType(schema.map { field =>
@@ -885,7 +885,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       }.getOrElse(field)
     })
     val partitionColumns = defaultTestTablePartitionColumns
-    val metadata = deltaLog.snapshot.metadata
+    val metadata = snapshot.metadata
     assert(metadata.schema == expectedSchema)
     assert(metadata.partitionColumns == partitionColumns)
   }
@@ -1124,8 +1124,8 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       val f2 = StructField("c2", IntegerType, nullable = true, metadata = fieldMetadata)
       val f3 = StructField("c3", IntegerType, nullable = false, metadata = fieldMetadata)
       val expectedSchema = StructType(f1 :: f2 :: f3 :: Nil)
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
-      assert(deltaLog.snapshot.metadata.schema == expectedSchema)
+      val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))
+      assert(snapshot.metadata.schema == expectedSchema)
       // Verify column comment
       val comments = sql(s"DESC $table")
         .where("col_name = 'c2'")
@@ -1848,7 +1848,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
               df2.write.format("delta").mode("append").saveAsTable("tbl")
             }
             e.getMessage.contains(
-              "A column or function parameter with name `c2` cannot be resolved")
+              "A column, variable, or function parameter with name `c2` cannot be resolved")
           }
         }
       }

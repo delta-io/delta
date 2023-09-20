@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.spark.sql.delta.actions.{CheckpointMetadata, SidecarFile, SingleAction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames.{checkpointVersion, numCheckpointParts}
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -30,6 +31,46 @@ import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types.StructType
+
+/**
+ * Information about the V2 Checkpoint in the LAST_CHECKPOINT file
+ * @param path             file name corresponding to the uuid-named v2 checkpoint
+ * @param sizeInBytes      size in bytes for the uuid-named v2 checkpoint
+ * @param modificationTime modification time for the uuid-named v2 checkpoint
+ * @param nonFileActions   all non file actions for the v2 checkpoint. This info may or may not be
+ *                         available. A None value means that info is missing.
+ *                         If it is not None, then it should have all the non-FileAction
+ *                         corresponding to the checkpoint.
+ * @param sidecarFiles     sidecar files corresponding to the v2 checkpoint. This info may or may
+ *                         not be available. A None value means that this info is missing.
+ *                         An empty list denotes that the v2 checkpoint has no sidecars.
+ */
+case class LastCheckpointV2(
+    path: String,
+    sizeInBytes: Long,
+    modificationTime: Long,
+    nonFileActions: Option[Seq[SingleAction]],
+    sidecarFiles: Option[Seq[SidecarFile]]) {
+
+  @JsonIgnore
+  lazy val checkpointMetadataOpt: Option[CheckpointMetadata] =
+    nonFileActions.flatMap(_.map(_.unwrap).collectFirst { case cm: CheckpointMetadata => cm })
+
+}
+
+object LastCheckpointV2 {
+  def apply(
+      fileStatus: FileStatus,
+      nonFileActions: Option[Seq[SingleAction]] = None,
+      sidecarFiles: Option[Seq[SidecarFile]] = None): LastCheckpointV2 = {
+    LastCheckpointV2(
+      path = fileStatus.getPath.getName,
+      sizeInBytes = fileStatus.getLen,
+      modificationTime = fileStatus.getModificationTime,
+      nonFileActions = nonFileActions,
+      sidecarFiles = sidecarFiles)
+  }
+}
 
 /**
  * Records information about a checkpoint.
@@ -67,6 +108,7 @@ case class LastCheckpointInfo(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     numOfAddFiles: Option[Long],
     checkpointSchema: Option[StructType],
+    v2Checkpoint: Option[LastCheckpointV2] = None,
     checksum: Option[String] = None) {
 
   @JsonIgnore
@@ -107,6 +149,7 @@ object LastCheckpointInfo {
           lastCheckpointInfo.parts,
           sizeInBytes = None,
           numOfAddFiles = None,
+          v2Checkpoint = None,
           checkpointSchema = None))
     }
 

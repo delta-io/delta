@@ -32,7 +32,8 @@ import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException}
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 
 class CaseSensitivitySuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils
+  with SharedSparkSession
+  with SQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._

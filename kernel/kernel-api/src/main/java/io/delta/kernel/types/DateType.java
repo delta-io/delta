@@ -15,16 +15,19 @@
  */
 package io.delta.kernel.types;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * A date type, supporting "0001-01-01" through "9999-12-31".
  * Internally, this is represented as the number of days from 1970-01-01.
+ *
+ * @since 3.0.0
  */
-public class DateType extends BasePrimitiveType
-{
+@Evolving
+public class DateType extends BasePrimitiveType {
     public static final DateType INSTANCE = new DateType();
 
-    private DateType()
-    {
+    private DateType() {
         super("date");
     }
 }

@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 
 import org.apache.spark.SparkConf
@@ -34,7 +35,8 @@ import org.apache.spark.sql.types.StructType
 
 class DeltaTableFeatureSuite
   extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   private lazy val testTableSchema = spark.range(1).schema
 
@@ -145,7 +147,9 @@ class DeltaTableFeatureSuite
         ChangeDataFeedTableFeature,
         GeneratedColumnsTableFeature,
         TestLegacyWriterFeature,
-        TestLegacyReaderWriterFeature))
+        TestLegacyReaderWriterFeature,
+        TestRemovableLegacyWriterFeature,
+        TestRemovableLegacyReaderWriterFeature))
     assert(
       Protocol(2, 5).implicitlySupportedFeatures === Set(
         AppendOnlyTableFeature,
@@ -155,7 +159,9 @@ class DeltaTableFeatureSuite
         ChangeDataFeedTableFeature,
         GeneratedColumnsTableFeature,
         TestLegacyWriterFeature,
-        TestLegacyReaderWriterFeature))
+        TestLegacyReaderWriterFeature,
+        TestRemovableLegacyWriterFeature,
+        TestRemovableLegacyReaderWriterFeature))
     assert(Protocol(2, TABLE_FEATURES_MIN_WRITER_VERSION).implicitlySupportedFeatures === Set())
     assert(
       Protocol(
@@ -210,7 +216,9 @@ class DeltaTableFeatureSuite
           CheckConstraintsTableFeature,
           GeneratedColumnsTableFeature,
           TestLegacyWriterFeature,
-          TestLegacyReaderWriterFeature)))
+          TestLegacyReaderWriterFeature,
+          TestRemovableLegacyWriterFeature,
+          TestRemovableLegacyReaderWriterFeature)))
   }
 
   test("protocol upgrade compatibility") {
@@ -237,7 +245,9 @@ class DeltaTableFeatureSuite
               GeneratedColumnsTableFeature,
               ColumnMappingTableFeature,
               TestLegacyWriterFeature,
-              TestLegacyReaderWriterFeature))))
+              TestLegacyReaderWriterFeature,
+              TestRemovableLegacyWriterFeature,
+              TestRemovableLegacyReaderWriterFeature))))
     assert(
       Protocol(2, 6).canUpgradeTo(
         Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
@@ -249,7 +259,9 @@ class DeltaTableFeatureSuite
             GeneratedColumnsTableFeature,
             ColumnMappingTableFeature,
             TestLegacyWriterFeature,
-            TestLegacyReaderWriterFeature))))
+            TestLegacyReaderWriterFeature,
+            TestRemovableLegacyWriterFeature,
+            TestRemovableLegacyReaderWriterFeature))))
     // Features are identical but protocol versions are lower, thus `canUpgradeTo` is `false`.
     assert(
       !Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
@@ -278,6 +290,24 @@ class DeltaTableFeatureSuite
         .withFeatures(Seq(
           TestWriterFeature,
           AppendOnlyTableFeature))
+        .canDowngradeTo(tableFeatureProtocol))
+    // Remove reader+writer feature.
+    assert(tableFeatureProtocol.withFeatures(Seq(TestReaderWriterFeature))
+      .canDowngradeTo(tableFeatureProtocol))
+    // Only one feature at a time.
+    assert(
+      !tableFeatureProtocol
+        .withFeatures(Seq(TestReaderWriterFeature, TestReaderWriterMetadataAutoUpdateFeature))
+        .canDowngradeTo(tableFeatureProtocol))
+    // Only one feature at a time - multiple reader+writer features.
+    assert(
+      !tableFeatureProtocol
+        .withFeatures(Seq(TestReaderWriterFeature, TestReaderWriterMetadataAutoUpdateFeature))
+        .canDowngradeTo(tableFeatureProtocol))
+    // Only one feature at a time - mix of reader+writer and writer features.
+    assert(
+      !tableFeatureProtocol
+        .withFeatures(Seq(TestWriterFeature, TestReaderWriterFeature))
         .canDowngradeTo(tableFeatureProtocol))
   }
 
@@ -408,7 +438,9 @@ class DeltaTableFeatureSuite
             GeneratedColumnsTableFeature.name,
             TestWriterFeature.name,
             TestLegacyWriterFeature.name,
-            TestLegacyReaderWriterFeature.name))
+            TestLegacyReaderWriterFeature.name,
+            TestRemovableLegacyWriterFeature.name,
+            TestRemovableLegacyReaderWriterFeature.name))
         }
       }
     }

@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
+import org.apache.spark.sql.delta.tablefeatures.DropFeature
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
@@ -552,6 +553,36 @@ class DeltaCatalog extends DelegatingCatalogExtension
     // Whether this is an ALTER TABLE ALTER COLUMN SYNC IDENTITY command.
     var syncIdentity = false
     val columnUpdates = new mutable.HashMap[Seq[String], (StructField, Option[ColumnPosition])]()
+    val isReplaceColumnsCommand = grouped.get(classOf[DeleteColumn]) match {
+      case Some(deletes) if grouped.contains(classOf[AddColumn]) =>
+        // Convert to Seq so that contains method works
+        val deleteSet = deletes.asInstanceOf[Seq[DeleteColumn]].map(_.fieldNames().toSeq).toSet
+        // Ensure that all the table top level columns are being deleted
+        table.schema().fieldNames.forall(f => deleteSet.contains(Seq(f)))
+      case _ =>
+        false
+    }
+
+    if (isReplaceColumnsCommand &&
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REPLACE_COLUMNS_SAFE)) {
+      // The new schema is essentially the AddColumn operators
+      val tableToUpdate = table
+      val colsToAdd = grouped(classOf[AddColumn]).asInstanceOf[Seq[AddColumn]]
+      val structFields = colsToAdd.map { col =>
+        assert(
+          col.fieldNames().length == 1, "We don't expect replace to provide nested column adds")
+        var field = StructField(col.fieldNames().head, col.dataType, col.isNullable)
+        Option(col.comment()).foreach { comment =>
+          field = field.withComment(comment)
+        }
+        Option(col.defaultValue()).foreach { defValue =>
+          field = field.withCurrentDefaultValue(defValue.getSql)
+        }
+        field
+      }
+      AlterTableReplaceColumnsDeltaCommand(tableToUpdate, structFields).run(spark)
+      return loadTable(ident)
+    }
 
     grouped.foreach {
       case (t, newColumns) if t == classOf[AddColumn] =>
@@ -598,7 +629,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
         def getColumn(fieldNames: Seq[String]): (StructField, Option[ColumnPosition]) = {
           columnUpdates.getOrElseUpdate(fieldNames, {
             // TODO: Theoretically we should be able to fetch the snapshot from a txn.
-            val schema = table.snapshot.schema
+            val schema = table.initialSnapshot.schema
             val colName = UnresolvedAttribute(fieldNames).name
             val fieldOpt = schema.findNestedField(fieldNames, includeCollections = true,
               spark.sessionState.conf.resolver)
@@ -664,6 +695,13 @@ class DeltaCatalog extends DelegatingCatalogExtension
           val c = constraint.asInstanceOf[DropConstraint]
           AlterTableDropConstraintDeltaCommand(table, c.constraintName, c.ifExists).run(spark)
         }
+
+      case (t, dropFeature) if t == classOf[DropFeature] =>
+        // Only single feature removal is supported.
+        val dropFeatureTableChange = dropFeature.head.asInstanceOf[DropFeature]
+        val featureName = dropFeatureTableChange.featureName
+        val truncateHistory = dropFeatureTableChange.truncateHistory
+        AlterTableDropFeatureDeltaCommand(table, featureName, truncateHistory).run(spark)
 
     }
 

@@ -59,7 +59,7 @@ import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, CloneTableStatement, LogicalPlan, RestoreTableStatement}
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, AlterTableDropFeature, CloneTableStatement, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
 import org.apache.spark.sql.errors.QueryParsingErrors
@@ -427,6 +427,8 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     ctx.identifier.asScala.toSeq match {
       case Seq(tbl) => TableIdentifier(tbl.getText)
       case Seq(db, tbl) => TableIdentifier(tbl.getText, Some(db.getText))
+      case Seq(catalog, db, tbl) =>
+        TableIdentifier(tbl.getText, Some(db.getText), Some(catalog.getText))
       case _ => throw new DeltaParseException(s"Illegal table name ${ctx.getText}", ctx)
     }
   }
@@ -495,7 +497,31 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       ifExists = ctx.EXISTS != null)
   }
 
-/**
+  /**
+   * A featureNameValue can either be String or an identifier. This function extracts
+   * the featureNameValue based on whether its a string literal or an identifier.
+   */
+  override def visitFeatureNameValue(featureNameValue: FeatureNameValueContext): String = {
+    if (featureNameValue.stringLit() != null) {
+      string(visitStringLit(featureNameValue.stringLit()))
+    } else {
+      featureNameValue.getText
+    }
+  }
+
+  /**
+   * Parse an ALTER TABLE DROP FEATURE command.
+   */
+  override def visitAlterTableDropFeature(ctx: AlterTableDropFeatureContext): LogicalPlan = {
+    val truncateHistory = ctx.TRUNCATE != null && ctx.HISTORY != null
+    AlterTableDropFeature(
+      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
+        "ALTER TABLE ... DROP FEATURE"),
+      visitFeatureNameValue(ctx.featureName),
+      truncateHistory)
+  }
+
+  /**
  * Create a [[ShowTableColumnsCommand]] logical plan.
  *
  * Syntax:

@@ -97,7 +97,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
 
       DeltaLog.clearCache()
       deltaLog = DeltaLog.forTable(spark, path)
-      val checkpointParts = deltaLog.snapshot.logSegment.checkpointProvider.files.size
+      val checkpointParts = deltaLog.snapshot.logSegment.checkpointProvider.topLevelFiles.size
       val multipart = partToCorrupt.map((_, checkpointParts))
 
       // We have different code paths for empty and non-empty checkpoints
@@ -126,7 +126,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
 
       DeltaLog.clearCache()
       deltaLog = DeltaLog.forTable(spark, path)
-      val checkpointParts = deltaLog.snapshot.logSegment.checkpointProvider.files.size
+      val checkpointParts = deltaLog.snapshot.logSegment.checkpointProvider.topLevelFiles.size
       val multipart = partToCorrupt.map((_, checkpointParts))
 
       // We have different code paths for empty and non-empty checkpoints
@@ -152,7 +152,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       DeltaLog.clearCache()
 
       val deltaLog = DeltaLog.forTable(spark, path)
-      val checkpointParts = deltaLog.snapshot.logSegment.checkpointProvider.files.size
+      val checkpointParts = deltaLog.snapshot.logSegment.checkpointProvider.topLevelFiles.size
       val multipart = partToCorrupt.map((_, checkpointParts))
 
       DeltaLog.clearCache()
@@ -200,7 +200,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       deltaLog.checkpoint()
       DeltaLog.clearCache()
       val checkpointParts0 =
-        DeltaLog.forTable(spark, path).snapshot.logSegment.checkpointProvider.files.size
+        DeltaLog.forTable(spark, path).snapshot.logSegment.checkpointProvider.topLevelFiles.size
 
       spark.range(10).write.format("delta").mode("append").save(path)
       deltaLog.update()
@@ -209,7 +209,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
 
       DeltaLog.clearCache()
       val checkpointParts1 =
-        DeltaLog.forTable(spark, path).snapshot.logSegment.checkpointProvider.files.size
+        DeltaLog.forTable(spark, path).snapshot.logSegment.checkpointProvider.topLevelFiles.size
 
       makeCorruptCheckpointFile(path, checkpointVersion = 0, shouldBeEmpty = false,
         multipart = partToCorrupt.map((_, checkpointParts0)))

@@ -31,8 +31,8 @@ import org.apache.iceberg.hadoop.HadoopTables
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{stringToDate, toJavaDate}
-import org.apache.spark.sql.functions.{col, from_json, lit, struct, substring}
-import org.apache.spark.sql.types.{LongType, StringType, StructType}
+import org.apache.spark.sql.functions.{col, expr, from_json, lit, struct, substring}
+import org.apache.spark.sql.types.{Decimal, DecimalType, LongType, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.UTF8String
 // scalastyle:on import.ordering.noEmptyLine
 
@@ -50,7 +50,7 @@ trait CloneIcebergSuiteBase extends QueryTest
   protected def sourceIdentifier: String
   protected def supportedModes: Seq[String] = Seq("SHALLOW")
 
-  private def toDate(date: String): Date = {
+  protected def toDate(date: String): Date = {
     toJavaDate(stringToDate(UTF8String.fromString(date)).get)
   }
 

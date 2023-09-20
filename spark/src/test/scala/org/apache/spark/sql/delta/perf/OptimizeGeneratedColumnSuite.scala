@@ -90,7 +90,7 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
           generatedColumns.keys.toSeq
         )
 
-        val metadata = DeltaLog.forTable(spark, TableIdentifier(table)).snapshot.metadata
+        val metadata = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))._2.metadata
         assert(metadata.optimizablePartitionExpressions(expressionKey.getOrElse(
           normalCol).toLowerCase(Locale.ROOT)) == expectedPartitionExpr :: Nil)
         filterTestCases.foreach { filterTestCase =>
@@ -117,7 +117,7 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
             updatedGeneratedColumns.keys.toSeq
           )
 
-          val metadata = DeltaLog.forTable(spark, TableIdentifier(table)).snapshot.metadata
+          val metadata = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))._2.metadata
           val nestedColPath =
             s"nested.${expressionKey.getOrElse(normalCol).toLowerCase(Locale.ROOT)}"
           assert(metadata.optimizablePartitionExpressions(nestedColPath)

@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.data;
 
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,19 +23,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.BinaryType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.ByteType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.DoubleType;
-import io.delta.kernel.types.FloatType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.ShortType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -43,8 +32,7 @@ import io.delta.kernel.internal.actions.Protocol;
  * Expose the common scan state for all scan files.
  */
 public class ScanStateRow
-    implements Row
-{
+    implements Row {
     private static final Map<Integer, Function<ScanStateRow, Object>>
         ordinalToAccessor = new HashMap<>();
     private static final Map<Integer, String> ordinalToColName = new HashMap<>();
@@ -80,23 +68,19 @@ public class ScanStateRow
         .stream()
         .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
 
-    public static int getLogicalSchemaStringColOrdinal()
-    {
+    public static int getLogicalSchemaStringColOrdinal() {
         return getOrdinal("logicalSchemaString");
     }
 
-    public static int getPhysicalSchemaStringColOrdinal()
-    {
+    public static int getPhysicalSchemaStringColOrdinal() {
         return getOrdinal("physicalSchemaString");
     }
 
-    public static int getPartitionColumnsColOrdinal()
-    {
+    public static int getPartitionColumnsColOrdinal() {
         return getOrdinal("partitionColumns");
     }
 
-    public static int getConfigurationColOrdinal()
-    {
+    public static int getConfigurationColOrdinal() {
         return getOrdinal("configuration");
     }
 
@@ -117,8 +101,7 @@ public class ScanStateRow
         Protocol protocol,
         String readSchemaLogicalJson,
         String readSchemaPhysicalJson,
-        String tablePath)
-    {
+        String tablePath) {
         this.configuration = metadata.getConfiguration();
         this.partitionColumns = metadata.getPartitionColumns();
         this.minReaderVersion = protocol.getMinReaderVersion();
@@ -128,146 +111,129 @@ public class ScanStateRow
         this.tablePath = tablePath;
     }
 
-    public Map<String, String> getConfiguration()
-    {
+    public Map<String, String> getConfiguration() {
         return configuration;
     }
 
-    public List<String> getPartitionColumns()
-    {
+    public List<String> getPartitionColumns() {
         return partitionColumns;
     }
 
-    public int getMinReaderVersion()
-    {
+    public int getMinReaderVersion() {
         return minReaderVersion;
     }
 
-    public int getMinWriterVersion()
-    {
+    public int getMinWriterVersion() {
         return minWriterVersion;
     }
 
-    public String getReadSchemaPhysicalJson()
-    {
+    public String getReadSchemaPhysicalJson() {
         return readSchemaPhysicalJson;
     }
 
-    public String getReadSchemaLogicalJson()
-    {
+    public String getReadSchemaLogicalJson() {
         return readSchemaLogicalJson;
     }
 
-    public String getTablePath()
-    {
+    public String getTablePath() {
         return tablePath;
     }
 
     @Override
-    public StructType getSchema()
-    {
+    public StructType getSchema() {
         return schema;
     }
 
     @Override
-    public boolean isNullAt(int ordinal)
-    {
+    public boolean isNullAt(int ordinal) {
         return getValue(ordinal) == null;
     }
 
     @Override
-    public boolean getBoolean(int ordinal)
-    {
+    public boolean getBoolean(int ordinal) {
         throwIfUnsafeAccess(ordinal, BooleanType.class, "boolean");
         return (boolean) getValue(ordinal);
     }
 
     @Override
-    public byte getByte(int ordinal)
-    {
+    public byte getByte(int ordinal) {
         throwIfUnsafeAccess(ordinal, ByteType.class, "byte");
         return (byte) getValue(ordinal);
     }
 
     @Override
-    public short getShort(int ordinal)
-    {
+    public short getShort(int ordinal) {
         throwIfUnsafeAccess(ordinal, ShortType.class, "short");
         return (short) getValue(ordinal);
     }
 
     @Override
-    public int getInt(int ordinal)
-    {
+    public int getInt(int ordinal) {
         throwIfUnsafeAccess(ordinal, IntegerType.class, "integer");
         return (int) getValue(ordinal);
     }
 
     @Override
-    public long getLong(int ordinal)
-    {
+    public long getLong(int ordinal) {
         throwIfUnsafeAccess(ordinal, LongType.class, "long");
         return (long) getValue(ordinal);
     }
 
     @Override
-    public float getFloat(int ordinal)
-    {
+    public float getFloat(int ordinal) {
         throwIfUnsafeAccess(ordinal, FloatType.class, "float");
         return (float) getValue(ordinal);
     }
 
     @Override
-    public double getDouble(int ordinal)
-    {
+    public double getDouble(int ordinal) {
         throwIfUnsafeAccess(ordinal, DoubleType.class, "double");
         return (double) getValue(ordinal);
     }
 
     @Override
-    public String getString(int ordinal)
-    {
+    public String getString(int ordinal) {
         throwIfUnsafeAccess(ordinal, StringType.class, "string");
         return (String) getValue(ordinal);
     }
 
     @Override
-    public byte[] getBinary(int ordinal)
-    {
+    public BigDecimal getDecimal(int ordinal) {
+        throwIfUnsafeAccess(ordinal, DecimalType.class, "decimal");
+        return (BigDecimal) getValue(ordinal);
+    }
+
+    @Override
+    public byte[] getBinary(int ordinal) {
         throwIfUnsafeAccess(ordinal, BinaryType.class, "binary");
         return (byte[]) getValue(ordinal);
     }
 
     @Override
-    public Row getStruct(int ordinal)
-    {
+    public Row getStruct(int ordinal) {
         throwIfUnsafeAccess(ordinal, StructType.class, "struct");
         return (Row) getValue(ordinal);
     }
 
     @Override
-    public <T> List<T> getArray(int ordinal)
-    {
+    public <T> List<T> getArray(int ordinal) {
         // TODO: not sufficient check, also need to check the element type
         throwIfUnsafeAccess(ordinal, ArrayType.class, "array");
         return (List<T>) getValue(ordinal);
     }
 
     @Override
-    public <K, V> Map<K, V> getMap(int ordinal)
-    {
+    public <K, V> Map<K, V> getMap(int ordinal) {
         // TODO: not sufficient check, also need to check the element types
         throwIfUnsafeAccess(ordinal, MapType.class, "map");
         return (Map<K, V>) getValue(ordinal);
     }
 
-    private Object getValue(int ordinal)
-    {
+    private Object getValue(int ordinal) {
         return ordinalToAccessor.get(ordinal).apply(this);
     }
 
-    private DataType dataType(int ordinal)
-    {
+    private DataType dataType(int ordinal) {
         if (schema.length() <= ordinal) {
             throw new IllegalArgumentException("invalid ordinal: " + ordinal);
         }
@@ -276,8 +242,7 @@ public class ScanStateRow
     }
 
     private void throwIfUnsafeAccess(
-        int ordinal, Class<? extends DataType> expDataType, String accessType)
-    {
+        int ordinal, Class<? extends DataType> expDataType, String accessType) {
 
         DataType actualDataType = dataType(ordinal);
         if (!expDataType.isAssignableFrom(actualDataType.getClass())) {
@@ -289,8 +254,7 @@ public class ScanStateRow
         }
     }
 
-    private static int getOrdinal(String columnName)
-    {
+    private static int getOrdinal(String columnName) {
         return colNameToOrdinal.get(columnName);
     }
 }

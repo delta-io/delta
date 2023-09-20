@@ -27,6 +27,7 @@ import org.apache.hadoop.fs.Path
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -91,6 +92,11 @@ class DeltaSink(
   }
 
   override def addBatch(batchId: Long, data: DataFrame): Unit = {
+    addBatchWithStatusImpl(batchId, data)
+  }
+
+
+  private def addBatchWithStatusImpl(batchId: Long, data: DataFrame): Boolean = {
     val txn = deltaLog.startTransaction()
     assert(queryId != null)
 
@@ -118,7 +124,7 @@ class DeltaSink(
     val currentVersion = txn.txnVersion(queryId)
     if (currentVersion >= batchId) {
       logInfo(s"Skipping already complete epoch $batchId, in query $queryId")
-      return
+      return false
     }
 
     val deletedFiles = outputMode match {
@@ -140,6 +146,7 @@ class DeltaSink(
                                                )
     val pendingTxn = PendingTxn(batchId, txn, info, newFiles, deletedFiles)
     pendingTxn.commit()
+    return true
   }
 
 

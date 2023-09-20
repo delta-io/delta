@@ -16,6 +16,9 @@
 
 package io.delta.kernel.data;
 
+import java.util.NoSuchElementException;
+
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -24,9 +27,11 @@ import io.delta.kernel.internal.data.ColumnarBatchRow;
 
 /**
  * Represents zero or more rows of records with same schema type.
+ *
+ * @since 3.0.0
  */
-public interface ColumnarBatch
-{
+@Evolving
+public interface ColumnarBatch {
     /**
      * @return the schema of the data in this batch.
      */
@@ -58,22 +63,21 @@ public interface ColumnarBatch
      * @param columnVector
      * @return {@link ColumnarBatch} with new vector inserted.
      * @throws IllegalArgumentException If the ordinal is not valid (ie less than zero or
-     * greater than the current number of vectors).
+     *                                  greater than the current number of vectors).
      */
     default ColumnarBatch withNewColumn(int ordinal, StructField columnSchema,
-        ColumnVector columnVector)
-    {
+                                        ColumnVector columnVector) {
         throw new UnsupportedOperationException("Not yet implemented");
     }
 
     /**
      * Return a copy of this {@link ColumnarBatch} with the column at given {@code ordinal}
      * removed. All columns after the {@code ordinal} will be shifted to left by one position.
+     *
      * @param ordinal Column ordinal to delete.
      * @return {@link ColumnarBatch} with a column vector deleted.
      */
-    default ColumnarBatch withDeletedColumnAt(int ordinal)
-    {
+    default ColumnarBatch withDeletedColumnAt(int ordinal) {
         throw new UnsupportedOperationException("Not yet implemented");
     }
 
@@ -85,8 +89,7 @@ public interface ColumnarBatch
      * @param newSchema
      * @return {@link ColumnarBatch} with given new schema.
      */
-    default ColumnarBatch withNewSchema(StructType newSchema)
-    {
+    default ColumnarBatch withNewSchema(StructType newSchema) {
         throw new UnsupportedOperationException("Not yet implemented");
     }
 
@@ -94,34 +97,32 @@ public interface ColumnarBatch
      * Return a slice of the current batch.
      *
      * @param start Starting record index to include in the returned columnar batch
-     * @param end Ending record index (exclusive) to include in the returned columnar batch
+     * @param end   Ending record index (exclusive) to include in the returned columnar batch
      * @return a columnar batch containing the records between [start, end)
      */
-    default ColumnarBatch slice(int start, int end)
-    {
+    default ColumnarBatch slice(int start, int end) {
         throw new UnsupportedOperationException("Not yet implemented!");
     }
 
     /**
      * @return iterator of {@link Row}s in this batch
      */
-    default CloseableIterator<Row> getRows()
-    {
+    default CloseableIterator<Row> getRows() {
         final ColumnarBatch batch = this;
-        return new CloseableIterator<Row>()
-        {
+        return new CloseableIterator<Row>() {
             int rowId = 0;
             int maxRowId = getSize();
 
             @Override
-            public boolean hasNext()
-            {
+            public boolean hasNext() {
                 return rowId < maxRowId;
             }
 
             @Override
-            public Row next()
-            {
+            public Row next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
                 Row row = new ColumnarBatchRow(batch, rowId);
                 rowId += 1;
                 return row;

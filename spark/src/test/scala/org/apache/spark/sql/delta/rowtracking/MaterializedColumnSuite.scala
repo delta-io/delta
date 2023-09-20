@@ -22,7 +22,8 @@ import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 
-class MaterializedColumnSuite extends RowIdTestUtils  with ParquetTest {
+class MaterializedColumnSuite extends RowIdTestUtils
+  with ParquetTest {
 
   private val testTableName = "target"
   private val testDataColumnName = "test_data"
@@ -36,13 +37,13 @@ class MaterializedColumnSuite extends RowIdTestUtils  with ParquetTest {
   }
 
   private def getMaterializedRowIdColumnName(tableName: String): Option[String] = {
-    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
-    deltaLog.update().metadata.configuration.get(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
+    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+    snapshot.metadata.configuration.get(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
   }
 
   private def getMaterializedRowCommitVersionColumnName(tableName: String): Option[String] = {
-    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
-    deltaLog.update().metadata.configuration.get(
+    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+    snapshot.metadata.configuration.get(
       MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
   }
 

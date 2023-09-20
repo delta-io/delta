@@ -29,7 +29,8 @@ import org.apache.spark.sql.types._
 
 class DeltaCheckpointWithStructColsSuite
   extends QueryTest
-  with SharedSparkSession  with DeltaColumnMappingTestUtils
+  with SharedSparkSession
+  with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._
