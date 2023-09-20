@@ -155,13 +155,17 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
 
         @Override
         ExpressionTransformResult visitColumn(Column column) {
-            int ordinal = inputDataSchema.indexOf(column.getName());
-            if (ordinal == -1) {
-                throw new IllegalArgumentException(
-                    format("Column `%s` doesn't exist in input data schema: %s",
-                        column.getName(), inputDataSchema));
+            String[] names = column.getNames();
+            DataType currentType = inputDataSchema;
+            for(int level = 0; level < names.length; level++) {
+                assertColumnExists(currentType instanceof StructType, inputDataSchema, column);
+                StructType structSchema = ((StructType) currentType);
+                int ordinal = structSchema.indexOf(names[level]);
+                assertColumnExists(ordinal != -1, inputDataSchema, column);
+                currentType = structSchema.at(ordinal).getDataType();
             }
-            return new ExpressionTransformResult(column, inputDataSchema.at(ordinal).getDataType());
+            assertColumnExists(currentType != null, inputDataSchema, column);
+            return new ExpressionTransformResult(column, currentType);
         }
 
         @Override
@@ -317,13 +321,24 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
 
         @Override
         ColumnVector visitColumn(Column column) {
-            int ordinal = input.getSchema().indexOf(column.getName());
-            if (ordinal == -1) {
-                throw new IllegalArgumentException(
-                    format("Column `%s` doesn't exist in input data schema: %s",
-                        column.getName(), input.getSchema()));
+            String[] names = column.getNames();
+            DataType currentType = input.getSchema();
+            ColumnVector columnVector = null;
+            for(int level = 0; level < names.length; level++) {
+                assertColumnExists(currentType instanceof StructType, input.getSchema(), column);
+                StructType structSchema = ((StructType) currentType);
+                int ordinal = structSchema.indexOf(names[level]);
+                assertColumnExists(ordinal != -1, input.getSchema(), column);
+                currentType = structSchema.at(ordinal).getDataType();
+
+                if (level == 0) {
+                    columnVector = input.getColumnVector(ordinal);
+                } else {
+                    columnVector = columnVector.getChild(ordinal);
+                }
             }
-            return input.getColumnVector(ordinal);
+            assertColumnExists(columnVector != null, input.getSchema(), column);
+            return columnVector;
         }
 
         @Override
@@ -365,6 +380,13 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             this.rowCount = rowCount;
             this.leftResult = leftResult;
             this.rightResult = rightResult;
+        }
+    }
+
+    private static void assertColumnExists(boolean condition, StructType schema, Column column) {
+        if (!condition) {
+            throw new IllegalArgumentException(
+                format("%s doesn't exist in input data schema: %s", column, schema));
         }
     }
 }

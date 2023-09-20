@@ -68,6 +68,13 @@ public class DefaultStructVector
         return new StructRow(this, rowId);
     }
 
+    @Override
+    public ColumnVector getChild(int ordinal) {
+        checkArgument(
+            ordinal >= 0 && ordinal < memberVectors.length, "Invalid ordinal " + ordinal);
+        return memberVectors[ordinal];
+    }
+
     /**
      * Wrapper class to expose one member as a {@link Row}
      */
