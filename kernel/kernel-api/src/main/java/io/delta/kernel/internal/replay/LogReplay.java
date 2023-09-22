@@ -62,6 +62,8 @@ public class LogReplay implements Logging {
      * Note that we don't need to read the entire RemoveFile, only the path and dv info.
      */
     public static final StructType ADD_REMOVE_READ_SCHEMA = new StructType()
+        // TODO: further restrict the fields to read from AddFile depending upon
+        // the whether stats are needed or not: https://github.com/delta-io/delta/issues/1961
         .add("add", AddFile.SCHEMA)
         .add("remove", new StructType()
             .add("path", StringType.INSTANCE, false /* nullable */)
