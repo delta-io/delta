@@ -16,11 +16,14 @@
 
 package org.apache.spark.sql.delta.commands
 
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier}
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.trees.UnaryLike
+import org.apache.spark.sql.execution.command.RunnableCommand
 
 /**
  * The column format of the result returned by the `SHOW COLUMNS` command.
@@ -28,30 +31,24 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 case class TableColumns(col_name: String)
 
 /**
- * A command listing all column names of a table.
+ * A command for listing all column names of a Delta table.
  *
- * The syntax of using this command in SQL is:
- * {{{
- *   SHOW COLUMNS (FROM | IN) tableName [(FROM | IN) schemaName];
- * }}}
- *
- * @param tableID  the identifier of the Delta table
+ * @param child The resolved Delta table
  */
-case class ShowTableColumnsCommand(tableID: DeltaTableIdentifier)
-  extends LeafRunnableCommand with DeltaCommand {
+case class ShowDeltaTableColumnsCommand(child: LogicalPlan)
+  extends RunnableCommand with UnaryLike[LogicalPlan] with DeltaCommand {
 
   override val output: Seq[Attribute] = ExpressionEncoder[TableColumns]().schema.toAttributes
+
+  override protected def withNewChildInternal(newChild: LogicalPlan): ShowDeltaTableColumnsCommand =
+    copy(child = newChild)
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     // Return the schema from snapshot if it is an Delta table. Or raise
     // `DeltaErrors.notADeltaTableException` if it is a non-Delta table.
-    val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(sparkSession, tableID)
+    val deltaLog = getDeltaTable(child, "SHOW COLUMNS").deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.showColumns") {
-      if (snapshot.version < 0) {
-        throw DeltaErrors.notADeltaTableException(tableID)
-      } else {
-        snapshot.schema.fieldNames.map { x => Row(x) }.toSeq
-      }
+      deltaLog.update().schema.fieldNames.map { x => Row(x) }.toSeq
     }
   }
 }

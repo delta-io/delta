@@ -546,6 +546,18 @@ class DeltaAnalysis(session: SparkSession)
     case DeltaReorgTable(ResolvedTable(_, _, t, _)) =>
       throw DeltaErrors.notADeltaTable(t.name())
 
+    case cmd @ ShowColumns(child @ ResolvedTable(_, _, table: DeltaTableV2, _), namespace, _) =>
+      // Adapted from the rule in spark ResolveSessionCatalog.scala, which V2 tables don't trigger.
+      // NOTE: It's probably a spark bug to check head instead of tail, for 3-part identifiers.
+      val resolver = session.sessionState.analyzer.resolver
+      val v1TableName = child.identifier.asTableIdentifier
+      namespace.foreach { ns =>
+        if (v1TableName.database.exists(!resolver(_, ns.head))) {
+          throw QueryCompilationErrors.showColumnsWithConflictDatabasesError(ns, v1TableName)
+        }
+      }
+      ShowDeltaTableColumnsCommand(child)
+
     case deltaMerge: DeltaMergeInto =>
       val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
         DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
