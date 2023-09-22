@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistory, DeltaLog, DeltaTableIdentifier, UnresolvedDeltaPathOrIdentifier, UnresolvedPathBasedDeltaTable}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Row, SparkSession}
@@ -85,10 +86,7 @@ case class DescribeDeltaHistory(
       throw DeltaErrors.maxArraySizeExceeded()
     }
     val deltaTableV2: DeltaTableV2 = getDeltaTable(child, DescribeDeltaHistory.COMMAND_NAME)
-    DescribeDeltaHistoryCommand(
-      table = deltaTableV2,
-      limit = limit,
-      output = output)
+    DescribeDeltaHistoryCommand(table = deltaTableV2, limit = limit, output = output)
   }
 }
 
@@ -101,8 +99,7 @@ case class DescribeDeltaHistoryCommand(
     override val output: Seq[Attribute] = ExpressionEncoder[DeltaHistory]().schema.toAttributes)
   extends LeafRunnableCommand
     with MultiInstanceRelation
-    with DeltaCommand
-{
+    with DeltaLogging {
 
   override def newInstance(): LogicalPlan = copy(output = output.map(_.newInstance()))
 
