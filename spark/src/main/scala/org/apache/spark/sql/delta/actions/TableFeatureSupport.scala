@@ -312,66 +312,6 @@ trait TableFeatureSupport { this: Protocol =>
     } else {
       mergedProtocol
     }
-    newProtocol.downgradeProtocolVersionsIfNeeded
-  }
-
-  /**
-   * If the current protocol does not contain any non-legacy table features and the remaining
-   * set of legacy table features exactly matches a legacy protocol version, it downgrades the
-   * protocol to the minimum reader/writer versions required to support the protocol's legacy
-   * features.
-   *
-   * Note, when a table is initialized with table features (3, 7), by default there are no legacy
-   * features. After we remove the last native feature we downgrade the protocol to (1, 1).
-   */
-  def downgradeProtocolVersionsIfNeeded: Protocol = {
-    if (!readerAndWriterFeatures.forall(_.isLegacyFeature)) return this
-
-    val (minReaderVersion, minWriterVersion) =
-      TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
-    val newProtocol = Protocol(minReaderVersion, minWriterVersion)
-
-    require(
-      !newProtocol.supportsReaderFeatures && !newProtocol.supportsWriterFeatures,
-      s"Downgraded protocol should not support table features, but got $newProtocol.")
-
-    // Ensure the legacy protocol supports features exactly as the current protocol.
-    if (this.implicitlyAndExplicitlySupportedFeatures ==
-      newProtocol.implicitlyAndExplicitlySupportedFeatures) {
-      newProtocol
-    } else {
-      this
-    }
-    newProtocol.downgradeProtocolVersionsIfNeeded
-  }
-
-  /**
-   * If the current protocol does not contain any non-legacy table features and the remaining
-   * set of legacy table features exactly matches a legacy protocol version, it downgrades the
-   * protocol to the minimum reader/writer versions required to support the protocol's legacy
-   * features.
-   *
-   * Note, when a table is initialized with table features (3, 7), by default there are no legacy
-   * features. After we remove the last native feature we downgrade the protocol to (1, 1).
-   */
-  def downgradeProtocolVersionsIfNeeded: Protocol = {
-    if (!readerAndWriterFeatures.forall(_.isLegacyFeature)) return this
-
-    val (minReaderVersion, minWriterVersion) =
-      TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
-    val newProtocol = Protocol(minReaderVersion, minWriterVersion)
-
-    require(
-      !newProtocol.supportsReaderFeatures && !newProtocol.supportsWriterFeatures,
-      s"Downgraded protocol should not support table features, but got $newProtocol.")
-
-    // Ensure the legacy protocol supports features exactly as the current protocol.
-    if (this.implicitlyAndExplicitlySupportedFeatures ==
-      newProtocol.implicitlyAndExplicitlySupportedFeatures) {
-      newProtocol
-    } else {
-      this
-    }
   }
 
   /**
@@ -428,12 +368,23 @@ trait TableFeatureSupport { this: Protocol =>
    * features. After we remove the last table feature we downgrade the protocol to (1, 1).
    */
   def downgradeProtocolVersionsIfNeeded: Protocol = {
-    if (readerAndWriterFeatures.filterNot(_.isLegacyFeature).nonEmpty) return this
+    if (!readerAndWriterFeatures.forall(_.isLegacyFeature)) return this
 
     val (minReaderVersion, minWriterVersion) =
       TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
+    val newProtocol = Protocol(minReaderVersion, minWriterVersion)
 
-    Protocol(minReaderVersion, minWriterVersion)
+    require(
+      !newProtocol.supportsReaderFeatures && !newProtocol.supportsWriterFeatures,
+      s"Downgraded protocol should not support table features, but got $newProtocol.")
+
+    // Ensure the legacy protocol supports features exactly as the current protocol.
+    if (this.implicitlyAndExplicitlySupportedFeatures ==
+      newProtocol.implicitlyAndExplicitlySupportedFeatures) {
+      newProtocol
+    } else {
+      this
+    }
   }
 
   /**
