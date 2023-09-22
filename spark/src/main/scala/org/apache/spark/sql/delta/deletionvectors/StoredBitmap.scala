@@ -18,7 +18,9 @@ package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.{IOException, ObjectInputStream}
 
+import org.apache.spark.sql.delta.DeltaErrorsBase
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -60,12 +62,13 @@ trait StoredBitmap {
  */
 case class DeletionVectorStoredBitmap(
     dvDescriptor: DeletionVectorDescriptor,
-    tableDataPath: Option[Path] = None) extends StoredBitmap {
+    tableDataPath: Option[Path] = None
+) extends StoredBitmap with DeltaLogging with DeltaErrorsBase {
   require(tableDataPath.isDefined || !dvDescriptor.isOnDisk,
     "Table path is required for on-disk deletion vectors")
 
   override def load(dvStore: DeletionVectorStore): RoaringBitmapArray = {
-    if (isEmpty) {
+    val bitmap = if (isEmpty) {
       new RoaringBitmapArray()
     } else if (isInline) {
       RoaringBitmapArray.readFrom(dvDescriptor.inlineData)
@@ -73,6 +76,21 @@ case class DeletionVectorStoredBitmap(
       assert(isOnDisk)
       dvStore.read(onDiskPath.get, dvDescriptor.offset.getOrElse(0), dvDescriptor.sizeInBytes)
     }
+
+    // Verify that the cardinality in the bitmap matches the DV descriptor.
+    if (bitmap.cardinality != dvDescriptor.cardinality) {
+      recordDeltaEvent(
+        deltaLog = null,
+        opType = "delta.assertions.deletionVectorReadCardinalityMismatch",
+        data = Map(
+          "deletionVectorPath" -> onDiskPath,
+          "deletionVectorCardinality" -> bitmap.cardinality,
+          "deletionVectorDescriptor" -> dvDescriptor),
+        path = tableDataPath)
+      throw deletionVectorCardinalityMismatch()
+    }
+
+    bitmap
   }
 
   override def size: Int = dvDescriptor.sizeInBytes
