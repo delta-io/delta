@@ -15,26 +15,20 @@
  */
 package io.delta.kernel.internal;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.Optional;
 
 import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 
-import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.data.AddFileColumnarBatch;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
@@ -58,7 +52,7 @@ public class ScanImpl
      * Schema that we actually want to read.
      */
     private final StructType readSchema;
-    private final CloseableIterator<AddFile> filesIter;
+    private final CloseableIterator<FilteredColumnarBatch> filesIter;
     private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
     private final Optional<Predicate> filter;
 
@@ -68,7 +62,7 @@ public class ScanImpl
         StructType snapshotSchema,
         StructType readSchema,
         Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
-        CloseableIterator<AddFile> filesIter,
+        CloseableIterator<FilteredColumnarBatch> filesIter,
         Optional<Predicate> filter,
         Path dataPath) {
         this.snapshotSchema = snapshotSchema;
@@ -86,64 +80,17 @@ public class ScanImpl
      * @return data in {@link ColumnarBatch} batch format. Each row correspond to one survived file.
      */
     @Override
-    public CloseableIterator<ColumnarBatch> getScanFiles(TableClient tableClient) {
+    public CloseableIterator<FilteredColumnarBatch> getScanFiles(TableClient tableClient) {
         if (accessedScanFiles) {
             throw new IllegalStateException("Scan files are already fetched from this instance");
         }
         accessedScanFiles = true;
-        return new CloseableIterator<ColumnarBatch>() {
-            private Optional<AddFile> nextValid = Optional.empty();
-            private boolean closed;
-
-            @Override
-            public boolean hasNext() {
-                if (closed) {
-                    throw new IllegalStateException("Can't call `hasNext` on a closed iterator.");
-                }
-                if (!nextValid.isPresent()) {
-                    nextValid = findNextValid();
-                }
-                return nextValid.isPresent();
-            }
-
-            @Override
-            public ColumnarBatch next() {
-                if (closed) {
-                    throw new IllegalStateException("Can't call `next` on a closed iterator.");
-                }
-                if (!hasNext()) {
-                    throw new NoSuchElementException();
-                }
-
-                // TODO: Figure out a way to take batch size as a parameter.
-                List<AddFile> batchAddFiles = new ArrayList<>();
-                do {
-                    batchAddFiles.add(nextValid.get());
-                    nextValid = Optional.empty();
-                }
-                while (batchAddFiles.size() < 8 && hasNext());
-                return new AddFileColumnarBatch(Collections.unmodifiableList(batchAddFiles));
-            }
-
-            @Override
-            public void close()
-                throws IOException {
-                filesIter.close();
-                this.closed = true;
-            }
-
-            private Optional<AddFile> findNextValid() {
-                if (filesIter.hasNext()) {
-                    return Optional.of(filesIter.next());
-                }
-                return Optional.empty();
-            }
-        };
+        return filesIter;
     }
 
     @Override
     public Row getScanState(TableClient tableClient) {
-        return new ScanStateRow(
+        return ScanStateRow.of(
             protocolAndMetadata.get()._2,
             protocolAndMetadata.get()._1,
             TableSchemaSerDe.toJson(readSchema),

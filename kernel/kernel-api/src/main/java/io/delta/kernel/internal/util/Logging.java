@@ -17,6 +17,9 @@ package io.delta.kernel.internal.util;
 
 import java.util.function.Supplier;
 
+/**
+ * TODO: Remove the stdout printing before 3.0 release.
+ */
 public interface Logging {
 
     default void logInfo(String msg) {

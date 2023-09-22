@@ -19,36 +19,16 @@ import java.io.IOException;
 import java.sql.Date;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
-import java.util.Collections;
 import java.util.Optional;
 
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
-
-import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.data.AddFileColumnarBatch;
 
 public class InternalUtils {
     private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
 
     private InternalUtils() {}
-
-    public static Row getScanFileRow(FileStatus fileStatus) {
-        AddFile addFile = new AddFile(
-            fileStatus.getPath(),
-            Collections.emptyMap(),
-            fileStatus.getSize(),
-            fileStatus.getModificationTime(),
-            false /* dataChange */,
-            null // deletionVector
-        );
-
-        return new AddFileColumnarBatch(Collections.singletonList(addFile))
-            .getRows()
-            .next();
-    }
 
     /**
      * Utility method to read at most one row from the given data {@link FileDataReadResult}

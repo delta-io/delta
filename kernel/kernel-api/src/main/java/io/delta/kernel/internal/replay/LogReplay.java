@@ -18,8 +18,6 @@ package io.delta.kernel.internal.replay;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.NoSuchElementException;
-import java.util.Optional;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
@@ -38,13 +36,13 @@ import io.delta.kernel.internal.util.Logging;
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
  * protocol for resolution is as follows:
- *  - The most recent {@link AddFile} and accompanying metadata for any `(path, dv id)` tuple wins.
- *  - {@link RemoveFile} deletes a corresponding AddFile. A RemoveFile "corresponds" to the AddFile
- *    that matches both the parquet file URI *and* the deletion vector's URI (if any).
- *  - The most recent {@link Metadata} wins.
- *  - The most recent {@link Protocol} version wins.
- *  - For each `(path, dv id)` tuple, this class should always output only one {@link FileAction}
- *    (either AddFile or RemoveFile)
+ *  - The most recent {@code AddFile} and accompanying metadata for any `(path, dv id)` tuple wins.
+ *  - {@code RemoveFile} deletes a corresponding AddFile. A {@code RemoveFile} "corresponds" to
+ *    the AddFile that matches both the parquet file URI *and* the deletion vector's URI (if any).
+ *  - The most recent {@code Metadata} wins.
+ *  - The most recent {@code Protocol} version wins.
+ *  - For each `(path, dv id)` tuple, this class should always output only one {@code FileAction}
+ *    (either {@code AddFile} or {@code RemoveFile})
  *
  * This class exposes only two public APIs
  * - {@link #loadProtocolAndMetadata()}: replay the log in reverse and return the first non-null
@@ -64,15 +62,29 @@ public class LogReplay implements Logging {
      * Note that we don't need to read the entire RemoveFile, only the path and dv info.
      */
     public static final StructType ADD_REMOVE_READ_SCHEMA = new StructType()
-        .add("add", AddFile.READ_SCHEMA)
+        // TODO: further restrict the fields to read from AddFile depending upon
+        // the whether stats are needed or not: https://github.com/delta-io/delta/issues/1961
+        .add("add", AddFile.SCHEMA)
         .add("remove", new StructType()
             .add("path", StringType.INSTANCE, false /* nullable */)
             .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */)
         );
 
+    public static int ADD_FILE_ORDINAL = ADD_REMOVE_READ_SCHEMA.indexOf("add");
+    public static int ADD_FILE_PATH_ORDINAL =
+        ((StructType) ADD_REMOVE_READ_SCHEMA.get("add").getDataType()).indexOf("path");
+    public static int ADD_FILE_DV_ORDINAL =
+        ((StructType) ADD_REMOVE_READ_SCHEMA.get("add").getDataType()).indexOf("deletionVector");
+
+    public static int REMOVE_FILE_ORDINAL = ADD_REMOVE_READ_SCHEMA.indexOf("remove");
+    public static int REMOVE_FILE_PATH_ORDINAL =
+        ((StructType) ADD_REMOVE_READ_SCHEMA.get("remove").getDataType()).indexOf("path");
+    public static int REMOVE_FILE_DV_ORDINAL =
+        ((StructType) ADD_REMOVE_READ_SCHEMA.get("remove").getDataType()).indexOf("deletionVector");
+
     /** Data (result) schema of the remaining active AddFiles. */
     public static final StructType ADD_ONLY_DATA_SCHEMA = new StructType()
-        .add("add", AddFile.READ_SCHEMA);
+        .add("add", AddFile.SCHEMA);
 
     private final Path dataPath;
     private final LogSegment logSegment;
@@ -111,109 +123,7 @@ public class LogReplay implements Logging {
                 tableClient,
                 logSegment.allLogFilesReversed(),
                 ADD_REMOVE_READ_SCHEMA);
-
-        return new ActiveAddFilesIterator(tableClient, addRemoveIter);
-    }
-
-    /**
-     * TEMPORARY. DELETE THIS. We should only expose AddFiles as part of ColumnarBatches via
-     * getAddFilesAsColumnarBatches. That requires updating downstream consumers of this API.
-     *
-     * TODO: delete this API and update downstream consumers to use getAddFilesAsColumnarBatches
-     *       instead.
-     *
-     * Converts the iterator of ColumnarBatches of AddFiles into an iterator of deserialized AddFile
-     * actions.
-     */
-    public CloseableIterator<AddFile> getAddFiles() {
-        return new CloseableIterator<AddFile>() {
-            private final CloseableIterator<FilteredColumnarBatch> batchesIter =
-                getAddFilesAsColumnarBatches();
-
-            // empty - not yet initialized
-            // not empty - exists a current batch
-            private Optional<CloseableIterator<Row>> currBatchIter = Optional.empty();
-
-            private Optional<ColumnVector> currBatchSelectionVector = Optional.empty();
-
-            private int currBatchRowIndex = -1;
-
-            // empty - not yet initialized
-            // not empty - exists a next AddFile to return
-            private Optional<AddFile> nextAddFile = Optional.empty();
-
-            @Override
-            public boolean hasNext() {
-                if (!nextAddFile.isPresent()) {
-                    tryLoadNextAddFile();
-                }
-
-                return nextAddFile.isPresent();
-            }
-
-            @Override
-            public AddFile next() {
-                if (!hasNext()) throw new NoSuchElementException();
-
-                final AddFile ret = nextAddFile.get();
-                nextAddFile = Optional.empty();
-                return ret;
-            }
-
-            @Override
-            public void close() throws IOException {
-                batchesIter.close();
-
-                if (currBatchIter.isPresent()) {
-                    currBatchIter.get().close();
-                }
-            }
-
-            private void tryLoadNextAddFile() {
-                if (nextAddFile.isPresent()) return;
-
-                while (true) {
-                    // Step 1: ensure `currBatchIter` has at least 1 more row. iterate through
-                    //         `batchesIter` if necessary
-                    while (!currBatchIter.isPresent() || !currBatchIter.get().hasNext()) {
-                        if (currBatchIter.isPresent()) {
-                            try {
-                                currBatchIter.get().close();
-                                currBatchIter = Optional.empty();
-                            } catch (IOException e) {
-                                throw new RuntimeException(e);
-                            }
-                        }
-
-                        if (!batchesIter.hasNext()) return; // No more batches!
-
-                        // even if this next `currBatchIter` doesn't have any rows, the while loop
-                        // will check for it and keep searching
-                        final FilteredColumnarBatch dataReadResult = batchesIter.next();
-                        assert(dataReadResult.getData().getSchema().equals(ADD_ONLY_DATA_SCHEMA));
-                        currBatchIter = Optional.of(dataReadResult.getData().getRows());
-                        currBatchSelectionVector = dataReadResult.getSelectionVector();
-                        currBatchRowIndex = -1;
-                    }
-
-                    // Step 2: now, `currBatchIter` has at least 1 more row to read. Read that row
-                    //         and return if it passes the selection vector. If not, return to top.
-                    currBatchRowIndex++;
-                    final Row row = currBatchIter.get().next();
-                    if (!currBatchSelectionVector.isPresent() ||
-                          currBatchSelectionVector.get().getBoolean(currBatchRowIndex)) {
-                        final Row addFileRowAtColumn0 = row.getStruct(0);
-                        nextAddFile = Optional.of(
-                            AddFile
-                                .fromRow(addFileRowAtColumn0)
-                                .withAbsolutePath(dataPath)
-                        );
-
-                        return;
-                    }
-                }
-            }
-        };
+        return new ActiveAddFilesIterator(tableClient, addRemoveIter, dataPath);
     }
 
     ////////////////////

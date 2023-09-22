@@ -29,6 +29,8 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 
+import io.delta.kernel.internal.InternalScanFileUtils;
+
 import io.delta.kernel.defaults.internal.parquet.ParquetBatchReader;
 
 /**
@@ -69,7 +71,8 @@ public class DefaultParquetHandler extends DefaultFileHandler implements Parquet
                     currentFileReader = null;
                     if (fileIter.hasNext()) {
                         currentFile = fileIter.next();
-                        FileStatus fileStatus = Utils.getFileStatus(currentFile.getScanFileRow());
+                        FileStatus fileStatus =
+                            InternalScanFileUtils.getAddFileStatus(currentFile.getScanFileRow());
                         currentFileReader = batchReader.read(fileStatus.getPath(), physicalSchema);
                     } else {
                         return false;

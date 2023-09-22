@@ -19,7 +19,7 @@ package io.delta.kernel
 import java.util.Optional
 
 import io.delta.golden.GoldenTableUtils
-import io.delta.kernel.data.{ColumnarBatch, Row}
+import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.types.{LongType, StructType}
 import io.delta.kernel.utils.CloseableIterator
@@ -45,7 +45,7 @@ class LogReplaySuite extends AnyFunSuite {
 
   private def readScanFiles(
       scanState: Row,
-      scanFilesBatchIter: CloseableIterator[ColumnarBatch]): Seq[ColumnarBatch] = {
+      scanFilesBatchIter: CloseableIterator[FilteredColumnarBatch]): Seq[ColumnarBatch] = {
     val dataBatches = scala.collection.mutable.ArrayBuffer[ColumnarBatch]()
     try {
       while (scanFilesBatchIter.hasNext()) {

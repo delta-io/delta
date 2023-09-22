@@ -17,8 +17,6 @@ package io.delta.kernel.defaults.client;
 
 import java.util.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
@@ -35,9 +33,9 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
-import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
+import io.delta.kernel.internal.InternalScanFileUtils;
 
-import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
 
 public class TestDefaultJsonHandler {
     private static final JsonHandler JSON_HANDLER = new DefaultJsonHandler(new Configuration() {
@@ -73,9 +71,7 @@ public class TestDefaultJsonHandler {
                     new StructType()
                         .add("path", StringType.INSTANCE)
                         .add("size", LongType.INSTANCE)
-                        .add("dataChange", BooleanType.INSTANCE)
-                )
-        ) {
+                        .add("dataChange", BooleanType.INSTANCE))) {
 
             List<String> actPaths = new ArrayList<>();
             List<Long> actSizes = new ArrayList<>();
@@ -156,28 +152,11 @@ public class TestDefaultJsonHandler {
         throws Exception {
         String listFrom = DefaultKernelTestUtils.getTestResourceFilePath("json-files/1.json");
         CloseableIterator<FileStatus> list = FS_CLIENT.listFrom(listFrom);
-        return list.map(fileStatus ->
-            new DefaultJsonRow(
-                addFileJsonFromPath(fileStatus.getPath()),
-                new StructType()
-                    .add("path", StringType.INSTANCE)
-                    .add("dataChange", BooleanType.INSTANCE)
-                    .add("size", LongType.INSTANCE)
-            )
-        );
-    }
-
-    private static ObjectNode addFileJsonFromPath(String path) {
-        ObjectMapper objectMapper = new ObjectMapper();
-        ObjectNode object = objectMapper.createObjectNode();
-        object.put("path", path);
-        object.put("dataChange", true);
-        object.put("size", 234L);
-        return object;
+        return list.map(fileStatus -> InternalScanFileUtils.generateScanFileRow(fileStatus));
     }
 
     private static void compareScanFileRows(Row expected, Row actual) {
         // basically compare the paths
-        assertEquals(expected.getString(0), actual.getString(0));
+        assertEquals(expected.getStruct(0).getString(0), actual.getStruct(0).getString(0));
     }
 }
