@@ -435,6 +435,9 @@ class DeltaAnalysis(session: SparkSession)
       DataSourceV2Relation.create(table, None, Some(u.identifier), u.options)
 
 
+    case d: DescribeDeltaHistory if d.childrenResolved =>
+      d.toCommand
+
     // This rule falls back to V1 nodes, since we don't have a V2 reader for Delta right now
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
       DeltaRelation.fromV2Relation(d, dsv2, options)

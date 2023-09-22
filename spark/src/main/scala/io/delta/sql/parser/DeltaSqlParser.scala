@@ -380,11 +380,10 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   override def visitDescribeDeltaHistory(
       ctx: DescribeDeltaHistoryContext): LogicalPlan = withOrigin(ctx) {
-    DescribeDeltaHistoryCommand(
+    DescribeDeltaHistory(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.limit).map(_.getText.toInt),
-      Map.empty)
+      Option(ctx.limit).map(_.getText.toInt))
   }
 
   override def visitGenerate(ctx: GenerateContext): LogicalPlan = withOrigin(ctx) {
