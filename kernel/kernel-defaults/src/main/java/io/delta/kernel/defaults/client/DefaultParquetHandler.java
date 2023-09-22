@@ -19,7 +19,6 @@ import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
 
-import io.delta.kernel.ScanFile;
 import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.ParquetHandler;
 import io.delta.kernel.data.ColumnarBatch;
@@ -29,6 +28,8 @@ import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
+
+import io.delta.kernel.internal.InternalScanFileUtils;
 
 import io.delta.kernel.defaults.internal.parquet.ParquetBatchReader;
 
@@ -71,7 +72,7 @@ public class DefaultParquetHandler extends DefaultFileHandler implements Parquet
                     if (fileIter.hasNext()) {
                         currentFile = fileIter.next();
                         FileStatus fileStatus =
-                            ScanFile.getAddFileStatus(currentFile.getScanFileRow());
+                            InternalScanFileUtils.getAddFileStatus(currentFile.getScanFileRow());
                         currentFileReader = batchReader.read(fileStatus.getPath(), physicalSchema);
                     } else {
                         return false;

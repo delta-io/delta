@@ -24,8 +24,6 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
-// TODO: check for unsafe access
-
 /**
  * Exposes a given map of values as a {@link Row}
  */

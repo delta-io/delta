@@ -48,25 +48,25 @@ public class ScanStateRow extends GenericRow {
             .boxed()
             .collect(toMap(i -> SCHEMA.at(i).getName(), i -> i));
 
-    public ScanStateRow(
+    public static ScanStateRow of(
         Metadata metadata,
         Protocol protocol,
         String readSchemaLogicalJson,
         String readSchemaPhysicalJson,
         String tablePath) {
-        super(
-            SCHEMA,
-            new HashMap<Integer, Object>() {
-                {
-                    put(0, metadata.getConfiguration());
-                    put(1, readSchemaLogicalJson);
-                    put(2, readSchemaPhysicalJson);
-                    put(3, metadata.getPartitionColumns());
-                    put(4, protocol.getMinReaderVersion());
-                    put(5, protocol.getMinWriterVersion());
-                    put(6, tablePath);
-                }
-            });
+        HashMap<Integer, Object> valueMap = new HashMap<>();
+        valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfiguration());
+        valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), readSchemaLogicalJson);
+        valueMap.put(COL_NAME_TO_ORDINAL.get("physicalSchemaString"), readSchemaPhysicalJson);
+        valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
+        valueMap.put(COL_NAME_TO_ORDINAL.get("minReaderVersion"), protocol.getMinReaderVersion());
+        valueMap.put(COL_NAME_TO_ORDINAL.get("minWriterVersion"), protocol.getMinWriterVersion());
+        valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
+        return new ScanStateRow(valueMap);
+    }
+
+    public ScanStateRow(HashMap<Integer, Object> valueMap) {
+        super(SCHEMA, valueMap);
     }
 
     /**

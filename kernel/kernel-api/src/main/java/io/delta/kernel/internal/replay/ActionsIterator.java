@@ -36,7 +36,7 @@ import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.utils.Utils;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
-import io.delta.kernel.internal.InternalScanFile;
+import io.delta.kernel.internal.InternalScanFileUtils;
 
 /**
  * This class takes as input a list of delta files (.json, .checkpoint.parquet) and produces an
@@ -176,7 +176,7 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
                 final CloseableIterator<FileReadContext> fileReadContextIter =
                     jsonHandler.contextualizeFileReads(
                         Utils.singletonCloseableIterator(
-                            InternalScanFile.generateScanFileRow(nextFile)),
+                            InternalScanFileUtils.generateScanFileRow(nextFile)),
                         ALWAYS_TRUE
                     );
 
@@ -202,7 +202,7 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
                 final CloseableIterator<FileReadContext> fileReadContextIter =
                     parquetHandler.contextualizeFileReads(
                         Utils.singletonCloseableIterator(
-                            InternalScanFile.generateScanFileRow(nextFile)),
+                            InternalScanFileUtils.generateScanFileRow(nextFile)),
                         ALWAYS_TRUE);
 
                 iteratorsToClose[0] = fileReadContextIter;

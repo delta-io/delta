@@ -33,7 +33,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
-import io.delta.kernel.internal.InternalScanFile;
+import io.delta.kernel.internal.InternalScanFileUtils;
 
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
 
@@ -152,7 +152,7 @@ public class TestDefaultJsonHandler {
         throws Exception {
         String listFrom = DefaultKernelTestUtils.getTestResourceFilePath("json-files/1.json");
         CloseableIterator<FileStatus> list = FS_CLIENT.listFrom(listFrom);
-        return list.map(fileStatus -> InternalScanFile.generateScanFileRow(fileStatus));
+        return list.map(fileStatus -> InternalScanFileUtils.generateScanFileRow(fileStatus));
     }
 
     private static void compareScanFileRows(Row expected, Row actual) {

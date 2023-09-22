@@ -68,6 +68,18 @@ public class LogReplay implements Logging {
             .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */)
         );
 
+    public static int ADD_FILE_ORDINAL = ADD_REMOVE_READ_SCHEMA.indexOf("add");
+    public static int ADD_FILE_PATH_ORDINAL =
+        ((StructType) ADD_REMOVE_READ_SCHEMA.get("add").getDataType()).indexOf("path");
+    public static int ADD_FILE_DV_ORDINAL =
+        ((StructType) ADD_REMOVE_READ_SCHEMA.get("add").getDataType()).indexOf("deletionVector");
+
+    public static int REMOVE_FILE_ORDINAL = ADD_REMOVE_READ_SCHEMA.indexOf("remove");
+    public static int REMOVE_FILE_PATH_ORDINAL =
+        ((StructType) ADD_REMOVE_READ_SCHEMA.get("remove").getDataType()).indexOf("path");
+    public static int REMOVE_FILE_DV_ORDINAL =
+        ((StructType) ADD_REMOVE_READ_SCHEMA.get("remove").getDataType()).indexOf("deletionVector");
+
     /** Data (result) schema of the remaining active AddFiles. */
     public static final StructType ADD_ONLY_DATA_SCHEMA = new StructType()
         .add("add", AddFile.SCHEMA);

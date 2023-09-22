@@ -90,7 +90,7 @@ public class ScanImpl
 
     @Override
     public Row getScanState(TableClient tableClient) {
-        return new ScanStateRow(
+        return ScanStateRow.of(
             protocolAndMetadata.get()._2,
             protocolAndMetadata.get()._1,
             TableSchemaSerDe.toJson(readSchema),

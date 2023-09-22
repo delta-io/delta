@@ -34,7 +34,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
-import io.delta.kernel.internal.InternalScanFile;
+import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.data.SelectionColumnVector;
@@ -54,7 +54,43 @@ public interface Scan {
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @return iterator of {@link FilteredColumnarBatch}s where each selected row in
-     * the batch corresponds to one scan file
+     * the batch corresponds to one scan file. Schema of each row is defined as follows:
+     * <p>
+     * <ol>
+     *  <li><ul>
+     *   <li>name: {@code add}, type: {@code struct}</li>
+     *   <li>Description: Represents `AddFile` DeltaLog action</li>
+     *   <li><ul>
+     *    <li>name: {@code path}, type: {@code string}, description: location of the file.</li>
+     *    <li>name: {@code partitionValues}, type: {@code map(string, string)},
+     *       description: A map from partition column to value for this logical file. </li>
+     *    <li>name: {@code size}, type: {@code log}, description: size of the file.</li>
+     *    <li>name: {@code modificationTime}, type: {@code log}, description: the time this
+     *       logical file was created, as milliseconds since the epoch.</li>
+     *    <li>name: {@code dataChange}, type: {@code boolean}, description: When false the
+     *      logical file must already be present in the table or the records in the added file
+     *      must be contained in one or more remove actions in the same version</li>
+     *    <li>name: {@code deletionVector}, type: {@code string}, description: Either null
+     *      (or absent in JSON) when no DV is associated with this data file, or a struct
+     *      (described below) that contains necessary information about the DV that is part of
+     *      this logical file. For description of each member variable in `deletionVector` @see
+     *      <a href=https://github.com/delta-io/delta/blob/master/PROTOCOL.md#Deletion-Vectors>
+     *          Protocol</a><ul>
+     *       <li>name: {@code storageType}, type: {@code string}</li>
+     *       <li>name: {@code pathOrInlineDv}, type: {@code string}</li>
+     *       <li>name: {@code offset}, type: {@code log}</li>
+     *       <li>name: {@code sizeInBytes}, type: {@code log}</li>
+     *       <li>name: {@code cardinality}, type: {@code log}</li>
+     *    </ul></li>
+     *   </ul></li>
+     *  </ul></li>
+     *  <li><ul>
+     *      <li>name: {@code tableRoot}, type: {@code string}</li>
+     *      <li>Description: Absolute path of the table location. TODO: this is temporary. Will
+     *      be removed in future. @see <a href=https://github.com/delta-io/delta/issues/2089>
+     *          </a></li>
+     *  </ul></li>
+     * </ol>
      */
     CloseableIterator<FilteredColumnarBatch> getScanFiles(TableClient tableClient);
 
@@ -144,7 +180,7 @@ public interface Scan {
 
                 Row scanFileRow = fileDataReadResult.getScanFileRow();
                 DeletionVectorDescriptor dv =
-                    InternalScanFile.getDeletionVectorDescriptorFromRow(scanFileRow);
+                    InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFileRow);
 
                 int rowIndexOrdinal = fileDataReadResult.getData().getSchema()
                     .indexOf(StructField.ROW_INDEX_COLUMN_NAME);
@@ -176,7 +212,8 @@ public interface Scan {
                         tableClient.getExpressionHandler(),
                         updatedBatch,
                         readSchemaWithoutPartitionColumns,
-                        ScanFile.getPartitionValues(fileDataReadResult.getScanFileRow()),
+                        InternalScanFileUtils
+                            .getPartitionValues(fileDataReadResult.getScanFileRow()),
                         physicalSchema
                     );
 
