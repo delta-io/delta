@@ -420,24 +420,35 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  test("can't downgrade") {
+  test("protocol downgrade is a no-op") {
     withTempDir { path =>
-      val log = createTableWithProtocol(Protocol(1, 3), path)
-      assert(log.snapshot.protocol === Protocol(1, 3))
-      val e1 = intercept[ProtocolDowngradeException] {
-        log.upgradeProtocol(Protocol(1, 2))
+      val log = createTableWithProtocol(Protocol(2, 3), path)
+      assert(log.update().protocol === Protocol(2, 3))
+
+      { // DeltaLog API. This API is internal-only and will fail when downgrade.
+
+        val e = intercept[ProtocolDowngradeException] {
+          log.upgradeProtocol(Protocol(1, 2))
+        }
+        assert(log.update().protocol == Protocol(2, 3))
+        assert(e.getErrorClass.contains("DELTA_INVALID_PROTOCOL_DOWNGRADE"))
       }
-      val e2 = intercept[ProtocolDowngradeException] {
+      { // DeltaTable API
         val table = io.delta.tables.DeltaTable.forPath(spark, path.getCanonicalPath)
-        table.upgradeTableProtocol(1, 2)
+        val events = Log4jUsageLogger.track {
+          table.upgradeTableProtocol(1, 2)
+        }
+        assert(log.update().protocol == Protocol(2, 3))
+        assert(events.count(_.tags.get("opType").contains("delta.protocol.downgradeIgnored")) === 1)
       }
-      val e3 = intercept[ProtocolDowngradeException] {
-        sql(s"ALTER TABLE delta.`${path.getCanonicalPath}` " +
-          "SET TBLPROPERTIES (delta.minWriterVersion = 2)")
+      { // SQL API
+        val events = Log4jUsageLogger.track {
+          sql(s"ALTER TABLE delta.`${path.getCanonicalPath}` " +
+            "SET TBLPROPERTIES (delta.minWriterVersion = 2)")
+        }
+        assert(log.update().protocol == Protocol(2, 3))
+        assert(events.count(_.tags.get("opType").contains("delta.protocol.downgradeIgnored")) === 1)
       }
-      assert(e1.getMessage === e2.getMessage)
-      assert(e1.getMessage === e3.getMessage)
-      assert(e1.getMessage.contains("cannot be downgraded from (1,3) to (1,2)"))
     }
   }
 
@@ -1292,6 +1303,53 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   }
 
   testAlterTable(
+    name = "downgrade reader version is a no-op",
+    tableProtocol = Protocol(2, 2),
+    props = Map(DeltaConfigs.MIN_READER_VERSION.key -> "1"),
+    expectedFinalProtocol = Some(Protocol(2, 2)))
+
+  testAlterTable(
+    name = "downgrade writer version is a no-op",
+    tableProtocol = Protocol(2, 2),
+    props = Map(DeltaConfigs.MIN_WRITER_VERSION.key -> "1"),
+    expectedFinalProtocol = Some(Protocol(2, 2)))
+
+  testAlterTable(
+    name = "downgrade both reader and versions version is a no-op",
+    tableProtocol = Protocol(2, 2),
+    props = Map(
+      DeltaConfigs.MIN_READER_VERSION.key -> "1",
+      DeltaConfigs.MIN_WRITER_VERSION.key -> "1"),
+    expectedFinalProtocol = Some(Protocol(2, 2)))
+
+  testAlterTable(
+    name = "downgrade reader but upgrade writer versions (legacy protocol)",
+    tableProtocol = Protocol(2, 2),
+    props = Map(
+      DeltaConfigs.MIN_READER_VERSION.key -> "1",
+      DeltaConfigs.MIN_WRITER_VERSION.key -> "5"),
+    expectedFinalProtocol = Some(Protocol(2, 5)))
+
+  testAlterTable(
+    name = "downgrade reader but upgrade writer versions (table features protocol)",
+    tableProtocol = Protocol(2, 2),
+    props = Map(
+      DeltaConfigs.MIN_READER_VERSION.key -> "1",
+      DeltaConfigs.MIN_WRITER_VERSION.key -> "7"),
+    expectedFinalProtocol = Some(
+      Protocol(2, 7).withFeatures(
+        Seq(AppendOnlyTableFeature, InvariantsTableFeature)))) // Features from writer version 2
+
+  testAlterTable(
+    name = "downgrade while enabling a feature will become an upgrade",
+    tableProtocol = Protocol(2, 2),
+    props = Map(
+      DeltaConfigs.MIN_READER_VERSION.key -> "1",
+      DeltaConfigs.MIN_WRITER_VERSION.key -> "1",
+      DeltaConfigs.CHANGE_DATA_FEED.key -> "true"),
+    expectedFinalProtocol = Some(Protocol(2, 4)))
+
+  testAlterTable(
     "legacy protocol, legacy feature, metadata",
     Map("delta.appendOnly" -> "true"),
     expectedFinalProtocol = Some(Protocol(1, 2)))
@@ -1839,7 +1897,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "2") {
           replaceTableAs(path)
         }
-        assert(log.update().protocol === p)
+        assert(log.update().protocol === p.merge(Protocol(1, 2)))
         withSQLConf(
           DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
           DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "2",
@@ -1847,8 +1905,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           replaceTableAs(path)
         }
         assert(
-          log.update().protocol === p.merge(
-            TestReaderWriterFeature.minProtocolVersion.withFeature(TestReaderWriterFeature)))
+          log.update().protocol ===
+            p
+              .merge(Protocol(1, 2))
+              .merge(
+                TestReaderWriterFeature.minProtocolVersion.withFeature(TestReaderWriterFeature)))
       }
     }
 

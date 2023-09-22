@@ -453,45 +453,35 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       //
       // Collect new reader and writer versions from table properties, which could be provided by
       // the user in `ALTER TABLE TBLPROPERTIES` or copied over from session defaults.
-      val readerVersionInNewMetadataTmp =
+      val readerVersionAsTableProp =
         Protocol.getReaderVersionFromTableConf(newMetadataTmp.configuration)
           .getOrElse(protocolBeforeUpdate.minReaderVersion)
-      val writerVersionInNewMetadataTmp =
+      val writerVersionAsTableProp =
         Protocol.getWriterVersionFromTableConf(newMetadataTmp.configuration)
           .getOrElse(protocolBeforeUpdate.minWriterVersion)
 
-      // If the collected reader and writer versions are provided by the user, we must use them,
-      // and throw ProtocolDowngradeException when they are lower than what the table have before
-      // this transaction.
-      // If they are copied over from session defaults (this code path is for existing table, the
-      // only case this can happen is therefore during `REPLACE`), we will update the target table
-      // protocol when the session defaults are higher, and not throw ProtocolDowngradeException
-      // when the defaults are lower.
-      val (isReaderVersionUserProvided, isWriterVersionUserProvided) = (
-        proposedNewMetadata.configuration.contains(Protocol.MIN_READER_VERSION_PROP),
-        proposedNewMetadata.configuration.contains(Protocol.MIN_WRITER_VERSION_PROP))
-      val newReaderVersion = if (isReaderVersionUserProvided) {
-        readerVersionInNewMetadataTmp
-      } else {
-        readerVersionInNewMetadataTmp.max(protocolBeforeUpdate.minReaderVersion)
-      }
-      val newWriterVersion = if (isWriterVersionUserProvided) {
-        writerVersionInNewMetadataTmp
-      } else {
-        writerVersionInNewMetadataTmp.max(protocolBeforeUpdate.minWriterVersion)
-      }
-      val newProtocolForLatestMetadata = Protocol(newReaderVersion, newWriterVersion)
+      val newProtocolForLatestMetadata =
+        Protocol(readerVersionAsTableProp, writerVersionAsTableProp)
+      val proposedNewProtocol = protocolBeforeUpdate.merge(newProtocolForLatestMetadata)
 
-      if (newReaderVersion < protocolBeforeUpdate.minReaderVersion ||
-        newWriterVersion < protocolBeforeUpdate.minWriterVersion) {
-        // Prevent protocol downgrade.
-        throw new ProtocolDowngradeException(protocolBeforeUpdate, newProtocolForLatestMetadata)
-      } else if (newReaderVersion > protocolBeforeUpdate.minReaderVersion ||
-        newWriterVersion > protocolBeforeUpdate.minWriterVersion) {
-        // Upgrade the table's protocol and enable all implicitly-enabled features.
-        newProtocol = Some(protocolBeforeUpdate.merge(newProtocolForLatestMetadata))
+      if (proposedNewProtocol != protocolBeforeUpdate) {
+        // The merged protocol has higher versions and/or supports more features.
+        // It's a valid upgrade.
+        newProtocol = Some(proposedNewProtocol)
       } else {
-        // Protocol version unchanged. Do nothing.
+        // The merged protocol is identical to the original one. Two possibilities:
+        // (1) the provided versions are lower than the original one, and all features supported by
+        //     the provided versions are already supported. This is a no-op.
+        if (readerVersionAsTableProp < protocolBeforeUpdate.minReaderVersion ||
+          writerVersionAsTableProp < protocolBeforeUpdate.minWriterVersion) {
+          recordProtocolChanges(
+            "delta.protocol.downgradeIgnored",
+            fromProtocol = protocolBeforeUpdate,
+            toProtocol = newProtocolForLatestMetadata,
+            isCreatingNewTable = false)
+        } else {
+          // (2) the new protocol versions is identical to the existing versions. Also a no-op.
+        }
       }
     }
 
@@ -1163,7 +1153,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           case m: Metadata =>
             assertMetadata(m)
           case p: Protocol =>
-            recordProtocolChanges(snapshot.protocol, p, isCreatingNewTable)
+            recordProtocolChanges(
+              "delta.protocol.change",
+              fromProtocol = snapshot.protocol,
+              toProtocol = p,
+              isCreatingNewTable)
           case d: DomainMetadata =>
             numOfDomainMetadatas += 1
           case _ =>
@@ -1329,7 +1323,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // NOTE: There is at most one protocol change at this point.
     protocolChanges.foreach { p =>
       newProtocol = Some(p)
-      recordProtocolChanges(snapshot.protocol, p, isCreatingNewTable)
+      recordProtocolChanges("delta.protocol.change", snapshot.protocol, p, isCreatingNewTable)
     }
 
     // Now, we know that there is at most 1 Metadata change (stored in newMetadata) and at most 1
@@ -1502,6 +1496,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Log protocol change events. */
   private def recordProtocolChanges(
+      opType: String,
       fromProtocol: Protocol,
       toProtocol: Protocol,
       isCreatingNewTable: Boolean): Unit = {
@@ -1517,7 +1512,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     } else {
       Map("fromProtocol" -> extract(fromProtocol), "toProtocol" -> extract(toProtocol))
     }
-    recordDeltaEvent(deltaLog, "delta.protocol.change", data = payload)
+    recordDeltaEvent(deltaLog, opType, data = payload)
   }
 
   /**

@@ -234,7 +234,8 @@ class DeltaLog private(
 
   /**
    * Upgrade the table's protocol version, by default to the maximum recognized reader and writer
-   * versions in this DBR release.
+   * versions in this Delta release. This method only upgrades protocol version, and will fail if
+   * the new protocol version is not a superset of the original one used by the snapshot.
    */
   def upgradeProtocol(
       snapshot: Snapshot,
@@ -243,6 +244,9 @@ class DeltaLog private(
     if (newVersion == currentVersion) {
       logConsole(s"Table $dataPath is already at protocol version $newVersion.")
       return
+    }
+    if (!currentVersion.canUpgradeTo(newVersion)) {
+      throw new ProtocolDowngradeException(currentVersion, newVersion)
     }
 
     val txn = startTransaction(Some(snapshot))

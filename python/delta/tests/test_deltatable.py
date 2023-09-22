@@ -940,12 +940,12 @@ class DeltaTableTestsMixin:
             self.spark.conf.unset('spark.databricks.delta.minReaderVersion')
 
         # cannot downgrade once upgraded
-        failed = False
-        try:
-            dt.upgradeTableProtocol(1, 2)
-        except BaseException:
-            failed = True
-        self.assertTrue(failed, "The upgrade should have failed, because downgrades aren't allowed")
+        dt.upgradeTableProtocol(1, 2)
+        dt_details = dt.detail().collect()[0].asDict()
+        self.assertTrue(dt_details["minReaderVersion"] == 1,
+                        "The upgrade should be a no-op, because downgrades aren't allowed")
+        self.assertTrue(dt_details["minWriterVersion"] == 3,
+                        "The upgrade should be a no-op, because downgrades aren't allowed")
 
         # bad args
         with self.assertRaisesRegex(ValueError, "readerVersion"):
