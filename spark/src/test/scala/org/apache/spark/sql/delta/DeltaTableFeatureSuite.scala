@@ -277,12 +277,14 @@ class DeltaTableFeatureSuite
     assert(Protocol(1, 7).withFeature(TestWriterFeature)
       .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestWriterFeature.name))
     for (n <- 1 to 3) {
-      assert(Protocol(n, 7)
-        .withFeatures(Seq(TestWriterFeature, AppendOnlyTableFeature))
-        .canDowngradeTo(Protocol(1, 2), droppedFeatureName = TestWriterFeature.name))
-      assert(Protocol(n, 7)
-        .withFeatures(Seq(TestWriterFeature, AppendOnlyTableFeature, ChangeDataFeedTableFeature))
-        .canDowngradeTo(Protocol(1, 4), droppedFeatureName = TestWriterFeature.name))
+      assert(
+        !Protocol(n, 7)
+          .withFeatures(Seq(TestWriterFeature, AppendOnlyTableFeature))
+          .canDowngradeTo(Protocol(1, 2), droppedFeatureName = TestWriterFeature.name))
+      assert(
+        Protocol(n, 7)
+          .withFeatures(Seq(TestWriterFeature, AppendOnlyTableFeature, InvariantsTableFeature))
+          .canDowngradeTo(Protocol(1, 2), droppedFeatureName = TestWriterFeature.name))
     }
     // When there are no explicit features the protocol versions need to be downgraded
     // below table features.
@@ -296,9 +298,6 @@ class DeltaTableFeatureSuite
     // Remove reader+writer feature.
     assert(tableFeatureProtocol.withFeatures(Seq(TestReaderWriterFeature))
       .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestReaderWriterFeature.name))
-    assert(tableFeatureProtocol
-      .withFeatures(Seq(TestReaderWriterFeature, ColumnMappingTableFeature))
-      .canDowngradeTo(Protocol(2, 5), droppedFeatureName = TestReaderWriterFeature.name))
     // Only one non-legacy feature at a time - multiple reader+writer features.
     assert(
       !tableFeatureProtocol
@@ -306,6 +305,7 @@ class DeltaTableFeatureSuite
         .canDowngradeTo(tableFeatureProtocol, droppedFeatureName = ""))
     assert(
       tableFeatureProtocol
+        .merge(Protocol(2, 5))
         .withFeatures(Seq(TestReaderWriterFeature, TestRemovableLegacyReaderWriterFeature))
         .canDowngradeTo(Protocol(2, 5), droppedFeatureName = TestReaderWriterFeature.name))
     // Only one feature at a time - mix of reader+writer and writer features.
@@ -318,6 +318,7 @@ class DeltaTableFeatureSuite
         .canDowngradeTo(Protocol(2, 4), droppedFeatureName = TestWriterFeature.name))
     assert(
       tableFeatureProtocol
+        .merge(Protocol(2, 5))
         .withFeatures(Seq(TestWriterFeature, AppendOnlyTableFeature, ColumnMappingTableFeature))
         .canDowngradeTo(Protocol(2, 5), droppedFeatureName = TestWriterFeature.name))
   }
