@@ -157,15 +157,14 @@ public class DataBuilderUtils {
         }
 
         @Override
-        // TODO! Move all tests over that use this?
         public ArrayValue getArray(int ordinal) {
-            return (ArrayValue) values.get(ordinal);
+            throw new UnsupportedOperationException(
+                    "array type unsupported for TestColumnBatchBuilder; use scala test utilities");
         }
 
         @Override
-        // todo move over any tests that use this and then make an unsupported error
         public MapValue getMap(int ordinal) {
-            return (MapValue) values.get(ordinal);
-        }
+            throw new UnsupportedOperationException(
+                    "map type unsupported for TestColumnBatchBuilder; use scala test utilities");        }
     }
 }

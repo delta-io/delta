@@ -37,6 +37,8 @@ import io.delta.kernel.types._
  * - ArrayType --> Seq[Any]
  * - MapType --> Map[Any, Any]
  * - StructType --> TestRow
+ *
+ * For complex types array and map, the inner elements types should align with this mapping.
  */
 class TestRow(val values: Array[Any]) {
 
@@ -81,7 +83,6 @@ object TestRow {
    */
   def apply(row: Row): TestRow = {
     TestRow.fromSeq(row.getSchema.fields().asScala.zipWithIndex.map { case (field, i) =>
-
       field.getDataType match {
         case _ if row.isNullAt(i) => null
         case _: BooleanType => row.getBoolean(i)
@@ -105,7 +106,8 @@ object TestRow {
   }
 
   /**
-   * TODO
+   * Retrieves the value at `rowId` in the column vector as it's corresponding scala type.
+   * See the [[TestRow]] docs for details.
    */
   private def getAsTestObject(vector: ColumnVector, rowId: Int): Any = {
     vector.getDataType match {

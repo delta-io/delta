@@ -29,7 +29,6 @@ public class ColumnarBatchRow
     private final ColumnarBatch columnarBatch;
     private final int rowId;
 
-    // TODO: document the accessor must return *ArrayValue* for ArrayType
     public ColumnarBatchRow(ColumnarBatch columnarBatch, int rowId) {
         this.columnarBatch = Objects.requireNonNull(columnarBatch, "columnarBatch is null");
         this.rowId = rowId;

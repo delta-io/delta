@@ -30,7 +30,8 @@ public final class VectorUtils {
     private VectorUtils() {}
 
     /**
-     * Which types are supported??
+     * Converts an {@link ArrayValue} to a Java list. Any nested complex types are also converted
+     * to their Java type.
      */
     public static <T> List<T> toJavaList(ArrayValue arrayValue) {
         ColumnVector elementVector = arrayValue.getElements();
@@ -43,6 +44,14 @@ public final class VectorUtils {
         return elements;
     }
 
+    /**
+     * Converts a {@link MapValue} to a Java map. Any nested complex types are also converted
+     * to their Java type.
+     *
+     * Please note not all key types override hashCode/equals. Be careful when using with keys of:
+     * - Struct type at any nesting level (i.e. ArrayType(StructType) does not)
+     * - Binary type
+     */
     public static <K, V> Map<K, V> toJavaMap(MapValue mapValue) {
         ColumnVector keyVector = mapValue.getKeys();
         DataType keyDataType = keyVector.getDataType();
@@ -59,16 +68,42 @@ public final class VectorUtils {
         return values;
     }
 
+    /**
+     * Gets the value at {@code rowId} from the column vector. The type of the Object returned
+     * depends on the data type of the column vector. For complex types array and map, returns
+     * the value as Java list or Java map.
+     */
     private static Object getValueAsObject(
             ColumnVector columnVector, DataType dataType, int rowId) {
-        // TODO support more types
-        // TODO combine with other utils?
         if (columnVector.isNullAt(rowId)) {
             return null;
+        }
+        if (dataType instanceof BooleanType) {
+            return columnVector.getBoolean(rowId);
+        } else if (dataType instanceof ByteType) {
+            return columnVector.getByte(rowId);
+        } else if (dataType instanceof ShortType) {
+            return columnVector.getShort(rowId);
+        } else if (dataType instanceof IntegerType || dataType instanceof DateType) {
+            return columnVector.getInt(rowId);
+        } else if (dataType instanceof LongType || dataType instanceof TimestampType) {
+            return columnVector.getLong(rowId);
+        } else if (dataType instanceof FloatType) {
+            return columnVector.getFloat(rowId);
+        } else if (dataType instanceof DoubleType) {
+            return columnVector.getDouble(rowId);
         } else if (dataType instanceof StringType) {
             return columnVector.getString(rowId);
+        } else if (dataType instanceof BinaryType) {
+            return columnVector.getBinary(rowId);
         } else if (dataType instanceof StructType) {
             return columnVector.getStruct(rowId);
+        } else if (dataType instanceof DecimalType) {
+            return columnVector.getDecimal(rowId);
+        } else if (dataType instanceof ArrayType) {
+            return toJavaList(columnVector.getArray(rowId));
+        } else if (dataType instanceof MapType) {
+            return toJavaMap(columnVector.getMap(rowId));
         } else {
             throw new UnsupportedOperationException("unsupported data type");
         }

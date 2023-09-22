@@ -25,8 +25,6 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.VectorUtils;
 
-// TODO: will update based on rebase
-
 public class Protocol {
     public static Protocol fromRow(Row row) {
         if (row == null) {

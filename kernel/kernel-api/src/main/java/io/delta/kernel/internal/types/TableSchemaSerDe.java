@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.types;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -78,7 +79,6 @@ public class TableSchemaSerDe {
     private static StructType parseStructType(JsonHandler jsonHandler,
                                               String serializedStructType) {
         Function<Row, StructType> evalMethod = (row) -> {
-            // todo how will this be done with the struct changes?
             final List<Row> fields = VectorUtils.toJavaList(row.getArray(0));
             return new StructType(
                 fields.stream()
@@ -97,8 +97,8 @@ public class TableSchemaSerDe {
         String serializedDataType = row.getString(1);
         DataType type = parseDataType(jsonHandler, serializedDataType);
         boolean nullable = row.getBoolean(2);
-        Map<String, String> metadata = VectorUtils.toJavaMap(row.getMap(3));
-
+        Map<String, String> metadata = row.isNullAt(3) ? Collections.emptyMap() :
+                VectorUtils.toJavaMap(row.getMap(3));
         return new StructField(name, type, nullable, metadata);
     }
 

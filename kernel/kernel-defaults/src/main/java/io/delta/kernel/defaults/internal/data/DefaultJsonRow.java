@@ -109,7 +109,6 @@ public class DefaultJsonRow implements Row {
     }
 
     @Override
-    // TODO?
     public ArrayValue getArray(int ordinal) {
         return (ArrayValue) parsedValues[ordinal];
     }
@@ -171,8 +170,6 @@ public class DefaultJsonRow implements Row {
         }
 
         if (dataType instanceof ArrayType) {
-            // todo make sure this works for nested arrays
-
             throwIfTypeMismatch("array", jsonValue.isArray(), jsonValue);
             final ArrayType arrayType = ((ArrayType) dataType);
             final ArrayNode jsonArray = (ArrayNode) jsonValue;
@@ -200,8 +197,6 @@ public class DefaultJsonRow implements Row {
         }
 
         if (dataType instanceof MapType) {
-            // todo make sure this works for nested maps
-
             throwIfTypeMismatch("map", jsonValue.isObject(), jsonValue);
             final MapType mapType = (MapType) dataType;
             if (!(mapType.getKeyType() instanceof StringType)) {
@@ -261,7 +256,7 @@ public class DefaultJsonRow implements Row {
         return decodeElement(rootNode.get(field.getName()), field.getDataType());
     }
 
-    // TODO: throw on unsafe access
+    // TODO should this do type checks?
     private static class DefaultJsonVector implements ColumnVector {
 
         private final DataType dataType;

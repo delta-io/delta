@@ -15,13 +15,14 @@
  */
 package io.delta.kernel.defaults.internal.expressions
 
+import org.scalatest.funsuite.AnyFunSuite
+
 import io.delta.kernel.data.ColumnVector
-import io.delta.kernel.defaults.internal.data.vector.VectorUtils.getValueAsObject
 import io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.types._
-import org.scalatest.funsuite.AnyFunSuite
 
 class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
   private val allowedCasts: Set[(DataType, DataType)] = Set(

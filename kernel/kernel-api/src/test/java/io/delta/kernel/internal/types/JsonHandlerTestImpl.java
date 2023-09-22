@@ -170,8 +170,6 @@ public class JsonHandlerTestImpl
             }
 
             if (dataType instanceof MapType) {
-                // TODO standardize the map type and array type here and in defaults package
-
                 throwIfTypeMismatch("map", jsonValue.isObject(), jsonValue);
                 final MapType mapType = (MapType) dataType;
                 final List<Object> keys = new ArrayList<>();
@@ -195,7 +193,6 @@ public class JsonHandlerTestImpl
 
                     @Override
                     public ColumnVector getKeys() {
-                        // todo check is string?
                         return new TestColumnVector(mapType.getKeyType(), keys);
                     }
 

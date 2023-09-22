@@ -34,7 +34,6 @@ import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
 
 public class Metadata {
-
     public static Metadata fromRow(Row row, TableClient tableClient) {
         if (row == null) {
             return null;
@@ -68,7 +67,7 @@ public class Metadata {
         .add("createdTime", LongType.INSTANCE, true /* contains null */)
         .add("configuration",
             new MapType(StringType.INSTANCE, StringType.INSTANCE, false),
-            false /* contains null */);
+            false /* nullable */);
 
     private final String id;
     private final Optional<String> name;
@@ -97,9 +96,9 @@ public class Metadata {
         this.format = requireNonNull(format, "format is null");
         this.schemaString = requireNonNull(schemaString, "schemaString is null");
         this.schema = schema;
-        this.partitionColumns = partitionColumns;
+        this.partitionColumns = requireNonNull(partitionColumns, "partitionColumns is null");
         this.createdTime = createdTime;
-        this.configuration = configuration;
+        this.configuration = requireNonNull(configuration, "configuration is null");
         this.columnMappingMode = new Lazy<>(() ->
                 VectorUtils.<String, String>toJavaMap(configuration)
                         .getOrDefault("delta.columnMapping.mode", "none")

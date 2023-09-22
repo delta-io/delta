@@ -36,7 +36,6 @@ import io.delta.kernel.utils.CloseableIterator;
 
 import io.delta.kernel.defaults.client.DefaultTableClient;
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
-import io.delta.kernel.defaults.internal.data.vector.VectorUtils;
 
 /**
  * Base class containing utility method to write integration tests that read data from
@@ -160,8 +159,8 @@ public abstract class BaseIntegration {
             ColumnVector expDataVector = expDataBatch.getColumnVector(fieldId);
             ColumnVector actDataVector = actDataBatch.getColumnVector(fieldId);
 
-            Object expObject = VectorUtils.getValueAsObject(expDataVector, expRowId);
-            Object actObject = VectorUtils.getValueAsObject(actDataVector, actRowId);
+            Object expObject = DefaultKernelTestUtils.getValueAsObject(expDataVector, expRowId);
+            Object actObject = DefaultKernelTestUtils.getValueAsObject(actDataVector, actRowId);
             boolean matched = compareObjects(fieldDataType, expObject, actObject);
             if (!matched) {
                 return false;

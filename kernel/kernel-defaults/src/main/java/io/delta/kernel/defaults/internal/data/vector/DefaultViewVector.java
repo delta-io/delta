@@ -24,14 +24,21 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
 import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 
-// TODO test!!
+/**
+ * Provides a restricted view on an underlying column vector.
+ */
 public class DefaultViewVector implements ColumnVector {
 
     private final ColumnVector underlyingVector;
     private final int offset;
     private final int size;
 
-    // TODO docs
+    /**
+     * @param underlyingVector the underlying column vector to read
+     * @param start the row index of the underlyingVector where we want this vector to start
+     * @param end the row index of the underlyingVector where we want this vector to end
+     *            (non-inclusive)
+     */
     public DefaultViewVector(ColumnVector underlyingVector, int start, int end) {
         this.underlyingVector = underlyingVector;
         this.offset = start;
