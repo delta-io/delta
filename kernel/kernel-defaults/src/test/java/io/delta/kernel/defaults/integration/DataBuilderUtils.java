@@ -165,6 +165,7 @@ public class DataBuilderUtils {
         @Override
         public MapValue getMap(int ordinal) {
             throw new UnsupportedOperationException(
-                    "map type unsupported for TestColumnBatchBuilder; use scala test utilities");        }
+                    "map type unsupported for TestColumnBatchBuilder; use scala test utilities");
+        }
     }
 }
