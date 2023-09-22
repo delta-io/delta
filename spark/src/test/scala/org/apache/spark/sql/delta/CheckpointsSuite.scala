@@ -549,8 +549,8 @@ class CheckpointsSuite
     }
   }
 
-  testDifferentCheckpoints("last checkpoint contains checkpoint schema for v1Checkpoints" +
-    " and not for v2Checkpoints") { (checkpointPolicy, v2CheckpointFormatOpt) =>
+  testDifferentCheckpoints("last checkpoint contains correct schema for v1/v2" +
+      " Checkpoints") { (checkpointPolicy, v2CheckpointFormatOpt) =>
     withTempDir { tempDir =>
       spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)

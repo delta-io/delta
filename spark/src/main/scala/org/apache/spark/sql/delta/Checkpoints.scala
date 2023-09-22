@@ -166,6 +166,7 @@ case class CheckpointInstance(
    *    Single part checkpoint.
    * 3. For Multi-part [[CheckpointInstance]]s corresponding to same version, the one with more
    *    parts is greater than the one with less parts.
+   *  4. For V2 Checkpoints corresponding to same version, we use the fileName as tie breaker.
    */
   override def compare(other: CheckpointInstance): Int = {
       (version, format, numParts, fileName) compare
@@ -189,8 +190,7 @@ object CheckpointInstance {
     }
 
     /** single-file checkpoint format */
-    object SINGLE extends Format(0, "SINGLE")
-      with FormatUsesSidecars
+    object SINGLE extends Format(0, "SINGLE") with FormatUsesSidecars
     /** multi-file checkpoint format */
     object WITH_PARTS extends Format(1, "WITH_PARTS")
     /** V2 Checkpoint format */

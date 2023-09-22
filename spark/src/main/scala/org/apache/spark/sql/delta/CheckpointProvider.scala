@@ -320,7 +320,6 @@ case class UninitializedV1OrV2ParquetCheckpointProvider(
 ) extends UninitializedV2LikeCheckpointProvider {
 
   override val v2CheckpointFormat: V2Checkpoint.Format = V2Checkpoint.Format.PARQUET
-
 }
 
 /**
@@ -447,7 +446,6 @@ case class V2CheckpointProvider(
     DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, sidecarFileStatuses).toSeq
   protected lazy val fileIndexForV2Checkpoint: DeltaLogFileIndex =
     DeltaLogFileIndex(v2CheckpointFormat.fileFormat, Seq(v2CheckpointFile)).head
-
 
   override lazy val topLevelFiles: Seq[FileStatus] = Seq(v2CheckpointFile)
   override lazy val topLevelFileIndex: Option[DeltaLogFileIndex] = Some(fileIndexForV2Checkpoint)
