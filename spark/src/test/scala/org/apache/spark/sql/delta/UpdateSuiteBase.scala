@@ -331,14 +331,31 @@ abstract class UpdateSuiteBase
 
     spark.read.format("delta").load(tempPath).createOrReplaceTempView("tblName")
 
-    checkUpdate(condition = Some("key = 99"), setClauses = "value = -1",
-      Row(99, -1) :: Row(100, 4) :: Row(101, 3) :: Row(102, 5) :: Nil)
-    checkUpdate(condition = Some("`key` = 100"), setClauses = "`value` = -1",
-      Row(99, -1) :: Row(100, -1) :: Row(101, 3) :: Row(102, 5) :: Nil)
-    checkUpdate(condition = Some("tblName.key = 101"), setClauses = "tblName.value = -1",
-      Row(99, -1) :: Row(100, -1) :: Row(101, -1) :: Row(102, 5) :: Nil, Some("tblName"))
-    checkUpdate(condition = Some("`tblName`.`key` = 102"), setClauses = "`tblName`.`value` = -1",
-      Row(99, -1) :: Row(100, -1) :: Row(101, -1) :: Row(102, -1) :: Nil, Some("tblName"))
+    checkUpdate(
+      condition = Some("key = 99"),
+      setClauses = "value = -1",
+      expectedResults = Row(99, -1) :: Row(100, 4) :: Row(101, 3) :: Row(102, 5) :: Nil)
+    checkUpdate(
+      condition = Some("`key` = 100"),
+      setClauses = "`value` = -1",
+      expectedResults = Row(99, -1) :: Row(100, -1) :: Row(101, 3) :: Row(102, 5) :: Nil)
+  }
+
+  test("different variations of column references - TempView") {
+    append(Seq((99, 2), (100, 4), (101, 3), (102, 5)).toDF("key", "value"))
+
+    spark.read.format("delta").load(tempPath).createOrReplaceTempView("tblName")
+
+    checkUpdate(
+      condition = Some("tblName.key = 101"),
+      setClauses = "tblName.value = -1",
+      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, 5) :: Nil,
+      tableName = Some("tblName"))
+    checkUpdate(
+      condition = Some("`tblName`.`key` = 102"),
+      setClauses = "`tblName`.`value` = -1",
+      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, -1) :: Nil,
+      tableName = Some("tblName"))
   }
 
   test("target columns can have db and table qualifiers") {

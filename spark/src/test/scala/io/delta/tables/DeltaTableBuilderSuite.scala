@@ -29,7 +29,8 @@ import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableExceptio
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, MetadataBuilder, StringType, StructType}
 
-class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
+class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest
+    {
 
   // Define the information for a default test table used by many tests.
   protected val defaultTestTableSchema = "c1 int, c2 int, c3 string"
@@ -53,7 +54,8 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
       colNullables: Set[String] = Set.empty,
       tableComment: Option[String] = None,
       partitionCols: Seq[String] = Seq.empty,
-      tableProperty: Option[(String, String)] = None): Unit = {
+      tableProperty: Option[(String, String)] = None
+      ): Unit = {
     val deltaLog = if (table.startsWith("delta.")) {
       DeltaLog.forTable(spark, table.stripPrefix("delta.`").stripSuffix("`"))
     } else {
@@ -159,7 +161,10 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   private def defaultTableBuilder(
-      builder: DeltaTableBuilder, tableName: Option[String], location: Option[String]) = {
+      builder: DeltaTableBuilder,
+      tableName: Option[String],
+      location: Option[String]
+      ) = {
     var tableBuilder = builder
     if (tableName.nonEmpty) {
       tableBuilder = tableBuilder.tableName(tableName.get)

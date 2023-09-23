@@ -21,6 +21,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import io.delta.kernel.annotation.Evolving;
+
+/**
+ * Represents a subfield of {@link StructType} with additional properties and metadata.
+ *
+ * @since 3.0.0
+ */
+@Evolving
 public class StructField {
 
     ////////////////////////////////////////////////////////////////////////////////

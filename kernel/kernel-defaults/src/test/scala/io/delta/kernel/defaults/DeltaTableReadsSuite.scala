@@ -15,15 +15,15 @@
  */
 package io.delta.kernel.defaults
 
+import java.io.File
 import java.math.BigDecimal
 
 import org.scalatest.funsuite.AnyFunSuite
-
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-
-import io.delta.kernel.Table
-
+import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
@@ -33,9 +33,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
   // TODO: for now we do not support timestamp partition columns, make sure it's blocked
   test("cannot read partition column of timestamp type") {
-    // kernel expects a fully qualified path
-    val path = "file:" + goldenTablePath("kernel-timestamp-TIMESTAMP_MICROS")
-    val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
+    val path = goldenTablePath("kernel-timestamp-TIMESTAMP_MICROS")
+    val snapshot = latestSnapshot(path);
 
     val e = intercept[UnsupportedOperationException] {
       readSnapshot(snapshot) // request entire schema
@@ -54,52 +53,44 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   4        | null                              | null
   */
 
-  def row0: (Int, Option[Long]) = (
+  def row0: TestRow = TestRow(
     0,
-    Some(1580544550000000L) // 2020-02-01 08:09:10 UTC to micros since the epoch
+    1580544550000000L // 2020-02-01 08:09:10 UTC to micros since the epoch
   )
 
-  def row1: (Int, Option[Long]) = (
+  def row1: TestRow = TestRow(
     1,
-    Some(915181200000000L) // 1999-01-01 09:00:00 UTC to micros since the epoch
+    915181200000000L // 1999-01-01 09:00:00 UTC to micros since the epoch
   )
 
-  def row2: (Int, Option[Long]) = (
+  def row2: TestRow = TestRow(
     2,
-    Some(946717200000000L) // 2000-01-01 09:00:00 UTC to micros since the epoch
+    946717200000000L // 2000-01-01 09:00:00 UTC to micros since the epoch
   )
 
-  def row3: (Int, Option[Long]) = (
+  def row3: TestRow = TestRow(
     3,
-    Some(-31536000000000L) // 1969-01-01 00:00:00 UTC to micros since the epoch
+    -31536000000000L // 1969-01-01 00:00:00 UTC to micros since the epoch
   )
 
-  def row4: (Int, Option[Long]) = (
+  def row4: TestRow = TestRow(
     4,
-    None
+    null
   )
 
-  // TODO: refactor this once testing utilities have support for Rows/ColumnarBatches
-  def utcTableExpectedResult: Set[(Int, Option[Long])] = Set(row0, row1, row2, row3, row4)
+  def utcTableExpectedResult: Seq[TestRow] = Seq(row0, row1, row2, row3, row4)
 
   def testTimestampTable(
     goldenTableName: String,
     timeZone: String,
-    expectedResult: Set[(Int, Option[Long])]): Unit = {
+    expectedResult: Seq[TestRow]): Unit = {
     withTimeZone(timeZone) {
-      // kernel expects a fully qualified path
-      val path = "file:" + goldenTablePath(goldenTableName)
-      val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
-
-      // for now omit "part" column since we don't support reading timestamp partition values
-      val readSchema = snapshot.getSchema(defaultTableClient)
-        .withoutField("part")
-
-      val result = readSnapshot(snapshot, readSchema).map { row =>
-        (row.getInt(0), if (row.isNullAt(1)) Option.empty[Long] else Some(row.getLong(1)))
-      }
-
-      assert(result.toSet == expectedResult)
+      checkTable(
+        path = goldenTablePath(goldenTableName),
+        expectedAnswer = expectedResult,
+        // for now omit "part" column since we don't support reading timestamp partition values
+        readCols = Seq("id", "time")
+      )
     }
   }
 
@@ -113,9 +104,16 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   }
 
   // PST table - all the "time" col timestamps are + 8 hours
-  def pstTableExpectedResult: Set[(Int, Option[Long])] = utcTableExpectedResult.map {
-    case (id, col) =>
-      (id, col.map(_ + DefaultKernelUtils.DateTimeConstants.MICROS_PER_HOUR * 8))
+  def pstTableExpectedResult: Seq[TestRow] = utcTableExpectedResult.map { testRow =>
+    val values = testRow.toSeq
+    TestRow(
+      values(0),
+      if (values(1) == null) {
+        null
+      } else {
+        values(1).asInstanceOf[Long] + DefaultKernelUtils.DateTimeConstants.MICROS_PER_HOUR * 8
+      }
+    )
   }
 
   for (timeZone <- Seq("UTC", "Iceland", "PST", "America/Los_Angeles")) {
@@ -138,30 +136,48 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       ).map { tup =>
         (new BigDecimal(tup._1), new BigDecimal(tup._2), new BigDecimal(tup._3),
           new BigDecimal(tup._4))
-      }.toSet
-
-      // kernel expects a fully qualified path
-      val path = "file:" + goldenTablePath(tablePath)
-      val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
-
-      val result = readSnapshot(snapshot).map { row =>
-        (row.getDecimal(0), row.getDecimal(1), row.getDecimal(2), row.getDecimal(3))
       }
 
-      assert(expectedResult == result.toSet)
+      checkTable(
+        path = goldenTablePath(tablePath),
+        expectedAnswer = expectedResult.map(TestRow.fromTuple(_))
+      )
     }
   }
 
+  //////////////////////////////////////////////////////////////////////////////////
+  // Misc tests
+  //////////////////////////////////////////////////////////////////////////////////
+
   test("end to end: multi-part checkpoint") {
-    val expectedResult = Seq(0) ++ (0 until 30)
+    checkTable(
+      path = goldenTablePath("multi-part-checkpoint"),
+      expectedAnswer = (Seq(0L) ++ (0L until 30L)).map(TestRow(_))
+    )
+  }
 
-    // kernel expects a fully qualified path
-    val path = "file:" + goldenTablePath("multi-part-checkpoint")
-    val snapshot = Table.forPath(path).getLatestSnapshot(defaultTableClient)
-    val result = readSnapshot(snapshot).map { row =>
-      row.getLong(0)
+  test("invalid path") {
+    val invalidPath = "/path/to/non-existent-directory"
+    val ex = intercept[TableNotFoundException] {
+      Table.forPath(defaultTableClient, invalidPath)
     }
+    assert(ex.getMessage().contains(s"Table at path `$invalidPath` is not found"))
+  }
 
-    assert(result.toSet == expectedResult.toSet)
+  test("table deleted after the `Table` creation") {
+    withTempDir { temp =>
+      val source = new File(goldenTablePath("data-reader-primitives"))
+      val target = new File(temp.getCanonicalPath)
+      FileUtils.copyDirectory(source, target)
+
+      val table = Table.forPath(defaultTableClient, target.getCanonicalPath)
+      // delete the table and try to get the snapshot. Expect a failure.
+      FileUtils.deleteDirectory(target)
+      val ex = intercept[TableNotFoundException] {
+        table.getLatestSnapshot(defaultTableClient)
+      }
+      assert(ex.getMessage.contains(
+        s"Table at path `file:${target.getCanonicalPath}` is not found"))
+    }
   }
 }

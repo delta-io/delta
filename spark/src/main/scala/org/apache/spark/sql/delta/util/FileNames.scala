@@ -25,7 +25,7 @@ object FileNames {
 
   val deltaFileRegex = raw"(\d+)\.json".r
   val checksumFileRegex = raw"(\d+)\.crc".r
-  val checkpointFileRegex = raw"(\d+)\.checkpoint(\.(\d+)\.(\d+))?\.parquet".r
+  val checkpointFileRegex = raw"(\d+)\.checkpoint((\.\d+\.\d+)?\.parquet|\.[^.]+\.(json|parquet))".r
 
   val deltaFilePattern = deltaFileRegex.pattern
   val checksumFilePattern = checksumFileRegex.pattern

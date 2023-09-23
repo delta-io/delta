@@ -24,7 +24,7 @@ import scala.math.Ordering.Implicits._
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.actions.{Metadata, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, CheckpointMetadata, Metadata, SidecarFile, SingleAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
@@ -36,11 +36,14 @@ import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
 
-import org.apache.spark.sql.{Column, DataFrame, SparkSession}
+import org.apache.spark.TaskContext
+import org.apache.spark.paths.SparkPath
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.FileFormat
+import org.apache.spark.sql.execution.datasources.OutputWriter
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{coalesce, col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
@@ -389,7 +392,9 @@ trait Checkpoints extends DeltaLogging {
   }
 }
 
-object Checkpoints extends DeltaLogging {
+object Checkpoints
+  extends DeltaLogging
+  {
 
   /** The name of the last checkpoint file */
   val LAST_CHECKPOINT_FILE_NAME = "_last_checkpoint"
@@ -424,6 +429,26 @@ object Checkpoints extends DeltaLogging {
     // log store and decide whether to use rename.
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
 
+    val v2CheckpointFormatOpt = {
+      val policy = DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(snapshot.metadata)
+      if (policy.needsV2CheckpointSupport) {
+        assert(CheckpointProvider.isV2CheckpointEnabled(snapshot))
+        val v2Format = spark.conf.get(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT)
+        // The format of the top level file in V2 checkpoints can be configured through
+        // the optional config [[DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT]].
+        // If nothing is specified, we use the json format. In the future, we may
+        // write json/parquet dynamically based on heuristics.
+        v2Format match {
+          case Some(V2Checkpoint.Format.JSON.name) | None => Some(V2Checkpoint.Format.JSON)
+          case Some(V2Checkpoint.Format.PARQUET.name) => Some(V2Checkpoint.Format.PARQUET)
+          case _ => throw new IllegalStateException("unknown checkpoint format")
+        }
+      } else {
+        None
+      }
+    }
+    val v2CheckpointEnabled = v2CheckpointFormatOpt.nonEmpty
+
     val checkpointRowCount = spark.sparkContext.longAccumulator("checkpointRowCount")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
 
@@ -433,34 +458,35 @@ object Checkpoints extends DeltaLogging {
 
     val numParts = checkpointPartSize.map { partSize =>
       math.ceil((snapshot.numOfFiles + snapshot.numOfRemoves).toDouble / partSize).toLong
-    }.getOrElse(1L)
+    }.getOrElse(1L).toInt
+    val legacyMultiPartCheckpoint = !v2CheckpointEnabled && numParts > 1
 
-    val checkpointPaths = if (numParts > 1) {
-      checkpointFileWithParts(snapshot.path, snapshot.version, numParts.toInt)
-    } else {
-      checkpointFileSingular(snapshot.path, snapshot.version) :: Nil
-    }
-
-    val numPartsOption = if (numParts > 1) {
-      Some(checkpointPaths.length)
-    } else {
-      None
-    }
-
-    // Use the string in the closure as Path is not Serializable.
-    val paths = checkpointPaths.map(_.toString)
-    val base = snapshot.stateDS
-      .repartition(paths.length, coalesce(col("add.path"), col("remove.path")))
-      .map { action =>
-        if (action.add != null) {
-          numOfFiles.add(1)
+    val base = {
+      val repartitioned = snapshot.stateDS
+        .repartition(numParts, coalesce(col("add.path"), col("remove.path")))
+        .map { action =>
+          if (action.add != null) {
+            numOfFiles.add(1)
+          }
+          action
         }
-        action
+      // commitInfo, cdc and remove.tags are not included in both classic and V2 checkpoints.
+      if (v2CheckpointEnabled) {
+        // When V2 Checkpoint is enabled, the baseCheckpoint refers to the sidecar files which will
+        // only have AddFile and RemoveFile actions. The other non-file actions will be written
+        // separately after sidecar files are written.
+        repartitioned
+          .select("add", "remove")
+          .withColumn("remove", col("remove").dropFields("tags", "stats"))
+          .where("add is not null or remove is not null")
+      } else {
+        // When V2 Checkpoint is disabled, the baseCheckpoint refers to the main classic checkpoint
+        // which has all actions except "commitInfo", "cdc", "checkpointMetadata", "sidecar".
+        repartitioned
+          .drop("commitInfo", "cdc", "checkpointMetadata", "sidecar")
+          .withColumn("remove", col("remove").dropFields("tags", "stats"))
       }
-      // commitInfo, cdc, remove.tags and remove.stats are not included in the checkpoint
-      // TODO: Add support for V2 Checkpoints here.
-      .drop("commitInfo", "cdc", "checkpointMetadata", "sidecar")
-      .withColumn("remove", col("remove").dropFields("tags", "stats"))
+    }
 
     val chk = buildCheckpoint(base, snapshot)
     val schema = chk.schema.asNullable
@@ -472,25 +498,27 @@ object Checkpoints extends DeltaLogging {
         new SerializableConfiguration(job.getConfiguration))
     }
 
+    // Use the SparkPath in the closure as Path is not Serializable.
+    val logSparkPath = SparkPath.fromPath(snapshot.path)
+    val version = snapshot.version
+
     // This is a hack to get spark to write directly to a file.
     val qe = chk.queryExecution
     def executeFinalCheckpointFiles(): Array[SerializableFileStatus] = qe
       .executedPlan
       .execute()
-      .mapPartitionsWithIndex { case (index, iter) =>
-        val finalPath = new Path(paths(index))
-        val writtenPath =
-          if (useRename) {
-            // Two instances of the same task may run at the same time in some cases (e.g.,
-            // speculation, stage retry), so generate the temp path here to avoid two tasks
-            // using the same path.
-            val tempPath =
-              new Path(finalPath.getParent, s".${finalPath.getName}.${UUID.randomUUID}.tmp")
-            DeltaFileOperations.registerTempFileDeletionTaskFailureListener(serConf.value, tempPath)
-            tempPath
-          } else {
-            finalPath
-          }
+      .mapPartitions { case iter =>
+        val actualNumParts = Option(TaskContext.get).map(_.numPartitions())
+          .getOrElse(numParts)
+        val partition = TaskContext.getPartitionId()
+        val (writtenPath, finalPath) = Checkpoints.getCheckpointWritePath(
+          serConf.value,
+          logSparkPath.toPath,
+          version,
+          actualNumParts,
+          partition,
+          useRename,
+          v2CheckpointEnabled)
         val fs = writtenPath.getFileSystem(serConf.value)
         val writeAction = () => {
           try {
@@ -547,23 +575,280 @@ object Checkpoints extends DeltaLogging {
       executeFinalCheckpointFiles()
     }
 
-    val checkpointSizeInBytes = finalCheckpointFiles.map(_.length).sum
     if (numOfFiles.value != snapshot.numOfFiles) {
       throw DeltaErrors.checkpointMismatchWithSnapshot
     }
 
-    // Attempting to write empty checkpoint
-    if (checkpointRowCount.value == 0) {
+    val parquetFilesSizeInBytes = finalCheckpointFiles.map(_.length).sum
+    var overallCheckpointSizeInBytes = parquetFilesSizeInBytes
+    var overallNumCheckpointActions: Long = checkpointRowCount.value
+    var checkpointSchemaToWriteInLastCheckpoint: Option[StructType] =
+      Checkpoints.checkpointSchemaToWriteInLastCheckpointFile(spark, schema)
+
+    val v2Checkpoint = if (v2CheckpointEnabled) {
+      val (v2CheckpointFileStatus, nonFileActionsWriten, v2Checkpoint, checkpointSchema) =
+        Checkpoints.writeTopLevelV2Checkpoint(
+          v2CheckpointFormatOpt.get,
+          finalCheckpointFiles,
+          spark,
+          schema,
+          snapshot,
+          deltaLog,
+          overallNumCheckpointActions,
+          parquetFilesSizeInBytes,
+          hadoopConf,
+          useRename
+        )
+      overallCheckpointSizeInBytes += v2CheckpointFileStatus.getLen
+      overallNumCheckpointActions += nonFileActionsWriten.size
+      checkpointSchemaToWriteInLastCheckpoint = checkpointSchema
+
+      Some(v2Checkpoint)
+    } else {
+      None
+    }
+
+    if (!v2CheckpointEnabled && checkpointRowCount.value == 0) {
+      // In case of V2 Checkpoints, zero row count is possible.
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
+
+    // If we don't parallelize, we use None for backwards compatibility
+    val checkpointParts = if (legacyMultiPartCheckpoint) Some(numParts) else None
+
     LastCheckpointInfo(
       version = snapshot.version,
-      size = checkpointRowCount.value,
-      parts = numPartsOption,
-      sizeInBytes = Some(checkpointSizeInBytes),
+      size = overallNumCheckpointActions,
+      parts = checkpointParts,
+      sizeInBytes = Some(overallCheckpointSizeInBytes),
       numOfAddFiles = Some(snapshot.numOfFiles),
-      checkpointSchema = checkpointSchemaToWriteInLastCheckpointFile(spark, schema)
+      v2Checkpoint = v2Checkpoint,
+      checkpointSchema = checkpointSchemaToWriteInLastCheckpoint
     )
+  }
+
+  /**
+   * Generate a tuple of the file to write the checkpoint and where it may later need
+   * to be copied. Should be used within a task, so that task or stage retries don't
+   * create the same files.
+   */
+  def getCheckpointWritePath(
+      conf: Configuration,
+      logPath: Path,
+      version: Long,
+      numParts: Int,
+      part: Int,
+      useRename: Boolean,
+      v2CheckpointEnabled: Boolean): (Path, Path) = {
+    def getCheckpointWritePath(path: Path): Path = {
+      if (useRename) {
+        val tempPath =
+          new Path(path.getParent, s".${path.getName}.${UUID.randomUUID}.tmp")
+        DeltaFileOperations.registerTempFileDeletionTaskFailureListener(conf, tempPath)
+        tempPath
+      } else {
+        path
+      }
+    }
+    val destinationName: Path = if (v2CheckpointEnabled) {
+      newV2CheckpointSidecarFile(logPath, version, numParts, part + 1)
+    } else {
+      if (numParts > 1) {
+        assert(part < numParts, s"Asked to create part: $part of max $numParts in checkpoint.")
+        checkpointFileWithParts(logPath, version, numParts)(part)
+      } else {
+        checkpointFileSingular(logPath, version)
+      }
+    }
+
+    getCheckpointWritePath(destinationName) -> destinationName
+  }
+
+  /**
+   * Writes a top-level V2 Checkpoint file which may point to multiple
+   * sidecar files.
+   *
+   * @param v2CheckpointFormat The format in which the top-level file should be
+   *                           written. Currently, json and parquet are supported.
+   * @param sidecarCheckpointFiles The list of sidecar files that have already been
+   *                               written. The top-level file will store this list.
+   * @param spark The current spark session
+   * @param sidecarSchema The schema of the sidecar parquet files.
+   * @param snapshot The snapshot for which the checkpoint is being written.
+   * @param deltaLog The deltaLog instance pointing to our tables deltaLog.
+   * @param rowsWrittenInCheckpointJob The number of rows that were written in total
+   *                                   to the sidecar files.
+   * @param parquetFilesSizeInBytes The combined size of all sidecar files in bytes.
+   * @param hadoopConf The hadoopConf to use for the filesystem operation.
+   * @param useRename Whether we should first write to a temporary file and then
+   *                  rename it to the target file name during the write.
+   * @return A tuple containing
+   *          1. [[FileStatus]] of the newly created top-level V2Checkpoint.
+   *          2. The sequence of actions that were written to the top-level file.
+   *          3. An instance of the LastCheckpointV2 containing V2-checkpoint related
+   *           metadata which can later be written to LAST_CHECKPOINT
+   *          4. Schema of the newly written top-level file (only for parquet files)
+   */
+  protected[delta] def writeTopLevelV2Checkpoint(
+      v2CheckpointFormat: V2Checkpoint.Format,
+      sidecarCheckpointFiles: Array[SerializableFileStatus],
+      spark: SparkSession,
+      sidecarSchema: StructType,
+      snapshot: Snapshot,
+      deltaLog: DeltaLog,
+      rowsWrittenInCheckpointJob: Long,
+      parquetFilesSizeInBytes: Long,
+      hadoopConf: Configuration,
+      useRename: Boolean) : (FileStatus, Seq[Action], LastCheckpointV2, Option[StructType]) = {
+    // Write the main v2 checkpoint file.
+    val sidecarFilesWritten = sidecarCheckpointFiles.map(SidecarFile(_)).toSeq
+    // Filter out the sidecar schema if it is too large.
+    val sidecarFileSchemaOpt =
+      Checkpoints.checkpointSchemaToWriteInLastCheckpointFile(spark, sidecarSchema)
+    val checkpointMetadata = CheckpointMetadata(snapshot.version)
+
+    val nonFileActionsToWrite =
+      (checkpointMetadata +: sidecarFilesWritten) ++ snapshot.nonFileActions
+    val (v2CheckpointPath, checkpointSchemaToWriteInLastCheckpoint) =
+      if (v2CheckpointFormat == V2Checkpoint.Format.JSON) {
+        val v2CheckpointPath = newV2CheckpointJsonFile(deltaLog.logPath, snapshot.version)
+        deltaLog.store.write(
+          v2CheckpointPath,
+          nonFileActionsToWrite.map(_.json).toIterator,
+          overwrite = true,
+          hadoopConf = hadoopConf
+        )
+        (v2CheckpointPath, None)
+      } else if (v2CheckpointFormat == V2Checkpoint.Format.PARQUET) {
+        val sparkSession = spark
+        // scalastyle:off sparkimplicits
+        import sparkSession.implicits._
+        // scalastyle:on sparkimplicits
+        val dfToWrite = nonFileActionsToWrite.map(_.wrap).toDF()
+        val v2CheckpointPath = newV2CheckpointParquetFile(deltaLog.logPath, snapshot.version)
+        val schemaOfDfWritten = createCheckpointV2ParquetFile(
+          spark, dfToWrite, v2CheckpointPath, hadoopConf, useRename)
+        (v2CheckpointPath, Some(schemaOfDfWritten))
+      } else {
+        throw DeltaErrors.assertionFailedError(
+          s"Unrecognized checkpoint V2 format: $v2CheckpointFormat")
+      }
+    // Main Checkpoint V2 File written successfully. Now create the last checkpoint v2 blob so
+    // that we can persist it in _last_checkpoint file.
+    val v2CheckpointFileStatus =
+      v2CheckpointPath.getFileSystem(hadoopConf).getFileStatus(v2CheckpointPath)
+    val unfilteredV2Checkpoint = LastCheckpointV2(
+      fileStatus = v2CheckpointFileStatus,
+      nonFileActions = Some((snapshot.nonFileActions :+ checkpointMetadata).map(_.wrap)),
+      sidecarFiles = Some(sidecarFilesWritten)
+    )
+    (
+      v2CheckpointFileStatus,
+      nonFileActionsToWrite,
+      trimLastCheckpointV2(unfilteredV2Checkpoint, spark),
+      checkpointSchemaToWriteInLastCheckpoint
+    )
+  }
+
+  /**
+   * Helper method to create a V2 Checkpoint parquet file or the V2 Checkpoint Compat file.
+   * V2 Checkpoint Compat files follow the same naming convention as classic checkpoints
+   * and they are needed so that V2Checkpoint-unaware readers can read them to understand
+   * that they don't have the capability to read table for which they were created.
+   * This is needed in cases where commit 0 has been cleaned up and the reader needs to
+   * read a checkpoint to read the [[Protocol]].
+   */
+  def createCheckpointV2ParquetFile(
+      spark: SparkSession,
+      ds: Dataset[Row],
+      finalPath: Path,
+      hadoopConf: Configuration,
+      useRename: Boolean): StructType = {
+    val df = ds.select(
+      "txn", "add", "remove", "metaData", "protocol", "domainMetadata",
+      "checkpointMetadata", "sidecar")
+    val schema = df.schema.asNullable
+    val format = new ParquetFileFormat()
+    val job = Job.getInstance(hadoopConf)
+    val factory = format.prepareWrite(spark, job, Map.empty, schema)
+    val serConf = new SerializableConfiguration(job.getConfiguration)
+    val finalSparkPath = SparkPath.fromPath(finalPath)
+
+    df.repartition(1)
+      .queryExecution
+      .executedPlan
+      .execute()
+      .mapPartitions { iter =>
+        val actualNumParts = Option(TaskContext.get).map(_.numPartitions()).getOrElse(1)
+        require(actualNumParts == 1, "The parquet V2 checkpoint must be written in 1 file")
+        val partition = TaskContext.getPartitionId()
+        val finalPath = finalSparkPath.toPath
+        val writePath = if (useRename) {
+          val tempPath =
+            new Path(finalPath.getParent, s".${finalPath.getName}.${UUID.randomUUID}.tmp")
+          DeltaFileOperations.registerTempFileDeletionTaskFailureListener(serConf.value, tempPath)
+          tempPath
+        } else {
+          finalPath
+        }
+
+        val fs = writePath.getFileSystem(serConf.value)
+
+        val attemptId = 0
+        val taskAttemptContext = new TaskAttemptContextImpl(
+          new JobConf(serConf.value),
+          new TaskAttemptID("", 0, TaskType.REDUCE, partition, attemptId))
+
+        var writerOpt: Option[OutputWriter] = None
+
+        try {
+          writerOpt = Some(factory.newInstance(
+            writePath.toString,
+            schema,
+            taskAttemptContext))
+
+          val writer = writerOpt.get
+          iter.foreach { row =>
+            writer.write(row)
+          }
+          // Note: `writer.close()` is not put in a `finally` clause because we don't want to
+          // close it when an exception happens. Closing the file would flush the content to the
+          // storage and create an incomplete file. A concurrent reader might see it and fail.
+          // This would leak resources but we don't have a way to abort the storage request here.
+          writer.close()
+        } catch {
+          case _: org.apache.hadoop.fs.FileAlreadyExistsException
+            if !useRename && fs.exists(writePath) =>
+          // The file has been written by a zombie task. We can just use this checkpoint file
+          // rather than failing a Delta commit.
+          case t: Throwable =>
+            throw t
+        }
+        if (useRename) {
+          renameAndCleanupTempPartFile(writePath, finalPath, fs)
+        }
+        val finalPathFileStatus = try {
+          fs.getFileStatus(finalPath)
+        } catch {
+          case _: FileNotFoundException if useRename =>
+            throw DeltaErrors.failOnCheckpointRename(writePath, finalPath)
+        }
+        Iterator(SerializableFileStatus.fromStatus(finalPathFileStatus))
+      }.collect()
+    schema
+  }
+
+  /** Bounds the size of a [[LastCheckpointV2]] by removing any oversized optional fields */
+  def trimLastCheckpointV2(
+      lastCheckpointV2: LastCheckpointV2,
+      spark: SparkSession): LastCheckpointV2 = {
+    val nonFileActionThreshold =
+      spark.sessionState.conf.getConf(DeltaSQLConf.LAST_CHECKPOINT_NON_FILE_ACTIONS_THRESHOLD)
+    val sidecarThreshold =
+      spark.sessionState.conf.getConf(DeltaSQLConf.LAST_CHECKPOINT_SIDECARS_THRESHOLD)
+    lastCheckpointV2.copy(
+      sidecarFiles = lastCheckpointV2.sidecarFiles.filter(_.size <= sidecarThreshold),
+      nonFileActions = lastCheckpointV2.nonFileActions.filter(_.size <= nonFileActionThreshold))
   }
 
   /**

@@ -17,6 +17,8 @@ package io.delta.kernel.types;
 
 import java.util.Objects;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * The data type representing {@code java.math.BigDecimal} values.
  * A Decimal that must have fixed precision (the maximum number of digits) and scale (the number
@@ -25,7 +27,10 @@ import java.util.Objects;
  * The precision can be up to 38, scale can also be up to 38 (less or equal to precision).
  * <p>
  * The default precision and scale is (10, 0).
+ *
+ * @since 3.0.0
  */
+@Evolving
 public final class DecimalType extends DataType {
     public static final DecimalType USER_DEFAULT = new DecimalType(10, 0);
 

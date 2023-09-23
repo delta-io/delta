@@ -763,7 +763,17 @@
     "message" : [
       "Cannot drop <feature> because the Delta log contains historical versions that use the feature.",
       "Please wait until the history retention period (<logRetentionPeriodKey>=<logRetentionPeriod>) ",
-      "has passed since the feature was last active."
+      "has passed since the feature was last active.",
+      "",
+      "Alternatively, please wait for the TRUNCATE HISTORY retention period to expire (<truncateHistoryLogRetentionPeriod>)",
+      "and then run:",
+      "    ALTER TABLE table_name DROP FEATURE feature_name TRUNCATE HISTORY"
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED" : {
+    "message" : [
+      "History truncation is only relevant for reader features."
     ],
     "sqlState" : "0AKDE"
   },
@@ -790,7 +800,11 @@
       "",
       "To drop the table feature from the protocol, please wait for the historical versions to",
       "expire, and then repeat this command. The retention period for historical versions is",
-      "currently configured as <logRetentionPeriodKey>=<logRetentionPeriod>."
+      "currently configured as <logRetentionPeriodKey>=<logRetentionPeriod>.",
+      "",
+      "Alternatively, please wait for the TRUNCATE HISTORY retention period to expire (<truncateHistoryLogRetentionPeriod>)",
+      "and then run:",
+      "    ALTER TABLE table_name DROP FEATURE feature_name TRUNCATE HISTORY"
     ],
     "sqlState" : "0AKDE"
   },
@@ -1539,7 +1553,7 @@
   },
   "DELTA_PATH_DOES_NOT_EXIST" : {
     "message" : [
-      "<path> doesn't exist"
+      "<path> doesn't exist, or is not a Delta table."
     ],
     "sqlState" : "42K03"
   },

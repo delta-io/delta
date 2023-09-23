@@ -18,6 +18,7 @@ package io.delta.kernel.client;
 
 import java.io.IOException;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
@@ -29,9 +30,11 @@ import io.delta.kernel.utils.CloseableIterator;
  * Provides JSON handling functionality to Delta Kernel. Delta Kernel can use this client to
  * parse JSON strings into {@link io.delta.kernel.data.Row} or read content from JSON files.
  * Connectors can leverage this interface to provide their best implementation of the JSON parsing
- * capability to
- * Delta Kernel.
+ * capability to Delta Kernel.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface JsonHandler
     extends FileHandler {
     /**

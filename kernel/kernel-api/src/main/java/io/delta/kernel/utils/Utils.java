@@ -16,24 +16,21 @@
 
 package io.delta.kernel.utils;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
 
-import io.delta.kernel.Scan;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
 
-import io.delta.kernel.internal.data.ScanStateRow;
-import io.delta.kernel.internal.types.TableSchemaSerDe;
-
+/**
+ * Various utility methods to help the connectors work with data objects returned by Kernel
+ *
+ * @since 3.0.0
+ */
+@Evolving
 public class Utils {
     /**
      * Utility method to create a singleton {@link CloseableIterator}.
@@ -128,82 +125,7 @@ public class Utils {
     }
 
     /**
-     * Utility method to get the logical schema from the scan state {@link Row} returned by
-     * {@link Scan#getScanState(TableClient)}.
-     *
-     * @param tableClient instance of {@link TableClient} to use.
-     * @param scanState   Scan state {@link Row}
-     * @return Logical schema to read from the data files.
-     */
-    public static StructType getLogicalSchema(TableClient tableClient, Row scanState) {
-        int schemaStringOrdinal = ScanStateRow.getLogicalSchemaStringColOrdinal();
-        String serializedSchema = scanState.getString(schemaStringOrdinal);
-        return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
-    }
-
-    /**
-     * Utility method to get the physical schema from the scan state {@link Row} returned by
-     * {@link Scan#getScanState(TableClient)}.
-     *
-     * @param tableClient instance of {@link TableClient} to use.
-     * @param scanState   Scan state {@link Row}
-     * @return Physical schema to read from the data files.
-     */
-    public static StructType getPhysicalSchema(TableClient tableClient, Row scanState) {
-        int schemaStringOrdinal = ScanStateRow.getPhysicalSchemaStringColOrdinal();
-        String serializedSchema = scanState.getString(schemaStringOrdinal);
-        return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
-    }
-
-    /**
-     * Get the list of partition column names from the scan state {@link Row} returned by
-     * {@link Scan#getScanState(TableClient)}.
-     *
-     * @param scanState Scan state {@link Row}
-     * @return List of partition column names according to the scan state.
-     */
-    public static List<String> getPartitionColumns(Row scanState) {
-        int partitionColumnsOrdinal = ScanStateRow.getPartitionColumnsColOrdinal();
-        return scanState.getArray(partitionColumnsOrdinal);
-    }
-
-    /**
-     * Get the column mapping mode from the scan state {@link Row} returned by
-     * {@link Scan#getScanState(TableClient)}.
-     */
-    public static String getColumnMappingMode(Row scanState) {
-        int configOrdinal = ScanStateRow.getConfigurationColOrdinal();
-        Map<String, String> configuration = scanState.getMap(configOrdinal);
-        String cmMode = configuration.get("delta.columnMapping.mode");
-        return cmMode == null ? "none" : cmMode;
-    }
-
-    /**
-     * Get the {@link FileStatus} from given scan file {@link Row}. The {@link FileStatus} contains
-     * file metadata about the scan file.
-     *
-     * @param scanFileInfo {@link Row} representing one scan file.
-     * @return a {@link FileStatus} object created from the given scan file row.
-     */
-    public static FileStatus getFileStatus(Row scanFileInfo) {
-        String path = scanFileInfo.getString(0);
-        Long size = scanFileInfo.getLong(2);
-
-        return FileStatus.of(path, size, 0);
-    }
-
-    /**
-     * Get the partition columns and value belonging to the given scan file row.
-     *
-     * @param scanFileInfo {@link Row} representing one scan file.
-     * @return Map of partition column name to partition column value.
-     */
-    public static Map<String, String> getPartitionValues(Row scanFileInfo) {
-        return scanFileInfo.getMap(1);
-    }
-
-    /**
-     * Close the given one or more {@link Closeable}s. {@link Closeable#close()}
+     * Close the given one or more {@link AutoCloseable}s. {@link AutoCloseable#close()}
      * will be called on all given non-null closeables. Will throw unchecked
      * {@link RuntimeException} if an error occurs while closing. If multiple closeables causes
      * exceptions in closing, the exceptions will be added as suppressed to the main exception
@@ -211,9 +133,9 @@ public class Utils {
      *
      * @param closeables
      */
-    public static void closeCloseables(Closeable... closeables) {
+    public static void closeCloseables(AutoCloseable... closeables) {
         RuntimeException exception = null;
-        for (Closeable closeable : closeables) {
+        for (AutoCloseable closeable : closeables) {
             if (closeable == null) {
                 continue;
             }
@@ -233,11 +155,12 @@ public class Utils {
     }
 
     /**
-     * Close the given list of {@link Closeable} objects. Any exception thrown is silently ignored.
+     * Close the given list of {@link AutoCloseable} objects. Any exception thrown is
+     * silently ignored.
      *
      * @param closeables
      */
-    public static void closeCloseablesSilently(Closeable... closeables) {
+    public static void closeCloseablesSilently(AutoCloseable... closeables) {
         try {
             closeCloseables(closeables);
         } catch (Throwable throwable) {

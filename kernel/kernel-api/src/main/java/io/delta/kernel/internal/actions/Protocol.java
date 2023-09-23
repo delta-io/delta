@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.internal.actions;
 
 import java.util.Collections;
@@ -25,7 +24,7 @@ import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
-public class Protocol implements Action {
+public class Protocol {
     public static Protocol fromRow(Row row) {
         if (row == null) {
             return null;

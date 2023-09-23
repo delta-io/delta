@@ -629,7 +629,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
         def getColumn(fieldNames: Seq[String]): (StructField, Option[ColumnPosition]) = {
           columnUpdates.getOrElseUpdate(fieldNames, {
             // TODO: Theoretically we should be able to fetch the snapshot from a txn.
-            val schema = table.snapshot.schema
+            val schema = table.initialSnapshot.schema
             val colName = UnresolvedAttribute(fieldNames).name
             val fieldOpt = schema.findNestedField(fieldNames, includeCollections = true,
               spark.sessionState.conf.resolver)
@@ -698,8 +698,10 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
       case (t, dropFeature) if t == classOf[DropFeature] =>
         // Only single feature removal is supported.
-        val featureName = dropFeature.head.asInstanceOf[DropFeature].featureName
-        AlterTableDropFeatureDeltaCommand(table, featureName).run(spark)
+        val dropFeatureTableChange = dropFeature.head.asInstanceOf[DropFeature]
+        val featureName = dropFeatureTableChange.featureName
+        val truncateHistory = dropFeatureTableChange.truncateHistory
+        AlterTableDropFeatureDeltaCommand(table, featureName, truncateHistory).run(spark)
 
     }
 

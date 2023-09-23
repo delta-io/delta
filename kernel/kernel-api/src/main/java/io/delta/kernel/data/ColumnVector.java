@@ -20,11 +20,15 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.DataType;
 
 /**
  * Represents zero or more values of a single column.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface ColumnVector extends AutoCloseable {
     /**
      * @return the data type of this column vector.
@@ -191,5 +195,16 @@ public interface ColumnVector extends AutoCloseable {
      */
     default <T> List<T> getArray(int rowId) {
         throw new UnsupportedOperationException("Invalid value request for data type");
+    }
+
+    /**
+     * Get the child vector associated with the given ordinal. This method is applicable only to the
+     * {@code struct} type columns.
+     *
+     * @param ordinal Ordinal of the child vector to return.
+     * @return
+     */
+    default ColumnVector getChild(int ordinal) {
+        throw new UnsupportedOperationException("Child vectors are not available.");
     }
 }

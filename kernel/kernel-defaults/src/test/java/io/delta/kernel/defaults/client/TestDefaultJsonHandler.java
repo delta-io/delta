@@ -15,14 +15,8 @@
  */
 package io.delta.kernel.defaults.client;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
@@ -33,18 +27,15 @@ import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.fs.FileStatus;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
+import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
+
+import io.delta.kernel.internal.InternalScanFileUtils;
 
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
-import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 
 public class TestDefaultJsonHandler {
     private static final JsonHandler JSON_HANDLER = new DefaultJsonHandler(new Configuration() {
@@ -60,7 +51,7 @@ public class TestDefaultJsonHandler {
         throws Exception {
         try (CloseableIterator<Row> inputScanFiles = testFiles();
             CloseableIterator<FileReadContext> fileReadContexts =
-                JSON_HANDLER.contextualizeFileReads(testFiles(), Literal.TRUE)) {
+                JSON_HANDLER.contextualizeFileReads(testFiles(), ALWAYS_TRUE)) {
             while (inputScanFiles.hasNext() || fileReadContexts.hasNext()) {
                 assertEquals(inputScanFiles.hasNext(), fileReadContexts.hasNext());
                 Row inputScanFile = inputScanFiles.next();
@@ -76,13 +67,11 @@ public class TestDefaultJsonHandler {
         try (
             CloseableIterator<FileDataReadResult> data =
                 JSON_HANDLER.readJsonFiles(
-                    JSON_HANDLER.contextualizeFileReads(testFiles(), Literal.TRUE),
+                    JSON_HANDLER.contextualizeFileReads(testFiles(), ALWAYS_TRUE),
                     new StructType()
                         .add("path", StringType.INSTANCE)
                         .add("size", LongType.INSTANCE)
-                        .add("dataChange", BooleanType.INSTANCE)
-                )
-        ) {
+                        .add("dataChange", BooleanType.INSTANCE))) {
 
             List<String> actPaths = new ArrayList<>();
             List<Long> actSizes = new ArrayList<>();
@@ -163,28 +152,11 @@ public class TestDefaultJsonHandler {
         throws Exception {
         String listFrom = DefaultKernelTestUtils.getTestResourceFilePath("json-files/1.json");
         CloseableIterator<FileStatus> list = FS_CLIENT.listFrom(listFrom);
-        return list.map(fileStatus ->
-            new DefaultJsonRow(
-                addFileJsonFromPath(fileStatus.getPath()),
-                new StructType()
-                    .add("path", StringType.INSTANCE)
-                    .add("dataChange", BooleanType.INSTANCE)
-                    .add("size", LongType.INSTANCE)
-            )
-        );
-    }
-
-    private static ObjectNode addFileJsonFromPath(String path) {
-        ObjectMapper objectMapper = new ObjectMapper();
-        ObjectNode object = objectMapper.createObjectNode();
-        object.put("path", path);
-        object.put("dataChange", true);
-        object.put("size", 234L);
-        return object;
+        return list.map(fileStatus -> InternalScanFileUtils.generateScanFileRow(fileStatus));
     }
 
     private static void compareScanFileRows(Row expected, Row actual) {
         // basically compare the paths
-        assertEquals(expected.getString(0), actual.getString(0));
+        assertEquals(expected.getStruct(0).getString(0), actual.getStruct(0).getString(0));
     }
 }

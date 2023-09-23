@@ -191,13 +191,7 @@ case class TableChanges(
   def toReadQuery: LogicalPlan = child.transformUp {
     case DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
       // withOptions empties the catalog table stats
-      val deltaTable = d.withOptions(options.asScala.toMap)
-      val relation = deltaTable.toBaseRelation
-      LogicalRelation(
-        relation,
-        relation.schema.toAttributes,
-        deltaTable.catalogTable,
-        isStreaming = false)
+      d.withOptions(options.asScala.toMap).toLogicalRelation
     case r: NamedRelation =>
       throw DeltaErrors.notADeltaTableException(fnName, r.name)
     case l: LogicalRelation =>

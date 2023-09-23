@@ -26,11 +26,12 @@ import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.AlwaysTrue;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 
+import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.InternalUtils;
 
@@ -105,8 +106,8 @@ public class Checkpointer {
             try (CloseableIterator<FileReadContext> fileReadContextIter =
                      jsonHandler.contextualizeFileReads(
                          Utils.singletonCloseableIterator(
-                             InternalUtils.getScanFileRow(lastCheckpointFile)),
-                         Literal.TRUE
+                             InternalScanFileUtils.generateScanFileRow(lastCheckpointFile)),
+                         AlwaysTrue.ALWAYS_TRUE
                      );
                  CloseableIterator<FileDataReadResult> jsonIter =
                      tableClient.getJsonHandler().readJsonFiles(

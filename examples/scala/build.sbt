@@ -57,6 +57,9 @@ val getScalaVersion = settingKey[String](
 val getDeltaVersion = settingKey[String](
   s"get delta version from environment variable DELTA_VERSION. If it doesn't exist, use $deltaVersion"
 )
+val getDeltaArtifactName = settingKey[String](
+  s"get delta artifact name based on the delta version. either `delta-core` or `delta-spark`."
+)
 
 getScalaVersion := {
   sys.env.get("SCALA_VERSION") match {
@@ -87,6 +90,11 @@ getDeltaVersion := {
   }
 }
 
+getDeltaArtifactName := {
+  val deltaVersion = getDeltaVersion.value
+  if (deltaVersion.charAt(0).asDigit >= 3) "delta-spark" else "delta-core"
+}
+
 lazy val extraMavenRepo = sys.env.get("EXTRA_MAVEN_REPO").toSeq.map { repo =>
   resolvers += "Delta" at repo
 }
@@ -97,7 +105,7 @@ lazy val root = (project in file("."))
     name := "hello-world",
     crossScalaVersions := Seq(scala212, scala213),
     libraryDependencies ++= Seq(
-      "io.delta" %% "delta-core" % getDeltaVersion.value,
+      "io.delta" %% getDeltaArtifactName.value % getDeltaVersion.value,
       "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
         getMajorMinor(getDeltaVersion.value)
       )

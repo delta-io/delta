@@ -19,7 +19,7 @@ package io.delta.kernel
 import java.util.Optional
 
 import io.delta.golden.GoldenTableUtils
-import io.delta.kernel.data.{ColumnarBatch, Row}
+import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.types.{LongType, StructType}
 import io.delta.kernel.utils.CloseableIterator
@@ -28,6 +28,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 // scalastyle:off println
 class LogReplaySuite extends AnyFunSuite {
+  // TODO: refactor to use TestUtils
 
   private val tableClient = DefaultTableClient.create(new Configuration() {{
       // Set the batch sizes to small so that we get to test the multiple batch scenarios.
@@ -44,7 +45,7 @@ class LogReplaySuite extends AnyFunSuite {
 
   private def readScanFiles(
       scanState: Row,
-      scanFilesBatchIter: CloseableIterator[ColumnarBatch]): Seq[ColumnarBatch] = {
+      scanFilesBatchIter: CloseableIterator[FilteredColumnarBatch]): Seq[ColumnarBatch] = {
     val dataBatches = scala.collection.mutable.ArrayBuffer[ColumnarBatch]()
     try {
       while (scanFilesBatchIter.hasNext()) {
@@ -67,7 +68,7 @@ class LogReplaySuite extends AnyFunSuite {
 
   test("simple end to end with inserts and deletes and checkpoint") {
     val unresolvedPath = GoldenTableUtils.goldenTablePath("basic-with-inserts-deletes-checkpoint")
-    val table = io.delta.kernel.Table.forPath(s"file:$unresolvedPath")
+    val table = io.delta.kernel.Table.forPath(tableClient, unresolvedPath)
     val conf = new Configuration()
     val client = DefaultTableClient.create(conf)
     val snapshot = table.getLatestSnapshot(client)

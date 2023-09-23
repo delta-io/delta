@@ -337,8 +337,12 @@ object DeltaOperations {
       "ifExists" -> ifExists)
   }
   /** Recorded when dropping a table feature. */
-  case class DropTableFeature(featureName: String) extends Operation("DROP FEATURE") {
-    override val parameters: Map[String, Any] = Map("featureName" -> featureName)
+  case class DropTableFeature(
+      featureName: String,
+      truncateHistory: Boolean) extends Operation("DROP FEATURE") {
+    override val parameters: Map[String, Any] = Map(
+      "featureName" -> featureName,
+      "truncateHistory" -> truncateHistory)
   }
   /** Recorded when columns are added. */
   case class AddColumns(
@@ -401,6 +405,11 @@ object DeltaOperations {
   }
 
   object ManualUpdate extends Operation("Manual Update") {
+    override val parameters: Map[String, Any] = Map.empty
+  }
+
+  /** A commit without any actions. Could be used to force creation of new checkpoints. */
+  object EmptyCommit extends Operation("Empty Commit") {
     override val parameters: Map[String, Any] = Map.empty
   }
 

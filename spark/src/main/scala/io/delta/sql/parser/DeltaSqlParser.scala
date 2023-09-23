@@ -284,7 +284,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     // could revert back to that.
     val sourceRelation = new UnresolvedRelation(visitMultipartIdentifier(ctx.source))
     val maybeTimeTravelSource = maybeTimeTravelChild(ctx.clause, sourceRelation)
-    val targetRelation = UnresolvedRelation(target)
+    val targetRelation = UnresolvedRelation(target.nameParts)
 
     val tablePropertyOverrides = Option(ctx.tableProps)
       .map(visitPropertyKeyValues)
@@ -402,7 +402,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   }
 
   override def visitRestore(ctx: RestoreContext): LogicalPlan = withOrigin(ctx) {
-    val tableRelation = UnresolvedRelation(visitTableIdentifier(ctx.table))
+    val tableRelation = UnresolvedRelation(visitTableIdentifier(ctx.table).nameParts)
     val timeTravelTableRelation = maybeTimeTravelChild(ctx.clause, tableRelation)
     RestoreTableStatement(timeTravelTableRelation.asInstanceOf[TimeTravel])
   }
@@ -513,10 +513,12 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    * Parse an ALTER TABLE DROP FEATURE command.
    */
   override def visitAlterTableDropFeature(ctx: AlterTableDropFeatureContext): LogicalPlan = {
+    val truncateHistory = ctx.TRUNCATE != null && ctx.HISTORY != null
     AlterTableDropFeature(
       createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
         "ALTER TABLE ... DROP FEATURE"),
-      visitFeatureNameValue(ctx.featureName))
+      visitFeatureNameValue(ctx.featureName),
+      truncateHistory)
   }
 
   /**

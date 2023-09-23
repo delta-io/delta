@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -452,7 +453,11 @@ object SchemaUtils extends DeltaLogging {
       keyDiffs ++ valueDiffs ++ nullabilityDiffs
     }
 
-    structDifference(existingSchema, specifiedSchema, "")
+    structDifference(
+      existingSchema,
+      CharVarcharUtils.replaceCharVarcharWithStringInSchema(specifiedSchema),
+      ""
+    )
   }
 
   /**

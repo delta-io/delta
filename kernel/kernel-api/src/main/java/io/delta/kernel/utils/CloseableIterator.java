@@ -22,6 +22,15 @@ import java.util.Iterator;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
+import io.delta.kernel.annotation.Evolving;
+
+/**
+ * Closeable extension of {@link Iterator}
+ *
+ * @param <T> the type of elements returned by this iterator
+ * @since 3.0.0
+ */
+@Evolving
 public interface CloseableIterator<T> extends Iterator<T>, Closeable {
     default <U> CloseableIterator<U> map(Function<T, U> mapper) {
         CloseableIterator<T> delegate = this;

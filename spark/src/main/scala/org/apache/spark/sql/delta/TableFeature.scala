@@ -520,7 +520,9 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
  * This is still WIP feature.
  */
 object V2CheckpointTableFeature
-  extends ReaderWriterFeature(name = "v2Checkpoint-under-development")
+  extends ReaderWriterFeature(
+    name = "v2Checkpoint-under-development"
+  )
   with FeatureAutomaticallyEnabledByMetadata {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true

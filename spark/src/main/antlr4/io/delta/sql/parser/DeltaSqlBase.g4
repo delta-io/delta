@@ -87,7 +87,7 @@ statement
     | ALTER TABLE table=qualifiedName
         DROP CONSTRAINT (IF EXISTS)? name=identifier                    #dropTableConstraint
     | ALTER TABLE table=qualifiedName
-        DROP FEATURE featureName=featureNameValue                       #alterTableDropFeature
+        DROP FEATURE featureName=featureNameValue (TRUNCATE HISTORY)?   #alterTableDropFeature
     | OPTIMIZE (path=STRING | table=qualifiedName)
         (WHERE partitionPredicate=predicateToken)?
         (zorderSpec)?                                                   #optimizeTable
@@ -225,7 +225,7 @@ nonReserved
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
     | SHOW | COLUMNS | IN | FROM | NO | STATISTICS
     | CLONE | SHALLOW
-    | FEATURE
+    | FEATURE | TRUNCATE
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -284,6 +284,7 @@ SYSTEM_VERSION: 'SYSTEM_VERSION';
 TABLE: 'TABLE';
 TBLPROPERTIES: 'TBLPROPERTIES';
 TIMESTAMP: 'TIMESTAMP';
+TRUNCATE: 'TRUNCATE';
 TO: 'TO';
 TRUE: 'TRUE';
 VACUUM: 'VACUUM';

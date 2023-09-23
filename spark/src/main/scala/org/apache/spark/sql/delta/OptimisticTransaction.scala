@@ -42,6 +42,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.types.StructType
@@ -136,21 +137,17 @@ private[delta] case class DeltaTableReadPredicate(
  * @param deltaLog The Delta Log for the table this transaction is modifying.
  * @param snapshot The snapshot that this transaction is reading at.
  */
-class OptimisticTransaction
-    (override val deltaLog: DeltaLog, override val snapshot: Snapshot)
-    (implicit override val clock: Clock)
+class OptimisticTransaction(
+    override val deltaLog: DeltaLog,
+    override val catalogTable: Option[CatalogTable],
+    override val snapshot: Snapshot)
   extends OptimisticTransactionImpl
   with DeltaLogging {
-
-  /** Creates a new OptimisticTransaction.
-   *
-   * @param deltaLog The Delta Log for the table this transaction is modifying.
-   * @param snapshotOpt The most recent snapshot of the table, if available.
-   */
-  // TODO: The deltaLog object already has a clock; an implicit clock shouldn't be needed
-  def this(deltaLog: DeltaLog, snapshotOpt: Option[Snapshot] = None)(implicit clock: Clock) {
-    this(deltaLog, snapshotOpt.getOrElse(deltaLog.update()))
-  }
+  def this(
+      deltaLog: DeltaLog,
+      catalogTable: Option[CatalogTable],
+      snapshotOpt: Option[Snapshot] = None) =
+    this(deltaLog, catalogTable, snapshotOpt.getOrElse(deltaLog.update()))
 }
 
 object OptimisticTransaction {
@@ -216,8 +213,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   import org.apache.spark.sql.delta.util.FileNames._
 
   val deltaLog: DeltaLog
+  val catalogTable: Option[CatalogTable]
   val snapshot: Snapshot
-  implicit val clock: Clock
+  def clock: Clock = deltaLog.clock
 
   protected def spark = SparkSession.active
 

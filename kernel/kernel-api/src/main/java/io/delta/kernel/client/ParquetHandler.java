@@ -18,6 +18,7 @@ package io.delta.kernel.client;
 
 import java.io.IOException;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.types.StructField;
@@ -28,7 +29,10 @@ import io.delta.kernel.utils.CloseableIterator;
  * Provides Parquet file related functionalities to Delta Kernel. Connectors can leverage this
  * interface to provide their own custom implementation of Parquet data file functionalities to
  * Delta Kernel.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface ParquetHandler
     extends FileHandler {
     /**

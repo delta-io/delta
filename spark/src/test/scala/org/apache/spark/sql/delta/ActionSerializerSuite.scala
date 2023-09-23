@@ -21,8 +21,10 @@ import java.util.UUID
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
@@ -357,12 +359,14 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
            | tblproperties
            | ('${TableFeatureProtocolUtils.propertyKey(DomainMetadataTableFeature)}' = 'enabled')
            |""".stripMargin)
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
+      val deltaTable = DeltaTableV2(spark, TableIdentifier(table))
+      val deltaLog = deltaTable.deltaLog
       val domainMetadatas = DomainMetadata(
         domain = "testDomain",
         configuration = JsonUtils.toJson(Map("key1" -> "value1")),
         removed = false) :: Nil
-      val version = deltaLog.startTransaction().commit(domainMetadatas, ManualUpdate)
+      val version = deltaTable.startTransactionWithInitialSnapshot()
+        .commit(domainMetadatas, ManualUpdate)
       val committedActions = deltaLog.store.read(
         FileNames.deltaFile(deltaLog.logPath, version),
         deltaLog.newDeltaHadoopConf())

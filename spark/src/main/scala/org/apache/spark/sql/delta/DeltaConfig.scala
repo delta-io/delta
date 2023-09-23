@@ -411,6 +411,19 @@ trait DeltaConfigsBase extends DeltaLogging {
   )
 
   /**
+   * The logRetention period to be used in DROP FEATURE ... TRUNCATE HISTORY command.
+   * The value should represent the expected duration of the longest running transaction. Setting
+   * this to a lower value than the longest running transaction may corrupt the table.
+   */
+  val TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION = buildConfig[CalendarInterval](
+    "dropFeatureTruncateHistory.retentionDuration",
+    "interval 24 hours",
+    parseCalendarInterval,
+    isValidIntervalConfigValue,
+    "needs to be provided as a calendar interval such as '2 weeks'. Months " +
+    "and years are not accepted. You may specify '365 days' for a year instead.")
+
+  /**
    * The shortest duration we have to keep logically deleted data files around before deleting them
    * physically. This is to prevent failures in stale readers after compactions or partition
    * overwrites.
@@ -624,9 +637,11 @@ trait DeltaConfigsBase extends DeltaLogging {
     "must be Serializable"
   )
 
+  val CHECKPOINT_POLICY_CONFIG_KEY = "checkpointPolicy-dev"
+
   /** Policy to decide what kind of checkpoint to write to a table. */
   val CHECKPOINT_POLICY = buildConfig[CheckpointPolicy.Policy](
-    key = "checkpointPolicy-dev",
+    key = CHECKPOINT_POLICY_CONFIG_KEY,
     defaultValue = CheckpointPolicy.Classic.name,
     fromString = str => CheckpointPolicy.fromName(str),
     validationFunction = (v => CheckpointPolicy.ALL.exists(_.name == v.name)),

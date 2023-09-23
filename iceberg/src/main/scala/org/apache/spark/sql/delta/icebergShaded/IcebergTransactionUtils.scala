@@ -150,6 +150,7 @@ object IcebergTransactionUtils
       .withFormat(FileFormat.PARQUET)
 
     if (partitionSpec.isPartitioned) {
+      val ICEBERG_NULL_PARTITION_VALUE = "__HIVE_DEFAULT_PARTITION__"
       val partitionPath = partitionSpec
         .fields()
         .asScala
@@ -158,7 +159,11 @@ object IcebergTransactionUtils
           // The Iceberg Schema and PartitionSpec all use the column logical names.
           // Delta FileAction::partitionValues, however, uses physical names.
           val physicalPartKey = logicalToPhysicalPartitionNames(logicalPartCol)
-          s"$logicalPartCol=${f.partitionValues(physicalPartKey)}"
+
+          // ICEBERG_NULL_PARTITION_VALUE is referred in Iceberg lib to mark NULL partition value
+          val partValue = Option(f.partitionValues(physicalPartKey))
+            .getOrElse(ICEBERG_NULL_PARTITION_VALUE)
+          s"$logicalPartCol=$partValue"
         }
         .mkString("/")
 

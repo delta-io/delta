@@ -503,14 +503,11 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
             |USING delta
             |AS SELECT 1 as a, 'a' as b
            """.stripMargin)
-
-
       sql(s"ALTER TABLE tbl RENAME TO newTbl")
-      checkDatasetUnorderly(
-        sql("SELECT * FROM newTbl").as[(Long, String)],
-        1L -> "a")
+      checkDatasetUnorderly(sql("SELECT * FROM newTbl").as[(Long, String)], 1L -> "a")
     }
   }
+
 
   /**
    * Although Spark 3.2 adds the support for SHOW CREATE TABLE for v2 tables, it doesn't work
