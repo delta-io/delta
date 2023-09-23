@@ -18,18 +18,20 @@ package org.apache.spark.sql.delta.commands.merge
 
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
+
 import org.apache.spark.SparkException
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{AttributeSet, Expression, Literal}
+import org.apache.spark.sql.catalyst.expressions.{AttributeSet, Expression}
 import org.apache.spark.sql.catalyst.optimizer.EliminateResolvedHint
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.execution.{LogicalRDD, SQLExecution}
+import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.storage.StorageLevel
 
@@ -44,7 +46,7 @@ import org.apache.spark.storage.StorageLevel
  * materialized RDD[InternalRow] on the executor local disks.
  *
  * 1st concern is that if an executor is lost, this data can be lost.
- * When Spark executor decomissioning API is used, it should attempt to move this
+ * When Spark executor decommissioning API is used, it should attempt to move this
  * materialized data safely out before removing the executor.
  *
  * 2nd concern is that if an executor is lost for another reason (e.g. spot kill), we will
