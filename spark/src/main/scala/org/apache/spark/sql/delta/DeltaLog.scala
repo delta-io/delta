@@ -664,11 +664,6 @@ object DeltaLog extends DeltaLogging {
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
-  def forTable(spark: SparkSession, dataPath: String, options: Map[String, String]): DeltaLog = {
-    apply(spark, logPathFor(dataPath), options, new SystemClock)
-  }
-
-  /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path): DeltaLog = {
     apply(spark, logPathFor(dataPath), new SystemClock)
   }

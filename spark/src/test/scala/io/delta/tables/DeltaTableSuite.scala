@@ -434,7 +434,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
       val origData: DataFrame = spark.read.options(fsOptions).format("delta").load(path)
 
-      val deltaLog = DeltaLog.forTable(spark, path, fsOptions)
+      val deltaLog = DeltaLog.forTable(spark, new Path(path), fsOptions)
       val table = io.delta.tables.DeltaTable.forPath(spark, path, fsOptions)
       val versionBeforeOptimize = deltaLog.snapshot.version
 
@@ -483,7 +483,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
         // version 0.
         df1.write.format("delta").options(fsOptions).save(path)
-        val deltaLog = DeltaLog.forTable(spark, path, fsOptions)
+        val deltaLog = DeltaLog.forTable(spark, new Path(path), fsOptions)
         assert(deltaLog.snapshot.version == 0)
 
         // version 1.
@@ -536,7 +536,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
       // create a table with a default Protocol.
       val testSchema = spark.range(1).schema
-      val log = DeltaLog.forTable(spark, path, fsOptions)
+      val log = DeltaLog.forTable(spark, new Path(path), fsOptions)
       log.ensureLogDirectoryExist()
       log.store.write(
         FileNames.deltaFile(log.logPath, 0),
@@ -562,7 +562,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
       // create a table with a default Protocol.
       val testSchema = spark.range(1).schema
-      val log = DeltaLog.forTable(spark, path, fsOptions)
+      val log = DeltaLog.forTable(spark, new Path(path), fsOptions)
       log.ensureLogDirectoryExist()
       log.store.write(
         FileNames.deltaFile(log.logPath, 0),
