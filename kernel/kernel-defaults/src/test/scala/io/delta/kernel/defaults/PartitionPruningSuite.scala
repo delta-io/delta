@@ -25,9 +25,9 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class PartitionPruningSuite extends AnyFunSuite with TestUtils {
   test("partition pruning: simple filter") {
-    val filter = predicate("=", col("as_int"), ofInt(5))
+    val filter = predicate("=", col("as_int"), ofInt(1))
     val selectedColumns = Seq("as_int", "as_long", "value")
-    val expectedResult = Seq((5, 5L, "5"))
+    val expectedResult = Seq((1, 1L, "1"))
 
     checkTable(
       path = goldenTablePath("data-reader-partition-values"),
