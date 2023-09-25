@@ -12,8 +12,8 @@ The provided PowerQuery/M function allows you to read a Delta Lake table directl
   - Local Folder or Network Share (tested)
   - Azure Data Lake Store Gen1 (tested)
   - Local Hadoop / HDFS (partially tested, check `UseFileBuffer` option)
-- Support for Partition Elimination to leverage the partitioning schema of the Delta Lake table ([details](#PartitionFilterFunction))
-- Support for File Pruning using file stats ([details](#StatsFilterFunction))
+- Support for Partition Elimination to leverage the partitioning schema of the Delta Lake table ([details](#partitionfilterfunction))
+- Support for File Pruning using file stats ([details](#statsfilterfunction))
 - Support all simple and complex data types (struct, map, array, ...)
 - Added shortcut to read `COUNT` from `_delta_log` directly if possible
 - Support for Delta Lake time travel - e.g. `VERSION AS OF`
@@ -39,33 +39,44 @@ in
 
 6. Open your query that contains the function and select `Blob_Content` in the parameter `DeltaTableFolderContent`
 7. Click `Invoke`
-7. A new PQ query will be created for you showing the contents of the Delta Lake table
+8. A new PQ query will be created for you showing the contents of the Delta Lake table
 
 # Parameters
+
 The function supports two parameters of which the second is optional:
+
 1. DeltaTableFolderContent
 2. DeltaTableOptions
 
-
 ## Parameter DeltaTableFolderContent
+
 A table that contains a file/folder listing of your Delta Lake table. PowerBI supports a wide set of storage services which you can use for this. There are however some mandatory things this file/folder listing has to cotain:
+
 - a sub-folder `_delta_log` (which holds the Delta Log files and also ensures that the parent folder is the root of the Delta Lake table)
 - mandatory columns `Name`, `Folder Path`, `Content`, `Extension`
 These are all returned by default for common Storage connectors like Azure Data Lake Storage Gen2 or Azure Blob Storaage
 
 ## Parameter DeltaTableOptions
+
 An optional record that be specified to control the following options:
+
 ### **Version**
+
 A numeric value that defines historic specific version of the Delta Lake table you want to read. This is similar to specifying 
 `VERSION AS OF` When querying the Delta Lake table via SQL. Default is the most recent/current version.
 You can also specify a negative value to go backwards from the most recent/current version number.
 e.g using a value of `-1` to load the previous version of the Delta table.
+
 ### **UseFileBuffer** 
+
 Some data sources do not support streaming of binary files and you may receive an error message like **"Parquet.Document cannot be used with streamed binary values."**. To mitigate this issue, you can set `UseFileBuffer=true`. Details about this issue and implications are desribed [here](https://blog.crossjoin.co.uk/2021/03/07/parquet-files-in-power-bi-power-query-and-the-streamed-binary-values-error/).
 Please be aware that this option can have negative performance impact!
+
 ### **PartitionFilterFunction**
+
 A fuction that is used to filter out partitions before actually reading the files. The function has to take 1 parameter of type `record` and must return a `logical` type (true/false). The record that is passed in can then be used to specify the partition filter. For each file in the delta table the metadata is checked against this function. If it is not matched, it is discarded from the final list of files that make up the Delta Lake table.
 Assuming your Delta Lake table is partitioned by Year and Month and you want to filter for `Year=2021` and `Month="Jan"` your function may look like this:
+
 ```m
 (PartitionValues as record) as logical =>
     Record.Field(PartitionValues, "Year") = 2021 and Record.Field(PartitionValues, "Month") = "Jan"
@@ -107,6 +118,7 @@ Please be aware that this option can have negative performance impact!
 ### **TimeZoneOffset**
 
 Apache Parquet has no built-in data type for timestamps with offset hence all timestamps are stored physically as UTC. As Delta Lake is also based on Apache Parquet, this also applies here. So, to explicitly change the timezone for all timestamps that are read from the Delta Lake table, you can use `TimeZoneOffset="+02:00"`. The resulting columns will then be of type DateTimeZone with the offset of `+02:00` and the DateTime-value shifted by +2 hours. The parameter supports the following format only: `[+|-][HH:mm]`
+
 ### **additional options may be added in the future!**
 
 # Known limitations
@@ -123,7 +135,8 @@ The examples below can be used *as-is* in Power BI desktop. If you are prompted 
 
 ## Using Delta Lake Time Travel
 
-To use Delta Lake Time Travel you need to specify the `Version`-option as part of the second argument. The following example reads the Version 1 of a Delta Lake table from an Azure Blob Storage. 
+To use Delta Lake Time Travel you need to specify the `Version`-option as part of the second argument. The following example reads the Version 1 of a Delta Lake table from an Azure Blob Storage.
+
 ```m
 let
     Source = AzureStorage.Blobs("https://gbadls01.blob.core.windows.net/public"),
@@ -185,3 +198,12 @@ in
 **Q:** The data source I am using does not work with the `fn_ReadDeltaTable` function - what can I do?
 
 **A:** Please open a support ticket/issue in the git repository.
+
+
+# Contributing
+If you want to contribute to this connector, you can use the provided `.pbip` Power BI Desktop Project file to develop a new feature and run some tests. Ideally, the tests will be based on data in `connectors\golden-tables` so it is easy for everyone else to re-run the tests. If this is not possible, you may also add references to your local files other data sourcs (e.g. blob storage) but be aware, that those then cannot be opened by other contributors if they require authentication.
+
+The idea is that you first create a PQ query that points to your Delta Lake table as a file-listing. Then reference that PQ query in the pre-defined query `DeltaTableFolderContent` in the PQ folder `/FunctionParameters/Options`. If necessary, you can also change all the other parameters there if you need to test them.
+You can then debug the code step by step using the PQ queries under folder `/FunctionSteps`. Once you are done with your changes there, it is very important that you remember the PQ queries that you have changed and duplicate them to the final PQ query `fn_ReadDeltaTable`!
+This will automatically run basic checks (rowcount and if the table can still be read) on the Golden Tables defined in PQ query `GoldenTables`.
+Once this all succeeds, you can take the text from `fn_ReadDeltaTable` and copy it to the file `connectors\powerbi\fn_ReadDeltaTable.pq`.
