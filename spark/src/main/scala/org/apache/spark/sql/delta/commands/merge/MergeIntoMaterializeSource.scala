@@ -306,7 +306,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     materializeReason
   }
 
-  protected def getSourceDF: DataFrame = {
+  protected def getSourceDF(): DataFrame = {
     if (sourceDF.isEmpty) {
       throw new IllegalStateException(
         "sourceDF was not initialized! Call prepareSourceDFAndReturnMaterializeReason before.")

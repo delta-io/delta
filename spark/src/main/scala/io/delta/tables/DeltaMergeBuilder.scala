@@ -487,7 +487,6 @@ object DeltaMergeMatchedActionBuilder {
  *
  * @since 0.3.0
  */
-@DeveloperApi
 class DeltaMergeNotMatchedActionBuilder private(
     private val mergeBuilder: DeltaMergeBuilder,
     private val notMatchCondition: Option[Column]) {

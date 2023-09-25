@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.commands.merge
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 
