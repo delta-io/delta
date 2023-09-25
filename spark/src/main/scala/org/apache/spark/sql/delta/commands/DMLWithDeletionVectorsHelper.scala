@@ -50,6 +50,8 @@ import org.apache.spark.util.{SerializableConfiguration, Utils => SparkUtils}
  * Contains utility classes and method for performing DML operations with Deletion Vectors.
  */
 object DMLWithDeletionVectorsHelper extends DeltaCommand {
+  val SUPPORTED_DML_COMMANDS: Seq[String] = Seq("DELETE", "UPDATE")
+
   /**
    * Creates a DataFrame that can be used to scan for rows matching the condition in the given
    * files. Generally the given file list is a pruned file list using the stats based pruning.
@@ -116,12 +118,11 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       fileIndex: TahoeFileIndex,
       condition: Expression,
       opName: String): Seq[TouchedFileWithDV] = {
-    {
-      val supportedOps = Seq("DELETE", "UPDATE")
-      require(
-        supportedOps.contains(opName),
-        s"Expecting opName to be one of ${supportedOps.mkString(", ")}, but got '$opName'.")
-    }
+    val supportedOps = Seq("DELETE", "UPDATE")
+    require(
+      SUPPORTED_DML_COMMANDS.contains(opName),
+      s"Expecting opName to be one of ${SUPPORTED_DML_COMMANDS.mkString(", ")}, " +
+        s"but got '$opName'.")
 
     recordDeltaOperation(deltaLog, opType = s"$opName.findTouchedFiles") {
       val candidateFiles = fileIndex match {
