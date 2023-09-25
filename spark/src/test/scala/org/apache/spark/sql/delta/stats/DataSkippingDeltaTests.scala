@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.QueryPlanningTracker
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -2123,4 +2124,26 @@ class DataSkippingDeltaV1NameColumnMappingSuite
     with DeltaColumnMappingEnableNameMode
     with DataSkippingDeltaTestV1ColumnMappingMode {
   override protected def runAllTests: Boolean = true
+}
+
+class DataSkippingDeltaV1JsonCheckpointV2Suite extends DataSkippingDeltaV1Suite {
+  override def sparkConf: SparkConf = {
+    super.sparkConf.setAll(
+      Seq(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.JSON.name
+      )
+    )
+  }
+}
+
+class DataSkippingDeltaV1ParquetCheckpointV2Suite extends DataSkippingDeltaV1Suite {
+  override def sparkConf: SparkConf = {
+    super.sparkConf.setAll(
+      Seq(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.PARQUET.name
+      )
+    )
+  }
 }

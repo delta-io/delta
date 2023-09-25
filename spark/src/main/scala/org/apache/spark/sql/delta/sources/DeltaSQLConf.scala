@@ -576,6 +576,14 @@ trait DeltaSQLConfBase {
   // Checkpoint V2 Specific Configs
   ////////////////////////////////////
 
+  val CHECKPOINT_V2_DRIVER_THREADPOOL_PARALLELISM =
+    buildStaticConf("checkpointV2.threadpool.size")
+      .doc("The size of the threadpool for fetching CheckpointMetadata and SidecarFiles from a" +
+        " checkpoint.")
+      .internal()
+      .intConf
+      .createWithDefault(32)
+
   val CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT =
     buildConf("checkpointV2.topLevelFileFormat")
       .internal()

@@ -26,12 +26,14 @@ import scala.util.matching.Regex
 
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.SparkContext
+import org.apache.spark.SparkFunSuite
 import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -222,6 +224,29 @@ trait DeltaTestUtilsBase {
   @deprecated("Use checkError() instead")
   protected def errorContains(errMsg: String, str: String): Unit = {
     assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
+  }
+}
+
+trait DeltaCheckpointTestUtils
+  extends DeltaTestUtilsBase { self: SparkFunSuite with SharedSparkSession =>
+
+  def testDifferentCheckpoints(testName: String)
+      (f: (CheckpointPolicy.Policy, Option[V2Checkpoint.Format]) => Unit): Unit = {
+    test(s"$testName [Checkpoint V1]") {
+      withSQLConf(DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey ->
+        CheckpointPolicy.Classic.name) {
+        f(CheckpointPolicy.Classic, None)
+      }
+    }
+    for (checkpointFormat <- V2Checkpoint.Format.ALL)
+    test(s"$testName [Checkpoint V2, format: ${checkpointFormat.name}]") {
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> checkpointFormat.name
+      ) {
+        f(CheckpointPolicy.V2, Some(checkpointFormat))
+      }
+    }
   }
 }
 

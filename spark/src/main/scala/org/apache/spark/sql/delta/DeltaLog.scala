@@ -35,6 +35,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.storage.LogStoreProvider
+import org.apache.spark.sql.delta.util.FileNames
 import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
@@ -85,6 +86,14 @@ class DeltaLog private(
 
   import org.apache.spark.sql.delta.files.TahoeFileIndex
   import org.apache.spark.sql.delta.util.FileNames._
+
+  /**
+   * Path to sidecar directory.
+   * This is intentionally kept `lazy val` as otherwise any other constructor codepaths in DeltaLog
+   * (e.g. SnapshotManagement etc) will see it as null as they are executed before this line is
+   * called.
+   */
+  lazy val sidecarDirPath: Path = FileNames.sidecarDirPath(logPath)
 
 
   protected def spark = SparkSession.active
