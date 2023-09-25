@@ -224,6 +224,11 @@ public class DefaultRowBasedColumnarBatch
             return rows.get(rowId).getArray(columnOrdinal);
         }
 
+        @Override
+        public ColumnVector getChild(int ordinal) {
+            return ColumnVector.super.getChild(ordinal);
+        }
+
         private void assertValidRowId(int rowId) {
             checkArgument(rowId < rows.size(),
                 "Invalid rowId: " + rowId + ", max allowed rowId is: " + (rows.size() - 1));
