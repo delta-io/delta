@@ -1220,7 +1220,8 @@ case class DeltaDynamicPartitionOverwriteCommand(
       deltaOptions,
       partitionColumns = Nil,
       deltaTable.deltaLog.unsafeVolatileSnapshot.metadata.configuration,
-      Dataset.ofRows(sparkSession, query)
+      Dataset.ofRows(sparkSession, query),
+      deltaTable.catalogTable
     ).run(sparkSession)
   }
 }

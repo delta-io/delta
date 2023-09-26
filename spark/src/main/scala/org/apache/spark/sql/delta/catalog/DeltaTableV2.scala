@@ -244,7 +244,7 @@ case class DeltaTableV2(
 
     cdcRelation.getOrElse {
       deltaLog.createRelation(
-        partitionPredicates, Some(initialSnapshot), timeTravelSpec.isDefined)
+        partitionPredicates, Some(initialSnapshot), catalogTable, timeTravelSpec.isDefined)
     }
   }
 
@@ -395,7 +395,8 @@ private class WriteIntoDeltaBuilder(
             new DeltaOptions(options.toMap, session.sessionState.conf),
             Nil,
             table.deltaLog.unsafeVolatileSnapshot.metadata.configuration,
-            data).run(session)
+            data,
+            table.catalogTable).run(session)
 
           // TODO: Push this to Apache Spark
           // Re-cache all cached plans(including this relation itself, if it's cached) that refer

@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.DeleteFromTable
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
@@ -76,6 +77,7 @@ case class WriteIntoDelta(
     partitionColumns: Seq[String],
     configuration: Map[String, String],
     data: DataFrame,
+    catalogTableOpt: Option[CatalogTable],
     schemaInCatalog: Option[StructType] = None)
   extends LeafRunnableCommand
   with ImplicitMetadataOperation
@@ -90,7 +92,7 @@ case class WriteIntoDelta(
 
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    deltaLog.withNewTransaction { txn =>
+    deltaLog.withNewTransaction(catalogTableOpt) { txn =>
       if (hasBeenExecuted(txn, sparkSession, Some(options))) {
         return Seq.empty
       }
@@ -414,7 +416,8 @@ case class WriteIntoDelta(
       txn: OptimisticTransaction,
       condition: Seq[Expression]): Seq[Action] = {
     val relation = LogicalRelation(
-        txn.deltaLog.createRelation(snapshotToUseOpt = Some(txn.snapshot)))
+        txn.deltaLog.createRelation(snapshotToUseOpt = Some(txn.snapshot),
+          catalogTableOpt = txn.catalogTable))
     val processedCondition = condition.reduceOption(And)
     val command = spark.sessionState.analyzer.execute(
       DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))
