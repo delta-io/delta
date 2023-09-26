@@ -116,7 +116,9 @@ class StatsCollectionSuite
         assert(e.getErrorClass == "DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS")
         assert(e.getSqlState == "0AKDD")
         assert(e.getMessage ==
-          "Statistics re-computation on a Delta table with deletion vectors is not yet supported.")
+          "[DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS] " +
+            "Statistics re-computation on a Delta table with deletion " +
+            "vectors is not yet supported.")
       }
     }
   }

@@ -1654,7 +1654,8 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
         }
         assert(e.getErrorClass == "DELTA_CANNOT_SET_LOCATION_ON_PATH_IDENTIFIER")
         assert(e.getSqlState == "42613")
-        assert(e.getMessage == "Cannot change the location of a path based table.")
+        assert(e.getMessage == "[DELTA_CANNOT_SET_LOCATION_ON_PATH_IDENTIFIER] " +
+          "Cannot change the location of a path based table.")
       }
     }
   }

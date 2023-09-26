@@ -914,7 +914,8 @@ class DeltaSuite extends QueryTest
             .option(DeltaOptions.REPLACE_WHERE_OPTION, "part1 = 1")
             .save(tempDir.getCanonicalPath)
         }
-        assert(e.getMessage === "A 'replaceWhere' expression and " +
+        assert(e.getMessage === "[DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE] " +
+          "A 'replaceWhere' expression and " +
           "'partitionOverwriteMode'='dynamic' cannot both be set in the DataFrameWriter options.")
       }
     }
@@ -2111,7 +2112,8 @@ class DeltaSuite extends QueryTest
           .mode("overwrite")
           .saveAsTable(table)
       }
-      assert(e.getMessage.startsWith("Data written out does not match replaceWhere"))
+      assert(e.getMessage.startsWith("[DELTA_REPLACE_WHERE_MISMATCH] " +
+        "Data written out does not match replaceWhere"))
 
       Seq(("a", "b", "c"), ("d", "e", "f"))
         .toDF("a.b", "c.d", "ab")
@@ -2673,7 +2675,8 @@ class DeltaSuite extends QueryTest
       val e1 = intercept[IllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (4, 0)")
       }
-      assert(e1.getMessage == "Invalid options for idempotent Dataframe writes: " +
+      assert(e1.getMessage == "[DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS] " +
+        "Invalid options for idempotent Dataframe writes: " +
         "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
         "must be specified for idempotent Delta writes")
       // this write should succeed as it's using a newer version than the latest
@@ -2683,7 +2686,8 @@ class DeltaSuite extends QueryTest
       val e2 = intercept[IllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (3, 0)")
       }
-      assert(e2.getMessage == "Invalid options for idempotent Dataframe writes: " +
+      assert(e2.getMessage == "[DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS] " +
+        "Invalid options for idempotent Dataframe writes: " +
         "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
         "must be specified for idempotent Delta writes")
 

@@ -2962,10 +2962,16 @@ abstract class MergeIntoSuiteBase
               )
             }
 
-            val message = if (e.getCause != null) {
-              e.getCause.getMessage
-            } else e.getMessage
-            assert(message.matches(expectedRegex.getOrElse(expectedErrorRegex)))
+            def extractErrorClass(e: Throwable): String =
+              e match {
+                case dt: DeltaThrowable => s"\\[${dt.getErrorClass}\\] "
+                case _ => ""
+              }
+
+            val (message, errorClass) = if (e.getCause != null) {
+              (e.getCause.getMessage, extractErrorClass(e.getCause))
+            } else (e.getMessage, extractErrorClass(e))
+            assert(message.matches(errorClass + expectedRegex.getOrElse(expectedErrorRegex)))
             checkAnswer(spark.read.format("delta").table("target"), dataBeforeException)
           } else {
             executeMerge(
