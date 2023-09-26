@@ -162,12 +162,10 @@ case class UpdateCommand(
       addAndRemoveActions
     } else {
       // Case 3: Find all the affected files using the user-specified condition
-
       val fileIndex = new TahoeBatchFileIndex(
         sparkSession, "update", candidateFiles, deltaLog, tahoeFileIndex.path, txn.snapshot)
 
-      if (shouldWriteDeletionVectors) {
-        // Case 3.1: Update with persistent deletion vectors
+      val touchedFilesWithDV = if (shouldWriteDeletionVectors) {
         val targetDf = DMLWithDeletionVectorsHelper.createTargetDfForScanningForMatches(
           sparkSession,
           target,
@@ -177,7 +175,7 @@ case class UpdateCommand(
         // with deletion vectors.
         val mustReadDeletionVectors = DeletionVectorUtils.deletionVectorsReadable(txn.snapshot)
 
-        val touchedFiles = DMLWithDeletionVectorsHelper.findTouchedFiles(
+        DMLWithDeletionVectorsHelper.findTouchedFiles(
           sparkSession,
           txn,
           mustReadDeletionVectors,
@@ -186,34 +184,7 @@ case class UpdateCommand(
           fileIndex,
           updateCondition,
           opName = "UPDATE")
-
-        if (touchedFiles.nonEmpty) {
-          val (dvActions, metricMap) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
-            sparkSession,
-            touchedFiles,
-            txn.snapshot)
-          metrics("numUpdatedRows").set(metricMap("numTouchedRows"))
-          numTouchedFiles = metricMap("numRemovedFiles")
-          val dvRewriteStartNs = System.nanoTime()
-          val newFiles = rewriteFiles(
-            sparkSession,
-            txn,
-            rootPath = tahoeFileIndex.path,
-            inputLeafFiles = touchedFiles.map(_.fileLogEntry),
-            nameToAddFileMap = nameToAddFile,
-            condition = updateCondition,
-            generateRemoveFileActions = false,
-            copyUnmodifiedRows = false)
-          rewriteTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - dvRewriteStartNs)
-
-          dvActions ++ newFiles
-        } else {
-          Nil // Nothing to update
-        }
       } else {
-        // Case 3.2: Update without persistent deletion vectors. Existing DVs will be applied to
-        // the data files (rows marked by DV will be physically removed).
-
         // Keep everything from the resolved target except a new TahoeFileIndex
         // that only involves the affected files instead of all files.
         val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
@@ -228,40 +199,60 @@ case class UpdateCommand(
               .as[String]
               .collect()
           }
-
         scanTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime)
 
-        val touchedFiles =
-          pathsToRewrite.map(getTouchedFile(deltaLog.dataPath, _, nameToAddFile)).toSeq
-
-        // Rewrite all touchedFiles
-        val addAndRemoveActions =
-          withStatusCode("DELTA", UpdateCommand.rewritingFilesMsg(touchedFiles.size)) {
-            if (touchedFiles.nonEmpty) {
-              rewriteFiles(
-                sparkSession,
-                txn,
-                rootPath = tahoeFileIndex.path,
-                inputLeafFiles = touchedFiles,
-                nameToAddFileMap = nameToAddFile,
-                condition = updateCondition,
-                generateRemoveFileActions = true,
-                copyUnmodifiedRows = true)
-            } else {
-              Nil
-            }
-          }
-        rewriteTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime) - scanTimeMs
-        numTouchedFiles = touchedFiles.length
-        val (addActions, removeActions) = addAndRemoveActions.partition(_.isInstanceOf[AddFile])
-        numRewrittenFiles = addActions.size
-        numAddedBytes = addActions.map(_.getFileSize).sum
-        numRemovedBytes = removeActions.map(_.getFileSize).sum
-        addAndRemoveActions
+        // Wrap AddFile into TouchedFileWithDV that has empty DV.
+        pathsToRewrite
+          .map(getTouchedFile(deltaLog.dataPath, _, nameToAddFile))
+          .map(f => TouchedFileWithDV(f.path, f, newDeletionVector = null, deletedRows = 0L))
+          .toSeq
       }
+
+      // When DV is on, we first mask removed rows with DVs and generate `remove` and `add` actions.
+      val actionsForExistingFiles = if (shouldWriteDeletionVectors) {
+        val (dvActions, metricMap) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
+          sparkSession,
+          touchedFilesWithDV,
+          txn.snapshot)
+        metrics("numUpdatedRows").set(metricMap("numModifiedRows"))
+        numTouchedFiles = metricMap("numRemovedFiles")
+        dvActions
+      } else {
+        Nil
+      }
+
+      // When DV is on, we write out updated rows only. The return value will be only `add` actions.
+      // When DV is off, we write out updated rows plus unmodified rows from the same file, then
+      // return `add` and `remove` actions.
+      val rewriteStartNs = System.nanoTime()
+      val actionsForNewFiles =
+        withStatusCode("DELTA", UpdateCommand.rewritingFilesMsg(touchedFilesWithDV.size)) {
+          if (touchedFilesWithDV.nonEmpty) {
+            rewriteFiles(
+              sparkSession,
+              txn,
+              rootPath = tahoeFileIndex.path,
+              inputLeafFiles = touchedFilesWithDV.map(_.fileLogEntry),
+              nameToAddFileMap = nameToAddFile,
+              condition = updateCondition,
+              generateRemoveFileActions = !shouldWriteDeletionVectors,
+              copyUnmodifiedRows = !shouldWriteDeletionVectors)
+          } else {
+            Nil
+          }
+        }
+      rewriteTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - rewriteStartNs)
+
+      numTouchedFiles = touchedFilesWithDV.length
+      val (addActions, removeActions) = actionsForNewFiles.partition(_.isInstanceOf[AddFile])
+      numRewrittenFiles = addActions.size
+      numAddedBytes = addActions.map(_.getFileSize).sum
+      numRemovedBytes = removeActions.map(_.getFileSize).sum
+
+      actionsForExistingFiles ++ actionsForNewFiles
     }
 
-    val changeActions = allActions.collect{ case f: AddCDCFile => f }
+    val changeActions = allActions.collect { case f: AddCDCFile => f }
     numAddedChangeFiles = changeActions.size
     changeFileBytes = changeActions.map(_.size).sum
 

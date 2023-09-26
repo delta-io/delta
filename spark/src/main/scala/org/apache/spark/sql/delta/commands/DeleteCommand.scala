@@ -277,7 +277,7 @@ case class DeleteCommand(
                 sparkSession,
                 touchedFiles,
                 txn.snapshot)
-              metrics("numDeletedRows").set(metricMap("numTouchedRows"))
+              metrics("numDeletedRows").set(metricMap("numModifiedRows"))
               numDeletionVectorsAdded = metricMap("numDeletionVectorsAdded")
               numDeletionVectorsRemoved = metricMap("numDeletionVectorsRemoved")
               numDeletionVectorsUpdated = metricMap("numDeletionVectorsUpdated")

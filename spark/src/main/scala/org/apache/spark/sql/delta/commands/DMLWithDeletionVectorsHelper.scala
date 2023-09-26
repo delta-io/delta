@@ -174,7 +174,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       spark: SparkSession,
       touchedFiles: Seq[TouchedFileWithDV],
       snapshot: Snapshot): (Seq[FileAction], Map[String, Long]) = {
-    val numTouchedRows: Long = touchedFiles.map(_.numberOfModifiedRows).sum
+    val numModifiedRows: Long = touchedFiles.map(_.numberOfModifiedRows).sum
     val numRemovedFiles: Long = touchedFiles.count(_.isFullyReplaced())
 
     val (fullyRemovedFiles, notFullyRemovedFiles) = touchedFiles.partition(_.isFullyReplaced())
@@ -201,7 +201,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       }
     numDeletionVectorsRemoved += fullyRemoved.count(_.deletionVector != null)
     val metricMap = Map(
-      "numTouchedRows" -> numTouchedRows,
+      "numModifiedRows" -> numModifiedRows,
       "numRemovedFiles" -> numRemovedFiles,
       "numDeletionVectorsAdded" -> numDeletionVectorsAdded,
       "numDeletionVectorsRemoved" -> numDeletionVectorsRemoved,
