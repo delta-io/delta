@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.cdc
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.AddCDCFile
+import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.test.DeltaExcludedTestMixin
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -212,10 +212,6 @@ class UpdateCDCWithDeletionVectorsSuite extends UpdateCDCSuite
       spark.range(0, 10, 1, numPartitions = 2).write.format("delta").save(path)
       executeUpdate(s"delta.`$path`", "id = -1", "id % 4 = 0")
 
-      val cdcActions =
-        log.getChanges(log.update().version).flatMap(_._2).collect { case f: AddCDCFile => f }.toSeq
-      assert(cdcActions.nonEmpty)
-
       val latestVersion = log.update().version
       checkAnswer(
         CDCReader
@@ -228,6 +224,15 @@ class UpdateCDCWithDeletionVectorsSuite extends UpdateCDCSuite
           Row(8, "update_preimage", latestVersion) ::
           Row(-1, "update_postimage", latestVersion) ::
           Nil)
+
+      val allActions = log.getChanges(latestVersion).flatMap(_._2).toSeq
+      val addActions = allActions.collect { case f: AddFile => f }
+      val removeActions = allActions.collect { case f: RemoveFile => f }
+      val cdcActions = allActions.collect { case f: AddCDCFile => f }
+
+      assert(addActions.count(_.deletionVector != null) === 2)
+      assert(removeActions.size === 2)
+      assert(cdcActions.nonEmpty)
     }
   }
 }
