@@ -451,7 +451,7 @@ class DeltaAnalysis(session: SparkSession)
       // rewrites Delta from V2 to V1
       val newTarget = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
       val indices = newTarget.collect {
-        case DeltaFullTable(index) => index
+        case DeltaFullTable(_, index) => index
       }
       if (indices.isEmpty) {
         // Not a Delta table at all, do not transform
@@ -469,7 +469,7 @@ class DeltaAnalysis(session: SparkSession)
       // rewrites Delta from V2 to V1
       val newTable = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
         newTable.collectLeaves().headOption match {
-          case Some(DeltaFullTable(index)) =>
+          case Some(DeltaFullTable(_, index)) =>
             DeltaUpdateTable(newTable, cols, expressions, condition)
           case o =>
             // not a Delta table

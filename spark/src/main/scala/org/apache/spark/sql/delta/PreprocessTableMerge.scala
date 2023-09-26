@@ -89,7 +89,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
 
     val deltaLogicalPlan = EliminateSubqueryAliases(target)
     val tahoeFileIndex = deltaLogicalPlan match {
-      case DeltaFullTable(index) => index
+      case DeltaFullTable(_, index) => index
       case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
     }
     val generatedColumns = GeneratedColumn.getGeneratedColumns(
@@ -190,8 +190,8 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     }
 
     if (transformToCommand) {
-      val tahoeFileIndex = EliminateSubqueryAliases(target) match {
-        case DeltaFullTable(index) => index
+      val (relation, tahoeFileIndex) = EliminateSubqueryAliases(target) match {
+        case DeltaFullTable(rel, index) => rel -> index
         case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
       }
 
@@ -206,6 +206,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         MergeIntoCommand(
           transformTimestamps(source, now),
           transformTimestamps(target, now),
+          relation.catalogTable,
           tahoeFileIndex,
           condition,
           processedMatched,

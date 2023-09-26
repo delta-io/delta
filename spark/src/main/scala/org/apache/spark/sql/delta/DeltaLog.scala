@@ -227,9 +227,28 @@ class DeltaLog private(
    * be recorded for this table, and all other tables will be read
    * at a snapshot that is pinned on the first access.
    *
+   * @param catalogTableOpt The [[CatalogTable]] for the table this transaction updates. Passing
+   * None asserts this is a path-based table with no catalog entry.
+   *
+   * @param snapshotOpt THe [[Snapshot]] this transaction should use, if not latest.
    * @note This uses thread-local variable to make the active transaction visible. So do not use
    *       multi-threaded code in the provided thunk.
    */
+  def withNewTransaction[T](
+      catalogTableOpt: Option[CatalogTable],
+      snapshotOpt: Option[Snapshot] = None)(
+      thunk: OptimisticTransaction => T): T = {
+    try {
+      val txn = startTransaction(catalogTableOpt, snapshotOpt)
+      OptimisticTransaction.setActive(txn)
+      thunk(txn)
+    } finally {
+      OptimisticTransaction.clearActive()
+    }
+  }
+
+  /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
+  @deprecated("Please use the CatalogTable overload instead", "3.0")
   def withNewTransaction[T](thunk: OptimisticTransaction => T): T = {
     try {
       val txn = startTransaction()

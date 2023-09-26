@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.types.{LongType, StructType}
@@ -59,6 +60,7 @@ import org.apache.spark.sql.types.{LongType, StructType}
 case class MergeIntoCommand(
     @transient source: LogicalPlan,
     @transient target: LogicalPlan,
+    @transient catalogTable: Option[CatalogTable],
     @transient targetFileIndex: TahoeFileIndex,
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
@@ -77,7 +79,7 @@ case class MergeIntoCommand(
   protected def runMerge(spark: SparkSession): Seq[Row] = {
     recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
       val startTime = System.nanoTime()
-      targetDeltaLog.withNewTransaction { deltaTxn =>
+      targetDeltaLog.withNewTransaction(catalogTable) { deltaTxn =>
         if (hasBeenExecuted(deltaTxn, spark)) {
           sendDriverMetrics(spark, metrics)
           return Seq.empty
