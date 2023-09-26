@@ -26,7 +26,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
-class ShowTableColumnsSuite extends QueryTest
+class ShowDeltaTableColumnsSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews {
