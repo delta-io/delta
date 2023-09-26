@@ -553,7 +553,15 @@ class DeltaAnalysis(session: SparkSession)
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))
 
-    case streamWrite: WriteToStream =>
+    case origStreamWrite @ WriteToStream(_, _, sink: DeltaSink, _, _, _, _, _) =>
+      val streamWrite = origStreamWrite.catalogTable match {
+        case Some(catalogTable) if sink.catalogTable.isEmpty =>
+          // Hook up the missing catalog table, since we didn't have access to it when we first
+          // created the DeltaSink in DeltaDataSource.createSink (Spark API).
+          origStreamWrite.copy(sink = sink.copy(catalogTable = Some(catalogTable)))
+        case _ => origStreamWrite
+      }
+
       verifyDeltaSourceSchemaLocation(
         streamWrite.inputQuery, streamWrite.resolvedCheckpointLocation)
       streamWrite

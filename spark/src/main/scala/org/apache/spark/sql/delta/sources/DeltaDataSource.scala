@@ -169,6 +169,8 @@ class DeltaDataSource
       throw DeltaErrors.outputModeNotSupportedException(getClass.getName, outputMode.toString)
     }
     val deltaOptions = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
+    // NOTE: Spark API doesn't give access to the CatalogTable here, but DeltaAnalysis will pick
+    // that info out of the containing WriteToStream (if present), and update the sink there.
     new DeltaSink(sqlContext, new Path(path), partitionColumns, outputMode, deltaOptions)
   }
 

@@ -1184,6 +1184,30 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("streaming write to catalog table via data source API") {
+    withTable("tab") {
+      Seq(1, 2, 3).toDF.write.format("delta").saveAsTable("tab")
+      checkDatasetUnorderly(spark.read.table("tab").as[Int], 1, 2, 3)
+
+      // Streaming write should correctly update the Delta table.
+      val input = MemoryStream[Int]
+      val q = input.toDF
+        .writeStream
+        .format("delta")
+        .option(
+          "checkpointLocation",
+          Utils.createTempDir(namePrefix = "tahoe-test").getCanonicalPath)
+        .toTable("tab")
+      try {
+        input.addData(10, 12, 13)
+        q.processAllAvailable()
+        checkDatasetUnorderly(spark.read.table("tab").as[Int], 1, 2, 3, 10, 12, 13)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
   test("support partitioning with batch data source API - append") {
     withTempDir { tempDir =>
       if (tempDir.exists()) {
