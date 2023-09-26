@@ -27,6 +27,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression, If, Literal}
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.QueryPlan
@@ -48,6 +49,7 @@ import org.apache.spark.sql.types.LongType
  */
 case class UpdateCommand(
     tahoeFileIndex: TahoeFileIndex,
+    catalogTable: Option[CatalogTable],
     target: LogicalPlan,
     updateExpressions: Seq[Expression],
     condition: Option[Expression])
@@ -82,7 +84,7 @@ case class UpdateCommand(
   final override def run(sparkSession: SparkSession): Seq[Row] = {
     recordDeltaOperation(tahoeFileIndex.deltaLog, "delta.dml.update") {
       val deltaLog = tahoeFileIndex.deltaLog
-      deltaLog.withNewTransaction { txn =>
+      deltaLog.withNewTransaction(catalogTable) { txn =>
         DeltaLog.assertRemovable(txn.snapshot)
         if (hasBeenExecuted(txn, sparkSession)) {
           sendDriverMetrics(sparkSession, metrics)

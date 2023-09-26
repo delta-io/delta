@@ -57,15 +57,15 @@ object DeltaTable {
  * Extractor Object for pulling out the full table scan of a Delta table.
  */
 object DeltaFullTable {
-  def unapply(a: LogicalPlan): Option[TahoeLogFileIndex] = a match {
+  def unapply(a: LogicalPlan): Option[(LogicalRelation, TahoeLogFileIndex)] = a match {
     // `DeltaFullTable` is not only used to match a certain query pattern, but also does
     // some validations to throw errors. We need to match both Project and Filter here,
     // so that we can check if Filter is present or not during validations.
-    case NodeWithOnlyDeterministicProjectAndFilter(DeltaTable(index: TahoeLogFileIndex)) =>
+    case NodeWithOnlyDeterministicProjectAndFilter(lr @ DeltaTable(index: TahoeLogFileIndex)) =>
       if (!index.deltaLog.tableExists) return None
       val hasFilter = a.find(_.isInstanceOf[Filter]).isDefined
       if (index.partitionFilters.isEmpty && index.versionToUse.isEmpty && !hasFilter) {
-        Some(index)
+        Some(lr -> index)
       } else if (index.versionToUse.nonEmpty) {
         throw DeltaErrors.failedScanWithHistoricalVersion(index.versionToUse.get)
       } else {
