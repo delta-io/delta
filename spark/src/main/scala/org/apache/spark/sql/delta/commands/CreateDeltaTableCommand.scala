@@ -160,7 +160,8 @@ case class CreateDeltaTableCommand(
           options,
           partitionColumns = table.partitionColumnNames,
           configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
-          data = data)
+          data = data,
+          Some(tableWithLocation))
         handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
         Nil
       case _ =>
