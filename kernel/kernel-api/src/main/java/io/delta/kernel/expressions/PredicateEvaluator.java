@@ -30,7 +30,10 @@ import io.delta.kernel.data.ColumnarBatch;
  * Result selection vector is combined with the given existing selection vector and a new selection
  * vector is returned. This mechanism allows running an input batch through several predicate
  * evaluations without rewriting the input batch to remove rows that do not pass the predicate
- * after each predicate evaluation.
+ * after each predicate evaluation. The new selection should be same or more selective as the
+ * existing selection vector. For example if a row is marked as unselected in existing selection
+ * vector, then it should remain unselected in the returned selection vector even when the given
+ * predicate returns true for the row.
  *
  * @since 3.0.0
  */

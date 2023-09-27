@@ -44,6 +44,9 @@ public class DefaultPredicateEvaluator implements PredicateEvaluator {
     private final ExpressionEvaluator expressionEvaluator;
 
     public DefaultPredicateEvaluator(StructType inputSchema, Predicate predicate) {
+        // Create a predicate that takes into account of the selection value in existing selection
+        // vector in addition to the given predicate. This is needed to make a row remain
+        // unselected in the final vector when it is unselected in existing selection vector.
         Predicate rewrittenPredicate = new And(
             new Predicate(
                 "=",
