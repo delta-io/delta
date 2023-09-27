@@ -553,15 +553,18 @@ class DeltaAnalysis(session: SparkSession)
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))
 
-    case origStreamWrite @ WriteToStream(_, _, sink: DeltaSink, _, _, _, _, _) =>
-      val streamWrite = origStreamWrite.catalogTable match {
-        case Some(catalogTable) if sink.catalogTable.isEmpty =>
-          // Hook up the missing catalog table, since we didn't have access to it when we first
-          // created the DeltaSink in DeltaDataSource.createSink (Spark API).
-          origStreamWrite.copy(sink = sink.copy(catalogTable = Some(catalogTable)))
+    case origStreamWrite: WriteToStream =>
+      // The command could have Delta as source and/or sink. We need to look at both.
+      val streamWrite = origStreamWrite match {
+        case WriteToStream(_, _, sink @ DeltaSink(_, _, _, _, _, None), _, _, _, _, Some(ct)) =>
+          // The command has a catalog table, but the DeltaSink does not. This happens because
+          // DeltaDataSource.createSink (Spark API) didn't have access to the catalog table when it
+          // created the DeltaSink. Fortunately we can fix it up here.
+          origStreamWrite.copy(sink = sink.copy(catalogTable = Some(ct)))
         case _ => origStreamWrite
       }
 
+      // We also need to validate the source schema location, if the command has a Delta source.
       verifyDeltaSourceSchemaLocation(
         streamWrite.inputQuery, streamWrite.resolvedCheckpointLocation)
       streamWrite
