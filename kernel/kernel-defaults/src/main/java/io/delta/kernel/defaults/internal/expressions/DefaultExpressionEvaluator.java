@@ -29,8 +29,7 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.compare;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.evalNullability;
+import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.*;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**
@@ -157,7 +156,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ExpressionTransformResult visitColumn(Column column) {
             String[] names = column.getNames();
             DataType currentType = inputDataSchema;
-            for(int level = 0; level < names.length; level++) {
+            for (int level = 0; level < names.length; level++) {
                 assertColumnExists(currentType instanceof StructType, inputDataSchema, column);
                 StructType structSchema = ((StructType) currentType);
                 int ordinal = structSchema.indexOf(names[level]);
@@ -171,6 +170,42 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         @Override
         ExpressionTransformResult visitCast(ImplicitCastExpression cast) {
             throw new UnsupportedOperationException("CAST expression is not expected.");
+        }
+
+        @Override
+        ExpressionTransformResult visitPartitionValue(PartitionValueExpression partitionValue) {
+            ExpressionTransformResult serializedPartValueInput = visit(partitionValue.getInput());
+            checkArgument(
+                serializedPartValueInput.outputType instanceof StringType,
+                "%s: expected string input, but got %s",
+                partitionValue, serializedPartValueInput.outputType);
+            DataType partitionColType = partitionValue.getDataType();
+            if (partitionColType instanceof StructType ||
+                partitionColType instanceof ArrayType ||
+                partitionColType instanceof MapType) {
+                throw new UnsupportedOperationException(
+                    "unsupported partition data type: " + partitionColType);
+            }
+            return new ExpressionTransformResult(
+                new PartitionValueExpression(serializedPartValueInput.expression, partitionColType),
+                partitionColType);
+        }
+
+        @Override
+        ExpressionTransformResult visitElementAt(ScalarExpression elementAt) {
+            ExpressionTransformResult transformedMapInput = visit(childAt(elementAt, 0));
+            ExpressionTransformResult transformedLookupKey = visit(childAt(elementAt, 1));
+
+            ScalarExpression transformedExpression = ElementAtEvaluator.validateAndTransform(
+                elementAt,
+                transformedMapInput.expression,
+                transformedMapInput.outputType,
+                transformedLookupKey.expression,
+                transformedLookupKey.outputType);
+
+            return new ExpressionTransformResult(
+                transformedExpression,
+                ((MapType) transformedMapInput.outputType).getValueType());
         }
 
         private Predicate validateIsPredicate(
@@ -187,9 +222,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         }
 
         private Expression transformBinaryComparator(Predicate predicate) {
-            checkArgument(predicate.getChildren().size() == 2, "expected two inputs");
-            ExpressionTransformResult leftResult = visit(predicate.getChildren().get(0));
-            ExpressionTransformResult rightResult = visit(predicate.getChildren().get(1));
+            ExpressionTransformResult leftResult = visit(getLeft(predicate));
+            ExpressionTransformResult rightResult = visit(getRight(predicate));
             Expression left = leftResult.expression;
             Expression right = rightResult.expression;
             if (!leftResult.outputType.equivalent(rightResult.outputType)) {
@@ -324,7 +358,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             String[] names = column.getNames();
             DataType currentType = input.getSchema();
             ColumnVector columnVector = null;
-            for(int level = 0; level < names.length; level++) {
+            for (int level = 0; level < names.length; level++) {
                 assertColumnExists(currentType instanceof StructType, input.getSchema(), column);
                 StructType structSchema = ((StructType) currentType);
                 int ordinal = structSchema.indexOf(names[level]);
@@ -347,6 +381,19 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             return cast.eval(inputResult);
         }
 
+        @Override
+        ColumnVector visitPartitionValue(PartitionValueExpression partitionValue) {
+            ColumnVector input = visit(partitionValue.getInput());
+            return PartitionValueEvaluator.eval(input, partitionValue.getDataType());
+        }
+
+        @Override
+        ColumnVector visitElementAt(ScalarExpression elementAt) {
+            ColumnVector map = visit(childAt(elementAt, 0));
+            ColumnVector lookupKey = visit(childAt(elementAt, 1));
+            return ElementAtEvaluator.eval(map, lookupKey);
+        }
+
         /**
          * Utility method to evaluate inputs to the binary input expression. Also validates the
          * evaluated expression result {@link ColumnVector}s are of the same size.
@@ -355,9 +402,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
          * @return Triplet of (result vector size, left operand result, left operand result)
          */
         private PredicateChildrenEvalResult evalBinaryExpressionChildren(Predicate predicate) {
-            checkArgument(predicate.getChildren().size() == 2, "expected two inputs");
-            ColumnVector left = visit(predicate.getChildren().get(0));
-            ColumnVector right = visit(predicate.getChildren().get(1));
+            ColumnVector left = visit(getLeft(predicate));
+            ColumnVector right = visit(getRight(predicate));
             checkArgument(
                 left.getSize() == right.getSize(),
                 "Left and right operand returned different results: left=%d, right=d",

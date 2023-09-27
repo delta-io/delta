@@ -17,8 +17,11 @@ package io.delta.kernel.defaults.internal.expressions;
 
 import java.math.BigDecimal;
 import java.util.Comparator;
+import java.util.List;
+import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.types.*;
 
 import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
@@ -46,7 +49,7 @@ class ExpressionUtils {
      * Utility method to compare the left and right according to the natural ordering
      * and return an integer array where each row contains the comparison result (-1, 0, 1) for
      * corresponding rows in the input vectors compared.
-     *
+     * <p>
      * Only primitive data types are supported.
      */
     static int[] compare(ColumnVector left, ColumnVector right) {
@@ -173,5 +176,31 @@ class ExpressionUtils {
                 result[rowId] = comparator.compare(left.getBinary(rowId), right.getBinary(rowId));
             }
         }
+    }
+
+    /**
+     * Utility method to return the left child of the binary input expression
+     */
+    static Expression getLeft(Expression expression) {
+        List<Expression> children = expression.getChildren();
+        checkArgument(
+            children.size() == 2,
+            format("%s: expected two inputs, but got %s", expression, children.size()));
+        return children.get(0);
+    }
+
+    /**
+     * Utility method to return the right child of the binary input expression
+     */
+    static Expression getRight(Expression expression) {
+        List<Expression> children = expression.getChildren();
+        checkArgument(
+            children.size() == 2,
+            format("%s: expected two inputs, but got %s", expression, children.size()));
+        return children.get(1);
+    }
+
+    static Expression childAt(Expression expression, int index) {
+        return expression.getChildren().get(index);
     }
 }
