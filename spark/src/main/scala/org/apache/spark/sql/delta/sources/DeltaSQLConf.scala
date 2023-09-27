@@ -467,7 +467,7 @@ trait DeltaSQLConfBase {
   val MERGE_MATERIALIZE_SOURCE =
     buildConf("merge.materializeSource")
       .internal()
-      .doc("When to materializes source plan during MERGE execution. " +
+      .doc("When to materialize the source plan during MERGE execution. " +
         "The value 'none' means source will never be materialized. " +
         "The value 'all' means source will always be materialized. " +
         "The value 'auto' means sources will not be materialized when they are certain to be " +
@@ -513,7 +513,7 @@ trait DeltaSQLConfBase {
 
   val MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS =
     buildStaticConf("merge.materializeSource.maxAttempts")
-      .doc("How many times to try MERGE with in case of lost RDD materialized source data")
+      .doc("How many times to try MERGE in case of lost RDD materialized source data")
       .intConf
       .createWithDefault(4)
 

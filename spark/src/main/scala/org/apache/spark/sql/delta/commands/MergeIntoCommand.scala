@@ -66,7 +66,8 @@ case class MergeIntoCommand(
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
-    migratedSchema: Option[StructType]) extends MergeIntoCommandBase
+    migratedSchema: Option[StructType])
+  extends MergeIntoCommandBase
   with InsertOnlyMergeExecutor
   with ClassicMergeExecutor {
 
@@ -139,9 +140,15 @@ case class MergeIntoCommand(
       spark.sharedState.cacheManager.recacheByPlan(spark, target)
     }
     sendDriverMetrics(spark, metrics)
-    Seq(Row(metrics("numTargetRowsUpdated").value + metrics("numTargetRowsDeleted").value +
-            metrics("numTargetRowsInserted").value, metrics("numTargetRowsUpdated").value,
-            metrics("numTargetRowsDeleted").value, metrics("numTargetRowsInserted").value))
+    val num_affected_rows =
+      metrics("numTargetRowsUpdated").value +
+        metrics("numTargetRowsDeleted").value +
+        metrics("numTargetRowsInserted").value
+    Seq(Row(
+      num_affected_rows,
+      metrics("numTargetRowsUpdated").value,
+      metrics("numTargetRowsDeleted").value,
+      metrics("numTargetRowsInserted").value))
   }
 
   /**

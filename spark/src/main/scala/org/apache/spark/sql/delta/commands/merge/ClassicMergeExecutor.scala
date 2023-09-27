@@ -34,20 +34,20 @@ import org.apache.spark.sql.functions.{coalesce, col, count, input_file_name, li
  *
  * Phase 1: Find the input files in target that are touched by the rows that satisfy
  *    the condition and verify that no two source rows match with the same target row.
- *    This is implemented as an inner-join using the given condition. See [[findTouchedFiles]]
- *    for more details. In the special case that there is no update clause we write all the non-
- *    matching source data as new files and skip phase 2.
+ *    This is implemented as an inner-join using the given condition (see [[findTouchedFiles]]).
+ *    In the special case that there is no update clause we write all the non-matching
+ *    source data as new files and skip phase 2.
  *    Issues an error message when the ON search_condition of the MERGE statement can match
  *    a single row from the target table with multiple rows of the source table-reference.
  *
  * Phase 2: Read the touched files again and write new files with updated and/or inserted rows.
- *    If there are updates, then use a outer join using the given condition to write the
+ *    If there are updates, then use an outer join using the given condition to write the
  *    updates and inserts (see [[writeAllChanges()]]. If there are no matches for updates,
- *    only inserts, then write them directy (see [[writeInsertsOnlyWhenNoMatches()]].
+ *    only inserts, then write them directly (see [[writeInsertsOnlyWhenNoMatches()]].
  *
  * See [[InsertOnlyMergeExecutor]] for the optimized executor used in case there are only inserts.
  */
-trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGeneration {
+trait ClassicMergeExecutor extends MergeOutputGeneration {
   self: MergeIntoCommandBase =>
   import MergeIntoCommandBase._
 
@@ -69,15 +69,6 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
     // Accumulator to collect all the distinct touched files
     val touchedFilesAccum = new SetAccumulator[String]()
     spark.sparkContext.register(touchedFilesAccum, TOUCHED_FILES_ACCUM_NAME)
-
-    // UDFs to records touched files names and add them to the accumulator
-    val recordTouchedFileName =
-      DeltaUDF.intFromStringBoolean { (fileName, shouldRecord) => {
-        if (shouldRecord) {
-          touchedFilesAccum.add(fileName)
-        }
-        1
-      }}.asNondeterministic()
 
     // Prune non-matching files if we don't need to collect them for NOT MATCHED BY SOURCE clauses.
     val dataSkippedFiles =
@@ -116,11 +107,11 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
       .filterNot { field =>
         targetColsNeeded.exists { name => columnComparator(name, field) }
       }
-    val incrSourceRowCountExpr = incrementMetricAndReturnBool("numSourceRows", true)
+    val incrSourceRowCountExpr = incrementMetricAndReturnBool("numSourceRows", valueToReturn = true)
     // We can't use filter() directly on the expression because that will prevent
     // column pruning. We don't need the SOURCE_ROW_PRESENT_COL so we immediately drop it.
-    val sourceDF = getSourceDF()
-      .withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
+    val sourceDF = getSourceDF
+      .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
       .filter(SOURCE_ROW_PRESENT_COL)
       .drop(SOURCE_ROW_PRESENT_COL)
     val targetPlan =
@@ -134,12 +125,21 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
       .withColumn(FILE_NAME_COL, input_file_name())
 
     val joinToFindTouchedFiles =
-      sourceDF.join(targetDF, new Column(condition), joinType)
+      sourceDF.join(targetDF, Column(condition), joinType)
+
+    // UDFs to records touched files names and add them to the accumulator
+    val recordTouchedFileName =
+      DeltaUDF.intFromStringBoolean { (fileName, shouldRecord) =>
+        if (shouldRecord) {
+          touchedFilesAccum.add(fileName)
+        }
+        1
+      }.asNondeterministic()
 
     // Process the matches from the inner join to record touched files and find multiple matches
     val collectTouchedFiles = joinToFindTouchedFiles
       .select(col(ROW_ID_COL),
-        recordTouchedFileName(col(FILE_NAME_COL), new Column(matchedPredicate)).as("one"))
+        recordTouchedFileName(col(FILE_NAME_COL), Column(matchedPredicate)).as("one"))
 
     // Calculate frequency of matches per source row
     val matchedRowCounts = collectTouchedFiles.groupBy(ROW_ID_COL).agg(sum("one").as("count"))
@@ -148,7 +148,7 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
     import org.apache.spark.sql.delta.implicits._
     val (multipleMatchCount, multipleMatchSum) = matchedRowCounts
       .filter("count > 1")
-      .select(coalesce(count(new Column("*")), lit(0)), coalesce(sum("count"), lit(0)))
+      .select(coalesce(count(Column("*")), lit(0)), coalesce(sum("count"), lit(0)))
       .as[(Long, Long)]
       .collect()
       .head
@@ -170,8 +170,8 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
     logTrace(s"findTouchedFiles: matched files:\n\t${touchedFileNames.mkString("\n\t")}")
 
     val nameToAddFileMap = generateCandidateFileMap(targetDeltaLog.dataPath, dataSkippedFiles)
-    val touchedAddFiles = touchedFileNames.map(f =>
-      getTouchedFile(targetDeltaLog.dataPath, f, nameToAddFileMap))
+    val touchedAddFiles = touchedFileNames.map(
+      getTouchedFile(targetDeltaLog.dataPath, _, nameToAddFileMap))
 
     if (metrics("numSourceRows").value == 0 && (dataSkippedFiles.isEmpty ||
       dataSkippedFiles.forall(_.numLogicalRecords.getOrElse(0) == 0))) {
@@ -210,16 +210,19 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
       spark: SparkSession,
       deltaTxn: OptimisticTransaction,
       filesToRewrite: Seq[AddFile],
-      deduplicateCDFDeletes: DeduplicateCDFDeletes)
-    : Seq[FileAction] = recordMergeOperation(
+      deduplicateCDFDeletes: DeduplicateCDFDeletes): Seq[FileAction] =
+    recordMergeOperation(
       extraOpType =
         if (shouldOptimizeMatchedOnlyMerge(spark)) "writeAllUpdatesAndDeletes"
         else "writeAllChanges",
       status = s"MERGE operation - Rewriting ${filesToRewrite.size} files",
       sqlMetricName = "rewriteTimeMs") {
 
-    require(!deduplicateCDFDeletes.enabled || isCdcEnabled(deltaTxn),
-      "CDF delete duplication is enabled but overall the CDF generation is disabled")
+      val cdcEnabled = isCdcEnabled(deltaTxn)
+
+      require(
+        !deduplicateCDFDeletes.enabled || cdcEnabled,
+        "CDF delete duplication is enabled but overall the CDF generation is disabled")
 
     // Generate a new target dataframe that has same output attributes exprIds as the target plan.
     // This allows us to apply the existing resolved update/insert expressions.
@@ -229,6 +232,7 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
       filesToRewrite,
       columnsToDrop = Nil)
     val baseTargetDF = Dataset.ofRows(spark, targetPlan)
+
     val joinType = if (shouldOptimizeMatchedOnlyMerge(spark)) {
       "rightOuter"
     } else {
@@ -243,31 +247,34 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
        """.stripMargin)
 
     // Expressions to update metrics
-    val incrSourceRowCountExpr = incrementMetricAndReturnBool("numSourceRowsInSecondScan", true)
-    val incrNoopCountExpr = incrementMetricAndReturnBool("numTargetRowsCopied", false)
+    val incrSourceRowCountExpr = incrementMetricAndReturnBool(
+      "numSourceRowsInSecondScan", valueToReturn = true)
+    val incrNoopCountExpr = incrementMetricAndReturnBool(
+      "numTargetRowsCopied", valueToReturn = false)
 
     // Apply an outer join to find both, matches and non-matches. We are adding two boolean fields
     // with value `true`, one to each side of the join. Whether this field is null or not after
-    // the outer join, will allow us to identify whether the resultant joined row was a
+    // the outer join, will allow us to identify whether the joined row was a
     // matched inner result or an unmatched result with null on one side.
     val joinedDF = {
       val sourceDF = if (deduplicateCDFDeletes.enabled && deduplicateCDFDeletes.includesInserts) {
         // Add row index for the source rows to identify inserted rows during the cdf deleted rows
         // deduplication. See [[deduplicateCDFDeletes()]]
-        getSourceDF()
+        getSourceDF
           .withColumn(SOURCE_ROW_INDEX_COL, monotonically_increasing_id())
       } else {
-        getSourceDF()
+        getSourceDF
       }
+      val left = sourceDF
+        .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
       val targetDF = baseTargetDF
         .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
-      sourceDF
-        .withColumn(SOURCE_ROW_PRESENT_COL, new Column(incrSourceRowCountExpr))
-        .join(
-        if (deduplicateCDFDeletes.enabled) {
-          targetDF.withColumn(TARGET_ROW_INDEX_COL, monotonically_increasing_id())
-        } else targetDF,
-        new Column(condition), joinType)
+      val right = if (deduplicateCDFDeletes.enabled) {
+        targetDF.withColumn(TARGET_ROW_INDEX_COL, monotonically_increasing_id())
+      } else {
+        targetDF
+      }
+      left.join(right, Column(condition), joinType)
     }
 
     // Precompute conditions in matched and not matched clauses and generate
@@ -277,31 +284,26 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
           joinedDF,
           clauses = matchedClauses ++ notMatchedClauses ++ notMatchedBySourceClauses)
 
-    val cdcEnabled = DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(deltaTxn.metadata)
-
-
     // The target output columns need to be marked as nullable here, as they are going to be used
     // to reference the output of an outer join.
     val targetOutputCols = getTargetOutputCols(deltaTxn, makeNullable = true)
 
     // If there are N columns in the target table, the full outer join output will have:
     // - N columns for target table
-    // - ROW_DROPPED_COL to define whether the generated row should dropped or written
-    // - if CDC is enabled, also CDC_TYPE_COLUMN_NAME containing the type of change being performed
+    // - ROW_DROPPED_COL to define whether the generated row should be dropped or written
+    // - if CDC is enabled, also CDC_TYPE_COLUMN_NAME with the type of change being performed
     //   in a particular row
-    // (N+1 or N+2 or N+3 columns depending on CDC disabled / enabled and if Row IDs are preserved)
+    // (N+1 or N+2 columns depending on CDC disabled / enabled)
     val outputColNames =
       targetOutputCols.map(_.name) ++
         Seq(ROW_DROPPED_COL) ++
-        (if (cdcEnabled) Seq(CDC_TYPE_COLUMN_NAME) else Seq())
+        (if (cdcEnabled) Some(CDC_TYPE_COLUMN_NAME) else None)
 
     // Copy expressions to copy the existing target row and not drop it (ROW_DROPPED_COL=false),
     // and in case CDC is enabled, set it to CDC_TYPE_NOT_CDC.
     // (N+1 or N+2 or N+3 columns depending on CDC disabled / enabled and if Row IDs are preserved)
-    val noopCopyExprs =
-      targetOutputCols ++
-        Seq(incrNoopCountExpr) ++
-        (if (cdcEnabled) Seq(CDC_TYPE_NOT_CDC) else Seq())
+      var noopCopyExprs = (targetOutputCols :+ incrNoopCountExpr) ++
+      (if (cdcEnabled) Some(CDC_TYPE_NOT_CDC) else None)
 
     // Generate output columns.
     val outputCols = generateWriteAllChangesOutputCols(
@@ -312,24 +314,23 @@ trait ClassicMergeExecutor extends MergeIntoMaterializeSource with MergeOutputGe
       cdcEnabled
     )
 
-    val outputDF = if (cdcEnabled) {
+    val preOutputDF = if (cdcEnabled) {
       generateCdcAndOutputRows(
           joinedAndPrecomputedConditionsDF,
           outputCols,
           outputColNames,
           noopCopyExprs,
           deduplicateCDFDeletes)
-        .filter(s"$ROW_DROPPED_COL = false")
-        .drop(ROW_DROPPED_COL)
-    } else { // change data capture is off, just output the normal data
-      // Apply the expressions on the join output. The filter ensures we only consider rows
-      // that are not dropped. And the drop ensures that the dropped flag does not leak out
-      // to the output.
+    } else {
+      // change data capture is off, just output the normal data
       joinedAndPrecomputedConditionsDF
         .select(outputCols: _*)
-        .filter(s"$ROW_DROPPED_COL = false")
-        .drop(ROW_DROPPED_COL)
     }
+    // The filter ensures we only consider rows that are not dropped.
+    // The drop ensures that the dropped flag does not leak out to the output.
+    val outputDF = preOutputDF
+      .filter(s"$ROW_DROPPED_COL = false")
+      .drop(ROW_DROPPED_COL)
 
     logDebug("writeAllChanges: join output plan:\n" + outputDF.queryExecution)
 

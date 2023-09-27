@@ -150,7 +150,7 @@ object DeltaMergeIntoClause {
       isEmptySeqEqualToStar: Boolean = true): Seq[Expression] = {
     assert(colNames.size == exprs.size)
     if (colNames.isEmpty && isEmptySeqEqualToStar) {
-      Seq[Expression](UnresolvedStar(None))
+      Seq(UnresolvedStar(None))
     } else {
       (colNames, exprs).zipped.map { (col, expr) => DeltaMergeAction(col.nameParts, expr) }
     }
@@ -608,8 +608,8 @@ object DeltaMergeInto {
           field.dataType match {
             // Specifically assigned to in one clause: always keep, including all nested attributes
             case _ if assignments.contains(fieldPath) => Some(field)
-            // If this is a struct and one of the child is being assigned to in a merge clause, keep
-            // it and continue filtering children.
+            // If this is a struct and one of the children is being assigned to in a merge clause,
+            // keep it and continue filtering children.
             case struct: StructType if childAssignedInMergeClause =>
               Some(field.copy(dataType = filterSchema(struct, fieldPath)))
             // The field isn't assigned to directly or indirectly (i.e. its children) in any non-*
