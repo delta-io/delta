@@ -23,7 +23,6 @@ import java.util.Optional
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultStructVector}
-import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.defaults.internal.data.vector.VectorUtils.getValueAsObject
 import io.delta.kernel.expressions._
 import io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE
@@ -32,7 +31,7 @@ import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
-class DefaultExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
+class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBase {
   test("evaluate expression: literal") {
     val testLiterals = Seq(
       Literal.ofBoolean(true),
@@ -212,7 +211,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
     val actOrOutputVector = evaluator(schema, orExpression, BooleanType.INSTANCE).eval(batch)
     checkBooleanVectors(actOrOutputVector, expOrOutputVector)
   }
-
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
     // Literals for each data type from the data type value range, used as inputs to comparator
@@ -477,54 +475,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  private def booleanVector(values: Seq[BooleanJ]): ColumnVector = {
-    new ColumnVector {
-      override def getDataType: DataType = BooleanType.INSTANCE
-
-      override def getSize: Int = values.length
-
-      override def close(): Unit = {}
-
-      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
-
-      override def getBoolean(rowId: Int): Boolean = values(rowId)
-    }
-  }
-
   private def evaluator(inputSchema: StructType, expression: Expression, outputType: DataType)
   : DefaultExpressionEvaluator = {
     new DefaultExpressionEvaluator(inputSchema, expression, outputType)
-  }
-
-  /** create a columnar batch of given `size` with zero columns in it. */
-  private def zeroColumnBatch(rowCount: Int): ColumnarBatch = {
-    new DefaultColumnarBatch(rowCount, new StructType(), new Array[ColumnVector](0))
-  }
-
-  private def and(left: Predicate, right: Predicate): And = {
-    new And(left, right)
-  }
-
-  private def or(left: Predicate, right: Predicate): Or = {
-    new Or(left, right)
-  }
-
-  private def comparator(symbol: String, left: Expression, right: Expression): Predicate = {
-    new Predicate(symbol, util.Arrays.asList(left, right))
-  }
-
-  private def checkBooleanVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
-    assert(actual.getDataType === expected.getDataType)
-    assert(actual.getSize === expected.getSize)
-    Seq.range(0, actual.getSize).foreach { rowId =>
-      assert(actual.isNullAt(rowId) === expected.isNullAt(rowId))
-      if (!actual.isNullAt(rowId)) {
-        assert(
-          actual.getBoolean(rowId) === expected.getBoolean(rowId),
-          s"unexpected value at $rowId"
-        )
-      }
-    }
   }
 
   private def testComparator(
