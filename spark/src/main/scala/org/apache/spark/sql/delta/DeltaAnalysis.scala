@@ -403,37 +403,6 @@ class DeltaAnalysis(session: SparkSession)
           throw DeltaErrors.notADeltaTableException("RESTORE")
       }
 
-    // Resolve as a resolved table if the path is for delta table. For non delta table, we keep the
-    // path and pass it along in a ResolvedPathBasedNonDeltaTable. This is needed as DESCRIBE DETAIL
-    // supports both delta and non delta paths.
-    case u: UnresolvedPathBasedTable =>
-      val table = getPathBasedDeltaTable(u.path)
-      val tableExists = Try(table.tableExists).getOrElse(false)
-      if (tableExists) {
-        // Resolve it as a path-based Delta table
-        val catalog = session.sessionState.catalogManager.currentCatalog.asTableCatalog
-        ResolvedTable.create(
-          catalog, Identifier.of(Array(DeltaSourceUtils.ALT_NAME), u.path), table)
-      } else {
-        // Resolve it as a placeholder, to identify it as a non-Delta table.
-        ResolvedPathBasedNonDeltaTable(u.path, u.commandName)
-      }
-
-    case u: UnresolvedPathBasedDeltaTable =>
-      val table = getPathBasedDeltaTable(u.path)
-      if (!table.tableExists) {
-        throw DeltaErrors.notADeltaTableException(u.commandName, u.deltaTableIdentifier)
-      }
-      val catalog = session.sessionState.catalogManager.currentCatalog.asTableCatalog
-      ResolvedTable.create(catalog, u.identifier, table)
-
-    case u: UnresolvedPathBasedDeltaTableRelation =>
-      val table = getPathBasedDeltaTable(u.path, u.options.asScala.toMap)
-      if (!table.tableExists) {
-        throw DeltaErrors.notADeltaTableException(u.deltaTableIdentifier)
-      }
-      DataSourceV2Relation.create(table, None, Some(u.identifier), u.options)
-
     case d: DescribeDeltaHistory if d.childrenResolved => d.toCommand
 
     // This rule falls back to V1 nodes, since we don't have a V2 reader for Delta right now
@@ -613,12 +582,6 @@ class DeltaAnalysis(session: SparkSession)
       provider = Some("delta"),
       stats = existingTable.flatMap(_.stats)
     )
-  }
-
-  private def getPathBasedDeltaTable(
-      path: String,
-      options: Map[String, String] = Map.empty): DeltaTableV2 = {
-    DeltaTableV2(session, new Path(path), options = options)
   }
 
   /**

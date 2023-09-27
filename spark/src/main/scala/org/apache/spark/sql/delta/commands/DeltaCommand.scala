@@ -287,7 +287,7 @@ trait DeltaCommand extends DeltaLogging {
    */
   def getDeltaTable(target: LogicalPlan, cmd: String): DeltaTableV2 = {
     // TODO: Remove this wrapper and let former callers invoke DeltaTableV2.extractFrom directly.
-    DeltaTableV2.extractFrom(target, cmd)
+    DeltaTableV2.extractFromResolvedTable(target, cmd)
   }
 
   /**

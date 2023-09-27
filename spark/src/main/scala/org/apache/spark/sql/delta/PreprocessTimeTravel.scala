@@ -75,7 +75,7 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
         throw DeltaErrors.notADeltaTableException(commandName)
       case tableRelation if tableRelation.resolved =>
         tableRelation
-      case _ =>
+      case _ if ResolveDeltaPathTable.maybeSQLFile(sparkSession, ur.multipartIdentifier) =>
         // If the identifier doesn't exist as a table, try resolving it as a path table.
         ResolveDeltaPathTable.resolveAsPathTableRelation(sparkSession, ur).getOrElse {
           ur.tableNotFound(ur.multipartIdentifier)

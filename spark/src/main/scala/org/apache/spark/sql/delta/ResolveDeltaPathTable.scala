@@ -16,9 +16,11 @@
 
 package org.apache.spark.sql.delta
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.util.AnalysisHelper
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
@@ -26,32 +28,73 @@ import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedRelation
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.{CatalogHelper, MultipartIdentifierHelper}
+import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * Replaces [[UnresolvedTable]]s if the plan is for direct query on files.
  */
 case class ResolveDeltaPathTable(sparkSession: SparkSession) extends Rule[LogicalPlan] {
+  import ResolveDeltaPathTable._
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
-    case u: UnresolvedTable =>
-      ResolveDeltaPathTable.resolveAsPathTable(sparkSession, u.multipartIdentifier).getOrElse(u)
+
+    // Attempts to resolve a path-based Delta table, returning ResolvedPathBasedNonDeltaTable if
+    // unsuccessful. This is needed as DESCRIBE DETAIL supports both Delta and non-Delta paths.
+    case u: UnresolvedPathBasedTable =>
+      resolveAsPathTable(sparkSession, multipartIdentifier(u.path)).getOrElse {
+        // Resolve it as a placeholder, to identify it as a non-Delta table.
+        ResolvedPathBasedNonDeltaTable(u.path, u.commandName)
+      }
+
+    // Resolves a known path-based Delta table as a Table.
+    case u: UnresolvedPathBasedDeltaTable =>
+      resolveAsPathTable(sparkSession, multipartIdentifier(u.path)).getOrElse {
+        throw DeltaErrors.notADeltaTableException(u.commandName, u.deltaTableIdentifier)
+      }
+
+    // Resolves a known path-based Delta table as a Relation.
+    case u: UnresolvedPathBasedDeltaTableRelation =>
+      resolveAsPathTableRelation(sparkSession, multipartIdentifier(u.path), u.options).getOrElse {
+        throw DeltaErrors.notADeltaTableException(u.deltaTableIdentifier)
+      }
+
+    // Resolves delta.`/path/to/table` as a path-based Delta table, now that catalog lookup failed.
+    case u: UnresolvedTable if maybeSQLFile(sparkSession, u.multipartIdentifier) =>
+      resolveAsPathTable(sparkSession, u.multipartIdentifier).getOrElse(u)
   }
+
+  // Helper that converts a path into the multipartIdentifier for a path-based Delta table
+  private def multipartIdentifier(path: String): Seq[String] = Seq(DeltaSourceUtils.ALT_NAME, path)
 }
 
-object ResolveDeltaPathTable
-{
+object ResolveDeltaPathTable {
+
+  /** Adapted from spark's [[ResolveSQLOnFile#maybeSQLFile]] */
+  def maybeSQLFile(sparkSession: SparkSession, multipartIdentifier: Seq[String]): Boolean = {
+    sparkSession.sessionState.conf.runSQLonFile && multipartIdentifier.size == 2
+  }
+
+  /** Convenience wrapper for UnresolvedRelation */
+  private[delta] def resolveAsPathTableRelation(
+      sparkSession: SparkSession,
+      u: UnresolvedRelation) : Option[DataSourceV2Relation] = {
+    resolveAsPathTableRelation(sparkSession, u.multipartIdentifier, u.options)
+  }
 
   /**
    * Try resolving the input table as a Path table.
    * If the path table exists, return a [[DataSourceV2Relation]] instance. Otherwise, return None.
    */
-  def resolveAsPathTableRelation(
+  private[delta] def resolveAsPathTableRelation(
       sparkSession: SparkSession,
-      u: UnresolvedRelation) : Option[DataSourceV2Relation] = {
-    resolveAsPathTable(sparkSession, u.multipartIdentifier).map { resolvedTable =>
-      DataSourceV2Relation.create(
-        resolvedTable.table, Some(resolvedTable.catalog), Some(resolvedTable.identifier))
+      multipartIdentifier: Seq[String],
+      options: CaseInsensitiveStringMap) : Option[DataSourceV2Relation] = {
+    // NOTE: [[ResolvedTable]] always provides a [[TableCatalog]], even for path-based tables, but
+    // we ignore it here because [[ResolvedRelation]] for Delta tables do not specify a catalog.
+    resolveAsPathTable(sparkSession, multipartIdentifier, options.asScala.toMap).map { resolved =>
+      DataSourceV2Relation.create(resolved.table, None, Some(resolved.identifier), options)
     }
   }
 
@@ -59,20 +102,19 @@ object ResolveDeltaPathTable
    * Try resolving the input table as a Path table.
    * If the path table exists, return a [[ResolvedTable]] instance. Otherwise, return None.
    */
-  def resolveAsPathTable(
+  private[delta] def resolveAsPathTable(
       sparkSession: SparkSession,
-      multipartIdentifier: Seq[String]): Option[ResolvedTable] = {
-    val sessionState = sparkSession.sessionState
-    if (!sessionState.conf.runSQLonFile || multipartIdentifier.size != 2) {
-      return None
-    }
+      multipartIdentifier: Seq[String],
+      options: Map[String, String] = Map.empty): Option[ResolvedTable] = {
     val tableId = multipartIdentifier.asTableIdentifier
     if (DeltaTableUtils.isValidPath(tableId)) {
-      val deltaTableV2 = DeltaTableV2(sparkSession, new Path(tableId.table))
-      val sessionCatalog = sessionState.catalogManager.v2SessionCatalog.asTableCatalog
-      Some(ResolvedTable.create(sessionCatalog, multipartIdentifier.asIdentifier, deltaTableV2))
-    } else {
-      None
+      val deltaTableV2 = DeltaTableV2(sparkSession, new Path(tableId.table), options = options)
+      if (deltaTableV2.tableExists) {
+        val identifier = multipartIdentifier.asIdentifier
+        val catalog = sparkSession.sessionState.catalogManager.v2SessionCatalog.asTableCatalog
+        return Some(ResolvedTable.create(catalog, identifier, deltaTableV2))
+      }
     }
+    None // Not a Delta table
   }
 }

@@ -318,26 +318,44 @@ case class DeltaTableV2(
 object DeltaTableV2 {
   /** Resolves a path into a DeltaTableV2, leveraging standard v2 table resolution. */
   def apply(spark: SparkSession, tablePath: Path, cmd: String): DeltaTableV2 =
-    resolve(spark, UnresolvedPathBasedDeltaTable(tablePath.toString, cmd), cmd)
+    extractFromResolvedTable(resolve(spark, tablePath, cmd), cmd)
 
   /** Resolves a table identifier into a DeltaTableV2, leveraging standard v2 table resolution. */
-  def apply(spark: SparkSession, tableId: TableIdentifier, cmd: String): DeltaTableV2 = {
-    resolve(spark, UnresolvedTable(tableId.nameParts, cmd, None), cmd)
+  def apply(spark: SparkSession, tableId: TableIdentifier, cmd: String): DeltaTableV2 =
+    extractFromResolvedTable(resolve(spark, tableId, cmd), cmd)
+
+  /** Attempts to resolve a path-based Delta table, using standard v2 table resolution. */
+  def resolve(spark: SparkSession, tablePath: Path, cmd: String): LogicalPlan =
+    resolve(spark, UnresolvedPathBasedDeltaTable(tablePath.toString, cmd))
+
+  /** Attempts to resolve a Delta table by name, using standard v2 table resolution. */
+  def resolve(spark: SparkSession, tableId: TableIdentifier, cmd: String): LogicalPlan = {
+    resolve(spark, UnresolvedTable(tableId.nameParts, cmd, None))
   }
 
   /** Applies standard v2 table resolution to an unresolved Delta table plan node */
-  def resolve(spark: SparkSession, unresolved: LogicalPlan, cmd: String): DeltaTableV2 =
-    extractFrom(spark.sessionState.analyzer.ResolveRelations(unresolved), cmd)
+  def resolve(spark: SparkSession, unresolved: LogicalPlan): LogicalPlan = {
+    // Resolve catalog-based tables first, then deal with any path-based tables that remain.
+    val catalogResolved = spark.sessionState.analyzer.ResolveRelations(unresolved)
+    ResolveDeltaPathTable(spark)(catalogResolved)
+  }
 
   /**
    * Extracts the DeltaTableV2 from a resolved Delta table plan node, throwing "table not found" if
    * the node does not actually represent a resolved Delta table.
    */
-  def extractFrom(plan: LogicalPlan, cmd: String): DeltaTableV2 = plan match {
-    case ResolvedTable(_, _, d: DeltaTableV2, _) => d
+  def extractFromResolvedTable(resolved: LogicalPlan, cmd: String): DeltaTableV2 = {
+    extractFromResolvedTableOpt(resolved).getOrElse {
+      throw DeltaErrors.notADeltaTableException(cmd)
+    }
+  }
+
+  /** Attempts to extract a resolved DeltaTableV2 from a plan node. */
+  def extractFromResolvedTableOpt(resolved: LogicalPlan): Option[DeltaTableV2] = resolved match {
+    case ResolvedTable(_, _, d: DeltaTableV2, _) => Some(d)
     case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
-      DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table))
-    case _ => throw DeltaErrors.notADeltaTableException(cmd)
+      Some(DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table)))
+    case _ => None
   }
 }
 
