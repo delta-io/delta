@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.util.UUID
 
+import org.apache.commons.io.FileUtils
+
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
@@ -315,6 +317,13 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
       dvDescriptor,
       updateStats = true
     )
+  }
+
+  /** Delete the DV file in the given [[AddFile]]. Assumes the [[AddFile]] has a valid DV. */
+  protected def deleteDVFile(tablePath: String, addFile: AddFile): Unit = {
+    assert(addFile.deletionVector != null)
+    val dvPath = addFile.deletionVector.absolutePath(new Path(tablePath))
+    FileUtils.delete(new File(dvPath.toString))
   }
 
   /**
