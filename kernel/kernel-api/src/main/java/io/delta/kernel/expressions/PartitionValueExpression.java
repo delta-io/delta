@@ -26,7 +26,8 @@ import io.delta.kernel.types.DataType;
 /**
  * Expression to decode the serialized partition value into partition type value according the
  * <a href=https://github.com/delta-io/delta/blob/master/PROTOCOL.md#partition-value-serialization>
- * Delta Protocol spec</a>.
+ * Delta Protocol spec</a>. Currently all valid partition types are supported except the
+ * `timestamp` and `timestamp without timezone` types.
  * <p>
  * <ul>
  * <li>Name: <code>partition_value</code>

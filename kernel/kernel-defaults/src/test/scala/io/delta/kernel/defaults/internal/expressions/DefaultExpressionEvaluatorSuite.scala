@@ -405,7 +405,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     )
     val testMapVector = new ColumnVector {
       override def getDataType: DataType =
-        new MapType(StringType.INSTANCE, StringType.INSTANCE, true)
+        new MapType(StringType.INSTANCE, StringType.INSTANCE, true /* valueContainsNull */)
 
       override def getSize: Int = testMapValues.size
 

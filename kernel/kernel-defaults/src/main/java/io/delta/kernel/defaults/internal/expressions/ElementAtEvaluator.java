@@ -65,11 +65,13 @@ class ElementAtEvaluator {
      * Utility method to evaluate the {@code element_at} on given map and key vectors.
      * @param map {@link ColumnVector} of {@code map(string, string)} type.
      * @param lookupKey {@link ColumnVector} of {@code string} type.
-     * @return
+     * @return result {@link ColumnVector} containing the lookup values.
      */
     static ColumnVector eval(ColumnVector map, ColumnVector lookupKey) {
         return new ColumnVector() {
             // Store the last lookup value to avoid multiple looks up for same row id.
+            // The general pattern is call `isNullAt(rowId)` followed by `getString`.
+            // So the cache of one value is enough.
             private int lastLookupRowId = -1;
             private Object lastLookupValue = null;
 
@@ -121,8 +123,8 @@ class ElementAtEvaluator {
             mapInputType instanceof MapType,
             "expected a map type input as first argument: " + elementAt);
         MapType asMapType = (MapType) mapInputType;
-        // TODO: we may extend type support in future, but for the need is just a look
-        // in map(string, string).
+        // TODO: we may extend type support in future, but currently the need is just a lookup
+        // in map column of type `map(string -> string)`.
         if (asMapType.getKeyType().equivalent(StringType.INSTANCE) &&
             asMapType.getValueType().equivalent(StringType.INSTANCE)) {
             return asMapType;
