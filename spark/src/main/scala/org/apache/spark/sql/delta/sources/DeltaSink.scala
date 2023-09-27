@@ -46,18 +46,10 @@ case class DeltaSink(
     partitionColumns: Seq[String],
     outputMode: OutputMode,
     options: DeltaOptions,
-    catalogTable: Option[CatalogTable])
+    catalogTable: Option[CatalogTable] = None)
   extends Sink
     with ImplicitMetadataOperation
     with DeltaLogging {
-
-  def this(
-      sqlContext: SQLContext,
-      path: Path,
-      partitionColumns: Seq[String],
-      outputMode: OutputMode,
-      options: DeltaOptions) = this(
-    sqlContext, path, partitionColumns, outputMode, options, catalogTable = None)
 
   private val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
 

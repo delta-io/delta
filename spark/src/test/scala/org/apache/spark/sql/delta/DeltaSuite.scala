@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSink}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
@@ -39,7 +39,7 @@ import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
-import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.execution.streaming.{MemoryStream, StreamingQueryWrapper}
 import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
@@ -1178,30 +1178,6 @@ class DeltaSuite extends QueryTest
         checkDatasetUnorderly(
           spark.read.format("delta").load(tempDir.getCanonicalPath).as[Int],
           1, 2, 3)
-      } finally {
-        q.stop()
-      }
-    }
-  }
-
-  test("streaming write to catalog table via data source API") {
-    withTable("tab") {
-      Seq(1, 2, 3).toDF.write.format("delta").saveAsTable("tab")
-      checkDatasetUnorderly(spark.read.table("tab").as[Int], 1, 2, 3)
-
-      // Streaming write should correctly update the Delta table.
-      val input = MemoryStream[Int]
-      val q = input.toDF
-        .writeStream
-        .format("delta")
-        .option(
-          "checkpointLocation",
-          Utils.createTempDir(namePrefix = "tahoe-test").getCanonicalPath)
-        .toTable("tab")
-      try {
-        input.addData(10, 12, 13)
-        q.processAllAvailable()
-        checkDatasetUnorderly(spark.read.table("tab").as[Int], 1, 2, 3, 10, 12, 13)
       } finally {
         q.stop()
       }
