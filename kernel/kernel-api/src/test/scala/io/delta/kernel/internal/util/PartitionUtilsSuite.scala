@@ -29,8 +29,7 @@ class PartitionUtilsSuite extends AnyFunSuite {
   // Table schema
   // Data columns: data1: int, data2: string, date3: struct(data31: boolean, data32: long)
   // Partition columns: part1: int, part2: date, part3: string
-  private val partitionColsToType: java.util.Map[String, DataType] =
-  new util.HashMap[String, DataType]() {
+  private val partitionColsToType = new util.HashMap[String, DataType]() {
     {
       put("part1", IntegerType.INSTANCE)
       put("part2", DateType.INSTANCE)
@@ -120,16 +119,25 @@ class PartitionUtilsSuite extends AnyFunSuite {
         "ALWAYS_TRUE()",
         "(((column(`data1`) = 12) OR (column(`data2`) >= sss)) OR " +
           "((column(`part1`) = 12) OR (column(`part3`) >= sss)))"
+      ),
+
+    // predicates (data and partitions compared in the same expression)
+    predicate("AND",
+      predicate("=", col("data1"), col("part1")),
+      predicate(">=", col("part3"), ofString("sss"))) ->
+      (
+        "(column(`part3`) >= sss)",
+        "(column(`data1`) = column(`part1`))"
       )
   )
 
-  partitionTestCases.foreach { testCase =>
-    val (predicate, (partitionPredicate, dataPredicate)) = testCase
-    test(s"split predicate into data and partition predicates: $predicate") {
-      val metadataAndDataPredicates = splitMetadataAndDataPredicates(predicate, partitionCols)
-      assert(metadataAndDataPredicates._1.toString === partitionPredicate)
-      assert(metadataAndDataPredicates._2.toString === dataPredicate)
-    }
+  partitionTestCases.foreach {
+    case (predicate, (partitionPredicate, dataPredicate)) =>
+      test(s"split predicate into data and partition predicates: $predicate") {
+        val metadataAndDataPredicates = splitMetadataAndDataPredicates(predicate, partitionCols)
+        assert(metadataAndDataPredicates._1.toString === partitionPredicate)
+        assert(metadataAndDataPredicates._2.toString === dataPredicate)
+      }
   }
 
   // Map entry format: (given predicate -> expected rewritten predicate)
@@ -153,13 +161,13 @@ class PartitionUtilsSuite extends AnyFunSuite {
         .stripMargin.replaceAll("\n", " "),
   )
 
-  rewriteTestCases.foreach { testCase =>
-    val (predicate, expRewrittenPredicate) = testCase
-    test(s"rewrite partition predicate on scan file schema: $predicate") {
-      val actRewrittenPredicate =
-        rewritePartitionPredicateOnScanFileSchema(predicate, partitionColsToType)
-      assert(actRewrittenPredicate.toString === expRewrittenPredicate)
-    }
+  rewriteTestCases.foreach {
+    case (predicate, expRewrittenPredicate) =>
+      test(s"rewrite partition predicate on scan file schema: $predicate") {
+        val actRewrittenPredicate =
+          rewritePartitionPredicateOnScanFileSchema(predicate, partitionColsToType)
+        assert(actRewrittenPredicate.toString === expRewrittenPredicate)
+      }
   }
 
   private def col(names: String*): Column = {

@@ -140,6 +140,18 @@ public class PartitionUtils {
      * Utility method to rewrite the partition predicate referring to the table schema as predicate
      * referring to the {@code partitionValues} in scan files read from Delta log. The scan file
      * batch is returned by the {@link io.delta.kernel.Scan#getScanFiles(TableClient)}.
+     * <p>
+     * E.g. given predicate on partition columns:
+     *   "p1 = 'new york' && p2 >= 26" where p1 is of type string and p2 is of int
+     * Rewritten expression looks like:
+     *   element_at(Column('add', 'partitionValues'), 'p1') = 'new york'
+     *      &&
+     *   partition_value(element_at(Column('add', 'partitionValues'), 'p2'), 'integer') >= 26
+     *
+     * The column `add.partitionValues` is a map(string -> string) type. Each partition values is
+     * in string serialization format according to the Delta protocol. Expression `partition_value`
+     * deserializes the string value into the given partition column type value. String type
+     * partition values don't need any deserialization.
      *
      * @param predicate             Predicate containing filters only on partition columns.
      * @param partitionColNameTypes Map of partition columns and their types.
@@ -187,6 +199,7 @@ public class PartitionUtils {
         for (Expression child : children) {
             if (child instanceof Column) {
                 String[] names = ((Column) child).getNames();
+                // Partition columns are never of nested types.
                 if (names.length != 1 || !partitionColNames.contains(names[0])) {
                     return true;
                 }
