@@ -192,7 +192,7 @@ case class CreateDeltaTableCommand(
 
 
     if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata)) {
-      deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, None)
+      deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, Some(txnUsedForCommit))
     }
   }
 
@@ -611,7 +611,7 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    val txn = deltaLog.startTransaction(snapshotOpt)
+    val txn = deltaLog.startTransaction(Some(tableWithLocation), snapshotOpt)
 
     // During CREATE/REPLACE, we synchronously run conversion (if Uniform is enabled) so
     // we always remove the post commit hook here.
