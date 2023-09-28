@@ -158,7 +158,7 @@ class PartitionUtilsSuite extends AnyFunSuite {
       predicate("=", col("part1"), ofInt(2781))) ->
       """((ELEMENT_AT(column(`add`.`partitionValues`), part3) <= sss) OR
         |(partition_value(ELEMENT_AT(column(`add`.`partitionValues`), part1), integer) = 2781))"""
-        .stripMargin.replaceAll("\n", " "),
+        .stripMargin.replaceAll("\n", " ")
   )
 
   rewriteTestCases.foreach {
