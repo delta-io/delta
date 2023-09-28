@@ -2055,7 +2055,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       }.getMessage.contains(s"unsupported by this version of Delta Lake: $featureName"))
     }
   }
-  
+
   test("error message with protocol too high - table path") {
     withTempDir { path =>
       spark.range(1).write.format("delta").save(path.getCanonicalPath)
@@ -2069,8 +2069,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val exceptionRead = intercept[InvalidProtocolVersionException] {
         spark.read.format("delta").load(path.getCanonicalPath)
       }
-      assert(exceptionRead.getMessage ==
-        getExpectedProtocolErrorMessage(log.dataPath.toString, tableReaderVersion, tableWriterVersion))
+      assert(exceptionRead.getMessage == getExpectedProtocolErrorMessage(
+        log.dataPath.toString,
+        tableReaderVersion,
+        tableWriterVersion))
 
       tableReaderVersion = 3
       tableWriterVersion = 8
@@ -2082,8 +2084,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           .format("delta")
           .save(path.getCanonicalPath)
       }
-      assert(exceptionWrite.getMessage ==
-        getExpectedProtocolErrorMessage(log.dataPath.toString, tableReaderVersion, tableWriterVersion))
+      assert(exceptionWrite.getMessage == getExpectedProtocolErrorMessage(
+        log.dataPath.toString,
+        tableReaderVersion,
+        tableWriterVersion))
     }
   }
 
@@ -2134,7 +2138,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       tableProtocolReaderVersion: Int,
       tableProtocolWriterVersion: Int)
     {
-      overwriteDeltaLogWithVersion(log, Protocol(tableProtocolReaderVersion, tableProtocolWriterVersion))
+      overwriteDeltaLogWithVersion(
+        log,
+        Protocol(tableProtocolReaderVersion, tableProtocolWriterVersion))
     }
 
   private def overwriteDeltaLogWithVersion(
@@ -2156,7 +2162,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       requiredReaderVersion: Int,
       requiredWriterVersion: Int): String = {
     // When testing flag is enabled Action.supportedReaderVersionNumbers includes 0.
-    "[DELTA_INVALID_PROTOCOL_VERSION] Delta protocol version is not supported by this version of Delta Lake: " +
+    "[DELTA_INVALID_PROTOCOL_VERSION] " +
+      "Delta protocol version is not supported by this version of Delta Lake: " +
       "table \"" + tableNameOrPath + "\" requires " +
       s"reader version $requiredReaderVersion and " +
       s"writer version $requiredWriterVersion, " +
