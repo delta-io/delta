@@ -1415,7 +1415,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case other => other
     }
 
-    deltaLog.protocolWrite(snapshot.protocol)
+    deltaLog.protocolWrite(snapshot.protocol, catalogTable)
 
     finalActions = RowId.assignFreshRowIds(protocol, snapshot, finalActions.toIterator).toList
     finalActions = DefaultRowCommitVersion

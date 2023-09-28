@@ -1127,7 +1127,7 @@
   },
   "DELTA_INVALID_PROTOCOL_VERSION" : {
     "message" : [
-      "Delta protocol version is not supported by this version of Delta Lake: table requires <required>, client supports <supported>. Please upgrade to a newer release."
+      "Delta protocol version is not supported by this version of Delta Lake: table \"<tableNameOrPath>\" requires reader version <readerRequired> and writer version <writerRequired>, client supports reader versions <supportedReaders> and writer versions <supportedWriters>. Please upgrade to a newer release."
     ],
     "sqlState" : "KD004"
   },

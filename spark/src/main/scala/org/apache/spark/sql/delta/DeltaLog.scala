@@ -340,7 +340,10 @@ class DeltaLog private(
    * The operation type to be checked is passed as a string in `readOrWrite`. Valid values are
    * `read` and `write`.
    */
-  private def protocolCheck(tableProtocol: Protocol, readOrWrite: String): Unit = {
+  private def protocolCheck(
+    tableProtocol: Protocol,
+    readOrWrite: String,
+    catalogTable: Option[CatalogTable]): Unit = {
     val clientSupportedProtocol = Action.supportedProtocolVersion()
     // Depending on the operation, pull related protocol versions out of Protocol objects.
     // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
@@ -388,8 +391,21 @@ class DeltaLog private(
         versionKey -> tableRequiredVersion,
         "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
         "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
+
+    val tableNameInException = if (catalogTable.isDefined) {
+      catalogTable.get.identifier.copy(catalog = None).unquotedString
+    }
+    else {
+      dataPath.toString()
+    }
+
     if (!clientSupportedVersions.contains(tableRequiredVersion)) {
-      throw new InvalidProtocolVersionException(tableRequiredVersion, clientSupportedVersions.toSeq)
+      throw new InvalidProtocolVersionException(
+        tableNameInException,
+        tableProtocol.minReaderVersion,
+        tableProtocol.minWriterVersion,
+        Action.supportedReaderVersionNumbers.toSeq,
+        Action.supportedWriterVersionNumbers.toSeq)
     } else {
       throw unsupportedFeaturesException(clientUnsupportedFeatureNames)
     }
@@ -420,16 +436,16 @@ class DeltaLog private(
    * Asserts that the client is up to date with the protocol and allowed to read the table that is
    * using the given `protocol`.
    */
-  def protocolRead(protocol: Protocol): Unit = {
-    protocolCheck(protocol, "read")
+  def protocolRead(protocol: Protocol, catalogTable: Option[CatalogTable] = None): Unit = {
+    protocolCheck(protocol, "read", catalogTable)
   }
 
   /**
    * Asserts that the client is up to date with the protocol and allowed to write to the table
    * that is using the given `protocol`.
    */
-  def protocolWrite(protocol: Protocol): Unit = {
-    protocolCheck(protocol, "write")
+  def protocolWrite(protocol: Protocol, catalogTable: Option[CatalogTable] = None): Unit = {
+    protocolCheck(protocol, "write", catalogTable)
   }
 
   /* ---------------------------------------- *
