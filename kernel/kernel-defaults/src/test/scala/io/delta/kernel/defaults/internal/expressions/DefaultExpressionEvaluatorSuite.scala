@@ -22,8 +22,7 @@ import java.util
 import java.util.Optional
 
 import org.scalatest.funsuite.AnyFunSuite
-
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, MapValue}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultStructVector}
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
@@ -414,9 +413,45 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
       override def isNullAt(rowId: Int): Boolean = testMapValues(rowId) == null
 
-      override def getMap[K, V](rowId: Int): util.Map[K, V] =
-        testMapValues(rowId).asInstanceOf[util.Map[K, V]]
+      override def getMap(rowId: Int): MapValue = {
+
+        // TODO make this a test utils somewhere?
+        new MapValue() {
+
+          private val keyArray = testMapValues(rowId).keySet().asScala.toSeq
+          private val valueArray = keyArray.map(testMapValues(rowId).get(_))
+
+          override def getSize: Int = testMapValues(rowId).size()
+
+          override def getKeys: ColumnVector = new ColumnVector {
+
+            override def getDataType: DataType = StringType.INSTANCE
+
+            override def getSize: Int = testMapValues(rowId).size()
+
+            override def close(): Unit = {}
+
+            override def isNullAt(rowId: Int): Boolean = keyArray(rowId) == null
+
+            override def getString(rowId: Int): String = keyArray(rowId)
+          }
+
+          override def getValues: ColumnVector = new ColumnVector {
+
+            override def getDataType: DataType = StringType.INSTANCE
+
+            override def getSize: Int = testMapValues(rowId).size()
+
+            override def close(): Unit = {}
+
+            override def isNullAt(rowId: Int): Boolean = valueArray(rowId) == null
+
+            override def getString(rowId: Int): String = valueArray(rowId)
+          }
+        }
+      }
     }
+
     val inputBatch = new DefaultColumnarBatch(
       testMapVector.getSize,
       new StructType().add("partitionValues", testMapVector.getDataType),

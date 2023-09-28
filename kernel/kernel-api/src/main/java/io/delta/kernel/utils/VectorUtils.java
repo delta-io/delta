@@ -85,8 +85,11 @@ public final class VectorUtils {
         } else if (dataType instanceof ShortType) {
             return columnVector.getShort(rowId);
         } else if (dataType instanceof IntegerType || dataType instanceof DateType) {
+            // DateType data is stored internally as the number of days since 1970-01-01
             return columnVector.getInt(rowId);
         } else if (dataType instanceof LongType || dataType instanceof TimestampType) {
+            // TimestampType data is stored internally as the number of microseconds since the unix
+            // epoch
             return columnVector.getLong(rowId);
         } else if (dataType instanceof FloatType) {
             return columnVector.getFloat(rowId);

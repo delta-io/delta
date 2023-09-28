@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.actions;
 
+import java.util.Map;
 import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
@@ -77,8 +78,8 @@ public class Metadata {
     private final StructType schema;
     private final ArrayValue partitionColumns;
     private final Optional<Long> createdTime;
-    private final MapValue configuration;
-    private final Lazy<String> columnMappingMode;
+    private final MapValue configurationMapValue;
+    private final Lazy<Map<String, String>> configuration;
 
     public Metadata(
         String id,
@@ -89,7 +90,7 @@ public class Metadata {
         StructType schema,
         ArrayValue partitionColumns,
         Optional<Long> createdTime,
-        MapValue configuration) {
+        MapValue configurationMapValue) {
         this.id = requireNonNull(id, "id is null");
         this.name = name;
         this.description = requireNonNull(description, "description is null");
@@ -98,12 +99,8 @@ public class Metadata {
         this.schema = schema;
         this.partitionColumns = requireNonNull(partitionColumns, "partitionColumns is null");
         this.createdTime = createdTime;
-        this.configuration = requireNonNull(configuration, "configuration is null");
-        this.columnMappingMode = new Lazy<>(() ->
-                VectorUtils.<String, String>toJavaMap(configuration)
-                        .getOrDefault("delta.columnMapping.mode", "none")
-        );
-
+        this.configurationMapValue = requireNonNull(configurationMapValue, "configuration is null");
+        this.configuration = new Lazy<>(() -> VectorUtils.toJavaMap(configurationMapValue));
     }
 
     public String getSchemaString() {
@@ -138,11 +135,11 @@ public class Metadata {
         return createdTime;
     }
 
-    public MapValue getConfiguration() {
-        return configuration;
+    public MapValue getConfigurationMapValue() {
+        return configurationMapValue;
     }
 
-    public String getColumnMappingMode() {
-        return columnMappingMode.get();
+    public Map<String, String> getConfiguration() {
+        return configuration.get();
     }
 }

@@ -30,6 +30,7 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import io.delta.kernel.data.*;
@@ -568,8 +569,8 @@ public class TestParquetBatchReader {
         assertEquals(elementVector.getDataType(), expDataType);
         // Check the elements are correct
         assertEquals(expList, VectorUtils.toJavaList(arrayValue));
-        // TODO check that you cannot access later elements (can we upgrade JUnit ot 4.13?)
-        // assertThrows(DefaultKernelTestUtils.getValueAsObject(elementVector, size + 1));
+        assertThrows(IllegalArgumentException.class,
+                () -> DefaultKernelTestUtils.getValueAsObject(elementVector, size + 1));
     }
 
     private static <K, V> void checkMapValue(
@@ -586,8 +587,9 @@ public class TestParquetBatchReader {
         assertEquals(valueVector.getDataType(), valueDataType);
         // Check the elements are correct
         assertEquals(expMap, VectorUtils.toJavaMap(mapValue));
-        // TODO check that you cannot access later elements (can we upgrade JUnit ot 4.13?)
-        // assertThrows(DefaultKernelTestUtils.getValueAsObject(keyVector, size + 1));
-        // assertThrows(DefaultKernelTestUtils.getValueAsObject(valueVector, size + 1));
+        assertThrows(IllegalArgumentException.class,
+                () -> DefaultKernelTestUtils.getValueAsObject(keyVector, size + 1));
+        assertThrows(IllegalArgumentException.class,
+                () -> DefaultKernelTestUtils.getValueAsObject(valueVector, size + 1));
     }
 }

@@ -87,8 +87,8 @@ public class ScanBuilderImpl
         // TODO: support timestamp type partition columns
         // Timestamp partition columns have complicated semantics related to timezones so block this
         // for now
-        List<String> partitionCols = VectorUtils.toJavaList(protocolAndMetadata.get()._2
-                .getPartitionColumns());
+        List<String> partitionCols = VectorUtils.toJavaList(
+                protocolAndMetadata.get()._2.getPartitionColumns());
         for (String colName : partitionCols) {
             if (readSchema.indexOf(colName) >= 0 &&
                 readSchema.get(colName).getDataType() instanceof TimestampType) {
