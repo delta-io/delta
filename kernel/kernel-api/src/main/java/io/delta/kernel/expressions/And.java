@@ -51,9 +51,4 @@ public final class And extends Predicate {
     public Predicate getRight() {
         return (Predicate) getChildren().get(1);
     }
-
-    @Override
-    public String toString() {
-        return "(" + getLeft() + " AND " + getRight() + ")";
-    }
 }
