@@ -27,6 +27,7 @@ import org.apache.hadoop.fs.Path
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
@@ -39,12 +40,13 @@ import org.apache.spark.util.Utils
 /**
  * A streaming sink that writes data into a Delta Table.
  */
-class DeltaSink(
+case class DeltaSink(
     sqlContext: SQLContext,
     path: Path,
     partitionColumns: Seq[String],
     outputMode: OutputMode,
-    options: DeltaOptions)
+    options: DeltaOptions,
+    catalogTable: Option[CatalogTable] = None)
   extends Sink
     with ImplicitMetadataOperation
     with DeltaLogging {
