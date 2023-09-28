@@ -2123,7 +2123,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           .saveAsTable(protocolTableName)
       }
 
-      pathInErrorMessage =  "default." + protocolTableName
+      pathInErrorMessage = "default." + protocolTableName
 
       assert(exceptionWrite.getMessage ==
         getExpectedProtocolErrorMessage(pathInErrorMessage, tableReaderVersion, tableWriterVersion))
