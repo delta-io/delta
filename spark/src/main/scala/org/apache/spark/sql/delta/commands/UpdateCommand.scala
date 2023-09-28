@@ -131,35 +131,15 @@ case class UpdateCommand(
 
     scanTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime)
 
-    val allActions: Seq[FileAction] = if (candidateFiles.isEmpty) {
+    val filesToRewrite: Seq[TouchedFileWithDV] = if (candidateFiles.isEmpty) {
       // Case 1: Do nothing if no row qualifies the partition predicates
       // that are part of Update condition
       Nil
     } else if (dataPredicates.isEmpty) {
       // Case 2: Update all the rows from the files that are in the specified partitions
       // when the data filter is empty
-      numTouchedFiles = candidateFiles.size
-
-      // Rewrite all candidateFiles
-      val addAndRemoveActions =
-        withStatusCode("DELTA", UpdateCommand.rewritingFilesMsg(candidateFiles.size)) {
-          rewriteFiles(
-            sparkSession,
-            txn,
-            rootPath = tahoeFileIndex.path,
-            inputLeafFiles = candidateFiles,
-            nameToAddFileMap = nameToAddFile,
-            condition = updateCondition,
-            generateRemoveFileActions = true,
-            copyUnmodifiedRows = true)
-        }
-
-      rewriteTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime) - scanTimeMs
-      val (addActions, removeActions) = addAndRemoveActions.partition(_.isInstanceOf[AddFile])
-      numRewrittenFiles = addActions.size
-      numAddedBytes = addActions.map(_.getFileSize).sum
-      numRemovedBytes = removeActions.map(_.getFileSize).sum
-      addAndRemoveActions
+      candidateFiles
+        .map(f => TouchedFileWithDV(f.path, f, newDeletionVector = null, deletedRows = 0L))
     } else {
       // Case 3: Find all the affected files using the user-specified condition
       val fileIndex = new TahoeBatchFileIndex(
@@ -199,7 +179,6 @@ case class UpdateCommand(
               .as[String]
               .collect()
           }
-        scanTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime)
 
         // Wrap AddFile into TouchedFileWithDV that has empty DV.
         pathsToRewrite
@@ -207,17 +186,31 @@ case class UpdateCommand(
           .map(f => TouchedFileWithDV(f.path, f, newDeletionVector = null, deletedRows = 0L))
           .toSeq
       }
+      // Refresh scan time for Case 3, since we performed scan here.
+      scanTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime)
+      touchedFilesWithDV
+    }
 
-      // When DV is on, we first mask removed rows with DVs and generate `remove` and `add` actions.
+    val totalActions = {
+      // When DV is on, we first mask removed rows with DVs and generate (remove, add) pairs.
       val actionsForExistingFiles = if (shouldWriteDeletionVectors) {
-        val (dvActions, metricMap) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
-          sparkSession,
-          touchedFilesWithDV,
-          txn.snapshot)
-        metrics("numUpdatedRows").set(metricMap("numModifiedRows"))
-        numTouchedFiles = metricMap("numRemovedFiles")
-        dvActions
+        // When there's no data predicate, all matched files are removed.
+        if (dataPredicates.isEmpty) {
+          val operationTimestamp = System.currentTimeMillis()
+          filesToRewrite.map(_.fileLogEntry.removeWithTimestamp(operationTimestamp))
+        } else {
+          // When there is data predicate, we generate (remove, add) pairs.
+          val filesToRewriteWithDV = filesToRewrite.filter(_.newDeletionVector != null)
+          val (dvActions, metricMap) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
+            sparkSession,
+            filesToRewriteWithDV,
+            txn.snapshot)
+          metrics("numUpdatedRows").set(metricMap("numModifiedRows"))
+          numTouchedFiles = metricMap("numRemovedFiles")
+          dvActions
+        }
       } else {
+        // Without DV we'll leave the job to `rewriteFiles`.
         Nil
       }
 
@@ -226,13 +219,13 @@ case class UpdateCommand(
       // return `add` and `remove` actions.
       val rewriteStartNs = System.nanoTime()
       val actionsForNewFiles =
-        withStatusCode("DELTA", UpdateCommand.rewritingFilesMsg(touchedFilesWithDV.size)) {
-          if (touchedFilesWithDV.nonEmpty) {
+        withStatusCode("DELTA", UpdateCommand.rewritingFilesMsg(filesToRewrite.size)) {
+          if (filesToRewrite.nonEmpty) {
             rewriteFiles(
               sparkSession,
               txn,
               rootPath = tahoeFileIndex.path,
-              inputLeafFiles = touchedFilesWithDV.map(_.fileLogEntry),
+              inputLeafFiles = filesToRewrite.map(_.fileLogEntry),
               nameToAddFileMap = nameToAddFile,
               condition = updateCondition,
               generateRemoveFileActions = !shouldWriteDeletionVectors,
@@ -243,7 +236,7 @@ case class UpdateCommand(
         }
       rewriteTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - rewriteStartNs)
 
-      numTouchedFiles = touchedFilesWithDV.length
+      numTouchedFiles = filesToRewrite.length
       val (addActions, removeActions) = actionsForNewFiles.partition(_.isInstanceOf[AddFile])
       numRewrittenFiles = addActions.size
       numAddedBytes = addActions.map(_.getFileSize).sum
@@ -252,7 +245,7 @@ case class UpdateCommand(
       actionsForExistingFiles ++ actionsForNewFiles
     }
 
-    val changeActions = allActions.collect { case f: AddCDCFile => f }
+    val changeActions = totalActions.collect { case f: AddCDCFile => f }
     numAddedChangeFiles = changeActions.size
     changeFileBytes = changeActions.map(_.size).sum
 
@@ -285,7 +278,7 @@ case class UpdateCommand(
     }
     txn.registerSQLMetrics(sparkSession, metrics)
 
-    val finalActions = createSetTransaction(sparkSession, deltaLog).toSeq ++ allActions
+    val finalActions = createSetTransaction(sparkSession, deltaLog).toSeq ++ totalActions
     txn.commitIfNeeded(finalActions, DeltaOperations.Update(condition))
     sendDriverMetrics(sparkSession, metrics)
 
