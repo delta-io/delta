@@ -72,6 +72,8 @@ public class DefaultArrayVector
         int end = offsets[rowId + 1];
         return new ArrayValue() {
 
+            private final ColumnVector elements = new DefaultViewVector(elementVector, start, end);
+
             @Override
             public int getSize() {
                 return end - start;
@@ -79,7 +81,7 @@ public class DefaultArrayVector
 
             @Override
             public ColumnVector getElements() {
-                return new DefaultViewVector(elementVector, start, end);
+                return elements;
             }
         };
     }

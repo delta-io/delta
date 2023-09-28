@@ -76,6 +76,9 @@ public class DefaultMapVector
         int end = offsets[rowId + 1];
         return new MapValue() {
 
+            private final ColumnVector keys = new DefaultViewVector(keyVector, start, end);
+            private final ColumnVector values = new DefaultViewVector(valueVector, start, end);
+
             @Override
             public int getSize() {
                 return end - start;
@@ -83,12 +86,12 @@ public class DefaultMapVector
 
             @Override
             public ColumnVector getKeys() {
-                return new DefaultViewVector(keyVector, start, end);
+                return keys;
             }
 
             @Override
             public ColumnVector getValues() {
-                return new DefaultViewVector(valueVector, start, end);
+                return values;
             }
         };
     }
