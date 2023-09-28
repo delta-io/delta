@@ -2872,6 +2872,13 @@ trait DeltaErrorsBase
       errorClass = "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI",
       messageParameters = Array(uri))
 
+  def deletionVectorCardinalityMismatch(): Throwable = {
+    new DeltaChecksumException(
+      errorClass = "DELTA_DELETION_VECTOR_CARDINALITY_MISMATCH",
+      messageParameters = Array.empty,
+      pos = 0
+    )
+  }
 
   def deletionVectorSizeMismatch(): Throwable = {
     new DeltaChecksumException(

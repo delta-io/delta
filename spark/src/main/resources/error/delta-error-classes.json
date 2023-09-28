@@ -556,6 +556,12 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_DELETION_VECTOR_CARDINALITY_MISMATCH" : {
+    "message" : [
+      "Deletion vector integrity check failed. Encountered a cardinality mismatch."
+    ],
+    "sqlState" : "XXKDS"
+  },
   "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH" : {
     "message" : [
       "Could not verify deletion vector integrity, CRC checksum verification failed."
