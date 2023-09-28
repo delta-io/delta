@@ -146,6 +146,7 @@ case class UpdateCommand(
         sparkSession, "update", candidateFiles, deltaLog, tahoeFileIndex.path, txn.snapshot)
 
       val touchedFilesWithDV = if (shouldWriteDeletionVectors) {
+        // Case 3.1: Find all the affected files via DV path
         val targetDf = DMLWithDeletionVectorsHelper.createTargetDfForScanningForMatches(
           sparkSession,
           target,
@@ -165,6 +166,7 @@ case class UpdateCommand(
           updateCondition,
           opName = "UPDATE")
       } else {
+        // Case 3.2: Find all the affected files using the non-DV path
         // Keep everything from the resolved target except a new TahoeFileIndex
         // that only involves the affected files instead of all files.
         val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
