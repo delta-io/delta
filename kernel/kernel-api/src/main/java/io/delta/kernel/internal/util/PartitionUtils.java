@@ -17,10 +17,7 @@ package io.delta.kernel.internal.util;
 
 import java.math.BigDecimal;
 import java.sql.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import static java.util.Arrays.asList;
@@ -32,6 +29,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.Tuple2;
+import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
@@ -211,10 +209,15 @@ public class PartitionUtils {
     }
 
     private static Predicate combineWithAndOp(Predicate left, Predicate right) {
-        if (left.getName().equalsIgnoreCase("ALWAYS_TRUE")) {
+        String leftName = left.getName().toUpperCase();
+        String rightName = right.getName().toUpperCase();
+        if (leftName.equals("ALWAYS_FALSE") || rightName.equals("ALWAYS_FALSE")) {
+            return ALWAYS_FALSE;
+        }
+        if (leftName.equals("ALWAYS_TRUE")) {
             return right;
         }
-        if (right.getName().equalsIgnoreCase("ALWAYS_TRUE")) {
+        if (rightName.equals("ALWAYS_TRUE")) {
             return left;
         }
         return new And(left, right);
