@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta.files
 
-import java.net.URI
-
 import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta._
@@ -25,6 +23,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, DeltaInvariantCheckerExec}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.perf.DeltaOptimizedWriterExec
 import org.apache.spark.sql.delta.schema._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA
@@ -228,6 +227,13 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     writeFiles(data, Nil)
   }
 
+  def writeFiles(
+      data: Dataset[_],
+      deltaOptions: Option[DeltaOptions],
+      additionalConstraints: Seq[Constraint]): Seq[FileAction] = {
+    writeFiles(data, deltaOptions, isOptimize = false, additionalConstraints)
+  }
+
   /**
    * Returns a tuple of (data, partition schema). For CDC writes, a `__is_cdc` column is added to
    * the data and `__is_cdc=true/false` is added to the front of the partition schema.
@@ -348,6 +354,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   def writeFiles(
       inputData: Dataset[_],
       writeOptions: Option[DeltaOptions],
+      isOptimize: Boolean,
       additionalConstraints: Seq[Constraint]): Seq[FileAction] = {
     hasWritten = true
 
@@ -379,7 +386,13 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
       val empty2NullPlan = convertEmptyToNullIfNeeded(queryExecution.executedPlan,
         partitioningColumns, constraints)
-      val physicalPlan = DeltaInvariantCheckerExec(empty2NullPlan, constraints)
+      val checkInvariants = DeltaInvariantCheckerExec(empty2NullPlan, constraints)
+      val physicalPlan = if (!isOptimize &&
+        shouldOptimizeWrite(writeOptions, spark.sessionState.conf)) {
+        DeltaOptimizedWriterExec(checkInvariants, metadata.partitionColumns, deltaLog)
+      } else {
+        checkInvariants
+      }
 
       val statsTrackers: ListBuffer[WriteJobStatsTracker] = ListBuffer()
 
@@ -448,5 +461,28 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
 
     resultFiles.toSeq ++ committer.changeFiles
+  }
+
+  /**
+   * Optimized writes can be enabled/disabled through the following order:
+   *  - Through DataFrameWriter options
+   *  - Through the table parameter
+   *  - Through SQL configuration
+   */
+  private def shouldOptimizeWrite(
+      writeOptions: Option[DeltaOptions], sessionConf: SQLConf): Boolean = {
+    writeOptions.flatMap(_.optimizeWrite)
+      .getOrElse(TransactionalWrite.shouldOptimizeWrite(metadata, sessionConf))
+  }
+
+}
+
+object TransactionalWrite {
+  def shouldOptimizeWrite(metadata: Metadata, sessionConf: SQLConf): Boolean = {
+    // We want table properties to take precedence over the session/default conf.
+    DeltaConfigs.OPTIMIZE_WRITE
+      .fromMetaData(metadata)
+      .orElse(sessionConf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED))
+      .getOrElse(false)
   }
 }

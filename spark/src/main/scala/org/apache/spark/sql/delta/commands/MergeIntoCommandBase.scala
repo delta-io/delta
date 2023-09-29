@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSource, MergeIntoMaterializeSourceReason, MergeStats}
-import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
+import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex, TransactionalWrite}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -228,7 +228,9 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       txn: OptimisticTransaction,
       outputDF: DataFrame): Seq[FileAction] = {
     val partitionColumns = txn.metadata.partitionColumns
-    if (partitionColumns.nonEmpty && spark.conf.get(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE)) {
+    // If the write will be optimized write, which shuffles the data anyway, then don't repartition.
+    if (partitionColumns.nonEmpty && spark.conf.get(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE)
+      && !TransactionalWrite.shouldOptimizeWrite(txn.metadata, spark.sessionState.conf)) {
       txn.writeFiles(outputDF.repartition(partitionColumns.map(col): _*))
     } else {
       txn.writeFiles(outputDF)

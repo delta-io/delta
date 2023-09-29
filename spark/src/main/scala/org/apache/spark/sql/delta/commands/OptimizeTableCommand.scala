@@ -412,7 +412,7 @@ class OptimizeExecutor(
       sparkSession.sparkContext.getLocalProperty(SPARK_JOB_GROUP_ID),
       description)
 
-    val addFiles = txn.writeFiles(repartitionDF).collect {
+    val addFiles = txn.writeFiles(repartitionDF, None, isOptimize = true, Nil).collect {
       case a: AddFile =>
         a.copy(dataChange = false)
       case other =>
