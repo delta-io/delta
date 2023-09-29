@@ -142,11 +142,10 @@ case class OptimizeTableCommand(
     copy(child = newChild)(zOrderBy)
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val deltaLog = getDeltaTable(child, "OPTIMIZE").deltaLog
-
-    val txn = deltaLog.startTransaction()
+    val table = getDeltaTable(child, "OPTIMIZE")
+    val txn = table.startTransaction()
     if (txn.readVersion == -1) {
-      throw DeltaErrors.notADeltaTableException(deltaLog.dataPath.toString)
+      throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
     }
 
     val partitionColumns = txn.snapshot.metadata.partitionColumns
@@ -443,7 +442,7 @@ class OptimizeExecutor(
       txn.commit(actions, optimizeOperation)
     } catch {
       case e: ConcurrentModificationException =>
-        val newTxn = txn.deltaLog.startTransaction()
+        val newTxn = txn.deltaLog.startTransaction(txn.catalogTable)
         if (f(newTxn)) {
           logInfo("Retrying commit after checking for semantic conflicts with concurrent updates.")
           commitAndRetry(newTxn, optimizeOperation, actions, metrics)(f)
