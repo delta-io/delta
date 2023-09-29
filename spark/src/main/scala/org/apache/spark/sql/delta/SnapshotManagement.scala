@@ -115,15 +115,15 @@ trait SnapshotManagement { self: DeltaLog =>
       listFromOrNone(startVersion).map { _
         .collect {
           case DeltaFile(f, fileVersion) =>
-            (f, FileType.DELTA, fileVersion)
+            (f, fileVersion)
           case CompactedDeltaFile(f, startVersion, endVersion)
-            if includeMinorCompactions && versionToLoad.forall(endVersion <= _) =>
-            (f, FileType.COMPACTED_DELTA, startVersion)
+              if includeMinorCompactions && versionToLoad.forall(endVersion <= _) =>
+            (f, startVersion)
           case CheckpointFile(f, fileVersion) if f.getLen > 0 =>
-            (f, FileType.CHECKPOINT, fileVersion)
+            (f, fileVersion)
         }
         // take files until the version we want to load
-        .takeWhile { case (_, _, fileVersion) => versionToLoad.forall(fileVersion <= _) }
+        .takeWhile { case (_, fileVersion) => versionToLoad.forall(fileVersion <= _) }
         .map(_._1).toArray
       }
     }
@@ -354,6 +354,8 @@ trait SnapshotManagement { self: DeltaLog =>
           (version, version)
       }
 
+      // select the compacted delta if the startVersion doesn't straddle `highestVersionSeen` and
+      // the endVersion doesn't cross the latestCommitVersion.
       if (highestVersionSeen < startVersion && endVersion <= latestCommitVersion) {
         commitRangeCovered.appendAll(startVersion to endVersion)
         selectedDeltas += file
@@ -374,6 +376,8 @@ trait SnapshotManagement { self: DeltaLog =>
     val missingCommits = requiredCommits.toSet -- coveredCommits
     if (!hasDuplicates && missingCommits.isEmpty) return selectedDeltas.toArray
 
+    // If the above check failed, that means the compacted delta validation failed.
+    // Just record that event and return just the deltas (deltasAfterCheckpoint).
     val eventData = Map(
       "deltasAndCompactedDeltas" -> deltasAndCompactedDeltas.map(_.getPath.getName),
       "deltasAfterCheckpoint" -> deltasAfterCheckpoint.map(_.getPath.getName),
