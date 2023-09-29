@@ -1302,6 +1302,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTALOG_MINOR_COMPACTION_USE_FOR_READS =
+    buildConf("deltaLog.minorCompaction.useForReads")
+      .doc("If true, minor compacted delta log files will be used for creating Snapshots")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val ICEBERG_MAX_COMMITS_TO_CONVERT = buildConf("iceberg.maxPendingCommits")
     .doc("""
         |The maximum number of pending Delta commits to convert to Iceberg incrementally.

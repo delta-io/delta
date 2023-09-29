@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.FileNotFoundException
 import java.util.Objects
 
+import scala.collection.mutable
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.control.NonFatal
 
@@ -29,6 +30,7 @@ import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaThreadPool
 import org.apache.spark.sql.delta.util.FileNames._
+import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.JsonIgnore
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
 
@@ -105,19 +107,24 @@ trait SnapshotManagement { self: DeltaLog =>
    * @return Some array of files found (possibly empty, if no usable commit files are present), or
    *         None if the listing returned no files at all.
    */
-  protected final def listDeltaAndCheckpointFiles(
+  protected final def listDeltaCompactedDeltaAndCheckpointFiles(
       startVersion: Long,
-      versionToLoad: Option[Long]): Option[Array[FileStatus]] =
+      versionToLoad: Option[Long],
+      includeMinorCompactions: Boolean): Option[Array[FileStatus]] =
     recordDeltaOperation(self, "delta.deltaLog.listDeltaAndCheckpointFiles") {
       listFromOrNone(startVersion).map { _
-        // Pick up all checkpoint and delta files
-        .filter { file => isDeltaCommitOrCheckpointFile(file.getPath) }
-        // Checkpoint files of 0 size are invalid but Spark will ignore them silently when reading
-        // such files, hence we drop them so that we never pick up such checkpoints.
-        .filterNot { file => isCheckpointFile(file) && file.getLen == 0 }
+        .collect {
+          case DeltaFile(f, fileVersion) =>
+            (f, fileVersion)
+          case CompactedDeltaFile(f, startVersion, endVersion)
+              if includeMinorCompactions && versionToLoad.forall(endVersion <= _) =>
+            (f, startVersion)
+          case CheckpointFile(f, fileVersion) if f.getLen > 0 =>
+            (f, fileVersion)
+        }
         // take files until the version we want to load
-        .takeWhile(f => versionToLoad.forall(getFileVersion(f) <= _))
-        .toArray
+        .takeWhile { case (_, fileVersion) => versionToLoad.forall(fileVersion <= _) }
+        .map(_._1).toArray
       }
     }
 
@@ -146,12 +153,18 @@ trait SnapshotManagement { self: DeltaLog =>
     // if that is -1, list from version 0L
     val lastCheckpointVersion = getCheckpointVersion(lastCheckpointInfo, oldCheckpointProviderOpt)
     val listingStartVersion = Math.max(0L, lastCheckpointVersion)
-    val newFiles = listDeltaAndCheckpointFiles(listingStartVersion, versionToLoad)
+    val includeMinorCompactions =
+      spark.conf.get(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS)
+    val newFiles = listDeltaCompactedDeltaAndCheckpointFiles(
+      startVersion = listingStartVersion,
+      versionToLoad = versionToLoad,
+      includeMinorCompactions = includeMinorCompactions)
     getLogSegmentForVersion(
       versionToLoad,
       newFiles,
       oldCheckpointProviderOpt = oldCheckpointProviderOpt,
-      lastCheckpointInfo = lastCheckpointInfo)
+      lastCheckpointInfo = lastCheckpointInfo
+    )
   }
 
   /**
@@ -185,6 +198,7 @@ trait SnapshotManagement { self: DeltaLog =>
     selectedDeltas.headOption.foreach { headDelta =>
       val headDeltaVersion = deltaVersion(headDelta)
       val lastDeltaVersion = selectedDeltas.last match {
+        case CompactedDeltaFile(_, _, endV) => endV
         case DeltaFile(_, v) => v
       }
 
@@ -195,6 +209,7 @@ trait SnapshotManagement { self: DeltaLog =>
           unsafeVolatileMetadata) // metadata is best-effort only
       }
       val deltaVersions = selectedDeltas.flatMap {
+        case CompactedDeltaFile(_, startV, endV) => (startV to endV)
         case DeltaFile(_, v) => Seq(v)
       }
       verifyDeltaVersions(spark, deltaVersions, Some(checkpointVersion + 1), versionToLoad)
@@ -216,13 +231,13 @@ trait SnapshotManagement { self: DeltaLog =>
         .getOrElse {
           // No files found even when listing from 0 => empty directory => table does not exist yet.
           if (lastCheckpointVersion < 0) return None
-          // [SC-95011] FIXME(ryan.johnson): We always write the commit and checkpoint files
-          // before updating _last_checkpoint. If the listing came up empty, then we either
-          // encountered a list-after-put inconsistency in the underlying log store, or somebody
-          // corrupted the table by deleting files. Either way, we can't safely continue.
+          // We always write the commit and checkpoint files before updating _last_checkpoint.
+          // If the listing came up empty, then we either encountered a list-after-put
+          // inconsistency in the underlying log store, or somebody corrupted the table by
+          // deleting files. Either way, we can't safely continue.
           //
           // For now, we preserve existing behavior by returning Array.empty, which will trigger a
-          // recursive call to [[getLogSegmentForVersion]] below (same as before the refactor).
+          // recursive call to [[getLogSegmentForVersion]] below.
           Array.empty[FileStatus]
         }
 
@@ -235,7 +250,8 @@ trait SnapshotManagement { self: DeltaLog =>
         // singleton, so try listing from the first version
         return getLogSegmentForVersion(versionToLoad = versionToLoad)
       }
-      val (checkpoints, deltas) = newFiles.partition(isCheckpointFile)
+      val (checkpoints, deltasAndCompactedDeltas) = newFiles.partition(isCheckpointFile)
+      val (deltas, compactedDeltas) = deltasAndCompactedDeltas.partition(isDeltaFile)
       // Find the latest checkpoint in the listing that is not older than the versionToLoad
       val checkpointFiles = checkpoints.map(f => CheckpointInstance(f.getPath))
       val newCheckpoint = getLatestCompleteCheckpointFromList(checkpointFiles, versionToLoad)
@@ -246,9 +262,8 @@ trait SnapshotManagement { self: DeltaLog =>
           // `startCheckpoint` was given but no checkpoint found on delta log. This means that the
           // last checkpoint we thought should exist (the `_last_checkpoint` file) no longer exists.
           // Try to look up another valid checkpoint and create `LogSegment` from it.
-          //
-          // [SC-95011] FIXME(ryan.johnson): Something has gone very wrong if the checkpoint doesn't
-          // exist at all. This code should only handle rejected incomplete checkpoints.
+          // This case can arise if the user deleted the table (all commits and checkpoints) but
+          // left the _last_checkpoint intact.
           recordDeltaEvent(this, "delta.checkpoint.error.partial")
           val snapshotVersion = versionToLoad.getOrElse(deltaVersion(deltas.last))
           getLogSegmentWithMaxExclusiveCheckpointVersion(snapshotVersion, lastCheckpointVersion)
@@ -268,6 +283,10 @@ trait SnapshotManagement { self: DeltaLog =>
         deltaVersion(file) > newCheckpointVersion
       }
 
+      // Here we validate that we are able to create a valid LogSegment by just using commit deltas
+      // and without considering minor-compacted deltas. We want to fail early if log is messed up
+      // i.e. some commit deltas are missing (although compacted-deltas are present).
+      validateDeltaVersions(deltasAfterCheckpoint, newCheckpointVersion, versionToLoad)
 
       val newVersion =
         deltasAfterCheckpoint.lastOption.map(deltaVersion).getOrElse(newCheckpoint.get.version)
@@ -288,15 +307,94 @@ trait SnapshotManagement { self: DeltaLog =>
       }
       val lastCommitTimestamp = deltas.last.getModificationTime
 
-      validateDeltaVersions(deltasAfterCheckpoint, newCheckpointVersion, versionToLoad)
+      val deltasAndCompactedDeltasForLogSegment = useCompactedDeltasForLogSegment(
+        deltasAndCompactedDeltas,
+        deltasAfterCheckpoint,
+        latestCommitVersion = newVersion,
+        checkpointVersionToUse = newCheckpointVersion)
+
+      validateDeltaVersions(
+        deltasAndCompactedDeltasForLogSegment, newCheckpointVersion, versionToLoad)
 
       Some(LogSegment(
         logPath,
         newVersion,
-        deltasAfterCheckpoint,
+        deltasAndCompactedDeltasForLogSegment,
         checkpointProviderOpt,
         lastCommitTimestamp))
     }
+  }
+
+  /**
+   * @param deltasAndCompactedDeltas - all deltas or compacted deltas which could be used
+   * @param deltasAfterCheckpoint - deltas after the last checkpoint file
+   * @param latestCommitVersion - commit version for which we are trying to create Snapshot for
+   * @param checkpointVersionToUse - underlying checkpoint version to use in Snapshot, -1 if no
+   *                               checkpoint is used.
+   * @return Returns a list of deltas/compacted-deltas which can be used to construct the
+   *         [[LogSegment]] instead of `deltasAfterCheckpoint`.
+   */
+  protected def useCompactedDeltasForLogSegment(
+      deltasAndCompactedDeltas: Seq[FileStatus],
+      deltasAfterCheckpoint: Array[FileStatus],
+      latestCommitVersion: Long,
+      checkpointVersionToUse: Long): Array[FileStatus] = {
+
+    val selectedDeltas = mutable.ArrayBuffer.empty[FileStatus]
+    var highestVersionSeen = checkpointVersionToUse
+    val commitRangeCovered = mutable.ArrayBuffer.empty[Long]
+    // track if there is at least 1 compacted delta in `deltasAndCompactedDeltas`
+    var hasCompactedDeltas = false
+    for (file <- deltasAndCompactedDeltas) {
+      val (startVersion, endVersion) = file match {
+        case CompactedDeltaFile(_, startVersion, endVersion) =>
+          hasCompactedDeltas = true
+          (startVersion, endVersion)
+        case DeltaFile(_, version) =>
+          (version, version)
+      }
+
+      // select the compacted delta if the startVersion doesn't straddle `highestVersionSeen` and
+      // the endVersion doesn't cross the latestCommitVersion.
+      if (highestVersionSeen < startVersion && endVersion <= latestCommitVersion) {
+        commitRangeCovered.appendAll(startVersion to endVersion)
+        selectedDeltas += file
+        highestVersionSeen = endVersion
+      }
+    }
+    // If there are no compacted deltas in the `deltasAndCompactedDeltas` list, return from this
+    // method.
+    if (!hasCompactedDeltas) return deltasAfterCheckpoint
+    // Validation-1: Commits represented by `compactedDeltasToUse` should be unique and there must
+    // not be any duplicates.
+    val coveredCommits = commitRangeCovered.toSet
+    val hasDuplicates = (commitRangeCovered.size != coveredCommits.size)
+
+    // Validation-2: All commits from (CheckpointVersion + 1) to latestCommitVersion should be
+    // either represented by compacted delta or by the delta.
+    val requiredCommits = (checkpointVersionToUse + 1) to latestCommitVersion
+    val missingCommits = requiredCommits.toSet -- coveredCommits
+    if (!hasDuplicates && missingCommits.isEmpty) return selectedDeltas.toArray
+
+    // If the above check failed, that means the compacted delta validation failed.
+    // Just record that event and return just the deltas (deltasAfterCheckpoint).
+    val eventData = Map(
+      "deltasAndCompactedDeltas" -> deltasAndCompactedDeltas.map(_.getPath.getName),
+      "deltasAfterCheckpoint" -> deltasAfterCheckpoint.map(_.getPath.getName),
+      "latestCommitVersion" -> latestCommitVersion,
+      "checkpointVersionToUse" -> checkpointVersionToUse,
+      "hasDuplicates" -> hasDuplicates,
+      "missingCommits" -> missingCommits
+    )
+    recordDeltaEvent(
+      deltaLog = this,
+      opType = "delta.getLogSegmentForVersion.compactedDeltaValidationFailed",
+      data = eventData)
+    if (Utils.isTesting) {
+      assert(false, s"Validation around Compacted deltas failed while creating Snapshot. " +
+        s"[${JsonUtils.toJson(eventData)}]")
+    }
+    deltasAfterCheckpoint
   }
 
   /**
@@ -398,10 +496,11 @@ trait SnapshotManagement { self: DeltaLog =>
       if (upperBoundVersion > 0) findLastCompleteCheckpointBefore(upperBoundVersion) else None
     previousCp match {
       case Some(cp) =>
-        val filesSinceCheckpointVersion = listDeltaAndCheckpointFiles(
+        val filesSinceCheckpointVersion = listDeltaCompactedDeltaAndCheckpointFiles(
           startVersion = cp.version,
-          versionToLoad = Some(snapshotVersion))
-          .getOrElse(Array.empty)
+          versionToLoad = Some(snapshotVersion),
+          includeMinorCompactions = false
+        ).getOrElse(Array.empty)
         val (checkpoints, deltas) = filesSinceCheckpointVersion.partition(isCheckpointFile)
         if (deltas.isEmpty) {
           // We cannot find any delta files. Returns None as we cannot construct a `LogSegment` only
@@ -436,8 +535,13 @@ trait SnapshotManagement { self: DeltaLog =>
           Some(checkpointProvider),
           deltas.last.getModificationTime))
       case None =>
+        val listFromResult =
+          listDeltaCompactedDeltaAndCheckpointFiles(
+            startVersion = 0,
+            versionToLoad = Some(snapshotVersion),
+            includeMinorCompactions = false)
         val (deltas, deltaVersions) =
-          listDeltaAndCheckpointFiles(startVersion = 0, versionToLoad = Some(snapshotVersion))
+          listFromResult
             .getOrElse(Array.empty)
             .flatMap(DeltaFile.unapply(_))
             .unzip
