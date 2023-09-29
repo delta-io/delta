@@ -517,12 +517,9 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
 /**
  * V2 Checkpoint table feature is for checkpoints with sidecars and the new format and
  * file naming scheme.
- * This is still WIP feature.
  */
 object V2CheckpointTableFeature
-  extends ReaderWriterFeature(
-    name = "v2Checkpoint-under-development"
-  )
+  extends ReaderWriterFeature(name = "v2Checkpoint")
   with FeatureAutomaticallyEnabledByMetadata {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
