@@ -231,7 +231,8 @@ case class AlterTableDropFeatureDeltaCommand(
     val log = table.deltaLog
     val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTime))
     val emptyCommitTS = System.nanoTime()
-    log.startTransaction(Some(snapshot)).commit(Nil, DeltaOperations.EmptyCommit)
+    log.startTransaction(table.catalogTable, Some(snapshot))
+      .commit(Nil, DeltaOperations.EmptyCommit)
     log.checkpoint(log.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
   }
 

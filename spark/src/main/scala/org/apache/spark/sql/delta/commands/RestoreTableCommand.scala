@@ -113,7 +113,7 @@ case class RestoreTableCommand(
       require(versionToRestore < latestVersion, s"Version to restore ($versionToRestore)" +
         s"should be less then last available version ($latestVersion)")
 
-      deltaLog.withNewTransaction { txn =>
+      deltaLog.withNewTransaction(sourceTable.catalogTable) { txn =>
         val latestSnapshot = txn.snapshot
         val snapshotToRestore = deltaLog.getSnapshotAt(versionToRestore)
         val latestSnapshotFiles = latestSnapshot.allFiles
