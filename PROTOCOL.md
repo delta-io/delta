@@ -10,8 +10,8 @@
     - [Change Data Files](#change-data-files)
     - [Delta Log Entries](#delta-log-entries)
     - [Checkpoints](#checkpoints)
+    - [Log Compaction Files](#log-compaction-files)
     - [Last Checkpoint File](#last-checkpoint-file)
-      - [Last Checkpoint File Schema](#last-checkpoint-file-schema)
   - [Actions](#actions)
     - [Change Metadata](#change-metadata)
       - [Format Specification](#format-specification)
@@ -89,8 +89,9 @@
     - [Column Metadata](#column-metadata)
     - [Example](#example)
   - [Checkpoint Schema](#checkpoint-schema)
-  - [JSON checksum](#json-checksum)
-    - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
+  - [Last Checkpoint File Schema](#last-checkpoint-file-schema)
+    - [JSON checksum](#json-checksum)
+      - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -253,6 +254,54 @@ as of now. The add and remove file actions are stored as their individual column
 
 These files reside in the `_delta_log/_sidecars` directory.
 
+### Log Compaction Files
+
+Log compaction files reside in the `_delta_log` directory. A log compaction file from a start version `x` to an end version `y` will have the following name:
+`<x>.<y>.compact.json`. This contains the aggregated
+actions for commit range `[x, y]`. Similar to commits, each row in the log
+compaction file represents an [action](#actions).
+The commit files for a given range are created by doing [Action Reconciliation](#action-reconciliation)
+of the corresponding commits.
+Instead of reading the individual commit files in range `[x, y]`, an implementation could choose to read
+the log compaction file `<x>.<y>.compact.json` to speed up the snapshot construction.
+
+Example:
+Suppose we have `4.json` as:
+```
+{"commitInfo":{...}}
+{"add":{"path":"f2",...}}
+{"remove":{"path":"f1",...}}
+```
+`5.json` as:
+```
+{"commitInfo":{...}}
+{"add":{"path":"f3",...}}
+{"add":{"path":"f4",...}}
+{"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4389}}
+```
+`6.json` as:
+```
+{"commitInfo":{...}}
+{"remove":{"path":"f3",...}}
+{"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4390}}
+```
+
+Then `4.6.compact.json` will have the following content:
+```
+{"add":{"path":"f2",...}}
+{"add":{"path":"f4",...}}
+{"remove":{"path":"f1",...}}
+{"remove":{"path":"f3",...}}
+{"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4390}}
+```
+
+Writers:
+- Can optionally produce log compactions for any given commit range
+
+Readers:
+- Can optionally consume log compactions, if available
+- The compaction replaces the corresponding commits during action reconciliation
+
 ### Last Checkpoint File
 The Delta transaction log will often contain many (e.g. 10,000+) files.
 Listing such a large directory can be prohibitively expensive.
@@ -260,26 +309,6 @@ The last checkpoint file can help reduce the cost of constructing the latest sna
 
 Rather than list the entire directory, readers can locate a recent checkpoint by looking at the `_delta_log/_last_checkpoint` file.
 Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexicographically-sorted, paginated directory listing to enumerate any delta files or newer checkpoints that comprise more recent versions of the table.
-
-#### Last Checkpoint File Schema
-
-This last checkpoint file is encoded as JSON and contains the following information:
-
-Field | Description
--|-
-version | The version of the table when the last checkpoint was made.
-size | The number of actions that are stored in the checkpoint.
-parts | The number of fragments if the last checkpoint was written in multiple parts. This field is optional.
-sizeInBytes | The number of bytes of the checkpoint. This field is optional.
-numOfAddFiles | The number of AddFile actions in the checkpoint. This field is optional.
-checkpointSchema | The schema of the checkpoint file. This field is optional.
-tags | String-string map containing any additional metadata about the last checkpoint. This field is optional.
-checksum | The checksum of the last checkpoint JSON. This field is optional.
-
-The checksum field is an optional field which contains the MD5 checksum for fields of the last checkpoint json file.
-Last checkpoint file readers are encouraged to validate the checksum, if present, and writers are encouraged to write the checksum
-while overwriting the file. Refer to [this section](#json-checksum) for rules around calculating the checksum field
-for the last checkpoint JSON.
 
 ## Actions
 Actions modify the state of the table and they are stored both in delta files and in checkpoints.
@@ -1232,7 +1261,9 @@ the `cutoffCommit`, because a commit exactly at midnight is an acceptable cutoff
 2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`.
 We need to preserve the `cutOffCheckpoint` and all commits after it, because we need them to enable
 time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
-3. Delete all [delta log entries](#delta-log-entries) and [checkpoint files](#checkpoints) before the `cutOffCheckpoint` checkpoint.
+3. Delete all [delta log entries](#delta-log-entries and [checkpoint files](#checkpoints) before the
+`cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files) having
+startVersion <= `cutOffCheckpoint`'s version.
 4. Now read all the available [checkpoints](#checkpoints-1) in the _delta_log directory and identify
 the corresponding [sidecar files](#sidecar-files). These sidecar files need to be protected.
 5. List all the files in `_delta_log/_sidecars` directory, preserve files that are less than a day
@@ -1795,7 +1826,27 @@ Checkpoint schema (just the `add` column):
 |    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: long
 ```
 
-## JSON checksum
+## Last Checkpoint File Schema
+
+This last checkpoint file is encoded as JSON and contains the following information:
+
+Field | Description
+-|-
+version | The version of the table when the last checkpoint was made.
+size | The number of actions that are stored in the checkpoint.
+parts | The number of fragments if the last checkpoint was written in multiple parts. This field is optional.
+sizeInBytes | The number of bytes of the checkpoint. This field is optional.
+numOfAddFiles | The number of AddFile actions in the checkpoint. This field is optional.
+checkpointSchema | The schema of the checkpoint file. This field is optional.
+tags | String-string map containing any additional metadata about the last checkpoint. This field is optional.
+checksum | The checksum of the last checkpoint JSON. This field is optional.
+
+The checksum field is an optional field which contains the MD5 checksum for fields of the last checkpoint json file.
+Last checkpoint file readers are encouraged to validate the checksum, if present, and writers are encouraged to write the checksum
+while overwriting the file. Refer to [this section](#json-checksum) for rules around calculating the checksum field
+for the last checkpoint JSON.
+
+### JSON checksum
 To generate the checksum for the last checkpoint JSON, firstly, the checksum JSON is canonicalized and converted to a string. Then
 the 32 character MD5 digest is calculated on the resultant string to get the checksum. Rules for [JSON](https://datatracker.ietf.org/doc/html/rfc8259) canonicalization are:
 
@@ -1826,7 +1877,7 @@ Json: `{"k0":"'v 0'", "checksum": "adsaskfljadfkjadfkj", "k1":{"k2": 2, "k3": ["
 Canonicalized form: `"k0"="%27v%200%27","k1"+"k2"=2,"k1"+"k3"+0="v3","k1"+"k3"+1+0=1,"k1"+"k3"+1+1=2,"k1"+"k3"+2+"k4"="v4","k1"+"k3"+2+"k5"+0="v5","k1"+"k3"+2+"k5"+1="v6","k1"+"k3"+2+"k5"+2="v7"`\
 Checksum is `6a92d155a59bf2eecbd4b4ec7fd1f875`
 
-### How to URL encode keys and string values
+#### How to URL encode keys and string values
 The [URL Encoding](https://datatracker.ietf.org/doc/html/rfc3986) spec is a bit flexible to give a reliable encoding. e.g. the spec allows both
 uppercase and lowercase as part of percent-encoding. Thus, we require a stricter set of rules for encoding:
 
