@@ -339,11 +339,14 @@ class DeltaLog private(
    *
    * The operation type to be checked is passed as a string in `readOrWrite`. Valid values are
    * `read` and `write`.
+   * @param tableProtocol: The protocol to be checked.
+   * @param readOrWrite: The operation type to be checked: `read` or `write`.
+   * @param catalogTable: optional catalog table of the Delta table protocol being checked.
    */
   private def protocolCheck(
-    tableProtocol: Protocol,
-    readOrWrite: String,
-    catalogTable: Option[CatalogTable]): Unit = {
+      tableProtocol: Protocol,
+      readOrWrite: String,
+      catalogTable: Option[CatalogTable]): Unit = {
     val clientSupportedProtocol = Action.supportedProtocolVersion()
     // Depending on the operation, pull related protocol versions out of Protocol objects.
     // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
@@ -392,12 +395,8 @@ class DeltaLog private(
         "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
         "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
 
-    val tableNameInException = if (catalogTable.isDefined) {
-      catalogTable.get.identifier.copy(catalog = None).unquotedString
-    }
-    else {
-      dataPath.toString()
-    }
+    val tableNameInException = catalogTable.map(_.identifier.copy(catalog = None).unquotedString)
+      .getOrElse(dataPath.toString())
 
     if (!clientSupportedVersions.contains(tableRequiredVersion)) {
       throw new InvalidProtocolVersionException(
@@ -435,6 +434,8 @@ class DeltaLog private(
   /**
    * Asserts that the client is up to date with the protocol and allowed to read the table that is
    * using the given `protocol`.
+   * @param tableProtocol: The protocol to be checked.
+   * @param catalogTable: optional catalog table of the Delta table protocol being checked.
    */
   def protocolRead(protocol: Protocol, catalogTable: Option[CatalogTable] = None): Unit = {
     protocolCheck(protocol, "read", catalogTable)
@@ -443,6 +444,8 @@ class DeltaLog private(
   /**
    * Asserts that the client is up to date with the protocol and allowed to write to the table
    * that is using the given `protocol`.
+   * @param tableProtocol: The protocol to be checked.
+   * @param catalogTable: optional catalog table of the Delta table protocol being checked.
    */
   def protocolWrite(protocol: Protocol, catalogTable: Option[CatalogTable] = None): Unit = {
     protocolCheck(protocol, "write", catalogTable)
