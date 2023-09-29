@@ -164,14 +164,26 @@ case class DeltaParquetFileFormat(
     val useOffHeapBuffers = sparkSession.sessionState.conf.offHeapColumnVectorEnabled
     (partitionedFile: PartitionedFile) => {
       val rowIteratorFromParquet = parquetDataReader(partitionedFile)
-      val iterToReturn =
-        iteratorWithAdditionalMetadataColumns(
-          partitionedFile,
-          rowIteratorFromParquet,
-          isRowDeletedColumn,
-          useOffHeapBuffers = useOffHeapBuffers,
-          rowIndexColumn = rowIndexColumn)
-      iterToReturn.asInstanceOf[Iterator[InternalRow]]
+      try {
+        val iterToReturn =
+          iteratorWithAdditionalMetadataColumns(
+            partitionedFile,
+            rowIteratorFromParquet,
+            isRowDeletedColumn,
+            useOffHeapBuffers = useOffHeapBuffers,
+            rowIndexColumn = rowIndexColumn)
+        iterToReturn.asInstanceOf[Iterator[InternalRow]]
+      } catch {
+        case NonFatal(e) =>
+          // Close the iterator if it is a closeable resource. The `ParquetFileFormat` opens
+          // the file and returns `RecordReaderIterator` (which implements `AutoCloseable` and
+          // `Iterator`) instance as a `Iterator`.
+          rowIteratorFromParquet match {
+            case resource: AutoCloseable => closeQuietly(resource)
+            case _ => // do nothing
+          }
+          throw e
+      }
     }
   }
 

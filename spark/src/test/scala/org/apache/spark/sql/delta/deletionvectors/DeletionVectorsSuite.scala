@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.deletionvectors
 
-import java.io.File
+import java.io.{File, FileNotFoundException}
 
 import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, BOOLEAN_DOMAIN}
@@ -32,6 +32,7 @@ import io.delta.tables.DeltaTable
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
 import org.apache.spark.sql.functions.col
@@ -660,6 +661,27 @@ class DeletionVectorsSuite extends QueryTest
       assertThrows[DeltaChecksumException] {
         removeRows(addFileWithDV1, dv)
       }
+    }
+  }
+
+  test("Check no resource leak when DV files are missing (table corrupted)") {
+    withTempDir { tempDir =>
+      val source = new File(table2Path)
+      val target = new File(tempDir, "resourceLeakTest")
+      val targetPath = target.getAbsolutePath
+
+      // Copy the source DV table to a temporary directory
+      FileUtils.copyDirectory(source, target)
+
+      val filesWithDvs = getFilesWithDeletionVectors(DeltaLog.forTable(spark, target))
+      assert(filesWithDvs.size > 0)
+      deleteDVFile(targetPath, filesWithDvs(0))
+
+      val se = intercept[SparkException] {
+        spark.sql(s"SELECT * FROM delta.`$targetPath`").collect()
+      }
+      assert(findIfResponsible[FileNotFoundException](se).nonEmpty,
+        s"Expected a file not found exception as the cause, but got: [${se}]")
     }
   }
 

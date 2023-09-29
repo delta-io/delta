@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
 import scala.collection.concurrent
+import scala.reflect.ClassTag
 import scala.util.matching.Regex
 
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
@@ -224,6 +225,16 @@ trait DeltaTestUtilsBase {
   @deprecated("Use checkError() instead")
   protected def errorContains(errMsg: String, str: String): Unit = {
     assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
+  }
+
+  /** Utility method to check exception `e` is of type `E` or a cause of it is of type `E` */
+  def findIfResponsible[E <: Throwable: ClassTag](e: Throwable): Option[E] = e match {
+    case culprit: E => Some(culprit)
+    case _ =>
+      val children = Option(e.getCause).iterator ++ e.getSuppressed.iterator
+      children
+        .map(findIfResponsible[E](_))
+        .collectFirst { case Some(culprit) => culprit }
   }
 }
 
