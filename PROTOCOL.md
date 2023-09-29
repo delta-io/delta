@@ -12,7 +12,6 @@
     - [Checkpoints](#checkpoints)
     - [Log Compaction Files](#log-compaction-files)
     - [Last Checkpoint File](#last-checkpoint-file)
-      - [Last Checkpoint File Schema](#last-checkpoint-file-schema)
   - [Actions](#actions)
     - [Change Metadata](#change-metadata)
       - [Format Specification](#format-specification)
@@ -90,8 +89,9 @@
     - [Column Metadata](#column-metadata)
     - [Example](#example)
   - [Checkpoint Schema](#checkpoint-schema)
-  - [JSON checksum](#json-checksum)
-    - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
+  - [Last Checkpoint File Schema](#last-checkpoint-file-schema)
+    - [JSON checksum](#json-checksum)
+      - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
