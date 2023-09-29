@@ -253,6 +253,47 @@ as of now. The add and remove file actions are stored as their individual column
 
 These files reside in the `_delta_log/_sidecars` directory.
 
+### Log Compaction Files
+
+Log compaction files resides in the `_delta_log` directory. A log compaction file from a start version `x` to an end version `y` will have the following name: 
+`<x>.<y>.compact.json`. This contains the aggregated
+actions for commit range `[x, y]`. Similar to commits, each row in the log
+compaction file represents an [action](#actions).
+The commit files for a given range are created by doing [Action Reconciliation](#action-reconciliation) 
+of the corresponding commits.
+Instead of reading ihe individual commit files in range `[x, y]`, an implementation could choose to read
+the log compaction file `<x>.<y>.compact.json` to speed up the snapshot construction.
+
+Example:
+Suppose we have `4.json` as:
+```
+{"commitInfo":{...}}
+{"add":{"path":"f2",...}}
+{"remove":{"path":"f1",...}}
+```
+`5.json` as:
+```
+{"commitInfo":{...}}
+{"add":{"path":"f3",...}}
+{"add":{"path":"f4",...}}
+{"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4389}}
+```
+`6.json` as:
+```
+{"commitInfo":{...}}
+{"remove":{"path":"f3",...}}
+{"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4390}}
+```
+
+Then `4.6.compact.json` will have the following content:
+```
+{"add":{"path":"f2",...}}
+{"add":{"path":"f4",...}}
+{"remove":{"path":"f1",...}}
+{"remove":{"path":"f3",...}}
+{"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4390}}
+```
+
 ### Last Checkpoint File
 The Delta transaction log will often contain many (e.g. 10,000+) files.
 Listing such a large directory can be prohibitively expensive.
