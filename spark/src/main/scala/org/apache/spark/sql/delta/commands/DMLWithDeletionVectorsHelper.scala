@@ -36,7 +36,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.paths.SparkPath
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
+import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, FileSourceMetadataAttribute, GenericInternalRow}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, LogicalRelation}
@@ -47,11 +47,13 @@ import org.apache.spark.util.{SerializableConfiguration, Utils => SparkUtils}
 
 
 /**
- * Contains utility classes and method to delete rows in a table using the Deletion Vectors.
+ * Contains utility classes and method for performing DML operations with Deletion Vectors.
  */
-object DeleteWithDeletionVectorsHelper extends DeltaCommand {
+object DMLWithDeletionVectorsHelper extends DeltaCommand {
+  val SUPPORTED_DML_COMMANDS: Seq[String] = Seq("DELETE", "UPDATE")
+
   /**
-   * Creates a DataFrame that can be used to scan for rows matching DELETE condition in given
+   * Creates a DataFrame that can be used to scan for rows matching the condition in the given
    * files. Generally the given file list is a pruned file list using the stats based pruning.
    */
   def createTargetDfForScanningForMatches(
@@ -114,8 +116,14 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
       deltaLog: DeltaLog,
       targetDf: DataFrame,
       fileIndex: TahoeFileIndex,
-      condition: Expression): Seq[TouchedFileWithDV] = {
-    recordDeltaOperation(deltaLog, opType = "DELETE.findTouchedFiles") {
+      condition: Expression,
+      opName: String): Seq[TouchedFileWithDV] = {
+    require(
+      SUPPORTED_DML_COMMANDS.contains(opName),
+      s"Expecting opName to be one of ${SUPPORTED_DML_COMMANDS.mkString(", ")}, " +
+        s"but got '$opName'.")
+
+    recordDeltaOperation(deltaLog, opType = s"$opName.findTouchedFiles") {
       val candidateFiles = fileIndex match {
         case f: TahoeBatchFileIndex => f.addFiles
         case _ => throw new IllegalArgumentException("Unexpected file index found!")
@@ -165,7 +173,7 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
       spark: SparkSession,
       touchedFiles: Seq[TouchedFileWithDV],
       snapshot: Snapshot): (Seq[FileAction], Map[String, Long]) = {
-    val numDeletedRows: Long = touchedFiles.map(_.numberOfModifiedRows).sum
+    val numModifiedRows: Long = touchedFiles.map(_.numberOfModifiedRows).sum
     val numRemovedFiles: Long = touchedFiles.count(_.isFullyReplaced())
 
     val (fullyRemovedFiles, notFullyRemovedFiles) = touchedFiles.partition(_.isFullyReplaced())
@@ -192,7 +200,7 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
       }
     numDeletionVectorsRemoved += fullyRemoved.count(_.deletionVector != null)
     val metricMap = Map(
-      "numDeletedRows" -> numDeletedRows,
+      "numModifiedRows" -> numModifiedRows,
       "numRemovedFiles" -> numRemovedFiles,
       "numDeletionVectorsAdded" -> numDeletionVectorsAdded,
       "numDeletionVectorsRemoved" -> numDeletionVectorsRemoved,
@@ -485,8 +493,8 @@ object DeletionVectorData {
 }
 
 /** Final output for each file containing the file path, DeletionVectorDescriptor and how many
- * rows are marked as deleted in this file as part of the this DELETE (doesn't include already
- * rows marked as deleted)
+ * rows are marked as deleted in this file as part of the this operation (doesn't include rows that
+ * are already marked as deleted).
  *
  * @param filePath        Absolute path of the data file this DV result is generated for.
  * @param deletionVector  Deletion vector generated containing the newly deleted row indices from
@@ -643,7 +651,7 @@ object DeletionVectorWriter extends DeltaLogging {
   }
 
   /**
-   * Prepares a mapper function that can be used by DELETE command to store the Deletion Vectors
+   * Prepares a mapper function that can be used by DML commands to store the Deletion Vectors
    * that are in described in [[DeletionVectorData]] and return their descriptors
    * [[DeletionVectorResult]].
    */
