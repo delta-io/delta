@@ -28,6 +28,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
+import io.delta.kernel.utils.VectorUtils;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -86,7 +87,8 @@ public class ScanBuilderImpl
         // TODO: support timestamp type partition columns
         // Timestamp partition columns have complicated semantics related to timezones so block this
         // for now
-        List<String> partitionCols = protocolAndMetadata.get()._2.getPartitionColumns();
+        List<String> partitionCols = VectorUtils.toJavaList(
+                protocolAndMetadata.get()._2.getPartitionColumns());
         for (String colName : partitionCols) {
             if (readSchema.indexOf(colName) >= 0 &&
                 readSchema.get(colName).getDataType() instanceof TimestampType) {

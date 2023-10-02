@@ -16,13 +16,9 @@
 package io.delta.kernel.internal.data;
 
 import java.math.BigDecimal;
-import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.*;
 import io.delta.kernel.types.StructType;
 
 /**
@@ -104,12 +100,12 @@ public class ColumnarBatchRow
     }
 
     @Override
-    public <T> List<T> getArray(int ordinal) {
+    public ArrayValue getArray(int ordinal) {
         return columnVector(ordinal).getArray(rowId);
     }
 
     @Override
-    public <K, V> Map<K, V> getMap(int ordinal) {
+    public MapValue getMap(int ordinal) {
         return columnVector(ordinal).getMap(rowId);
     }
 

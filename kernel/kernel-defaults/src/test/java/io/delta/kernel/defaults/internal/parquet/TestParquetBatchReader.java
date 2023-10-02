@@ -30,14 +30,14 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.*;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
+import io.delta.kernel.utils.VectorUtils;
 
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
 import io.delta.kernel.defaults.internal.DefaultKernelUtils;
@@ -343,12 +343,14 @@ public class TestParquetBatchReader {
                     boolean expIsNull = rowId % 25 == 0;
                     if (expIsNull) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
+                        assertNull(vector.getArray(batchWithIdx._2));
                     } else if (rowId % 29 == 0) {
-                        assertEquals(Collections.emptyList(), vector.getArray(batchWithIdx._2));
+                        checkArrayValue(vector.getArray(batchWithIdx._2), IntegerType.INSTANCE,
+                                Collections.<Integer>emptyList());
                     } else {
                         List<Integer> expArray = Arrays.asList(rowId, null, rowId + 1);
-                        List<Integer> actArray = vector.getArray(batchWithIdx._2);
-                        assertEquals(expArray, actArray);
+                        checkArrayValue(vector.getArray(batchWithIdx._2), IntegerType.INSTANCE,
+                                expArray);
                     }
                     break;
                 }
@@ -357,41 +359,50 @@ public class TestParquetBatchReader {
                     break;
                 case "array_of_structs": {
                     assertFalse(vector.isNullAt(batchWithIdx._2));
-                    List<Row> actArray = vector.getArray(batchWithIdx._2);
-                    assertTrue(actArray.size() == 2);
-                    Row item0 = actArray.get(0);
+                    ArrayValue arrayValue = vector.getArray(batchWithIdx._2);
+                    ColumnVector elementVector = arrayValue.getElements();
+                    assertEquals(2, arrayValue.getSize());
+                    assertEquals(2, elementVector.getSize());
+                    assertTrue(elementVector.getDataType() instanceof StructType);
+                    Row item0 = elementVector.getStruct(0);
                     assertEquals(rowId, item0.getLong(0));
-                    assertNull(actArray.get(1));
+                    assertTrue(elementVector.isNullAt(1));
                     break;
                 }
                 case "map_of_prims": {
                     boolean expIsNull = rowId % 28 == 0;
                     if (expIsNull) {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
+                        assertNull(vector.getMap(batchWithIdx._2));
                     } else if (rowId % 30 == 0) {
-                        assertEquals(Collections.emptyMap(), vector.getMap(batchWithIdx._2));
+                        checkMapValue(
+                                vector.getMap(batchWithIdx._2),
+                                IntegerType.INSTANCE,
+                                LongType.INSTANCE,
+                                Collections.<Integer, Long>emptyMap()
+                        );
                     } else {
-                        Map<Integer, Long> actValue = vector.getMap(batchWithIdx._2);
-                        assertTrue(actValue.size() == 2);
+                        Map<Integer, Long> expValue = new HashMap<Integer, Long>() {
+                            {
+                                put(rowId, (rowId % 29 == 0) ? null : (rowId + 2L));
+                                put((rowId % 27 != 0) ? (rowId + 2) : (rowId + 3), rowId + 9L);
 
-                        // entry 0: key = rowId
-                        Integer key0 = rowId;
-                        Long actValue0 = actValue.get(key0);
-                        Long expValue0 = (rowId % 29 == 0) ? null : (rowId + 2L);
-                        assertEquals(expValue0, actValue0);
-
-                        // entry 1
-                        Integer key1 = (rowId % 27 != 0) ? (rowId + 2) : (rowId + 3);
-                        Long actValue1 = actValue.get(key1);
-                        Long expValue1 = rowId + 9L;
-                        assertEquals(expValue1, actValue1);
+                            }
+                        };
+                        checkMapValue(
+                                vector.getMap(batchWithIdx._2),
+                                IntegerType.INSTANCE,
+                                LongType.INSTANCE,
+                                expValue
+                        );
                     }
                     break;
                 }
                 case "map_of_rows": {
                     // Map(i + 1 -> (if (i % 10 == 0) Row((i*20).longValue()) else null))
                     assertFalse(vector.isNullAt(batchWithIdx._2));
-                    Map<Integer, Row> actValue = vector.getMap(batchWithIdx._2);
+                    MapValue mapValue = vector.getMap(batchWithIdx._2);
+                    Map<Integer, Row> actValue = VectorUtils.toJavaMap(mapValue);
 
                     // entry 0: key = rowId
                     Integer key0 = rowId + 1;
@@ -492,7 +503,8 @@ public class TestParquetBatchReader {
                 expArray = Collections.emptyList();
                 break;
         }
-        assertEquals(expArray, vector.getArray(batchRowId));
+        DataType expDataType = new ArrayType(IntegerType.INSTANCE, true);
+        checkArrayValue(vector.getArray(batchRowId), expDataType, expArray);
     }
 
     private static void validateMapOfArraysColumn(
@@ -525,7 +537,12 @@ public class TestParquetBatchReader {
                 }
             };
         }
-        assertEquals(expMap, vector.getMap(batchRowId));
+        checkMapValue(
+                vector.getMap(batchRowId),
+                LongType.INSTANCE,
+                new ArrayType(IntegerType.INSTANCE, true),
+                expMap
+        );
     }
 
     private static Tuple2<ColumnarBatch, Integer> getBatchForRowId(
@@ -539,5 +556,40 @@ public class TestParquetBatchReader {
         }
 
         throw new IllegalArgumentException("row id is not found: " + rowId);
+    }
+
+    private static <T> void checkArrayValue(
+            ArrayValue arrayValue, DataType expDataType, List<T> expList) {
+        int size = expList.size();
+        ColumnVector elementVector = arrayValue.getElements();
+        // Check the size is as expected and arrayValue.getSize == elementVector.getSize
+        assertEquals(size, arrayValue.getSize());
+        assertEquals(size, elementVector.getSize());
+        // Check the element vector has the correct data type
+        assertEquals(elementVector.getDataType(), expDataType);
+        // Check the elements are correct
+        assertEquals(expList, VectorUtils.toJavaList(arrayValue));
+        assertThrows(IllegalArgumentException.class,
+                () -> DefaultKernelTestUtils.getValueAsObject(elementVector, size + 1));
+    }
+
+    private static <K, V> void checkMapValue(
+            MapValue mapValue, DataType keyDataType, DataType valueDataType, Map<K, V> expMap) {
+        int size = expMap.size();
+        ColumnVector keyVector = mapValue.getKeys();
+        ColumnVector valueVector = mapValue.getValues();
+        // Check the size mapValue.getSize == keyVector.getSize == valueVector.getSize
+        assertEquals(size, mapValue.getSize());
+        assertEquals(size, keyVector.getSize());
+        assertEquals(size, valueVector.getSize());
+        // Check the key and value vector has the correct data type
+        assertEquals(keyVector.getDataType(), keyDataType);
+        assertEquals(valueVector.getDataType(), valueDataType);
+        // Check the elements are correct
+        assertEquals(expMap, VectorUtils.toJavaMap(mapValue));
+        assertThrows(IllegalArgumentException.class,
+                () -> DefaultKernelTestUtils.getValueAsObject(keyVector, size + 1));
+        assertThrows(IllegalArgumentException.class,
+                () -> DefaultKernelTestUtils.getValueAsObject(valueVector, size + 1));
     }
 }

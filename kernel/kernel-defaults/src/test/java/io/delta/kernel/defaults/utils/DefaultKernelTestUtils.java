@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults.utils;
 
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
@@ -23,14 +24,12 @@ public class DefaultKernelTestUtils {
 
     /**
      * Returns a URI encoded path of the resource.
-     *
-     * @param resourcePath
-     * @return
      */
     public static String getTestResourceFilePath(String resourcePath) {
         return DefaultKernelTestUtils.class.getClassLoader().getResource(resourcePath).getFile();
     }
 
+    // This will no longer be needed once all tests have been moved to Scala
     public static Object getValueAsObject(Row row, int columnOrdinal) {
         // TODO: may be it is better to just provide a `getObject` on the `Row` to
         // avoid the nested if-else statements.
@@ -60,10 +59,46 @@ public class DefaultKernelTestUtils {
             return row.getBinary(columnOrdinal);
         } else if (dataType instanceof StructType) {
             return row.getStruct(columnOrdinal);
-        } else if (dataType instanceof MapType) {
-            return row.getMap(columnOrdinal);
-        } else if (dataType instanceof ArrayType) {
-            return row.getArray(columnOrdinal);
+        }
+
+        throw new UnsupportedOperationException(dataType + " is not supported yet");
+    }
+
+    /**
+     * Get the value at given {@code rowId} from the column vector. The type of the value object
+     * depends on the data type of the {@code vector}.
+     */
+    public static Object getValueAsObject(ColumnVector vector, int rowId) {
+        // TODO: may be it is better to just provide a `getObject` on the `ColumnVector` to
+        // avoid the nested if-else statements.
+        final DataType dataType = vector.getDataType();
+
+        if (vector.isNullAt(rowId)) {
+            return null;
+        }
+
+        if (dataType instanceof BooleanType) {
+            return vector.getBoolean(rowId);
+        } else if (dataType instanceof ByteType) {
+            return vector.getByte(rowId);
+        } else if (dataType instanceof ShortType) {
+            return vector.getShort(rowId);
+        } else if (dataType instanceof IntegerType || dataType instanceof DateType) {
+            return vector.getInt(rowId);
+        } else if (dataType instanceof LongType || dataType instanceof TimestampType) {
+            return vector.getLong(rowId);
+        } else if (dataType instanceof FloatType) {
+            return vector.getFloat(rowId);
+        } else if (dataType instanceof DoubleType) {
+            return vector.getDouble(rowId);
+        } else if (dataType instanceof StringType) {
+            return vector.getString(rowId);
+        } else if (dataType instanceof BinaryType) {
+            return vector.getBinary(rowId);
+        } else if (dataType instanceof StructType) {
+            return vector.getStruct(rowId);
+        } else if (dataType instanceof DecimalType) {
+            return vector.getDecimal(rowId);
         }
 
         throw new UnsupportedOperationException(dataType + " is not supported yet");

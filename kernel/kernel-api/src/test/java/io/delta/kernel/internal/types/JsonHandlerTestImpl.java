@@ -17,7 +17,6 @@ package io.delta.kernel.internal.types;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -29,10 +28,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.JsonHandler;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FileDataReadResult;
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.BooleanType;
@@ -160,23 +156,51 @@ public class JsonHandlerTestImpl
                     final Object parsedElement = decodeElement(element, arrayType.getElementType());
                     output.add(parsedElement);
                 }
-                return output;
+                return new ArrayValue() {
+                    @Override
+                    public int getSize() {
+                        return output.size();
+                    }
+
+                    @Override
+                    public ColumnVector getElements() {
+                        return new TestColumnVector(arrayType.getElementType(), output);
+                    }
+                };
             }
 
             if (dataType instanceof MapType) {
                 throwIfTypeMismatch("map", jsonValue.isObject(), jsonValue);
                 final MapType mapType = (MapType) dataType;
+                final List<Object> keys = new ArrayList<>();
+                final List<Object> values = new ArrayList<>();
                 final Iterator<Map.Entry<String, JsonNode>> iter = jsonValue.fields();
-                final Map<Object, Object> output = new HashMap<>();
 
                 while (iter.hasNext()) {
                     Map.Entry<String, JsonNode> entry = iter.next();
                     String keyParsed = entry.getKey();
                     Object valueParsed = decodeElement(entry.getValue(), mapType.getValueType());
-                    output.put(keyParsed, valueParsed);
+                    keys.add(keyParsed);
+                    values.add(valueParsed);
                 }
 
-                return output;
+                return new MapValue() {
+
+                    @Override
+                    public int getSize() {
+                        return keys.size();
+                    }
+
+                    @Override
+                    public ColumnVector getKeys() {
+                        return new TestColumnVector(mapType.getKeyType(), keys);
+                    }
+
+                    @Override
+                    public ColumnVector getValues() {
+                        return new TestColumnVector(mapType.getValueType(), values);
+                    }
+                };
             }
 
             throw new UnsupportedOperationException(
@@ -279,13 +303,109 @@ public class JsonHandlerTestImpl
         }
 
         @Override
-        public <T> List<T> getArray(int ordinal) {
-            return (List<T>) parsedValues[ordinal];
+        public ArrayValue getArray(int ordinal) {
+            return (ArrayValue) parsedValues[ordinal];
         }
 
         @Override
-        public <K, V> Map<K, V> getMap(int ordinal) {
-            return (Map<K, V>) parsedValues[ordinal];
+        public MapValue getMap(int ordinal) {
+            return (MapValue) parsedValues[ordinal];
+        }
+    }
+
+    private static class TestColumnVector implements ColumnVector {
+
+        private final DataType dataType;
+        private final List<Object> values;
+
+        TestColumnVector(DataType dataType, List<Object> values) {
+            this.dataType = dataType;
+            this.values = values;
+        }
+
+        @Override
+        public DataType getDataType() {
+            return dataType;
+        }
+
+        @Override
+        public int getSize() {
+            return values.size();
+        }
+
+        @Override
+        public void close() {
+
+        }
+
+        @Override
+        public boolean isNullAt(int rowId) {
+            return values.get(rowId) == null;
+        }
+
+        @Override
+        public boolean getBoolean(int rowId) {
+            return (boolean) values.get(rowId);
+        }
+
+        @Override
+        public byte getByte(int rowId) {
+            throw new UnsupportedOperationException("not yet implemented - test only");
+        }
+
+        @Override
+        public short getShort(int rowId) {
+            throw new UnsupportedOperationException("not yet implemented - test only");
+        }
+
+        @Override
+        public int getInt(int rowId) {
+            return (int) values.get(rowId);
+        }
+
+        @Override
+        public long getLong(int rowId) {
+            return (long) values.get(rowId);
+        }
+
+        @Override
+        public float getFloat(int rowId) {
+            throw new UnsupportedOperationException("not yet implemented - test only");
+        }
+
+        @Override
+        public double getDouble(int rowId) {
+            throw new UnsupportedOperationException("not yet implemented - test only");
+        }
+
+        @Override
+        public String getString(int rowId) {
+            return (String) values.get(rowId);
+        }
+
+        @Override
+        public BigDecimal getDecimal(int rowId) {
+            throw new UnsupportedOperationException("not yet implemented - test only");
+        }
+
+        @Override
+        public byte[] getBinary(int rowId) {
+            throw new UnsupportedOperationException("not yet implemented - test only");
+        }
+
+        @Override
+        public Row getStruct(int rowId) {
+            return (Row) values.get(rowId);
+        }
+
+        @Override
+        public ArrayValue getArray(int rowId) {
+            return (ArrayValue) values.get(rowId);
+        }
+
+        @Override
+        public MapValue getMap(int rowId) {
+            return (MapValue) values.get(rowId);
         }
     }
 }

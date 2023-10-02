@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults.client;
 
+import java.io.IOException;
 import java.util.*;
 
 import org.apache.hadoop.conf.Configuration;
@@ -30,8 +31,9 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Utils;
+import io.delta.kernel.utils.VectorUtils;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
+import static io.delta.kernel.utils.Utils.singletonColumnVector;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
 
@@ -126,7 +128,7 @@ public class TestDefaultJsonHandler {
             .add("dataChange", BooleanType.INSTANCE);
 
         ColumnarBatch batch =
-            JSON_HANDLER.parseJson(Utils.singletonColumnVector(input), readSchema);
+            JSON_HANDLER.parseJson(singletonColumnVector(input), readSchema);
         assertEquals(1, batch.getSize());
 
         try (CloseableIterator<Row> rows = batch.getRows()) {
@@ -142,9 +144,65 @@ public class TestDefaultJsonHandler {
                     put("p2", "str");
                 }
             };
-            assertEquals(expPartitionValues, row.getMap(1));
+            Map<String, String> actualPartitionValues = VectorUtils.toJavaMap(row.getMap(1));
+            assertEquals(expPartitionValues, actualPartitionValues);
             assertEquals(348L, row.getLong(2));
             assertEquals(true, row.getBoolean(3));
+        }
+    }
+
+    @Test
+    public void parseNestedComplexTypes() throws IOException {
+        String json = "{" +
+                "  \"array\": [0, 1, null]," +
+                "  \"nested_array\": [[\"a\", \"b\"], [\"c\"], []]," +
+                "  \"map\": {\"a\":  true, \"b\":  false},\n" +
+                "  \"nested_map\": {\"a\":  {\"one\":  [], \"two\":  [1, 2, 3]}, \"b\":  {}}\n" +
+                "}";
+        StructType schema = new StructType()
+                .add("array", new ArrayType(IntegerType.INSTANCE, true))
+                .add("nested_array", new ArrayType(new ArrayType(StringType.INSTANCE, true), true))
+                .add("map", new MapType(StringType.INSTANCE, BooleanType.INSTANCE, true))
+                .add("nested_map",
+                        new MapType(
+                                StringType.INSTANCE,
+                                new MapType(
+                                        StringType.INSTANCE,
+                                        new ArrayType(IntegerType.INSTANCE, true),
+                                        true
+                                ),
+                                true
+                        ));
+        ColumnarBatch batch = JSON_HANDLER.parseJson(singletonColumnVector(json), schema);
+
+        try (CloseableIterator<Row> rows = batch.getRows()) {
+            Row result = rows.next();
+            List<Integer> exp0 = Arrays.asList(0, 1, null);
+            assertEquals(exp0, VectorUtils.toJavaList(result.getArray(0)));
+            List<List<String>> exp1 = Arrays.asList(Arrays.asList("a", "b"), Arrays.asList("c"),
+                    Collections.emptyList());
+            assertEquals(exp1, VectorUtils.toJavaList(result.getArray(1)));
+            Map<String, Boolean> exp2 = new HashMap<String, Boolean>() {
+                {
+                    put("a", true);
+                    put("b", false);
+                }
+            };
+            assertEquals(exp2, VectorUtils.toJavaMap(result.getMap(2)));
+            Map<String, List<Integer>> nestedMap = new HashMap<String, List<Integer>>() {
+                {
+                    put("one", Collections.emptyList());
+                    put("two", Arrays.asList(1, 2, 3));
+                }
+            };
+            Map<String, Map<String, List<Integer>>> exp3 =
+                    new HashMap<String, Map<String, List<Integer>>>()  {
+                        {
+                            put("a", nestedMap);
+                            put("b", Collections.emptyMap());
+                        }
+                    };
+            assertEquals(exp3, VectorUtils.toJavaMap(result.getMap(3)));
         }
     }
 

@@ -25,6 +25,7 @@ import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
+import io.delta.kernel.utils.VectorUtils;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -55,7 +56,7 @@ public class ScanStateRow extends GenericRow {
         String readSchemaPhysicalJson,
         String tablePath) {
         HashMap<Integer, Object> valueMap = new HashMap<>();
-        valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfiguration());
+        valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
         valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), readSchemaLogicalJson);
         valueMap.put(COL_NAME_TO_ORDINAL.get("physicalSchemaString"), readSchemaPhysicalJson);
         valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
@@ -105,7 +106,8 @@ public class ScanStateRow extends GenericRow {
      * @return List of partition column names according to the scan state.
      */
     public static List<String> getPartitionColumns(Row scanState) {
-        return scanState.getArray(COL_NAME_TO_ORDINAL.get("partitionColumns"));
+        return VectorUtils.toJavaList(
+                scanState.getArray(COL_NAME_TO_ORDINAL.get("partitionColumns")));
     }
 
     /**
@@ -113,10 +115,9 @@ public class ScanStateRow extends GenericRow {
      * {@link Scan#getScanState(TableClient)}.
      */
     public static String getColumnMappingMode(Row scanState) {
-        Map<String, String> configuration =
-            scanState.getMap(COL_NAME_TO_ORDINAL.get("configuration"));
-        String cmMode = configuration.get("delta.columnMapping.mode");
-        return cmMode == null ? "none" : cmMode;
+        Map<String, String> configuration = VectorUtils.toJavaMap(
+                scanState.getMap(COL_NAME_TO_ORDINAL.get("configuration")));
+        return configuration.getOrDefault("delta.columnMapping.mode", "none");
     }
 
     /**

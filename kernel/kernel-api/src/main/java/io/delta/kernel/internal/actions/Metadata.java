@@ -16,20 +16,23 @@
 package io.delta.kernel.internal.actions;
 
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.client.TableClient;
+import io.delta.kernel.data.ArrayValue;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.VectorUtils;
 import static io.delta.kernel.utils.Utils.requireNonNull;
 
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
 
 public class Metadata {
@@ -66,7 +69,7 @@ public class Metadata {
         .add("createdTime", LongType.INSTANCE, true /* contains null */)
         .add("configuration",
             new MapType(StringType.INSTANCE, StringType.INSTANCE, false),
-            false /* contains null */);
+            false /* nullable */);
 
     private final String id;
     private final Optional<String> name;
@@ -74,9 +77,10 @@ public class Metadata {
     private final Format format;
     private final String schemaString;
     private final StructType schema;
-    private final List<String> partitionColumns;
+    private final ArrayValue partitionColumns;
     private final Optional<Long> createdTime;
-    private final Map<String, String> configuration;
+    private final MapValue configurationMapValue;
+    private final Lazy<Map<String, String>> configuration;
 
     public Metadata(
         String id,
@@ -85,19 +89,19 @@ public class Metadata {
         Format format,
         String schemaString,
         StructType schema,
-        List<String> partitionColumns,
+        ArrayValue partitionColumns,
         Optional<Long> createdTime,
-        Map<String, String> configuration) {
+        MapValue configurationMapValue) {
         this.id = requireNonNull(id, "id is null");
         this.name = name;
         this.description = requireNonNull(description, "description is null");
         this.format = requireNonNull(format, "format is null");
         this.schemaString = requireNonNull(schemaString, "schemaString is null");
         this.schema = schema;
-        this.partitionColumns =
-            partitionColumns == null ? Collections.emptyList() : partitionColumns;
+        this.partitionColumns = requireNonNull(partitionColumns, "partitionColumns is null");
         this.createdTime = createdTime;
-        this.configuration = configuration == null ? Collections.emptyMap() : configuration;
+        this.configurationMapValue = requireNonNull(configurationMapValue, "configuration is null");
+        this.configuration = new Lazy<>(() -> VectorUtils.toJavaMap(configurationMapValue));
     }
 
     public String getSchemaString() {
@@ -108,7 +112,7 @@ public class Metadata {
         return schema;
     }
 
-    public List<String> getPartitionColumns() {
+    public ArrayValue getPartitionColumns() {
         return partitionColumns;
     }
 
@@ -132,7 +136,11 @@ public class Metadata {
         return createdTime;
     }
 
+    public MapValue getConfigurationMapValue() {
+        return configurationMapValue;
+    }
+
     public Map<String, String> getConfiguration() {
-        return configuration;
+        return Collections.unmodifiableMap(configuration.get());
     }
 }

@@ -18,12 +18,9 @@ package io.delta.kernel.defaults.internal.data;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.*;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -210,7 +207,7 @@ public class DefaultRowBasedColumnarBatch
         }
 
         @Override
-        public <K, V> Map<K, V> getMap(int rowId) {
+        public MapValue getMap(int rowId) {
             assertValidRowId(rowId);
             return rows.get(rowId).getMap(columnOrdinal);
         }
@@ -222,7 +219,7 @@ public class DefaultRowBasedColumnarBatch
         }
 
         @Override
-        public <T> List<T> getArray(int rowId) {
+        public ArrayValue getArray(int rowId) {
             assertValidRowId(rowId);
             return rows.get(rowId).getArray(columnOrdinal);
         }

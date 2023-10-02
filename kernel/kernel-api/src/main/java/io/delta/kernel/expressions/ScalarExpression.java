@@ -33,7 +33,8 @@ import io.delta.kernel.annotation.Evolving;
  *   <li>Name: <code>element_at</code>
  *     <ul>
  *       <li>Semantic: <code>element_at(map, key)</code>. Return the value of given <i>key</i>
- *       from the <i>map</i> type input. Ex: `element_at(map(1, 'a', 2, 'b'), 2)` returns 'b'</li>
+ *       from the <i>map</i> type input. Returns <i>null</i> if the given <i>key</i> is not in
+ *       the <i>map</i> Ex: `element_at(map(1, 'a', 2, 'b'), 2)` returns 'b'</li>
  *       <li>Since version: 3.0.0</li>
  *     </ul>
  *   </li>

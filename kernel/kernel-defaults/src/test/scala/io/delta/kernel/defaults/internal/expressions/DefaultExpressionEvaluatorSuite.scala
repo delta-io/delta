@@ -21,10 +21,11 @@ import java.sql.Date
 import java.util
 import java.util.Optional
 
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import org.scalatest.funsuite.AnyFunSuite
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, MapValue}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultMapVector, DefaultStructVector}
-import io.delta.kernel.defaults.internal.data.vector.VectorUtils.getValueAsObject
+import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultStructVector}
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.expressions._
 import io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE
@@ -32,7 +33,6 @@ import io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.types._
-import org.scalatest.funsuite.AnyFunSuite
 
 class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBase {
   test("evaluate expression: literal") {
@@ -397,25 +397,16 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   test("evaluate expression: element_at") {
     import scala.collection.JavaConverters._
     val nullStr = null.asInstanceOf[String]
-    val testMapValues = Seq(
-      Map("k0" -> "v00", "k1" -> "v01", "k3" -> nullStr, nullStr -> "v04").asJava,
-      Map("k0" -> "v10", "k1" -> nullStr, "k3" -> "v13", nullStr -> "v14").asJava,
-      Map("k0" -> nullStr, "k1" -> "v21", "k3" -> "v23", nullStr -> "v24").asJava,
+    val testMapValues: Seq[Map[AnyRef, AnyRef]] = Seq(
+      Map("k0" -> "v00", "k1" -> "v01", "k3" -> nullStr, nullStr -> "v04"),
+      Map("k0" -> "v10", "k1" -> nullStr, "k3" -> "v13", nullStr -> "v14"),
+      Map("k0" -> nullStr, "k1" -> "v21", "k3" -> "v23", nullStr -> "v24"),
       null
     )
-    val testMapVector = new ColumnVector {
-      override def getDataType: DataType =
-        new MapType(StringType.INSTANCE, StringType.INSTANCE, true /* valueContainsNull */)
+    val testMapVector = buildMapVector(
+      testMapValues,
+      new MapType(StringType.INSTANCE, StringType.INSTANCE, true))
 
-      override def getSize: Int = testMapValues.size
-
-      override def close(): Unit = {}
-
-      override def isNullAt(rowId: Int): Boolean = testMapValues(rowId) == null
-
-      override def getMap[K, V](rowId: Int): util.Map[K, V] =
-        testMapValues(rowId).asInstanceOf[util.Map[K, V]]
-    }
     val inputBatch = new DefaultColumnarBatch(
       testMapVector.getSize,
       new StructType().add("partitionValues", testMapVector.getDataType),
@@ -424,7 +415,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     Seq("k0", "k1", "k2", null).foreach { lookupKey =>
       val expOutput = testMapValues.map(map => {
         if (map == null) null
-        else map.get(lookupKey)
+        else map.getOrElse(lookupKey, null)
       })
 
       val lookupKeyExpr = if (lookupKey == null) {

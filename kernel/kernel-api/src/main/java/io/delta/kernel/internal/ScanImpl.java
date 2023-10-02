@@ -99,7 +99,7 @@ public class ScanImpl
                     readSchema,
                     snapshotSchema,
                     protocolAndMetadata.get()._2.getConfiguration()
-                        .getOrDefault("delta.columnMapping.mode", "none")
+                            .getOrDefault("delta.columnMapping.mode", "none")
                 )
             ),
             dataPath.toUri().toString());

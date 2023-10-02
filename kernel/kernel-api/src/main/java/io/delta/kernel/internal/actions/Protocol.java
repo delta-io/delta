@@ -23,6 +23,7 @@ import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.VectorUtils;
 
 public class Protocol {
     public static Protocol fromRow(Row row) {
@@ -32,8 +33,10 @@ public class Protocol {
         return new Protocol(
             row.getInt(0),
             row.getInt(1),
-            row.isNullAt(2) ? Collections.emptyList() : row.getArray(2),
-            row.isNullAt(3) ? Collections.emptyList() : row.getArray(3));
+            row.isNullAt(2) ? Collections.emptyList() :
+                    VectorUtils.toJavaList(row.getArray(2)),
+            row.isNullAt(3) ? Collections.emptyList() :
+                    VectorUtils.toJavaList(row.getArray(3)));
     }
 
     public static final StructType READ_SCHEMA = new StructType()

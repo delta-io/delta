@@ -16,10 +16,10 @@
 package io.delta.kernel.defaults.internal.data.vector;
 
 import java.math.BigDecimal;
-import java.util.List;
-import java.util.Map;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
 
@@ -107,8 +107,8 @@ public class DefaultConstantVector
     }
 
     @Override
-    public <K, V> Map<K, V> getMap(int rowId) {
-        return (Map<K, V>) value;
+    public MapValue getMap(int rowId) {
+        return (MapValue) value;
     }
 
     @Override
@@ -117,7 +117,7 @@ public class DefaultConstantVector
     }
 
     @Override
-    public <T> List<T> getArray(int rowId) {
-        return (List<T>) value;
+    public ArrayValue getArray(int rowId) {
+        return (ArrayValue) value;
     }
 }

@@ -24,8 +24,9 @@ import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.client.TableClient
-import io.delta.kernel.data.Row
+import io.delta.kernel.data.{ColumnVector, MapValue, Row}
 import io.delta.kernel.defaults.client.DefaultTableClient
+import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
@@ -299,5 +300,35 @@ trait TestUtils extends Assertions {
     try f(tempDir) finally {
       FileUtils.deleteDirectory(tempDir)
     }
+  }
+
+  /**
+   * Builds a MapType ColumnVector from a sequence of maps.
+   */
+  def buildMapVector(mapValues: Seq[Map[AnyRef, AnyRef]], dataType: MapType): ColumnVector = {
+    val keyType = dataType.getKeyType
+    val valueType = dataType.getValueType
+
+    def getMapValue(map: Map[AnyRef, AnyRef]): MapValue = {
+      if (map == null) {
+        null
+      } else {
+        val (keys, values) = map.unzip
+        new MapValue() {
+          override def getSize: Int = map.size
+
+          override def getKeys = new DefaultGenericVector(
+            keyType, keys.toArray)
+
+          override def getValues = new DefaultGenericVector(
+            valueType, values.toArray)
+        }
+      }
+    }
+
+    new DefaultGenericVector(
+      dataType,
+      mapValues.map(getMapValue).toArray
+    )
   }
 }

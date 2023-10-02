@@ -28,6 +28,7 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.VectorUtils;
 
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
@@ -111,7 +112,7 @@ public class InternalScanFileUtils {
      */
     public static Map<String, String> getPartitionValues(Row scanFileInfo) {
         Row addFile = getAddFileEntry(scanFileInfo);
-        return addFile.getMap(ADD_FILE_PARTITION_VALUES_ORDINAL);
+        return VectorUtils.toJavaMap(addFile.getMap(ADD_FILE_PARTITION_VALUES_ORDINAL));
     }
 
     /**
