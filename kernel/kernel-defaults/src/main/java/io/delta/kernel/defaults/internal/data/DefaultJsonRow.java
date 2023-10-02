@@ -26,8 +26,9 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 import io.delta.kernel.types.*;
+
+import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 
 public class DefaultJsonRow implements Row {
     private final Object[] parsedValues;
