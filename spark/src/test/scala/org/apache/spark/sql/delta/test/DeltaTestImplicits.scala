@@ -104,6 +104,14 @@ object DeltaTestImplicits {
     def enableExpiredLogCleanup(): Boolean = {
       deltaLog.enableExpiredLogCleanup(snapshot.metadata)
     }
+
+    def upgradeProtocol(newVersion: Protocol): Unit = {
+      upgradeProtocol(deltaLog.unsafeVolatileSnapshot, newVersion)
+    }
+
+    def upgradeProtocol(snapshot: Snapshot, newVersion: Protocol): Unit = {
+      deltaLog.upgradeProtocol(None, snapshot, newVersion)
+    }
   }
 
   implicit class DeltaTableV2ObjectTestHelper(dt: DeltaTableV2.type) {
