@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.catalog
 
 import java.{util => ju}
 
+
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 import scala.collection.mutable
@@ -35,6 +36,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
@@ -251,7 +253,8 @@ case class DeltaTableV2(
   /** Creates a [[LogicalRelation]] that represents this table */
   lazy val toLogicalRelation: LogicalRelation = {
     val relation = this.toBaseRelation
-    LogicalRelation(relation, relation.schema.toAttributes, ttSafeCatalogTable, isStreaming = false)
+    LogicalRelation(
+      relation, toAttributes(relation.schema), ttSafeCatalogTable, isStreaming = false)
   }
 
   /** Creates a [[DataFrame]] that uses the requested spark session to read from this table */

@@ -262,17 +262,18 @@ class DeletionVectorsSuite extends QueryTest
 
   Seq("name", "id").foreach(mode =>
     test(s"DELETE with DVs with column mapping mode=$mode") {
-      withTempDir { dirName =>
-        val path = dirName.getAbsolutePath
-        val data = (0 until 50).map(x => (x % 10, x, s"foo${x % 5}"))
-        spark.conf.set("spark.databricks.delta.properties.defaults.columnMapping.mode", mode)
-        data.toDF("part", "col1", "col2").write.format("delta").partitionBy(
-          "part").save(path)
-        val tableLog = DeltaLog.forTable(spark, path)
-        enableDeletionVectorsInTable(tableLog, true)
-        spark.sql(s"DELETE FROM delta.`$path` WHERE col1 = 2")
-        checkAnswer(spark.sql(s"select * from delta.`$path` WHERE col1 = 2"), Seq())
-        verifyDVsExist(tableLog, 1)
+      withSQLConf("spark.databricks.delta.properties.defaults.columnMapping.mode" -> mode) {
+        withTempDir { dirName =>
+          val path = dirName.getAbsolutePath
+          val data = (0 until 50).map(x => (x % 10, x, s"foo${x % 5}"))
+          data.toDF("part", "col1", "col2").write.format("delta").partitionBy(
+            "part").save(path)
+          val tableLog = DeltaLog.forTable(spark, path)
+          enableDeletionVectorsInTable(tableLog, true)
+          spark.sql(s"DELETE FROM delta.`$path` WHERE col1 = 2")
+          checkAnswer(spark.sql(s"select * from delta.`$path` WHERE col1 = 2"), Seq())
+          verifyDVsExist(tableLog, 1)
+        }
       }
     }
   )

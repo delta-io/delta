@@ -179,6 +179,12 @@ case class DeltaParquetFileFormat(
     if (columnMappingMode != NoMapping) true else super.supportFieldName(name)
   }
 
+  override def metadataSchemaFields: Seq[StructField] = {
+    // TODO: Check with RyanJohnson or Johan Lasperas
+    // The issue seems be due to SPARK-42918
+    super.metadataSchemaFields.filter(field => field != ParquetFileFormat.ROW_INDEX_FIELD)
+  }
+
   def copyWithDVInfo(
       tablePath: String,
       broadcastDvMap: Broadcast[Map[URI, DeletionVectorDescriptorWithFilterType]],
