@@ -72,10 +72,13 @@ public class DefaultMapVector
         if (isNullAt(rowId)) {
             return null;
         }
+        // use the offsets array to find the starting and ending index in the underlying vectors
+        // for this rowId
         int start = offsets[rowId];
         int end = offsets[rowId + 1];
         return new MapValue() {
 
+            // create a view over the keys and values for this rowId
             private final ColumnVector keys = new DefaultViewVector(keyVector, start, end);
             private final ColumnVector values = new DefaultViewVector(valueVector, start, end);
 

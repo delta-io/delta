@@ -68,10 +68,13 @@ public class DefaultArrayVector
         if (isNullAt(rowId)) {
             return null;
         }
+        // use the offsets array to find the starting and ending index in the underlying vector
+        // for this rowId
         int start = offsets[rowId];
         int end = offsets[rowId + 1];
         return new ArrayValue() {
 
+            // create a view over the elements for this rowId
             private final ColumnVector elements = new DefaultViewVector(elementVector, start, end);
 
             @Override

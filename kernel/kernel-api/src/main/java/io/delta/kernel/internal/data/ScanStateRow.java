@@ -106,7 +106,6 @@ public class ScanStateRow extends GenericRow {
      * @return List of partition column names according to the scan state.
      */
     public static List<String> getPartitionColumns(Row scanState) {
-        // TODO can this be null?
         return VectorUtils.toJavaList(
                 scanState.getArray(COL_NAME_TO_ORDINAL.get("partitionColumns")));
     }
@@ -116,7 +115,6 @@ public class ScanStateRow extends GenericRow {
      * {@link Scan#getScanState(TableClient)}.
      */
     public static String getColumnMappingMode(Row scanState) {
-        // TODO can this be null?
         Map<String, String> configuration = VectorUtils.toJavaMap(
                 scanState.getMap(COL_NAME_TO_ORDINAL.get("configuration")));
         return configuration.getOrDefault("delta.columnMapping.mode", "none");
