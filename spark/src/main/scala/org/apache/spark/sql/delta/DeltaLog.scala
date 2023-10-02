@@ -266,6 +266,7 @@ class DeltaLog private(
    * the new protocol version is not a superset of the original one used by the snapshot.
    */
   def upgradeProtocol(
+      catalogTable: Option[CatalogTable],
       snapshot: Snapshot,
       newVersion: Protocol): Unit = {
     val currentVersion = snapshot.protocol
@@ -277,7 +278,7 @@ class DeltaLog private(
       throw new ProtocolDowngradeException(currentVersion, newVersion)
     }
 
-    val txn = startTransaction(Some(snapshot))
+    val txn = startTransaction(catalogTable, Some(snapshot))
     try {
       SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
     } catch {
@@ -286,11 +287,6 @@ class DeltaLog private(
     }
     txn.commit(Seq(newVersion), DeltaOperations.UpgradeProtocol(newVersion))
     logConsole(s"Upgraded table at $dataPath to $newVersion.")
-  }
-
-  // Test-only!!
-  private[delta] def upgradeProtocol(newVersion: Protocol): Unit = {
-    upgradeProtocol(unsafeVolatileSnapshot, newVersion)
   }
 
   /**
