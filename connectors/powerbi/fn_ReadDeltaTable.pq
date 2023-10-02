@@ -168,10 +168,10 @@ let
         #"Latest Log Files" = 
         let
             Source = #"_delta_log Folder",
-            #"Filtered Rows" = Table.SelectRows(Source, each ([Extension] = ".json")),
-            #"Filtered Rows1" = Table.SelectRows(#"Filtered Rows", each [Version] > Record.Field(_last_checkpoint, "version"))
+            #"Filtered After Last Checkpoint" = Table.SelectRows(Source, each [Version] > Record.Field(_last_checkpoint, "version")),
+            #"Filtered JSON Files" = Table.SelectRows(#"Filtered After Last Checkpoint", each ([Extension] = ".json" and not Text.EndsWith([Name], ".compacted.json")))
         in
-            #"Filtered Rows1",
+            #"Filtered JSON Files",
 
         #"Logs JSON" = 
         let
@@ -254,7 +254,7 @@ let
                         else if [type] = "double" then Double.From
                         else if [type] = "date" then Date.From
                         else if [type] = "timestamp" and TimeZoneOffset = null then DateTime.From
-                        else if [type] = "timestamp" and TimeZoneOffset <> null then (x) as nullable datetimezone => DateTime.AddZone(x + TimeZoneOffsetDuration, Duration.Hours(TimeZoneOffsetDuration), Duration.Minutes(TimeZoneOffsetDuration))
+                        else if [type] = "timestamp" and TimeZoneOffset <> null then (x) as nullable datetimezone => DateTime.AddZone(DateTime.From(x) + TimeZoneOffsetDuration, Duration.Hours(TimeZoneOffsetDuration), Duration.Minutes(TimeZoneOffsetDuration))
                         else if [type] = "boolean" then Logical.From
                         else if [type] = "binary" then Binary.From
                         else if (Value.Is([type], type text) and Text.StartsWith([type], "decimal")) then Number.From
@@ -288,22 +288,20 @@ let
             #"Filtered Rows" = Table.SelectRows(#"Added file_name", each ([file_name] <> null)),
             #"Added partitionValuesTable" = Table.AddColumn(#"Filtered Rows", "partitionValuesTable", each if [add] <> null then if Value.Is(Record.Field([add], "partitionValues"), Record.Type) then Record.ToTable(Record.Field([add], "partitionValues")) else Table.RenameColumns(Record.Field([add], "partitionValues"), {"Key", "Name"}) else null, type nullable table),
             #"Added partitionValuesJSON" = Table.AddColumn(#"Added partitionValuesTable", "partitionValuesJSON", each Text.FromBinary(Json.FromValue([partitionValuesTable]))),
-            #"Added stats" = Table.AddColumn(#"Added partitionValuesJSON", "stats", each if [add] <> null then 
-                if Value.Is(Record.Field([add], "stats"), type text) 
+            #"Added stats" = Table.AddColumn(#"Added partitionValuesJSON", "stats", each if [add] <> null and Record.HasFields([add], "stats") and Value.Is(Record.Field([add], "stats"), type text) 
                 then Record.Field([add], "stats") 
-                else "{}"
                 else null, type text),
             #"Grouped Rows1" = Table.Group(#"Added stats", {"file_name"}, {{"partitionValuesJSON", each List.Max([partitionValuesJSON]), type nullable text}, {"stats", each List.Max([stats]), type nullable text}, {"isRelevant", each List.Sum([Counter]), type nullable text}}),
             #"Relevant Files" = Table.SelectRows(#"Grouped Rows1", each ([isRelevant] > 0)),
             #"Added partitionValuesTable2" = Table.AddColumn(#"Relevant Files", "partitionValuesTable", each try Table.FromRecords(Json.Document([partitionValuesJSON])) otherwise null),
             #"Added partitionValuesRecord" = Table.AddColumn(#"Added partitionValuesTable2", "partitionValuesRecord", each Record.TransformFields(Record.FromTable([partitionValuesTable]), Table.SelectRows(#"metadata_columns", each [isPartitionedBy] = true)[ColumnTransformation]), Expression.Evaluate("type [" & Text.Combine(Table.SelectRows(#"metadata_columns", each [isPartitionedBy] = true)[TableDataType], ", ") & "]", PQ_DataTypes)),
             #"Expanded partitionValuesRecord" = Table.ExpandRecordColumn(#"Added partitionValuesRecord", "partitionValuesRecord", Table.SelectRows(#"metadata_columns", each [isPartitionedBy] = true)[physicalName]),
-            #"Parse stats to JSON" = Table.AddColumn(#"Expanded partitionValuesRecord", "JSON", each Json.Document([stats]), type [minValues=list, maxValues=list, numRecords=Int64.Type, nullCount=Int64.Type]),
+            #"Renamed for Filters" = Table.RenameColumns(#"Expanded partitionValuesRecord",Table.ToRows(Table.SelectColumns(Table.SelectRows(metadata_columns, each [isPartitionedBy]),{"physicalName", "name"}))),
+            #"Apply PartitionFilterFunction" = Table.SelectRows(#"Renamed for Filters", each PartitionFilterFunction(_)),
+            #"Parse stats to JSON" = Table.AddColumn(#"Apply PartitionFilterFunction", "JSON", each if [stats] = null then null else Json.Document([stats]), type [minValues=list, maxValues=list, numRecords=Int64.Type, nullCount=Int64.Type]),
             #"Expanded Stats" = Table.ExpandRecordColumn(#"Parse stats to JSON", "JSON", {"minValues", "maxValues", "numRecords", "nullCount"}, {"minValues", "maxValues", "numRecords", "nullCount"}),
             #"Removed Columns" = Table.RemoveColumns(#"Expanded Stats",{"partitionValuesJSON", "stats", "isRelevant", "partitionValuesTable"}),
-            #"Renamed for Filters" = Table.RenameColumns(#"Removed Columns",Table.ToRows(Table.SelectColumns(Table.SelectRows(metadata_columns, each [isPartitionedBy]),{"physicalName", "name"}))),
-            #"Apply PartitionFilterFunction" = Table.SelectRows(#"Renamed for Filters", each PartitionFilterFunction(_)),
-            #"Apply StatsFilterFunction" = Table.SelectRows(#"Apply PartitionFilterFunction", each StatsFilterFunction([minValues], [maxValues])),
+            #"Apply StatsFilterFunction" = Table.SelectRows(#"Removed Columns", each StatsFilterFunction([minValues], [maxValues])),
             #"Renamed to physicalNames" = Table.RenameColumns(#"Apply StatsFilterFunction",Table.ToRows(Table.SelectColumns(Table.SelectRows(metadata_columns, each [isPartitionedBy]),{"name", "physicalName"})))
         in
             #"Renamed to physicalNames",
