@@ -26,6 +26,7 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 import io.delta.kernel.types.*;
 
 public class DefaultJsonRow implements Row {
@@ -191,7 +192,7 @@ public class DefaultJsonRow implements Row {
 
                 @Override
                 public ColumnVector getElements() {
-                    return new DefaultJsonVector(arrayType.getElementType(), elements);
+                    return new DefaultGenericVector(arrayType.getElementType(), elements);
                 }
             };
         }
@@ -226,12 +227,12 @@ public class DefaultJsonRow implements Row {
 
                 @Override
                 public ColumnVector getKeys() {
-                    return new DefaultJsonVector(mapType.getKeyType(), keys.toArray());
+                    return new DefaultGenericVector(mapType.getKeyType(), keys.toArray());
                 }
 
                 @Override
                 public ColumnVector getValues() {
-                    return new DefaultJsonVector(mapType.getValueType(), values.toArray());
+                    return new DefaultGenericVector(mapType.getValueType(), values.toArray());
                 }
             };
         }
@@ -255,102 +256,4 @@ public class DefaultJsonRow implements Row {
 
         return decodeElement(rootNode.get(field.getName()), field.getDataType());
     }
-
-    // TODO should this do type checks?
-    private static class DefaultJsonVector implements ColumnVector {
-
-        private final DataType dataType;
-        private final Object[] values;
-
-        DefaultJsonVector(DataType dataType, Object[] values) {
-            this.dataType = dataType;
-            this.values = values;
-        }
-
-        @Override
-        public DataType getDataType() {
-            return dataType;
-        }
-
-        @Override
-        public int getSize() {
-            return values.length;
-        }
-
-        @Override
-        public void close() {
-
-        }
-
-        @Override
-        public boolean isNullAt(int rowId) {
-            return values[rowId] == null;
-        }
-
-        @Override
-        public boolean getBoolean(int rowId) {
-            return (boolean) values[rowId];
-        }
-
-        @Override
-        public byte getByte(int rowId) {
-            throw new UnsupportedOperationException("not yet implemented");
-        }
-
-        @Override
-        public short getShort(int rowId) {
-            throw new UnsupportedOperationException("not yet implemented");
-        }
-
-        @Override
-        public int getInt(int rowId) {
-            return (int) values[rowId];
-        }
-
-        @Override
-        public long getLong(int rowId) {
-            return (long) values[rowId];
-        }
-
-        @Override
-        public float getFloat(int rowId) {
-            throw new UnsupportedOperationException("not yet implemented");
-        }
-
-        @Override
-        public double getDouble(int rowId) {
-            throw new UnsupportedOperationException("not yet implemented");
-        }
-
-        @Override
-        public String getString(int rowId) {
-            return (String) values[rowId];
-        }
-
-        @Override
-        public BigDecimal getDecimal(int rowId) {
-            throw new UnsupportedOperationException("not yet implemented");
-        }
-
-        @Override
-        public byte[] getBinary(int rowId) {
-            throw new UnsupportedOperationException("not yet implemented");
-        }
-
-        @Override
-        public Row getStruct(int rowId) {
-            return (Row) values[rowId];
-        }
-
-        @Override
-        public ArrayValue getArray(int rowId) {
-            return (ArrayValue) values[rowId];
-        }
-
-        @Override
-        public MapValue getMap(int rowId) {
-            return (MapValue) values[rowId];
-        }
-    }
-
 }

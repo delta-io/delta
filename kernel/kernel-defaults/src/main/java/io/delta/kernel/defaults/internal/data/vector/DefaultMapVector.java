@@ -81,7 +81,7 @@ public class DefaultMapVector
 
             @Override
             public int getSize() {
-                return end - start;
+                return keys.getSize();
             }
 
             @Override

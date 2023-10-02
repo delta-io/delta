@@ -25,7 +25,8 @@ public interface ArrayValue {
     int getSize();
 
     /**
-     * A {@link ColumnVector} containing the array elements.
+     * A {@link ColumnVector} containing the array elements with exactly
+     * {@link ArrayValue#getSize()} elements.
      */
     ColumnVector getElements();
 }

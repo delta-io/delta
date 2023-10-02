@@ -124,7 +124,7 @@ class ElementAtEvaluator {
                                 mapValue.getValues().getString(i);
                     }
                 }
-                // TODO what is the behavior for element_at if not in the map?
+                // If the key is not in the map return null
                 return null;
             }
         };

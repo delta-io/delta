@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.actions;
 
+import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import static java.util.Objects.requireNonNull;
@@ -140,6 +141,6 @@ public class Metadata {
     }
 
     public Map<String, String> getConfiguration() {
-        return configuration.get();
+        return Collections.unmodifiableMap(configuration.get());
     }
 }

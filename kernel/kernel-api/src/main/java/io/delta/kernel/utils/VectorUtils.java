@@ -34,11 +34,11 @@ public final class VectorUtils {
      * to their Java type.
      */
     public static <T> List<T> toJavaList(ArrayValue arrayValue) {
-        ColumnVector elementVector = arrayValue.getElements();
-        DataType dataType = elementVector.getDataType();
+        final ColumnVector elementVector = arrayValue.getElements();
+        final DataType dataType = elementVector.getDataType();
 
         List<T> elements = new ArrayList<>();
-        for (int i = 0; i < arrayValue.getSize(); i ++) {
+        for (int i = 0; i < arrayValue.getSize(); i++) {
             elements.add((T) getValueAsObject(elementVector, dataType, i));
         }
         return elements;
@@ -53,14 +53,14 @@ public final class VectorUtils {
      * - Binary type
      */
     public static <K, V> Map<K, V> toJavaMap(MapValue mapValue) {
-        ColumnVector keyVector = mapValue.getKeys();
-        DataType keyDataType = keyVector.getDataType();
-        ColumnVector valueVector = mapValue.getValues();
-        DataType valueDataType = valueVector.getDataType();
+        final ColumnVector keyVector = mapValue.getKeys();
+        final DataType keyDataType = keyVector.getDataType();
+        final ColumnVector valueVector = mapValue.getValues();
+        final DataType valueDataType = valueVector.getDataType();
 
         Map<K, V> values = new HashMap<>();
 
-        for (int i = 0; i < mapValue.getSize(); i ++) {
+        for (int i = 0; i < mapValue.getSize(); i++) {
             Object key = getValueAsObject(keyVector, keyDataType, i);
             Object value = getValueAsObject(valueVector, valueDataType, i);
             values.put((K) key, (V) value);
@@ -77,8 +77,7 @@ public final class VectorUtils {
             ColumnVector columnVector, DataType dataType, int rowId) {
         if (columnVector.isNullAt(rowId)) {
             return null;
-        }
-        if (dataType instanceof BooleanType) {
+        } else if (dataType instanceof BooleanType) {
             return columnVector.getBoolean(rowId);
         } else if (dataType instanceof ByteType) {
             return columnVector.getByte(rowId);

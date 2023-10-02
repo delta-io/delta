@@ -37,7 +37,7 @@ public class DefaultViewVector implements ColumnVector {
      * @param underlyingVector the underlying column vector to read
      * @param start the row index of the underlyingVector where we want this vector to start
      * @param end the row index of the underlyingVector where we want this vector to end
-     *            (non-inclusive)
+     *            (exclusive)
      */
     public DefaultViewVector(ColumnVector underlyingVector, int start, int end) {
         this.underlyingVector = underlyingVector;
@@ -57,7 +57,7 @@ public class DefaultViewVector implements ColumnVector {
 
     @Override
     public void close() {
-        underlyingVector.close();
+        // Don't close the underlying vector as it may still be used
     }
 
     @Override

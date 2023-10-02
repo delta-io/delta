@@ -25,12 +25,15 @@ public interface MapValue {
     int getSize();
 
     /**
-     * A {@link ColumnVector} containing the keys.
+     * A {@link ColumnVector} containing the keys. There are exactly {@link MapValue#getSize()} keys
+     * in the vector, and each key maps one-to-one to the value at the same index in
+     * {@link MapValue#getValues()}.
      */
     ColumnVector getKeys();
 
     /**
-     * A {@link ColumnVector} containing the values.
+     * A {@link ColumnVector} containing the values. There are exactly {@link MapValue#getSize()}
+     * values in the vector, and maps one-to-one to the keys in {@link MapValue#getKeys()}
      */
     ColumnVector getValues();
 

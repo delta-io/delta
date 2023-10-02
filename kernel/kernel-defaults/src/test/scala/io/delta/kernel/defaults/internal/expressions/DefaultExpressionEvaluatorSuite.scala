@@ -397,60 +397,15 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   test("evaluate expression: element_at") {
     import scala.collection.JavaConverters._
     val nullStr = null.asInstanceOf[String]
-    val testMapValues = Seq(
-      Map("k0" -> "v00", "k1" -> "v01", "k3" -> nullStr, nullStr -> "v04").asJava,
-      Map("k0" -> "v10", "k1" -> nullStr, "k3" -> "v13", nullStr -> "v14").asJava,
-      Map("k0" -> nullStr, "k1" -> "v21", "k3" -> "v23", nullStr -> "v24").asJava,
+    val testMapValues: Seq[Map[AnyRef, AnyRef]] = Seq(
+      Map("k0" -> "v00", "k1" -> "v01", "k3" -> nullStr, nullStr -> "v04"),
+      Map("k0" -> "v10", "k1" -> nullStr, "k3" -> "v13", nullStr -> "v14"),
+      Map("k0" -> nullStr, "k1" -> "v21", "k3" -> "v23", nullStr -> "v24"),
       null
     )
-    val testMapVector = new ColumnVector {
-      override def getDataType: DataType =
-        new MapType(StringType.INSTANCE, StringType.INSTANCE, true /* valueContainsNull */)
-
-      override def getSize: Int = testMapValues.size
-
-      override def close(): Unit = {}
-
-      override def isNullAt(rowId: Int): Boolean = testMapValues(rowId) == null
-
-      override def getMap(rowId: Int): MapValue = {
-
-        // TODO make this a test utils somewhere?
-        new MapValue() {
-
-          private val keyArray = testMapValues(rowId).keySet().asScala.toSeq
-          private val valueArray = keyArray.map(testMapValues(rowId).get(_))
-
-          override def getSize: Int = testMapValues(rowId).size()
-
-          override def getKeys: ColumnVector = new ColumnVector {
-
-            override def getDataType: DataType = StringType.INSTANCE
-
-            override def getSize: Int = testMapValues(rowId).size()
-
-            override def close(): Unit = {}
-
-            override def isNullAt(rowId: Int): Boolean = keyArray(rowId) == null
-
-            override def getString(rowId: Int): String = keyArray(rowId)
-          }
-
-          override def getValues: ColumnVector = new ColumnVector {
-
-            override def getDataType: DataType = StringType.INSTANCE
-
-            override def getSize: Int = testMapValues(rowId).size()
-
-            override def close(): Unit = {}
-
-            override def isNullAt(rowId: Int): Boolean = valueArray(rowId) == null
-
-            override def getString(rowId: Int): String = valueArray(rowId)
-          }
-        }
-      }
-    }
+    val testMapVector = buildMapVector(
+      testMapValues,
+      new MapType(StringType.INSTANCE, StringType.INSTANCE, true))
 
     val inputBatch = new DefaultColumnarBatch(
       testMapVector.getSize,
@@ -460,7 +415,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     Seq("k0", "k1", "k2", null).foreach { lookupKey =>
       val expOutput = testMapValues.map(map => {
         if (map == null) null
-        else map.get(lookupKey)
+        else map.getOrElse(lookupKey, null)
       })
 
       val lookupKeyExpr = if (lookupKey == null) {

@@ -76,7 +76,7 @@ public class DefaultArrayVector
 
             @Override
             public int getSize() {
-                return end - start;
+                return elements.getSize();
             }
 
             @Override
