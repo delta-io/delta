@@ -115,6 +115,12 @@ class ElementAtEvaluator {
                 return lastLookupValue;
             }
 
+            /**
+             * Given a {@link MapValue} and string {@code key} find the corresponding value.
+             * Returns null if the key is not in the map.
+             * @param mapValue String->String map to search
+             * @param key the key to look up the value for; may be null
+             */
             private String findValueForKey(MapValue mapValue, String key) {
                 ColumnVector keyVector = mapValue.getKeys();
                 for (int i = 0; i < mapValue.getSize(); i++) {
