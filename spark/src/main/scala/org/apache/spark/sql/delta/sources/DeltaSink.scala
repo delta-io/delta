@@ -99,7 +99,7 @@ case class DeltaSink(
 
 
   private def addBatchWithStatusImpl(batchId: Long, data: DataFrame): Boolean = {
-    val txn = deltaLog.startTransaction()
+    val txn = deltaLog.startTransaction(catalogTable)
     assert(queryId != null)
 
     if (SchemaUtils.typeExistsRecursively(data.schema)(_.isInstanceOf[NullType])) {
