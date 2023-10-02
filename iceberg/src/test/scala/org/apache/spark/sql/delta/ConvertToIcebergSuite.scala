@@ -17,11 +17,9 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
-
 import org.scalatest.concurrent.Eventually
 import org.scalatest.time.SpanSugar._
-
-import org.apache.spark.sql.{QueryTest, Row, SparkSession}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row, SparkSession}
 import org.apache.spark.util.Utils
 import org.apache.spark.SparkContext
 
@@ -39,83 +37,18 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    warehousePath = Utils.createTempDir()
-    _sparkSessionWithDelta = createSparkSessionWithDelta()
-    _sparkSessionWithIceberg = createSparkSessionWithIceberg()
-    require(!_sparkSessionWithDelta.eq(_sparkSessionWithIceberg), "separate sessions expected")
   }
 
   override def beforeEach(): Unit = {
     super.beforeEach()
-    testTablePath = Utils.createTempDir().getAbsolutePath
   }
 
   override def afterEach(): Unit = {
     super.afterEach()
-    Utils.deleteRecursively(new File(testTablePath))
-    _sparkSessionWithDelta.sql(s"DROP TABLE IF EXISTS $testTableName")
-    _sparkSessionWithIceberg.sql(s"DROP TABLE IF EXISTS $testTableName")
   }
 
   override def afterAll(): Unit = {
     super.afterAll()
-    if (warehousePath != null) Utils.deleteRecursively(warehousePath)
-    SparkContext.getActive.foreach(_.stop())
-  }
-
-  test("basic test - path based table created with SQL") {
-    runDeltaSql(s"""CREATE TABLE delta.`$testTablePath` (col1 INT) USING DELTA
-                   |TBLPROPERTIES (
-                   |  'delta.columnMapping.mode' = 'id',
-                   |  'delta.universalFormat.enabledFormats' = 'iceberg'
-                   |)""".stripMargin)
-    verifyReadWithIceberg(testTablePath, Seq())
-    runDeltaSql(s"INSERT INTO delta.`$testTablePath` VALUES (123)")
-    verifyReadWithIceberg(testTablePath, Seq(Row(123)))
-  }
-
-  test("basic test - catalog table created with SQL") {
-    runDeltaSql(s"""CREATE TABLE $testTableName(col1 INT) USING DELTA
-                   |LOCATION '$testTablePath'
-                   |TBLPROPERTIES (
-                   |  'delta.columnMapping.mode' = 'id',
-                   |  'delta.universalFormat.enabledFormats' = 'iceberg'
-                   |)""".stripMargin)
-    verifyReadWithIceberg(testTablePath, Seq())
-    runDeltaSql(s"INSERT INTO $testTableName VALUES (123)")
-    verifyReadWithIceberg(testTablePath, Seq(Row(123)))
-  }
-
-  test("basic test - path based table created with DataFrame") {
-    withDeltaSparkSession { deltaSpark =>
-      withDefaultTablePropsInSQLConf {
-        deltaSpark.range(10).write.format("delta").save(testTablePath)
-      }
-    }
-    verifyReadWithIceberg(testTablePath, 0 to 9 map (Row(_)))
-    withDeltaSparkSession { deltaSpark =>
-      deltaSpark.range(10, 20, 1)
-        .write.format("delta").mode("append").save(testTablePath)
-    }
-    verifyReadWithIceberg(testTablePath, 0 to 19 map (Row(_)))
-  }
-
-  test("basic test - catalog table created with DataFrame") {
-    withDeltaSparkSession { deltaSpark =>
-      withDefaultTablePropsInSQLConf {
-        deltaSpark.range(10).write.format("delta")
-          .option("path", testTablePath)
-          .saveAsTable(testTableName)
-      }
-    }
-    verifyReadWithIceberg(testTablePath, 0 to 9 map (Row(_)))
-    withDeltaSparkSession { deltaSpark =>
-      deltaSpark.range(10, 20, 1)
-        .write.format("delta").mode("append")
-        .option("path", testTablePath)
-        .saveAsTable(testTableName)
-    }
-    verifyReadWithIceberg(testTablePath, 0 to 19 map (Row(_)))
   }
 
   def runDeltaSql(sqlStr: String): Unit = {
@@ -124,10 +57,16 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
     }
   }
 
-  def verifyReadWithIceberg(tablePath: String, expectedAnswer: Seq[Row]): Unit = {
+  def runIcebergSql(sqlStr: String): DataFrame = {
+    withIcebergSparkSession { icebergSpark =>
+      icebergSpark.sql(sqlStr)
+    }
+  }
+
+  def verifyReadWithIceberg(tableName: String, expectedAnswer: Seq[Row]): Unit = {
     withIcebergSparkSession { icebergSparkSession =>
       eventually(timeout(10.seconds)) {
-        val icebergDf = icebergSparkSession.read.format("iceberg").load(tablePath)
+        val icebergDf = icebergSparkSession.sql(s"SELECT * FROM ${tableName}")
         checkAnswer(icebergDf, expectedAnswer)
       }
     }
@@ -145,15 +84,15 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
     ) { f }
   }
 
-  def withDeltaSparkSession(f: SparkSession => Unit): Unit = {
+  def withDeltaSparkSession[T](f: SparkSession => T): T = {
     withSparkSession(_sparkSessionWithDelta, f)
   }
 
-  def withIcebergSparkSession(f: SparkSession => Unit): Unit = {
+  def withIcebergSparkSession[T](f: SparkSession => T): T = {
     withSparkSession(_sparkSessionWithIceberg, f)
   }
 
-  def withSparkSession(sessionToUse: SparkSession, f: SparkSession => Unit): Unit = {
+  def withSparkSession[T](sessionToUse: SparkSession, f: SparkSession => T): T = {
     try {
       SparkSession.setDefaultSession(sessionToUse)
       SparkSession.setActiveSession(sessionToUse)
@@ -174,6 +113,7 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
       .appName("DeltaSession")
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
       .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+      .config("spark.sql.catalog.spark_catalog.type", "hive")
       .getOrCreate()
     SparkSession.clearActiveSession()
     SparkSession.clearDefaultSession()

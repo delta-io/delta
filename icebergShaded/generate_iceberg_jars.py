@@ -40,6 +40,8 @@ iceberg_src_compiled_jar_rel_glob_patterns = [
     "api/build/libs/iceberg-api-*.jar",
     "core/build/libs/iceberg-core-*.jar",
     "parquet/build/libs/iceberg-parquet-*.jar",
+    "hive-metastore/build/libs/iceberg-hive-*.jar",
+    "data/build/libs/iceberg-data-*.jar"
 ]
 
 iceberg_root_dir = path.abspath(path.dirname(__file__))
@@ -112,6 +114,8 @@ def generate_iceberg_jars():
         build_args = "-x spotlessCheck -x checkstyleMain -x test -x integrationTest"
         run_cmd("./gradlew :iceberg-core:build %s" % build_args)
         run_cmd("./gradlew :iceberg-parquet:build %s" % build_args)
+        run_cmd("./gradlew :iceberg-hive-metastore:build %s" % build_args)
+        run_cmd("./gradlew :iceberg-data:build %s" % build_args)
 
     print(">>> Copying JARs to lib directory")
     shutil.rmtree(iceberg_lib_dir, ignore_errors=True)

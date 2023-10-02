@@ -46,6 +46,6 @@ object IcebergConverterHook extends PostCommitHook with DeltaLogging {
     postCommitSnapshot
       .deltaLog
       .icebergConverter
-      .enqueueSnapshotForConversion(postCommitSnapshot, Some(txn))
+      .enqueueSnapshotForConversion(postCommitSnapshot, txn)
   }
 }
