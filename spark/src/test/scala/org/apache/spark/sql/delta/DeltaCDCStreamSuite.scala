@@ -1047,7 +1047,7 @@ class DeltaCDCStreamDeletionVectorSuite extends DeltaCDCStreamSuite
   with DeletionVectorsTestUtils {
   override def beforeAll(): Unit = {
     super.beforeAll()
-    enableDeletionVectorsForDeletes(spark)
+    enableDeletionVectorsForAllSupportedOperations(spark)
   }
 }
 
