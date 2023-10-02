@@ -21,6 +21,9 @@ import java.util.concurrent.ThreadPoolExecutor
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.Duration
 
+import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.metering.DeltaLogging
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.util.ThreadUtils
 
@@ -44,6 +47,9 @@ private[delta] class DeltaThreadPool(tpe: ThreadPoolExecutor) {
     val futures = items.map(i => submit(spark)(f(i)))
     ThreadUtils.awaitResult(Future.sequence(futures), timeout)
   }
+
+  def submitNonFateSharing[T](f: SparkSession => T): NonFateSharingFuture[T] =
+    new NonFateSharingFuture(this)(f)
 }
 
 
@@ -51,4 +57,41 @@ private[delta] class DeltaThreadPool(tpe: ThreadPoolExecutor) {
 private[delta] object DeltaThreadPool {
   def apply(prefix: String, numThreads: Int): DeltaThreadPool =
     new DeltaThreadPool(ThreadUtils.newDaemonCachedThreadPool(prefix, numThreads))
+}
+
+/**
+ * Helper class to run a function `f` immediately in a threadpool and avoid sharing [[SparkSession]]
+ * on further retries if the the first attempt of function `f` (in the future) fails due to some
+ * reason.
+ * Everyone will use the future that prefetches f -- it succeeds -- but if the future fails,
+ * everyone will call f themselves.
+ */
+class NonFateSharingFuture[T](pool: DeltaThreadPool)(f: SparkSession => T)
+  extends DeltaLogging {
+
+  // We may not have a spark session yet, but that's ok (the future is best-effort)
+  // Submit a future if a spark session is available
+  private var futureOpt = SparkSession.getActiveSession.map { spark =>
+    pool.submit(spark) { f(spark) }
+  }
+
+  def get(timeout: Duration): T = {
+    // Prefer to get a prefetched result from the future
+    futureOpt.foreach { future =>
+      try {
+        return ThreadUtils.awaitResult(future, timeout)
+      } catch {
+        case e: Throwable =>
+          logError("Failed to get result from future", e)
+          futureOpt = None // avoid excessive log spam
+          throw e
+      }
+    }
+
+    // Future missing or failed, so fall back to direct execution
+    SparkSession.getActiveSession match {
+      case Some(spark) => f(spark)
+      case _ => throw DeltaErrors.sparkSessionNotSetException()
+    }
+  }
 }
