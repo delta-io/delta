@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.catalog
 
 import java.{util => ju}
 
-
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 import scala.collection.mutable

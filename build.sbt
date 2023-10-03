@@ -325,6 +325,7 @@ val icebergSparkRuntimeArtifactName = {
 }
 
 /**
+ * Need a Icebeg release version with support for Spark 3.5
 lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
   // delta-iceberg depends on delta-spark! So, we need to include it during our test.
   .dependsOn(spark % "test")
