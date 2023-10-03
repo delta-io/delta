@@ -22,6 +22,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
+import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 
 /**
  * Generic column vector implementation to expose an array of objects as a column vector.
@@ -136,6 +137,17 @@ public class DefaultGenericVector implements ColumnVector {
         return (MapValue) values[rowId];
     }
 
+    @Override
+    public ColumnVector getChild(int ordinal) {
+        checkArgument(dataType instanceof StructType);
+        StructType structType = (StructType) dataType;
+        return new DefaultSubFieldVector(
+                getSize(),
+                structType.at(ordinal).getDataType(),
+                ordinal,
+                (rowId) -> (Row) values[rowId]);
+    }
+
     private void throwIfUnsafeAccess( Class<? extends DataType> expDataType, String accessType) {
         if (!expDataType.isAssignableFrom(dataType.getClass())) {
             String msg = String.format(
@@ -144,4 +156,5 @@ public class DefaultGenericVector implements ColumnVector {
                     dataType);
             throw new UnsupportedOperationException(msg);
         }
-    }}
+    }
+}

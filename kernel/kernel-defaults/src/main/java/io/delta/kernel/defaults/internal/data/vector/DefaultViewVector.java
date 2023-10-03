@@ -144,6 +144,11 @@ public class DefaultViewVector implements ColumnVector {
         return underlyingVector.getArray(offset + rowId);
     }
 
+    @Override
+    public ColumnVector getChild(int ordinal) {
+        return new DefaultViewVector(underlyingVector.getChild(ordinal), offset, offset + size);
+    }
+
     private void checkValidRowId(int rowId) {
         checkArgument(rowId >= 0 && rowId < size,
                 String.format(
