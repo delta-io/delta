@@ -152,7 +152,7 @@ public class PartitionUtils {
      * String type partition values don't need any deserialization.
      *
      * @param predicate             Predicate containing filters only on partition columns.
-     * @param partitionColNameTypes Map of partition columns and their types.
+     * @param partitionColNameTypes Map of partition column name (in lower case) to its type.
      * @return
      */
     public static Predicate rewritePartitionPredicateOnScanFileSchema(
@@ -170,7 +170,10 @@ public class PartitionUtils {
         if (expression instanceof Column) {
             Column column = (Column) expression;
             String partColName = column.getNames()[0];
-            DataType partColType = partitionColNameTypes.get(partColName);
+            DataType partColType = partitionColNameTypes.get(partColName.toLowerCase(Locale.ROOT));
+            if (partColType == null) {
+                throw new IllegalArgumentException(partColName + " has no data type in metadata");
+            }
 
             Expression elementAt =
                 new ScalarExpression(
