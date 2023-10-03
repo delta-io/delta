@@ -16,7 +16,7 @@
 package io.delta.kernel.internal;
 
 import java.util.*;
-import java.util.stream.Collectors;
+import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
@@ -136,12 +136,8 @@ public class ScanImpl
      * Consider `ALWAYS_TRUE` as no predicate.
      */
     private Optional<Predicate> removeAlwaysTrue(Optional<Predicate> predicate) {
-        return predicate.map(filter -> {
-            if (filter.getName().equalsIgnoreCase("ALWAYS_TRUE")) {
-                return null;
-            }
-            return filter;
-        });
+        return predicate
+            .filter(filter -> !filter.getName().equalsIgnoreCase("ALWAYS_TRUE"));
     }
 
     private CloseableIterator<FilteredColumnarBatch> applyPartitionPruning(
@@ -157,8 +153,8 @@ public class ScanImpl
         Set<String> partitionColNames = partitionColumnNames.get();
         Map<String, DataType> partitionColNameToTypeMap = metadata.getSchema().fields().stream()
             .filter(field -> partitionColNames.contains(field.getName()))
-            .collect(Collectors.toMap(
-                field -> field.getName().toLowerCase(Locale.ROOT),
+            .collect(toMap(
+                field -> field.getName().toLowerCase(Locale.ENGLISH),
                 field -> field.getDataType()));
 
         Predicate predicateOnScanFileBatch = rewritePartitionPredicateOnScanFileSchema(
@@ -194,7 +190,7 @@ public class ScanImpl
             String partitionColName = partitionColNameVector.getString(i);
             checkArgument(partitionColName != null && !partitionColName.isEmpty(),
                 "Expected non-null and non-empty partition column name");
-            partitionColumnNames.add(partitionColName.toLowerCase());
+            partitionColumnNames.add(partitionColName.toLowerCase(Locale.ENGLISH));
         }
         return Collections.unmodifiableSet(partitionColumnNames);
     }

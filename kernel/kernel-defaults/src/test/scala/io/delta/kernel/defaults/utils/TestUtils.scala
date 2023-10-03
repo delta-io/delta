@@ -82,7 +82,7 @@ trait TestUtils extends Assertions {
     snapshot: Snapshot,
     readSchema: StructType = null,
     filter: Predicate = null,
-    expectedRemainingFilter: Optional[Predicate] = Optional.empty(),
+    expectedRemainingFilter: Predicate = null,
     tableClient: TableClient = defaultTableClient): Seq[Row] = {
 
     val result = ArrayBuffer[Row]()
@@ -101,7 +101,8 @@ trait TestUtils extends Assertions {
 
     if (filter != null) {
       val actRemainingPredicate = scan.getRemainingFilter()
-      assert(actRemainingPredicate.toString === expectedRemainingFilter.toString)
+      assert(
+        actRemainingPredicate.toString === Optional.ofNullable(expectedRemainingFilter).toString)
     }
 
     val scanState = scan.getScanState(tableClient);
@@ -199,7 +200,7 @@ trait TestUtils extends Assertions {
     tableClient: TableClient = defaultTableClient,
     expectedSchema: StructType = null,
     filter: Predicate = null,
-    expectedRemainingFilter: Optional[Predicate] = Optional.empty()
+    expectedRemainingFilter: Predicate = null
     // version
   ): Unit = {
 

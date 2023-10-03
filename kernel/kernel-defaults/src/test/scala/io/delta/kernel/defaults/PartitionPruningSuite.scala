@@ -95,7 +95,7 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils {
               expectedAnswer = expectedResult.map(TestRow.fromTuple(_)),
               readCols = selectedColumns,
               filter = filter,
-              expectedRemainingFilter = Optional.empty())
+              expectedRemainingFilter = null)
           }
         }
       }
@@ -110,14 +110,14 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils {
         predicate(">=", col("as_float"), ofFloat(-200)),
         predicate("=", col("as_date"), ofDate(18878 /* daysSinceEpochUTC */))
       )
-    ) -> (Optional.empty[Predicate](), Seq((18878, "0"), (18878, "1"))),
+    ) -> (null, Seq((18878, "0"), (18878, "1"))),
 
     (
       "partition pruning: with predicate on two different partition col combined with OR",
       or(
         predicate("=", col("as_float"), ofFloat(0)),
         predicate("=", col("as_int"), ofInt(1)))
-    ) -> (Optional.empty[Predicate](), Seq((18878, "0"), (18878, "1"))),
+    ) -> (null, Seq((18878, "0"), (18878, "1"))),
 
     (
       "partition pruning: with predicate on data and partition column mix with AND",
@@ -126,7 +126,7 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils {
         predicate("=", col("as_float"), ofFloat(0)) // partition col filter
       )
     ) -> (
-      Optional.of(predicate("=", col("as_value"), ofString("1"))),
+      predicate("=", col("as_value"), ofString("1")),
       Seq((18878, "0"))
     ),
 
@@ -137,10 +137,10 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils {
         predicate("=", col("as_float"), ofFloat(0)) // partition col filter
       )
     ) -> (
-      Optional.of(or(
+      or(
         predicate("=", col("as_value"), ofString("1")), // data col filter
         predicate("=", col("as_float"), ofFloat(0)) // partition col filter
-      )),
+      ),
       Seq((18878, "0"), (18878, "1"), (null, "2"))
     ),
 
@@ -151,7 +151,7 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils {
         predicate("=", col("as_float"), ofFloat(234)) // partition col filter
       )
     ) -> (
-      Optional.of(predicate("=", col("as_value"), ofString("200"))),
+      predicate("=", col("as_value"), ofString("200")),
       Seq()
     )
   )
