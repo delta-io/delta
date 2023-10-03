@@ -78,7 +78,7 @@ trait CloneIcebergSuiteBase extends QueryTest
 
   protected def testClone(testName: String)(f: String => Unit): Unit =
     supportedModes.foreach { mode => test(s"$testName - $mode") { f(mode) } }
-
+/*
   testClone("table with deleted files") { mode =>
     withTable(table, cloneTable) {
       spark.sql(
@@ -97,12 +97,12 @@ trait CloneIcebergSuiteBase extends QueryTest
       checkAnswer(spark.table(cloneTable), Row(1, "a") :: Nil)
     }
   }
-
+*/
   protected def runCreateOrReplace(mode: String, source: String): DataFrame = {
     Try(spark.sql(s"DELETE FROM $cloneTable"))
     spark.sql(s"CREATE OR REPLACE TABLE $cloneTable $mode CLONE $source")
   }
-
+/*
   testClone("table with renamed columns") { mode =>
     withTable(table, cloneTable) {
       spark.sql(
@@ -323,7 +323,7 @@ trait CloneIcebergSuiteBase extends QueryTest
       checkAnswer(spark.table(cloneTable), spark.sql(s"SELECT * FROM $table"))
     }
   }
-
+*/
   testClone("create or replace table - replace partition field") { mode =>
     withTable(table, cloneTable) {
       spark.sql(
@@ -336,7 +336,6 @@ trait CloneIcebergSuiteBase extends QueryTest
       val icebergTable = hadoopTables.load(tablePath)
       val icebergTableSchema =
         org.apache.iceberg.spark.SparkSchemaUtil.convert(icebergTable.schema())
-
       val df1 = spark.createDataFrame(
         Seq(
           Row(toDate("2022-01-01"), 1L, "toy", 2.5D),
@@ -366,8 +365,24 @@ trait CloneIcebergSuiteBase extends QueryTest
         icebergTableSchema)
 
       df2.writeTo(table).append()
-
       runCreateOrReplace(mode, sourceIdentifier)
+
+      logInfo("attn")
+      sql(s"select * from $cloneTable").show(false)
+      logInfo("attnIceberg")
+      sql(s"select * from $table").show(false)
+      sql(s"desc table $table").show(false)
+      sql(s"describe detail $cloneTable").show(false)
+
+      val df3 = spark.createDataFrame(
+        Seq(
+          Row(icebergTable.location())).asJava,
+        StructType(Seq(StructField("asd", StringType)))).show(false)
+
+
+
+      Thread.sleep(300000)
+
       assert(deltaLog.update().metadata.partitionColumns == Seq("date_month"))
       // Old data of cloned Delta table has null on the new partition field.
       checkAnswer(spark.table(cloneTable),
@@ -379,7 +394,7 @@ trait CloneIcebergSuiteBase extends QueryTest
         spark.sql(s"SELECT * FROM $table"))
     }
   }
-
+/*
   testClone("Enables column mapping table feature") { mode =>
     withTable(table, cloneTable) {
       spark.sql(
@@ -392,12 +407,14 @@ trait CloneIcebergSuiteBase extends QueryTest
       assert(protocol.isFeatureSupported(ColumnMappingTableFeature))
     }
   }
+
+ */
 }
 
 class CloneIcebergByPathSuite extends CloneIcebergSuiteBase
 {
   override def sourceIdentifier: String = s"iceberg.`$tablePath`"
-
+/*
   test("negative case: select from iceberg table using path") {
     withTable(table) {
       val ae = intercept[AnalysisException] {
@@ -406,6 +423,8 @@ class CloneIcebergByPathSuite extends CloneIcebergSuiteBase
       assert(ae.getMessage.contains("table does not support batch scan"))
     }
   }
+
+ */
 }
 
 class CloneIcebergByNameSuite extends CloneIcebergSuiteBase

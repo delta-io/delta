@@ -17,18 +17,16 @@
 package org.apache.spark.sql.delta.commands.convert
 
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.delta.{DeltaColumnMapping, SerializableFileStatus}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
 import org.apache.hadoop.fs.Path
 import org.apache.iceberg.{RowLevelOperationMode, Table, TableProperties}
 import org.apache.iceberg.transforms.IcebergPartitionUtil
-
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{StructField, StructType, StringType}
 import org.apache.spark.util.SerializableConfiguration
 
 class IcebergFileManifest(
@@ -77,7 +75,16 @@ class IcebergFileManifest(
     val schemaBatchSize =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_SCHEMA_INFERENCE)
 
+    def printabc(str: String) = {
+      spark.createDataFrame(Seq(
+        Row(s"ATTN " + str)).asJava
+        ,
+        StructType(Seq(StructField("asd", StringType)))
+      ).show(false)
+    }
+
     val partFields = table.spec().fields().asScala
+    printabc(s"partFields $partFields")
     val icebergSchema = table.schema()
     // Prune removed partition fields.
     val physicalNameToFieldIndex = partFields.zipWithIndex.collect {
@@ -103,6 +110,11 @@ class IcebergFileManifest(
         .exists(RowLevelOperationMode.fromName(_) == RowLevelOperationMode.MERGE_ON_READ)
     }
 
+
+
+    // should be date_month to 1
+    printabc("physicalNameToFieldIndex " + physicalNameToFieldIndex)
+
     var numFiles = 0L
     val res = table.newScan().planFiles().iterator().asScala.grouped(schemaBatchSize).map { batch =>
       logInfo(s"Getting file statuses for a batch of ${batch.size} of files; " +
@@ -121,17 +133,27 @@ class IcebergFileManifest(
         val partitionValues = if (spark.sessionState.conf.getConf(
           DeltaSQLConf.DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES)) {
           val icebergPartitionValues = fileScanTask.file().partition()
+          printabc("icebergPartitionValues " + icebergPartitionValues)
+
+
+
+
           val physicalNameToPartValueMap = physicalNameToFieldIndex
             .map { case (physicalName, fieldIndex) =>
               val partValue = icebergPartitionValues.get(fieldIndex, classOf[java.lang.Object])
               val partValueAsString = IcebergPartitionUtil.partitionValueToString(
                 partFields(fieldIndex), partValue, icebergSchema, dateFormatter, timestampFormatter)
+
+              printabc(s"physicalName $physicalName fieldIndex $fieldIndex partValue" +
+                s" $partValue partValueAsString $partValueAsString")
+
               (physicalName, partValueAsString)
             }
           Some(physicalNameToPartValueMap)
         } else None
         (filePath, partitionValues)
       }
+
       val numParallelism = Math.min(Math.max(filePathWithPartValues.size, 1),
         spark.sparkContext.defaultParallelism)
 
