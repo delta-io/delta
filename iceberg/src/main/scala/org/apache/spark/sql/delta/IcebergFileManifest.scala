@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.{DeltaColumnMapping, SerializableFileStatus}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
 import org.apache.hadoop.fs.Path
-import org.apache.iceberg.{RowLevelOperationMode, Table, TableProperties}
+import org.apache.iceberg.{PartitionData, RowLevelOperationMode, Table, TableProperties}
 import org.apache.iceberg.transforms.IcebergPartitionUtil
 
 import org.apache.spark.internal.Logging
@@ -80,10 +80,11 @@ class IcebergFileManifest(
     val partFields = table.spec().fields().asScala
     val icebergSchema = table.schema()
     // Prune removed partition fields.
-    val physicalNameToFieldIndex = partFields.zipWithIndex.collect {
-      case (field, index) if field.transform().toString != VOID_TRANSFORM =>
-        DeltaColumnMapping.getPhysicalName(partitionSchema(field.name)) -> index
+    val physicalNameToFieldId = partFields.zipWithIndex.collect {
+      case (field, _) if field.transform().toString != VOID_TRANSFORM =>
+        DeltaColumnMapping.getPhysicalName(partitionSchema(field.name)) -> field.fieldId()
     }.toMap
+    val fieldIdToPartitionField = partFields.map(field => field.fieldId() -> field).toMap
 
     val dateFormatter = DateFormatter()
     val timestampFormatter = TimestampFormatter(ConvertUtils.timestampPartitionPattern,
@@ -120,13 +121,21 @@ class IcebergFileManifest(
         }
         val partitionValues = if (spark.sessionState.conf.getConf(
           DeltaSQLConf.DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES)) {
-          val icebergPartitionValues = fileScanTask.file().partition()
-          val physicalNameToPartValueMap = physicalNameToFieldIndex
-            .map { case (physicalName, fieldIndex) =>
-              val partValue = icebergPartitionValues.get(fieldIndex, classOf[java.lang.Object])
-              val partValueAsString = IcebergPartitionUtil.partitionValueToString(
-                partFields(fieldIndex), partValue, icebergSchema, dateFormatter, timestampFormatter)
-              (physicalName, partValueAsString)
+
+          val icebergPartition = fileScanTask.file().partition()
+          val icebergPartitionData = icebergPartition.asInstanceOf[PartitionData]
+          val fieldIdToIdx = icebergPartitionData.getPartitionType.fields().asScala.zipWithIndex
+            .map(kv => kv._1.fieldId() -> kv._2).toMap
+          val physicalNameToPartValueMap = physicalNameToFieldId
+            .map { case (physicalName, fieldId) =>
+              val fieldIndex = fieldIdToIdx.get(fieldId)
+              val partValueAsString = fieldIndex.map {idx =>
+                val partValue = icebergPartitionData.get(idx)
+                val partField = fieldIdToPartitionField.getOrElse(fieldId, null)
+                IcebergPartitionUtil.partitionValueToString(
+                    partField, partValue, icebergSchema, dateFormatter, timestampFormatter)
+              }.getOrElse(null)
+              physicalName -> partValueAsString
             }
           Some(physicalNameToPartValueMap)
         } else None
