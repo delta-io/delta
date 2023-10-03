@@ -81,7 +81,10 @@ case class UpdateCommand(
       createTimingMetric(sc, "time taken to rewrite the matched files"),
     "numAddedChangeFiles" -> createMetric(sc, "number of change data capture files generated"),
     "changeFileBytes" -> createMetric(sc, "total size of change data capture files generated"),
-    "numTouchedRows" -> createMetric(sc, "number of rows touched (copied + updated)")
+    "numTouchedRows" -> createMetric(sc, "number of rows touched (copied + updated)"),
+    "numDeletionVectorsAdded" -> createMetric(sc, "number of deletion vectors added"),
+    "numDeletionVectorsRemoved" -> createMetric(sc, "number of deletion vectors removed"),
+    "numDeletionVectorsUpdated" -> createMetric(sc, "number of deletion vectors updated")
   )
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -114,6 +117,9 @@ case class UpdateCommand(
     var changeFileBytes: Long = 0
     var scanTimeMs: Long = 0
     var rewriteTimeMs: Long = 0
+    var numDeletionVectorsAdded: Long = 0
+    var numDeletionVectorsRemoved: Long = 0
+    var numDeletionVectorsUpdated: Long = 0
 
     val startTime = System.nanoTime()
     val numFilesTotal = txn.snapshot.numOfFiles
@@ -210,6 +216,9 @@ case class UpdateCommand(
             filesToRewriteWithDV,
             txn.snapshot)
           metrics("numUpdatedRows").set(metricMap("numModifiedRows"))
+          numDeletionVectorsAdded = metricMap("numDeletionVectorsAdded")
+          numDeletionVectorsRemoved = metricMap("numDeletionVectorsRemoved")
+          numDeletionVectorsUpdated = metricMap("numDeletionVectorsUpdated")
           numTouchedFiles = metricMap("numRemovedFiles")
           dvActions
         }
@@ -279,6 +288,9 @@ case class UpdateCommand(
       // `totalActions` is empty.
       metrics("numCopiedRows").set(
         metrics("numTouchedRows").value - metrics("numUpdatedRows").value)
+      metrics("numDeletionVectorsAdded").set(numDeletionVectorsAdded)
+      metrics("numDeletionVectorsRemoved").set(numDeletionVectorsRemoved)
+      metrics("numDeletionVectorsUpdated").set(numDeletionVectorsUpdated)
     }
     txn.registerSQLMetrics(sparkSession, metrics)
 
@@ -297,7 +309,10 @@ case class UpdateCommand(
         numAddedChangeFiles,
         changeFileBytes,
         scanTimeMs,
-        rewriteTimeMs)
+        rewriteTimeMs,
+        numDeletionVectorsAdded,
+        numDeletionVectorsRemoved,
+        numDeletionVectorsUpdated)
     )
   }
 
@@ -478,5 +493,8 @@ case class UpdateMetric(
     numAddedChangeFiles: Long,
     changeFileBytes: Long,
     scanTimeMs: Long,
-    rewriteTimeMs: Long
+    rewriteTimeMs: Long,
+    numDeletionVectorsAdded: Long,
+    numDeletionVectorsRemoved: Long,
+    numDeletionVectorsUpdated: Long
 )
