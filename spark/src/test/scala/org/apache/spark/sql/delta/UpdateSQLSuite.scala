@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.errors.QueryExecutionErrors.toSQLType
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
@@ -236,6 +237,23 @@ class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
       }
       // scalastyle:on argcount
 
+      def assertDVMetrics(
+          numUpdatedRows: Long = 0,
+          numCopiedRows: Long = 0,
+          numDeletionVectorsAdded: Long = 0,
+          numDeletionVectorsRemoved: Long = 0,
+          numDeletionVectorsUpdated: Long = 0): Unit = {
+        val table = io.delta.tables.DeltaTable.forPath(path)
+        val updateMetrics = DeltaMetricsUtils.getLastOperationMetrics(table)
+        assert(updateMetrics.getOrElse("numUpdatedRows", -1) === numUpdatedRows)
+        assert(updateMetrics.getOrElse("numCopiedRows", -1) === numCopiedRows)
+        assert(updateMetrics.getOrElse("numDeletionVectorsAdded", -1) === numDeletionVectorsAdded)
+        assert(
+          updateMetrics.getOrElse("numDeletionVectorsRemoved", -1) === numDeletionVectorsRemoved)
+        assert(
+          updateMetrics.getOrElse("numDeletionVectorsUpdated", -1) === numDeletionVectorsUpdated)
+      }
+
       // DV created. 4 rows updated.
       updateAndCheckLog(
         "id % 3 = 0",
@@ -250,6 +268,8 @@ class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
         sumNumRowsInRemoveFileWithoutDV = 10,
         sumDvCardinalityInRemoveFile = 0)
 
+      assertDVMetrics(numUpdatedRows = 4, numDeletionVectorsAdded = 2)
+
       // DV updated. 2 rows from the original file updated.
       updateAndCheckLog(
         "id % 4 = 0",
@@ -263,6 +283,12 @@ class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
         sumNumRowsInRemoveFileWithoutDV = 0,
         sumDvCardinalityInRemoveFile = 4)
 
+      assertDVMetrics(
+        numUpdatedRows = 2,
+        numDeletionVectorsAdded = 2,
+        numDeletionVectorsRemoved = 2,
+        numDeletionVectorsUpdated = 2)
+
       // Original files DV removed, because all rows in the SECOND FILE are deleted.
       updateAndCheckLog(
         "id IN (5, 7)",
@@ -275,6 +301,8 @@ class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
         sumNumRowsInRemoveFileWithDV = 5,
         sumNumRowsInRemoveFileWithoutDV = 0,
         sumDvCardinalityInRemoveFile = 3)
+
+      assertDVMetrics(numUpdatedRows = 2, numDeletionVectorsRemoved = 1)
     }
   }
 
