@@ -82,6 +82,7 @@ trait TestUtils extends Assertions {
     snapshot: Snapshot,
     readSchema: StructType = null,
     filter: Predicate = null,
+    expectedRemainingFilter: Optional[Predicate] = Optional.empty(),
     tableClient: TableClient = defaultTableClient): Seq[Row] = {
 
     val result = ArrayBuffer[Row]()
@@ -97,6 +98,11 @@ trait TestUtils extends Assertions {
     }
 
     val scan = scanBuilder.build()
+
+    if (filter != null) {
+      val actRemainingPredicate = scan.getRemainingFilter()
+      assert(actRemainingPredicate.toString === expectedRemainingFilter.toString)
+    }
 
     val scanState = scan.getScanState(tableClient);
     val fileIter = scan.getScanFiles(tableClient)
@@ -183,6 +189,8 @@ trait TestUtils extends Assertions {
    * @param tableClient table client to use to read the table
    * @param expectedSchema expected schema to check for; if null then no check is performed
    * @param filter Filter to select a subset of rows form the table
+   * @param expectedRemainingFilter Remaining predicate out of the `filter` that is not enforced
+   *                                by Kernel.
    */
   def checkTable(
     path: String,
@@ -190,7 +198,8 @@ trait TestUtils extends Assertions {
     readCols: Seq[String] = null,
     tableClient: TableClient = defaultTableClient,
     expectedSchema: StructType = null,
-    filter: Predicate = null
+    filter: Predicate = null,
+    expectedRemainingFilter: Optional[Predicate] = Optional.empty()
     // version
   ): Unit = {
 
@@ -214,7 +223,7 @@ trait TestUtils extends Assertions {
       )
     }
 
-    val result = readSnapshot(snapshot, readSchema, filter, tableClient)
+    val result = readSnapshot(snapshot, readSchema, filter, expectedRemainingFilter, tableClient)
     checkAnswer(result, expectedAnswer)
   }
 

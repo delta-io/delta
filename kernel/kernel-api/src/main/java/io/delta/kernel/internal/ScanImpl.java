@@ -189,7 +189,7 @@ public class ScanImpl
         ColumnVector partitionColNameVector = partitionColValue.getElements();
         Set<String> partitionColumnNames = new HashSet<>();
         for (int i = 0; i < partitionColValue.getSize(); i++) {
-            checkArgument(partitionColNameVector.isNullAt(i),
+            checkArgument(!partitionColNameVector.isNullAt(i),
                 "Expected a non-null partition column name");
             String partitionColName = partitionColNameVector.getString(i);
             checkArgument(partitionColName != null && !partitionColName.isEmpty(),
