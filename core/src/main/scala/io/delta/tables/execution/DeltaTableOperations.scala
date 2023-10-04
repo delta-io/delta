@@ -20,6 +20,7 @@ import scala.collection.Map
 
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, DescribeDeltaDetailCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
@@ -39,19 +40,20 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
   protected def executeDelete(condition: Option[Expression]): Unit = improveUnsupportedOpError {
-    val delete = DeleteFromTable(
-      self.toDF.queryExecution.analyzed,
-      condition.getOrElse(Literal.TrueLiteral))
-    toDataset(sparkSession, delete)
+    withActiveSession(sparkSession) {
+      val delete = DeleteFromTable(
+        self.toDF.queryExecution.analyzed,
+        condition.getOrElse(Literal.TrueLiteral))
+      toDataset(sparkSession, delete)
+    }
   }
 
   protected def executeHistory(
       deltaLog: DeltaLog,
       limit: Option[Int] = None,
-      tableId: Option[TableIdentifier] = None): DataFrame = {
+      tableId: Option[TableIdentifier] = None): DataFrame = withActiveSession(sparkSession) {
     val history = deltaLog.history
-    val spark = self.toDF.sparkSession
-    spark.createDataFrame(history.getHistory(limit))
+    sparkSession.createDataFrame(history.getHistory(limit))
   }
 
   protected def executeDetails(
@@ -73,17 +75,20 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   protected def executeUpdate(
       set: Map[String, Column],
       condition: Option[Column]): Unit = improveUnsupportedOpError {
-    val assignments = set.map { case (targetColName, column) =>
-      Assignment(UnresolvedAttribute.quotedString(targetColName), column.expr)
-    }.toSeq
-    val update = UpdateTable(self.toDF.queryExecution.analyzed, assignments, condition.map(_.expr))
-    toDataset(sparkSession, update)
+    withActiveSession(sparkSession) {
+      val assignments = set.map { case (targetColName, column) =>
+        Assignment(UnresolvedAttribute.quotedString(targetColName), column.expr)
+      }.toSeq
+      val update =
+        UpdateTable(self.toDF.queryExecution.analyzed, assignments, condition.map(_.expr))
+      toDataset(sparkSession, update)
+    }
   }
 
   protected def executeVacuum(
       deltaLog: DeltaLog,
       retentionHours: Option[Double],
-      tableId: Option[TableIdentifier] = None): DataFrame = {
+      tableId: Option[TableIdentifier] = None): DataFrame = withActiveSession(sparkSession) {
     VacuumCommand.gc(sparkSession, deltaLog, false, retentionHours)
     sparkSession.emptyDataFrame
   }
