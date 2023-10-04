@@ -20,12 +20,11 @@ import java.time.{Instant, LocalDateTime}
 import java.util.Locale
 
 import scala.collection.mutable
-import scala.reflect.ClassTag
 
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
@@ -35,6 +34,7 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.CURRENT_LIKE
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{instantToMicros, localDateTimeToMicros}
+import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, DateType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
@@ -200,11 +200,15 @@ case class PreprocessTableMerge(override val conf: SQLConf)
        * invoking the [[ComputeCurrentTime]] rule. This is why they need special handling.
        */
       val now = Instant.now()
+
+      val sourceWithInlinedSubqueries =
+        inlineSubqueryResults(SparkSession.active, transformTimestamps(source, now))
+
       // Transform timestamps for the MergeIntoCommand, source, and target using the same instant.
       // Called explicitly because source and target are not children of MergeIntoCommand.
       transformTimestamps(
         MergeIntoCommand(
-          transformTimestamps(source, now),
+          sourceWithInlinedSubqueries,
           transformTimestamps(target, now),
           relation.catalogTable,
           tahoeFileIndex,
@@ -225,6 +229,43 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         migrateSchema,
         finalSchemaOpt)
     }
+  }
+
+  /**
+   * Inlines the results of the subqueries in the `source` of the `MergeIntoCommand`.
+   * This is necessary to deal with "deterministic" scalar subqueries that can return
+   * non-deterministic results. E.g. a query with a LIMIT 1 without an ORDER BY.
+   * In most cases these subqueries are evaluated only once as part of the source materialization,
+   * but scalar subqueries can be inferred from the materialized source and propagated to the target
+   * side of the join.
+   */
+  private def inlineSubqueryResults(spark: SparkSession, source: LogicalPlan): LogicalPlan = {
+    // Gather all non-correlated scalar subqueries in the source.
+    val subqueries = source.flatMap {
+      _.expressions.flatMap(_.collect { case s: ScalarSubquery if !s.isCorrelated => s })
+    }
+    if (subqueries.isEmpty) {
+      return source
+    }
+
+    // Evaluate all non-correlated scalar subqueries in a single query to enable subquery reuse.
+    val namedSubqueries = subqueries.map { s =>
+      Alias(s, s"subquery-${s.exprId.id}")()
+    }
+    val qe = new QueryExecution(spark, Project(namedSubqueries, OneRowRelation()))
+    val result = SQLExecution.withNewExecutionId(qe) {
+      qe.executedPlan.executeCollect().head
+    }
+
+    // Replace the subqueries in the source and target with their results.
+    val subqueryResults = subqueries.zipWithIndex.map { case (s, i) =>
+      s.exprId.id -> Literal.create(result.get(i, s.dataType), s.dataType)
+    }.toMap
+    val newSource = source.transformAllExpressions {
+      case s: ScalarSubquery if !s.isCorrelated => subqueryResults(s.exprId.id)
+    }
+
+    newSource
   }
 
   private def transformTimestamps(plan: LogicalPlan, instant: Instant): LogicalPlan = {
