@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.{DeltaColumnMapping, SerializableFileStatus}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
 import org.apache.hadoop.fs.Path
-import org.apache.iceberg.{RowLevelOperationMode, Table, TableProperties}
+import org.apache.iceberg.{PartitionData, RowLevelOperationMode, Table, TableProperties}
 import org.apache.iceberg.transforms.IcebergPartitionUtil
 
 import org.apache.spark.internal.Logging
@@ -79,10 +79,22 @@ class IcebergFileManifest(
 
     val partFields = table.spec().fields().asScala
     val icebergSchema = table.schema()
-    // Prune removed partition fields.
-    val physicalNameToFieldIndex = partFields.zipWithIndex.collect {
-      case (field, index) if field.transform().toString != VOID_TRANSFORM =>
-        DeltaColumnMapping.getPhysicalName(partitionSchema(field.name)) -> index
+    // we must use field id to look up the partition value; consider scenario with iceberg
+    // behavior chance since 1.4.0:
+    // 1) create table with partition schema (a[col_name]: 1[field_id]), add file1;
+    //    The partition data for file1 is (a:1:some_part_value)
+    // 2) add new partition col b and the partition schema becomes (a: 1, b: 2), add file2;
+    //    the partition data for file2 is (a:1:some_part_value, b:2:some_part_value)
+    // 3) remove partition col a, then add file3;
+    //    for iceberg < 1.4.0: the partFields is (a:1(void), b:2); the partition data for
+    //                         file3 is (a:1(void):null, b:2:some_part_value);
+    //    for iceberg 1.4.0:   the partFields is (b:2); When it reads file1 (a:1:some_part_value),
+    //                         it must use the field_id instead of index to look up the partition
+    //                         value, as the partField and partitionData from file1 have different
+    //                         ordering and thus same index indicates different column.
+    val physicalNameToField = partFields.collect {
+      case field if field.transform().toString != VOID_TRANSFORM =>
+        DeltaColumnMapping.getPhysicalName(partitionSchema(field.name)) -> field
     }.toMap
 
     val dateFormatter = DateFormatter()
@@ -120,13 +132,20 @@ class IcebergFileManifest(
         }
         val partitionValues = if (spark.sessionState.conf.getConf(
           DeltaSQLConf.DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES)) {
-          val icebergPartitionValues = fileScanTask.file().partition()
-          val physicalNameToPartValueMap = physicalNameToFieldIndex
-            .map { case (physicalName, fieldIndex) =>
-              val partValue = icebergPartitionValues.get(fieldIndex, classOf[java.lang.Object])
-              val partValueAsString = IcebergPartitionUtil.partitionValueToString(
-                partFields(fieldIndex), partValue, icebergSchema, dateFormatter, timestampFormatter)
-              (physicalName, partValueAsString)
+
+          val icebergPartition = fileScanTask.file().partition()
+          val icebergPartitionData = icebergPartition.asInstanceOf[PartitionData]
+          val fieldIdToIdx = icebergPartitionData.getPartitionType.fields().asScala.zipWithIndex
+            .map(kv => kv._1.fieldId() -> kv._2).toMap
+          val physicalNameToPartValueMap = physicalNameToField
+            .map { case (physicalName, field) =>
+              val fieldIndex = fieldIdToIdx.get(field.fieldId())
+              val partValueAsString = fieldIndex.map {idx =>
+                val partValue = icebergPartitionData.get(idx)
+                IcebergPartitionUtil.partitionValueToString(
+                    field, partValue, icebergSchema, dateFormatter, timestampFormatter)
+              }.getOrElse(null)
+              physicalName -> partValueAsString
             }
           Some(physicalNameToPartValueMap)
         } else None
