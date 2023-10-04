@@ -79,12 +79,23 @@ class IcebergFileManifest(
 
     val partFields = table.spec().fields().asScala
     val icebergSchema = table.schema()
-    // Prune removed partition fields.
-    val physicalNameToFieldId = partFields.zipWithIndex.collect {
-      case (field, _) if field.transform().toString != VOID_TRANSFORM =>
-        DeltaColumnMapping.getPhysicalName(partitionSchema(field.name)) -> field.fieldId()
+    // we must use field id to look up the partition value; consider scenario with iceberg
+    // behavior chance since 1.4.0:
+    // 1) create table with partition schema (a[col_name]: 1[field_id]), add file1;
+    //    The partition data for file1 is (a:1:some_part_value)
+    // 2) add new partition col b and the partition schema becomes (a: 1, b: 2), add file2;
+    //    the partition data for file2 is (a:1:some_part_value, b:2:some_part_value)
+    // 3) remove partition col a, then add file3;
+    //    for iceberg < 1.4.0: the partFields is (a:1(void), b:2); the partition data for
+    //                         file3 is (a:1(void):null, b:2:some_part_value);
+    //    for iceberg 1.4.0:   the partFields is (b:2); When it reads file1 (a:1:some_part_value),
+    //                         it must use the field_id instead of index to look up the partition
+    //                         value, as the partField and partitionData from file1 have different
+    //                         ordering and thus same index indicates different column.
+    val physicalNameToField = partFields.collect {
+      case field if field.transform().toString != VOID_TRANSFORM =>
+        DeltaColumnMapping.getPhysicalName(partitionSchema(field.name)) -> field
     }.toMap
-    val fieldIdToPartitionField = partFields.map(field => field.fieldId() -> field).toMap
 
     val dateFormatter = DateFormatter()
     val timestampFormatter = TimestampFormatter(ConvertUtils.timestampPartitionPattern,
@@ -126,14 +137,13 @@ class IcebergFileManifest(
           val icebergPartitionData = icebergPartition.asInstanceOf[PartitionData]
           val fieldIdToIdx = icebergPartitionData.getPartitionType.fields().asScala.zipWithIndex
             .map(kv => kv._1.fieldId() -> kv._2).toMap
-          val physicalNameToPartValueMap = physicalNameToFieldId
-            .map { case (physicalName, fieldId) =>
-              val fieldIndex = fieldIdToIdx.get(fieldId)
+          val physicalNameToPartValueMap = physicalNameToField
+            .map { case (physicalName, field) =>
+              val fieldIndex = fieldIdToIdx.get(field.fieldId())
               val partValueAsString = fieldIndex.map {idx =>
                 val partValue = icebergPartitionData.get(idx)
-                val partField = fieldIdToPartitionField.getOrElse(fieldId, null)
                 IcebergPartitionUtil.partitionValueToString(
-                    partField, partValue, icebergSchema, dateFormatter, timestampFormatter)
+                    field, partValue, icebergSchema, dateFormatter, timestampFormatter)
               }.getOrElse(null)
               physicalName -> partValueAsString
             }
