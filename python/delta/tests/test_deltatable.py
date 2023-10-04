@@ -16,6 +16,7 @@
 
 import unittest
 import os
+from multiprocessing.pool import ThreadPool
 
 from pyspark.sql import Row
 from pyspark.sql.column import _to_seq
@@ -278,6 +279,35 @@ class DeltaTableTests(DeltaTestCase):
         with self.assertRaises(TypeError):
             dt.merge(source, "key = k").whenNotMatchedInsert(
                 values="k = 'a'", condition={"value": 1})
+
+    def test_merge_with_inconsistent_sessions(self) -> None:
+        source_path = os.path.join(self.tempFile, "source")
+        target_path = os.path.join(self.tempFile, "target")
+        spark = self.spark
+
+        def f(spark):
+            spark.range(20) \
+                .withColumn("x", col("id")) \
+                .withColumn("y", col("id")) \
+                .write.mode("overwrite").format("delta").save(source_path)
+            spark.range(1) \
+                .withColumn("x", col("id")) \
+                .write.mode("overwrite").format("delta").save(target_path)
+            target = DeltaTable.forPath(spark, target_path)
+            source = spark.read.format("delta").load(source_path).alias("s")
+            target.alias("t") \
+                .merge(source, "t.id = s.id") \
+                .whenMatchedUpdate(set={"t.x": "t.x + 1"}) \
+                .whenNotMatchedInsertAll() \
+                .execute()
+            assert(spark.read.format("delta").load(target_path).count() == 20)
+
+        pool = ThreadPool(3)
+        spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+        try:
+            pool.starmap(f, [(spark,)])
+        finally:
+            spark.conf.unset("spark.databricks.delta.schema.autoMerge.enabled")
 
     def test_history(self):
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
