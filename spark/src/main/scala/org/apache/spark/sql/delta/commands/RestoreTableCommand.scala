@@ -29,7 +29,6 @@ import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Literal}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
@@ -86,9 +85,7 @@ trait RestoreTableCommandBase {
  * 7) If table was modified in parallel then ignore restore and raise exception.
  *
  */
-case class RestoreTableCommand(
-    sourceTable: DeltaTableV2,
-    targetIdent: TableIdentifier)
+case class RestoreTableCommand(sourceTable: DeltaTableV2)
   extends LeafRunnableCommand with DeltaCommand with RestoreTableCommandBase {
 
   override val output: Seq[Attribute] = outputSchema

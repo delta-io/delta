@@ -317,8 +317,9 @@ case class DeltaTableV2(
 
 object DeltaTableV2 {
   /** Resolves a path into a DeltaTableV2, leveraging standard v2 table resolution. */
-  def apply(spark: SparkSession, tablePath: Path, cmd: String): DeltaTableV2 =
-    resolve(spark, UnresolvedPathBasedDeltaTable(tablePath.toString, cmd), cmd)
+  def apply(spark: SparkSession, tablePath: Path, options: Map[String, String], cmd: String)
+      : DeltaTableV2 =
+    resolve(spark, UnresolvedPathBasedDeltaTable(tablePath.toString, options, cmd), cmd)
 
   /** Resolves a table identifier into a DeltaTableV2, leveraging standard v2 table resolution. */
   def apply(spark: SparkSession, tableId: TableIdentifier, cmd: String): DeltaTableV2 = {

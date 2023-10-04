@@ -364,10 +364,6 @@ class DeltaAnalysis(session: SparkSession)
             if tt.expressions.forall(_.resolved) =>
           val ttSpec = DeltaTimeTravelSpec(tt.timestamp, tt.version, tt.creationSource)
           val traveledTable = tbl.copy(timeTravelOpt = Some(ttSpec))
-          val tblIdent = tbl.catalogTable match {
-            case Some(existingCatalog) => existingCatalog.identifier
-            case None => TableIdentifier(tbl.path.toString, Some("delta"))
-          }
           // restoring to same version as latest should be a no-op.
           val sourceSnapshot = try {
             traveledTable.initialSnapshot
@@ -391,7 +387,7 @@ class DeltaAnalysis(session: SparkSession)
             return LocalRelation(restoreStatement.output)
           }
 
-          RestoreTableCommand(traveledTable, tblIdent)
+          RestoreTableCommand(traveledTable)
 
         case u: UnresolvedRelation =>
           u.tableNotFound(u.multipartIdentifier)
@@ -407,20 +403,19 @@ class DeltaAnalysis(session: SparkSession)
     // path and pass it along in a ResolvedPathBasedNonDeltaTable. This is needed as DESCRIBE DETAIL
     // supports both delta and non delta paths.
     case u: UnresolvedPathBasedTable =>
-      val table = getPathBasedDeltaTable(u.path)
-      val tableExists = Try(table.tableExists).getOrElse(false)
-      if (tableExists) {
+      val table = getPathBasedDeltaTable(u.path, u.options)
+      if (Try(table.tableExists).getOrElse(false)) {
         // Resolve it as a path-based Delta table
         val catalog = session.sessionState.catalogManager.currentCatalog.asTableCatalog
         ResolvedTable.create(
           catalog, Identifier.of(Array(DeltaSourceUtils.ALT_NAME), u.path), table)
       } else {
         // Resolve it as a placeholder, to identify it as a non-Delta table.
-        ResolvedPathBasedNonDeltaTable(u.path, u.commandName)
+        ResolvedPathBasedNonDeltaTable(u.path, u.options, u.commandName)
       }
 
     case u: UnresolvedPathBasedDeltaTable =>
-      val table = getPathBasedDeltaTable(u.path)
+      val table = getPathBasedDeltaTable(u.path, u.options)
       if (!table.tableExists) {
         throw DeltaErrors.notADeltaTableException(u.commandName, u.deltaTableIdentifier)
       }
@@ -626,9 +621,7 @@ class DeltaAnalysis(session: SparkSession)
     )
   }
 
-  private def getPathBasedDeltaTable(
-      path: String,
-      options: Map[String, String] = Map.empty): DeltaTableV2 = {
+  private def getPathBasedDeltaTable(path: String, options: Map[String, String]): DeltaTableV2 = {
     DeltaTableV2(session, new Path(path), options = options)
   }
 
