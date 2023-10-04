@@ -412,6 +412,12 @@ class DeltaTimeTravelSuite extends QueryTest
     )
   }
 
+  test("[SPARK-45383] Time travel on a non-existing table should throw AnalysisException") {
+    intercept[AnalysisException] {
+      spark.sql("SELECT * FROM not_existing VERSION AS OF 0")
+    }
+  }
+
   test("as of timestamp in between commits should use commit before timestamp") {
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath
