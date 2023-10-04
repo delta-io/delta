@@ -473,6 +473,9 @@ object DeltaTableUtils extends PredicateHelper
     }
   }
 
+  // Workaround for withActive not being visible in io/delta.
+  def withActiveSession[T](spark: SparkSession)(body: => T): T = spark.withActive(body)
+
   def parseColToTransform(col: String): IdentityTransform = {
     IdentityTransform(FieldReference(Seq(col)))
   }
