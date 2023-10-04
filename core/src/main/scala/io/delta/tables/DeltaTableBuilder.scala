@@ -296,70 +296,72 @@ class DeltaTableBuilder private[tables](
    */
   @Evolving
   def execute(): DeltaTable = {
-    if (identifier == null && location.isEmpty) {
-      throw DeltaErrors.analysisException("Table name or location has to be specified")
-    }
+    DeltaTableUtils.withActiveSession(spark) {
+      if (identifier == null && location.isEmpty) {
+        throw DeltaErrors.analysisException("Table name or location has to be specified")
+      }
 
-    if (this.identifier == null) {
-      identifier = s"delta.`${location.get}`"
-    }
+      if (this.identifier == null) {
+        identifier = s"delta.`${location.get}`"
+      }
 
-    // Return DeltaTable Object.
-    val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
+      // Return DeltaTable Object.
+      val tableId: TableIdentifier = spark.sessionState.sqlParser.parseTableIdentifier(identifier)
 
-    if (DeltaTableUtils.isValidPath(tableId) && location.nonEmpty
-        && tableId.table != location.get) {
-      throw DeltaErrors.analysisException(
-        s"Creating path-based Delta table with a different location isn't supported. "
-          + s"Identifier: $identifier, Location: ${location.get}")
-    }
+      if (DeltaTableUtils.isValidPath(tableId) && location.nonEmpty
+          && tableId.table != location.get) {
+        throw DeltaErrors.analysisException(
+          s"Creating path-based Delta table with a different location isn't supported. "
+            + s"Identifier: $identifier, Location: ${location.get}")
+      }
 
-    val table = spark.sessionState.sqlParser.parseMultipartIdentifier(identifier)
+      val table = spark.sessionState.sqlParser.parseMultipartIdentifier(identifier)
 
-    val partitioning = partitioningColumns.map { colNames =>
-      colNames.map(name => DeltaTableUtils.parseColToTransform(name))
-    }.getOrElse(Seq.empty[Transform])
+      val partitioning = partitioningColumns.map { colNames =>
+        colNames.map(name => DeltaTableUtils.parseColToTransform(name))
+      }.getOrElse(Seq.empty[Transform])
 
-    val stmt = builderOption match {
-      case CreateTableOptions(ifNotExists) =>
-        CreateTableStatement(
-          table,
-          StructType(columns),
-          partitioning,
-          None,
-          this.properties,
-          Some(FORMAT_NAME),
-          Map.empty,
-          location,
-          tblComment,
-          None,
-          false,
-          ifNotExists
-        )
-      case ReplaceTableOptions(orCreate) =>
-        ReplaceTableStatement(
-          table,
-          StructType(columns),
-          partitioning,
-          None,
-          this.properties,
-          Some(FORMAT_NAME),
-          Map.empty,
-          location,
-          tblComment,
-          None,
-          orCreate
-        )
-    }
-    val qe = spark.sessionState.executePlan(stmt)
-    // call `QueryExecution.toRDD` to trigger the execution of commands.
-    SQLExecution.withNewExecutionId(qe, Some("create delta table"))(qe.toRdd)
+      val stmt = builderOption match {
+        case CreateTableOptions(ifNotExists) =>
+          CreateTableStatement(
+            table,
+            StructType(columns),
+            partitioning,
+            None,
+            this.properties,
+            Some(FORMAT_NAME),
+            Map.empty,
+            location,
+            tblComment,
+            None,
+            false,
+            ifNotExists
+          )
+        case ReplaceTableOptions(orCreate) =>
+          ReplaceTableStatement(
+            table,
+            StructType(columns),
+            partitioning,
+            None,
+            this.properties,
+            Some(FORMAT_NAME),
+            Map.empty,
+            location,
+            tblComment,
+            None,
+            orCreate
+          )
+      }
+      val qe = spark.sessionState.executePlan(stmt)
+      // call `QueryExecution.toRDD` to trigger the execution of commands.
+      SQLExecution.withNewExecutionId(qe, Some("create delta table"))(qe.toRdd)
 
-    // Return DeltaTable Object.
-    if (DeltaTableUtils.isValidPath(tableId)) {
+      // Return DeltaTable Object.
+      if (DeltaTableUtils.isValidPath(tableId)) {
         DeltaTable.forPath(location.get)
-    } else {
-      DeltaTable.forName(this.identifier)
+      } else {
+        DeltaTable.forName(this.identifier)
+      }
     }
   }
 }

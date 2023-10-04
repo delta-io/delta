@@ -356,4 +356,14 @@ object DeltaTableUtils extends PredicateHelper
   def parseColToTransform(col: String): IdentityTransform = {
     IdentityTransform(FieldReference(Seq(col)))
   }
+
+  def withActiveSession[T](spark: SparkSession)(body: => T): T = {
+    val old = SparkSession.getActiveSession
+    SparkSession.setActiveSession(spark)
+    try {
+      body
+    } finally {
+      SparkSession.setActiveSession(old.getOrElse(null))
+    }
+  }
 }

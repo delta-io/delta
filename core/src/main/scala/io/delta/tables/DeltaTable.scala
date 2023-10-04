@@ -807,7 +807,9 @@ object DeltaTable {
    */
   @Evolving
   def createOrReplace(spark: SparkSession): DeltaTableBuilder = {
-    new DeltaTableBuilder(spark, ReplaceTableOptions(orCreate = true))
+    DeltaTableUtils.withActiveSession(spark) {
+      new DeltaTableBuilder(spark, ReplaceTableOptions(orCreate = true))
+    }
   }
 
   /**
