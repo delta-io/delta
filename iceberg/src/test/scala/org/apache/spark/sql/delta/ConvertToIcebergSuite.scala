@@ -16,39 +16,95 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.File
+import java.io.{File, IOException}
+import java.net.ServerSocket
+
 import org.scalatest.concurrent.Eventually
 import org.scalatest.time.SpanSugar._
-import org.apache.spark.sql.{DataFrame, QueryTest, Row, SparkSession}
-import org.apache.spark.util.Utils
-import org.apache.spark.SparkContext
 
+import org.apache.spark.SparkContext
+import org.apache.spark.sql.{QueryTest, Row, SparkSession}
+import org.apache.spark.util.Utils
+
+/**
+ * This test suite relies on an external Hive metastore (HMS) instance to run.
+ *
+ * A standalone HMS can be created using the following docker command.
+ *  ************************************************************
+ *  docker run -d -p 9083:9083 --env SERVICE_NAME=metastore \
+ *  --name metastore-standalone apache/hive:4.0.0-beta-1
+ *  ************************************************************
+ *  The URL of this standalone HMS is thrift://localhost:9083
+ *
+ *  By default this hms will use `/opt/hive/data/warehouse` as warehouse path.
+ *  Please make sure this path exists prior to running the suite.
+ */
 class ConvertToIcebergSuite extends QueryTest with Eventually {
 
   private var _sparkSession: SparkSession = null
   private var _sparkSessionWithDelta: SparkSession = null
   private var _sparkSessionWithIceberg: SparkSession = null
 
-  private var warehousePath: File = null
-  private var testTablePath: String = null
-  private val testTableName: String = "deltaTable"
+  private val PORT = 9083
+  private val WAREHOUSE_PATH = "/opt/hive/data/warehouse/"
+
+  private val testTableName: String = "deltatable"
+  private var testTablePath: String = s"$WAREHOUSE_PATH$testTableName"
 
   override def spark: SparkSession = _sparkSession
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-  }
-
-  override def beforeEach(): Unit = {
-    super.beforeEach()
+    if (hmsReady(PORT)) {
+      _sparkSessionWithDelta = createSparkSessionWithDelta()
+      _sparkSessionWithIceberg = createSparkSessionWithIceberg()
+      require(!_sparkSessionWithDelta.eq(_sparkSessionWithIceberg), "separate sessions expected")
+    }
   }
 
   override def afterEach(): Unit = {
     super.afterEach()
+    if (hmsReady(PORT)) {
+      _sparkSessionWithDelta.sql(s"DROP TABLE IF EXISTS $testTableName")
+    }
+    Utils.deleteRecursively(new File(testTablePath))
   }
 
   override def afterAll(): Unit = {
     super.afterAll()
+    SparkContext.getActive.foreach(_.stop())
+  }
+
+  test("basic test - managed table created with SQL") {
+    if (hmsReady(PORT)) {
+      runDeltaSql(
+        s"""CREATE TABLE `${testTableName}` (col1 INT) USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+      runDeltaSql(s"INSERT INTO `$testTableName` VALUES (123)")
+      verifyReadWithIceberg(testTableName, Seq(Row(123)))
+    }
+  }
+
+  test("basic test - catalog table created with DataFrame") {
+    if (hmsReady(PORT)) {
+      withDeltaSparkSession { deltaSpark =>
+        withDefaultTablePropsInSQLConf {
+          deltaSpark.range(10).write.format("delta")
+            .option("path", testTablePath)
+            .saveAsTable(testTableName)
+        }
+      }
+      withDeltaSparkSession { deltaSpark =>
+        deltaSpark.range(10, 20, 1)
+          .write.format("delta").mode("append")
+          .option("path", testTablePath)
+          .saveAsTable(testTableName)
+      }
+      verifyReadWithIceberg(testTableName, 0 to 19 map (Row(_)))
+    }
   }
 
   def runDeltaSql(sqlStr: String): Unit = {
@@ -57,29 +113,19 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
     }
   }
 
-  def runIcebergSql(sqlStr: String): DataFrame = {
-    withIcebergSparkSession { icebergSpark =>
-      icebergSpark.sql(sqlStr)
-    }
-  }
-
   def verifyReadWithIceberg(tableName: String, expectedAnswer: Seq[Row]): Unit = {
     withIcebergSparkSession { icebergSparkSession =>
       eventually(timeout(10.seconds)) {
-        val icebergDf = icebergSparkSession.sql(s"SELECT * FROM ${tableName}")
+        val icebergDf = icebergSparkSession.read.format("iceberg").load(tableName)
         checkAnswer(icebergDf, expectedAnswer)
       }
     }
   }
 
-  def tablePropsForCreate: String = {
-    s"""  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'id',
-       |  '${DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.key}' = 'iceberg'""".stripMargin
-  }
 
   def withDefaultTablePropsInSQLConf(f: => Unit): Unit = {
     withSQLConf(
-      DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> "id",
+      DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> "name",
       DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.defaultTablePropertyKey -> "iceberg"
     ) { f }
   }
@@ -113,7 +159,8 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
       .appName("DeltaSession")
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
       .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-      .config("spark.sql.catalog.spark_catalog.type", "hive")
+      .config("hive.metastore.uris", s"thrift://localhost:$PORT")
+      .config("spark.sql.catalogImplementation", "hive")
       .getOrCreate()
     SparkSession.clearActiveSession()
     SparkSession.clearDefaultSession()
@@ -129,11 +176,31 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
       .config("spark.sql.extensions",
         "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
       .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkSessionCatalog")
-      .config("spark.sql.catalog.spark_catalog.type", "hive")
+      .config("hive.metastore.uris", s"thrift://localhost:$PORT")
+      .config("spark.sql.catalogImplementation", "hive")
       .getOrCreate()
     SparkSession.clearActiveSession()
     SparkSession.clearDefaultSession()
     sparkSession
   }
 
+  def hmsReady(port: Int): Boolean = {
+    var ss: ServerSocket = null
+    try {
+      ss = new ServerSocket(port)
+      ss.setReuseAddress(true)
+      logWarning("No HMS detected, test suite will not run")
+      return false
+    } catch {
+      case e: IOException =>
+    } finally {
+      if (ss != null) {
+        try ss.close()
+        catch {
+          case e: IOException =>
+        }
+      }
+    }
+    true
+  }
 }
