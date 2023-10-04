@@ -19,7 +19,11 @@ package io.delta.tables
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableUtils}
+<<<<<<< HEAD:spark/src/main/scala/io/delta/tables/DeltaTableBuilder.scala
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+=======
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
+>>>>>>> 73f1a6965 (set active session for commands):core/src/main/scala/io/delta/tables/DeltaTableBuilder.scala
 import io.delta.tables.execution._
 
 import org.apache.spark.annotation._
@@ -302,7 +306,7 @@ class DeltaTableBuilder private[tables](
    * @since 1.0.0
    */
   @Evolving
-  def execute(): DeltaTable = {
+  def execute(): DeltaTable = withActiveSession(spark) {
     if (identifier == null && location.isEmpty) {
       throw DeltaErrors.analysisException("Table name or location has to be specified")
     }
@@ -361,7 +365,11 @@ class DeltaTableBuilder private[tables](
 
     // Return DeltaTable Object.
     if (DeltaTableUtils.isValidPath(tableId)) {
+<<<<<<< HEAD:spark/src/main/scala/io/delta/tables/DeltaTableBuilder.scala
       DeltaTable.forPath(spark, location.get)
+=======
+      DeltaTable.forPath(location.get)
+>>>>>>> 73f1a6965 (set active session for commands):core/src/main/scala/io/delta/tables/DeltaTableBuilder.scala
     } else {
       DeltaTable.forName(spark, this.identifier)
     }
