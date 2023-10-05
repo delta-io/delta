@@ -750,7 +750,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         reservoirVersion = 7,
         index = 13,
         isInitialSnapshot = isStartingVersion)
-      assert(offset.json.contains(s""""isStartingVersion:":$isStartingVersion"""))
+      assert(offset.json.contains(s""""isStartingVersion":$isStartingVersion"""))
     }
   }
 
