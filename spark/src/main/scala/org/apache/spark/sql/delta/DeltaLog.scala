@@ -214,12 +214,8 @@ class DeltaLog private(
 
   /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
   @deprecated("Please use the CatalogTable overload instead", "3.0")
-  def startTransaction(): OptimisticTransaction = startTransaction(snapshotOpt = None)
-
-  /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
-  @deprecated("Please use the CatalogTable overload instead", "3.0")
-  def startTransaction(snapshotOpt: Option[Snapshot]): OptimisticTransaction = {
-    startTransaction(catalogTableOpt = None, snapshotOpt)
+  def startTransaction(): OptimisticTransaction = {
+    startTransaction(catalogTableOpt = None, snapshotOpt = None)
   }
 
   /**
