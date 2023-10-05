@@ -22,6 +22,9 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StructType;
+
+import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 
 public class DefaultConstantVector
     implements ColumnVector {
@@ -119,5 +122,17 @@ public class DefaultConstantVector
     @Override
     public ArrayValue getArray(int rowId) {
         return (ArrayValue) value;
+    }
+
+    @Override
+    public ColumnVector getChild(int ordinal) {
+        checkArgument(dataType instanceof StructType);
+        StructType structType = (StructType) dataType;
+        return new DefaultSubFieldVector(
+                numRows,
+                structType.at(ordinal).getDataType(),
+                ordinal,
+                (rowId) -> (Row) value
+        );
     }
 }
