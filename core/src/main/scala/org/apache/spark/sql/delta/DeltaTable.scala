@@ -357,13 +357,6 @@ object DeltaTableUtils extends PredicateHelper
     IdentityTransform(FieldReference(Seq(col)))
   }
 
-  def withActiveSession[T](spark: SparkSession)(body: => T): T = {
-    val old = SparkSession.getActiveSession
-    SparkSession.setActiveSession(spark)
-    try {
-      body
-    } finally {
-      SparkSession.setActiveSession(old.getOrElse(null))
-    }
-  }
+  // Workaround for withActive not being visible in io/delta.
+  def withActiveSession[T](spark: SparkSession)(body: => T): T = spark.withActive(body)
 }

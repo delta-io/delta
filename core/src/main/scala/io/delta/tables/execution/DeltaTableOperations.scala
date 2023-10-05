@@ -18,7 +18,8 @@ package io.delta.tables.execution
 
 import scala.collection.Map
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaLog, DeltaTableUtils, PreprocessTableUpdate}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaLog, PreprocessTableUpdate}
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.commands.{DeleteCommand, DeltaGenerateCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.tables.DeltaTable
@@ -28,7 +29,6 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.SparkSession
 
 /**
  * Interface to provide the actual implementations of DeltaTable operations.
@@ -36,7 +36,7 @@ import org.apache.spark.sql.SparkSession
 trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
   protected def executeDelete(condition: Option[Expression]): Unit = improveUnsupportedOpError {
-    DeltaTableUtils.withActiveSession(sparkSession) {
+    withActiveSession(sparkSession) {
       val delete = DeleteFromTable(self.toDF.queryExecution.analyzed, condition)
       toDataset(sparkSession, delete)
     }
@@ -45,12 +45,9 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   protected def executeHistory(
       deltaLog: DeltaLog,
       limit: Option[Int] = None,
-      tableId: Option[TableIdentifier] = None): DataFrame = {
-    DeltaTableUtils.withActiveSession(sparkSession) {
-      val history = deltaLog.history
-      val spark = self.toDF.sparkSession
-      spark.createDataFrame(history.getHistory(limit))
-    }
+      tableId: Option[TableIdentifier] = None): DataFrame = withActiveSession(sparkSession) {
+    val history = deltaLog.history
+    sparkSession.createDataFrame(history.getHistory(limit))
   }
 
   protected def executeGenerate(tblIdentifier: String, mode: String): Unit = {
@@ -65,7 +62,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   protected def executeUpdate(
       set: Map[String, Column],
       condition: Option[Column]): Unit = improveUnsupportedOpError {
-    DeltaTableUtils.withActiveSession(sparkSession) {
+    withActiveSession(sparkSession) {
       val assignments = set.map { case (targetColName, column) =>
         Assignment(UnresolvedAttribute.quotedString(targetColName), column.expr)
       }.toSeq
@@ -78,11 +75,9 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   protected def executeVacuum(
       deltaLog: DeltaLog,
       retentionHours: Option[Double],
-      tableId: Option[TableIdentifier] = None): DataFrame = {
-    DeltaTableUtils.withActiveSession(sparkSession) {
-      VacuumCommand.gc(sparkSession, deltaLog, false, retentionHours)
-      sparkSession.emptyDataFrame
-    }
+      tableId: Option[TableIdentifier] = None): DataFrame = withActiveSession(sparkSession) {
+    VacuumCommand.gc(sparkSession, deltaLog, false, retentionHours)
+    sparkSession.emptyDataFrame
   }
 
   protected def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {

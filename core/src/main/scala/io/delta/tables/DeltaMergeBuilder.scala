@@ -19,7 +19,8 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 import scala.collection.Map
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableUtils, PreprocessTableMerge}
+import org.apache.spark.sql.delta.{DeltaErrors, PreprocessTableMerge}
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
@@ -203,7 +204,7 @@ class DeltaMergeBuilder private(
    */
   def execute(): Unit = improveUnsupportedOpError {
     val sparkSession = targetTable.toDF.sparkSession
-    DeltaTableUtils.withActiveSession(sparkSession) {
+    withActiveSession(sparkSession) {
       // Analyzer using `Dataset.ofRows()` because the Analyzer incorrectly resolves all
       // references in the DeltaMergeInto using both source and target child plans, even before
       // DeltaAnalysis rule kicks in. This is because the Analyzer  understands only MergeIntoTable,
