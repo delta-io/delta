@@ -34,6 +34,7 @@ import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
 import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
@@ -118,6 +119,34 @@ class CheckpointsSuite
         spark.conf.getOption(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key)
       assert(lastCheckpointOpt.get.checkpointSchema.isEmpty ===
         (expectedFormat.contains(V2Checkpoint.Format.JSON.name)))
+    }
+  }
+
+  testDifferentCheckpoints("test empty checkpoints") { (checkpointPolicy, _) =>
+    val tableName = "test_empty_table"
+    withTable(tableName) {
+      sql(s"CREATE TABLE `$tableName` (a INT) USING DELTA")
+      sql(s"ALTER TABLE `$tableName` SET TBLPROPERTIES('comment' = 'A table comment')")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      deltaLog.checkpoint()
+      def validateSnapshot(snapshot: Snapshot): Unit = {
+        assert(!snapshot.checkpointProvider.isEmpty)
+        assert(snapshot.checkpointProvider.version === 1)
+        val checkpointFile = snapshot.checkpointProvider.topLevelFiles.head.getPath
+        val fileActions = getCheckpointDfForFilesContainingFileActions(deltaLog, checkpointFile)
+        assert(fileActions.where("add is not null or remove is not null").collect().size === 0)
+        if (checkpointPolicy == CheckpointPolicy.V2) {
+          val v2CheckpointProvider =
+            snapshot.checkpointProvider.asInstanceOf[LazyCompleteCheckpointProvider]
+              .underlyingCheckpointProvider.asInstanceOf[V2CheckpointProvider]
+          assert(v2CheckpointProvider.sidecarFiles.size === 1)
+          val sidecar = v2CheckpointProvider.sidecarFiles.head.toFileStatus(deltaLog.logPath)
+          assert(spark.read.parquet(sidecar.getPath.toString).count() === 0)
+        }
+      }
+      validateSnapshot(deltaLog.update())
+      DeltaLog.clearCache()
+      validateSnapshot(DeltaLog.forTable(spark, TableIdentifier(tableName)).unsafeVolatileSnapshot)
     }
   }
 
