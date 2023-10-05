@@ -727,6 +727,33 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("isInitialSnapshot serializes as isStartingVersion") {
+    for (isStartingVersion <- Seq(false, true)) {
+      // From serialized to object
+      val reservoirId = UUID.randomUUID().toString
+      val json =
+        s"""
+           |{
+           |  "reservoirId": "$reservoirId",
+           |  "sourceVersion": 1,
+           |  "reservoirVersion": 1,
+           |  "index": 1,
+           |  "isStartingVersion": $isStartingVersion
+           |}
+        """.stripMargin
+      val offsetDeserialized = DeltaSourceOffset(reservoirId, SerializedOffset(json))
+      assert(offsetDeserialized.isInitialSnapshot === isStartingVersion)
+
+      // From object to serialized
+      val offset = DeltaSourceOffset(
+        reservoirId = reservoirId,
+        reservoirVersion = 7,
+        index = 13,
+        isInitialSnapshot = isStartingVersion)
+      assert(offset.json.contains(s""""isStartingVersion:":$isStartingVersion"""))
+    }
+  }
+
   testQuietly("recreate the reservoir should fail the query") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
