@@ -558,6 +558,7 @@ sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends Le
 /** Resolves to a [[ResolvedTable]] if the DeltaTable exists */
 case class UnresolvedPathBasedDeltaTable(
     path: String,
+    options: Map[String, String],
     commandName: String) extends UnresolvedPathBasedDeltaTableBase(path)
 
 /** Resolves to a [[DataSourceV2Relation]] if the DeltaTable exists */
@@ -572,6 +573,7 @@ case class UnresolvedPathBasedDeltaTableRelation(
  */
 case class UnresolvedPathBasedTable(
     path: String,
+    options: Map[String, String],
     commandName: String) extends LeafNode {
   override lazy val resolved: Boolean = false
   override val output: Seq[Attribute] = Nil
@@ -585,6 +587,7 @@ case class UnresolvedPathBasedTable(
  */
 case class ResolvedPathBasedNonDeltaTable(
     path: String,
+    options: Map[String, String],
     commandName: String) extends LeafNode {
   override val output: Seq[Attribute] = Nil
 }
@@ -601,7 +604,7 @@ object UnresolvedDeltaPathOrIdentifier {
       tableIdentifier: Option[TableIdentifier],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
-      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, cmd)
+      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, Map.empty, cmd)
       case (None, Some(t)) =>
         UnresolvedTable(t.nameParts, cmd, None)
       case _ => throw new IllegalArgumentException(
@@ -626,7 +629,7 @@ object UnresolvedPathOrIdentifier {
     (path, tableIdentifier) match {
       case (_, Some(t)) =>
         UnresolvedTable(t.nameParts, cmd, None)
-      case (Some(p), None) => UnresolvedPathBasedTable(p, cmd)
+      case (Some(p), None) => UnresolvedPathBasedTable(p, Map.empty, cmd)
       case _ => throw new IllegalArgumentException(
         s"At least one of path or tableIdentifier must be provided to $cmd")
     }
