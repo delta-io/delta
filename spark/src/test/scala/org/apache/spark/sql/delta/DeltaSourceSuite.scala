@@ -642,6 +642,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     // Set unknown sourceVersion as the max allowed version plus 1.
     val unknownVersion = 4
 
+    // Note: "isStartingVersion" corresponds to DeltaSourceOffset.isInitialSnapshot.
     val json =
       s"""
          |{
@@ -661,6 +662,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("invalid sourceVersion value") {
+    // Note: "isStartingVersion" corresponds to DeltaSourceOffset.isInitialSnapshot.
     val json =
       """
         |{
@@ -682,6 +684,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("missing sourceVersion") {
+    // Note: "isStartingVersion" corresponds to DeltaSourceOffset.isInitialSnapshot.
     val json =
       """
         |{
@@ -702,6 +705,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("unmatched reservoir id") {
+    // Note: "isStartingVersion" corresponds to DeltaSourceOffset.isInitialSnapshot.
     val json =
       s"""
         |{
@@ -1632,9 +1636,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
               SerializedOffset(offsetJson)
             ))
           assert(endOffsets.toList ==
-            DeltaSourceOffset(id, 1, 0, isStartingVersion = false)
+            DeltaSourceOffset(id, 1, 0, isInitialSnapshot = false)
               // When we reach the end of version 1, we will jump to version 2 with index -1
-              :: DeltaSourceOffset(id, 2, -1, isStartingVersion = false)
+              :: DeltaSourceOffset(id, 2, -1, isInitialSnapshot = false)
               :: Nil)
         } finally {
           q.stop()
@@ -1909,27 +1913,27 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       try {
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
-        // source2: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
+        // source1: DeltaSourceOffset(reservoirVersion=1,index=0,isInitialSnapshot=true)
+        // source2: DeltaSourceOffset(reservoirVersion=1,index=0,isInitialSnapshot=true)
 
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir1.getCanonicalPath)
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
-        // source2: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
+        // source2: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
         // Note: version 2 doesn't exist in source1
 
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
-        // source2: DeltaSourceOffset(reservoirVersion=3,index=-1,isStartingVersion=false)
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
+        // source2: DeltaSourceOffset(reservoirVersion=3,index=-1,isInitialSnapshot=false)
         // Note: version 2 doesn't exist in source1
 
         q.stop()
         // Restart the query. It will call `getBatch` on the previous two offsets of `source1` which
-        // are both DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // are both DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
         // As version 2 doesn't exist, we should not try to load version 2 in this case.
         q = startQuery()
         q.processAllAvailable()
@@ -1945,24 +1949,24 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         reservoirId = "foo",
         reservoirVersion = 4,
         index = 10,
-        isStartingVersion = false),
+        isInitialSnapshot = false),
       currentOffset = DeltaSourceOffset(
         reservoirId = "foo",
         reservoirVersion = 4,
         index = 10,
-        isStartingVersion = false)
+        isInitialSnapshot = false)
     )
     DeltaSourceOffset.validateOffsets(
       previousOffset = DeltaSourceOffset(
         reservoirId = "foo",
         reservoirVersion = 4,
         index = 10,
-        isStartingVersion = false),
+        isInitialSnapshot = false),
       currentOffset = DeltaSourceOffset(
         reservoirId = "foo",
         reservoirVersion = 5,
         index = 1,
-        isStartingVersion = false)
+        isInitialSnapshot = false)
     )
 
     assert(intercept[IllegalStateException] {
@@ -1971,26 +1975,26 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
-          isStartingVersion = false),
+          isInitialSnapshot = false),
         currentOffset = DeltaSourceOffset(
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
-          isStartingVersion = true)
+          isInitialSnapshot = true)
       )
-    }.getMessage.contains("Found invalid offsets: 'isStartingVersion' fliped incorrectly."))
+    }.getMessage.contains("Found invalid offsets: 'isInitialSnapshot' fliped incorrectly."))
     assert(intercept[IllegalStateException] {
       DeltaSourceOffset.validateOffsets(
         previousOffset = DeltaSourceOffset(
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
-          isStartingVersion = false),
+          isInitialSnapshot = false),
         currentOffset = DeltaSourceOffset(
           reservoirId = "foo",
           reservoirVersion = 1,
           index = 10,
-          isStartingVersion = false)
+          isInitialSnapshot = false)
       )
     }.getMessage.contains("Found invalid offsets: 'reservoirVersion' moved back."))
     assert(intercept[IllegalStateException] {
@@ -1999,12 +2003,12 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
-          isStartingVersion = false),
+          isInitialSnapshot = false),
         currentOffset = DeltaSourceOffset(
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 9,
-          isStartingVersion = false)
+          isInitialSnapshot = false)
       )
     }.getMessage.contains("Found invalid offsets. 'index' moved back."))
   }
