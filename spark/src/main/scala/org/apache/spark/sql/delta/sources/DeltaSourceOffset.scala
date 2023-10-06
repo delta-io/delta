@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.sources
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.util.JsonUtils
+import com.fasterxml.jackson.annotation.JsonProperty
 import org.json4s._
 import org.json4s.jackson.JsonMethods.parse
 
@@ -40,17 +41,22 @@ import org.apache.spark.sql.execution.streaming.{Offset, SerializedOffset}
  * @param index             The index in the sequence of AddFiles in this version. Used to
  *                          break large commits into multiple batches. This index is created by
  *                          sorting on modificationTimestamp and path.
- * @param isStartingVersion Whether this offset denotes a query that is starting rather than
- *                          processing changes. When starting a new query, we first process
- *                          all data present in the table at the start and then move on to
- *                          processing new data that has arrived.
+ * @param isInitialSnapshot Whether this offset points into an initial full table snapshot at the
+ *                          provided reservoir version rather than into the changes at that version.
+ *                          When starting a new query, we first process all data present in the
+ *                          table at the start and then move on to processing new data that has
+ *                          arrived.
  */
 case class DeltaSourceOffset private(
     sourceVersion: Long,
     reservoirId: String,
     reservoirVersion: Long,
     index: Long,
-    isStartingVersion: Boolean
+    // This was confusingly called "starting version" in earlier versions, even though enabling the
+    // option "starting version" actually causes this to be disabled. We still have to
+    // serialize it using the old name for backward compatibility.
+    @JsonProperty("isStartingVersion")
+    isInitialSnapshot: Boolean
   ) extends Offset with Comparable[DeltaSourceOffset] {
 
   import DeltaSourceOffset._
@@ -132,13 +138,13 @@ object DeltaSourceOffset extends Logging {
    * @param reservoirId Table id
    * @param reservoirVersion Table commit version
    * @param index File action index in the commit version
-   * @param isStartingVersion Whether this offset is still in initial snapshot
+   * @param isInitialSnapshot Whether this offset is still in initial snapshot
    */
   def apply(
       reservoirId: String,
       reservoirVersion: Long,
       index: Long,
-      isStartingVersion: Boolean
+      isInitialSnapshot: Boolean
   ): DeltaSourceOffset = {
     // TODO should we detect `reservoirId` changes when a query is running?
     new DeltaSourceOffset(
@@ -146,7 +152,7 @@ object DeltaSourceOffset extends Logging {
       reservoirId,
       reservoirVersion,
       index,
-      isStartingVersion
+      isInitialSnapshot
     )
   }
 
@@ -177,7 +183,7 @@ object DeltaSourceOffset extends Logging {
           o.reservoirId,
           o.reservoirVersion,
           offsetIndex,
-          o.isStartingVersion
+          o.isInitialSnapshot
         )
     }
   }
@@ -218,9 +224,9 @@ object DeltaSourceOffset extends Logging {
    * re-process data and cause data duplication.
    */
   def validateOffsets(previousOffset: DeltaSourceOffset, currentOffset: DeltaSourceOffset): Unit = {
-    if (!previousOffset.isStartingVersion && currentOffset.isStartingVersion) {
+    if (!previousOffset.isInitialSnapshot && currentOffset.isInitialSnapshot) {
       throw new IllegalStateException(
-        s"Found invalid offsets: 'isStartingVersion' fliped incorrectly. " +
+        s"Found invalid offsets: 'isInitialSnapshot' fliped incorrectly. " +
           s"Previous: $previousOffset, Current: $currentOffset")
     }
     if (previousOffset.reservoirVersion > currentOffset.reservoirVersion) {

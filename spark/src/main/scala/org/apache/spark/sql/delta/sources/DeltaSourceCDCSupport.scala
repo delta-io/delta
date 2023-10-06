@@ -188,17 +188,17 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
    *
    * @param startVersion - calculated starting version
    * @param startIndex - calculated starting index
-   * @param isStartingVersion - whether the stream has to return the initial snapshot or not
+   * @param isInitialSnapshot - whether the stream has to return the initial snapshot or not
    * @param endOffset - Offset that signifies the end of the stream.
    * @return the DataFrame containing the file changes (AddFile, RemoveFile, AddCDCFile)
    */
   protected def getCDCFileChangesAndCreateDataFrame(
       startVersion: Long,
       startIndex: Long,
-      isStartingVersion: Boolean,
+      isInitialSnapshot: Boolean,
       endOffset: DeltaSourceOffset): DataFrame = {
     val changes: Iterator[(Long, Iterator[IndexedFile])] =
-      getFileChangesForCDC(startVersion, startIndex, isStartingVersion, None, Some(endOffset))
+      getFileChangesForCDC(startVersion, startIndex, isInitialSnapshot, None, Some(endOffset))
 
     val groupedFileActions: Iterator[(Long, Seq[FileAction])] =
       changes.map { case (v, indexFiles) =>
@@ -227,7 +227,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
   protected def getFileChangesForCDC(
       fromVersion: Long,
       fromIndex: Long,
-      isStartingVersion: Boolean,
+      isInitialSnapshot: Boolean,
       limits: Option[AdmissionLimits],
       endOffset: Option[DeltaSourceOffset],
       verifyMetadataAction: Boolean = true): Iterator[(Long, Iterator[IndexedFile])] = {
@@ -278,7 +278,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       }
     }
 
-    val iter: Iterator[(Long, IndexedChangeFileSeq)] = if (isStartingVersion) {
+    val iter: Iterator[(Long, IndexedChangeFileSeq)] = if (isInitialSnapshot) {
       // If we are reading change data from the start of the table we need to
       // get the latest snapshot of the table as well.
       val snapshot: Iterator[IndexedFile] = getSnapshotAt(fromVersion).map { m =>
