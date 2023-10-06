@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.perf
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Alias, Cast, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Alias, Literal, ToPrettyString}
 import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, Complete, Count}
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -79,10 +79,10 @@ trait OptimizeMetadataOnlyDeltaQuery {
         Nil,
         Seq(
           Alias(
-            Cast(
+            ToPrettyString(
               AggregateExpression(Count(Seq(Literal(1, _))), Complete, false, None, _),
-              StringType, _, _),
-          _)
+              _),
+            _)
         ),
         PhysicalOperation(_, Nil, DeltaTable(i: TahoeLogFileIndex))
       ) if i.partitionFilters.isEmpty =>

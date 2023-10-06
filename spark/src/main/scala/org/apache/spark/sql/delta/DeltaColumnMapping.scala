@@ -30,6 +30,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
@@ -56,6 +57,15 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     (CDCReader.CDC_COLUMNS_IN_DATA ++ Seq(
       CDCReader.CDC_COMMIT_VERSION,
       CDCReader.CDC_COMMIT_TIMESTAMP,
+      /**
+       * Whenever `_metadata` column is selected, Spark adds the format generated metadata
+       * columns to `ParquetFileFormat`'s required output schema. Column `_metadata` contains
+       * constant value subfields metadata such as `file_path` and format specific custom metadata
+       * subfields such as `row_index` in Parquet. Spark creates the file format object with
+       * data schema plus additional custom metadata columns required from file format to fill up
+       * the `_metadata` column.
+       */
+      ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME,
       DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME,
       DeltaParquetFileFormat.ROW_INDEX_COLUMN_NAME)
     ).map(_.toLowerCase(Locale.ROOT)).toSet
