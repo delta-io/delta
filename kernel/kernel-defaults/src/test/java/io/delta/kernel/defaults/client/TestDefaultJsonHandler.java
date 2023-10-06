@@ -33,9 +33,8 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.VectorUtils;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
-import static io.delta.kernel.utils.Utils.singletonColumnVector;
-
 import io.delta.kernel.internal.InternalScanFileUtils;
+import static io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector;
 
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
 
@@ -128,7 +127,7 @@ public class TestDefaultJsonHandler {
             .add("dataChange", BooleanType.BOOLEAN);
 
         ColumnarBatch batch =
-            JSON_HANDLER.parseJson(singletonColumnVector(input), readSchema);
+            JSON_HANDLER.parseJson(singletonStringColumnVector(input), readSchema);
         assertEquals(1, batch.getSize());
 
         try (CloseableIterator<Row> rows = batch.getRows()) {
@@ -173,7 +172,7 @@ public class TestDefaultJsonHandler {
                                 ),
                                 true
                         ));
-        ColumnarBatch batch = JSON_HANDLER.parseJson(singletonColumnVector(json), schema);
+        ColumnarBatch batch = JSON_HANDLER.parseJson(singletonStringColumnVector(json), schema);
 
         try (CloseableIterator<Row> rows = batch.getRows()) {
             Row result = rows.next();

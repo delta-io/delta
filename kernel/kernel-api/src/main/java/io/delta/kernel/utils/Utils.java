@@ -20,10 +20,7 @@ import java.io.IOException;
 import java.util.Iterator;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.StringType;
 
 /**
  * Various utility methods to help the connectors work with data objects returned by Kernel
@@ -82,44 +79,6 @@ public class Utils {
             @Override
             public T next() {
                 return iter.next();
-            }
-        };
-    }
-
-    /**
-     * Utility method to create a singleton string {@link ColumnVector}
-     *
-     * @param value the string element to create the vector with
-     * @return A {@link ColumnVector} with a single element {@code value}
-     */
-    // TODO: add String to method name or make generic?
-    public static ColumnVector singletonColumnVector(String value) {
-        return new ColumnVector() {
-            @Override
-            public DataType getDataType() {
-                return StringType.STRING;
-            }
-
-            @Override
-            public int getSize() {
-                return 1;
-            }
-
-            @Override
-            public void close() {
-            }
-
-            @Override
-            public boolean isNullAt(int rowId) {
-                return value == null;
-            }
-
-            @Override
-            public String getString(int rowId) {
-                if (rowId != 0) {
-                    throw new IllegalArgumentException("Invalid row id: " + rowId);
-                }
-                return value;
             }
         };
     }

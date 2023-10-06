@@ -40,6 +40,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
 import io.delta.kernel.utils.VectorUtils;
+import io.delta.kernel.internal.util.InternalUtils;
 
 /**
  * Utility class to serialize and deserialize the table schema which is of type {@link StructType}.
@@ -189,7 +190,7 @@ public class TableSchemaSerDe {
         String jsonString,
         StructType outputSchema,
         Function<Row, R> evalFunction) {
-        ColumnVector columnVector = Utils.singletonColumnVector(jsonString);
+        ColumnVector columnVector = InternalUtils.singletonStringColumnVector(jsonString);
         ColumnarBatch result = jsonHandler.parseJson(columnVector, outputSchema);
 
         assert result.getSize() == 1;
