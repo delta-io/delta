@@ -118,9 +118,6 @@ lazy val spark = (project in file("spark"))
     // For adding staged Spark RC versions, Ex:
     // resolvers += "Apche Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
 
-    // Add Iceberg 1.4.0 RC2 dep; TODO: replace with final release
-    resolvers += "Apache Iceberg 1.4.0 (RC2) Staging" at "https://repository.apache.org/content/repositories/orgapacheiceberg-1146/",
-
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
