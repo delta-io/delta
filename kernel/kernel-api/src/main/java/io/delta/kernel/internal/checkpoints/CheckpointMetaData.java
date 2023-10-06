@@ -32,9 +32,9 @@ public class CheckpointMetaData {
 
     // TODO: there are more optional fields
     public static StructType READ_SCHEMA = new StructType()
-        .add("version", LongType.INSTANCE, false /* nullable */)
-        .add("size", LongType.INSTANCE, false /* nullable */)
-        .add("parts", LongType.INSTANCE);
+        .add("version", LongType.LONG, false /* nullable */)
+        .add("size", LongType.LONG, false /* nullable */)
+        .add("parts", LongType.LONG);
 
     public final long version;
     public final long size;

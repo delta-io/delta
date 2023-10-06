@@ -71,9 +71,9 @@ public class TestDefaultJsonHandler {
                 JSON_HANDLER.readJsonFiles(
                     JSON_HANDLER.contextualizeFileReads(testFiles(), ALWAYS_TRUE),
                     new StructType()
-                        .add("path", StringType.INSTANCE)
-                        .add("size", LongType.INSTANCE)
-                        .add("dataChange", BooleanType.INSTANCE))) {
+                        .add("path", StringType.STRING)
+                        .add("size", LongType.LONG)
+                        .add("dataChange", BooleanType.BOOLEAN))) {
 
             List<String> actPaths = new ArrayList<>();
             List<Long> actSizes = new ArrayList<>();
@@ -121,11 +121,11 @@ public class TestDefaultJsonHandler {
                 "   \"dataChange\":true" +
                 "   }";
         StructType readSchema = new StructType()
-            .add("path", StringType.INSTANCE)
+            .add("path", StringType.STRING)
             .add("partitionValues",
-                new MapType(StringType.INSTANCE, StringType.INSTANCE, false))
-            .add("size", LongType.INSTANCE)
-            .add("dataChange", BooleanType.INSTANCE);
+                new MapType(StringType.STRING, StringType.STRING, false))
+            .add("size", LongType.LONG)
+            .add("dataChange", BooleanType.BOOLEAN);
 
         ColumnarBatch batch =
             JSON_HANDLER.parseJson(singletonColumnVector(input), readSchema);
@@ -160,15 +160,15 @@ public class TestDefaultJsonHandler {
                 "  \"nested_map\": {\"a\":  {\"one\":  [], \"two\":  [1, 2, 3]}, \"b\":  {}}\n" +
                 "}";
         StructType schema = new StructType()
-                .add("array", new ArrayType(IntegerType.INSTANCE, true))
-                .add("nested_array", new ArrayType(new ArrayType(StringType.INSTANCE, true), true))
-                .add("map", new MapType(StringType.INSTANCE, BooleanType.INSTANCE, true))
+                .add("array", new ArrayType(IntegerType.INTEGER, true))
+                .add("nested_array", new ArrayType(new ArrayType(StringType.STRING, true), true))
+                .add("map", new MapType(StringType.STRING, BooleanType.BOOLEAN, true))
                 .add("nested_map",
                         new MapType(
-                                StringType.INSTANCE,
+                                StringType.STRING,
                                 new MapType(
-                                        StringType.INSTANCE,
-                                        new ArrayType(IntegerType.INSTANCE, true),
+                                        StringType.STRING,
+                                        new ArrayType(IntegerType.INTEGER, true),
                                         true
                                 ),
                                 true

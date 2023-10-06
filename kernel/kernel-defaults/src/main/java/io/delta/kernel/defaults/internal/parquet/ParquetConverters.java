@@ -468,7 +468,7 @@ class ParquetConverters {
 
     public static class FileRowIndexColumnConverter extends LongColumnConverter {
         FileRowIndexColumnConverter(int initialBatchSize) {
-            super(LongType.INSTANCE, initialBatchSize);
+            super(LongType.LONG, initialBatchSize);
         }
 
         @Override

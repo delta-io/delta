@@ -36,7 +36,6 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.MixedDataType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;

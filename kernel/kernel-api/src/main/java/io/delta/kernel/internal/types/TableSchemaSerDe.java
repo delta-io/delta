@@ -34,7 +34,6 @@ import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.DecimalType;
 import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.MixedDataType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -207,11 +206,11 @@ public class TableSchemaSerDe {
      * Schema of the one member ({@link StructField}) in {@link StructType}.
      */
     private static final StructType STRUCT_FIELD_SCHEMA = new StructType()
-        .add("name", StringType.INSTANCE)
+        .add("name", StringType.STRING)
         .add("type", MixedDataType.INSTANCE) // Data type can be a string or a object.
-        .add("nullable", BooleanType.INSTANCE)
+        .add("nullable", BooleanType.BOOLEAN)
         .add("metadata",
-            new MapType(StringType.INSTANCE, StringType.INSTANCE, false /* valueContainsNull */));
+            new MapType(StringType.STRING, StringType.STRING, false /* valueContainsNull */));
 
     /**
      * Schema of the serialized {@link StructType}.
@@ -238,9 +237,9 @@ public class TableSchemaSerDe {
      */
     private static StructType ARRAY_TYPE_SCHEMA =
         new StructType()
-            .add("type", StringType.INSTANCE)
+            .add("type", StringType.STRING)
             .add("elementType", MixedDataType.INSTANCE)
-            .add("containsNull", BooleanType.INSTANCE);
+            .add("containsNull", BooleanType.BOOLEAN);
 
     /**
      * Example Map Type in serialized format
@@ -253,10 +252,10 @@ public class TableSchemaSerDe {
      */
     private static StructType MAP_TYPE_SCHEMA =
         new StructType()
-            .add("type", StringType.INSTANCE)
+            .add("type", StringType.STRING)
             .add("keyType", MixedDataType.INSTANCE)
             .add("valueType", MixedDataType.INSTANCE)
-            .add("valueContainsNull", BooleanType.INSTANCE);
+            .add("valueContainsNull", BooleanType.BOOLEAN);
 
     private static Pattern DECIMAL_TYPE_PATTERN =
         Pattern.compile("decimal\\(\\s*(?<precision>[0-9]+),\\s*(?<scale>[0-9]+)\\s*\\)");

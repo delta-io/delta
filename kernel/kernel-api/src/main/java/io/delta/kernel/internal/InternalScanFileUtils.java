@@ -43,7 +43,7 @@ public class InternalScanFileUtils {
     private InternalScanFileUtils() {}
 
     private static final String TABLE_ROOT_COL_NAME = "tableRoot";
-    private static final DataType TABLE_ROOT_DATA_TYPE = StringType.INSTANCE;
+    private static final DataType TABLE_ROOT_DATA_TYPE = StringType.STRING;
     /**
      * {@link Column} expression referring to the `partitionValues` in scan `add` file.
      */

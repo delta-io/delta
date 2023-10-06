@@ -97,7 +97,7 @@ public class Utils {
         return new ColumnVector() {
             @Override
             public DataType getDataType() {
-                return StringType.INSTANCE;
+                return StringType.STRING;
             }
 
             @Override

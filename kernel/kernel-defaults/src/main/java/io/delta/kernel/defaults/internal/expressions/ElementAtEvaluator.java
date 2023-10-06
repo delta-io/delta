@@ -143,8 +143,8 @@ class ElementAtEvaluator {
         MapType asMapType = (MapType) mapInputType;
         // TODO: we may extend type support in future, but currently the need is just a lookup
         // in map column of type `map(string -> string)`.
-        if (asMapType.getKeyType().equivalent(StringType.INSTANCE) &&
-            asMapType.getValueType().equivalent(StringType.INSTANCE)) {
+        if (asMapType.getKeyType().equivalent(StringType.STRING) &&
+            asMapType.getValueType().equivalent(StringType.STRING)) {
             return asMapType;
         }
         throw new UnsupportedOperationException(

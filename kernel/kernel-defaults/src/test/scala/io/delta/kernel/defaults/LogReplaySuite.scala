@@ -75,7 +75,7 @@ class LogReplaySuite extends AnyFunSuite {
     val schema = snapshot.getSchema(client)
     val version = snapshot.getVersion(client)
 
-    assert(schema === new StructType().add("id", LongType.INSTANCE))
+    assert(schema === new StructType().add("id", LongType.LONG))
     assert(version === 13)
 
     var output = new scala.collection.mutable.ArrayBuffer[Long]()

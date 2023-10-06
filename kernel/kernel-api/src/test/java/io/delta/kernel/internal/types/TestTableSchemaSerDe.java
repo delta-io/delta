@@ -63,14 +63,14 @@ public class TestTableSchemaSerDe {
     public void complexTypesRoundTrip() {
         List<StructField> fieldList = new ArrayList<>();
 
-        ArrayType arrayType = array(IntegerType.INSTANCE, true);
+        ArrayType arrayType = array(IntegerType.INTEGER, true);
         ArrayType arrayArrayType = array(arrayType, false);
-        MapType mapType = map(FloatType.INSTANCE, BinaryType.INSTANCE, false);
-        MapType mapMapType = map(mapType, BinaryType.INSTANCE, true);
+        MapType mapType = map(FloatType.FLOAT, BinaryType.BINARY, false);
+        MapType mapMapType = map(mapType, BinaryType.BINARY, true);
         StructType structType = new StructType()
-            .add("simple", DateType.INSTANCE);
+            .add("simple", DateType.DATE);
         StructType structAllType = new StructType()
-            .add("prim", BooleanType.INSTANCE)
+            .add("prim", BooleanType.BOOLEAN)
             .add("arr", arrayType)
             .add("map", mapType)
             .add("struct", structType);

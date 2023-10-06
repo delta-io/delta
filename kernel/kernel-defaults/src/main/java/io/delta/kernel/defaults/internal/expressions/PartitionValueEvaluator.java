@@ -73,9 +73,9 @@ class PartitionValueEvaluator {
 
             @Override
             public int getInt(int rowId) {
-                if (partitionType.equivalent(IntegerType.INSTANCE)) {
+                if (partitionType.equivalent(IntegerType.INTEGER)) {
                     return Integer.parseInt(input.getString(rowId));
-                } else if (partitionType.equivalent(DateType.INSTANCE)) {
+                } else if (partitionType.equivalent(DateType.DATE)) {
                     return InternalUtils.daysSinceEpoch(Date.valueOf(input.getString(rowId)));
                 }
                 throw new UnsupportedOperationException("Invalid value request for data type");
@@ -83,7 +83,7 @@ class PartitionValueEvaluator {
 
             @Override
             public long getLong(int rowId) {
-                if (partitionType.equivalent(LongType.INSTANCE)) {
+                if (partitionType.equivalent(LongType.LONG)) {
                     return Long.parseLong(input.getString(rowId));
                 }
                 // TODO: partition value of timestamp type are not yet supported

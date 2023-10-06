@@ -13,10 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.types;
+package io.delta.kernel.internal.types;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StructType;
 
 /**
  * TODO:
