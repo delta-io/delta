@@ -542,7 +542,7 @@ class ConvertIcebergToDeltaPartitioningFiveDigitYearSuite
           case e: Throwable if e.isInstanceOf[org.apache.spark.SparkThrowable] &&
             e.getMessage.contains("spark.sql.legacy.timeParserPolicy") =>
             thrownError = true
-          case other: Throwable => throw other
+          case other => throw other
         }
         assert(thrownError, s"Error message $msg is incorrect.")
       } else {
