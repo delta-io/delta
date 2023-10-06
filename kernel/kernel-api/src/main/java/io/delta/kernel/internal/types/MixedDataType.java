@@ -21,7 +21,7 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 
 /**
- * TODO:
+ * TODO: this is temporary
  * This is a controversial data type to have, but we have no way to specify the schema
  * of JSON serialized table schema. In order to use the
  * {@link io.delta.kernel.client.JsonHandler#parseJson(ColumnVector, StructType)}, the Kernel

@@ -107,10 +107,8 @@ trait TestUtils extends Assertions {
 
     val scanState = scan.getScanState(tableClient);
     val fileIter = scan.getScanFiles(tableClient)
-    // TODO serialize scan state and scan rows
 
     fileIter.forEach { fileColumnarBatch =>
-      // TODO deserialize scan state and scan rows
       val dataBatches = Scan.readData(
         tableClient,
         scanState,

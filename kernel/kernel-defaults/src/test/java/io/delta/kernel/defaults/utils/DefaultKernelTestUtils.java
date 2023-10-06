@@ -31,8 +31,6 @@ public class DefaultKernelTestUtils {
 
     // This will no longer be needed once all tests have been moved to Scala
     public static Object getValueAsObject(Row row, int columnOrdinal) {
-        // TODO: may be it is better to just provide a `getObject` on the `Row` to
-        // avoid the nested if-else statements.
         final DataType dataType = row.getSchema().at(columnOrdinal).getDataType();
 
         if (row.isNullAt(columnOrdinal)) {
@@ -69,8 +67,6 @@ public class DefaultKernelTestUtils {
      * depends on the data type of the {@code vector}.
      */
     public static Object getValueAsObject(ColumnVector vector, int rowId) {
-        // TODO: may be it is better to just provide a `getObject` on the `ColumnVector` to
-        // avoid the nested if-else statements.
         final DataType dataType = vector.getDataType();
 
         if (vector.isNullAt(rowId)) {

@@ -35,7 +35,6 @@ public class StructField {
     // Static Fields / Methods
     ////////////////////////////////////////////////////////////////////////////////
 
-    // TODO: for now we introduce isMetadataColumn as a field in the column metadata
     /**
      * Indicates a metadata column when present in the field metadata and the value is true
      */

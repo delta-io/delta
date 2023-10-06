@@ -58,7 +58,7 @@ public class InternalScanFileUtils {
 
     public static final StructType SCAN_FILE_SCHEMA = new StructType()
         .add("add", AddFile.SCHEMA)
-        // TODO: table root is temporary, until the path in `add.path` is converted to
+        // NOTE: table root is temporary, until the path in `add.path` is converted to
         // an absolute path. https://github.com/delta-io/delta/issues/2089
         .add(TABLE_ROOT_COL_NAME, TABLE_ROOT_DATA_TYPE);
 

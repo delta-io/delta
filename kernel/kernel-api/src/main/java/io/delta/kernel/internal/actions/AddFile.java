@@ -21,7 +21,7 @@ import io.delta.kernel.types.*;
  * Delta log action representing an `AddFile`
  */
 public class AddFile {
-    // TODO: there are more optional fields in `AddFile` according to the spec. We will be adding
+    // Note: these are more optional fields in `AddFile` according to the spec. We will be adding
     // them in read schema as we support the related features.
     public static final StructType SCHEMA = new StructType()
         .add("path", StringType.STRING, false /* nullable */)

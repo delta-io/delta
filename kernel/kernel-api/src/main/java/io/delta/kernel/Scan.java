@@ -86,7 +86,7 @@ public interface Scan {
      *  </ul></li>
      *  <li><ul>
      *      <li>name: {@code tableRoot}, type: {@code string}</li>
-     *      <li>Description: Absolute path of the table location. TODO: this is temporary. Will
+     *      <li>Description: Absolute path of the table location. NOTE: this is temporary. Will
      *      be removed in future. @see <a href=https://github.com/delta-io/delta/issues/2089>
      *          </a></li>
      *  </ul></li>
