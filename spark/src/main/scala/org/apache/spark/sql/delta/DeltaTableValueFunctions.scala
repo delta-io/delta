@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaDataSource
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.FunctionIdentifier
-import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedLeafNode, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, StringLiteral}
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, UnaryNode}
 import org.apache.spark.sql.connector.catalog.V1Table
@@ -71,13 +71,9 @@ object DeltaTableValueFunctions {
 /**
  * Represents an unresolved Delta Table Value Function
  */
-// TODO[SPARK-44071]: Inherit from UnresolvedLeafNode once spark-3.5 is released
-trait DeltaTableValueFunction extends LeafNode {
+trait DeltaTableValueFunction extends UnresolvedLeafNode {
   def fnName: String
   val functionArgs: Seq[Expression]
-
-  override def output: Seq[Attribute] = Nil
-  override lazy val resolved = false
 }
 
 /**

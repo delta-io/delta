@@ -14,6 +14,8 @@
 # limitations under the License.
 #
 
+# mypy: disable-error-code="union-attr"
+# mypy: disable-error-code="attr-defined"
 # type: ignore[union-attr]
 
 import unittest

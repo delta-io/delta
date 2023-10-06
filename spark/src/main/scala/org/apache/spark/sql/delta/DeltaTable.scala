@@ -24,9 +24,10 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
 
+import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedAttribute, UnresolvedLeafNode, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
@@ -546,13 +547,10 @@ object DeltaTableUtils extends PredicateHelper
   }
 }
 
-// TODO: Use `UnresolvedNode` in Spark 3.5 once it is released.
-sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends LeafNode {
+sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends UnresolvedLeafNode {
   def identifier: Identifier = Identifier.of(Array(DeltaSourceUtils.ALT_NAME), path)
   def deltaTableIdentifier: DeltaTableIdentifier = DeltaTableIdentifier(Some(path), None)
 
-  override lazy val resolved: Boolean = false
-  override val output: Seq[Attribute] = Nil
 }
 
 /** Resolves to a [[ResolvedTable]] if the DeltaTable exists */

@@ -405,6 +405,35 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     fieldToAdd = "element.b" -> "string",
     updatedColumnType = "array<struct<a: int, b: string>>")
 
+  testAlterTableNestedFields("struct in nested map keys")(
+    initialColumnType = "map<map<struct<a: int>, int>, int>",
+    fieldToAdd = "key.key.b" -> "string",
+    updatedColumnType = "map<map<struct<a: int, b: string>, int>, int>")
+
+  testAlterTableNestedFields("struct in nested map values")(
+    initialColumnType = "map<int, map<int, struct<a: int>>>",
+    fieldToAdd = "value.value.b" -> "string",
+    updatedColumnType = "map<int, map<int, struct<a: int, b: string>>>")
+
+  testAlterTableNestedFields("struct in nested arrays")(
+    initialColumnType = "array<array<struct<a: int>>>",
+    fieldToAdd = "element.element.b" -> "string",
+    updatedColumnType = "array<array<struct<a: int, b: string>>>")
+
+  testAlterTableNestedFields("struct in nested array and map")(
+    initialColumnType = "array<map<int, struct<a: int>>>",
+    fieldToAdd = "element.value.b" -> "string",
+    updatedColumnType = "array<map<int, struct<a: int, b: string>>>")
+
+  testAlterTableNestedFields("struct in nested map key and array")(
+    initialColumnType = "map<array<struct<a: int>>, int>",
+    fieldToAdd = "key.element.b" -> "string",
+    updatedColumnType = "map<array<struct<a: int, b: string>>, int>")
+
+  testAlterTableNestedFields("struct in nested map value and array")(
+    initialColumnType = "map<int, array<struct<a: int>>>",
+    fieldToAdd = "value.element.b" -> "string",
+    updatedColumnType = "map<int, array<struct<a: int, b: string>>>")
 
   test("ALTER TABLE CHANGE COLUMN with nullability change in struct type - not supported") {
     withTempDir { dir =>

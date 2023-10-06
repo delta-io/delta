@@ -21,7 +21,7 @@ import java.util.UUID
 import scala.collection.generic.Sizing
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
-import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, DeltaUDF, OptimisticTransaction, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat, StoredBitmap}
@@ -37,9 +37,9 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, FileSourceMetadataAttribute, GenericInternalRow}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
-import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types.StructType
@@ -77,18 +77,16 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
    * @param fileIndex the new file index
    */
   private def replaceFileIndex(target: LogicalPlan, fileIndex: TahoeFileIndex): LogicalPlan = {
-    val additionalCols = Seq(
-      AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FILED.dataType)(),
-      // TODO: when upgrading to Spark 3.5 or 4.0 this should be FileFormat.createFileMetadataCol
-      FileSourceMetadataAttribute(FileFormat.METADATA_NAME, FileFormat.BASE_METADATA_STRUCT)
-    )
+    val rowIndexCol = AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FILED.dataType)();
+    var fileMetadataCol: AttributeReference = null
 
-    val newTarget = target transformDown {
+    val newTarget = target.transformUp {
       case l @ LogicalRelation(
         hfsr @ HadoopFsRelation(_, _, _, _, format: DeltaParquetFileFormat, _), _, _, _) =>
+        fileMetadataCol = format.createFileMetadataCol()
         // Take the existing schema and add additional metadata columns
         val newDataSchema = StructType(hfsr.dataSchema).add(ROW_INDEX_STRUCT_FILED)
-        val finalOutput = l.output ++ additionalCols
+        val finalOutput = l.output ++ Seq(rowIndexCol, fileMetadataCol)
         // Disable splitting and filter pushdown in order to generate the row-indexes
         val newFormat = format.copy(isSplittable = false, disablePushDowns = true)
 
@@ -99,7 +97,10 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
 
         l.copy(relation = newBaseRelation, output = finalOutput)
       case p @ Project(projectList, _) =>
-        val newProjectList = projectList ++ additionalCols
+        if (fileMetadataCol == null) {
+          throw new IllegalStateException("File metadata column is not yet created.")
+        }
+        val newProjectList = projectList ++ Seq(rowIndexCol, fileMetadataCol)
         p.copy(projectList = newProjectList)
     }
     newTarget
@@ -362,18 +363,8 @@ object DeletionVectorBitmapGenerator {
       candidateFiles: Seq[AddFile],
       condition: Expression)
     : Seq[DeletionVectorResult] = {
-    // If the metadata column is not canonicalized, we must canonicalize them before use.
-    val targetDfWithMetadataColumn = if (sparkMetadataFilePathIsCanonicalized) {
-      targetDf.withColumn(FILE_NAME_COL, col(s"${METADATA_NAME}.${FILE_PATH}"))
-    } else {
-      val canonicalizedPathStringMap = buildCanonicalizedPathStringMap(txn.deltaLog, candidateFiles)
-      val broadcastCanonicalizedPathStringMap =
-        sparkSession.sparkContext.broadcast(canonicalizedPathStringMap)
-
-      val lookupPathUdf = DeltaUDF.stringFromString(broadcastCanonicalizedPathStringMap.value(_))
-      targetDf.withColumn(FILE_NAME_COL, lookupPathUdf(col(s"${METADATA_NAME}.${FILE_PATH}")))
-    }
-    val matchedRowsDf = targetDfWithMetadataColumn
+    val matchedRowsDf = targetDf
+      .withColumn(FILE_NAME_COL, col(s"${METADATA_NAME}.${FILE_PATH}"))
       // Filter after getting input file name as the filter might introduce a join and we
       // cannot get input file name on join's output.
       .filter(new Column(condition))
@@ -408,43 +399,6 @@ object DeletionVectorBitmapGenerator {
     }
 
     DeletionVectorBitmapGenerator.buildDeletionVectors(sparkSession, df, txn.deltaLog, txn)
-  }
-
-  private def buildCanonicalizedPathStringMap(
-      log: DeltaLog,
-      addFiles: Seq[AddFile]): Map[String, String] = {
-    val basePath = log.dataPath.toString
-    addFiles.map { add =>
-      val absPath = absolutePath(basePath, add.path)
-      absPath.toString -> SparkPath.fromPath(absPath).urlEncoded
-    }.toMap
-  }
-
-  /**
-   * In Spark 3.4 the file path metadata column is not canonicalized but it is in Spark 3.4.1. To
-   * make Delta Lake works with both Spark versions, we must use Spark's internal path
-   * transformation method to transform our paths here. This method will return a un-canonicalized
-   * path in Spark 3.4 and a canonicalized one in Spark 3.4.1.
-   *
-   * Related issue: https://github.com/delta-io/delta/issues/1725.
-   */
-  private lazy val sparkMetadataFilePathIsCanonicalized: Boolean = {
-    try {
-      val probeString = "file:/path with space/data.parquet"
-      val row = FileFormat.updateMetadataInternalRow(
-        new GenericInternalRow(size = 1),
-        Seq(FileFormat.FILE_PATH),
-        filePath = new Path(probeString),
-        fileSize = 0L,
-        fileBlockStart = 0L,
-        fileBlockLength = 0L,
-        fileModificationTime = 0L)
-      row.getUTF8String(0).toString != probeString
-    } catch {
-      // method has changed (for example in Spark 3.5 onwards which does not have this bug).
-      // Return true in this case.
-      case _: NoSuchMethodError | _: NoClassDefFoundError => true
-    }
   }
 }
 
