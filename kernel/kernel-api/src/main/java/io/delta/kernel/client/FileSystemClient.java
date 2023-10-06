@@ -21,6 +21,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.fs.FileReadRequest;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
@@ -56,17 +57,15 @@ public interface FileSystemClient {
      */
     String resolvePath(String path) throws IOException;
 
-    // TODO: solidify input type; need some combination of path, offset, size
-
     /**
-     * Read data specified by the start and end offset from the file. It is the responsibility
-     * of the caller close each returned stream.
+     * Return an iterator of byte streams one for each read request in {@code readRequests}.
+     * It is the responsibility of the caller to close each returned stream.
      *
-     * @param iter Iterator for tuples (file path, range (start offset, end offset)
-     * @return Data for each range requested as one {@link ByteArrayInputStream}.
+     * @param readRequests Iterator of read requests
+     * @return Data for each request as one {@link ByteArrayInputStream}.
      * @throws IOException
      */
     CloseableIterator<ByteArrayInputStream> readFiles(
-        CloseableIterator<Tuple2<String, Tuple2<Integer, Integer>>> iter)
+        CloseableIterator<FileReadRequest> readRequests)
         throws IOException;
 }

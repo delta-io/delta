@@ -23,6 +23,7 @@ import java.util.Optional;
 import java.util.zip.CRC32;
 
 import io.delta.kernel.client.FileSystemClient;
+import io.delta.kernel.fs.FileReadRequest;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.utils.Utils;
@@ -60,17 +61,24 @@ public class DeletionVectorStoredBitmap {
         } else { // isOnDisk
             String onDiskPath = dvDescriptor.getAbsolutePath(tableDataPath.get());
 
-            // TODO: this type is TBD
-            Tuple2<String, Tuple2<Integer, Integer>> dvToRead =
-                new Tuple2(
-                    onDiskPath, // filePath
-                    new Tuple2(
-                        dvDescriptor.getOffset().orElse(0), // offset
-                        // we pad 4 bytes in the front for the size
-                        // and 4 bytes at the end for CRC-32 checksum
-                        dvDescriptor.getSizeInBytes() + 8 // size
-                    )
-                );
+            FileReadRequest dvToRead = new FileReadRequest() {
+                @Override
+                public String getPath() {
+                    return onDiskPath;
+                }
+
+                @Override
+                public int getStartOffset() {
+                    return dvDescriptor.getOffset().orElse(0);
+                }
+
+                @Override
+                public int getReadLength() {
+                    // We pad 4 bytes in the front for the size and 4 bytes at the end for
+                    // CRC-32 checksum
+                    return dvDescriptor.getSizeInBytes() + 8;
+                }
+            };
 
             CloseableIterator<ByteArrayInputStream> streamIter = fileSystemClient.readFiles(
                 Utils.singletonCloseableIterator(dvToRead));
