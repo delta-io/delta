@@ -25,7 +25,6 @@ import java.util.zip.CRC32;
 import io.delta.kernel.client.FileSystemClient;
 import io.delta.kernel.fs.FileReadRequest;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.utils.Utils;
 
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;

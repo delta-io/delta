@@ -23,15 +23,14 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Iterator;
 
-import io.delta.kernel.fs.FileReadRequest;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
 import io.delta.kernel.client.FileSystemClient;
+import io.delta.kernel.fs.FileReadRequest;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.utils.Utils;
 
 /**
@@ -82,7 +81,8 @@ public class DefaultFileSystemClient
     @Override
     public CloseableIterator<ByteArrayInputStream> readFiles(
         CloseableIterator<FileReadRequest> readRequests) {
-        return readRequests.map(elem -> getStream(elem.getPath(), elem.getStartOffset(), elem.getReadLength()));
+        return readRequests.map(elem ->
+                getStream(elem.getPath(), elem.getStartOffset(), elem.getReadLength()));
     }
 
     private ByteArrayInputStream getStream(String filePath, int offset, int size) {

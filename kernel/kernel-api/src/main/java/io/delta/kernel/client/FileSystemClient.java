@@ -24,7 +24,6 @@ import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.fs.FileReadRequest;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
 
 /**
  * Provides file system related functionalities to Delta Kernel. Delta Kernel uses this client
