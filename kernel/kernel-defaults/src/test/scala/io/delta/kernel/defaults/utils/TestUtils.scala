@@ -334,18 +334,13 @@ trait TestUtils extends Assertions {
         new MapValue() {
           override def getSize: Int = map.size
 
-          override def getKeys = new DefaultGenericVector(
-            keyType, keys.toArray)
+          override def getKeys = DefaultGenericVector.fromArray(keyType, keys.toArray)
 
-          override def getValues = new DefaultGenericVector(
-            valueType, values.toArray)
+          override def getValues = DefaultGenericVector.fromArray(valueType, values.toArray)
         }
       }
     }
 
-    new DefaultGenericVector(
-      dataType,
-      mapValues.map(getMapValue).toArray
-    )
+    DefaultGenericVector.fromArray(dataType, mapValues.map(getMapValue).toArray)
   }
 }

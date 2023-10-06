@@ -193,7 +193,7 @@ public class DefaultJsonRow implements Row {
 
                 @Override
                 public ColumnVector getElements() {
-                    return new DefaultGenericVector(arrayType.getElementType(), elements);
+                    return DefaultGenericVector.fromArray(arrayType.getElementType(), elements);
                 }
             };
         }
@@ -205,7 +205,7 @@ public class DefaultJsonRow implements Row {
                 throw new RuntimeException("MapType with a key type of `String` is supported, " +
                         "received a key type: " + mapType.getKeyType());
             }
-            List<String> keys = new ArrayList<>(jsonValue.size());
+            List<Object> keys = new ArrayList<>(jsonValue.size());
             List<Object> values = new ArrayList<>(jsonValue.size());
             final Iterator<Map.Entry<String, JsonNode>> iter = jsonValue.fields();
 
@@ -228,12 +228,12 @@ public class DefaultJsonRow implements Row {
 
                 @Override
                 public ColumnVector getKeys() {
-                    return new DefaultGenericVector(mapType.getKeyType(), keys.toArray());
+                    return DefaultGenericVector.fromList(mapType.getKeyType(), keys);
                 }
 
                 @Override
                 public ColumnVector getValues() {
-                    return new DefaultGenericVector(mapType.getValueType(), values.toArray());
+                    return DefaultGenericVector.fromList(mapType.getValueType(), values);
                 }
             };
         }
