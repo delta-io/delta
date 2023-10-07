@@ -674,8 +674,8 @@ abstract class UpdateSuiteBase
 
     testAnalysisException(
       targetDF,
-      set =
-        Seq("a = named_struct('c', named_struct('d', 'rand', 'e', 'str'))", "a.c.d = 'RANDOM2'"),
+      set = Seq("a = named_struct('c', named_struct('d', 'rand', 'e', 'str'), 'g', 3)",
+        "a.c.d = 'RANDOM2'"),
       errMsgs = "There is a conflict from these SET columns" :: Nil)
 
     val schema = new StructType().add("a", MapType(StringType, IntegerType))
