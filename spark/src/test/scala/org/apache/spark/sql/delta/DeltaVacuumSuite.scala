@@ -297,19 +297,19 @@ trait DeltaVacuumSuiteBase extends QueryTest
       CreateFile(notCommittedFile, commitToActionLog = false),
       CheckFiles(Seq(committedFile, notCommittedFile)),
 
-      // Dry run should not delete the not committed file and but not delete files
+      // Dry run should not delete any file.
       ExecuteVacuumInScala(
         deltaTable,
         Seq(),
         dryRun = Some(true)),
       CheckFiles(Seq(committedFile, notCommittedFile)),
 
-      // Actual run should delete the not committed file and but not delete files
+      // Actual run should delete the not committed file and but not delete files.
       ExecuteVacuumInScala(deltaTable, Seq()),
       CheckFiles(Seq(committedFile)),
       CheckFiles(Seq(notCommittedFile), exist = false), // file ts older than default retention
 
-      // Dry run should not delete the not committed file and but not delete files
+      // Dry run should not delete any file.
       ExecuteVacuumInScala(
         deltaTable,
         Seq(),
