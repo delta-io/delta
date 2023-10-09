@@ -233,13 +233,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
           case (None, Some(retention)) => deltaTable.vacuum(retention)
           case (None, None) => deltaTable.vacuum()
         }
-
-        if(expectedDf == Seq()) {
-          assert(result === spark.emptyDataFrame)
-        } else {
-          val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
-          checkDatasetUnorderly(result.as[String], qualified: _*)
-        }
+        val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
+        checkDatasetUnorderly(result.as[String], qualified: _*)
       case AdvanceClock(timeToAdd: Long) =>
         Given(s"*** Advancing clock by $timeToAdd millis")
         clock.advance(timeToAdd)
@@ -300,30 +295,39 @@ trait DeltaVacuumSuiteBase extends QueryTest
       // Dry run should not delete any file.
       ExecuteVacuumInScala(
         deltaTable,
-        Seq(),
+        expectedDf = Seq(new File(tablePath, notCommittedFile).toString),
         dryRun = Some(true)),
       CheckFiles(Seq(committedFile, notCommittedFile)),
 
       // Actual run should delete the not committed file and but not delete files.
-      ExecuteVacuumInScala(deltaTable, Seq()),
+      ExecuteVacuumInScala(deltaTable, Seq(tablePath)),
       CheckFiles(Seq(committedFile)),
       CheckFiles(Seq(notCommittedFile), exist = false), // file ts older than default retention
-
-      // Dry run should not delete any file.
-      ExecuteVacuumInScala(
-        deltaTable,
-        Seq(),
-        Some(0),
-        dryRun = Some(true)),
-      CheckFiles(Seq(committedFile)),
 
       // Logically delete the file.
       LogicallyDeleteFile(committedFile),
       CheckFiles(Seq(committedFile)),
 
+      // Dry run should not delete any file.
+      ExecuteVacuumInScala(
+        deltaTable,
+        expectedDf = Seq(new File(tablePath, committedFile).toString),
+        Some(0),
+        dryRun = Some(true)),
+      CheckFiles(Seq(committedFile)),
+
+
       // Vacuum with 0 retention should actually delete the file.
-      ExecuteVacuumInScala(deltaTable, Seq(), Some(0)),
-      CheckFiles(Seq(committedFile), exist = false))
+      ExecuteVacuumInScala(deltaTable, Seq(tablePath), Some(0)),
+      CheckFiles(Seq(committedFile), exist = false),
+
+      // Check DRY RUN returns empty dataframe.
+      ExecuteVacuumInScala(
+        deltaTable,
+        Seq(),
+        Some(0),
+        dryRun = Some(true))
+    )
   }
 
   /**
@@ -523,11 +527,17 @@ class DeltaVacuumSuite
   }
 
   test("basic case - Scala on path-based table") {
+    val tableName = "deltaTable"
     withEnvironment { (tempDir, _) =>
-      import testImplicits._
-      spark.emptyDataset[Int].write.format("delta").save(tempDir.getAbsolutePath)
-      val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
-      vacuumScalaTest(deltaTable, tempDir.getAbsolutePath)
+      withTable(tableName) {
+        import testImplicits._
+        io.delta.tables.DeltaTable.create().tableName(tableName)
+          .addColumn("c1", "int")
+          .location(tempDir.getAbsolutePath)
+          .execute()
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
+        vacuumScalaTest(deltaTable, tempDir.getAbsolutePath)
+      }
     }
   }
 
@@ -537,7 +547,10 @@ class DeltaVacuumSuite
       withTable(tableName) {
         // Initialize the table so that we can create the DeltaTable object
         import testImplicits._
-        spark.emptyDataset[Int].write.format("delta").saveAsTable(tableName)
+        io.delta.tables.DeltaTable.create().tableName(tableName)
+          .addColumn("c1", "int")
+          .location(tempDir.getAbsolutePath)
+          .execute()
         val deltaTable = io.delta.tables.DeltaTable.forName(tableName)
         val tablePath =
           new File(spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName)).location)
