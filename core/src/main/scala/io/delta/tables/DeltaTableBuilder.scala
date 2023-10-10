@@ -19,11 +19,7 @@ package io.delta.tables
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableUtils}
-<<<<<<< HEAD
-=======
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
->>>>>>> 91d25681b (set active session for commands)
 import io.delta.tables.execution._
 
 import org.apache.spark.annotation._
