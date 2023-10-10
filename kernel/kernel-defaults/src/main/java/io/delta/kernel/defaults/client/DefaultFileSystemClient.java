@@ -27,8 +27,8 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
-import io.delta.kernel.client.FileSystemClient;
 import io.delta.kernel.client.FileReadRequest;
+import io.delta.kernel.client.FileSystemClient;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.Utils;
