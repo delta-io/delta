@@ -27,10 +27,10 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
+import io.delta.kernel.client.FileReadRequest;
 import io.delta.kernel.client.FileSystemClient;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
 import io.delta.kernel.utils.Utils;
 
 /**
@@ -80,11 +80,12 @@ public class DefaultFileSystemClient
 
     @Override
     public CloseableIterator<ByteArrayInputStream> readFiles(
-        CloseableIterator<Tuple2<String, Tuple2<Integer, Integer>>> iter) {
-        return iter.map(elem -> getStream(elem._1, elem._2._1, elem._2._2));
+        CloseableIterator<FileReadRequest> readRequests) {
+        return readRequests.map(elem ->
+                getStream(elem.getPath(), elem.getStartOffset(), elem.getReadLength()));
     }
 
-    private ByteArrayInputStream getStream(String filePath, Integer offset, Integer size) {
+    private ByteArrayInputStream getStream(String filePath, int offset, int size) {
         Path path = new Path(filePath);
         try {
             FileSystem fs = path.getFileSystem(hadoopConf);
