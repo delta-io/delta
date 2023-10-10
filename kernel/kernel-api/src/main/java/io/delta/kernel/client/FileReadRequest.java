@@ -13,8 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.fs;
-// TODO here or in io.delta.kernel.client?
+package io.delta.kernel.client;
 
 import io.delta.kernel.annotation.Evolving;
 

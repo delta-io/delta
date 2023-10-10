@@ -21,7 +21,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.fs.FileReadRequest;
 import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
 
@@ -57,7 +56,8 @@ public interface FileSystemClient {
     String resolvePath(String path) throws IOException;
 
     /**
-     * Return an iterator of byte streams one for each read request in {@code readRequests}.
+     * Return an iterator of byte streams one for each read request in {@code readRequests}. The
+     * returned streams are in the same order as the given {@link FileReadRequest}s.
      * It is the responsibility of the caller to close each returned stream.
      *
      * @param readRequests Iterator of read requests
