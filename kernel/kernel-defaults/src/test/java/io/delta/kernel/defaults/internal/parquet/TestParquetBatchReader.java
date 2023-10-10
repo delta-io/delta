@@ -364,8 +364,11 @@ public class TestParquetBatchReader {
                     assertEquals(2, arrayValue.getSize());
                     assertEquals(2, elementVector.getSize());
                     assertTrue(elementVector.getDataType() instanceof StructType);
+                    // check getStruct
                     Row item0 = elementVector.getStruct(0);
                     assertEquals(rowId, item0.getLong(0));
+                    // also check DefaultViewVector implements getChild
+                    assertEquals(rowId, elementVector.getChild(0).getLong(0));
                     assertTrue(elementVector.isNullAt(1));
                     break;
                 }
