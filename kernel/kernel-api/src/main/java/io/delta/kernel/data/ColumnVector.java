@@ -168,17 +168,6 @@ public interface ColumnVector extends AutoCloseable {
     }
 
     /**
-     * Return the row value located at {@code rowId}. The return value is undefined and can be
-     * anything, if the slot for {@code rowId} is null.
-     *
-     * @param rowId
-     * @return
-     */
-    default Row getStruct(int rowId) {
-        throw new UnsupportedOperationException("Invalid value request for data type");
-    }
-
-    /**
      * Return the array value located at {@code rowId}. Returns null if the slot for {@code rowId}
      * is null
      */
@@ -191,9 +180,9 @@ public interface ColumnVector extends AutoCloseable {
      * {@code struct} type columns.
      *
      * @param ordinal Ordinal of the child vector to return.
-     * @return
      */
     default ColumnVector getChild(int ordinal) {
-        throw new UnsupportedOperationException("Child vectors are not available.");
+        throw new UnsupportedOperationException(
+            "Child vectors are not available for vector of type " + getDataType());
     }
 }

@@ -22,6 +22,7 @@ import java.util.*;
 import java.util.stream.IntStream;
 import static java.util.stream.Collectors.toMap;
 
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
@@ -53,6 +54,25 @@ public class DeletionVectorDescriptor {
         final int sizeInBytes = requireNonNull(row, 3, "sizeInBytes").getInt(3);
         final long cardinality = requireNonNull(row, 4, "cardinality").getLong(4);
 
+        return new DeletionVectorDescriptor(storageType, pathOrInlineDv, offset,
+            sizeInBytes, cardinality);
+    }
+
+    public static DeletionVectorDescriptor fromColumnVector(ColumnVector vector, int rowId) {
+        if (vector.isNullAt(rowId)) {
+            return null;
+        }
+
+        final String storageType = requireNonNull(vector.getChild(0), rowId, "storageType")
+            .getString(rowId);
+        final String pathOrInlineDv = requireNonNull(vector.getChild(1), rowId, "pathOrInlineDv")
+            .getString(rowId);
+        final Optional<Integer> offset = Optional.ofNullable(
+            vector.getChild(2).isNullAt(rowId) ? null : vector.getChild(2).getInt(rowId));
+        final int sizeInBytes = requireNonNull(vector.getChild(3), rowId, "sizeInBytes")
+            .getInt(rowId);
+        final long cardinality = requireNonNull(vector.getChild(4), rowId, "cardinality")
+            .getLong(rowId);
         return new DeletionVectorDescriptor(storageType, pathOrInlineDv, offset,
             sizeInBytes, cardinality);
     }

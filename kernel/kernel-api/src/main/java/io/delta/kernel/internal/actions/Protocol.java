@@ -18,7 +18,7 @@ package io.delta.kernel.internal.actions;
 import java.util.Collections;
 import java.util.List;
 
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
@@ -26,17 +26,20 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.VectorUtils;
 
 public class Protocol {
-    public static Protocol fromRow(Row row) {
-        if (row == null) {
+
+    public static Protocol fromColumnVector(ColumnVector vector, int rowId) {
+        if (vector.isNullAt(rowId)) {
             return null;
         }
+
         return new Protocol(
-            row.getInt(0),
-            row.getInt(1),
-            row.isNullAt(2) ? Collections.emptyList() :
-                    VectorUtils.toJavaList(row.getArray(2)),
-            row.isNullAt(3) ? Collections.emptyList() :
-                    VectorUtils.toJavaList(row.getArray(3)));
+            vector.getChild(0).getInt(rowId),
+            vector.getChild(1).getInt(rowId),
+            vector.getChild(2).isNullAt(rowId) ? Collections.emptyList() :
+                VectorUtils.toJavaList(vector.getChild(2).getArray(rowId)),
+            vector.getChild(3).isNullAt(rowId) ? Collections.emptyList() :
+                VectorUtils.toJavaList(vector.getChild(3).getArray(rowId))
+        );
     }
 
     public static final StructType READ_SCHEMA = new StructType()

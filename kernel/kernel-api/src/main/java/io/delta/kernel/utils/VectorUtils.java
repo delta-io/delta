@@ -23,7 +23,9 @@ import java.util.Map;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
+import io.delta.kernel.internal.data.StructRow;
 
 public final class VectorUtils {
 
@@ -71,7 +73,7 @@ public final class VectorUtils {
     /**
      * Gets the value at {@code rowId} from the column vector. The type of the Object returned
      * depends on the data type of the column vector. For complex types array and map, returns
-     * the value as Java list or Java map.
+     * the value as Java list or Java map. For struct type, returns an {@link Row}.
      */
     private static Object getValueAsObject(
             ColumnVector columnVector, DataType dataType, int rowId) {
@@ -99,7 +101,8 @@ public final class VectorUtils {
         } else if (dataType instanceof BinaryType) {
             return columnVector.getBinary(rowId);
         } else if (dataType instanceof StructType) {
-            return columnVector.getStruct(rowId);
+            // TODO are we okay with this usage of StructRow?
+            return StructRow.fromStructVector(columnVector, rowId);
         } else if (dataType instanceof DecimalType) {
             return columnVector.getDecimal(rowId);
         } else if (dataType instanceof ArrayType) {

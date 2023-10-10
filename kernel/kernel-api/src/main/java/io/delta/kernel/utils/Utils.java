@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.util.Iterator;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 
 /**
@@ -133,5 +134,13 @@ public class Utils {
                 "Expected a non-null value for column: " + columnName);
         }
         return row;
+    }
+
+    public static ColumnVector requireNonNull(ColumnVector vector, int rowId, String columnName) {
+        if (vector.isNullAt(rowId)) {
+            throw new IllegalArgumentException(
+                "Expected a non-null value for column: " + columnName);
+        }
+        return vector;
     }
 }

@@ -149,8 +149,7 @@ public class LogReplay implements Logging {
 
                     for (int i = 0; i < protocolVector.getSize(); i++) {
                         if (!protocolVector.isNullAt(i)) {
-                            final Row row = protocolVector.getStruct(i);
-                            protocol = Protocol.fromRow(row);
+                            protocol = Protocol.fromColumnVector(protocolVector, i);
 
                             if (metadata != null) {
                                 // Stop since we have found the latest Protocol and Metadata.
@@ -167,8 +166,7 @@ public class LogReplay implements Logging {
 
                     for (int i = 0; i < metadataVector.getSize(); i++) {
                         if (!metadataVector.isNullAt(i)) {
-                            final Row row = metadataVector.getStruct(i);
-                            metadata = Metadata.fromRow(row, tableClient);
+                            metadata = Metadata.fromColumnVector(metadataVector, i, tableClient);
 
                             if (protocol != null) {
                                 // Stop since we have found the latest Protocol and Metadata.

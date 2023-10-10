@@ -216,12 +216,6 @@ public class TestDefaultJsonHandler {
             assertEquals(exp3, VectorUtils.toJavaMap(result.getMap(3)));
             ArrayValue arrayOfStruct = result.getArray(4);
             assertEquals(arrayOfStruct.getSize(), 2);
-            // check getStruct
-            assertEquals("foo", arrayOfStruct.getElements().getStruct(0).getString(0));
-            assertEquals(3, arrayOfStruct.getElements().getStruct(0).getInt(1));
-            assertTrue(arrayOfStruct.getElements().getStruct(1).isNullAt(0));
-            assertTrue(arrayOfStruct.getElements().getStruct(1).isNullAt(1));
-            // check getChild
             assertEquals("foo", arrayOfStruct.getElements().getChild(0).getString(0));
             assertEquals(3, arrayOfStruct.getElements().getChild(1).getInt(0));
             assertTrue(arrayOfStruct.getElements().getChild(0).isNullAt(1));

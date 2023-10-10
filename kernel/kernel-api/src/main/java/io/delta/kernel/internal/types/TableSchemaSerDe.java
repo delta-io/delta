@@ -15,16 +15,16 @@
  */
 package io.delta.kernel.internal.types;
 
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import io.delta.kernel.client.JsonHandler;
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -79,11 +79,12 @@ public class TableSchemaSerDe {
     private static StructType parseStructType(JsonHandler jsonHandler,
                                               String serializedStructType) {
         Function<Row, StructType> evalMethod = (row) -> {
-            final List<Row> fields = VectorUtils.toJavaList(row.getArray(0));
-            return new StructType(
-                fields.stream()
-                    .map(field -> parseStructField(jsonHandler, field))
-                    .collect(Collectors.toList()));
+            final ArrayValue fieldsArrayValue = row.getArray(0);
+            ArrayList<StructField> parsedFields = new ArrayList<>(fieldsArrayValue.getSize());
+            for (int i = 0; i < fieldsArrayValue.getSize(); i ++) {
+                parsedFields.add(parseStructField(jsonHandler, fieldsArrayValue.getElements(), i));
+            }
+            return new StructType(parsedFields);
         };
         return parseAndEvalSingleRow(
             jsonHandler, serializedStructType, STRUCT_TYPE_SCHEMA, evalMethod);
@@ -92,13 +93,15 @@ public class TableSchemaSerDe {
     /**
      * Utility method to parse a {@link StructField} from the {@link Row}
      */
-    private static StructField parseStructField(JsonHandler jsonHandler, Row row) {
-        String name = row.getString(0);
-        String serializedDataType = row.getString(1);
+    private static StructField parseStructField(
+            JsonHandler jsonHandler, ColumnVector vector, int rowId) {
+
+        String name = vector.getChild(0).getString(rowId);
+        String serializedDataType = vector.getChild(1).getString(rowId);
         DataType type = parseDataType(jsonHandler, serializedDataType);
-        boolean nullable = row.getBoolean(2);
-        Map<String, String> metadata = row.isNullAt(3) ? Collections.emptyMap() :
-                VectorUtils.toJavaMap(row.getMap(3));
+        boolean nullable = vector.getChild(2).getBoolean(rowId);
+        Map<String, String> metadata = vector.getChild(3).isNullAt(rowId) ? Collections.emptyMap() :
+            VectorUtils.toJavaMap(vector.getChild(3).getMap(rowId));
         return new StructField(name, type, nullable, metadata);
     }
 

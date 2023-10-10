@@ -253,21 +253,21 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
     }
 
     public static String getAddFilePath(ColumnVector addFileVector, int rowId) {
-        return addFileVector.getStruct(rowId).getString(ADD_FILE_PATH_ORDINAL);
+        return addFileVector.getChild(ADD_FILE_PATH_ORDINAL).getString(rowId);
     }
 
     public static DeletionVectorDescriptor getAddFileDV(ColumnVector addFileVector, int rowId) {
-        return DeletionVectorDescriptor.fromRow(
-            addFileVector.getStruct(rowId).getStruct(ADD_FILE_DV_ORDINAL));
+        return DeletionVectorDescriptor.fromColumnVector(
+            addFileVector.getChild(ADD_FILE_DV_ORDINAL), rowId);
     }
 
     public static String getRemoveFilePath(ColumnVector removeFileVector, int rowId) {
-        return removeFileVector.getStruct(rowId).getString(REMOVE_FILE_PATH_ORDINAL);
+        return removeFileVector.getChild(REMOVE_FILE_PATH_ORDINAL).getString(rowId);
     }
 
     public static DeletionVectorDescriptor getRemoveFileDV(
         ColumnVector removeFileVector, int rowId) {
-        return DeletionVectorDescriptor.fromRow(
-            removeFileVector.getStruct(rowId).getStruct(REMOVE_FILE_DV_ORDINAL));
+        return DeletionVectorDescriptor.fromColumnVector(
+            removeFileVector.getChild(REMOVE_FILE_DV_ORDINAL), rowId);
     }
 }

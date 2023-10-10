@@ -15,19 +15,20 @@
  */
 package io.delta.kernel.internal.actions;
 
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import static io.delta.kernel.utils.Utils.requireNonNull;
 
 public class Format {
-    public static Format fromRow(Row row) {
-        if (row == null) {
+
+    public static Format fromColumnVector(ColumnVector vector, int rowId) {
+        if (vector.isNullAt(rowId)) {
             return null;
         }
-
-        final String provider = requireNonNull(row, 0, "provider").getString(0);
+        final String provider = requireNonNull(vector.getChild(0), rowId, "provider")
+            .getString(rowId);
         return new Format(provider);
     }
 

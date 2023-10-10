@@ -126,7 +126,10 @@ object TestRow {
       case _: DecimalType => vector.getDecimal(rowId)
       case _: ArrayType => arrayValueToScalaSeq(vector.getArray(rowId))
       case _: MapType => mapValueToScalaMap(vector.getMap(rowId))
-       case _: StructType => TestRow(vector.getStruct(rowId))
+      case dataType: StructType =>
+        TestRow.fromSeq(Seq.range(0, dataType.length()).map { ordinal =>
+          getAsTestObject(vector.getChild(ordinal), rowId)
+        })
       case _ => throw new UnsupportedOperationException("unrecognized data type")
     }
   }
