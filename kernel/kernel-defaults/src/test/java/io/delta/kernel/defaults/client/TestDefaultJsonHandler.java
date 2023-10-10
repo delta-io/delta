@@ -21,10 +21,12 @@ import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.FileSystemClient;
 import io.delta.kernel.client.JsonHandler;
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
@@ -156,7 +158,9 @@ public class TestDefaultJsonHandler {
                 "  \"array\": [0, 1, null]," +
                 "  \"nested_array\": [[\"a\", \"b\"], [\"c\"], []]," +
                 "  \"map\": {\"a\":  true, \"b\":  false},\n" +
-                "  \"nested_map\": {\"a\":  {\"one\":  [], \"two\":  [1, 2, 3]}, \"b\":  {}}\n" +
+                "  \"nested_map\": {\"a\":  {\"one\":  [], \"two\":  [1, 2, 3]}, \"b\":  {}},\n" +
+                "  \"array_of_struct\": " +
+                "[{\"field1\": \"foo\", \"field2\": 3}, {\"field1\": null}]\n" +
                 "}";
         StructType schema = new StructType()
                 .add("array", new ArrayType(IntegerType.INTEGER, true))
@@ -171,7 +175,15 @@ public class TestDefaultJsonHandler {
                                         true
                                 ),
                                 true
-                        ));
+                        )
+                ).add("array_of_struct",
+                        new ArrayType(
+                                new StructType()
+                                        .add("field1", StringType.STRING, true)
+                                        .add("field2", IntegerType.INTEGER, true),
+                                true
+                        )
+                );
         ColumnarBatch batch = JSON_HANDLER.parseJson(singletonStringColumnVector(json), schema);
 
         try (CloseableIterator<Row> rows = batch.getRows()) {
@@ -202,6 +214,18 @@ public class TestDefaultJsonHandler {
                         }
                     };
             assertEquals(exp3, VectorUtils.toJavaMap(result.getMap(3)));
+            ArrayValue arrayOfStruct = result.getArray(4);
+            assertEquals(arrayOfStruct.getSize(), 2);
+            // check getStruct
+            assertEquals("foo", arrayOfStruct.getElements().getStruct(0).getString(0));
+            assertEquals(3, arrayOfStruct.getElements().getStruct(0).getInt(1));
+            assertTrue(arrayOfStruct.getElements().getStruct(1).isNullAt(0));
+            assertTrue(arrayOfStruct.getElements().getStruct(1).isNullAt(1));
+            // check getChild
+            assertEquals("foo", arrayOfStruct.getElements().getChild(0).getString(0));
+            assertEquals(3, arrayOfStruct.getElements().getChild(1).getInt(0));
+            assertTrue(arrayOfStruct.getElements().getChild(0).isNullAt(1));
+            assertTrue(arrayOfStruct.getElements().getChild(1).isNullAt(1));
         }
     }
 
