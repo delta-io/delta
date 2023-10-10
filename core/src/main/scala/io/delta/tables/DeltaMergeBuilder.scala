@@ -19,12 +19,8 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 import scala.collection.Map
 
-<<<<<<< HEAD:core/src/main/scala/io/delta/tables/DeltaMergeBuilder.scala
 import org.apache.spark.sql.delta.{DeltaErrors, PreprocessTableMerge}
-=======
-import org.apache.spark.sql.delta.{DeltaErrors, PostHocResolveUpCast, PreprocessTableMerge}
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
->>>>>>> fbf208f3b (set active session for commands):spark/src/main/scala/io/delta/tables/DeltaMergeBuilder.scala
 import org.apache.spark.sql.delta.DeltaViewHelper
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.util.AnalysisHelper
@@ -282,22 +278,7 @@ class DeltaMergeBuilder private(
       // https://issues.apache.org/jira/browse/SPARK-34962.
       val resolvedMergeInto =
       DeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
-<<<<<<< HEAD:core/src/main/scala/io/delta/tables/DeltaMergeBuilder.scala
         tryResolveReferences(sparkSession) _)
-    if (!resolvedMergeInto.resolved) {
-      throw DeltaErrors.analysisException("Failed to resolve\n", plan = Some(resolvedMergeInto))
-    }
-    val strippedMergeInto = resolvedMergeInto.copy(
-      target = DeltaViewHelper.stripTempViewForMerge(resolvedMergeInto.target, SQLConf.get)
-    )
-    // Preprocess the actions and verify
-    val mergeIntoCommand =
-      PreprocessTableMerge(sparkSession.sessionState.conf)(strippedMergeInto)
-        .asInstanceOf[MergeIntoCommand]
-    sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
-    mergeIntoCommand.run(sparkSession)
-=======
-        tryResolveReferencesForExpressions(sparkSession))
       if (!resolvedMergeInto.resolved) {
         throw DeltaErrors.analysisException("Failed to resolve\n", plan = Some(resolvedMergeInto))
       }
@@ -305,14 +286,12 @@ class DeltaMergeBuilder private(
         target = DeltaViewHelper.stripTempViewForMerge(resolvedMergeInto.target, SQLConf.get)
       )
       // Preprocess the actions and verify
-      var mergeIntoCommand =
+      val mergeIntoCommand =
         PreprocessTableMerge(sparkSession.sessionState.conf)(strippedMergeInto)
-      // Resolve UpCast expressions that `PreprocessTableMerge` may have introduced.
-      mergeIntoCommand = PostHocResolveUpCast(sparkSession).apply(mergeIntoCommand)
+          .asInstanceOf[MergeIntoCommand]
       sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
-      mergeIntoCommand.asInstanceOf[MergeIntoCommand].run(sparkSession)
+      mergeIntoCommand.run(sparkSession)
     }
->>>>>>> fbf208f3b (set active session for commands):spark/src/main/scala/io/delta/tables/DeltaMergeBuilder.scala
   }
 
   /**
