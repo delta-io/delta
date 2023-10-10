@@ -320,53 +320,6 @@ class DeltaTableTests(DeltaTestCase):
                 .merge(source, "key = k")
                 .whenNotMatchedInsert(values="k = 'a'", condition={"value": 1}))
 
-<<<<<<< HEAD
-=======
-        # ---- bad args in whenNotMatchedBySourceUpdate()
-        with self.assertRaisesRegex(ValueError, "cannot be None"):
-            (dt  # type: ignore[call-overload]
-                .merge(source, "key = k")
-                .whenNotMatchedBySourceUpdate({"value": "value"}))
-
-        with self.assertRaisesRegex(ValueError, "cannot be None"):
-            (dt  # type: ignore[call-overload]
-                .merge(source, "key = k")
-                .whenNotMatchedBySourceUpdate(1))
-
-        with self.assertRaisesRegex(ValueError, "cannot be None"):
-            (dt  # type: ignore[call-overload]
-                .merge(source, "key = k")
-                .whenNotMatchedBySourceUpdate(condition="key = 'a'"))
-
-        with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
-            (dt  # type: ignore[call-overload]
-                .merge(source, "key = k")
-                .whenNotMatchedBySourceUpdate(1, {"value": "value"}))
-
-        with self.assertRaisesRegex(TypeError, "must be a dict"):
-            (dt  # type: ignore[call-overload]
-                .merge(source, "key = k")
-                .whenNotMatchedBySourceUpdate("key = 'a'", 1))
-
-        with self.assertRaisesRegex(TypeError, "Values of dict in .* must contain only"):
-            (dt
-                .merge(source, "key = k")
-                .whenNotMatchedBySourceUpdate(set={"value": 1}))  # type: ignore[dict-item]
-
-        with self.assertRaisesRegex(TypeError, "Keys of dict in .* must contain only"):
-            (dt
-                .merge(source, "key = k")
-                .whenNotMatchedBySourceUpdate(set={1: ""}))  # type: ignore[dict-item]
-
-        with self.assertRaises(TypeError):
-            (dt  # type: ignore[call-overload]
-                .merge(source, "key = k")
-                .whenNotMatchedBySourceUpdate(set="key = 'a'", condition={"value": 1}))
-
-        # bad args in whenNotMatchedBySourceDelete()
-        with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
-            dt.merge(source, "key = k").whenNotMatchedBySourceDelete(1)  # type: ignore[arg-type]
-
     def test_merge_with_inconsistent_sessions(self) -> None:
         source_path = os.path.join(self.tempFile, "source")
         target_path = os.path.join(self.tempFile, "target")
@@ -396,7 +349,6 @@ class DeltaTableTests(DeltaTestCase):
         finally:
             spark.conf.unset("spark.databricks.delta.schema.autoMerge.enabled")
 
->>>>>>> cc66327d2 (set active session for commands)
     def test_history(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         self.__overwriteDeltaTable([('a', 3), ('b', 2), ('c', 1)])

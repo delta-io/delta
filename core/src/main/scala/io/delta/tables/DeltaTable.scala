@@ -19,12 +19,8 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
-<<<<<<< HEAD
-import org.apache.spark.sql.delta.actions.Protocol
-=======
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
-import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
->>>>>>> cc66327d2 (set active session for commands)
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableSetPropertiesDeltaCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
