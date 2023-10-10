@@ -184,6 +184,9 @@ public class MultiThreadedTableReader
             } finally {
                 stopSignal.set(true);
                 executorService.shutdownNow();
+                if (error.get() != null) {
+                    throw new RuntimeException(error.get());
+                }
             }
         }
 
