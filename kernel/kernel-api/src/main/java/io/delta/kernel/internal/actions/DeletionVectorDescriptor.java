@@ -63,11 +63,11 @@ public class DeletionVectorDescriptor {
     public static final String UUID_DV_MARKER = "u";
 
     public static final StructType READ_SCHEMA = new StructType()
-        .add("storageType", StringType.INSTANCE, false /* nullable*/)
-        .add("pathOrInlineDv", StringType.INSTANCE, false /* nullable*/)
-        .add("offset", IntegerType.INSTANCE, true /* nullable*/)
-        .add("sizeInBytes", IntegerType.INSTANCE, false /* nullable*/)
-        .add("cardinality", LongType.INSTANCE, false /* nullable*/);
+        .add("storageType", StringType.STRING, false /* nullable*/)
+        .add("pathOrInlineDv", StringType.STRING, false /* nullable*/)
+        .add("offset", IntegerType.INTEGER, true /* nullable*/)
+        .add("sizeInBytes", IntegerType.INTEGER, false /* nullable*/)
+        .add("cardinality", LongType.LONG, false /* nullable*/);
 
     private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
         IntStream.range(0, READ_SCHEMA.length())

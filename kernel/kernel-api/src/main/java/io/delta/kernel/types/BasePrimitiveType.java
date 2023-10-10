@@ -57,17 +57,17 @@ public abstract class BasePrimitiveType extends DataType {
     private static final Supplier<Map<String, DataType>> nameToPrimitiveTypeMap = () ->
         Collections.unmodifiableMap(new HashMap<String, DataType>() {
             {
-                put("boolean", BooleanType.INSTANCE);
-                put("byte", ByteType.INSTANCE);
-                put("short", ShortType.INSTANCE);
-                put("integer", IntegerType.INSTANCE);
-                put("long", LongType.INSTANCE);
-                put("float", FloatType.INSTANCE);
-                put("double", DoubleType.INSTANCE);
-                put("date", DateType.INSTANCE);
-                put("timestamp", TimestampType.INSTANCE);
-                put("binary", BinaryType.INSTANCE);
-                put("string", StringType.INSTANCE);
+                put("boolean", BooleanType.BOOLEAN);
+                put("byte", ByteType.BYTE);
+                put("short", ShortType.SHORT);
+                put("integer", IntegerType.INTEGER);
+                put("long", LongType.LONG);
+                put("float", FloatType.FLOAT);
+                put("double", DoubleType.DOUBLE);
+                put("date", DateType.DATE);
+                put("timestamp", TimestampType.TIMESTAMP);
+                put("binary", BinaryType.BINARY);
+                put("string", StringType.STRING);
             }
         });
 

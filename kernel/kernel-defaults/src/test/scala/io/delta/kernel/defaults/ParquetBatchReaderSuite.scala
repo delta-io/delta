@@ -50,7 +50,7 @@ class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
     }
 
     val readSchema = new StructType()
-      .add("id", IntegerType.INSTANCE)
+      .add("id", IntegerType.INTEGER)
       .add("col1", new DecimalType(9, 0)) // INT32: 1 <= precision <= 9
       .add("col2", new DecimalType(12, 0)) // INT64: 10 <= precision <= 18
       .add("col3", new DecimalType(25, 0)) // FIXED_LEN_BYTE_ARRAY
@@ -93,7 +93,7 @@ class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
     }
 
     val readSchema = new StructType()
-      .add("id", IntegerType.INSTANCE)
+      .add("id", IntegerType.INTEGER)
       .add("col1", new DecimalType(5, 1)) // INT32: 1 <= precision <= 9
       .add("col2", new DecimalType(10, 5)) // INT64: 10 <= precision <= 18
       .add("col3", new DecimalType(20, 5)) // FIXED_LEN_BYTE_ARRAY

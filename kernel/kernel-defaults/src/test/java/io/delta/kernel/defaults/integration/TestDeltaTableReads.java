@@ -132,10 +132,10 @@ public class TestDeltaTableReads
         Snapshot snapshot = snapshot(tablePath);
         StructType readSchema = new StructType()
             // partition fields
-            .add("as_int", IntegerType.INSTANCE)
-            .add("as_double", DoubleType.INSTANCE)
+            .add("as_int", IntegerType.INTEGER)
+            .add("as_double", DoubleType.DOUBLE)
             // data fields
-            .add("value", StringType.INSTANCE);
+            .add("value", StringType.STRING);
 
         List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
 

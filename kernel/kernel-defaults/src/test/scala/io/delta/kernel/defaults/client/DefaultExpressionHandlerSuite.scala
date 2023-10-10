@@ -23,7 +23,7 @@ class DefaultExpressionHandlerSuite extends AnyFunSuite {
   test("create selection vector: single value") {
     Seq(true, false).foreach { testValue =>
       val outputVector = selectionVector(Seq(testValue).toArray, 0, 1)
-      assert(outputVector.getDataType === BooleanType.INSTANCE)
+      assert(outputVector.getDataType === BooleanType.BOOLEAN)
       assert(outputVector.getSize == 1)
       assert(outputVector.isNullAt(0) == false)
       assert(outputVector.getBoolean(0) == testValue)
@@ -34,7 +34,7 @@ class DefaultExpressionHandlerSuite extends AnyFunSuite {
     Seq((0, testValues.length), (0, 3), (2, 2), (2, 4), (3, testValues.length)).foreach { pair =>
       val (from, to) = (pair._1, pair._2)
       val outputVector = selectionVector(testValues, from, to)
-      assert(outputVector.getDataType === BooleanType.INSTANCE)
+      assert(outputVector.getDataType === BooleanType.BOOLEAN)
       assert(outputVector.getSize == (to - from))
       Seq.range(from, to).foreach { rowId =>
         assert(outputVector.isNullAt(rowId - from) == false)

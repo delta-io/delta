@@ -58,7 +58,7 @@ trait ExpressionSuiteBase extends TestUtils {
 
   protected def booleanVector(values: Seq[BooleanJ]): ColumnVector = {
     new ColumnVector {
-      override def getDataType: DataType = BooleanType.INSTANCE
+      override def getDataType: DataType = BooleanType.BOOLEAN
 
       override def getSize: Int = values.length
 
