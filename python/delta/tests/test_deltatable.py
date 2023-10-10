@@ -20,11 +20,8 @@
 
 import unittest
 import os
-<<<<<<< HEAD
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
-=======
 from multiprocessing.pool import ThreadPool
->>>>>>> 73f1a6965 (set active session for commands)
 
 from pyspark.sql import DataFrame, Row
 from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
@@ -430,7 +427,6 @@ class DeltaTableTestsMixin:
                 .merge(source, "key = k")
                 .whenNotMatchedInsert(values="k = 'a'", condition={"value": 1}))
 
-<<<<<<< HEAD
         # ---- bad args in whenNotMatchedBySourceUpdate()
         with self.assertRaisesRegex(ValueError, "cannot be None"):
             (dt  # type: ignore[call-overload]
@@ -476,8 +472,6 @@ class DeltaTableTestsMixin:
         with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
             dt.merge(source, "key = k").whenNotMatchedBySourceDelete(1)  # type: ignore[arg-type]
 
-    def test_history(self) -> None:
-=======
     def test_merge_with_inconsistent_sessions(self) -> None:
         source_path = os.path.join(self.tempFile, "source")
         target_path = os.path.join(self.tempFile, "target")
@@ -507,8 +501,7 @@ class DeltaTableTestsMixin:
         finally:
             spark.conf.unset("spark.databricks.delta.schema.autoMerge.enabled")
 
-    def test_history(self):
->>>>>>> 73f1a6965 (set active session for commands)
+    def test_history(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         self.__overwriteDeltaTable([('a', 3), ('b', 2), ('c', 1)])
         dt = DeltaTable.forPath(self.spark, self.tempFile)

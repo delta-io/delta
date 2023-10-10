@@ -19,15 +19,10 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 import scala.collection.Map
 
-<<<<<<< HEAD:spark/src/main/scala/io/delta/tables/DeltaMergeBuilder.scala
 import org.apache.spark.sql.delta.{DeltaErrors, PostHocResolveUpCast, PreprocessTableMerge}
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.DeltaViewHelper
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
-=======
-import org.apache.spark.sql.delta.{DeltaErrors, PreprocessTableMerge}
-import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
-import org.apache.spark.sql.delta.metering.DeltaLogging
->>>>>>> 73f1a6965 (set active session for commands):core/src/main/scala/io/delta/tables/DeltaMergeBuilder.scala
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.annotation._
@@ -271,33 +266,8 @@ class DeltaMergeBuilder private(
    */
   def execute(): Unit = improveUnsupportedOpError {
     val sparkSession = targetTable.toDF.sparkSession
-<<<<<<< HEAD:spark/src/main/scala/io/delta/tables/DeltaMergeBuilder.scala
-    // Note: We are explicitly resolving DeltaMergeInto plan rather than going to through the
-    // Analyzer using `Dataset.ofRows()` because the Analyzer incorrectly resolves all
-    // references in the DeltaMergeInto using both source and target child plans, even before
-    // DeltaAnalysis rule kicks in. This is because the Analyzer  understands only MergeIntoTable,
-    // and handles that separately by skipping resolution (for Delta) and letting the
-    // DeltaAnalysis rule do the resolving correctly. This can be solved by generating
-    // MergeIntoTable instead, which blocked by the different issue with MergeIntoTable as explained
-    // in the function `mergePlan` and https://issues.apache.org/jira/browse/SPARK-34962.
-    val resolvedMergeInto =
-      DeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
-        tryResolveReferencesForExpressions(sparkSession))
-    if (!resolvedMergeInto.resolved) {
-      throw DeltaErrors.analysisException("Failed to resolve\n", plan = Some(resolvedMergeInto))
-    }
-    val strippedMergeInto = resolvedMergeInto.copy(
-      target = DeltaViewHelper.stripTempViewForMerge(resolvedMergeInto.target, SQLConf.get)
-    )
-    // Preprocess the actions and verify
-    var mergeIntoCommand =
-      PreprocessTableMerge(sparkSession.sessionState.conf)(strippedMergeInto)
-    // Resolve UpCast expressions that `PreprocessTableMerge` may have introduced.
-    mergeIntoCommand = PostHocResolveUpCast(sparkSession).apply(mergeIntoCommand)
-    sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
-    mergeIntoCommand.asInstanceOf[MergeIntoCommand].run(sparkSession)
-=======
     withActiveSession(sparkSession) {
+      // Note: We are explicitly resolving DeltaMergeInto plan rather than going to through the
       // Analyzer using `Dataset.ofRows()` because the Analyzer incorrectly resolves all
       // references in the DeltaMergeInto using both source and target child plans, even before
       // DeltaAnalysis rule kicks in. This is because the Analyzer  understands only MergeIntoTable,
@@ -307,17 +277,22 @@ class DeltaMergeBuilder private(
       // explained in the function `mergePlan` and
       // https://issues.apache.org/jira/browse/SPARK-34962.
       val resolvedMergeInto =
-        DeltaMergeInto.resolveReferences(mergePlan, sparkSession.sessionState.conf)(
-          tryResolveReferences(sparkSession) _)
+      DeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
+        tryResolveReferencesForExpressions(sparkSession))
       if (!resolvedMergeInto.resolved) {
         throw DeltaErrors.analysisException("Failed to resolve\n", plan = Some(resolvedMergeInto))
       }
+      val strippedMergeInto = resolvedMergeInto.copy(
+        target = DeltaViewHelper.stripTempViewForMerge(resolvedMergeInto.target, SQLConf.get)
+      )
       // Preprocess the actions and verify
-      val mergeIntoCommand = PreprocessTableMerge(sparkSession.sessionState.conf)(resolvedMergeInto)
+      var mergeIntoCommand =
+        PreprocessTableMerge(sparkSession.sessionState.conf)(strippedMergeInto)
+      // Resolve UpCast expressions that `PreprocessTableMerge` may have introduced.
+      mergeIntoCommand = PostHocResolveUpCast(sparkSession).apply(mergeIntoCommand)
       sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
-      mergeIntoCommand.run(sparkSession)
+      mergeIntoCommand.asInstanceOf[MergeIntoCommand].run(sparkSession)
     }
->>>>>>> 73f1a6965 (set active session for commands):core/src/main/scala/io/delta/tables/DeltaMergeBuilder.scala
   }
 
   /**

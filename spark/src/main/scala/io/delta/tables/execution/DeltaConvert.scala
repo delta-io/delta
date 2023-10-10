@@ -29,14 +29,9 @@ trait DeltaConvertBase {
       spark: SparkSession,
       tableIdentifier: TableIdentifier,
       partitionSchema: Option[StructType],
-<<<<<<< HEAD:spark/src/main/scala/io/delta/tables/execution/DeltaConvert.scala
-      deltaPath: Option[String]): DeltaTable = {
+      deltaPath: Option[String]): DeltaTable = withActiveSession(spark) {
     val cvt = ConvertToDeltaCommand(tableIdentifier, partitionSchema, collectStats = true,
       deltaPath)
-=======
-      deltaPath: Option[String]): DeltaTable = withActiveSession(spark) {
-    val cvt = ConvertToDeltaCommand(tableIdentifier, partitionSchema, deltaPath)
->>>>>>> 73f1a6965 (set active session for commands):core/src/main/scala/io/delta/tables/execution/DeltaConvert.scala
     cvt.run(spark)
     if (cvt.isCatalogTable(spark.sessionState.analyzer, tableIdentifier)) {
       DeltaTable.forName(spark, tableIdentifier.toString)

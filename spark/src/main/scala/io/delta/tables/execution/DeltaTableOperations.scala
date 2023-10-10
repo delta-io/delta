@@ -18,16 +18,11 @@ package io.delta.tables.execution
 
 import scala.collection.Map
 
-<<<<<<< HEAD:spark/src/main/scala/io/delta/tables/execution/DeltaTableOperations.scala
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, DescribeDeltaDetailCommand, VacuumCommand}
-=======
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaLog, PreprocessTableUpdate}
-import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
-import org.apache.spark.sql.delta.commands.{DeleteCommand, DeltaGenerateCommand, VacuumCommand}
->>>>>>> 73f1a6965 (set active session for commands):core/src/main/scala/io/delta/tables/execution/DeltaTableOperations.scala
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.tables.DeltaTable
 
@@ -45,17 +40,12 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
   protected def executeDelete(condition: Option[Expression]): Unit = improveUnsupportedOpError {
-<<<<<<< HEAD:spark/src/main/scala/io/delta/tables/execution/DeltaTableOperations.scala
-    val delete = DeleteFromTable(
-      self.toDF.queryExecution.analyzed,
-      condition.getOrElse(Literal.TrueLiteral))
-    toDataset(sparkSession, delete)
-=======
     withActiveSession(sparkSession) {
-      val delete = DeleteFromTable(self.toDF.queryExecution.analyzed, condition)
+      val delete = DeleteFromTable(
+        self.toDF.queryExecution.analyzed,
+        condition.getOrElse(Literal.TrueLiteral))
       toDataset(sparkSession, delete)
     }
->>>>>>> 73f1a6965 (set active session for commands):core/src/main/scala/io/delta/tables/execution/DeltaTableOperations.scala
   }
 
   protected def executeHistory(
