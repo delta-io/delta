@@ -15,8 +15,6 @@
  */
 package io.delta.kernel.examples;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -25,6 +23,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
@@ -35,8 +34,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.Table;
 import io.delta.kernel.TableNotFoundException;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.DataReadResult;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.examples.utils.RowSerDe;
 import io.delta.kernel.types.StructType;
@@ -80,7 +78,7 @@ public class MultiThreadedTableReader
 
     public void show(int limit, Optional<List<String>> columnsOpt)
         throws TableNotFoundException {
-        Table table = Table.forPath(tablePath);
+        Table table = Table.forPath(tableClient, tablePath);
         Snapshot snapshot = table.getLatestSnapshot(tableClient);
         StructType readSchema = pruneSchema(snapshot.getSchema(tableClient), columnsOpt);
 
@@ -155,6 +153,7 @@ public class MultiThreadedTableReader
         private final BlockingQueue<ScanFile> workQueue = new ArrayBlockingQueue<>(20);
 
         private int readRecordCount; // Data read so far.
+        private AtomicReference<Exception> error = new AtomicReference<>();
 
         Reader(int limit) {
             this.limit = limit;
@@ -190,26 +189,27 @@ public class MultiThreadedTableReader
 
         private Runnable workGenerator(Scan scan) {
             return (() -> {
-                try {
-                    Row scanStateRow = scan.getScanState(tableClient);
-                    CloseableIterator<ColumnarBatch> scanFileIter = scan.getScanFiles(tableClient);
+                Row scanStateRow = scan.getScanState(tableClient);
+                try(CloseableIterator<FilteredColumnarBatch> scanFileIter =
+                    scan.getScanFiles(tableClient)) {
 
                     while (scanFileIter.hasNext() && !stopSignal.get()) {
-                        ColumnarBatch scanFileBatch = scanFileIter.next();
-                        try (CloseableIterator<Row> scanFileRows = scanFileBatch.getRows()) {
+                        try (CloseableIterator<Row> scanFileRows = scanFileIter.next().getRows()) {
                             while (scanFileRows.hasNext() && !stopSignal.get()) {
                                 workQueue.put(new ScanFile(scanStateRow, scanFileRows.next()));
                             }
-                        } catch (IOException ioe) {
-                            throw new RuntimeException(ioe);
                         }
                     }
+
                     for (int i = 0; i < numThreads; i++) {
                         // poison pill for each worker threads to stop the work.
                         workQueue.put(ScanFile.POISON_PILL);
                     }
                 } catch (InterruptedException ie) {
                     System.out.print("Work generator is interrupted");
+                } catch (Exception e) {
+                    error.compareAndSet(null /* expected */, e);
+                    throw new RuntimeException(e);
                 }
             });
         }
@@ -221,7 +221,7 @@ public class MultiThreadedTableReader
                     if (work == ScanFile.POISON_PILL) {
                         return; // exit as there are no more work units
                     }
-                    try (CloseableIterator<DataReadResult> dataIter = Scan.readData(
+                    try (CloseableIterator<FilteredColumnarBatch> dataIter = Scan.readData(
                         tableClient,
                         work.getScanRow(tableClient),
                         Utils.singletonCloseableIterator(work.getScanFileRow(tableClient)),
@@ -233,10 +233,11 @@ public class MultiThreadedTableReader
                             }
                         }
                     }
-                } catch (IOException ioe) {
-                    throw new UncheckedIOException(ioe);
                 } catch (InterruptedException ie) {
                     System.out.printf("Worker %d is interrupted." + workerId);
+                } catch (Exception e) {
+                    error.compareAndSet(null /* expected */, e);
+                    throw new RuntimeException(e);
                 } finally {
                     countDownLatch.countDown();
                 }
@@ -246,12 +247,12 @@ public class MultiThreadedTableReader
         /**
          * Returns true when sufficient amount of rows are received
          */
-        private boolean printDataBatch(DataReadResult dataReadResult) {
+        private boolean printDataBatch(FilteredColumnarBatch data) {
             synchronized (this) {
                 if (readRecordCount >= limit) {
                     return true;
                 }
-                readRecordCount += printData(dataReadResult, limit - readRecordCount);
+                readRecordCount += printData(data, limit - readRecordCount);
                 return readRecordCount >= limit;
             }
         }
