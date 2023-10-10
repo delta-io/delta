@@ -21,7 +21,7 @@ import java.util.UUID
 import scala.collection.generic.Sizing
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
-import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, DeltaUDF, OptimisticTransaction, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat, StoredBitmap}
@@ -36,10 +36,10 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.paths.SparkPath
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, FileSourceMetadataAttribute, GenericInternalRow}
+import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
-import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types.StructType
@@ -47,11 +47,13 @@ import org.apache.spark.util.{SerializableConfiguration, Utils => SparkUtils}
 
 
 /**
- * Contains utility classes and method to delete rows in a table using the Deletion Vectors.
+ * Contains utility classes and method for performing DML operations with Deletion Vectors.
  */
-object DeleteWithDeletionVectorsHelper extends DeltaCommand {
+object DMLWithDeletionVectorsHelper extends DeltaCommand {
+  val SUPPORTED_DML_COMMANDS: Seq[String] = Seq("DELETE", "UPDATE")
+
   /**
-   * Creates a DataFrame that can be used to scan for rows matching DELETE condition in given
+   * Creates a DataFrame that can be used to scan for rows matching the condition in the given
    * files. Generally the given file list is a pruned file list using the stats based pruning.
    */
   def createTargetDfForScanningForMatches(
@@ -75,18 +77,16 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
    * @param fileIndex the new file index
    */
   private def replaceFileIndex(target: LogicalPlan, fileIndex: TahoeFileIndex): LogicalPlan = {
-    val additionalCols = Seq(
-      AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FILED.dataType)(),
-      // TODO: when upgrading to Spark 3.5 or 4.0 this should be FileFormat.createFileMetadataCol
-      FileSourceMetadataAttribute(FileFormat.METADATA_NAME, FileFormat.BASE_METADATA_STRUCT)
-    )
+    val rowIndexCol = AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FILED.dataType)();
+    var fileMetadataCol: AttributeReference = null
 
-    val newTarget = target transformDown {
+    val newTarget = target.transformUp {
       case l @ LogicalRelation(
         hfsr @ HadoopFsRelation(_, _, _, _, format: DeltaParquetFileFormat, _), _, _, _) =>
+        fileMetadataCol = format.createFileMetadataCol()
         // Take the existing schema and add additional metadata columns
         val newDataSchema = StructType(hfsr.dataSchema).add(ROW_INDEX_STRUCT_FILED)
-        val finalOutput = l.output ++ additionalCols
+        val finalOutput = l.output ++ Seq(rowIndexCol, fileMetadataCol)
         // Disable splitting and filter pushdown in order to generate the row-indexes
         val newFormat = format.copy(isSplittable = false, disablePushDowns = true)
 
@@ -97,7 +97,10 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
 
         l.copy(relation = newBaseRelation, output = finalOutput)
       case p @ Project(projectList, _) =>
-        val newProjectList = projectList ++ additionalCols
+        if (fileMetadataCol == null) {
+          throw new IllegalStateException("File metadata column is not yet created.")
+        }
+        val newProjectList = projectList ++ Seq(rowIndexCol, fileMetadataCol)
         p.copy(projectList = newProjectList)
     }
     newTarget
@@ -114,8 +117,14 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
       deltaLog: DeltaLog,
       targetDf: DataFrame,
       fileIndex: TahoeFileIndex,
-      condition: Expression): Seq[TouchedFileWithDV] = {
-    recordDeltaOperation(deltaLog, opType = "DELETE.findTouchedFiles") {
+      condition: Expression,
+      opName: String): Seq[TouchedFileWithDV] = {
+    require(
+      SUPPORTED_DML_COMMANDS.contains(opName),
+      s"Expecting opName to be one of ${SUPPORTED_DML_COMMANDS.mkString(", ")}, " +
+        s"but got '$opName'.")
+
+    recordDeltaOperation(deltaLog, opType = s"$opName.findTouchedFiles") {
       val candidateFiles = fileIndex match {
         case f: TahoeBatchFileIndex => f.addFiles
         case _ => throw new IllegalArgumentException("Unexpected file index found!")
@@ -165,7 +174,7 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
       spark: SparkSession,
       touchedFiles: Seq[TouchedFileWithDV],
       snapshot: Snapshot): (Seq[FileAction], Map[String, Long]) = {
-    val numDeletedRows: Long = touchedFiles.map(_.numberOfModifiedRows).sum
+    val numModifiedRows: Long = touchedFiles.map(_.numberOfModifiedRows).sum
     val numRemovedFiles: Long = touchedFiles.count(_.isFullyReplaced())
 
     val (fullyRemovedFiles, notFullyRemovedFiles) = touchedFiles.partition(_.isFullyReplaced())
@@ -192,7 +201,7 @@ object DeleteWithDeletionVectorsHelper extends DeltaCommand {
       }
     numDeletionVectorsRemoved += fullyRemoved.count(_.deletionVector != null)
     val metricMap = Map(
-      "numDeletedRows" -> numDeletedRows,
+      "numModifiedRows" -> numModifiedRows,
       "numRemovedFiles" -> numRemovedFiles,
       "numDeletionVectorsAdded" -> numDeletionVectorsAdded,
       "numDeletionVectorsRemoved" -> numDeletionVectorsRemoved,
@@ -354,18 +363,8 @@ object DeletionVectorBitmapGenerator {
       candidateFiles: Seq[AddFile],
       condition: Expression)
     : Seq[DeletionVectorResult] = {
-    // If the metadata column is not canonicalized, we must canonicalize them before use.
-    val targetDfWithMetadataColumn = if (sparkMetadataFilePathIsCanonicalized) {
-      targetDf.withColumn(FILE_NAME_COL, col(s"${METADATA_NAME}.${FILE_PATH}"))
-    } else {
-      val canonicalizedPathStringMap = buildCanonicalizedPathStringMap(txn.deltaLog, candidateFiles)
-      val broadcastCanonicalizedPathStringMap =
-        sparkSession.sparkContext.broadcast(canonicalizedPathStringMap)
-
-      val lookupPathUdf = DeltaUDF.stringFromString(broadcastCanonicalizedPathStringMap.value(_))
-      targetDf.withColumn(FILE_NAME_COL, lookupPathUdf(col(s"${METADATA_NAME}.${FILE_PATH}")))
-    }
-    val matchedRowsDf = targetDfWithMetadataColumn
+    val matchedRowsDf = targetDf
+      .withColumn(FILE_NAME_COL, col(s"${METADATA_NAME}.${FILE_PATH}"))
       // Filter after getting input file name as the filter might introduce a join and we
       // cannot get input file name on join's output.
       .filter(new Column(condition))
@@ -400,43 +399,6 @@ object DeletionVectorBitmapGenerator {
     }
 
     DeletionVectorBitmapGenerator.buildDeletionVectors(sparkSession, df, txn.deltaLog, txn)
-  }
-
-  private def buildCanonicalizedPathStringMap(
-      log: DeltaLog,
-      addFiles: Seq[AddFile]): Map[String, String] = {
-    val basePath = log.dataPath.toString
-    addFiles.map { add =>
-      val absPath = absolutePath(basePath, add.path)
-      absPath.toString -> SparkPath.fromPath(absPath).urlEncoded
-    }.toMap
-  }
-
-  /**
-   * In Spark 3.4 the file path metadata column is not canonicalized but it is in Spark 3.4.1. To
-   * make Delta Lake works with both Spark versions, we must use Spark's internal path
-   * transformation method to transform our paths here. This method will return a un-canonicalized
-   * path in Spark 3.4 and a canonicalized one in Spark 3.4.1.
-   *
-   * Related issue: https://github.com/delta-io/delta/issues/1725.
-   */
-  private lazy val sparkMetadataFilePathIsCanonicalized: Boolean = {
-    try {
-      val probeString = "file:/path with space/data.parquet"
-      val row = FileFormat.updateMetadataInternalRow(
-        new GenericInternalRow(size = 1),
-        Seq(FileFormat.FILE_PATH),
-        filePath = new Path(probeString),
-        fileSize = 0L,
-        fileBlockStart = 0L,
-        fileBlockLength = 0L,
-        fileModificationTime = 0L)
-      row.getUTF8String(0).toString != probeString
-    } catch {
-      // method has changed (for example in Spark 3.5 onwards which does not have this bug).
-      // Return true in this case.
-      case _: NoSuchMethodError | _: NoClassDefFoundError => true
-    }
   }
 }
 
@@ -485,8 +447,8 @@ object DeletionVectorData {
 }
 
 /** Final output for each file containing the file path, DeletionVectorDescriptor and how many
- * rows are marked as deleted in this file as part of the this DELETE (doesn't include already
- * rows marked as deleted)
+ * rows are marked as deleted in this file as part of the this operation (doesn't include rows that
+ * are already marked as deleted).
  *
  * @param filePath        Absolute path of the data file this DV result is generated for.
  * @param deletionVector  Deletion vector generated containing the newly deleted row indices from
@@ -643,7 +605,7 @@ object DeletionVectorWriter extends DeltaLogging {
   }
 
   /**
-   * Prepares a mapper function that can be used by DELETE command to store the Deletion Vectors
+   * Prepares a mapper function that can be used by DML commands to store the Deletion Vectors
    * that are in described in [[DeletionVectorData]] and return their descriptors
    * [[DeletionVectorResult]].
    */

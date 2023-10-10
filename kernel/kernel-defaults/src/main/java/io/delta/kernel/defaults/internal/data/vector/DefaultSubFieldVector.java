@@ -32,9 +32,6 @@ import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument
 /**
  * {@link ColumnVector} wrapper on top of {@link Row} objects. This wrapper allows referencing
  * any nested level column vector from a set of rows.
- * TODO: We should change the {@link io.delta.kernel.defaults.client.DefaultJsonHandler} to
- * generate data in true columnar format than wrapping a set of rows with a columnar batch
- * interface.
  */
 public class DefaultSubFieldVector implements ColumnVector {
     private final int size;

@@ -35,7 +35,7 @@ val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
 // Dependent library versions
-val sparkVersion = "3.4.0"
+val sparkVersion = "3.5.0"
 val flinkVersion = "1.16.1"
 val hadoopVersion = "3.3.1"
 val scalaTestVersion = "3.2.15"
@@ -115,6 +115,8 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
     ),
+    // For adding staged Spark RC versions, Ex:
+    // resolvers += "Apche Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
@@ -322,6 +324,8 @@ val icebergSparkRuntimeArtifactName = {
  s"iceberg-spark-runtime-$expMaj.$expMin"
 }
 
+/**
+ * Need a Icebeg release version with support for Spark 3.5
 lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
   // delta-iceberg depends on delta-spark! So, we need to include it during our test.
   .dependsOn(spark % "test")
@@ -451,7 +455,7 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assemblyPackageScala / assembleArtifact := false,
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
   )
-
+*/
 lazy val hive = (project in file("connectors/hive"))
   .dependsOn(standaloneCosmetic)
   .settings (
@@ -1081,7 +1085,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

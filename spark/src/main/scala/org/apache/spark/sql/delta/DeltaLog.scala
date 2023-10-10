@@ -214,12 +214,8 @@ class DeltaLog private(
 
   /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
   @deprecated("Please use the CatalogTable overload instead", "3.0")
-  def startTransaction(): OptimisticTransaction = startTransaction(snapshotOpt = None)
-
-  /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
-  @deprecated("Please use the CatalogTable overload instead", "3.0")
-  def startTransaction(snapshotOpt: Option[Snapshot]): OptimisticTransaction = {
-    startTransaction(catalogTableOpt = None, snapshotOpt)
+  def startTransaction(): OptimisticTransaction = {
+    startTransaction(catalogTableOpt = None, snapshotOpt = None)
   }
 
   /**
@@ -266,6 +262,7 @@ class DeltaLog private(
    * the new protocol version is not a superset of the original one used by the snapshot.
    */
   def upgradeProtocol(
+      catalogTable: Option[CatalogTable],
       snapshot: Snapshot,
       newVersion: Protocol): Unit = {
     val currentVersion = snapshot.protocol
@@ -277,7 +274,7 @@ class DeltaLog private(
       throw new ProtocolDowngradeException(currentVersion, newVersion)
     }
 
-    val txn = startTransaction(Some(snapshot))
+    val txn = startTransaction(catalogTable, Some(snapshot))
     try {
       SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
     } catch {
@@ -286,11 +283,6 @@ class DeltaLog private(
     }
     txn.commit(Seq(newVersion), DeltaOperations.UpgradeProtocol(newVersion))
     logConsole(s"Upgraded table at $dataPath to $newVersion.")
-  }
-
-  // Test-only!!
-  private[delta] def upgradeProtocol(newVersion: Protocol): Unit = {
-    upgradeProtocol(unsafeVolatileSnapshot, newVersion)
   }
 
   /**

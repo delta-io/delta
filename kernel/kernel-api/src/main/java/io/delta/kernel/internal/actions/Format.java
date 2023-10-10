@@ -32,9 +32,9 @@ public class Format {
     }
 
     public static final StructType READ_SCHEMA = new StructType()
-        .add("provider", StringType.INSTANCE, false /* nullable */)
+        .add("provider", StringType.STRING, false /* nullable */)
         .add("options",
-            new MapType(StringType.INSTANCE, StringType.INSTANCE, false),
+            new MapType(StringType.STRING, StringType.STRING, false),
             true /* nullable */
         );
 

@@ -36,13 +36,13 @@ import io.delta.kernel.internal.types.TableSchemaSerDe;
  */
 public class ScanStateRow extends GenericRow {
     private static final StructType SCHEMA = new StructType()
-        .add("configuration", new MapType(StringType.INSTANCE, StringType.INSTANCE, false))
-        .add("logicalSchemaString", StringType.INSTANCE)
-        .add("physicalSchemaString", StringType.INSTANCE)
-        .add("partitionColumns", new ArrayType(StringType.INSTANCE, false))
-        .add("minReaderVersion", IntegerType.INSTANCE)
-        .add("minWriterVersion", IntegerType.INSTANCE)
-        .add("tablePath", StringType.INSTANCE);
+        .add("configuration", new MapType(StringType.STRING, StringType.STRING, false))
+        .add("logicalSchemaString", StringType.STRING)
+        .add("physicalSchemaString", StringType.STRING)
+        .add("partitionColumns", new ArrayType(StringType.STRING, false))
+        .add("minReaderVersion", IntegerType.INTEGER)
+        .add("minWriterVersion", IntegerType.INTEGER)
+        .add("tablePath", StringType.STRING);
 
     private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
         IntStream.range(0, SCHEMA.length())

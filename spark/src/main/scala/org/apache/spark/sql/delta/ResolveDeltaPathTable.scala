@@ -35,7 +35,8 @@ case class ResolveDeltaPathTable(sparkSession: SparkSession) extends Rule[Logica
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case u: UnresolvedTable =>
-      ResolveDeltaPathTable.resolveAsPathTable(sparkSession, u.multipartIdentifier).getOrElse(u)
+      ResolveDeltaPathTable.resolveAsPathTable(sparkSession, u.multipartIdentifier, Map.empty)
+        .getOrElse(u)
   }
 }
 
@@ -49,7 +50,7 @@ object ResolveDeltaPathTable
   def resolveAsPathTableRelation(
       sparkSession: SparkSession,
       u: UnresolvedRelation) : Option[DataSourceV2Relation] = {
-    resolveAsPathTable(sparkSession, u.multipartIdentifier).map { resolvedTable =>
+    resolveAsPathTable(sparkSession, u.multipartIdentifier, Map.empty).map { resolvedTable =>
       DataSourceV2Relation.create(
         resolvedTable.table, Some(resolvedTable.catalog), Some(resolvedTable.identifier))
     }
@@ -61,14 +62,15 @@ object ResolveDeltaPathTable
    */
   def resolveAsPathTable(
       sparkSession: SparkSession,
-      multipartIdentifier: Seq[String]): Option[ResolvedTable] = {
+      multipartIdentifier: Seq[String],
+      options: Map[String, String]): Option[ResolvedTable] = {
     val sessionState = sparkSession.sessionState
     if (!sessionState.conf.runSQLonFile || multipartIdentifier.size != 2) {
       return None
     }
     val tableId = multipartIdentifier.asTableIdentifier
     if (DeltaTableUtils.isValidPath(tableId)) {
-      val deltaTableV2 = DeltaTableV2(sparkSession, new Path(tableId.table))
+      val deltaTableV2 = DeltaTableV2(sparkSession, new Path(tableId.table), options = options)
       val sessionCatalog = sessionState.catalogManager.v2SessionCatalog.asTableCatalog
       Some(ResolvedTable.create(sessionCatalog, multipartIdentifier.asIdentifier, deltaTableV2))
     } else {

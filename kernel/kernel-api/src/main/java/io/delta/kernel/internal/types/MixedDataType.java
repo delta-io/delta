@@ -13,13 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.types;
+package io.delta.kernel.internal.types;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StructType;
 
 /**
- * TODO:
+ * TODO: this is temporary
  * This is a controversial data type to have, but we have no way to specify the schema
  * of JSON serialized table schema. In order to use the
  * {@link io.delta.kernel.client.JsonHandler#parseJson(ColumnVector, StructType)}, the Kernel

@@ -35,7 +35,6 @@ public class StructField {
     // Static Fields / Methods
     ////////////////////////////////////////////////////////////////////////////////
 
-    // TODO: for now we introduce isMetadataColumn as a field in the column metadata
     /**
      * Indicates a metadata column when present in the field metadata and the value is true
      */
@@ -48,7 +47,7 @@ public class StructField {
     public static String ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
     public static StructField ROW_INDEX_COLUMN = new StructField(
         ROW_INDEX_COLUMN_NAME,
-        LongType.INSTANCE,
+        LongType.LONG,
         false,
         Collections.singletonMap(IS_METADATA_COLUMN_KEY, "true"));
 

@@ -220,7 +220,7 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
                 .getEvaluator(
                     scanAddFiles.getSchema(),
                     Literal.ofString(tableRoot.toUri().toString()),
-                    StringType.INSTANCE);
+                    StringType.STRING);
         }
         ColumnVector tableRootVector = tableRootVectorGenerator.eval(scanAddFiles);
         scanAddFiles = scanAddFiles.withNewColumn(

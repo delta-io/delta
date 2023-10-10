@@ -27,6 +27,9 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultSubFieldVector;
 
 /**
  * {@link ColumnarBatch} wrapper around list of {@link Row} objects.
+ *  TODO: We should change the {@link io.delta.kernel.defaults.client.DefaultJsonHandler} to
+ *  generate data in true columnar format than wrapping a set of rows with a columnar batch
+ *  interface.
  */
 public class DefaultRowBasedColumnarBatch implements ColumnarBatch {
     private final StructType schema;

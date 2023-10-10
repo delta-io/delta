@@ -34,6 +34,7 @@ import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
 import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
@@ -118,6 +119,34 @@ class CheckpointsSuite
         spark.conf.getOption(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key)
       assert(lastCheckpointOpt.get.checkpointSchema.isEmpty ===
         (expectedFormat.contains(V2Checkpoint.Format.JSON.name)))
+    }
+  }
+
+  testDifferentCheckpoints("test empty checkpoints") { (checkpointPolicy, _) =>
+    val tableName = "test_empty_table"
+    withTable(tableName) {
+      sql(s"CREATE TABLE `$tableName` (a INT) USING DELTA")
+      sql(s"ALTER TABLE `$tableName` SET TBLPROPERTIES('comment' = 'A table comment')")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      deltaLog.checkpoint()
+      def validateSnapshot(snapshot: Snapshot): Unit = {
+        assert(!snapshot.checkpointProvider.isEmpty)
+        assert(snapshot.checkpointProvider.version === 1)
+        val checkpointFile = snapshot.checkpointProvider.topLevelFiles.head.getPath
+        val fileActions = getCheckpointDfForFilesContainingFileActions(deltaLog, checkpointFile)
+        assert(fileActions.where("add is not null or remove is not null").collect().size === 0)
+        if (checkpointPolicy == CheckpointPolicy.V2) {
+          val v2CheckpointProvider =
+            snapshot.checkpointProvider.asInstanceOf[LazyCompleteCheckpointProvider]
+              .underlyingCheckpointProvider.asInstanceOf[V2CheckpointProvider]
+          assert(v2CheckpointProvider.sidecarFiles.size === 1)
+          val sidecar = v2CheckpointProvider.sidecarFiles.head.toFileStatus(deltaLog.logPath)
+          assert(spark.read.parquet(sidecar.getPath.toString).count() === 0)
+        }
+      }
+      validateSnapshot(deltaLog.update())
+      DeltaLog.clearCache()
+      validateSnapshot(DeltaLog.forTable(spark, TableIdentifier(tableName)).unsafeVolatileSnapshot)
     }
   }
 
@@ -652,6 +681,54 @@ class CheckpointsSuite
         assert(lc5.v2Checkpoint.get.sidecarFiles.isEmpty)
       }
     }
+  }
+
+  def checkIntermittentError(tempDir: File, lastCheckpointMissing: Boolean): Unit = {
+    // Create a table with commit version 0, 1 and a checkpoint.
+    val tablePath = tempDir.getAbsolutePath
+    spark.range(10).write.format("delta").save(tablePath)
+    spark.sql(s"INSERT INTO delta.`$tablePath`" +
+      s"SELECT * FROM delta.`$tablePath` WHERE id = 1").collect()
+
+    val log = DeltaLog.forTable(spark, tablePath)
+    val conf = log.newDeltaHadoopConf()
+    log.checkpoint()
+
+    // Delete _last_checkpoint, CRC file based on test configuration.
+    val fs = log.logPath.getFileSystem(conf)
+    if (lastCheckpointMissing) {
+      fs.delete(log.LAST_CHECKPOINT)
+    }
+
+    // In order to trigger an intermittent failure while reading checkpoint, this test corrupts
+    // the checkpoint temporarily so that json/parquet checkpoint reader fails. The corrupted
+    // file is written with same length so that when the file is uncorrupted in future, then we
+    // can test that delta is able to read that file and produce correct results. If the "bad" file
+    // is not of same length, then the read with "good" file will also fail as parquet reader will
+    // use the cache file status's getLen to find out where the footer is and will fail after not
+    // finding the magic bytes.
+    val checkpointFileStatus =
+    log.listFrom(0).filter(FileNames.isCheckpointFile).toSeq.head
+    // Rename the correct checkpoint to a temp path and create a checkpoint with character 'r'
+    // repeated.
+    val tempPath = checkpointFileStatus.getPath.suffix(".temp")
+    fs.rename(checkpointFileStatus.getPath, tempPath)
+    val randomContentToWrite = Seq("r" * (checkpointFileStatus.getLen.toInt - 1)) // + 1 (\n)
+    log.store.write(
+      checkpointFileStatus.getPath, randomContentToWrite.toIterator, overwrite = true, conf)
+    assert(log.store.read(checkpointFileStatus.getPath, conf) === randomContentToWrite)
+    assert(fs.getFileStatus(tempPath).getLen === checkpointFileStatus.getLen)
+
+    DeltaLog.clearCache()
+    sql(s"SELECT * FROM delta.`$tablePath`").collect()
+    val snapshot = DeltaLog.forTable(spark, tablePath).unsafeVolatileSnapshot
+    snapshot.computeChecksum
+    assert(snapshot.checkpointProvider.isEmpty)
+  }
+  for (lastCheckpointMissing <- BOOLEAN_DOMAIN)
+  testDifferentCheckpoints("intermittent error while reading checkpoint should not" +
+      s" stick to snapshot [lastCheckpointMissing: $lastCheckpointMissing]") { (_, _) =>
+    withTempDir { tempDir => checkIntermittentError(tempDir, lastCheckpointMissing) }
   }
 }
 

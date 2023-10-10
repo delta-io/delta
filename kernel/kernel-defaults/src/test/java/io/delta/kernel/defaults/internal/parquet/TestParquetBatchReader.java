@@ -55,36 +55,36 @@ public class TestParquetBatchReader {
             .get();
 
     private static final StructType ALL_TYPES_FILE_SCHEMA = new StructType()
-        .add("byteType", ByteType.INSTANCE)
-        .add("shortType", ShortType.INSTANCE)
-        .add("integerType", IntegerType.INSTANCE)
-        .add("longType", LongType.INSTANCE)
-        .add("floatType", FloatType.INSTANCE)
-        .add("doubleType", DoubleType.INSTANCE)
+        .add("byteType", ByteType.BYTE)
+        .add("shortType", ShortType.SHORT)
+        .add("integerType", IntegerType.INTEGER)
+        .add("longType", LongType.LONG)
+        .add("floatType", FloatType.FLOAT)
+        .add("doubleType", DoubleType.DOUBLE)
         .add("decimal", new DecimalType(10, 2))
-        .add("booleanType", BooleanType.INSTANCE)
-        .add("stringType", StringType.INSTANCE)
-        .add("binaryType", BinaryType.INSTANCE)
-        .add("dateType", DateType.INSTANCE)
-        .add("timestampType", TimestampType.INSTANCE)
+        .add("booleanType", BooleanType.BOOLEAN)
+        .add("stringType", StringType.STRING)
+        .add("binaryType", BinaryType.BINARY)
+        .add("dateType", DateType.DATE)
+        .add("timestampType", TimestampType.TIMESTAMP)
         .add("nested_struct",
             new StructType()
-                .add("aa", StringType.INSTANCE)
-                .add("ac", new StructType().add("aca", IntegerType.INSTANCE)))
+                .add("aa", StringType.STRING)
+                .add("ac", new StructType().add("aca", IntegerType.INTEGER)))
         .add("array_of_prims",
-            new ArrayType(IntegerType.INSTANCE, true))
+            new ArrayType(IntegerType.INTEGER, true))
         .add("array_of_arrays",
-            new ArrayType(new ArrayType(IntegerType.INSTANCE, true), true))
+            new ArrayType(new ArrayType(IntegerType.INTEGER, true), true))
         .add("array_of_structs",
-            new ArrayType(new StructType().add("ab", LongType.INSTANCE), true))
-        .add("map_of_prims", new MapType(IntegerType.INSTANCE, LongType.INSTANCE, true))
+            new ArrayType(new StructType().add("ab", LongType.LONG), true))
+        .add("map_of_prims", new MapType(IntegerType.INTEGER, LongType.LONG, true))
         .add("map_of_rows", new MapType(
-            IntegerType.INSTANCE,
-            new StructType().add("ab", LongType.INSTANCE),
+            IntegerType.INTEGER,
+            new StructType().add("ab", LongType.LONG),
             true))
         .add("map_of_arrays", new MapType(
-            LongType.INSTANCE,
-            new ArrayType(IntegerType.INSTANCE, true),
+            LongType.LONG,
+            new ArrayType(IntegerType.INTEGER, true),
             true));
 
     @Test
@@ -97,16 +97,16 @@ public class TestParquetBatchReader {
     public void readSubsetOfColumns()
         throws Exception {
         StructType readSchema = new StructType()
-            .add("byteType", ByteType.INSTANCE)
-            .add("booleanType", BooleanType.INSTANCE)
-            .add("stringType", StringType.INSTANCE)
-            .add("dateType", DateType.INSTANCE)
+            .add("byteType", ByteType.BYTE)
+            .add("booleanType", BooleanType.BOOLEAN)
+            .add("stringType", StringType.STRING)
+            .add("dateType", DateType.DATE)
             .add("nested_struct",
                 new StructType()
-                    .add("aa", StringType.INSTANCE)
-                    .add("ac", new StructType().add("aca", IntegerType.INSTANCE)))
+                    .add("aa", StringType.STRING)
+                    .add("ac", new StructType().add("aca", IntegerType.INTEGER)))
             .add("array_of_prims",
-                new ArrayType(IntegerType.INSTANCE, true));
+                new ArrayType(IntegerType.INTEGER, true));
 
         readAndVerify(readSchema, 73 /* readBatchSize */);
     }
@@ -115,16 +115,16 @@ public class TestParquetBatchReader {
     public void readSubsetOfColumnsWithMissingColumnsInFile()
         throws Exception {
         StructType readSchema = new StructType()
-            .add("booleanType", BooleanType.INSTANCE)
-            .add("integerType", IntegerType.INSTANCE)
+            .add("booleanType", BooleanType.BOOLEAN)
+            .add("integerType", IntegerType.INTEGER)
             .add("missing_column_struct",
-                new StructType().add("ab", IntegerType.INSTANCE))
-            .add("longType", LongType.INSTANCE)
-            .add("missing_column_primitive", DateType.INSTANCE)
+                new StructType().add("ab", IntegerType.INTEGER))
+            .add("longType", LongType.LONG)
+            .add("missing_column_primitive", DateType.DATE)
             .add("nested_struct",
                 new StructType()
-                    .add("aa", StringType.INSTANCE)
-                    .add("ac", new StructType().add("aca", IntegerType.INSTANCE))
+                    .add("aa", StringType.STRING)
+                    .add("ac", new StructType().add("aca", IntegerType.INTEGER))
             );
 
         readAndVerify(readSchema, 23 /* readBatchSize */);
@@ -140,7 +140,7 @@ public class TestParquetBatchReader {
             .collect(Collectors.toList());
 
         StructType readSchema = new StructType()
-            .add("id", LongType.INSTANCE)
+            .add("id", LongType.LONG)
             .add(StructField.ROW_INDEX_COLUMN);
 
         Configuration conf = new Configuration();
@@ -345,11 +345,11 @@ public class TestParquetBatchReader {
                         assertTrue(vector.isNullAt(batchWithIdx._2));
                         assertNull(vector.getArray(batchWithIdx._2));
                     } else if (rowId % 29 == 0) {
-                        checkArrayValue(vector.getArray(batchWithIdx._2), IntegerType.INSTANCE,
+                        checkArrayValue(vector.getArray(batchWithIdx._2), IntegerType.INTEGER,
                                 Collections.<Integer>emptyList());
                     } else {
                         List<Integer> expArray = Arrays.asList(rowId, null, rowId + 1);
-                        checkArrayValue(vector.getArray(batchWithIdx._2), IntegerType.INSTANCE,
+                        checkArrayValue(vector.getArray(batchWithIdx._2), IntegerType.INTEGER,
                                 expArray);
                     }
                     break;
@@ -380,8 +380,8 @@ public class TestParquetBatchReader {
                     } else if (rowId % 30 == 0) {
                         checkMapValue(
                                 vector.getMap(batchWithIdx._2),
-                                IntegerType.INSTANCE,
-                                LongType.INSTANCE,
+                                IntegerType.INTEGER,
+                                LongType.LONG,
                                 Collections.<Integer, Long>emptyMap()
                         );
                     } else {
@@ -394,8 +394,8 @@ public class TestParquetBatchReader {
                         };
                         checkMapValue(
                                 vector.getMap(batchWithIdx._2),
-                                IntegerType.INSTANCE,
-                                LongType.INSTANCE,
+                                IntegerType.INTEGER,
+                                LongType.LONG,
                                 expValue
                         );
                     }
@@ -506,7 +506,7 @@ public class TestParquetBatchReader {
                 expArray = Collections.emptyList();
                 break;
         }
-        DataType expDataType = new ArrayType(IntegerType.INSTANCE, true);
+        DataType expDataType = new ArrayType(IntegerType.INTEGER, true);
         checkArrayValue(vector.getArray(batchRowId), expDataType, expArray);
     }
 
@@ -542,8 +542,8 @@ public class TestParquetBatchReader {
         }
         checkMapValue(
                 vector.getMap(batchRowId),
-                LongType.INSTANCE,
-                new ArrayType(IntegerType.INSTANCE, true),
+                LongType.LONG,
+                new ArrayType(IntegerType.INTEGER, true),
                 expMap
         );
     }

@@ -35,9 +35,8 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.VectorUtils;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
-import static io.delta.kernel.utils.Utils.singletonColumnVector;
-
 import io.delta.kernel.internal.InternalScanFileUtils;
+import static io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector;
 
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
 
@@ -73,9 +72,9 @@ public class TestDefaultJsonHandler {
                 JSON_HANDLER.readJsonFiles(
                     JSON_HANDLER.contextualizeFileReads(testFiles(), ALWAYS_TRUE),
                     new StructType()
-                        .add("path", StringType.INSTANCE)
-                        .add("size", LongType.INSTANCE)
-                        .add("dataChange", BooleanType.INSTANCE))) {
+                        .add("path", StringType.STRING)
+                        .add("size", LongType.LONG)
+                        .add("dataChange", BooleanType.BOOLEAN))) {
 
             List<String> actPaths = new ArrayList<>();
             List<Long> actSizes = new ArrayList<>();
@@ -123,14 +122,14 @@ public class TestDefaultJsonHandler {
                 "   \"dataChange\":true" +
                 "   }";
         StructType readSchema = new StructType()
-            .add("path", StringType.INSTANCE)
+            .add("path", StringType.STRING)
             .add("partitionValues",
-                new MapType(StringType.INSTANCE, StringType.INSTANCE, false))
-            .add("size", LongType.INSTANCE)
-            .add("dataChange", BooleanType.INSTANCE);
+                new MapType(StringType.STRING, StringType.STRING, false))
+            .add("size", LongType.LONG)
+            .add("dataChange", BooleanType.BOOLEAN);
 
         ColumnarBatch batch =
-            JSON_HANDLER.parseJson(singletonColumnVector(input), readSchema);
+            JSON_HANDLER.parseJson(singletonStringColumnVector(input), readSchema);
         assertEquals(1, batch.getSize());
 
         try (CloseableIterator<Row> rows = batch.getRows()) {
@@ -164,15 +163,15 @@ public class TestDefaultJsonHandler {
                 "[{\"field1\": \"foo\", \"field2\": 3}, {\"field1\": null}]\n" +
                 "}";
         StructType schema = new StructType()
-                .add("array", new ArrayType(IntegerType.INSTANCE, true))
-                .add("nested_array", new ArrayType(new ArrayType(StringType.INSTANCE, true), true))
-                .add("map", new MapType(StringType.INSTANCE, BooleanType.INSTANCE, true))
+                .add("array", new ArrayType(IntegerType.INTEGER, true))
+                .add("nested_array", new ArrayType(new ArrayType(StringType.STRING, true), true))
+                .add("map", new MapType(StringType.STRING, BooleanType.BOOLEAN, true))
                 .add("nested_map",
                         new MapType(
-                                StringType.INSTANCE,
+                                StringType.STRING,
                                 new MapType(
-                                        StringType.INSTANCE,
-                                        new ArrayType(IntegerType.INSTANCE, true),
+                                        StringType.STRING,
+                                        new ArrayType(IntegerType.INTEGER, true),
                                         true
                                 ),
                                 true
@@ -180,12 +179,12 @@ public class TestDefaultJsonHandler {
                 ).add("array_of_struct",
                         new ArrayType(
                                 new StructType()
-                                        .add("field1", StringType.INSTANCE, true)
-                                        .add("field2", IntegerType.INSTANCE, true),
+                                        .add("field1", StringType.STRING, true)
+                                        .add("field2", IntegerType.INTEGER, true),
                                 true
                         )
                 );
-        ColumnarBatch batch = JSON_HANDLER.parseJson(singletonColumnVector(json), schema);
+        ColumnarBatch batch = JSON_HANDLER.parseJson(singletonStringColumnVector(json), schema);
 
         try (CloseableIterator<Row> rows = batch.getRows()) {
             Row result = rows.next();

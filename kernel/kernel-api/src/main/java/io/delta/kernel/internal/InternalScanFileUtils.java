@@ -43,7 +43,7 @@ public class InternalScanFileUtils {
     private InternalScanFileUtils() {}
 
     private static final String TABLE_ROOT_COL_NAME = "tableRoot";
-    private static final DataType TABLE_ROOT_DATA_TYPE = StringType.INSTANCE;
+    private static final DataType TABLE_ROOT_DATA_TYPE = StringType.STRING;
     /**
      * {@link Column} expression referring to the `partitionValues` in scan `add` file.
      */
@@ -58,7 +58,7 @@ public class InternalScanFileUtils {
 
     public static final StructType SCAN_FILE_SCHEMA = new StructType()
         .add("add", AddFile.SCHEMA)
-        // TODO: table root is temporary, until the path in `add.path` is converted to
+        // NOTE: table root is temporary, until the path in `add.path` is converted to
         // an absolute path. https://github.com/delta-io/delta/issues/2089
         .add(TABLE_ROOT_COL_NAME, TABLE_ROOT_DATA_TYPE);
 

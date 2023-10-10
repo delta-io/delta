@@ -38,7 +38,7 @@ public class DefaultDoubleVector
      * @param values      column vector values.
      */
     public DefaultDoubleVector(int size, Optional<boolean[]> nullability, double[] values) {
-        super(size, DoubleType.INSTANCE, nullability);
+        super(size, DoubleType.DOUBLE, nullability);
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
             "invalid number of values (%s) for given size (%s)", values.length, size);

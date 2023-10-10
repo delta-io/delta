@@ -37,8 +37,8 @@ class DefaultPredicateEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBas
     Seq[BooleanJ](true, false, false, true, false, false, true, null, false, null, null))
 
   private val testSchema = new StructType()
-    .add("left", BooleanType.INSTANCE)
-    .add("right", BooleanType.INSTANCE)
+    .add("left", BooleanType.BOOLEAN)
+    .add("right", BooleanType.BOOLEAN)
 
   private val batch = new DefaultColumnarBatch(
     testLeftCol.getSize, testSchema, Array(testLeftCol, testRightCol))
