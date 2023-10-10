@@ -66,7 +66,7 @@ public class LogReplay implements Logging {
         // the whether stats are needed or not: https://github.com/delta-io/delta/issues/1961
         .add("add", AddFile.SCHEMA)
         .add("remove", new StructType()
-            .add("path", StringType.INSTANCE, false /* nullable */)
+            .add("path", StringType.STRING, false /* nullable */)
             .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */)
         );
 

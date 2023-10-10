@@ -40,10 +40,10 @@ public class Protocol {
     }
 
     public static final StructType READ_SCHEMA = new StructType()
-        .add("minReaderVersion", IntegerType.INSTANCE, false /* nullable */)
-        .add("minWriterVersion", IntegerType.INSTANCE, false /* nullable */)
-        .add("readerFeatures", new ArrayType(StringType.INSTANCE, false /* contains null */))
-        .add("writerFeatures", new ArrayType(StringType.INSTANCE, false /* contains null */));
+        .add("minReaderVersion", IntegerType.INTEGER, false /* nullable */)
+        .add("minWriterVersion", IntegerType.INTEGER, false /* nullable */)
+        .add("readerFeatures", new ArrayType(StringType.STRING, false /* contains null */))
+        .add("writerFeatures", new ArrayType(StringType.STRING, false /* contains null */));
 
     private final int minReaderVersion;
     private final int minWriterVersion;

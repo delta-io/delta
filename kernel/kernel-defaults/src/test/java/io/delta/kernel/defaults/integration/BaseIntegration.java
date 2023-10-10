@@ -134,12 +134,10 @@ public abstract class BaseIntegration {
                         break;
                     }
                 }
-                // TODO: improve the logging info
                 assertTrue("Actual data contain a row that is not expected", matched);
             }
         }
 
-        // TODO: improve the logging info
         assertEquals(
             "An expected row is not present in the actual data output",
             expDataBatch.getSize(),

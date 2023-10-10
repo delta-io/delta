@@ -17,24 +17,22 @@ package io.delta.kernel.internal.util;
 
 import java.util.function.Supplier;
 
-/**
- * TODO: Remove the stdout printing before 3.0 release.
- */
+// TODO re-enable proper logging
 public interface Logging {
 
     default void logInfo(String msg) {
-        System.out.println(this.getClass() + " :: " + msg);
+        // System.out.println(this.getClass() + " :: " + msg);
     }
 
     default void logInfo(Supplier<String> msg) {
-        System.out.println(this.getClass() + " :: " + msg.get());
+        // System.out.println(this.getClass() + " :: " + msg.get());
     }
 
     default void logDebug(String msg) {
-        System.out.println(this.getClass() + " :: " + msg);
+        // System.out.println(this.getClass() + " :: " + msg);
     }
 
     default void logDebug(Supplier<String> msg) {
-        System.out.println(this.getClass() + " :: " + msg.get());
+        // System.out.println(this.getClass() + " :: " + msg.get());
     }
 }

@@ -24,7 +24,7 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class ByteType extends BasePrimitiveType {
-    public static final ByteType INSTANCE = new ByteType();
+    public static final ByteType BYTE = new ByteType();
 
     private ByteType() {
         super("byte");

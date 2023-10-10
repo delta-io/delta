@@ -39,27 +39,27 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val testLiterals = Seq(
       Literal.ofBoolean(true),
       Literal.ofBoolean(false),
-      Literal.ofNull(BooleanType.INSTANCE),
+      Literal.ofNull(BooleanType.BOOLEAN),
       ofByte(24.toByte),
-      Literal.ofNull(ByteType.INSTANCE),
+      Literal.ofNull(ByteType.BYTE),
       Literal.ofShort(876.toShort),
-      Literal.ofNull(ShortType.INSTANCE),
+      Literal.ofNull(ShortType.SHORT),
       Literal.ofInt(2342342),
-      Literal.ofNull(IntegerType.INSTANCE),
+      Literal.ofNull(IntegerType.INTEGER),
       Literal.ofLong(234234223L),
-      Literal.ofNull(LongType.INSTANCE),
+      Literal.ofNull(LongType.LONG),
       Literal.ofFloat(23423.4223f),
-      Literal.ofNull(FloatType.INSTANCE),
+      Literal.ofNull(FloatType.FLOAT),
       Literal.ofDouble(23423.422233d),
-      Literal.ofNull(DoubleType.INSTANCE),
+      Literal.ofNull(DoubleType.DOUBLE),
       Literal.ofString("string_val"),
-      Literal.ofNull(StringType.INSTANCE),
+      Literal.ofNull(StringType.STRING),
       Literal.ofBinary("binary_val".getBytes),
-      Literal.ofNull(BinaryType.INSTANCE),
+      Literal.ofNull(BinaryType.BINARY),
       Literal.ofDate(4234),
-      Literal.ofNull(DateType.INSTANCE),
+      Literal.ofNull(DateType.DATE),
       Literal.ofTimestamp(2342342342232L),
-      Literal.ofNull(TimestampType.INSTANCE))
+      Literal.ofNull(TimestampType.TIMESTAMP))
 
     val inputBatches: Seq[ColumnarBatch] = Seq[ColumnarBatch](
       zeroColumnBatch(rowCount = 0),
@@ -120,7 +120,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   test("evaluate expression: nested column reference") {
-    val col3Type = IntegerType.INSTANCE
+    val col3Type = IntegerType.INTEGER
     val col2Type = new StructType().add("col3", col3Type)
     val col1Type = new StructType().add("col2", col2Type)
     val batchSchema = new StructType().add("col1", col1Type)
@@ -176,9 +176,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   test("evaluate expression: always true, always false") {
     Seq(ALWAYS_TRUE, ALWAYS_FALSE).foreach { expr =>
       val batch = zeroColumnBatch(rowCount = 87)
-      val outputVector = evaluator(batch.getSchema, expr, BooleanType.INSTANCE).eval(batch)
+      val outputVector = evaluator(batch.getSchema, expr, BooleanType.BOOLEAN).eval(batch)
       assert(outputVector.getSize === 87)
-      assert(outputVector.getDataType === BooleanType.INSTANCE)
+      assert(outputVector.getDataType === BooleanType.BOOLEAN)
       Seq.range(0, 87).foreach { rowId =>
         assert(!outputVector.isNullAt(rowId))
         assert(outputVector.getBoolean(rowId) == (expr == ALWAYS_TRUE))
@@ -197,8 +197,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       Seq[BooleanJ](true, true, false, true, null, null, null, null, null))
 
     val schema = new StructType()
-      .add("left", BooleanType.INSTANCE)
-      .add("right", BooleanType.INSTANCE)
+      .add("left", BooleanType.BOOLEAN)
+      .add("right", BooleanType.BOOLEAN)
     val batch = new DefaultColumnarBatch(leftColumn.getSize, schema, Array(leftColumn, rightColumn))
 
     val left = comparator("=", new Column("left"), Literal.ofBoolean(true))
@@ -206,12 +206,12 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
     // And
     val andExpression = and(left, right)
-    val actAndOutputVector = evaluator(schema, andExpression, BooleanType.INSTANCE).eval(batch)
+    val actAndOutputVector = evaluator(schema, andExpression, BooleanType.BOOLEAN).eval(batch)
     checkBooleanVectors(actAndOutputVector, expAndOutputVector)
 
     // Or
     val orExpression = or(left, right)
-    val actOrOutputVector = evaluator(schema, orExpression, BooleanType.INSTANCE).eval(batch)
+    val actOrOutputVector = evaluator(schema, orExpression, BooleanType.BOOLEAN).eval(batch)
     checkBooleanVectors(actOrOutputVector, expOrOutputVector)
   }
 
@@ -219,26 +219,26 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     // Literals for each data type from the data type value range, used as inputs to comparator
     // (small, big, small, null)
     val literals = Seq(
-      (ofByte(1.toByte), ofByte(2.toByte), ofByte(1.toByte), ofNull(ByteType.INSTANCE)),
-      (ofShort(1.toShort), ofShort(2.toShort), ofShort(1.toShort), ofNull(ShortType.INSTANCE)),
-      (ofInt(1), ofInt(2), ofInt(1), ofNull(IntegerType.INSTANCE)),
-      (ofLong(1L), ofLong(2L), ofLong(1L), ofNull(LongType.INSTANCE)),
-      (ofFloat(1.0F), ofFloat(2.0F), ofFloat(1.0F), ofNull(FloatType.INSTANCE)),
-      (ofDouble(1.0), ofDouble(2.0), ofDouble(1.0), ofNull(DoubleType.INSTANCE)),
-      (ofBoolean(false), ofBoolean(true), ofBoolean(false), ofNull(BooleanType.INSTANCE)),
+      (ofByte(1.toByte), ofByte(2.toByte), ofByte(1.toByte), ofNull(ByteType.BYTE)),
+      (ofShort(1.toShort), ofShort(2.toShort), ofShort(1.toShort), ofNull(ShortType.SHORT)),
+      (ofInt(1), ofInt(2), ofInt(1), ofNull(IntegerType.INTEGER)),
+      (ofLong(1L), ofLong(2L), ofLong(1L), ofNull(LongType.LONG)),
+      (ofFloat(1.0F), ofFloat(2.0F), ofFloat(1.0F), ofNull(FloatType.FLOAT)),
+      (ofDouble(1.0), ofDouble(2.0), ofDouble(1.0), ofNull(DoubleType.DOUBLE)),
+      (ofBoolean(false), ofBoolean(true), ofBoolean(false), ofNull(BooleanType.BOOLEAN)),
       (
         ofTimestamp(343L),
         ofTimestamp(123212312L),
         ofTimestamp(343L),
-        ofNull(TimestampType.INSTANCE)
+        ofNull(TimestampType.TIMESTAMP)
       ),
-      (ofDate(-12123), ofDate(123123), ofDate(-12123), ofNull(DateType.INSTANCE)),
-      (ofString("apples"), ofString("oranges"), ofString("apples"), ofNull(StringType.INSTANCE)),
+      (ofDate(-12123), ofDate(123123), ofDate(-12123), ofNull(DateType.DATE)),
+      (ofString("apples"), ofString("oranges"), ofString("apples"), ofNull(StringType.STRING)),
       (
         ofBinary("apples".getBytes()),
         ofBinary("oranges".getBytes()),
         ofBinary("apples".getBytes()),
-        ofNull(BinaryType.INSTANCE)
+        ofNull(BinaryType.BINARY)
       ),
       (
         ofDecimal(BigDecimalJ.valueOf(1.12), 7, 3),
@@ -285,7 +285,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     ofInt(-234),
     ofLong(223L),
     ofFloat(-2423423.9f),
-    ofNull(DoubleType.INSTANCE)
+    ofNull(DoubleType.DOUBLE)
   )
 
   test("evaluate expression: comparators `byte` with other implicit types") {
@@ -405,7 +405,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     )
     val testMapVector = buildMapVector(
       testMapValues,
-      new MapType(StringType.INSTANCE, StringType.INSTANCE, true))
+      new MapType(StringType.STRING, StringType.STRING, true))
 
     val inputBatch = new DefaultColumnarBatch(
       testMapVector.getSize,
@@ -419,7 +419,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       })
 
       val lookupKeyExpr = if (lookupKey == null) {
-        Literal.ofNull(StringType.INSTANCE)
+        Literal.ofNull(StringType.STRING)
       } else {
         Literal.ofString(lookupKey)
       }
@@ -427,10 +427,10 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         "element_at",
         util.Arrays.asList(new Column("partitionValues"), lookupKeyExpr))
 
-      val outputVector = evaluator(inputBatch.getSchema, elementAtExpr, StringType.INSTANCE)
+      val outputVector = evaluator(inputBatch.getSchema, elementAtExpr, StringType.STRING)
         .eval(inputBatch)
       assert(outputVector.getSize === testMapValues.size)
-      assert(outputVector.getDataType === StringType.INSTANCE)
+      assert(outputVector.getDataType === StringType.STRING)
       Seq.range(0, testMapValues.size).foreach { rowId =>
         val expNull = expOutput(rowId) == null
         assert(outputVector.isNullAt(rowId) == expNull)
@@ -443,13 +443,13 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
   test("evaluate expression: element_at - unsupported map type input") {
     val inputSchema = new StructType()
-      .add("as_map", new MapType(IntegerType.INSTANCE, BooleanType.INSTANCE, true))
+      .add("as_map", new MapType(IntegerType.INTEGER, BooleanType.BOOLEAN, true))
     val elementAtExpr = new ScalarExpression(
       "element_at",
       util.Arrays.asList(new Column("as_map"), Literal.ofString("empty")))
 
     val ex = intercept[UnsupportedOperationException] {
-      evaluator(inputSchema, elementAtExpr, StringType.INSTANCE)
+      evaluator(inputSchema, elementAtExpr, StringType.STRING)
     }
     assert(ex.getMessage.contains(
       "ELEMENT_AT(column(`as_map`), empty): Supported only on type map(string, string) input data"))
@@ -457,13 +457,13 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
   test("evaluate expression: element_at - unsupported lookup type input") {
     val inputSchema = new StructType()
-      .add("as_map", new MapType(StringType.INSTANCE, StringType.INSTANCE, true))
+      .add("as_map", new MapType(StringType.STRING, StringType.STRING, true))
     val elementAtExpr = new ScalarExpression(
       "element_at",
       util.Arrays.asList(new Column("as_map"), Literal.ofShort(24)))
 
     val ex = intercept[UnsupportedOperationException] {
-      evaluator(inputSchema, elementAtExpr, StringType.INSTANCE)
+      evaluator(inputSchema, elementAtExpr, StringType.STRING)
     }
     assert(ex.getMessage.contains("ELEMENT_AT(column(`as_map`), 24): " +
       "lookup key type (short) is different from the map key type (string)"))
@@ -472,31 +472,31 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   test("evaluate expression: partition_value") {
     // (serialized partition value, partition col type, expected deserialized partition value)
     val testCases = Seq(
-      ("true", BooleanType.INSTANCE, true),
-      ("false", BooleanType.INSTANCE, false),
-      (null, BooleanType.INSTANCE, null),
-      ("24", ByteType.INSTANCE, 24.toByte),
-      ("null", ByteType.INSTANCE, null),
-      ("876", ShortType.INSTANCE, 876.toShort),
-      ("null", ShortType.INSTANCE, null),
-      ("2342342", IntegerType.INSTANCE, 2342342),
-      ("null", IntegerType.INSTANCE, null),
-      ("234234223", LongType.INSTANCE, 234234223L),
-      ("null", LongType.INSTANCE, null),
-      ("23423.4223", FloatType.INSTANCE, 23423.4223f),
-      ("null", FloatType.INSTANCE, null),
-      ("23423.422233", DoubleType.INSTANCE, 23423.422233d),
-      ("null", DoubleType.INSTANCE, null),
+      ("true", BooleanType.BOOLEAN, true),
+      ("false", BooleanType.BOOLEAN, false),
+      (null, BooleanType.BOOLEAN, null),
+      ("24", ByteType.BYTE, 24.toByte),
+      ("null", ByteType.BYTE, null),
+      ("876", ShortType.SHORT, 876.toShort),
+      ("null", ShortType.SHORT, null),
+      ("2342342", IntegerType.INTEGER, 2342342),
+      ("null", IntegerType.INTEGER, null),
+      ("234234223", LongType.LONG, 234234223L),
+      ("null", LongType.LONG, null),
+      ("23423.4223", FloatType.FLOAT, 23423.4223f),
+      ("null", FloatType.FLOAT, null),
+      ("23423.422233", DoubleType.DOUBLE, 23423.422233d),
+      ("null", DoubleType.DOUBLE, null),
       ("234.422233", new DecimalType(10, 6), new BigDecimalJ("234.422233")),
-      ("null", DoubleType.INSTANCE, null),
-      ("string_val", StringType.INSTANCE, "string_val"),
-      ("null", StringType.INSTANCE, null),
-      ("binary_val", BinaryType.INSTANCE, "binary_val".getBytes()),
-      ("null", BinaryType.INSTANCE, null),
-      ("2021-11-18", DateType.INSTANCE, InternalUtils.daysSinceEpoch(Date.valueOf("2021-11-18"))),
-      ("null", DateType.INSTANCE, null),
-      ("2021-11-18", DateType.INSTANCE, InternalUtils.daysSinceEpoch(Date.valueOf("2021-11-18"))),
-      ("null", DateType.INSTANCE, null)
+      ("null", DoubleType.DOUBLE, null),
+      ("string_val", StringType.STRING, "string_val"),
+      ("null", StringType.STRING, null),
+      ("binary_val", BinaryType.BINARY, "binary_val".getBytes()),
+      ("null", BinaryType.BINARY, null),
+      ("2021-11-18", DateType.DATE, InternalUtils.daysSinceEpoch(Date.valueOf("2021-11-18"))),
+      ("null", DateType.DATE, null),
+      ("2021-11-18", DateType.DATE, InternalUtils.daysSinceEpoch(Date.valueOf("2021-11-18"))),
+      ("null", DateType.DATE, null)
       // TODO: timestamp partition value types are not yet supported in reading
     )
 
@@ -504,7 +504,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     testCases.foreach { testCase =>
       val (serializedPartVal, partType, deserializedPartVal) = testCase
       val literalSerializedPartVal = if (serializedPartVal == "null") {
-        Literal.ofNull(StringType.INSTANCE)
+        Literal.ofNull(StringType.STRING)
       } else {
         Literal.ofString(serializedPartVal)
       }
@@ -521,7 +521,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
   test("evaluate expression: partition_value - invalid serialize value") {
     val inputBatch = zeroColumnBatch(rowCount = 1)
-    val (serializedPartVal, partType) = ("23423sdfsdf", IntegerType.INSTANCE)
+    val (serializedPartVal, partType) = ("23423sdfsdf", IntegerType.INTEGER)
     val expr = new PartitionValueExpression(Literal.ofString(serializedPartVal), partType)
     val ex = intercept[IllegalArgumentException] {
       val outputVector = evaluator(inputBatch.getSchema, expr, partType).eval(inputBatch)
@@ -577,17 +577,17 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   /** Utility method to generate a consistent `isNull` value for given column type and row id */
   private def testIsNullValue(dataType: DataType, rowId: Int): Boolean = {
     dataType match {
-      case BooleanType.INSTANCE => rowId % 4 == 0
-      case ByteType.INSTANCE => rowId % 8 == 0
-      case ShortType.INSTANCE => rowId % 12 == 0
-      case IntegerType.INSTANCE => rowId % 20 == 0
-      case LongType.INSTANCE => rowId % 25 == 0
-      case FloatType.INSTANCE => rowId % 5 == 0
-      case DoubleType.INSTANCE => rowId % 10 == 0
-      case StringType.INSTANCE => rowId % 2 == 0
-      case BinaryType.INSTANCE => rowId % 3 == 0
-      case DateType.INSTANCE => rowId % 5 == 0
-      case TimestampType.INSTANCE => rowId % 3 == 0
+      case BooleanType.BOOLEAN => rowId % 4 == 0
+      case ByteType.BYTE => rowId % 8 == 0
+      case ShortType.SHORT => rowId % 12 == 0
+      case IntegerType.INTEGER => rowId % 20 == 0
+      case LongType.LONG => rowId % 25 == 0
+      case FloatType.FLOAT => rowId % 5 == 0
+      case DoubleType.DOUBLE => rowId % 10 == 0
+      case StringType.STRING => rowId % 2 == 0
+      case BinaryType.BINARY => rowId % 3 == 0
+      case DateType.DATE => rowId % 5 == 0
+      case TimestampType.TIMESTAMP => rowId % 3 == 0
       case _ =>
         if (dataType.isInstanceOf[DecimalType]) rowId % 6 == 0
         else throw new UnsupportedOperationException(s"$dataType is not supported")
@@ -597,17 +597,17 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   /** Utility method to generate a consistent column value for given column type and row id */
   private def testColumnValue(dataType: DataType, rowId: Int): Any = {
     dataType match {
-      case BooleanType.INSTANCE => rowId % 7 == 0
-      case ByteType.INSTANCE => (rowId * 7 / 17).toByte
-      case ShortType.INSTANCE => (rowId * 9 / 87).toShort
-      case IntegerType.INSTANCE => rowId * 2876 / 176
-      case LongType.INSTANCE => rowId * 287623L / 91
-      case FloatType.INSTANCE => rowId * 7651.2323f / 91
-      case DoubleType.INSTANCE => rowId * 23423.23d / 17
-      case StringType.INSTANCE => (rowId % 19).toString
-      case BinaryType.INSTANCE => Array[Byte]((rowId % 21).toByte, (rowId % 7 - 1).toByte)
-      case DateType.INSTANCE => (rowId * 28234) % 2876
-      case TimestampType.INSTANCE => (rowId * 2342342L) % 23
+      case BooleanType.BOOLEAN => rowId % 7 == 0
+      case ByteType.BYTE => (rowId * 7 / 17).toByte
+      case ShortType.SHORT => (rowId * 9 / 87).toShort
+      case IntegerType.INTEGER => rowId * 2876 / 176
+      case LongType.LONG => rowId * 287623L / 91
+      case FloatType.FLOAT => rowId * 7651.2323f / 91
+      case DoubleType.DOUBLE => rowId * 23423.23d / 17
+      case StringType.STRING => (rowId % 19).toString
+      case BinaryType.BINARY => Array[Byte]((rowId % 21).toByte, (rowId % 7 - 1).toByte)
+      case DateType.DATE => (rowId * 28234) % 2876
+      case TimestampType.TIMESTAMP => (rowId * 2342342L) % 23
       case _ =>
         if (dataType.isInstanceOf[DecimalType]) new BigDecimalJ(rowId * 22342.23)
         else throw new UnsupportedOperationException(s"$dataType is not supported")
@@ -623,10 +623,10 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     comparator: String, left: Expression, right: Expression, expResult: BooleanJ): Unit = {
     val expression = new Predicate(comparator, util.Arrays.asList(left, right))
     val batch = zeroColumnBatch(rowCount = 1)
-    val outputVector = evaluator(batch.getSchema, expression, BooleanType.INSTANCE).eval(batch)
+    val outputVector = evaluator(batch.getSchema, expression, BooleanType.BOOLEAN).eval(batch)
 
     assert(outputVector.getSize === 1)
-    assert(outputVector.getDataType === BooleanType.INSTANCE)
+    assert(outputVector.getDataType === BooleanType.BOOLEAN)
     assert(
       outputVector.isNullAt(0) === (expResult == null),
       s"Unexpected null value: $comparator($left, $right)")

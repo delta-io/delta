@@ -36,7 +36,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   // Timestamp type tests
   //////////////////////////////////////////////////////////////////////////////////
 
-  // TODO: for now we do not support timestamp partition columns, make sure it's blocked
+  // For now we do not support timestamp partition columns, make sure it's blocked
   test("cannot read partition column of timestamp type") {
     val path = goldenTablePath("kernel-timestamp-TIMESTAMP_MICROS")
     val snapshot = latestSnapshot(path)
