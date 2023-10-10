@@ -46,14 +46,17 @@ class DeltaRetentionSuite extends QueryTest
 
   test("delete expired logs") {
     withTempDir { tempDir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val startTime = getStartTimeForRetentionTest
+      val clock = new ManualClock(startTime)
+      val actualTestStartTime = System.currentTimeMillis()
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       val logPath = new File(log.logPath.toUri)
       (1 to 5).foreach { i =>
         val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
-          RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+          val timestamp = startTime + (System.currentTimeMillis()-actualTestStartTime)
+          RemoveFile(i - 1 toString, Some(timestamp), true) :: Nil
         } else {
           Nil
         }
@@ -87,7 +90,9 @@ class DeltaRetentionSuite extends QueryTest
 
   test("log files being already deleted shouldn't fail log deletion job") {
     withTempDir { tempDir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val startTime = getStartTimeForRetentionTest
+      val clock = new ManualClock(startTime)
+      val actualTestStartTime = System.currentTimeMillis()
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       val logPath = new File(log.logPath.toUri)
       val iterationCount = (log.checkpointInterval() * 2) + 1
@@ -96,7 +101,8 @@ class DeltaRetentionSuite extends QueryTest
         val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
-          RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+          val timestamp = startTime + (System.currentTimeMillis()-actualTestStartTime)
+          RemoveFile(i - 1 toString, Some(timestamp), true) :: Nil
         } else {
           Nil
         }
@@ -134,7 +140,7 @@ class DeltaRetentionSuite extends QueryTest
   testQuietly(
     "RemoveFiles persist across checkpoints as tombstones if retention time hasn't expired") {
     withTempDir { tempDir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val clock = new ManualClock(getStartTimeForRetentionTest)
       val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
 
       val txn = startTxnWithManualLogCleanup(log1)
@@ -162,7 +168,7 @@ class DeltaRetentionSuite extends QueryTest
 
   testQuietly("retention timestamp is picked properly by the cold snapshot initialization") {
     withTempDir { dir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val clock = new ManualClock(getStartTimeForRetentionTest)
       def deltaLog: DeltaLog = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath), clock)
 
       // Create table with 30 day tombstone retention.
@@ -199,7 +205,7 @@ class DeltaRetentionSuite extends QueryTest
 
   testQuietly("retention timestamp is lesser than the default value") {
     withTempDir { dir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val clock = new ManualClock(getStartTimeForRetentionTest)
       def deltaLog: DeltaLog = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath), clock)
 
       // Create table with 2 day tombstone retention.
@@ -232,7 +238,7 @@ class DeltaRetentionSuite extends QueryTest
 
   testQuietly("RemoveFiles get deleted during checkpoint if retention time has passed") {
     withTempDir { tempDir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val clock = new ManualClock(getStartTimeForRetentionTest)
       val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
 
       val txn = startTxnWithManualLogCleanup(log1)
@@ -256,7 +262,7 @@ class DeltaRetentionSuite extends QueryTest
 
   test("the checkpoint file for version 0 should be cleaned") {
     withTempDir { tempDir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val clock = new ManualClock(getStartTimeForRetentionTest)
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       val logPath = new File(log.logPath.toUri)
       startTxnWithManualLogCleanup(log).commit(AddFile("0", Map.empty, 1, 1, true) :: Nil, testOp)
@@ -286,7 +292,7 @@ class DeltaRetentionSuite extends QueryTest
 
   test("allow users to expire transaction identifiers from checkpoints") {
     withTempDir { dir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val clock = new ManualClock(getStartTimeForRetentionTest)
       val log = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath), clock)
       sql(
         s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
@@ -339,8 +345,8 @@ class DeltaRetentionSuite extends QueryTest
     val checkpointPolicy = CheckpointPolicy.V2.name
     withSQLConf((DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> v2CheckpointFormat)) {
       withTempDir { tempDir =>
-        val startTime = System.currentTimeMillis()
-        val clock = new ManualClock(System.currentTimeMillis())
+        val startTime = getStartTimeForRetentionTest
+        val clock = new ManualClock(startTime)
         val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
         val logPath = new File(log.logPath.toUri)
         val visitedFiles = scala.collection.mutable.Set.empty[String]
@@ -449,8 +455,8 @@ class DeltaRetentionSuite extends QueryTest
     val checkpointPolicy = CheckpointPolicy.V2.name
     withSQLConf((DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> v2CheckpointFormat)) {
       withTempDir { tempDir =>
-        val startTime = System.currentTimeMillis()
-        val clock = new ManualClock(System.currentTimeMillis())
+        val startTime = getStartTimeForRetentionTest
+        val clock = new ManualClock(startTime)
         val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
         val logPath = new File(log.logPath.toUri)
         val visitedFiles = scala.collection.mutable.Set.empty[String]

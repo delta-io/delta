@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.util.{Calendar, TimeZone}
 
 import scala.collection.mutable
 
@@ -27,6 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames.{newV2CheckpointJsonFile, newV2CheckpointParquetFile}
+import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
@@ -47,6 +49,30 @@ trait DeltaRetentionSuiteBase extends QueryTest
   protected def intervalStringToMillis(str: String): Long = {
     DeltaConfigs.getMilliSeconds(
       IntervalUtils.safeStringToInterval(UTF8String.fromString(str)))
+  }
+
+  /**
+   * Returns milliseconds since epoch at 1:00am UTC of current day.
+   *
+   * Context:
+   * Most DeltaRetentionSuite tests rely on ManualClock to time travel and
+   * trigger metadata cleanup. Cleanup boundaries are determined by
+   * finding files that were modified before 00:00 of the day on which
+   * currentTime-LOG_RETENTION_PERIOD falls. This means that for a long running
+   * test started at 23:59, the number of expired files would jump suddenly
+   * in 1 minute (the expiration boundary would move by a day as soon as
+   * system clock hits 00:00 of the next day). By fixing the start time of the
+   * test to 01:00, we avoid these scenarios.
+   *
+   * This would still break if the test runs for more than 23 hours.
+   */
+  protected def getStartTimeForRetentionTest: Long = {
+    val currentTime = System.currentTimeMillis()
+    val date = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+    date.setTimeInMillis(currentTime)
+    val dayStartTimeStamp = DateUtils.truncate(date, Calendar.DAY_OF_MONTH)
+    dayStartTimeStamp.add(Calendar.HOUR_OF_DAY, 1);
+    dayStartTimeStamp.getTimeInMillis
   }
 
   protected def getDeltaFiles(dir: File): Seq[File] =
