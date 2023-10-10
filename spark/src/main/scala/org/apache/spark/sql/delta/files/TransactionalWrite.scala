@@ -350,6 +350,11 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   /**
    * Writes out the dataframe after performing schema validation. Returns a list of
    * actions to append these files to the reservoir.
+   *
+   * @param inputData Data to write out.
+   * @param writeOptions Options to decide how to write out the data.
+   * @param isOptimize Whether the operation writing this is Optimize or not.
+   * @param additionalConstraints Additional constraints on the write.
    */
   def writeFiles(
       inputData: Dataset[_],
@@ -387,6 +392,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       val empty2NullPlan = convertEmptyToNullIfNeeded(queryExecution.executedPlan,
         partitioningColumns, constraints)
       val checkInvariants = DeltaInvariantCheckerExec(empty2NullPlan, constraints)
+      // No need to plan optimized write if the write command is OPTIMIZE, which aims to produce
+      // evenly-balanced data files already.
       val physicalPlan = if (!isOptimize &&
         shouldOptimizeWrite(writeOptions, spark.sessionState.conf)) {
         DeltaOptimizedWriterExec(checkInvariants, metadata.partitionColumns, deltaLog)

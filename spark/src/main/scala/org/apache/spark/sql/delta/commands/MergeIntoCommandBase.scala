@@ -228,7 +228,9 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       txn: OptimisticTransaction,
       outputDF: DataFrame): Seq[FileAction] = {
     val partitionColumns = txn.metadata.partitionColumns
-    // If the write will be optimized write, which shuffles the data anyway, then don't repartition.
+    // If the write will be an optimized write, which shuffles the data anyway, then don't
+    // repartition. Optimized writes can handle both splitting very large tasks and coalescing
+    // very small ones.
     if (partitionColumns.nonEmpty && spark.conf.get(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE)
       && !TransactionalWrite.shouldOptimizeWrite(txn.metadata, spark.sessionState.conf)) {
       txn.writeFiles(outputDF.repartition(partitionColumns.map(col): _*))
