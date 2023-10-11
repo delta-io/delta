@@ -9,6 +9,9 @@ import static io.delta.flink.source.internal.DeltaSourceOptions.STARTING_VERSION
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
 
+import org.apache.flink.core.fs.Path;
+import org.apache.hadoop.conf.Configuration;
+
 /**
  * An implementation of {@link SnapshotSupplier} for {#link
  * {@link org.apache.flink.api.connector.source.Boundedness#CONTINUOUS_UNBOUNDED}}
@@ -16,8 +19,8 @@ import io.delta.standalone.Snapshot;
  */
 public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
 
-    public ContinuousSourceSnapshotSupplier(DeltaLog deltaLog) {
-        super(deltaLog);
+    public ContinuousSourceSnapshotSupplier(DeltaLog deltaLog, Configuration configuration, Path tablePath) {
+	super(deltaLog, configuration, tablePath);
     }
 
     /**
