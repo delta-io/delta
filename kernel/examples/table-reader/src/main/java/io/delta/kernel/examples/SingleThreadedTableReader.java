@@ -25,8 +25,7 @@ import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.Table;
 import io.delta.kernel.TableNotFoundException;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.DataReadResult;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -53,7 +52,7 @@ public class SingleThreadedTableReader
     @Override
     public void show(int limit, Optional<List<String>> columnsOpt)
         throws TableNotFoundException, IOException {
-        Table table = Table.forPath(tablePath);
+        Table table = Table.forPath(tableClient, tablePath);
         Snapshot snapshot = table.getLatestSnapshot(tableClient);
         StructType readSchema = pruneSchema(snapshot.getSchema(tableClient), columnsOpt);
 
@@ -93,19 +92,19 @@ public class SingleThreadedTableReader
         printSchema(readSchema);
 
         Row scanState = scan.getScanState(tableClient);
-        CloseableIterator<ColumnarBatch> scanFileIter = scan.getScanFiles(tableClient);
+        CloseableIterator<FilteredColumnarBatch> scanFileIter = scan.getScanFiles(tableClient);
 
         int readRecordCount = 0;
         try {
             while (scanFileIter.hasNext()) {
-                try (CloseableIterator<DataReadResult> data =
+                try (CloseableIterator<FilteredColumnarBatch> data =
                     Scan.readData(
                         tableClient,
                         scanState,
                         scanFileIter.next().getRows(),
                         Optional.empty())) {
                     while (data.hasNext()) {
-                        DataReadResult dataReadResult = data.next();
+                        FilteredColumnarBatch dataReadResult = data.next();
                         readRecordCount += printData(dataReadResult, maxRowCount - readRecordCount);
                         if (readRecordCount >= maxRowCount) {
                             return;
