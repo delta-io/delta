@@ -7,6 +7,9 @@ import io.delta.flink.source.internal.utils.TransitiveOptional;
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
 
+import org.apache.flink.core.fs.Path;
+import org.apache.hadoop.conf.Configuration;
+
 /**
  * An implementation of {@link SnapshotSupplier} for {#link
  * {@link org.apache.flink.api.connector.source.Boundedness#BOUNDED}}
@@ -14,8 +17,8 @@ import io.delta.standalone.Snapshot;
  */
 public class BoundedSourceSnapshotSupplier extends SnapshotSupplier {
 
-    public BoundedSourceSnapshotSupplier(DeltaLog deltaLog) {
-        super(deltaLog);
+    public BoundedSourceSnapshotSupplier(DeltaLog deltaLog, Configuration configuration, Path tablePath) {
+        super(deltaLog, configuration, tablePath);
     }
 
     /**
