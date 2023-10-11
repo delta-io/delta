@@ -324,6 +324,62 @@ trait CloneIcebergSuiteBase extends QueryTest
     }
   }
 
+  testClone("create or replace table - replace partition field") { mode =>
+    withTable(table, cloneTable) {
+      spark.sql(
+        s"""CREATE TABLE $table (date date, id bigint, category string, price double)
+           | USING iceberg PARTITIONED BY (date)""".stripMargin)
+
+      // scalastyle:off deltahadoopconfiguration
+      val hadoopTables = new HadoopTables(spark.sessionState.newHadoopConf())
+      // scalastyle:on deltahadoopconfiguration
+      val icebergTable = hadoopTables.load(tablePath)
+      val icebergTableSchema =
+        org.apache.iceberg.spark.SparkSchemaUtil.convert(icebergTable.schema())
+
+      val df1 = spark.createDataFrame(
+        Seq(
+          Row(toDate("2022-01-01"), 1L, "toy", 2.5D),
+          Row(toDate("2022-01-01"), 2L, "food", 0.6D),
+          Row(toDate("2022-02-05"), 3L, "food", 1.4D),
+          Row(toDate("2022-02-05"), 4L, "toy", 10.2D)).asJava,
+        icebergTableSchema)
+
+      df1.writeTo(table).append()
+
+      runCreateOrReplace(mode, sourceIdentifier)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(cloneTable))
+      assert(deltaLog.snapshot.metadata.partitionColumns == Seq("date"))
+      checkAnswer(spark.table(cloneTable), df1)
+
+      // Replace the partition field "date" with a transformed field "month(date)"
+      icebergTable.refresh()
+      icebergTable.updateSpec().removeField("date")
+        .addField(org.apache.iceberg.expressions.Expressions.month("date")).commit()
+
+      // Invalidate cache and load the updated partition spec
+      spark.sql(s"REFRESH TABLE $table")
+      val df2 = spark.createDataFrame(
+        Seq(
+          Row(toDate("2022-02-05"), 5L, "toy", 5.8D),
+          Row(toDate("2022-06-04"), 6L, "toy", 20.1D)).asJava,
+        icebergTableSchema)
+
+      df2.writeTo(table).append()
+
+      runCreateOrReplace(mode, sourceIdentifier)
+      assert(deltaLog.update().metadata.partitionColumns == Seq("date_month"))
+      // Old data of cloned Delta table has null on the new partition field.
+      checkAnswer(spark.table(cloneTable),
+        df1.withColumn("date_month", lit(null))
+          .union(df2.withColumn("date_month", substring(col("date") cast "String", 1, 7))))
+      // The new partition field is a hidden metadata column in Iceberg.
+      checkAnswer(
+        spark.table(cloneTable).drop("date_month"),
+        spark.sql(s"SELECT * FROM $table"))
+    }
+  }
+
   testClone("Enables column mapping table feature") { mode =>
     withTable(table, cloneTable) {
       spark.sql(
