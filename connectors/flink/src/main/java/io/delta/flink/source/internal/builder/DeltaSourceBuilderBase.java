@@ -278,7 +278,7 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
     protected SourceSchema getSourceSchema() {
         DeltaLog deltaLog =
             DeltaLog.forTable(hadoopConfiguration, SourceUtils.pathToString(tablePath));
-        SnapshotSupplier snapshotSupplier = snapshotSupplierFactory.create(deltaLog);
+        SnapshotSupplier snapshotSupplier = snapshotSupplierFactory.create(deltaLog, hadoopConfiguration, tablePath);
         Snapshot snapshot = snapshotSupplier.getSnapshot(sourceConfiguration);
 
         try {
