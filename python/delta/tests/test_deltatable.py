@@ -19,7 +19,7 @@ import os
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 from multiprocessing.pool import ThreadPool
 
-from pyspark.sql import DataFrame, Row
+from pyspark.sql import DataFrame, Row, SparkSession
 from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
 from pyspark.sql.functions import col, lit, expr, floor
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, DataType
@@ -323,7 +323,7 @@ class DeltaTableTests(DeltaTestCase):
         target_path = os.path.join(self.tempFile, "target")
         spark = self.spark
 
-        def f(spark):
+        def f(spark: SparkSession) -> None:
             spark.range(20) \
                 .withColumn("x", col("id")) \
                 .withColumn("y", col("id")) \
