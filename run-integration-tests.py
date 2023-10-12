@@ -205,13 +205,13 @@ def run_s3_log_store_util_integration_tests():
         raise
 
 
-def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_version, use_local):
+def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_version, extra_maven_repo, use_local):
     print("\n\n##### Running Iceberg tests on version %s #####" % str(version))
     clear_artifact_cache()
     if use_local:
         run_cmd(["build/sbt", "publishM2"])
 
-    test_dir = path.join(root_dir, path.join("delta-iceberg", "integration_tests"))
+    test_dir = path.join(root_dir, path.join("iceberg", "integration_tests"))
 
     # Add more Iceberg tests here if needed ...
     test_files_names = ["iceberg_converter.py"]
@@ -224,7 +224,7 @@ def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_vers
         "io.delta:delta-iceberg_2.12:" + version,
         "org.apache.iceberg:iceberg-spark-runtime-{}_2.12:{}".format(spark_version, iceberg_version)])
 
-    repo = ""
+    repo = extra_maven_repo if extra_maven_repo else ""
 
     for test_file in test_files:
         try:
@@ -451,7 +451,7 @@ if __name__ == "__main__":
     if args.run_iceberg_integration_tests:
         run_iceberg_integration_tests(
             root_dir, args.version,
-            args.iceberg_spark_version, args.iceberg_lib_version, args.use_local)
+            args.iceberg_spark_version, args.iceberg_lib_version, args.maven_repo, args.use_local)
         quit()
 
     if args.run_storage_s3_dynamodb_integration_tests:
