@@ -58,19 +58,20 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
 
   protected def executeDetails(
       path: String,
-      tableIdentifier: Option[TableIdentifier]): DataFrame = {
+      tableIdentifier: Option[TableIdentifier]): DataFrame = withActiveSession(sparkSession) {
     val details = DescribeDeltaDetailCommand(Option(path), tableIdentifier, self.deltaLog.options)
     toDataset(sparkSession, details)
   }
 
-  protected def executeGenerate(tblIdentifier: String, mode: String): Unit = {
-    val tableId: TableIdentifier = sparkSession
-      .sessionState
-      .sqlParser
-      .parseTableIdentifier(tblIdentifier)
-    val generate = DeltaGenerateCommand(mode, tableId, self.deltaLog.options)
-    toDataset(sparkSession, generate)
-  }
+  protected def executeGenerate(tblIdentifier: String, mode: String): Unit =
+    withActiveSession(sparkSession) {
+      val tableId: TableIdentifier = sparkSession
+        .sessionState
+        .sqlParser
+        .parseTableIdentifier(tblIdentifier)
+      val generate = DeltaGenerateCommand(mode, tableId, self.deltaLog.options)
+      toDataset(sparkSession, generate)
+    }
 
   protected def executeUpdate(
       set: Map[String, Column],
@@ -96,7 +97,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   protected def executeRestore(
       table: DeltaTableV2,
       versionAsOf: Option[Long],
-      timestampAsOf: Option[String]): DataFrame = {
+      timestampAsOf: Option[String]): DataFrame = withActiveSession(sparkSession) {
     val identifier = table.getTableIdentifierIfExists.map(
       id => Identifier.of(id.database.toArray, id.table))
     val sourceRelation = DataSourceV2Relation.create(table, None, identifier)
