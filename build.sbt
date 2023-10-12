@@ -378,8 +378,9 @@ lazy val iceberg = (project in file("iceberg"))
       // Note: the input here is only `libraryDependencies` jars, not `.dependsOn(_)` jars.
       val allowedJars = Seq(
         s"iceberg-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
-        "scala-library-2.12.15.jar",
-        "scala-collection-compat_2.12-2.1.1.jar",
+        s"scala-library-${scala212}.jar",
+        s"scala-library-${scala213}.jar",
+        s"scala-collection-compat_${scalaBinaryVersion.value}-2.1.1.jar",
         "caffeine-2.9.3.jar",
         // Note: We are excluding
         // - antlr4-runtime-4.9.3.jar
@@ -1083,7 +1084,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
