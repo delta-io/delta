@@ -38,7 +38,7 @@ public class DefaultFloatVector
      * @param values      column vector values.
      */
     public DefaultFloatVector(int size, Optional<boolean[]> nullability, float[] values) {
-        super(size, FloatType.INSTANCE, nullability);
+        super(size, FloatType.FLOAT, nullability);
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
             "invalid number of values (%s) for given size (%s)", values.length, size);

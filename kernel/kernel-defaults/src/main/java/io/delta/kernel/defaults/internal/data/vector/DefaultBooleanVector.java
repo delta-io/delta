@@ -38,7 +38,7 @@ public class DefaultBooleanVector
      * @param values      column vector values.
      */
     public DefaultBooleanVector(int size, Optional<boolean[]> nullability, boolean[] values) {
-        super(size, BooleanType.INSTANCE, nullability);
+        super(size, BooleanType.BOOLEAN, nullability);
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
             "invalid number of values (%s) for given size (%s)", values.length, size);

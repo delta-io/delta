@@ -24,7 +24,7 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class FloatType extends BasePrimitiveType {
-    public static final FloatType INSTANCE = new FloatType();
+    public static final FloatType FLOAT = new FloatType();
 
     private FloatType() {
         super("float");

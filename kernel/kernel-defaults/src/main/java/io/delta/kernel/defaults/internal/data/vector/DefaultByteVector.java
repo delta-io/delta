@@ -38,7 +38,7 @@ public class DefaultByteVector
      * @param values      column vector values.
      */
     public DefaultByteVector(int size, Optional<boolean[]> nullability, byte[] values) {
-        super(size, ByteType.INSTANCE, nullability);
+        super(size, ByteType.BYTE, nullability);
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
             "invalid number of values (%s) for given size (%s)", values.length, size);

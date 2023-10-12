@@ -27,9 +27,6 @@ import io.delta.kernel.utils.Tuple2;
 
 import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
-// TODO: add test suite
-// If we implement additional methods (i.e. serialize) we can copy the test suite from delta-spark
-
 /**
  * A 64-bit extension of [[RoaringBitmap]] that is optimized for cases that usually fit within
  * a 32-bit bitmap, but may run over by a few bits on occasion.

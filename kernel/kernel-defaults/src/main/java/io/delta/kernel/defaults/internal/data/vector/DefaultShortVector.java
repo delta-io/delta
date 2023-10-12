@@ -38,7 +38,7 @@ public class DefaultShortVector
      * @param values      column vector values.
      */
     public DefaultShortVector(int size, Optional<boolean[]> nullability, short[] values) {
-        super(size, ShortType.INSTANCE, nullability);
+        super(size, ShortType.SHORT, nullability);
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
             "invalid number of values (%s) for given size (%s)", values.length, size);

@@ -58,17 +58,17 @@ public class Metadata {
     }
 
     public static final StructType READ_SCHEMA = new StructType()
-        .add("id", StringType.INSTANCE, false /* nullable */)
-        .add("name", StringType.INSTANCE, true /* nullable */)
-        .add("description", StringType.INSTANCE, true /* nullable */)
+        .add("id", StringType.STRING, false /* nullable */)
+        .add("name", StringType.STRING, true /* nullable */)
+        .add("description", StringType.STRING, true /* nullable */)
         .add("format", Format.READ_SCHEMA, false /* nullable */)
-        .add("schemaString", StringType.INSTANCE, false /* nullable */)
+        .add("schemaString", StringType.STRING, false /* nullable */)
         .add("partitionColumns",
-            new ArrayType(StringType.INSTANCE, false /* contains null */),
+            new ArrayType(StringType.STRING, false /* contains null */),
             false /* nullable */)
-        .add("createdTime", LongType.INSTANCE, true /* contains null */)
+        .add("createdTime", LongType.LONG, true /* contains null */)
         .add("configuration",
-            new MapType(StringType.INSTANCE, StringType.INSTANCE, false),
+            new MapType(StringType.STRING, StringType.STRING, false),
             false /* nullable */);
 
     private final String id;

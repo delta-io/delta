@@ -26,19 +26,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.ByteType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.DoubleType;
-import io.delta.kernel.types.FloatType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.ShortType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
+import io.delta.kernel.utils.VectorUtils;
 
 import io.delta.kernel.internal.types.TableSchemaSerDe;
 
@@ -111,12 +100,16 @@ public class RowSerDe {
                 value = row.getFloat(fieldId);
             } else if (fieldType instanceof DoubleType) {
                 value = row.getDouble(fieldId);
+            } else if (fieldType instanceof DateType) {
+                value = row.getInt(fieldId);
+            } else if (fieldType instanceof TimestampType) {
+                value = row.getLong(fieldId);
             } else if (fieldType instanceof StringType) {
                 value = row.getString(fieldId);
             } else if (fieldType instanceof ArrayType) {
-                value = row.getArray(fieldId);
+                value = VectorUtils.toJavaList(row.getArray(fieldId));
             } else if (fieldType instanceof MapType) {
-                value = row.getMap(fieldId);
+                value = VectorUtils.toJavaMap(row.getMap(fieldId));
             } else if (fieldType instanceof StructType) {
                 Row subRow = row.getStruct(fieldId);
                 value = convertRowToJsonObject(subRow);

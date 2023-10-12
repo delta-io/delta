@@ -107,26 +107,26 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ExpressionTransformResult visitAnd(And and) {
             Predicate left = validateIsPredicate(and, visit(and.getLeft()));
             Predicate right = validateIsPredicate(and, visit(and.getRight()));
-            return new ExpressionTransformResult(new And(left, right), BooleanType.INSTANCE);
+            return new ExpressionTransformResult(new And(left, right), BooleanType.BOOLEAN);
         }
 
         @Override
         ExpressionTransformResult visitOr(Or or) {
             Predicate left = validateIsPredicate(or, visit(or.getLeft()));
             Predicate right = validateIsPredicate(or, visit(or.getRight()));
-            return new ExpressionTransformResult(new Or(left, right), BooleanType.INSTANCE);
+            return new ExpressionTransformResult(new Or(left, right), BooleanType.BOOLEAN);
         }
 
         @Override
         ExpressionTransformResult visitAlwaysTrue(AlwaysTrue alwaysTrue) {
             // nothing to validate or rewrite.
-            return new ExpressionTransformResult(alwaysTrue, BooleanType.INSTANCE);
+            return new ExpressionTransformResult(alwaysTrue, BooleanType.BOOLEAN);
         }
 
         @Override
         ExpressionTransformResult visitAlwaysFalse(AlwaysFalse alwaysFalse) {
             // nothing to validate or rewrite.
-            return new ExpressionTransformResult(alwaysFalse, BooleanType.INSTANCE);
+            return new ExpressionTransformResult(alwaysFalse, BooleanType.BOOLEAN);
         }
 
         @Override
@@ -139,7 +139,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 case "<=":
                     return new ExpressionTransformResult(
                         transformBinaryComparator(predicate),
-                        BooleanType.INSTANCE);
+                        BooleanType.BOOLEAN);
                 default:
                     throw new UnsupportedOperationException(
                         "unsupported expression encountered: " + predicate);
@@ -281,12 +281,12 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
 
         @Override
         ColumnVector visitAlwaysTrue(AlwaysTrue alwaysTrue) {
-            return new DefaultConstantVector(BooleanType.INSTANCE, input.getSize(), true);
+            return new DefaultConstantVector(BooleanType.BOOLEAN, input.getSize(), true);
         }
 
         @Override
         ColumnVector visitAlwaysFalse(AlwaysFalse alwaysFalse) {
-            return new DefaultConstantVector(BooleanType.INSTANCE, input.getSize(), false);
+            return new DefaultConstantVector(BooleanType.BOOLEAN, input.getSize(), false);
         }
 
         @Override

@@ -13,20 +13,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.types;
+package io.delta.kernel.client;
 
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * The data type representing {@code short} type values.
- *
- * @since 3.0.0
+ * Represents a request to read a range of bytes from a given file.
  */
 @Evolving
-public class ShortType extends BasePrimitiveType {
-    public static final ShortType SHORT = new ShortType();
+public interface FileReadRequest {
+    /**
+     * Get the fully qualified path of the file from which to read the data.
+     */
+    String getPath();
 
-    private ShortType() {
-        super("short");
-    }
+    /**
+     * Get the start offset in the file from where to start reading the data.
+     */
+    int getStartOffset();
+
+    /**
+     * Get the length of the data to read from the file starting at the <i>startOffset</i>.
+     */
+    int getReadLength();
 }

@@ -24,7 +24,7 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class BinaryType extends BasePrimitiveType {
-    public static final BinaryType INSTANCE = new BinaryType();
+    public static final BinaryType BINARY = new BinaryType();
 
     private BinaryType() {
         super("binary");

@@ -31,9 +31,9 @@ class PartitionUtilsSuite extends AnyFunSuite {
   // Partition columns: part1: int, part2: date, part3: string
   private val partitionColsToType = new util.HashMap[String, DataType]() {
     {
-      put("part1", IntegerType.INSTANCE)
-      put("part2", DateType.INSTANCE)
-      put("part3", StringType.INSTANCE)
+      put("part1", IntegerType.INTEGER)
+      put("part2", DateType.DATE)
+      put("part3", StringType.STRING)
     }
   }
 

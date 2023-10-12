@@ -54,8 +54,6 @@ public class DataBuilderUtils {
 
         public TestColumnBatchBuilder addRow(Object... values) {
             checkArgument(values.length == schema.length(), "Invalid columns length");
-            // TODO: we could improve this further to check the type of the object based on the
-            // column data type in the schema, but given this for test it should be fine.
             rows.add(row(schema, values));
 
             return this;

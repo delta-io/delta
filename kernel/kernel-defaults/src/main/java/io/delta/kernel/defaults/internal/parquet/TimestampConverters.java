@@ -53,7 +53,7 @@ public class TimestampConverters {
 
             if (timestamp.getUnit() == LogicalTypeAnnotation.TimeUnit.MICROS) {
                 return new ParquetConverters.LongColumnConverter(
-                    TimestampType.INSTANCE, initialBatchSize);
+                    TimestampType.TIMESTAMP, initialBatchSize);
             } else if (timestamp.getUnit() == LogicalTypeAnnotation.TimeUnit.MILLIS) {
                 return new TimestampMillisConverter(initialBatchSize);
             } else {
@@ -71,7 +71,7 @@ public class TimestampConverters {
     public static class TimestampMillisConverter extends ParquetConverters.LongColumnConverter {
 
         TimestampMillisConverter( int initialBatchSize) {
-            super(TimestampType.INSTANCE, initialBatchSize);
+            super(TimestampType.TIMESTAMP, initialBatchSize);
         }
 
         @Override
@@ -83,7 +83,7 @@ public class TimestampConverters {
     public static class TimestampBinaryConverter extends ParquetConverters.LongColumnConverter {
 
         TimestampBinaryConverter( int initialBatchSize) {
-            super(TimestampType.INSTANCE, initialBatchSize);
+            super(TimestampType.TIMESTAMP, initialBatchSize);
         }
 
         private long binaryToSQLTimestamp(Binary binary) {

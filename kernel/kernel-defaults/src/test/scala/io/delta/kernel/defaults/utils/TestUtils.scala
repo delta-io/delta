@@ -107,10 +107,8 @@ trait TestUtils extends Assertions {
 
     val scanState = scan.getScanState(tableClient);
     val fileIter = scan.getScanFiles(tableClient)
-    // TODO serialize scan state and scan rows
 
     fileIter.forEach { fileColumnarBatch =>
-      // TODO deserialize scan state and scan rows
       val dataBatches = Scan.readData(
         tableClient,
         scanState,
@@ -158,25 +156,25 @@ trait TestUtils extends Assertions {
 
   /** All simple data type used in parameterized tests where type is one of the test dimensions. */
   val SIMPLE_TYPES = Seq(
-    BooleanType.INSTANCE,
-    ByteType.INSTANCE,
-    ShortType.INSTANCE,
-    IntegerType.INSTANCE,
-    LongType.INSTANCE,
-    FloatType.INSTANCE,
-    DoubleType.INSTANCE,
-    DateType.INSTANCE,
-    TimestampType.INSTANCE,
-    StringType.INSTANCE,
-    BinaryType.INSTANCE,
+    BooleanType.BOOLEAN,
+    ByteType.BYTE,
+    ShortType.SHORT,
+    IntegerType.INTEGER,
+    LongType.LONG,
+    FloatType.FLOAT,
+    DoubleType.DOUBLE,
+    DateType.DATE,
+    TimestampType.TIMESTAMP,
+    StringType.STRING,
+    BinaryType.BINARY,
     new DecimalType(10, 5)
   )
 
   /** All types. Used in parameterized tests where type is one of the test dimensions. */
   val ALL_TYPES = SIMPLE_TYPES ++ Seq(
-    new ArrayType(BooleanType.INSTANCE, true),
-    new MapType(IntegerType.INSTANCE, LongType.INSTANCE, true),
-    new StructType().add("s1", BooleanType.INSTANCE).add("s2", IntegerType.INSTANCE)
+    new ArrayType(BooleanType.BOOLEAN, true),
+    new MapType(IntegerType.INTEGER, LongType.LONG, true),
+    new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER)
   )
 
   /**
@@ -334,18 +332,13 @@ trait TestUtils extends Assertions {
         new MapValue() {
           override def getSize: Int = map.size
 
-          override def getKeys = new DefaultGenericVector(
-            keyType, keys.toArray)
+          override def getKeys = DefaultGenericVector.fromArray(keyType, keys.toArray)
 
-          override def getValues = new DefaultGenericVector(
-            valueType, values.toArray)
+          override def getValues = DefaultGenericVector.fromArray(valueType, values.toArray)
         }
       }
     }
 
-    new DefaultGenericVector(
-      dataType,
-      mapValues.map(getMapValue).toArray
-    )
+    DefaultGenericVector.fromArray(dataType, mapValues.map(getMapValue).toArray)
   }
 }

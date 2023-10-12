@@ -35,18 +35,18 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils {
   // Test case to verify pruning on each partition column type works.
   // format: partition column reference -> (nonNullPartitionValues, nullPartitionValue)
   val testCasesAllTypes = Map(
-    col("as_boolean") -> (ofBoolean(false), ofNull(BooleanType.INSTANCE)),
-    col("as_byte") -> (ofByte(1), ofNull(ByteType.INSTANCE)),
-    col("as_short") -> (ofShort(1), ofNull(ShortType.INSTANCE)),
-    col("as_int") -> (ofInt(1), ofNull(IntegerType.INSTANCE)),
-    col("as_long") -> (ofLong(1), ofNull(LongType.INSTANCE)),
-    col("as_float") -> (ofFloat(1), ofNull(FloatType.INSTANCE)),
-    col("as_double") -> (ofDouble(1), ofNull(DoubleType.INSTANCE)),
+    col("as_boolean") -> (ofBoolean(false), ofNull(BooleanType.BOOLEAN)),
+    col("as_byte") -> (ofByte(1), ofNull(ByteType.BYTE)),
+    col("as_short") -> (ofShort(1), ofNull(ShortType.SHORT)),
+    col("as_int") -> (ofInt(1), ofNull(IntegerType.INTEGER)),
+    col("as_long") -> (ofLong(1), ofNull(LongType.LONG)),
+    col("as_float") -> (ofFloat(1), ofNull(FloatType.FLOAT)),
+    col("as_double") -> (ofDouble(1), ofNull(DoubleType.DOUBLE)),
     // 2021-09-08 in days since epoch 18878
-    col("as_date") -> (ofDate(18878 /* daysSinceEpochUTC */), ofNull(DateType.INSTANCE)),
-    col("as_string") -> (ofString("1"), ofNull(StringType.INSTANCE)),
+    col("as_date") -> (ofDate(18878 /* daysSinceEpochUTC */), ofNull(DateType.DATE)),
+    col("as_string") -> (ofString("1"), ofNull(StringType.STRING)),
     // TODO: timestamp partition column is not yet supported
-    // col("as_timestamp") -> (ofTimestamp(1), ofNull(TimestampType.INSTANCE)),
+    // col("as_timestamp") -> (ofTimestamp(1), ofNull(TimestampType.TIMESTAMP)),
     col("as_big_decimal") -> (
       ofDecimal(new BigDecimalJ(1), 1, 0),
       ofNull(new DecimalType(1, 0))))
