@@ -485,7 +485,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
             query1.lastProgress.sources.head.endOffset
           )
           var expectedReservoirVersion = 1
-          var expectedIndex = 1
+          var expectedIndex = 1L
           assert(endOffset.reservoirVersion === expectedReservoirVersion)
           assert(endOffset.index === expectedIndex)
         }

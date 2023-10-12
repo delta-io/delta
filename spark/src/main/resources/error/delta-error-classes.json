@@ -1131,6 +1131,12 @@
     ],
     "sqlState" : "KD004"
   },
+  "DELTA_INVALID_SOURCE_OFFSET_FORMAT" : {
+    "message" : [
+      "The stored source offset format is invalid"
+    ],
+    "sqlState" : "XXKDS"
+  },
   "DELTA_INVALID_SOURCE_VERSION" : {
     "message" : [
       "sourceVersion(<version>) is invalid"
