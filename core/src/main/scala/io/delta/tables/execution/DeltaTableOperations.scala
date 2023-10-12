@@ -51,12 +51,14 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   }
 
   protected def executeGenerate(tblIdentifier: String, mode: String): Unit = {
-    val tableId: TableIdentifier = sparkSession
-      .sessionState
-      .sqlParser
-      .parseTableIdentifier(tblIdentifier)
-    val generate = DeltaGenerateCommand(mode, tableId)
-    toDataset(sparkSession, generate)
+    withActiveSession(sparkSession) {
+      val tableId: TableIdentifier = sparkSession
+        .sessionState
+        .sqlParser
+        .parseTableIdentifier(tblIdentifier)
+      val generate = DeltaGenerateCommand(mode, tableId)
+      toDataset(sparkSession, generate)
+    }
   }
 
   protected def executeUpdate(
