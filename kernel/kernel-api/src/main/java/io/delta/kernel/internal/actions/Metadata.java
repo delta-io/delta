@@ -30,10 +30,9 @@ import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.VectorUtils;
-import static io.delta.kernel.utils.Utils.requireNonNull;
-
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
+import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 
 public class Metadata {
 

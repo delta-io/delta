@@ -28,7 +28,7 @@ import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-import static io.delta.kernel.utils.Utils.requireNonNull;
+import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 
 import io.delta.kernel.internal.deletionvectors.Base85Codec;
 import io.delta.kernel.internal.fs.Path;

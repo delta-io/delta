@@ -20,8 +20,6 @@ import java.io.IOException;
 import java.util.Iterator;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.Row;
 
 /**
  * Various utility methods to help the connectors work with data objects returned by Kernel
@@ -128,19 +126,4 @@ public class Utils {
         }
     }
 
-    public static Row requireNonNull(Row row, int ordinal, String columnName) {
-        if (row.isNullAt(ordinal)) {
-            throw new IllegalArgumentException(
-                "Expected a non-null value for column: " + columnName);
-        }
-        return row;
-    }
-
-    public static ColumnVector requireNonNull(ColumnVector vector, int rowId, String columnName) {
-        if (vector.isNullAt(rowId)) {
-            throw new IllegalArgumentException(
-                "Expected a non-null value for column: " + columnName);
-        }
-        return vector;
-    }
 }

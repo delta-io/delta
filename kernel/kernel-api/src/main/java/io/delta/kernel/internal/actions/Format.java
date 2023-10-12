@@ -15,11 +15,15 @@
  */
 package io.delta.kernel.internal.actions;
 
+import java.util.Collections;
+import java.util.Map;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-import static io.delta.kernel.utils.Utils.requireNonNull;
+import io.delta.kernel.utils.VectorUtils;
+import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 
 public class Format {
 
@@ -29,7 +33,9 @@ public class Format {
         }
         final String provider = requireNonNull(vector.getChild(0), rowId, "provider")
             .getString(rowId);
-        return new Format(provider);
+        final Map<String, String> options = vector.getChild(1).isNullAt(rowId) ?
+            Collections.emptyMap() : VectorUtils.toJavaMap(vector.getChild(1).getMap(rowId));
+        return new Format(provider, options);
     }
 
     public static final StructType READ_SCHEMA = new StructType()
@@ -40,8 +46,18 @@ public class Format {
         );
 
     private final String provider;
+    private final Map<String, String> options;
 
-    public Format(String provider) {
+    public Format(String provider, Map<String, String> options) {
         this.provider = provider;
+        this.options = options;
+    }
+
+    public String getProvider() {
+        return provider;
+    }
+
+    public Map<String, String> getOptions() {
+        return Collections.unmodifiableMap(options);
     }
 }
