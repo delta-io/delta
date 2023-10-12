@@ -377,7 +377,7 @@ lazy val iceberg = (project in file("iceberg"))
     assembly / assemblyExcludedJars := {
       // Note: the input here is only `libraryDependencies` jars, not `.dependsOn(_)` jars.
       val allowedJars = Seq(
-        "iceberg-shaded_2.12-3.0.0-SNAPSHOT.jar",
+        s"iceberg-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
         "scala-library-2.12.15.jar",
         "scala-collection-compat_2.12-2.1.1.jar",
         "caffeine-2.9.3.jar",
