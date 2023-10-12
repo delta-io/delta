@@ -424,12 +424,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--iceberg-spark-version",
         required=False,
-        default="3.3",
+        default="3.5",
         help="Spark version for the Iceberg library")
     parser.add_argument(
         "--iceberg-lib-version",
         required=False,
-        default="1.0.0",
+        default="1.4.0",
         help="Iceberg Spark Runtime library version")
 
     args = parser.parse_args()
