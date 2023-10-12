@@ -17,6 +17,7 @@
 package io.delta.tables
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.commands.OptimizeTableCommand
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
@@ -75,15 +76,16 @@ class DeltaOptimizeBuilder private(
     execute(attrs)
   }
 
-  private def execute(zOrderBy: Seq[UnresolvedAttribute]): DataFrame = {
-    val tableId: TableIdentifier = sparkSession
-      .sessionState
-      .sqlParser
-      .parseTableIdentifier(tableIdentifier)
-    val optimize =
-      OptimizeTableCommand(None, Some(tableId), partitionFilter, options)(zOrderBy = zOrderBy)
-    toDataset(sparkSession, optimize)
-  }
+  private def execute(zOrderBy: Seq[UnresolvedAttribute]): DataFrame =
+    withActiveSession(sparkSession) {
+      val tableId: TableIdentifier = sparkSession
+        .sessionState
+        .sqlParser
+        .parseTableIdentifier(tableIdentifier)
+      val optimize =
+        OptimizeTableCommand(None, Some(tableId), partitionFilter, options)(zOrderBy = zOrderBy)
+      toDataset(sparkSession, optimize)
+    }
 }
 
 private[delta] object DeltaOptimizeBuilder {
