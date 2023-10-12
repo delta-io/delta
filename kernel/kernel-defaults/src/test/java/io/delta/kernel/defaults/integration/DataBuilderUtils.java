@@ -29,7 +29,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
 
 import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.defaults.internal.Preconditions.checkArgument;
 
 public class DataBuilderUtils {
     public static TestColumnBatchBuilder builder(StructType schema) {

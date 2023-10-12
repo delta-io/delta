@@ -39,7 +39,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 
 import io.delta.kernel.defaults.internal.DefaultKernelUtils;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.defaults.internal.Preconditions.checkArgument;
 
 public class ParquetBatchReader {
     private final Configuration configuration;

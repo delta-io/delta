@@ -27,7 +27,7 @@ import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.utils.Utils;
 
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.defaults.internal.Preconditions.checkArgument;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**

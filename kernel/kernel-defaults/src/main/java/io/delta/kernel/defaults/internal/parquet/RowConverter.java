@@ -36,7 +36,7 @@ import io.delta.kernel.types.StructType;
 
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
 import io.delta.kernel.defaults.internal.data.vector.DefaultStructVector;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.defaults.internal.Preconditions.checkArgument;
 import static io.delta.kernel.defaults.internal.DefaultKernelUtils.findSubFieldType;
 
 class RowConverter
