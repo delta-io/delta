@@ -30,6 +30,8 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
 import shadedForDelta.org.apache.iceberg.{AppendFiles, DeleteFiles, OverwriteFiles, PendingUpdate, RewriteFiles, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
+import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
+import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
@@ -297,9 +299,11 @@ class IcebergConversionTransaction(
     }
     assert(fileUpdates.forall(_.hasCommitted), "Cannot commit. You have uncommitted changes.")
 
+    val nameMapping = NameMappingParser.toJson(MappingUtil.create(icebergSchema))
     txn.updateProperties()
       .set(IcebergConverter.DELTA_VERSION_PROPERTY, postCommitSnapshot.version.toString)
       .set(IcebergConverter.DELTA_TIMESTAMP_PROPERTY, postCommitSnapshot.timestamp.toString)
+      .set(IcebergConverter.ICEBERG_NAME_MAPPING_PROPERTY, nameMapping)
       .commit()
 
     try {
