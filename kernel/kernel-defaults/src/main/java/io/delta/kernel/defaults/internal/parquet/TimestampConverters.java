@@ -29,7 +29,7 @@ import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT96;
 import io.delta.kernel.types.TimestampType;
 
 import io.delta.kernel.defaults.internal.DefaultKernelUtils;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.defaults.internal.Preconditions.checkArgument;
 
 public class TimestampConverters {
 

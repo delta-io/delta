@@ -24,7 +24,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.defaults.internal.Preconditions.checkArgument;
 
 /**
  * Generic column vector implementation to expose an array of objects as a column vector.

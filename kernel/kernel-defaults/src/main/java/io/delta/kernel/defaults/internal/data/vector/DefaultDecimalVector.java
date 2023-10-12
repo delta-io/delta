@@ -22,7 +22,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.DecimalType;
 
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.defaults.internal.Preconditions.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for decimal type data.
