@@ -28,11 +28,10 @@ import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
-
 import io.delta.kernel.internal.deletionvectors.Base85Codec;
 import io.delta.kernel.internal.fs.Path;
 import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 
 /**
  * Information about a deletion vector attached to a file action.
