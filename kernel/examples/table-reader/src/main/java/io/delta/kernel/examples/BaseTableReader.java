@@ -40,6 +40,7 @@ import io.delta.kernel.TableNotFoundException;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 
@@ -60,15 +61,20 @@ public abstract class BaseTableReader {
     }
 
     /**
-     * Show the given {@code limit} rows containing the given columns from the table.
+     * Show the given {@code limit} rows containing the given columns with the predicate from the
+     * table.
      *
-     * @param limit      Max number of rows to show.
-     * @param columnsOpt If null, show all columns in the table.
+     * @param limit        Max number of rows to show.
+     * @param columnsOpt   If null, show all columns in the table.
+     * @param predicateOpt Optional predicate
+     * @return Number of rows returned by the query.
      * @throws TableNotFoundException
      * @throws IOException
      */
-    public abstract void show(int limit, Optional<List<String>> columnsOpt)
-        throws TableNotFoundException, IOException;
+    public abstract int show(
+        int limit,
+        Optional<List<String>> columnsOpt,
+        Optional<Predicate> predicateOpt) throws TableNotFoundException, IOException;
 
     /**
      * Utility method to return a pruned schema that contains the given {@code columns} from
