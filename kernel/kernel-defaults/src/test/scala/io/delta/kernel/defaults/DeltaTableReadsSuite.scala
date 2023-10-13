@@ -21,14 +21,13 @@ import java.sql.Date
 
 import scala.collection.JavaConverters._
 
-import org.scalatest.funsuite.AnyFunSuite
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-
 import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
+import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
+import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 

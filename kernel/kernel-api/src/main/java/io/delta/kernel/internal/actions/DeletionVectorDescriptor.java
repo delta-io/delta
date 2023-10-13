@@ -18,7 +18,10 @@ package io.delta.kernel.internal.actions;
 
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.*;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.IntStream;
 import static java.util.stream.Collectors.toMap;
 
@@ -28,6 +31,7 @@ import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+
 import io.delta.kernel.internal.deletionvectors.Base85Codec;
 import io.delta.kernel.internal.fs.Path;
 import static io.delta.kernel.internal.util.InternalUtils.checkArgument;

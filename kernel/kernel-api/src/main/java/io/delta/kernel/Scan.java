@@ -31,7 +31,6 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
@@ -41,6 +40,7 @@ import io.delta.kernel.internal.data.SelectionColumnVector;
 import io.delta.kernel.internal.deletionvectors.DeletionVectorUtils;
 import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray;
 import io.delta.kernel.internal.util.PartitionUtils;
+import io.delta.kernel.internal.util.Tuple2;
 
 /**
  * Represents a scan of a Delta table.

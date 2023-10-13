@@ -27,13 +27,13 @@ import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.AlwaysTrue;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Utils;
+import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.Utils;
 
 /**
  * Class to load the {@link CheckpointMetaData} from `_last_checkpoint` file.

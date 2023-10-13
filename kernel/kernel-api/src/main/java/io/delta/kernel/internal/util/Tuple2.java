@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.utils;
+package io.delta.kernel.internal.util;
 
 import java.util.Objects;
 

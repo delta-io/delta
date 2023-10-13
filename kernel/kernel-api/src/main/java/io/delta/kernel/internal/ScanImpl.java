@@ -26,7 +26,6 @@ import io.delta.kernel.expressions.PredicateEvaluator;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -36,6 +35,7 @@ import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
 import io.delta.kernel.internal.util.InternalSchemaUtils;
 import io.delta.kernel.internal.util.PartitionUtils;
+import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
 

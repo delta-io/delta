@@ -16,7 +16,10 @@
 package io.delta.kernel.defaults.internal.data;
 
 import java.math.BigDecimal;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -27,6 +30,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
+
 import io.delta.kernel.internal.types.MixedDataType;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;

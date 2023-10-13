@@ -15,18 +15,14 @@
  */
 package io.delta.kernel.types;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.expressions.Column;
-import io.delta.kernel.utils.Tuple2;
+
+import io.delta.kernel.internal.util.Tuple2;
 
 /**
  * Struct type which contains one or more columns.

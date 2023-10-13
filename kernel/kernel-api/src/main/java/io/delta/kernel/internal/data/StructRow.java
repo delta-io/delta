@@ -15,8 +15,10 @@
  */
 package io.delta.kernel.internal.data;
 
-import io.delta.kernel.data.*;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
+
 import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
 /**

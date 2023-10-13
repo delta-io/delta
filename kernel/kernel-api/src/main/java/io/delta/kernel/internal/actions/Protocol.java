@@ -23,7 +23,8 @@ import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.VectorUtils;
+
+import io.delta.kernel.internal.util.VectorUtils;
 
 public class Protocol {
 

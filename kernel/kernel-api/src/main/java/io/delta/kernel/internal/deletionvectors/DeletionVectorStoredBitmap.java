@@ -25,10 +25,10 @@ import java.util.zip.CRC32;
 import io.delta.kernel.client.FileReadRequest;
 import io.delta.kernel.client.FileSystemClient;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Utils;
 
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
 /**

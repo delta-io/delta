@@ -24,14 +24,11 @@ import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.VectorUtils;
+import io.delta.kernel.types.*;
+
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
+import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 
 public class Metadata {
