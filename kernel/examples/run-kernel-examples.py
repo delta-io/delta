@@ -46,11 +46,22 @@ def run_multi_threaded_examples(version, maven_repo, examples_root_dir, golden_t
     run_example(version, maven_repo, project_dir, main_class, test_cases)
 
 
+def run_integration_tests(version, maven_repo, examples_root_dir, golden_tables_dir):
+    main_class = "io.delta.kernel.integration.IntegrationTestSuite"
+    project_dir = path.join(examples_root_dir, "table-reader")
+    with WorkingDirectory(project_dir):
+        cmd = ["mvn", "package", "exec:java", f"-Dexec.mainClass={main_class}",
+               f"-Dstaging.repo.url={maven_repo}",
+               f"-Ddelta-kernel.version={version}",
+               f"-Dexec.args={golden_tables_dir}"]
+        run_cmd(cmd, stream_output=True)
+
+
 def run_example(version, maven_repo, project_dir, main_class, test_cases):
     with WorkingDirectory(project_dir):
         for test in test_cases:
             cmd = ["mvn", "package", "exec:java", f"-Dexec.mainClass={main_class}",
-                   f"-Dstaging-repo={maven_repo}",
+                   f"-Dstaging.repo.url={maven_repo}",
                    f"-Ddelta-kernel.version={version}",
                    f"-Dexec.args={test}"]
             run_cmd(cmd, stream_output=True)
@@ -160,3 +171,4 @@ if __name__ == "__main__":
 
     run_single_threaded_examples(args.version, args.maven_repo, examples_root_dir, golden_file_dir)
     run_multi_threaded_examples(args.version, args.maven_repo, examples_root_dir, golden_file_dir)
+    run_integration_tests(args.version, args.maven_repo, examples_root_dir, golden_file_dir)
