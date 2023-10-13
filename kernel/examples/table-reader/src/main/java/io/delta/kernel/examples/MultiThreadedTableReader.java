@@ -25,14 +25,12 @@ import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 
-import io.delta.kernel.Scan;
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.Table;
-import io.delta.kernel.TableNotFoundException;
+import io.delta.kernel.*;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.examples.utils.RowSerDe;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 
@@ -73,13 +71,21 @@ public class MultiThreadedTableReader
         this.numThreads = numThreads;
     }
 
-    public void show(int limit, Optional<List<String>> columnsOpt)
+    public int show(int limit, Optional<List<String>> columnsOpt, Optional<Predicate> predicate)
         throws TableNotFoundException {
         Table table = Table.forPath(tableClient, tablePath);
         Snapshot snapshot = table.getLatestSnapshot(tableClient);
         StructType readSchema = pruneSchema(snapshot.getSchema(tableClient), columnsOpt);
 
-        new Reader(limit).readData(readSchema, snapshot);
+        ScanBuilder scanBuilder = snapshot.getScanBuilder(tableClient)
+            .withReadSchema(tableClient, readSchema);
+
+        if (predicate.isPresent()) {
+            scanBuilder = scanBuilder.withFilter(tableClient, predicate.get());
+        }
+
+        return new Reader(limit)
+            .readData(readSchema, scanBuilder.build());
     }
 
     public static void main(String[] args)
@@ -100,7 +106,7 @@ public class MultiThreadedTableReader
         Optional<List<String>> columns = parseColumnList(commandLine, "columns");
 
         new MultiThreadedTableReader(numThreads, tablePath)
-            .show(limit, columns);
+            .show(limit, columns, Optional.empty());
     }
 
     /**
@@ -149,7 +155,7 @@ public class MultiThreadedTableReader
             Executors.newFixedThreadPool(numThreads + 1);
         private final BlockingQueue<ScanFile> workQueue = new ArrayBlockingQueue<>(20);
 
-        private int readRecordCount; // Data read so far.
+        private int readRecordCount; // Number of rows read so far, synchronized with `this` object
         private AtomicReference<Exception> error = new AtomicReference<>();
 
         Reader(int limit) {
@@ -160,13 +166,10 @@ public class MultiThreadedTableReader
          * Read the data from the given {@code snapshot}.
          *
          * @param readSchema Subset of columns to read from the snapshot.
-         * @param snapshot   Table snapshot object
+         * @param scan Scan object to read data from.
+         * @return Number of rows read
          */
-        void readData(StructType readSchema, Snapshot snapshot) {
-            Scan scan = snapshot.getScanBuilder(tableClient)
-                .withReadSchema(tableClient, readSchema)
-                .build();
-
+        int readData(StructType readSchema, Scan scan) {
             printSchema(readSchema);
             try {
                 executorService.submit(workGenerator(scan));
@@ -185,6 +188,8 @@ public class MultiThreadedTableReader
                     throw new RuntimeException(error.get());
                 }
             }
+
+            return readRecordCount;
         }
 
         private Runnable workGenerator(Scan scan) {
