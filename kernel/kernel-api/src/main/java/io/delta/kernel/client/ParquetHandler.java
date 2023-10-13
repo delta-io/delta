@@ -40,7 +40,7 @@ public interface ParquetHandler
      * {@link ColumnarBatch} with the columns requested by {@code physicalSchema}.
      * <p>
      * If {@code physicalSchema} has a {@link StructField} with column name
-     * {@link StructField#ROW_INDEX_COLUMN_NAME} and the field is a metadata column
+     * {@link StructField#METADATA_ROW_INDEX_COLUMN_NAME} and the field is a metadata column
      * {@link StructField#isMetadataColumn()} the column must be populated with the file row index.
      *
      * @param fileIter       Iterator of {@link FileReadContext} objects to read data from.
