@@ -851,8 +851,6 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
-  // TODO: requires bug fix in delta-io/delta#1886
-  /*
   generateGoldenTable("dv-with-columnmapping") { tablePath =>
     withSQLConf(
       ("spark.databricks.delta.properties.defaults.columnMapping.mode", "name"),
@@ -867,7 +865,6 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       }
     }
   }
-  */
 
   def writeBasicTimestampTable(path: String, timeZone: TimeZone): Unit = {
     TimeZone.setDefault(timeZone)
