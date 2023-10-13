@@ -13,7 +13,7 @@ In this user guide, we are going to walk through the following:
 ## Read a Delta table in a single process
 In this section, we will walk through how to build a very simple single-process Delta connector that can read a Delta table using the default [`TableClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/client/TableClient.html) implementation provided by Delta Kernel.
 
-You can either write this code yourself in your project, or you can use the [examples]https://github.com/delta-io/delta/tree/master/kernel/examples) present in the Delta code repository.
+You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) present in the Delta code repository.
 
 ### Step 1: Set up Delta Kernel for your project
 You need to `io.delta:delta-kernel.api` and `io.delta:delta-kernel-defaults` dependencies. Following is an example Maven `pom` file dependency list.
@@ -197,7 +197,7 @@ For each of these capabilities, you can choose to build your own implementation 
 In the Delta Kernel project, there are multiple dependencies you can choose to depend on.
 
 1. Delta Kernel core APIs - This is a must-have dependency, which contains all the main APIs like Table, Snapshot, and Scan that you will use to access the metadata and data of the Delta table. This has very few dependencies reducing the chance of conflicts with any dependencies in your connector and engine. This also provides the [`TableClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/client/TableClient.html) interface which allows you to plug in your implementations of computationally-expensive operations, but it does not provide any implementation of this interface. 
-2. Delta Kernel default [`TableClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/index.html) - This has a default implementation called [`DefaultTableClient`](https://delta-io.github.io/delta/snapshot/kernel-defaults/java/io/delta/kernel/defaults/client/DefaultTableClient.html) and additional dependencies such as `Hadoop`. If you wish to reuse all or parts of this implementation, then you can optionally depend on this. 
+2. Delta Kernel default- This has a default implementation called [`DefaultTableClient`](https://delta-io.github.io/delta/snapshot/kernel-defaults/java/io/delta/kernel/defaults/client/DefaultTableClient.html) and additional dependencies such as `Hadoop`. If you wish to reuse all or parts of this implementation, then you can optionally depend on this. 
 
 #### Set up Java projects
 As discussed above, you can import one or both of the artifacts as follows:
@@ -300,7 +300,7 @@ When identifying the columns to read, note that there are multiple types of colu
 
 * Data columns: Columns that are expected to be read from the Parquet file. Based on the `StructField` object defining the column, read the column in the Parquet file that matches the same name.
 * Metadata columns: These are special columns that must be populated using metadata about the Parquet file ([`StructField#isMetadataColumn`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/types/StructField.html#isMetadataColumn--) tells whether a column in `StructType` is a metadata column). To understand how to populate such a column, first match the column name against the set of standard metadata column name constants. For example, 
-    * `StructFileld#isMetadataColumn()` returns true and the column name is `StructField.ROW_INDEX_COLUMN_NAME`, then you have to a generate column vector populated with the actual index of each row in the Parquet file (that is, not indexed by the possible subset of rows return after Parquet data skipping).
+    * `StructFileld#isMetadataColumn()` returns true and the column name is `StructField.METADATA_ROW_INDEX_COLUMN_NAME`, then you have to a generate column vector populated with the actual index of each row in the Parquet file (that is, not indexed by the possible subset of rows return after Parquet data skipping).
 
 ##### Requirements and guarantees
 Any implementation must adhere to the following guarantees.
@@ -324,7 +324,7 @@ This is for creating an expression evaluator for `Predicate` type expressions. T
 
 The returned object is of type [`PredicateEvaluator`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/expressions/PredicateEvaluator.html). This is a special interface for evaluating Predicate on input batch returns a selection vector containing one value for each row in input batch indicating whether the row has passed the predicate or not. Optionally it takes an existing selection vector along with the input batch for evaluation. The result selection vector is combined with the given existing selection vector and a new selection vector is returned. This mechanism allows running an input batch through several predicate evaluations without rewriting the input batch to remove rows that do not pass the predicate after each predicate evaluation. The new selection should be the same or more selective as the existing selection vector. For example, if a row is marked as unselected in the existing selection vector, then it should remain unselected in the returned selection vector even when the given predicate returns true for the row.
 
-##### Method [`createSelectionVector(boolean[] values, int from, int to`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/client/ExpressionHandler.html#createSelectionVector-boolean:A-int-int-)
+##### Method [`createSelectionVector(boolean[] values, int from, int to)`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/client/ExpressionHandler.html#createSelectionVector-boolean:A-int-int-)
 This method allows creating `ColumnVector` for boolean type values given as input. This allows the connector to maintain all `ColumnVector`s created in the desired memory format.
 
 ##### Requirements and guarantees
