@@ -22,38 +22,43 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ArrayValue;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
-import io.delta.kernel.data.Row;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.VectorUtils;
-import static io.delta.kernel.utils.Utils.requireNonNull;
-
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
+import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 
 public class Metadata {
-    public static Metadata fromRow(Row row, TableClient tableClient) {
-        if (row == null) {
+
+    public static Metadata fromColumnVector(
+            ColumnVector vector, int rowId, TableClient tableClient) {
+        if (vector.isNullAt(rowId)) {
             return null;
         }
 
-        final String schemaJson = requireNonNull(row, 4, "schemaString").getString(4);
+        final String schemaJson = requireNonNull(vector.getChild(4), rowId, "schemaString")
+            .getString(rowId);
         StructType schema = TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), schemaJson);
 
         return new Metadata(
-            requireNonNull(row, 0, "id").getString(0),
-            Optional.ofNullable(row.isNullAt(1) ? null : row.getString(1)),
-            Optional.ofNullable(row.isNullAt(2) ? null : row.getString(2)),
-            Format.fromRow(requireNonNull(row, 0, "id").getStruct(3)),
+            requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),
+            Optional.ofNullable(vector.getChild(1).isNullAt(rowId) ? null :
+                vector.getChild(1).getString(rowId)),
+            Optional.ofNullable(vector.getChild(2).isNullAt(rowId) ? null :
+                vector.getChild(2).getString(rowId)),
+            Format.fromColumnVector(requireNonNull(vector.getChild(3), rowId, "format"), rowId),
             schemaJson,
             schema,
-            row.getArray(5),
-            Optional.ofNullable(row.isNullAt(6) ? null : row.getLong(6)),
-            row.getMap(7)
+            vector.getChild(5).getArray(rowId),
+            Optional.ofNullable(vector.getChild(6).isNullAt(rowId) ? null :
+                vector.getChild(6).getLong(rowId)),
+            vector.getChild(7).getMap(rowId)
         );
     }
 
