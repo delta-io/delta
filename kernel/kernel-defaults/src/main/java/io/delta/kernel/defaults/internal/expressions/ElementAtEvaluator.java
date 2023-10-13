@@ -25,7 +25,8 @@ import io.delta.kernel.expressions.ScalarExpression;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
-import io.delta.kernel.utils.Utils;
+
+import io.delta.kernel.internal.util.Utils;
 
 import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;

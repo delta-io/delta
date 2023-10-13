@@ -24,6 +24,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
+
 import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 
 /**
@@ -141,13 +142,6 @@ public class DefaultGenericVector implements ColumnVector {
         assertValidRowId(rowId);
         throwIfUnsafeAccess(BinaryType.class, "binary");
         return (byte[]) rowIdToValueAccessor.apply(rowId);
-    }
-
-    @Override
-    public Row getStruct(int rowId) {
-        assertValidRowId(rowId);
-        throwIfUnsafeAccess(StructType.class, "struct");
-        return (Row) rowIdToValueAccessor.apply(rowId);
     }
 
     @Override
