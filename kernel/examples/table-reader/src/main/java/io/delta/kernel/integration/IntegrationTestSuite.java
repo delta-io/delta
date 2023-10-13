@@ -80,6 +80,14 @@ public class IntegrationTestSuite {
             Optional.empty(), /* predicate */
             35 /* expected row count */);
 
+        // Basic reads: Table with DVs and column mapping
+        runAndVerifyRowCount(
+            "basic_read_table_with_columnmapping_deletionvectors",
+            "dv-with-columnmapping",
+            Optional.of(asList("col1", "col2")), /* read schema */
+            Optional.empty(), /* predicate */
+            35 /* expected row count */);
+
         // Partition pruning: simple expression
         runAndVerifyRowCount(
             "partition_pruning_simple_filter",
