@@ -146,7 +146,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
             |)""".stripMargin)
       }
       assert(e.getMessage.contains("expects a table. Please use ALTER VIEW instead.") ||
-        e.getMessage.contains("does not support ALTER TABLE ... SET TBLPROPERTIES"))
+        e.getMessage.contains("EXPECT_TABLE_NOT_VIEW.USE_ALTER_VIEW"))
     }
   }
 

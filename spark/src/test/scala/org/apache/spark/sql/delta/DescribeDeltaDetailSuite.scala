@@ -198,9 +198,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
       val e = intercept[AnalysisException] {
         sql(s"DESCRIBE DETAIL $viewName")
       }
-      assert(e.getMessage.contains(
-        s"$viewName is a temp view. 'DESCRIBE DETAIL' expects a table.") ||
-        e.getMessage.contains("does not support DESCRIBE DETAIL"))
+      assert(e.getMessage.contains("'DESCRIBE DETAIL' expects a table"))
     }
   }
 
@@ -209,9 +207,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     withView(view) {
       sql(s"CREATE VIEW $view AS SELECT 1")
       val e = intercept[AnalysisException] { sql(s"DESCRIBE DETAIL $view") }
-      assert(e.getMessage.contains(
-        "detailtestview is a view. 'DESCRIBE DETAIL' expects a table.") ||
-        e.getMessage.contains("does not support DESCRIBE DETAIL"))
+      assert(e.getMessage.contains("'DESCRIBE DETAIL' expects a table"))
     }
   }
 
