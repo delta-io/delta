@@ -21,6 +21,7 @@ organizationName := "example"
 val scala212 = "2.12.15"
 val scala213 = "2.13.8"
 val deltaVersion = "2.1.0"
+val icebergVersion = "1.4.0"
 
 def getMajorMinor(version: String): (Int, Int) = {
   val majorMinor = Try {
@@ -62,7 +63,9 @@ val getDeltaVersion = settingKey[String](
 val getDeltaArtifactName = settingKey[String](
   s"get delta artifact name based on the delta version. either `delta-core` or `delta-spark`."
 )
-
+val getIcebergSparkRuntimeArtifactName = settingKey[String](
+  s"get iceberg-spark-runtime name based on the delta version."
+)
 getScalaVersion := {
   sys.env.get("SCALA_VERSION") match {
     case Some("2.12") =>
@@ -97,6 +100,12 @@ getDeltaArtifactName := {
   if (deltaVersion.charAt(0).asDigit >= 3) "delta-spark" else "delta-core"
 }
 
+getIcebergSparkRuntimeArtifactName := {
+  val (expMaj, expMin) = getMajorMinor(lookupSparkVersion.apply(
+    getMajorMinor(getDeltaVersion.value)))
+  s"iceberg-spark-runtime-$expMaj.$expMin"
+}
+
 lazy val extraMavenRepo = sys.env.get("EXTRA_MAVEN_REPO").toSeq.map { repo =>
   resolvers += "Delta" at repo
 }
@@ -108,9 +117,15 @@ lazy val root = (project in file("."))
     crossScalaVersions := Seq(scala212, scala213),
     libraryDependencies ++= Seq(
       "io.delta" %% getDeltaArtifactName.value % getDeltaVersion.value,
+      "io.delta" %% "delta-iceberg" % getDeltaVersion.value,
       "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
         getMajorMinor(getDeltaVersion.value)
-      )
+      ),
+      "org.apache.spark" %% "spark-hive" % lookupSparkVersion.apply(
+        getMajorMinor(getDeltaVersion.value)
+      ),
+      "org.apache.iceberg" %% getIcebergSparkRuntimeArtifactName.value % icebergVersion,
+      "org.apache.iceberg" % "iceberg-hive-metastore" % icebergVersion
     ),
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,

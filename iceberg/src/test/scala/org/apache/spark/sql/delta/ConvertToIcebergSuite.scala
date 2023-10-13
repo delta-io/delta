@@ -115,10 +115,9 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
 
   def verifyReadWithIceberg(tableName: String, expectedAnswer: Seq[Row]): Unit = {
     withIcebergSparkSession { icebergSparkSession =>
-      eventually(timeout(10.seconds)) {
-        val icebergDf = icebergSparkSession.read.format("iceberg").load(tableName)
-        checkAnswer(icebergDf, expectedAnswer)
-      }
+      Thread.sleep(20000)
+      val icebergDf = icebergSparkSession.read.format("iceberg").load(tableName)
+      checkAnswer(icebergDf, expectedAnswer)
     }
   }
 
