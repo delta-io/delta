@@ -83,7 +83,7 @@ class RowConverter
             final Type typeFromFile = field.isDataColumn() ?
                 findSubFieldType(fileSchema, field) : null;
             if (typeFromFile == null) {
-                if (field.getName() == StructField.ROW_INDEX_COLUMN_NAME &&
+                if (field.getName() == StructField.METADATA_ROW_INDEX_COLUMN_NAME &&
                     field.isMetadataColumn()) {
                     checkArgument(field.getDataType() instanceof LongType,
                         "row index metadata column must be type long");

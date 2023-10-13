@@ -141,7 +141,7 @@ public class TestParquetBatchReader {
 
         StructType readSchema = new StructType()
             .add("id", LongType.LONG)
-            .add(StructField.ROW_INDEX_COLUMN);
+            .add(StructField.METADATA_ROW_INDEX_COLUMN);
 
         Configuration conf = new Configuration();
         // Set the batch size small enough so there will be multiple batches

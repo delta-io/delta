@@ -145,7 +145,7 @@ public interface Scan {
 
         StructType readSchema = readSchemaWithoutPartitionColumns
             // TODO: do we only want to request row_index_col when there is at least 1 DV?
-            .add(StructField.ROW_INDEX_COLUMN); // request the row_index column for DV filtering
+            .add(StructField.METADATA_ROW_INDEX_COLUMN); // request the row_index column for DV filtering
 
         ParquetHandler parquetHandler = tableClient.getParquetHandler();
 
@@ -183,7 +183,7 @@ public interface Scan {
                     InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFileRow);
 
                 int rowIndexOrdinal = fileDataReadResult.getData().getSchema()
-                    .indexOf(StructField.ROW_INDEX_COLUMN_NAME);
+                    .indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME);
 
                 // Get the selectionVector if DV is present
                 Optional<ColumnVector> selectionVector;
