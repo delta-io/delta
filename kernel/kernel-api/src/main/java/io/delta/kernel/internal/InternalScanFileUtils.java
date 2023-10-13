@@ -23,17 +23,17 @@ import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Column;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.VectorUtils;
+import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.util.VectorUtils;
 
 /**
  * Utilities to extract information out of the scan file rows returned by

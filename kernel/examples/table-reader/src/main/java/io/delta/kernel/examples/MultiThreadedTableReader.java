@@ -17,11 +17,7 @@ package io.delta.kernel.examples;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -39,7 +35,8 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.examples.utils.RowSerDe;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Utils;
+
+import io.delta.kernel.internal.util.Utils;
 
 /**
  * Multi-threaded Delta Lake table reader using the Delta Kernel APIs. It illustrates

@@ -15,11 +15,7 @@
  */
 package io.delta.kernel.internal.util;
 
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 
 public class InternalSchemaUtils {
     private InternalSchemaUtils() {}

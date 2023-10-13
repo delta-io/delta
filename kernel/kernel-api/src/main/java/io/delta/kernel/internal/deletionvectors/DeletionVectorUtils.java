@@ -20,9 +20,9 @@ import java.io.IOException;
 import java.util.Optional;
 
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.utils.Tuple2;
 
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
+import io.delta.kernel.internal.util.Tuple2;
 
 /**
  * Utility methods regarding deletion vectors.

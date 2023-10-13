@@ -22,7 +22,8 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.VectorUtils;
+
+import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 
 public class Format {

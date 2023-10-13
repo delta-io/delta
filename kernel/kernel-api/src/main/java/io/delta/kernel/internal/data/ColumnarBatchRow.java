@@ -17,7 +17,8 @@ package io.delta.kernel.internal.data;
 
 import java.util.Objects;
 
-import io.delta.kernel.data.*;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
 
 /**
  * Row abstraction around a columnar batch and a particular row within the columnar batch.

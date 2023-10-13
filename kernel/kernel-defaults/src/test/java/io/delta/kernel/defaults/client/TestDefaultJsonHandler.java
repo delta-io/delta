@@ -30,12 +30,13 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.VectorUtils;
+import io.delta.kernel.utils.FileStatus;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
+
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector;
 
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;

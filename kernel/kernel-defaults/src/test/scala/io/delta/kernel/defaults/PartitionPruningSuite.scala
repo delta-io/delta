@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults
 
 import java.math.{BigDecimal => BigDecimalJ}
-import java.util.Optional
 
 import scala.collection.JavaConverters._
 

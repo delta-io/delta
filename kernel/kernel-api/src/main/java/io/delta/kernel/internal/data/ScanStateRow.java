@@ -25,11 +25,11 @@ import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
-import io.delta.kernel.utils.VectorUtils;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
+import io.delta.kernel.internal.util.VectorUtils;
 
 /**
  * Encapsulate the scan state (common info for all scan files) as a {@link Row}

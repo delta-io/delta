@@ -29,9 +29,10 @@ import org.apache.hadoop.fs.Path;
 
 import io.delta.kernel.client.FileReadRequest;
 import io.delta.kernel.client.FileSystemClient;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Utils;
+import io.delta.kernel.utils.FileStatus;
+
+import io.delta.kernel.internal.util.Utils;
 
 /**
  * Default implementation of {@link FileSystemClient} based on Hadoop APIs.

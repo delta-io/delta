@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.fs;
+package io.delta.kernel.utils;
 
 import java.util.Objects;
 
