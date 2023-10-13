@@ -17,6 +17,7 @@
 package io.delta.tables
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeltaOptimizeContext
 import org.apache.spark.sql.delta.commands.OptimizeTableCommand
