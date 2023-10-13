@@ -25,6 +25,7 @@ RUN apt-get install -y wget
 RUN apt-get install -y openjdk-8-jdk
 RUN apt-get install -y python3.8
 RUN apt-get install -y python3-pip
+RUN apt-get install -y git
 
 # Upgrade pip. This is needed to use prebuilt wheels for packages cffi (dep of cryptography) and
 # cryptography. Otherwise, building wheels for these packages fails.
