@@ -18,13 +18,12 @@ package io.delta.kernel.defaults
 import java.io.File
 import java.math.BigDecimal
 
-import org.scalatest.funsuite.AnyFunSuite
-import org.apache.hadoop.conf.Configuration
 import io.delta.golden.GoldenTableUtils.goldenTableFile
-
-import io.delta.kernel.types.{DecimalType, IntegerType, StructType}
 import io.delta.kernel.defaults.internal.parquet.ParquetBatchReader
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.types.{DecimalType, IntegerType, StructType}
+import org.apache.hadoop.conf.Configuration
+import org.scalatest.funsuite.AnyFunSuite
 
 class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
 

@@ -36,10 +36,12 @@ import static org.junit.Assert.assertTrue;
 import io.delta.kernel.data.*;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
-import io.delta.kernel.utils.VectorUtils;
+
+import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.VectorUtils;
 
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
+
 import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 
 public class TestParquetBatchReader {

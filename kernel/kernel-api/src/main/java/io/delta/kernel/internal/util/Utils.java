@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.utils;
+package io.delta.kernel.internal.util;
 
 import java.io.IOException;
 import java.util.Iterator;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.utils.CloseableIterator;
 
 /**
  * Various utility methods to help the connectors work with data objects returned by Kernel

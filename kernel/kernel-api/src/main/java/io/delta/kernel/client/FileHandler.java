@@ -19,8 +19,8 @@ package io.delta.kernel.client;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 
 /**
  * Provides file handling functionality to Delta Kernel. Connectors can implement this client to
