@@ -395,8 +395,10 @@ class DeltaLog private(
         "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
         "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
 
-    val tableNameInException = catalogTable.map(_.identifier.copy(catalog = None).unquotedString)
-      .getOrElse(dataPath.toString())
+    val tableNameInException = catalogTable match {
+      case Some(ct) => ct.identifier.copy(catalog = None).unquotedString
+      case None => dataPath.toString()
+    }
 
     if (!clientSupportedVersions.contains(tableRequiredVersion)) {
       throw new InvalidProtocolVersionException(

@@ -87,7 +87,27 @@ case class DeltaTableV2(
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
   lazy val deltaLog: DeltaLog = {
-      DeltaLog.forTable(spark, rootPath, options)
+      val tableNameInException = catalogTable match {
+        case Some(ct) => Some(ct.identifier.copy(catalog = None).unquotedString)
+        case None => tableIdentifier
+      }
+
+      try {
+        DeltaLog.forTable(spark, rootPath, options)
+      } catch {
+        // When InvalidProtocolVersionException happens during the initialization (read)
+        // we it doesn't know the table name, so we need to update the message.
+        case e: InvalidProtocolVersionException if tableNameInException.isDefined &&
+          // sanity check, the path should always be the same
+          rootPath.toString() == e.tableNameOrPath =>
+          throw new InvalidProtocolVersionException(
+            tableNameInException.get,
+            e.readerRequiredVersion,
+            e.writerRequiredVersion,
+            e.supportedReaderVersions,
+            e.supportedWriterVersions)
+            .initCause(e)
+      }
   }
 
   def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>

@@ -2106,8 +2106,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         spark.read.format("delta").table(protocolTableName)
       }
 
-      // During reads we can't get the table name, so we get the path instead
-      var pathInErrorMessage = log.dataPath.toString
+      var pathInErrorMessage = "default." + protocolTableName
 
       assert(exceptionRead.getMessage ==
         getExpectedProtocolErrorMessage(pathInErrorMessage, tableReaderVersion, tableWriterVersion))
@@ -2122,8 +2121,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           .format("delta")
           .saveAsTable(protocolTableName)
       }
-
-      pathInErrorMessage = "default." + protocolTableName
 
       assert(exceptionWrite.getMessage ==
         getExpectedProtocolErrorMessage(pathInErrorMessage, tableReaderVersion, tableWriterVersion))
