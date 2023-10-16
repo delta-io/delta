@@ -578,6 +578,74 @@ class CheckpointsSuite
     }
   }
 
+
+
+  testDifferentV2Checkpoints(s"V2 Checkpoint compat file equivalency to normal V2 Checkpoint") {
+    withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+
+      spark.range(10, 20).write.mode("append").format("delta").save(tempDir.getAbsolutePath)
+
+      deltaLog.checkpoint() // Checkpoint 1
+      val normalCheckpointSnapshot = deltaLog.update()
+
+      deltaLog.createSinglePartCheckpointForBackwardCompat( // Compatibility Checkpoint 1
+        normalCheckpointSnapshot, new deltaLog.V2CompatCheckpointMetrics)
+
+      val allFiles = normalCheckpointSnapshot.allFiles.collect().sortBy(_.path).toList
+      val setTransactions = normalCheckpointSnapshot.setTransactions
+      val numOfFiles = normalCheckpointSnapshot.numOfFiles
+      val numOfRemoves = normalCheckpointSnapshot.numOfRemoves
+      val numOfMetadata = normalCheckpointSnapshot.numOfMetadata
+      val numOfProtocol = normalCheckpointSnapshot.numOfProtocol
+      val actions = normalCheckpointSnapshot.stateDS.collect().toSet
+
+      val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+
+      // Delete the normal V2 Checkpoint so that the snapshot can be initialized
+      // using the compat checkpoint.
+      fs.delete(normalCheckpointSnapshot.checkpointProvider.topLevelFiles.head.getPath)
+
+      DeltaLog.clearCache()
+      val deltaLog2 = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+      val compatCheckpointSnapshot = deltaLog2.update()
+      assert(!compatCheckpointSnapshot.checkpointProvider.isEmpty)
+      assert(compatCheckpointSnapshot.checkpointProvider.version ==
+        normalCheckpointSnapshot.checkpointProvider.version)
+      assert(
+        compatCheckpointSnapshot.checkpointProvider.topLevelFiles.head.getPath.getName
+          ==
+          FileNames.checkpointFileSingular(
+            deltaLog2.logPath,
+            normalCheckpointSnapshot.checkpointProvider.version).getName
+      )
+
+      assert(
+        compatCheckpointSnapshot.allFiles.collect().sortBy(_.path).toList
+        == allFiles
+      )
+
+      assert(compatCheckpointSnapshot.setTransactions == setTransactions)
+
+      assert(compatCheckpointSnapshot.stateDS.collect().toSet == actions)
+
+      assert(compatCheckpointSnapshot.numOfFiles == numOfFiles)
+
+      assert(compatCheckpointSnapshot.numOfRemoves == numOfRemoves)
+
+      assert(compatCheckpointSnapshot.numOfMetadata == numOfMetadata)
+
+      assert(compatCheckpointSnapshot.numOfProtocol == numOfProtocol)
+
+      val tableData =
+        spark.sql(s"SELECT * FROM delta.`${deltaLog.dataPath}` ORDER BY id")
+          .collect()
+          .map(_.getLong(0))
+      assert(tableData.toSeq == (0 to 19))
+    }
+  }
+
   testDifferentCheckpoints("last checkpoint contains correct schema for v1/v2" +
       " Checkpoints") { (checkpointPolicy, v2CheckpointFormatOpt) =>
     withTempDir { tempDir =>
@@ -694,7 +762,7 @@ class CheckpointsSuite
     val conf = log.newDeltaHadoopConf()
     log.checkpoint()
 
-    // Delete _last_checkpoint, CRC file based on test configuration.
+    // Delete _last_checkpoint file based on test configuration.
     val fs = log.logPath.getFileSystem(conf)
     if (lastCheckpointMissing) {
       fs.delete(log.LAST_CHECKPOINT)
