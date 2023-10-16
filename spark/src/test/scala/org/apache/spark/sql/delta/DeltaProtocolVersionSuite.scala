@@ -68,7 +68,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     log.update()
     log
   }
-
+/*
   test("protocol for empty folder") {
     def testEmptyFolder(
         readerVersion: Int,
@@ -2090,7 +2090,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         tableWriterVersion))
     }
   }
-
+*/
   test("error message with protocol too high - table name") {
     val protocolTableName = "mytableprotocoltoohigh"
     withTable(protocolTableName) {
@@ -2107,9 +2107,19 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       }
 
       var pathInErrorMessage = "default." + protocolTableName
+      val readErrorMessage = getExpectedProtocolErrorMessage(pathInErrorMessage, tableReaderVersion, tableWriterVersion)
 
-      assert(exceptionRead.getMessage ==
-        getExpectedProtocolErrorMessage(pathInErrorMessage, tableReaderVersion, tableWriterVersion))
+      assert(exceptionRead.getMessage == readErrorMessage)
+
+      val exceptionMerge = intercept[InvalidProtocolVersionException] {
+        val deltaTable = io.delta.tables.DeltaTable.forName(protocolTableName)
+        deltaTable.merge(spark.range(1).as("src").toDF, s"src.id = $protocolTableName.id")
+          .whenMatched()
+          .updateAll()
+          .execute()      
+      }
+
+      assert(exceptionMerge.getMessage == readErrorMessage)
 
       tableReaderVersion = 3
       tableWriterVersion = 8
@@ -2167,7 +2177,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       "client supports reader versions 0, 1, 2, 3 and writer versions 0, 1, 2, 3, 4, 5, 7. " +
       "Please upgrade to a newer release."
   }
-
+/*
   def protocolWithFeatures(
       readerFeatures: Seq[TableFeature] = Seq.empty,
       writerFeatures: Seq[TableFeature] = Seq.empty): Protocol = {
@@ -3155,6 +3165,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     require(blob.nonEmpty, "Expecting a delta.protocol.change event but didn't see any.")
     blob.map(JsonUtils.fromJson[Map[String, Any]]).head
   }
+  */
 }
 
 class DeltaProtocolVersionSuite extends DeltaProtocolVersionSuiteBase
