@@ -49,6 +49,8 @@ object IcebergConverter {
    * Indicates the timestamp (milliseconds) of the delta commit that it corresponds to.
    */
   val DELTA_TIMESTAMP_PROPERTY = "delta-timestamp"
+
+  val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
 }
 
 /**
