@@ -228,15 +228,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "junit" % "junit" % "4.13" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
     ),
-
-    // Can be run explicitly via: build/sbt $module/checkstyle
-    // Will automatically be run during compilation (e.g. build/sbt compile)
-    // and during tests (e.g. build/sbt test)
-    checkstyleConfigLocation := CheckstyleConfigLocation.File("kernel/dev/checkstyle.xml"),
-    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
-    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
-    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value,
-
+    javaCheckstyleSettings("kernel/dev/checkstyle.xml"),
     // Unidoc settings
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kernel/")),
   ).configureUnidoc(docTitle = "Delta Kernel")
@@ -261,15 +253,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
     ),
-
-    // Can be run explicitly via: build/sbt $module/checkstyle
-    // Will automatically be run during compilation (e.g. build/sbt compile)
-    // and during tests (e.g. build/sbt test)
-    checkstyleConfigLocation := CheckstyleConfigLocation.File("kernel/dev/checkstyle.xml"),
-    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
-    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
-    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value,
-
+    javaCheckstyleSettings("kernel/dev/checkstyle.xml"),
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
@@ -775,6 +759,7 @@ lazy val standaloneWithoutParquetUtils = project
     Compile / packageBin := (standalone / assembly).value
   )
 
+// TODO scalastyle settings
 lazy val standalone = (project in file("connectors/standalone"))
   .dependsOn(storage % "compile->compile;provided->provided")
   .dependsOn(goldenTables % "test")
@@ -873,6 +858,7 @@ lazy val standalone = (project in file("connectors/standalone"))
 
     // Unidoc setting
     unidocSourceFilePatterns += SourceFilePattern("io/delta/standalone/"),
+    javaCheckstyleSettings("connectors/dev/checkstyle.xml")
   ).configureUnidoc()
 
 
@@ -1053,6 +1039,9 @@ lazy val flink = (project in file("connectors/flink"))
 
     // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/flink/"),
+    // TODO: this is the config that was used before archiving connectors but it has
+    //  standalone-specific import orders
+    javaCheckstyleSettings("connectors/dev/checkstyle.xml")
   ).configureUnidoc()
 
 /**
@@ -1123,6 +1112,24 @@ lazy val scalaStyleSettings = Seq(
 
   Test / test := ((Test / test) dependsOn testScalastyle).value
 )
+
+/*
+ ****************************
+ * Java checkstyle settings *
+ ****************************
+ */
+
+def javaCheckstyleSettings(checkstyleFile: String): Def.SettingsDefinition = {
+  // Can be run explicitly via: build/sbt $module/checkstyle
+  // Will automatically be run during compilation (e.g. build/sbt compile)
+  // and during tests (e.g. build/sbt test)
+  Seq(
+    checkstyleConfigLocation := CheckstyleConfigLocation.File(checkstyleFile),
+    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
+    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
+    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
+  )
+}
 
 /*
  ********************
