@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.{SparkConf, SparkThrowable}
+import org.apache.spark.{SparkConf, SparkException, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.internal.SQLConf
 
@@ -307,6 +307,34 @@ class ImplicitDMLCastingSuite extends QueryTest
             validateException(exception, sqlConfig, testConfig)
           }
         }
+      }
+    }
+  }
+
+  test("Details are part of the error message") {
+    val sourceTableName = "source_table_name"
+    val sourceValueType = "INT"
+    val targetTableName = "target_table_name"
+    val targetValueType = "LONG"
+    val valueColumnName = "value"
+
+    withTable(sourceTableName, targetTableName) {
+      sql(s"CREATE OR REPLACE TABLE $targetTableName(id LONG, $valueColumnName $sourceValueType) " +
+        "USING DELTA")
+      sql(s"CREATE OR REPLACE TABLE $sourceTableName(id LONG, $valueColumnName $targetValueType) " +
+        "USING DELTA")
+      sql(s"INSERT INTO $sourceTableName VALUES(0, 9223372036854775807)")
+
+      val userFacingError = intercept[SparkException] {
+        sql(s"""MERGE INTO $targetTableName t
+               |USING $sourceTableName s
+               |ON s.id = t.id
+               |WHEN NOT MATCHED THEN INSERT *""".stripMargin)
+      }
+      val expectedDetails =
+        Seq("DELTA_CAST_OVERFLOW_IN_TABLE_WRITE", sourceValueType, valueColumnName)
+      for (detail <- expectedDetails) {
+        assert(userFacingError.toString.contains(detail))
       }
     }
   }
