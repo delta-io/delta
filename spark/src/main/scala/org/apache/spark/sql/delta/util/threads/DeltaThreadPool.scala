@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.util
+package org.apache.spark.sql.delta.util.threads
 
-import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.{LinkedBlockingQueue, ThreadPoolExecutor, TimeUnit}
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.Duration
@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.util.ThreadUtils
+import org.apache.spark.util.ThreadUtils.namedThreadFactory
 
 /** A wrapper for [[ThreadPoolExecutor]] whose tasks run with the caller's [[SparkSession]]. */
 private[delta] class DeltaThreadPool(tpe: ThreadPoolExecutor) {
@@ -56,7 +57,28 @@ private[delta] class DeltaThreadPool(tpe: ThreadPoolExecutor) {
 /** Convenience constructor that creates a [[ThreadPoolExecutor]] with sensible defaults. */
 private[delta] object DeltaThreadPool {
   def apply(prefix: String, numThreads: Int): DeltaThreadPool =
-    new DeltaThreadPool(ThreadUtils.newDaemonCachedThreadPool(prefix, numThreads))
+    new DeltaThreadPool(newDaemonCachedThreadPool(prefix, numThreads))
+
+  /**
+   * Create a cached thread pool whose max number of threads is `maxThreadNumber`. Thread names
+   * are formatted as prefix-ID, where ID is a unique, sequentially assigned integer.
+   */
+  def newDaemonCachedThreadPool(
+      prefix: String,
+      maxThreadNumber: Int): ThreadPoolExecutor = {
+    val keepAliveSeconds = 60
+    val queueSize = Integer.MAX_VALUE
+    val threadFactory = namedThreadFactory(prefix)
+    val threadPool = new SparkThreadLocalForwardingThreadPoolExecutor(
+      maxThreadNumber, // corePoolSize: the max number of threads to create before queuing the tasks
+      maxThreadNumber, // maximumPoolSize: because we use LinkedBlockingDeque, this one is not used
+      keepAliveSeconds,
+      TimeUnit.SECONDS,
+      new LinkedBlockingQueue[Runnable](queueSize),
+      threadFactory)
+    threadPool.allowCoreThreadTimeOut(true)
+    threadPool
+  }
 }
 
 /**
