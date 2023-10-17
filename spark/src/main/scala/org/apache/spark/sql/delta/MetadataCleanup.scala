@@ -160,7 +160,7 @@ trait MetadataCleanup extends DeltaLogging {
    * could read the legacy classic checkpoint file and fail gracefully with Protocol requirement
    * failure.
    */
-  protected def createSinglePartCheckpointForBackwardCompat(
+  protected[delta] def createSinglePartCheckpointForBackwardCompat(
       snapshotToCleanup: Snapshot,
       metrics: V2CompatCheckpointMetrics): Unit = {
     // Do nothing if this table does not use V2 Checkpoints, or has no checkpoints at all.
@@ -311,7 +311,7 @@ trait MetadataCleanup extends DeltaLogging {
   }
 
   /** Class to track metrics related to V2 Compatibility checkpoint creation. */
-  protected class V2CompatCheckpointMetrics {
+  protected[delta] class V2CompatCheckpointMetrics {
     // time taken (in ms) to run the v2 checkpoint compat logic
     var v2CheckpointCompatLogicTimeTakenMs: Long = -1
 
