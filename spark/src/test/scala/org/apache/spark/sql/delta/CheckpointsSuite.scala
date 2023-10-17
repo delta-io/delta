@@ -725,6 +725,119 @@ class CheckpointsSuite
     snapshot.computeChecksum
     assert(snapshot.checkpointProvider.isEmpty)
   }
+
+
+  /**
+   * Writes all actions in the top-level file of a new V2 Checkpoint. No sidecar files are
+   * written.
+   */
+  private def writeAllActionsInV2Manifest(
+      snapshot: Snapshot,
+      v2CheckpointFormat: V2Checkpoint.Format): Path = {
+    val checkpointMetadata = CheckpointMetadata(version = snapshot.version)
+    val actionsDS = snapshot.stateDS
+      .where("checkpointMetadata is null and " +
+        "commitInfo is null and cdc is null and sidecar is null")
+      .union(spark.createDataset(Seq(checkpointMetadata.wrap)))
+      .toDF()
+
+    val actionsToWrite = Checkpoints
+      .buildCheckpoint(actionsDS, snapshot)
+      .as[SingleAction]
+      .collect()
+      .toSeq
+      .map(_.unwrap)
+
+    val deltaLog = snapshot.deltaLog
+    val (v2CheckpointPath, _) =
+      if (v2CheckpointFormat == V2Checkpoint.Format.JSON) {
+        val v2CheckpointPath =
+          FileNames.newV2CheckpointJsonFile(deltaLog.logPath, snapshot.version)
+        deltaLog.store.write(
+          v2CheckpointPath,
+          actionsToWrite.map(_.json).toIterator,
+          overwrite = true,
+          hadoopConf = deltaLog.newDeltaHadoopConf())
+        (v2CheckpointPath, None)
+      } else if (v2CheckpointFormat == V2Checkpoint.Format.PARQUET) {
+        val sparkSession = spark
+        // scalastyle:off sparkimplicits
+        import sparkSession.implicits._
+        // scalastyle:on sparkimplicits
+        val dfToWrite = actionsToWrite.map(_.wrap).toDF()
+        val v2CheckpointPath =
+          FileNames.newV2CheckpointParquetFile(deltaLog.logPath, snapshot.version)
+        val schemaOfDfWritten =
+          Checkpoints.createCheckpointV2ParquetFile(
+            spark,
+            dfToWrite,
+            v2CheckpointPath,
+            deltaLog.newDeltaHadoopConf(),
+            false)
+        (v2CheckpointPath, Some(schemaOfDfWritten))
+      } else {
+        throw DeltaErrors.assertionFailedError(
+          s"Unrecognized checkpoint V2 format: $v2CheckpointFormat")
+      }
+    v2CheckpointPath
+  }
+
+  for (checkpointFormat <- V2Checkpoint.Format.ALL)
+  test(s"All actions in V2 manifest [v2CheckpointFormat: ${checkpointFormat.name}]") {
+    withSQLConf(
+      DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name) {
+      withTempDir { dir =>
+        spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, dir)
+        spark.sql(s"INSERT INTO delta.`${log.dataPath}` VALUES (2718);")
+        log
+        .startTransaction()
+        .commit(Seq(SetTransaction("app-1", 2, None)), DeltaOperations.ManualUpdate)
+
+        val snapshot = log.update()
+        val allFiles = snapshot.allFiles.collect().toSet
+        val setTransactions = snapshot.setTransactions.toSet
+        val numOfFiles = snapshot.numOfFiles
+        val numOfRemoves = snapshot.numOfRemoves
+        val numOfMetadata = snapshot.numOfMetadata
+        val numOfProtocol = snapshot.numOfProtocol
+        val actions = snapshot.stateDS.collect().toSet
+
+        assert(snapshot.version == 2)
+
+        writeAllActionsInV2Manifest(snapshot, checkpointFormat)
+
+        DeltaLog.clearCache()
+        val checkpointSnapshot = log.update()
+
+        assert(!checkpointSnapshot.checkpointProvider.isEmpty)
+
+        assert(checkpointSnapshot.checkpointProvider.version == 2)
+
+        // Check the integrity of the data in the checkpoint-backed table.
+        val data = spark
+          .sql(s"SELECT * FROM delta.`${log.dataPath}` ORDER BY ID;")
+          .collect()
+          .map(_.getLong(0))
+
+        val expectedData = ((0 to 9).toList :+ 2718).toArray
+        assert(data sameElements expectedData)
+        assert(checkpointSnapshot.setTransactions.toSet == setTransactions)
+
+        assert(checkpointSnapshot.stateDS.collect().toSet == actions)
+
+        assert(checkpointSnapshot.numOfFiles == numOfFiles)
+
+        assert(checkpointSnapshot.numOfRemoves == numOfRemoves)
+
+        assert(checkpointSnapshot.numOfMetadata == numOfMetadata)
+
+        assert(checkpointSnapshot.numOfProtocol == numOfProtocol)
+
+        assert(checkpointSnapshot.allFiles.collect().toSet == allFiles)
+      }
+    }
+  }
   for (lastCheckpointMissing <- BOOLEAN_DOMAIN)
   testDifferentCheckpoints("intermittent error while reading checkpoint should not" +
       s" stick to snapshot [lastCheckpointMissing: $lastCheckpointMissing]") { (_, _) =>

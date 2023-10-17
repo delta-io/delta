@@ -438,8 +438,16 @@ case class V2CheckpointProvider(
 
   private[delta] def sidecarFileStatuses: Seq[FileStatus] =
     sidecarFiles.map(_.toFileStatus(logPath))
-  protected lazy val fileIndexesForSidecarFiles: Seq[DeltaLogFileIndex] =
-    Seq(CheckpointProvider.checkpointFileIndex(sidecarFileStatuses))
+
+  protected lazy val fileIndexesForSidecarFiles: Seq[DeltaLogFileIndex] = {
+    // V2 checkpoints without sidecars are legal.
+    if (sidecarFileStatuses.isEmpty) {
+      Seq.empty
+    } else {
+      Seq(CheckpointProvider.checkpointFileIndex(sidecarFileStatuses))
+    }
+  }
+
   protected lazy val fileIndexForV2Checkpoint: DeltaLogFileIndex =
     DeltaLogFileIndex(v2CheckpointFormat.fileFormat, Seq(v2CheckpointFile)).head
 
