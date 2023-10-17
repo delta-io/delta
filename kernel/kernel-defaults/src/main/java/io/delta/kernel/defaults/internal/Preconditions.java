@@ -16,6 +16,9 @@
 package io.delta.kernel.defaults.internal;
 
 public class Preconditions {
+
+    private Preconditions() {}
+
     /**
      * Precondition-style validation that throws {@link IllegalArgumentException}.
      *
