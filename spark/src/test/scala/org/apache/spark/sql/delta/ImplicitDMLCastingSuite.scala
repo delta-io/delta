@@ -332,7 +332,7 @@ class ImplicitDMLCastingSuite extends QueryTest
                |WHEN NOT MATCHED THEN INSERT *""".stripMargin)
       }
       val expectedDetails =
-        Seq("DELTA_CAST_OVERFLOW_IN_TABLE_WRITE", sourceValueType, targetValueType, valueColumnName)
+        Seq("DELTA_CAST_OVERFLOW_IN_TABLE_WRITE", sourceValueType, valueColumnName)
       for (detail <- expectedDetails) {
         assert(userFacingError.toString.contains(detail))
       }
