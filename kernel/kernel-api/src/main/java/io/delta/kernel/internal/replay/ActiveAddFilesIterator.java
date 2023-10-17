@@ -21,17 +21,25 @@ import java.net.URISyntaxException;
 import java.util.*;
 
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.data.*;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.FileDataReadResult;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.fs.Path;
-import static io.delta.kernel.internal.replay.LogReplay.*;
+import io.delta.kernel.internal.util.Tuple2;
+import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_DV_ORDINAL;
+import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_ORDINAL;
+import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_PATH_ORDINAL;
+import static io.delta.kernel.internal.replay.LogReplay.REMOVE_FILE_DV_ORDINAL;
+import static io.delta.kernel.internal.replay.LogReplay.REMOVE_FILE_ORDINAL;
+import static io.delta.kernel.internal.replay.LogReplay.REMOVE_FILE_PATH_ORDINAL;
 
 /**
  * This class takes an iterator of ({@link FileDataReadResult}, isFromCheckpoint), where the
@@ -253,21 +261,21 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
     }
 
     public static String getAddFilePath(ColumnVector addFileVector, int rowId) {
-        return addFileVector.getStruct(rowId).getString(ADD_FILE_PATH_ORDINAL);
+        return addFileVector.getChild(ADD_FILE_PATH_ORDINAL).getString(rowId);
     }
 
     public static DeletionVectorDescriptor getAddFileDV(ColumnVector addFileVector, int rowId) {
-        return DeletionVectorDescriptor.fromRow(
-            addFileVector.getStruct(rowId).getStruct(ADD_FILE_DV_ORDINAL));
+        return DeletionVectorDescriptor.fromColumnVector(
+            addFileVector.getChild(ADD_FILE_DV_ORDINAL), rowId);
     }
 
     public static String getRemoveFilePath(ColumnVector removeFileVector, int rowId) {
-        return removeFileVector.getStruct(rowId).getString(REMOVE_FILE_PATH_ORDINAL);
+        return removeFileVector.getChild(REMOVE_FILE_PATH_ORDINAL).getString(rowId);
     }
 
     public static DeletionVectorDescriptor getRemoveFileDV(
         ColumnVector removeFileVector, int rowId) {
-        return DeletionVectorDescriptor.fromRow(
-            removeFileVector.getStruct(rowId).getStruct(REMOVE_FILE_DV_ORDINAL));
+        return DeletionVectorDescriptor.fromColumnVector(
+            removeFileVector.getChild(REMOVE_FILE_DV_ORDINAL), rowId);
     }
 }

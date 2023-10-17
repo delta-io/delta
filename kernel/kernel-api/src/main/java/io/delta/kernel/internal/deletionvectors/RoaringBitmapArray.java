@@ -23,8 +23,7 @@ import java.util.ArrayList;
 
 import org.roaringbitmap.RoaringBitmap;
 
-import io.delta.kernel.utils.Tuple2;
-
+import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
 /**

@@ -260,18 +260,17 @@ trait DeltaSourceBase extends Source
   protected def getFileChangesWithRateLimit(
       fromVersion: Long,
       fromIndex: Long,
-      isStartingVersion: Boolean,
-      limits: Option[AdmissionLimits] = Some(AdmissionLimits())):
-  ClosableIterator[IndexedFile] = {
+      isInitialSnapshot: Boolean,
+      limits: Option[AdmissionLimits] = Some(AdmissionLimits())): ClosableIterator[IndexedFile] = {
     val iter = if (options.readChangeFeed) {
       // In this CDC use case, we need to consider RemoveFile and AddCDCFiles when getting the
       // offset.
 
       // This method is only used to get the offset so we need to return an iterator of IndexedFile.
-      getFileChangesForCDC(fromVersion, fromIndex, isStartingVersion, limits, None).flatMap(_._2)
+      getFileChangesForCDC(fromVersion, fromIndex, isInitialSnapshot, limits, None).flatMap(_._2)
         .toClosable
     } else {
-      val changes = getFileChanges(fromVersion, fromIndex, isStartingVersion)
+      val changes = getFileChanges(fromVersion, fromIndex, isInitialSnapshot)
 
       // Take each change until we've seen the configured number of addFiles. Some changes don't
       // represent file additions; we retain them for offset tracking, but they don't count towards
@@ -295,22 +294,22 @@ trait DeltaSourceBase extends Source
    * get the changes from startVersion, startIndex to the end
    * @param startVersion - calculated starting version
    * @param startIndex - calculated starting index
-   * @param isStartingVersion - whether the stream has to return the initial snapshot or not
+   * @param isInitialSnapshot - whether the stream has to return the initial snapshot or not
    * @param endOffset - Offset that signifies the end of the stream.
    * @return
    */
   protected def getFileChangesAndCreateDataFrame(
       startVersion: Long,
       startIndex: Long,
-      isStartingVersion: Boolean,
+      isInitialSnapshot: Boolean,
       endOffset: DeltaSourceOffset): DataFrame = {
     if (options.readChangeFeed) {
-      getCDCFileChangesAndCreateDataFrame(startVersion, startIndex, isStartingVersion, endOffset)
+      getCDCFileChangesAndCreateDataFrame(startVersion, startIndex, isInitialSnapshot, endOffset)
     } else {
       val fileActionsIter = getFileChanges(
         startVersion,
         startIndex,
-        isStartingVersion,
+        isInitialSnapshot,
         endOffset = Some(endOffset)
       )
       try {
@@ -373,12 +372,12 @@ trait DeltaSourceBase extends Source
    * called when starting a new stream query.
    *
    * @param fromVersion The version of the delta table to calculate the offset from.
-   * @param isStartingVersion Whether the delta version is for the initial snapshot or not.
+   * @param isInitialSnapshot Whether the delta version is for the initial snapshot or not.
    * @param limits Indicates how much data can be processed by a micro batch.
    */
   protected def getStartingOffsetFromSpecificDeltaVersion(
       fromVersion: Long,
-      isStartingVersion: Boolean,
+      isInitialSnapshot: Boolean,
       limits: Option[AdmissionLimits]): Option[DeltaSourceOffset] = {
     // Initialize schema tracking log if possible, no-op if already initialized
     // This is one of the two places can initialize schema tracking.
@@ -390,7 +389,7 @@ trait DeltaSourceBase extends Source
     val changes = getFileChangesWithRateLimit(
       fromVersion,
       fromIndex = DeltaSourceOffset.BASE_INDEX,
-      isStartingVersion = isStartingVersion,
+      isInitialSnapshot = isInitialSnapshot,
       limits)
 
     val lastFileChange = DeltaSource.iteratorLast(changes)
@@ -401,7 +400,7 @@ trait DeltaSourceBase extends Source
       // Block latestOffset() from generating an invalid offset by proactively verifying
       // incompatible schema changes under column mapping. See more details in the method doc.
       checkReadIncompatibleSchemaChangeOnStreamStartOnce(fromVersion)
-      buildOffsetFromIndexedFile(lastFileChange.get, fromVersion, isStartingVersion)
+      buildOffsetFromIndexedFile(lastFileChange.get, fromVersion, isInitialSnapshot)
     }
   }
 
@@ -423,7 +422,7 @@ trait DeltaSourceBase extends Source
     val changes = getFileChangesWithRateLimit(
       previousOffset.reservoirVersion,
       previousOffset.index,
-      previousOffset.isStartingVersion,
+      previousOffset.isInitialSnapshot,
       limits)
 
     val lastFileChange = DeltaSource.iteratorLast(changes)
@@ -436,7 +435,7 @@ trait DeltaSourceBase extends Source
       // method scala doc.
       checkReadIncompatibleSchemaChangeOnStreamStartOnce(previousOffset.reservoirVersion)
       buildOffsetFromIndexedFile(lastFileChange.get, previousOffset.reservoirVersion,
-        previousOffset.isStartingVersion)
+        previousOffset.isInitialSnapshot)
     }
   }
 
@@ -445,12 +444,12 @@ trait DeltaSourceBase extends Source
    * version is valid by comparing with previous version.
    * @param indexedFile The last indexed file used to build offset from.
    * @param version Previous offset reservoir version.
-   * @param isStartingVersion Whether previous offset is starting version or not.
+   * @param isInitialSnapshot Whether previous offset is starting version or not.
    */
   private def buildOffsetFromIndexedFile(
       indexedFile: IndexedFile,
       version: Long,
-      isStartingVersion: Boolean): Option[DeltaSourceOffset] = {
+      isInitialSnapshot: Boolean): Option[DeltaSourceOffset] = {
     val (v, i, isLastFileInVersion) = (indexedFile.version, indexedFile.index, indexedFile.isLast)
     assert(v >= version,
       s"buildOffsetFromIndexedFile returns an invalid version: $v (expected: >= $version), " +
@@ -459,18 +458,18 @@ trait DeltaSourceBase extends Source
     // If the last file in previous batch is the last file of that version, automatically bump
     // to next version to skip accessing that version file altogether.
     val offset = if (isLastFileInVersion) {
-      // isStartingVersion must be false here as we have bumped the version.
+      // isInitialSnapshot must be false here as we have bumped the version.
       Some(DeltaSourceOffset(
         tableId,
         v + 1,
         index = DeltaSourceOffset.BASE_INDEX,
-        isStartingVersion = false))
+        isInitialSnapshot = false))
     } else {
-      // isStartingVersion will be true only if previous isStartingVersion is true and the next file
+      // isInitialSnapshot will be true only if previous isInitialSnapshot is true and the next file
       // is still at the same version (i.e v == version).
       Some(DeltaSourceOffset(
         tableId, v, i,
-        isStartingVersion = v == version && isStartingVersion
+        isInitialSnapshot = v == version && isInitialSnapshot
       ))
     }
     offset
@@ -482,10 +481,10 @@ trait DeltaSourceBase extends Source
   protected def createDataFrameBetweenOffsets(
       startVersion: Long,
       startIndex: Long,
-      isStartingVersion: Boolean,
+      isInitialSnapshot: Boolean,
       startOffsetOption: Option[DeltaSourceOffset],
       endOffset: DeltaSourceOffset): DataFrame = {
-    getFileChangesAndCreateDataFrame(startVersion, startIndex, isStartingVersion, endOffset)
+    getFileChangesAndCreateDataFrame(startVersion, startIndex, isInitialSnapshot, endOffset)
   }
 
   protected def cleanUpSnapshotResources(): Unit = {
@@ -730,7 +729,7 @@ case class DeltaSource(
   protected def getFileChanges(
       fromVersion: Long,
       fromIndex: Long,
-      isStartingVersion: Boolean,
+      isInitialSnapshot: Boolean,
       endOffset: Option[DeltaSourceOffset] = None,
       verifyMetadataAction: Boolean = true
   ): ClosableIterator[IndexedFile] = {
@@ -764,7 +763,7 @@ case class DeltaSource(
       }
     }
 
-    var iter = if (isStartingVersion) {
+    var iter = if (isInitialSnapshot) {
       Iterator(1, 2).flatMapWithClose {  // so that the filterAndIndexDeltaLogs call is lazy
         case 1 => getSnapshotAt(fromVersion).toClosable
         case 2 => filterAndIndexDeltaLogs(fromVersion + 1)
@@ -850,7 +849,7 @@ case class DeltaSource(
 
   private def getStartingOffset(limits: Option[AdmissionLimits]): Option[DeltaSourceOffset] = {
 
-    val (version, isStartingVersion) = getStartingVersion match {
+    val (version, isInitialSnapshot) = getStartingVersion match {
       case Some(v) => (v, false)
       case None => (snapshotAtSourceInit.version, true)
     }
@@ -858,7 +857,7 @@ case class DeltaSource(
       return None
     }
 
-    getStartingOffsetFromSpecificDeltaVersion(version, isStartingVersion, limits)
+    getStartingOffsetFromSpecificDeltaVersion(version, isInitialSnapshot, limits)
   }
 
   override def getDefaultReadLimit: ReadLimit = {
@@ -1010,7 +1009,7 @@ case class DeltaSource(
     val endOffset = toDeltaSourceOffset(end)
     val startDeltaOffsetOption = startOffsetOption.map(toDeltaSourceOffset)
 
-    val (startVersion, startIndex, isStartingVersion) =
+    val (startVersion, startIndex, isInitialSnapshot) =
       extractStartingState(startDeltaOffsetOption, endOffset)
 
     if (startOffsetOption.contains(endOffset)) {
@@ -1052,7 +1051,7 @@ case class DeltaSource(
     validateAndInitMetadataLogForPlannedBatchesDuringStreamStart(startVersion, endOffset)
 
     val createdDf = createDataFrameBetweenOffsets(
-      startVersion, startIndex, isStartingVersion, startDeltaOffsetOption, endOffset)
+      startVersion, startIndex, isInitialSnapshot, startDeltaOffsetOption, endOffset)
 
     createdDf
   }
@@ -1072,18 +1071,18 @@ case class DeltaSource(
    * @param endOffset The end offset for a batch.
    * @return (start commit version to scan from,
    *         start offset index to scan from,
-   *         whether this version is still considered part of initial snapshot)
+   *         whether this version is part of the initial snapshot)
    */
   private def extractStartingState(
       startOffsetOption: Option[DeltaSourceOffset],
       endOffset: DeltaSourceOffset): (Long, Long, Boolean) = {
-    val (startVersion, startIndex, isStartingVersion) = if (startOffsetOption.isEmpty) {
+    val (startVersion, startIndex, isInitialSnapshot) = if (startOffsetOption.isEmpty) {
       getStartingVersion match {
         case Some(v) =>
           (v, DeltaSourceOffset.BASE_INDEX, false)
 
         case None =>
-          if (endOffset.isStartingVersion) {
+          if (endOffset.isInitialSnapshot) {
             (endOffset.reservoirVersion, DeltaSourceOffset.BASE_INDEX, true)
           } else {
             assert(
@@ -1098,13 +1097,13 @@ case class DeltaSource(
       }
     } else {
       val startOffset = startOffsetOption.get
-      if (!startOffset.isStartingVersion) {
+      if (!startOffset.isInitialSnapshot) {
         // unpersist `snapshot` because it won't be used any more.
         cleanUpSnapshotResources()
       }
-      (startOffset.reservoirVersion, startOffset.index, startOffset.isStartingVersion)
+      (startOffset.reservoirVersion, startOffset.index, startOffset.isInitialSnapshot)
     }
-    (startVersion, startIndex, isStartingVersion)
+    (startVersion, startIndex, isInitialSnapshot)
   }
 
   /**

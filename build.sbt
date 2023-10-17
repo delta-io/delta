@@ -21,15 +21,15 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala212 = "2.12.15"
-val scala213 = "2.13.5"
+val scala212 = "2.12.17"
+val scala213 = "2.13.8"
 val all_scala_versions = Seq(scala212, scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
 // It was necessary to change default_scala_version to scala213 in build.sbt
 // to build the project with Scala 2.13 only
 // As a setting, it's possible to set it on command line easily
-// sbt 'set default_scala_version := 2.13.5' [commands]
+// sbt 'set default_scala_version := 2.13.8' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
@@ -324,8 +324,6 @@ val icebergSparkRuntimeArtifactName = {
  s"iceberg-spark-runtime-$expMaj.$expMin"
 }
 
-/**
- * Need a Icebeg release version with support for Spark 3.5
 lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
   // delta-iceberg depends on delta-spark! So, we need to include it during our test.
   .dependsOn(spark % "test")
@@ -367,7 +365,7 @@ lazy val iceberg = (project in file("iceberg"))
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
-      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.3.0" % "provided",
+      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.4.0" % "provided",
       "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3"
     ),
     Compile / unmanagedJars += (icebergShaded / assembly).value,
@@ -379,9 +377,10 @@ lazy val iceberg = (project in file("iceberg"))
     assembly / assemblyExcludedJars := {
       // Note: the input here is only `libraryDependencies` jars, not `.dependsOn(_)` jars.
       val allowedJars = Seq(
-        "iceberg-shaded_2.12-3.0.0-SNAPSHOT.jar",
-        "scala-library-2.12.15.jar",
-        "scala-collection-compat_2.12-2.1.1.jar",
+        s"iceberg-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
+        s"scala-library-${scala212}.jar",
+        s"scala-library-${scala213}.jar",
+        s"scala-collection-compat_${scalaBinaryVersion.value}-2.1.1.jar",
         "caffeine-2.9.3.jar",
         // Note: We are excluding
         // - antlr4-runtime-4.9.3.jar
@@ -455,7 +454,7 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assemblyPackageScala / assembleArtifact := false,
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
   )
-*/
+
 lazy val hive = (project in file("connectors/hive"))
   .dependsOn(standaloneCosmetic)
   .settings (
@@ -1085,7 +1084,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

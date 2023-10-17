@@ -165,4 +165,20 @@ public class InternalUtils {
             }
         };
     }
+
+    public static Row requireNonNull(Row row, int ordinal, String columnName) {
+        if (row.isNullAt(ordinal)) {
+            throw new IllegalArgumentException(
+                "Expected a non-null value for column: " + columnName);
+        }
+        return row;
+    }
+
+    public static ColumnVector requireNonNull(ColumnVector vector, int rowId, String columnName) {
+        if (vector.isNullAt(rowId)) {
+            throw new IllegalArgumentException(
+                "Expected a non-null value for column: " + columnName);
+        }
+        return vector;
+    }
 }

@@ -150,12 +150,6 @@ public class DefaultSubFieldVector implements ColumnVector {
     }
 
     @Override
-    public Row getStruct(int rowId) {
-        assertValidRowId(rowId);
-        return rowIdToRowAccessor.apply(rowId).getStruct(columnOrdinal);
-    }
-
-    @Override
     public ArrayValue getArray(int rowId) {
         assertValidRowId(rowId);
         return rowIdToRowAccessor.apply(rowId).getArray(columnOrdinal);

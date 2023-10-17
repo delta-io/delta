@@ -25,11 +25,11 @@ import shutil
 from os import path
 
 iceberg_lib_dir_name = "lib"
-iceberg_src_dir_name = "iceberg_src"
+iceberg_src_dir_name = "iceberg_src" # this is a git dir
 iceberg_patches_dir_name = "iceberg_src_patches"
 
 iceberg_src_commit_hash = "ede085d0f7529f24acd0c81dd0a43f7bb969b763"
-iceberg_src_branch = "master"  # only this branch will be downloaded
+iceberg_src_branch = "main"  # only this branch will be downloaded
 
 # Relative to iceberg_src directory.
 # We use * because after applying the patches, a random git hash will be appended to each jar name.
@@ -44,7 +44,7 @@ iceberg_src_compiled_jar_rel_glob_patterns = [
     "data/build/libs/iceberg-data-*.jar"
 ]
 
-iceberg_root_dir = path.abspath(path.dirname(__file__))
+iceberg_root_dir = path.abspath(path.dirname(__file__)) # this is NOT a git dir
 iceberg_src_dir = path.join(iceberg_root_dir, iceberg_src_dir_name)
 iceberg_patches_dir = path.join(iceberg_root_dir, iceberg_patches_dir_name)
 iceberg_lib_dir = path.join(iceberg_root_dir, iceberg_lib_dir_name)
@@ -65,24 +65,10 @@ def iceberg_jars_exists():
     return True
 
 
-def set_git_config_if_empty(config_key, default_value):
-    curr_val = None
-    try:
-        (_, curr_val, _) = run_cmd("git config --get user.%s" % config_key)
-        curr_val = curr_val.decode("utf-8")
-    except:
-        print("Error getting user.%s" % config_key)
-    if not curr_val:
-        run_cmd("git config user.%s \"%s\"" % (config_key, default_value))
-
-
 def prepare_iceberg_source():
     with WorkingDirectory(iceberg_root_dir):
         print(">>> Cloning Iceberg repo")
         shutil.rmtree(iceberg_src_dir_name, ignore_errors=True)
-
-        set_git_config_if_empty("email", "<>")
-        set_git_config_if_empty("name", "Anonymous")
 
         # We just want the shallowest, smallest iceberg clone. We will check out the commit later.
         run_cmd("git clone --depth 1 --branch %s https://github.com/apache/iceberg.git %s" %

@@ -27,13 +27,13 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
-import io.delta.kernel.utils.VectorUtils;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.VectorUtils;
 
 /**
  * Implementation of {@link ScanBuilder}.

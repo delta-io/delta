@@ -21,8 +21,8 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 
 /**
  * Provides file system related functionalities to Delta Kernel. Delta Kernel uses this client

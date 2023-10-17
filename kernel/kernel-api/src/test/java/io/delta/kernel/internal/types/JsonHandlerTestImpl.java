@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,17 +31,11 @@ import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Utils;
+
+import io.delta.kernel.internal.util.Utils;
+import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 
 /**
  * Implementation of {@link JsonHandler} for testing Delta Kernel APIs
@@ -393,11 +388,6 @@ public class JsonHandlerTestImpl
         }
 
         @Override
-        public Row getStruct(int rowId) {
-            return (Row) values.get(rowId);
-        }
-
-        @Override
         public ArrayValue getArray(int rowId) {
             return (ArrayValue) values.get(rowId);
         }
@@ -405,6 +395,153 @@ public class JsonHandlerTestImpl
         @Override
         public MapValue getMap(int rowId) {
             return (MapValue) values.get(rowId);
+        }
+
+
+        @Override
+        public ColumnVector getChild(int ordinal) {
+            checkArgument(dataType instanceof StructType);
+            StructType structType = (StructType) dataType;
+            List<Row> rows = values.stream()
+                .map(row -> (Row) row)
+                .collect(Collectors.toList());
+            return new RowBasedVector(
+                structType.at(ordinal).getDataType(),
+                rows,
+                ordinal
+            );
+        }
+    }
+
+    /**
+     * Wrapper around list of {@link Row}s to expose the rows as a column vector
+     */
+    private static class RowBasedVector implements ColumnVector {
+        private final DataType dataType;
+        private final List<Row> rows;
+        private final int columnOrdinal;
+
+        RowBasedVector(DataType dataType, List<Row> rows, int columnOrdinal) {
+            this.dataType = dataType;
+            this.rows = rows;
+            this.columnOrdinal = columnOrdinal;
+        }
+
+        @Override
+        public DataType getDataType() {
+            return dataType;
+        }
+
+        @Override
+        public int getSize() {
+            return rows.size();
+        }
+
+        @Override
+        public void close() { /* nothing to close */ }
+
+        @Override
+        public boolean isNullAt(int rowId) {
+            assertValidRowId(rowId);
+            if (rows.get(rowId) == null) {
+                return true;
+            }
+            return rows.get(rowId).isNullAt(columnOrdinal);
+        }
+
+        @Override
+        public boolean getBoolean(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getBoolean(columnOrdinal);
+        }
+
+        @Override
+        public byte getByte(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getByte(columnOrdinal);
+        }
+
+        @Override
+        public short getShort(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getShort(columnOrdinal);
+        }
+
+        @Override
+        public int getInt(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getInt(columnOrdinal);
+        }
+
+        @Override
+        public long getLong(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getLong(columnOrdinal);
+        }
+
+        @Override
+        public float getFloat(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getFloat(columnOrdinal);
+        }
+
+        @Override
+        public double getDouble(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getDouble(columnOrdinal);
+        }
+
+        @Override
+        public String getString(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getString(columnOrdinal);
+        }
+
+        @Override
+        public BigDecimal getDecimal(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getDecimal(columnOrdinal);
+        }
+
+        @Override
+        public byte[] getBinary(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getBinary(columnOrdinal);
+        }
+
+        @Override
+        public MapValue getMap(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getMap(columnOrdinal);
+        }
+
+        @Override
+        public ArrayValue getArray(int rowId) {
+            assertValidRowId(rowId);
+            return rows.get(rowId).getArray(columnOrdinal);
+        }
+
+        @Override
+        public ColumnVector getChild(int ordinal) {
+            List<Row> childRows = rows.stream()
+                .map(row -> {
+                    if (row == null || row.isNullAt(columnOrdinal)) {
+                        return null;
+                    } else {
+                        return row.getStruct(columnOrdinal);
+                    }
+                }).collect(Collectors.toList());
+            StructType structType = (StructType) dataType;
+            return new RowBasedVector(
+                structType.at(ordinal).getDataType(),
+                childRows,
+                ordinal
+            );
+        }
+
+        private void assertValidRowId(int rowId) {
+            checkArgument(rowId < rows.size(),
+                "Invalid rowId: " + rowId + ", max allowed rowId is: " + (rows.size() - 1));
         }
     }
 }

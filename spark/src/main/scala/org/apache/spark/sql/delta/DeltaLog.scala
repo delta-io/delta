@@ -801,8 +801,8 @@ object DeltaLog extends DeltaLogging {
           }
         )
       } catch {
-        case e: com.google.common.util.concurrent.UncheckedExecutionException =>
-          throw e.getCause
+        case e: com.google.common.util.concurrent.UncheckedExecutionException => throw e.getCause
+        case e: java.util.concurrent.ExecutionException => throw e.getCause
       }
     }
 

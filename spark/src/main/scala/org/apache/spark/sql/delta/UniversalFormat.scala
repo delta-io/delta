@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.sql.SparkSession
@@ -142,6 +143,42 @@ object UniversalFormat extends DeltaLogging {
         } else {
           throw DeltaErrors.uniFormIcebergRequiresIcebergCompatV1()
         }
+    }
+  }
+
+  /**
+   * This method should be called before CTAS writer writes the new table to disk.
+   * It will call [[enforceIcebergInvariantsAndDependencies]] to perform the actual check.
+   * @param writer delta writer used to write CTAS data.
+   * @return updated writer
+   */
+  def enforceInvariantsAndDependenciesForCTAS(writer: WriteIntoDelta): WriteIntoDelta = {
+    var metadata = Metadata(configuration = writer.configuration)
+
+    // Check UniversalFormat related property dependencies
+    val (_, universalMetadata) = UniversalFormat.enforceIcebergInvariantsAndDependencies(
+      prevProtocol = Protocol(),
+      prevMetadata = Metadata(),
+      newestProtocol = Protocol(),
+      newestMetadata = metadata,
+      isCreatingNewTable = true
+    )
+
+    metadata = universalMetadata.getOrElse(metadata)
+
+    // UniversalFormat relies on IcebergV1, check its dependencies
+    val (_, icebergMetadata) = IcebergCompatV1.enforceInvariantsAndDependencies(
+      prevProtocol = Protocol(),
+      prevMetadata = Metadata(),
+      newestProtocol = Protocol(),
+      newestMetadata = metadata,
+      isCreatingNewTable = true,
+      actions = Seq()
+    )
+
+    icebergMetadata.orElse(universalMetadata) match {
+      case Some(valid) => writer.copy(configuration = valid.configuration)
+      case _ => writer
     }
   }
 

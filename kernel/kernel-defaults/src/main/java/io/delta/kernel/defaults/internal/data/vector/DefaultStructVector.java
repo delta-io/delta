@@ -15,14 +15,9 @@
  */
 package io.delta.kernel.defaults.internal.data.vector;
 
-import java.math.BigDecimal;
 import java.util.Optional;
-import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.MapValue;
-import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 
@@ -60,110 +55,9 @@ public class DefaultStructVector
     }
 
     @Override
-    public Row getStruct(int rowId) {
-        checkValidRowId(rowId);
-        if (isNullAt(rowId)) {
-            return null;
-        }
-        return new StructRow(this, rowId);
-    }
-
-    @Override
     public ColumnVector getChild(int ordinal) {
         checkArgument(
             ordinal >= 0 && ordinal < memberVectors.length, "Invalid ordinal " + ordinal);
         return memberVectors[ordinal];
-    }
-
-    /**
-     * Wrapper class to expose one member as a {@link Row}
-     */
-    private static class StructRow
-        implements Row {
-        private final DefaultStructVector structVector;
-        private final int rowId;
-
-        StructRow(DefaultStructVector structVector, int rowId) {
-            this.structVector = requireNonNull(structVector, "structVector is null");
-            checkArgument(
-                rowId >= 0 && rowId < structVector.getSize(),
-                "invalid row id: %s", rowId);
-            this.rowId = rowId;
-        }
-
-        @Override
-        public StructType getSchema() {
-            return (StructType) structVector.getDataType();
-        }
-
-        @Override
-        public boolean isNullAt(int ordinal) {
-            return structVector.memberVectors[ordinal].isNullAt(rowId);
-        }
-
-        @Override
-        public boolean getBoolean(int ordinal) {
-            return structVector.memberVectors[ordinal].getBoolean(rowId);
-        }
-
-        @Override
-        public byte getByte(int ordinal) {
-            return structVector.memberVectors[ordinal].getByte(rowId);
-        }
-
-        @Override
-        public short getShort(int ordinal) {
-            return structVector.memberVectors[ordinal].getShort(rowId);
-        }
-
-        @Override
-        public int getInt(int ordinal) {
-            return structVector.memberVectors[ordinal].getInt(rowId);
-        }
-
-        @Override
-        public long getLong(int ordinal) {
-            return structVector.memberVectors[ordinal].getLong(rowId);
-        }
-
-        @Override
-        public float getFloat(int ordinal) {
-            return structVector.memberVectors[ordinal].getFloat(rowId);
-        }
-
-        @Override
-        public double getDouble(int ordinal) {
-            return structVector.memberVectors[ordinal].getDouble(rowId);
-        }
-
-        @Override
-        public String getString(int ordinal) {
-            return structVector.memberVectors[ordinal].getString(rowId);
-        }
-
-        @Override
-        public BigDecimal getDecimal(int ordinal) {
-            return structVector.memberVectors[ordinal].getDecimal(rowId);
-        }
-
-        @Override
-        public byte[] getBinary(int ordinal) {
-            return structVector.memberVectors[ordinal].getBinary(rowId);
-        }
-
-        @Override
-        public Row getStruct(int ordinal) {
-            return structVector.memberVectors[ordinal].getStruct(rowId);
-        }
-
-        @Override
-        public ArrayValue getArray(int ordinal) {
-            return structVector.memberVectors[ordinal].getArray(rowId);
-        }
-
-        @Override
-        public MapValue getMap(int ordinal) {
-            return structVector.memberVectors[ordinal].getMap(rowId);
-        }
     }
 }

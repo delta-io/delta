@@ -24,6 +24,10 @@ import org.scalatest.time.SpanSugar._
 
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogStorageFormat}
+import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.types.{IntegerType, StringType, StructType, StructField}
 import org.apache.spark.util.Utils
 
 /**
@@ -75,6 +79,31 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
     SparkContext.getActive.foreach(_.stop())
   }
 
+  test("enforceSupportInCatalog") {
+    var testTable = new CatalogTable(
+      TableIdentifier("table"),
+      CatalogTableType.EXTERNAL,
+      CatalogStorageFormat(None, None, None, None, compressed = false, Map.empty),
+      new StructType(Array(StructField("col1", IntegerType), StructField("col2", StringType))))
+    var testMetadata = Metadata()
+
+    assert(UniversalFormat.enforceSupportInCatalog(testTable, testMetadata).isEmpty)
+
+    testTable = testTable.copy(properties = Map("table_type" -> "iceberg"))
+    var resultTable = UniversalFormat.enforceSupportInCatalog(testTable, testMetadata)
+    assert(resultTable.nonEmpty)
+    assert(!resultTable.get.properties.contains("table_type"))
+
+    testMetadata = testMetadata.copy(
+      configuration = Map("delta.universalFormat.enabledFormats" -> "iceberg"))
+    assert(UniversalFormat.enforceSupportInCatalog(testTable, testMetadata).isEmpty)
+
+    testTable = testTable.copy(properties = Map.empty)
+    resultTable = UniversalFormat.enforceSupportInCatalog(testTable, testMetadata)
+    assert(resultTable.nonEmpty)
+    assert(resultTable.get.properties("table_type") == "iceberg")
+  }
+
   test("basic test - managed table created with SQL") {
     if (hmsReady(PORT)) {
       runDeltaSql(
@@ -116,6 +145,7 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
   def verifyReadWithIceberg(tableName: String, expectedAnswer: Seq[Row]): Unit = {
     withIcebergSparkSession { icebergSparkSession =>
       eventually(timeout(10.seconds)) {
+        icebergSparkSession.sql(s"REFRESH TABLE ${tableName}")
         val icebergDf = icebergSparkSession.read.format("iceberg").load(tableName)
         checkAnswer(icebergDf, expectedAnswer)
       }

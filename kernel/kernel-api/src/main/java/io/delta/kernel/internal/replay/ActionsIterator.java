@@ -29,14 +29,14 @@ import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.client.ParquetHandler;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.FileDataReadResult;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
-import io.delta.kernel.utils.Utils;
+import io.delta.kernel.utils.FileStatus;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.Utils;
 
 /**
  * This class takes as input a list of delta files (.json, .checkpoint.parquet) and produces an

@@ -144,13 +144,6 @@ public class DefaultGenericVector implements ColumnVector {
     }
 
     @Override
-    public Row getStruct(int rowId) {
-        assertValidRowId(rowId);
-        throwIfUnsafeAccess(StructType.class, "struct");
-        return (Row) rowIdToValueAccessor.apply(rowId);
-    }
-
-    @Override
     public ArrayValue getArray(int rowId) {
         assertValidRowId(rowId);
         // TODO: not sufficient check, also need to check the element type

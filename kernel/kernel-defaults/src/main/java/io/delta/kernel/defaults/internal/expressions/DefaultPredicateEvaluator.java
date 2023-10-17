@@ -25,7 +25,8 @@ import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.Utils;
+
+import io.delta.kernel.internal.util.Utils;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 

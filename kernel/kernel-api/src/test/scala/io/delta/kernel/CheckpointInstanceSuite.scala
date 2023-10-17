@@ -17,11 +17,11 @@ package io.delta.kernel
 
 import java.util.Optional
 
-import collection.JavaConverters._
+import scala.collection.JavaConverters._
 
-import org.scalatest.funsuite.AnyFunSuite
 import io.delta.kernel.internal.checkpoints.CheckpointInstance
 import io.delta.kernel.internal.fs.Path
+import org.scalatest.funsuite.AnyFunSuite
 
 class CheckpointInstanceSuite extends AnyFunSuite {
 

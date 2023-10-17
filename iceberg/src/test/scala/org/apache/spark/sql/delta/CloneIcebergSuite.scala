@@ -403,7 +403,7 @@ class CloneIcebergByPathSuite extends CloneIcebergSuiteBase
       val ae = intercept[AnalysisException] {
         sql(s"SELECT * FROM $sourceIdentifier")
       }
-      assert(ae.getMessage.contains("table does not support batch scan"))
+      assert(ae.getMessage.contains("does not support batch scan"))
     }
   }
 }

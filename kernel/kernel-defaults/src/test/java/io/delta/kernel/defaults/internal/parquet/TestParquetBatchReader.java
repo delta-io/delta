@@ -36,10 +36,12 @@ import static org.junit.Assert.assertTrue;
 import io.delta.kernel.data.*;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
-import io.delta.kernel.utils.VectorUtils;
+
+import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.VectorUtils;
 
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
+
 import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 
 public class TestParquetBatchReader {
@@ -141,7 +143,7 @@ public class TestParquetBatchReader {
 
         StructType readSchema = new StructType()
             .add("id", LongType.LONG)
-            .add(StructField.ROW_INDEX_COLUMN);
+            .add(StructField.METADATA_ROW_INDEX_COLUMN);
 
         Configuration conf = new Configuration();
         // Set the batch size small enough so there will be multiple batches
@@ -364,10 +366,6 @@ public class TestParquetBatchReader {
                     assertEquals(2, arrayValue.getSize());
                     assertEquals(2, elementVector.getSize());
                     assertTrue(elementVector.getDataType() instanceof StructType);
-                    // check getStruct
-                    Row item0 = elementVector.getStruct(0);
-                    assertEquals(rowId, item0.getLong(0));
-                    // also check DefaultViewVector implements getChild
                     assertEquals(rowId, elementVector.getChild(0).getLong(0));
                     assertTrue(elementVector.isNullAt(1));
                     break;
@@ -443,28 +441,21 @@ public class TestParquetBatchReader {
             return;
         }
 
-        Row struct = vector.getStruct(batchRowId);
         boolean expAaValNull = tableRowId % 19 == 0;
         boolean expAcValNull = tableRowId % 19 == 0 || tableRowId % 23 == 0;
         final int aaColOrdinal = 0;
         final int acColOrdinal = 1;
 
-        assertEquals(struct.isNullAt(aaColOrdinal), expAaValNull);
-        assertEquals(struct.isNullAt(acColOrdinal), expAcValNull);
+        assertEquals(vector.getChild(aaColOrdinal).isNullAt(batchRowId), expAaValNull);
+        assertEquals(vector.getChild(acColOrdinal).isNullAt(batchRowId), expAcValNull);
 
         if (!expAaValNull) {
-            String aaVal = struct.getString(aaColOrdinal);
+            String aaVal = vector.getChild(aaColOrdinal).getString(batchRowId);
             assertEquals(Integer.toString(tableRowId), aaVal);
         }
         if (!expAcValNull) {
-            Row acVal = struct.getStruct(acColOrdinal);
-            if (expAcValNull) {
-                assertTrue(struct.isNullAt(1));
-                assertNull(acVal);
-            } else {
-                int actAcaVal = acVal.getInt(0);
-                assertEquals(tableRowId, actAcaVal);
-            }
+            int actAcaVal = vector.getChild(acColOrdinal).getChild(0).getInt(batchRowId);
+            assertEquals(tableRowId, actAcaVal);
         }
     }
 

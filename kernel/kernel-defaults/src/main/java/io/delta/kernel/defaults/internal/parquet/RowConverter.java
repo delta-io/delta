@@ -15,11 +15,7 @@
  */
 package io.delta.kernel.defaults.internal.parquet;
 
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import static java.util.Objects.requireNonNull;
 
 import org.apache.parquet.io.api.Converter;
@@ -83,7 +79,7 @@ class RowConverter
             final Type typeFromFile = field.isDataColumn() ?
                 findSubFieldType(fileSchema, field) : null;
             if (typeFromFile == null) {
-                if (field.getName() == StructField.ROW_INDEX_COLUMN_NAME &&
+                if (field.getName() == StructField.METADATA_ROW_INDEX_COLUMN_NAME &&
                     field.isMetadataColumn()) {
                     checkArgument(field.getDataType() instanceof LongType,
                         "row index metadata column must be type long");

@@ -91,8 +91,6 @@ public class DefaultKernelTestUtils {
             return vector.getString(rowId);
         } else if (dataType instanceof BinaryType) {
             return vector.getBinary(rowId);
-        } else if (dataType instanceof StructType) {
-            return vector.getStruct(rowId);
         } else if (dataType instanceof DecimalType) {
             return vector.getDecimal(rowId);
         }

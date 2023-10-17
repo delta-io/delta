@@ -29,7 +29,11 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import static io.delta.kernel.defaults.internal.Preconditions.checkArgument;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.*;
+import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.childAt;
+import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.compare;
+import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.evalNullability;
+import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.getLeft;
+import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.getRight;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**
