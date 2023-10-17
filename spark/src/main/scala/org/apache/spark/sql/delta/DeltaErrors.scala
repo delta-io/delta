@@ -628,14 +628,16 @@ trait DeltaErrorsBase
       columnName: String): ArithmeticException = {
     new DeltaArithmeticException(
       errorClass = "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE",
-      messageParameters = Map(
-        "sourceType" -> toSQLType(from),
-        "targetType" -> toSQLType(to),
-        "columnName" -> toSQLId(columnName),
-        "storeAssignmentPolicyFlag" -> SQLConf.STORE_ASSIGNMENT_POLICY.key,
-        "updateAndMergeCastingFollowsAnsiEnabledFlag" ->
-          DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
-        "ansiEnabledFlag" -> SQLConf.ANSI_ENABLED.key))
+      messageParameters = Array(
+        toSQLType(from), // sourceType
+        toSQLType(to), // targetType
+        toSQLId(columnName), // columnName
+        SQLConf.STORE_ASSIGNMENT_POLICY.key, // storeAssignmentPolicyFlag
+        // updateAndMergeCastingFollowsAnsiEnabledFlag
+        DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
+        SQLConf.ANSI_ENABLED.key // ansiEnabledFlag
+      )
+    )
   }
 
   def notADeltaTable(table: String): Throwable = {
