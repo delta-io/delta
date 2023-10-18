@@ -17,53 +17,75 @@ package io.delta.kernel.internal.replay
 
 import java.util
 
-import scala.reflect.runtime.universe._
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.utils.FileStatus
-import io.delta.kernel.internal.replay.LogReplay.assertLogFilesBelongToTable
+import io.delta.kernel.internal.snapshot.LogSegment
+import io.delta.kernel.internal.replay.LogReplay
 
 import org.scalatest.funsuite.AnyFunSuite
-import org.junit.Assert.assertThrows
+import org.junit.Assert._
 
 class TestLogReplay extends AnyFunSuite {
-
-  // Create a test instance of LogReplay
-  val logReplay = new LogReplay(
-    new Path("s3://bucket/logPath"),
-    new Path("s3://bucket/dataPath"),
-    null,
-    null
-  )
-
-  // Get a reference to the private method using reflection
-  val methodSymbol = typeOf[LogReplay].decl(TermName("assertLogFilesBelongToTable")).asMethod
-  val im = runtimeMirror(getClass.getClassLoader)
-  val assertLogFilesBelongToTable = im.reflect(logReplay).reflectMethod(methodSymbol)
-
+  
   test("assertLogFilesBelongToTable should pass for correct log paths") {
-    // Create a list of FileStatus objects representing log files with correct log paths
-    val logFiles = List(
-      new FileStatus.of("s3://bucket/logPath/logfile1"),
-      new FileStatus.of("s3://bucket/logPath/logfile2"),
-      new FileStatus.of("s3://bucket/logPath/logfile3")
+    /* 
+      Test puplic LogSegment constructor rather than assertLogFilesBelongToTable
+      method directly because method is private
+    */
+    val logSegment = new LogSegment(
+      new Path("s3://bucket/logPath"),
+      null,
+      new List(
+        new FileStatus.of("s3://bucket/logPath/deltafile1", null, null),
+        new FileStatus.of("s3://bucket/logPath/deltafile2", null, null)
+      ),
+      new List(
+        new FileStatus.of("s3://bucket/logPath/checkpointfile1", null, null),
+        new FileStatus.of("s3://bucket/logPath/checkpointfile2", null, null)
+      ),
+      null,
+      null
     )
 
     // Test that files with the correct log path pass the assertion
-    assertLogFilesBelongToTable(new Path("s3://bucket/logPath"), logFiles)
+    val logReplay = new LogReplay(
+      new Path("s3://bucket/logPath"),
+      new Path("s3://bucket/dataPath"),
+      null,
+      logSegment
+    )
   }
 
   test("assertLogFilesBelongToTable should fail for incorrect log paths") {
-    // Create a list of FileStatus objects representing log files with incorrect log paths
-    val invalidLogFiles = List(
-      new FileStatus.of("s3://bucket/invalidPath/logfile1"),
-      new FileStatus.of("s3://bucket/invalidPath/logfile2")
+    /* 
+      Test puplic LogSegment constructor rather than assertLogFilesBelongToTable
+      method directly because method is private
+    */
+    val logSegment = new LogSegment(
+      new Path("s3://bucket/logPath"),
+      null,
+      new List(
+        new FileStatus.of("s3://bucket/invalidLogPath/deltafile1", null, null),
+        new FileStatus.of("s3://bucket/invalidLogPath/deltafile2", null, null)
+      ),
+      new List(
+        new FileStatus.of("s3://bucket/invalidLogPath/checkpointfile1", null, null),
+        new FileStatus.of("s3://bucket/invalidLogPath/checkpointfile2", null, null)
+      ),
+      null,
+      null
     )
 
     // Test that files with incorrect log paths trigger the assertion
     assertThrows[RuntimeException] {
-      assertLogFilesBelongToTable(new Path("logPath"), invalidLogFiles)
+      val logReplay = new LogReplay(
+        new Path("s3://bucket/logPath"),
+        new Path("s3://bucket/dataPath"),
+        null,
+        logSegment
+      )
     }
   }
 }
