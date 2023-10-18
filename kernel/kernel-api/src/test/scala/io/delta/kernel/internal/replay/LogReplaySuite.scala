@@ -31,17 +31,17 @@ class TestLogReplay extends AnyFunSuite {
   
   test("assertLogFilesBelongToTable should pass for correct log paths") {
     /* 
-      Test puplic LogSegment constructor rather than assertLogFilesBelongToTable
+      Test public LogSegment constructor rather than assertLogFilesBelongToTable
       method directly because method is private
     */
     val logSegment = new LogSegment(
       new Path("s3://bucket/logPath"),
       null,
-      new List(
+      List(
         new FileStatus.of("s3://bucket/logPath/deltafile1", null, null),
         new FileStatus.of("s3://bucket/logPath/deltafile2", null, null)
       ),
-      new List(
+      List(
         new FileStatus.of("s3://bucket/logPath/checkpointfile1", null, null),
         new FileStatus.of("s3://bucket/logPath/checkpointfile2", null, null)
       ),
@@ -60,17 +60,17 @@ class TestLogReplay extends AnyFunSuite {
 
   test("assertLogFilesBelongToTable should fail for incorrect log paths") {
     /* 
-      Test puplic LogSegment constructor rather than assertLogFilesBelongToTable
+      Test public LogSegment constructor rather than assertLogFilesBelongToTable
       method directly because method is private
     */
     val logSegment = new LogSegment(
       new Path("s3://bucket/logPath"),
       null,
-      new List(
+      List(
         new FileStatus.of("s3://bucket/invalidLogPath/deltafile1", null, null),
         new FileStatus.of("s3://bucket/invalidLogPath/deltafile2", null, null)
       ),
-      new List(
+      List(
         new FileStatus.of("s3://bucket/invalidLogPath/checkpointfile1", null, null),
         new FileStatus.of("s3://bucket/invalidLogPath/checkpointfile2", null, null)
       ),
