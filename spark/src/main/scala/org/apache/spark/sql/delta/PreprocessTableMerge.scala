@@ -152,7 +152,10 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           conf.resolver(insertAct.targetColNameParts.head, col.name)
         }
       }.map { col =>
-        val defaultValue: Expression = Literal(null, col.dataType)
+        var defaultValue: Expression = Literal(null, col.dataType)
+        import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns.getDefaultValueExprOrNullLit
+        defaultValue = getDefaultValueExprOrNullLit(col, conf.useNullsForMissingDefaultColumnValues)
+          .getOrElse(defaultValue)
         DeltaMergeAction(Seq(col.name), defaultValue, targetColNameResolved = true)
       }
 
