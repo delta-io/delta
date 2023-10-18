@@ -28,9 +28,9 @@ import org.scalatest.funsuite.AnyFunSuite
 import org.junit.Assert._
 
 class TestLogReplay extends AnyFunSuite {
-  
+
   test("assertLogFilesBelongToTable should pass for correct log paths") {
-    /* 
+    /*
       Test public LogSegment constructor rather than assertLogFilesBelongToTable
       method directly because method is private
     */
@@ -59,7 +59,7 @@ class TestLogReplay extends AnyFunSuite {
   }
 
   test("assertLogFilesBelongToTable should fail for incorrect log paths") {
-    /* 
+    /*
       Test public LogSegment constructor rather than assertLogFilesBelongToTable
       method directly because method is private
     */
