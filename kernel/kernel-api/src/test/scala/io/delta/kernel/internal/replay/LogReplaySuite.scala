@@ -29,15 +29,20 @@ import org.junit.Assert.assertThrows
 
 class TestLogReplay extends AnyFunSuite {
 
+  // Create a test instance of LogReplay
+  val logReplay = new LogReplay(
+    new Path("s3://bucket/logPath"),
+    new Path("s3://bucket/dataPath"),
+    null,
+    null
+  )
+
   // Get a reference to the private method using reflection
   val methodSymbol = typeOf[LogReplay].decl(TermName("assertLogFilesBelongToTable")).asMethod
   val im = runtimeMirror(getClass.getClassLoader)
   val assertLogFilesBelongToTable = im.reflect(logReplay).reflectMethod(methodSymbol)
 
   test("assertLogFilesBelongToTable should pass for correct log paths") {
-    // Create a test instance of LogReplay
-    val logReplay = new LogReplay(new Path("s3://bucket/logPath"), new Path("s3://bucket/dataPath"), null, null)
-
     // Create a list of FileStatus objects representing log files with correct log paths
     val logFiles = List(
       new FileStatus.of("s3://bucket/logPath/logfile1"),
@@ -50,9 +55,6 @@ class TestLogReplay extends AnyFunSuite {
   }
 
   test("assertLogFilesBelongToTable should fail for incorrect log paths") {
-    // Create a test instance of LogReplay
-    val logReplay = new LogReplay(new Path("s3://bucket/logPath"), new Path("s3://bucket/dataPath"), null, null)
-
     // Create a list of FileStatus objects representing log files with incorrect log paths
     val invalidLogFiles = List(
       new FileStatus.of("s3://bucket/invalidPath/logfile1"),
