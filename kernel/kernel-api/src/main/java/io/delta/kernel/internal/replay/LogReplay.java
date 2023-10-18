@@ -244,8 +244,8 @@ public class LogReplay implements Logging {
      */
     private static void assertLogFilesBelongToTable(Path logPath, List<FileStatus> allFiles) {
         for (FileStatus fileStatus : allFiles) {
-            Path filePath = fileStatus.getPath();
-            if (!new Path(filePath.toUri()).getParent().equals(new Path(logPath.toUri()))) {
+            String filePath = fileStatus.getPath();
+            if (!new Path(filePath).getParent().equals(new Path(logPath.toUri()))) {
                 throw new RuntimeException("File (" + filePath + ") doesn't belong in the " +
                     "transaction log at " + logPath + ". Please contact Databricks Support.");
             }
