@@ -15,11 +15,13 @@
  */
 package io.delta.kernel.internal.replay;
 
+import java.util.*;
+
 import static org.junit.Assert.*;
 import org.junit.Test;
 
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.FileStatus;
+import io.delta.kernel.internal.utils.FileStatus;
 
 public class TestLogReplay {
 
