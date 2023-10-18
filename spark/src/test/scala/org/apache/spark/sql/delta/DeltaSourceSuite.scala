@@ -25,7 +25,7 @@ import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
-import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSourceOffset}
+import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -653,13 +653,14 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
          |  "isStartingVersion": true
          |}
       """.stripMargin
-    val e = intercept[IllegalStateException] {
+    val e = intercept[SparkThrowable] {
       DeltaSourceOffset(
         UUID.randomUUID().toString,
         SerializedOffset(json)
       )
     }
-    assert(e.getMessage.contains("Please upgrade to newer version of Delta"))
+    assert(e.getErrorClass == "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION")
+    assert(e.toString.contains("Please upgrade to newer version of Delta"))
   }
 
   test("invalid sourceVersion value") {
@@ -673,13 +674,14 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         |  "isStartingVersion": true
         |}
       """.stripMargin
-    val e = intercept[IllegalStateException] {
+    val e = intercept[SparkThrowable] {
       DeltaSourceOffset(
         UUID.randomUUID().toString,
         SerializedOffset(json)
       )
     }
-    assert(e.getMessage.contains("source offset format is invalid"))
+    assert(e.getErrorClass == "DELTA_INVALID_SOURCE_OFFSET_FORMAT")
+    assert(e.toString.contains("source offset format is invalid"))
   }
 
   test("missing sourceVersion") {
@@ -692,14 +694,15 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         |  "isStartingVersion": true
         |}
       """.stripMargin
-    val e = intercept[IllegalStateException] {
+    val e = intercept[SparkThrowable] {
       DeltaSourceOffset(
         UUID.randomUUID().toString,
         SerializedOffset(json)
       )
     }
+    assert(e.getErrorClass == "DELTA_INVALID_SOURCE_VERSION")
     for (msg <- "is invalid") {
-      assert(e.getMessage.contains(msg))
+      assert(e.toString.contains(msg))
     }
   }
 
@@ -715,14 +718,15 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         |  "isStartingVersion": true
         |}
       """.stripMargin
-    val e = intercept[IllegalStateException] {
+    val e = intercept[SparkThrowable] {
       DeltaSourceOffset(
         UUID.randomUUID().toString,
         SerializedOffset(json)
       )
     }
+    assert(e.getErrorClass == "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE")
     for (msg <- Seq("delete", "checkpoint", "restart")) {
-      assert(e.getMessage.contains(msg))
+      assert(e.toString.contains(msg))
     }
   }
 

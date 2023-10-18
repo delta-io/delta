@@ -25,6 +25,7 @@ import com.fasterxml.jackson.core.{JsonGenerator, JsonParseException, JsonParser
 import com.fasterxml.jackson.databind.{DeserializationContext, SerializerProvider}
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer
+import com.fasterxml.jackson.databind.exc.InvalidFormatException
 import com.fasterxml.jackson.databind.ser.std.StdSerializer
 
 import org.apache.spark.internal.Logging
@@ -206,7 +207,8 @@ object DeltaSourceOffset extends Logging {
       val o = try {
         p.readValueAs(classOf[DeltaSourceOffsetForSerialization])
       } catch {
-        case _: JsonParseException =>
+        case e: Throwable if e.isInstanceOf[JsonParseException] ||
+            e.isInstanceOf[InvalidFormatException] =>
           // The version may be there with a different format, or something else might be off.
           throw DeltaErrors.invalidSourceOffsetFormat()
       }
