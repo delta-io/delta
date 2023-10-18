@@ -1191,6 +1191,10 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       spark.range(30).repartition(9).write.format("delta").mode("append").save(tablePath)
     }
   }
+
+  generateGoldenTable("no-delta-log-folder") { tablePath =>
+    spark.range(20).write.format("parquet").save(tablePath)
+  }
 }
 
 case class TestStruct(f1: String, f2: Long)
