@@ -29,6 +29,7 @@ import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
@@ -1737,38 +1738,42 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         "delta.commit.retry.conflictCheck",
         tags = Map(TAG_LOG_STORE_CLASS -> deltaLog.store.getClass.getName)) {
 
-    val nextAttemptVersion = getNextAttemptVersion(checkVersion)
+    DeltaTableV2.withEnrichedInvalidProtocolVersionException(
+      catalogTable.map(_.identifier.copy(catalog = None).unquotedString)) {
 
-    val logPrefixStr = s"[attempt $attemptNumber]"
-    val txnDetailsLogStr = {
-      var adds = 0L
-      var removes = 0L
-      currentTransactionInfo.actions.foreach {
-        case _: AddFile => adds += 1
-        case _: RemoveFile => removes += 1
-        case _ =>
+      val nextAttemptVersion = getNextAttemptVersion(checkVersion)
+
+      val logPrefixStr = s"[attempt $attemptNumber]"
+      val txnDetailsLogStr = {
+        var adds = 0L
+        var removes = 0L
+        currentTransactionInfo.actions.foreach {
+          case _: AddFile => adds += 1
+          case _: RemoveFile => removes += 1
+          case _ =>
+        }
+        s"$adds adds, $removes removes, ${readPredicates.size} read predicates, " +
+          s"${readFiles.size} read files"
       }
-      s"$adds adds, $removes removes, ${readPredicates.size} read predicates, " +
-        s"${readFiles.size} read files"
-    }
 
-    logInfo(s"$logPrefixStr Checking for conflicts with versions " +
-      s"[$checkVersion, $nextAttemptVersion) with current txn having $txnDetailsLogStr")
+      logInfo(s"$logPrefixStr Checking for conflicts with versions " +
+        s"[$checkVersion, $nextAttemptVersion) with current txn having $txnDetailsLogStr")
 
-    var updatedCurrentTransactionInfo = currentTransactionInfo
-    (checkVersion until nextAttemptVersion).foreach { otherCommitVersion =>
-      updatedCurrentTransactionInfo = checkForConflictsAgainstVersion(
-        updatedCurrentTransactionInfo,
-        otherCommitVersion,
-        commitIsolationLevel)
-      logInfo(s"$logPrefixStr No conflicts in version $otherCommitVersion, " +
+      var updatedCurrentTransactionInfo = currentTransactionInfo
+      (checkVersion until nextAttemptVersion).foreach { otherCommitVersion =>
+        updatedCurrentTransactionInfo = checkForConflictsAgainstVersion(
+          updatedCurrentTransactionInfo,
+          otherCommitVersion,
+          commitIsolationLevel)
+        logInfo(s"$logPrefixStr No conflicts in version $otherCommitVersion, " +
+          s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start")
+      }
+
+      logInfo(s"$logPrefixStr No conflicts with versions [$checkVersion, $nextAttemptVersion) " +
+        s"with current txn having $txnDetailsLogStr, " +
         s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start")
+      (nextAttemptVersion, updatedCurrentTransactionInfo)
     }
-
-    logInfo(s"$logPrefixStr No conflicts with versions [$checkVersion, $nextAttemptVersion) " +
-      s"with current txn having $txnDetailsLogStr, " +
-      s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start")
-    (nextAttemptVersion, updatedCurrentTransactionInfo)
   }
 
   protected def checkForConflictsAgainstVersion(

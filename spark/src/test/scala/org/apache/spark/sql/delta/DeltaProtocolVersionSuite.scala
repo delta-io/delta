@@ -507,6 +507,47 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("incompatible protocol change during the transaction - error message with table name") {
+    for (incompatibleProtocol <- Seq(
+      Protocol(minReaderVersion = Int.MaxValue),
+      Protocol(minWriterVersion = Int.MaxValue),
+      Protocol(minReaderVersion = Int.MaxValue, minWriterVersion = Int.MaxValue)
+    )) {
+      val tableName = "mytableprotocoltoohigh"
+      withTable(tableName) {
+        spark.range(0).write.format("delta").saveAsTable(tableName)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val hadoopConf = deltaLog.newDeltaHadoopConf()
+        val txn = deltaLog.startTransaction(DeltaTableV2(spark, TableIdentifier(tableName)).catalogTable)
+        val currentVersion = txn.snapshot.version
+        deltaLog.store.write(
+          deltaFile(deltaLog.logPath, currentVersion + 1),
+          Iterator(incompatibleProtocol.json),
+          overwrite = false,
+          hadoopConf)
+
+        // Should detect the above incompatible protocol change and fail
+        val exception = intercept[InvalidProtocolVersionException] {
+          txn.commit(AddFile("test", Map.empty, 1, 1, dataChange = true) :: Nil, ManualUpdate)
+        }
+
+        var pathInErrorMessage = "default." + tableName
+        val errorMessage = getExpectedProtocolErrorMessage(
+          pathInErrorMessage,
+          incompatibleProtocol.minReaderVersion,
+          incompatibleProtocol.minWriterVersion)
+
+        assert(exception.getMessage == errorMessage)
+
+        // Make sure we didn't commit anything
+        val p = deltaFile(deltaLog.logPath, currentVersion + 2)
+        assert(
+          !p.getFileSystem(hadoopConf).exists(p),
+          s"$p should not be committed")
+      }
+    }
+  }
+
   private def overwriteDeltaLogWithVersion(
       log: DeltaLog,
       tableProtocolReaderVersion: Int,
