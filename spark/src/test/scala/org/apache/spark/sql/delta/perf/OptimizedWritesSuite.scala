@@ -89,7 +89,7 @@ abstract class OptimizedWritesSuiteBase extends QueryTest
       }
     }
 
-    // When table property "delta.autoOptimize.optimizeWrite" is set, it takes precedence over
+    // Test order of precedence between table property "delta.autoOptimize.optimizeWrite" and
     // session conf.
     for {
       sqlConf <- DeltaTestUtils.BOOLEAN_DOMAIN
@@ -103,14 +103,12 @@ abstract class OptimizedWritesSuiteBase extends QueryTest
           spark.range(10).coalesce(1).write.format("delta")
             .mode("append").save(dir)
 
-          // We're setting the table property explicitly and hence, OW should be controlled
-          // only by the table property, not the config.
           sql(s"ALTER TABLE delta.`$dir` SET TBLPROPERTIES" +
             s" (delta.autoOptimize.optimizeWrite = ${tableProperty.toString})")
 
           val df = spark.range(0, 100, 1, 4).toDF()
           // OW adds one file vs non-OW adds 4 files
-          val expectedNumberOfFiles = if (tableProperty) 2 else 5
+          val expectedNumberOfFiles = if (sqlConf) 2 else 5
           df.write.format("delta").mode("append").save(dir)
           checkResult(
             df.union(spark.range(10).toDF()),

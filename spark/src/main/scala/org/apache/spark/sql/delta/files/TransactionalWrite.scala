@@ -473,8 +473,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   /**
    * Optimized writes can be enabled/disabled through the following order:
    *  - Through DataFrameWriter options
-   *  - Through the table parameter
    *  - Through SQL configuration
+   *  - Through the table parameter
    */
   private def shouldOptimizeWrite(
       writeOptions: Option[DeltaOptions], sessionConf: SQLConf): Boolean = {
@@ -486,10 +486,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
 object TransactionalWrite {
   def shouldOptimizeWrite(metadata: Metadata, sessionConf: SQLConf): Boolean = {
-    // We want table properties to take precedence over the session/default conf.
-    DeltaConfigs.OPTIMIZE_WRITE
-      .fromMetaData(metadata)
-      .orElse(sessionConf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED))
+    sessionConf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED)
+      .orElse(DeltaConfigs.OPTIMIZE_WRITE.fromMetaData(metadata))
       .getOrElse(false)
   }
 }
