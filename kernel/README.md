@@ -50,7 +50,7 @@ The Delta Kernel project provides the following two Maven artifacts:
 
 The Java API docs are available [here](https://delta-io.github.io/delta/snapshot/kernel-api/java/index.html). Only the classes and interfaces documented here are considered as public APIs with backward compatibility guarantees (when marked as Stable APIs). All other classes and interfaces available in the JAR are considered as private APIs with no stability guarantees. 
 
-Detailed user guide explaining the APIs and how to use them is available [here](#USER_GUIDE.md).
+Detailed user guide explaining the APIs and how to use them is available [here](https://github.com/delta-io/delta/blob/master/kernel/USER_GUIDE.md).
 
 Example Java programs that read Delta Lake tables using the Kernel APIs are avilable [here](https://github.com/delta-io/delta/tree/master/kernel/examples).
 
