@@ -1181,10 +1181,6 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
-  generateGoldenTable("no-delta-log-folder") { tablePath =>
-    spark.range(20).write.format("parquet").save(tablePath)
-  }
-
   generateGoldenTable("log-replay-latest-metadata-protocol") { tablePath =>
     spark.range(20).toDF("col1")
       .write.format("delta").save(tablePath)

@@ -53,7 +53,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       (50 until 100).map(x => (x, s"val=$x"))
     checkTable(
       path = goldenTablePath("basic-with-inserts-updates"),
-      expectedAnswer = expectedValues.map(TestRow.fromTuple),
+      expectedAnswer = expectedValues.map(TestRow.fromTuple)
     )
   }
 
@@ -257,7 +257,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     checkTable(
       path = goldenTablePath("data-reader-escaped-chars"),
       expectedAnswer = TestRow("foo1", "bar+%21") :: TestRow("foo2", "bar+%22") ::
-        TestRow("foo3", "bar+%23") :: Nil,
+        TestRow("foo3", "bar+%23") :: Nil
     )
   }
 
