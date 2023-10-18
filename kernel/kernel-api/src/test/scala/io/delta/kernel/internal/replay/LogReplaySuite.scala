@@ -15,8 +15,6 @@
  */
 package io.delta.kernel.internal.replay
 
-import java.util.List
-
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.internal.fs.Path
@@ -41,11 +39,11 @@ class TestLogReplay extends AnyFunSuite {
       List(
         FileStatus.of("s3://bucket/logPath/deltafile1", 0L, 0L),
         FileStatus.of("s3://bucket/logPath/deltafile2", 0L, 0L)
-      ),
+      ).asJava,
       List(
         FileStatus.of("s3://bucket/logPath/checkpointfile1", 0L, 0L),
         FileStatus.of("s3://bucket/logPath/checkpointfile2", 0L, 0L)
-      ),
+      ).asJava,
       0L,
       0L
     )
@@ -70,11 +68,11 @@ class TestLogReplay extends AnyFunSuite {
       List(
         FileStatus.of("s3://bucket/invalidLogPath/deltafile1", 0L, 0L),
         FileStatus.of("s3://bucket/invalidLogPath/deltafile2", 0L, 0L)
-      ),
+      ).asJava,
       List(
         FileStatus.of("s3://bucket/invalidLogPath/checkpointfile1", 0L, 0L),
         FileStatus.of("s3://bucket/invalidLogPath/checkpointfile2", 0L, 0L)
-      ),
+      ).asJava,
       0L,
       0L
     )
