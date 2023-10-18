@@ -230,10 +230,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     assert(scanFileRows.isEmpty)
   }
 
-  // TODO canonicalizePath in log replay. In standalone we have canonicalizePath which does:
-  //   - return untouched if path is relative, already fully qualified or points to external file
-  //     systems
-  //   - otherwise qualifies it
+  // TODO we need to canonicalize path during log replay see issue #2213
   ignore("path should be canonicalized - normal characters") {
     Seq("canonicalized-paths-normal-a", "canonicalized-paths-normal-b").foreach { path =>
       val snapshot = latestSnapshot(goldenTablePath(path))
