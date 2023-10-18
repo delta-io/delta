@@ -243,6 +243,12 @@ public class LogReplay implements Logging {
      * Verifies that a set of delta or checkpoint files to be read actually belongs to this table.
      */
     private static void assertLogFilesBelongToTable(Path logPath, List<FileStatus> allFiles) {
-        // TODO:
+        for (FileStatus fileStatus : allFiles) {
+            Path filePath = fileStatus.getPath();
+            if (!new Path(filePath.toUri()).getParent().equals(new Path(logPath.toUri()))) {
+                throw new AssertionError("File (" + filePath + ") doesn't belong in the " +
+                    "transaction log at " + logPath + ". Please contact Databricks Support.");
+            }
+        }
     }
 }
