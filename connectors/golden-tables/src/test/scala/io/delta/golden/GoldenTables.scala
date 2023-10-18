@@ -203,6 +203,19 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
+  generateGoldenTable("corrupted-last-checkpoint-kernel") { tablePath =>
+    val log = DeltaLog.forTable(spark, new Path(tablePath))
+    val checkpointInterval = log.checkpointInterval(log.unsafeVolatileSnapshot.metadata)
+    for (f <- 0 to checkpointInterval) {
+      spark.range(10).write.format("delta").mode("append").save(tablePath)
+    }
+    spark.range(100).write.format("delta").mode("overwrite").save(tablePath)
+
+    // Create an empty "_last_checkpoint" (corrupted)
+    val fs = log.LAST_CHECKPOINT.getFileSystem(log.newDeltaHadoopConf())
+    fs.create(log.LAST_CHECKPOINT, true /* overwrite */).close()
+  }
+
   /** TEST: DeltaLogSuite > paths should be canonicalized */
   {
     def helper(scheme: String, path: String, tableSuffix: String): Unit = {
@@ -345,12 +358,15 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     assert(new File(log.logPath.toUri).mkdirs())
 
     val file = AddFile("abc", Map.empty, 1, 1, true)
+    val metadata = Metadata(
+      schemaString = new StructType().add("id", IntegerType).json
+    )
     log.store.write(
       FileNames.deltaFile(log.logPath, 0L),
 
       // Protocol reader version explicitly set too high
       // Also include a Metadata
-      Iterator(Protocol(99), Metadata(), file).map(a => JsonUtils.toJson(a.wrap)))
+      Iterator(Protocol(99), metadata, file).map(a => JsonUtils.toJson(a.wrap)))
   }
 
   /** TEST: DeltaLogSuite > get commit info */

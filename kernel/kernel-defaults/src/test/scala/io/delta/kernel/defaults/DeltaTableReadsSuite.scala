@@ -150,15 +150,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   }
 
   //////////////////////////////////////////////////////////////////////////////////
-  // Misc tests
+  // Table/Snapshot tests
   //////////////////////////////////////////////////////////////////////////////////
-
-  test("end to end: multi-part checkpoint") {
-    checkTable(
-      path = goldenTablePath("multi-part-checkpoint"),
-      expectedAnswer = (Seq(0L) ++ (0L until 30L)).map(TestRow(_))
-    )
-  }
 
   test("invalid path") {
     val invalidPath = "/path/to/non-existent-directory"
@@ -183,6 +176,45 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       assert(ex.getMessage.contains(
         s"Table at path `file:${target.getCanonicalPath}` is not found"))
     }
+  }
+
+  // TODO for the below, when and what error should we throw?
+  //   - on Table creation?
+  //   - on Snapshot creation?
+
+  test("empty _delta_log folder") {
+    withTempDir { dir =>
+      new File(dir, "_delta_log").mkdirs()
+      intercept[TableNotFoundException] {
+        latestSnapshot(dir.getAbsolutePath)
+      }
+    }
+  }
+
+  test("empty folder with no _delta_log dir") {
+    withTempDir { dir =>
+      intercept[TableNotFoundException] {
+        latestSnapshot(dir.getAbsolutePath)
+      }
+    }
+  }
+
+  // TODO should this throw not a delta table exception instead?
+  test("non-empty folder not a delta table") {
+    intercept[TableNotFoundException] {
+      latestSnapshot(goldenTablePath("no-delta-log-folder"))
+    }
+  }
+  
+  //////////////////////////////////////////////////////////////////////////////////
+  // Misc tests
+  //////////////////////////////////////////////////////////////////////////////////
+
+  test("end to end: multi-part checkpoint") {
+    checkTable(
+      path = goldenTablePath("multi-part-checkpoint"),
+      expectedAnswer = (Seq(0L) ++ (0L until 30L)).map(TestRow(_))
+    )
   }
 
   test("read partitioned table") {
@@ -281,5 +313,59 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       path = path,
       expectedAnswer = expectedAnswer
     )
+  }
+
+  test("table with array of primitives") {
+    val expectedAnswer = (0 until 10).map { i =>
+      TestRow(
+        Seq(i), Seq(i.toLong), Seq(i.toByte), Seq(i.toShort),
+        Seq(i % 2 == 0), Seq(i.toFloat), Seq(i.toDouble), Seq(i.toString),
+        Seq(Array(i.toByte, i.toByte)), Seq(new BigDecimal(i))
+      )
+    }
+    checkTable(
+      path = goldenTablePath("data-reader-array-primitives"),
+      expectedAnswer = expectedAnswer
+    )
+  }
+
+  test("table with nested struct") {
+    val expectedAnswer = (0 until 10).map { i =>
+      TestRow(TestRow(i.toString, i.toString, TestRow(i, i.toLong)), i)
+    }
+    checkTable(
+      path = goldenTablePath("data-reader-nested-struct"),
+      expectedAnswer = expectedAnswer
+    )
+  }
+
+  test("table with empty parquet files") {
+    checkTable(
+      path = goldenTablePath("125-iterator-bug"),
+      expectedAnswer = (1 to 5).map(TestRow(_))
+    )
+  }
+
+  test("handle corrupted '_last_checkpoint' file") {
+    checkTable(
+      path = goldenTablePath("corrupted-last-checkpoint-kernel"),
+      expectedAnswer = (0L until 100L).map(TestRow(_))
+    )
+  }
+
+  test("error - version not contiguous") {
+    val e = intercept[IllegalStateException] {
+      latestSnapshot(goldenTablePath("versions-not-contiguous"))
+    }
+    assert(e.getMessage.contains("Versions ([0, 2]) are not continuous"))
+  }
+
+  test("table protocol version greater than reader protocol version") {
+    val e = intercept[Exception] {
+      latestSnapshot(goldenTablePath("deltalog-invalid-protocol-version"))
+        .getScanBuilder(defaultTableClient)
+        .build()
+    }
+    assert(e.getMessage.contains("Unsupported reader protocol version"))
   }
 }
