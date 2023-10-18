@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.internal.replay
 
-import java.util
+import java.util.List
 
 import scala.collection.JavaConverters._
 
@@ -25,7 +25,7 @@ import io.delta.kernel.internal.snapshot.LogSegment
 import io.delta.kernel.internal.replay.LogReplay
 
 import org.scalatest.funsuite.AnyFunSuite
-import org.junit.Assert._
+import org.junit.Assert.assertThrows
 
 class TestLogReplay extends AnyFunSuite {
 
@@ -39,15 +39,15 @@ class TestLogReplay extends AnyFunSuite {
       new Path("s3://bucket/logPath"),
       0,
       List(
-        FileStatus.of("s3://bucket/logPath/deltafile1", 0, 0),
-        FileStatus.of("s3://bucket/logPath/deltafile2", 0, 0)
+        FileStatus.of("s3://bucket/logPath/deltafile1", 0L, 0L),
+        FileStatus.of("s3://bucket/logPath/deltafile2", 0L, 0L)
       ),
       List(
-        FileStatus.of("s3://bucket/logPath/checkpointfile1", 0, 0),
-        FileStatus.of("s3://bucket/logPath/checkpointfile2", 0, 0)
+        FileStatus.of("s3://bucket/logPath/checkpointfile1", 0L, 0L),
+        FileStatus.of("s3://bucket/logPath/checkpointfile2", 0L, 0L)
       ),
-      0,
-      0
+      0L,
+      0L
     )
 
     // Test that files with the correct log path pass the assertion
@@ -68,15 +68,15 @@ class TestLogReplay extends AnyFunSuite {
       new Path("s3://bucket/logPath"),
       0,
       List(
-        FileStatus.of("s3://bucket/invalidLogPath/deltafile1", 0, 0),
-        FileStatus.of("s3://bucket/invalidLogPath/deltafile2", 0, 0)
+        FileStatus.of("s3://bucket/invalidLogPath/deltafile1", 0L, 0L),
+        FileStatus.of("s3://bucket/invalidLogPath/deltafile2", 0L, 0L)
       ),
       List(
-        FileStatus.of("s3://bucket/invalidLogPath/checkpointfile1", 0, 0),
-        FileStatus.of("s3://bucket/invalidLogPath/checkpointfile2", 0, 0)
+        FileStatus.of("s3://bucket/invalidLogPath/checkpointfile1", 0L, 0L),
+        FileStatus.of("s3://bucket/invalidLogPath/checkpointfile2", 0L, 0L)
       ),
-      0,
-      0
+      0L,
+      0L
     )
 
     // Test that files with incorrect log paths trigger the assertion
