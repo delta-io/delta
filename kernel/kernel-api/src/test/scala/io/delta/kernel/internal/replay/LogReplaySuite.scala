@@ -17,42 +17,51 @@ package io.delta.kernel.internal.replay
 
 import java.util
 
+import scala.reflect.runtime.universe._
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.utils.FileStatus
+import io.delta.kernel.internal.replay.LogReplay.assertLogFilesBelongToTable
 
 import org.scalatest.funsuite.AnyFunSuite
-import org.junit.Assert._
+import org.junit.Assert.assertThrows
 
 class TestLogReplay extends AnyFunSuite {
 
+  // Get a reference to the private method using reflection
+  val methodSymbol = typeOf[LogReplay].decl(TermName("assertLogFilesBelongToTable")).asMethod
+  val im = runtimeMirror(getClass.getClassLoader)
+  val assertLogFilesBelongToTable = im.reflect(logReplay).reflectMethod(methodSymbol)
+
   test("assertLogFilesBelongToTable should pass for correct log paths") {
     // Create a test instance of LogReplay
-    val logReplay = new LogReplay(new Path("logPath"), new Path("dataPath"), null, null)
+    val logReplay = new LogReplay(new Path("s3://bucket/logPath"), new Path("s3://bucket/dataPath"), null, null)
 
-    // Create a list of FileStatus objects representing log files
+    // Create a list of FileStatus objects representing log files with correct log paths
     val logFiles = List(
-      new FileStatus("logPath/logfile1"),
-      new FileStatus("logPath/logfile2"),
-      new FileStatus("logPath/logfile3")
+      new FileStatus.of("s3://bucket/logPath/logfile1"),
+      new FileStatus.of("s3://bucket/logPath/logfile2"),
+      new FileStatus.of("s3://bucket/logPath/logfile3")
     )
 
     // Test that files with the correct log path pass the assertion
-    logReplay.assertLogFilesBelongToTable(new Path("logPath"), logFiles)
+    assertLogFilesBelongToTable(new Path("s3://bucket/logPath"), logFiles)
   }
 
   test("assertLogFilesBelongToTable should fail for incorrect log paths") {
     // Create a test instance of LogReplay
-    val logReplay = new LogReplay(new Path("logPath"), new Path("dataPath"), null, null)
+    val logReplay = new LogReplay(new Path("s3://bucket/logPath"), new Path("s3://bucket/dataPath"), null, null)
 
-    // Create a list of FileStatus objects with incorrect log paths
+    // Create a list of FileStatus objects representing log files with incorrect log paths
     val invalidLogFiles = List(
-      new FileStatus("invalidPath/logfile1"),
-      new FileStatus("invalidPath/logfile2")
+      new FileStatus.of("s3://bucket/invalidPath/logfile1"),
+      new FileStatus.of("s3://bucket/invalidPath/logfile2")
     )
 
     // Test that files with incorrect log paths trigger the assertion
     assertThrows[RuntimeException] {
-      logReplay.assertLogFilesBelongToTable(new Path("logPath"), invalidLogFiles)
+      assertLogFilesBelongToTable(new Path("logPath"), invalidLogFiles)
     }
   }
 }
