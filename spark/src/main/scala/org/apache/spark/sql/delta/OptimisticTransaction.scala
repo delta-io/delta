@@ -715,8 +715,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
     if (index.deltaLog.isSameLogAs(deltaLog)) return this
 
+    val compositeId = index.deltaLog.compositeId
     // Will be called only when the log is accessed the first time
-    readSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => index.getSnapshot)
+    readSnapshots.computeIfAbsent(compositeId, _ => index.getSnapshot)
   }
 
   /** Returns a[[DeltaScan]] based on the given filters. */
