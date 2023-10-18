@@ -34,19 +34,20 @@ class TestLogReplay extends AnyFunSuite {
       Test public LogSegment constructor rather than assertLogFilesBelongToTable
       method directly because method is private
     */
+
     val logSegment = new LogSegment(
       new Path("s3://bucket/logPath"),
-      null,
+      0,
       List(
-        new FileStatus.of("s3://bucket/logPath/deltafile1", null, null),
-        new FileStatus.of("s3://bucket/logPath/deltafile2", null, null)
+        FileStatus.of("s3://bucket/logPath/deltafile1", 0, 0),
+        FileStatus.of("s3://bucket/logPath/deltafile2", 0, 0)
       ),
       List(
-        new FileStatus.of("s3://bucket/logPath/checkpointfile1", null, null),
-        new FileStatus.of("s3://bucket/logPath/checkpointfile2", null, null)
+        FileStatus.of("s3://bucket/logPath/checkpointfile1", 0, 0),
+        FileStatus.of("s3://bucket/logPath/checkpointfile2", 0, 0)
       ),
-      null,
-      null
+      0,
+      0
     )
 
     // Test that files with the correct log path pass the assertion
@@ -65,17 +66,17 @@ class TestLogReplay extends AnyFunSuite {
     */
     val logSegment = new LogSegment(
       new Path("s3://bucket/logPath"),
-      null,
+      0,
       List(
-        new FileStatus.of("s3://bucket/invalidLogPath/deltafile1", null, null),
-        new FileStatus.of("s3://bucket/invalidLogPath/deltafile2", null, null)
+        FileStatus.of("s3://bucket/invalidLogPath/deltafile1", 0, 0),
+        FileStatus.of("s3://bucket/invalidLogPath/deltafile2", 0, 0)
       ),
       List(
-        new FileStatus.of("s3://bucket/invalidLogPath/checkpointfile1", null, null),
-        new FileStatus.of("s3://bucket/invalidLogPath/checkpointfile2", null, null)
+        FileStatus.of("s3://bucket/invalidLogPath/checkpointfile1", 0, 0),
+        FileStatus.of("s3://bucket/invalidLogPath/checkpointfile2", 0, 0)
       ),
-      null,
-      null
+      0,
+      0
     )
 
     // Test that files with incorrect log paths trigger the assertion
