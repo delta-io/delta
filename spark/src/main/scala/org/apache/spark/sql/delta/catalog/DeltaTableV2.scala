@@ -92,7 +92,7 @@ case class DeltaTableV2(
         case None => tableIdentifier
       }
 
-      DeltaTableV2.withEnhancedInvalidProtocolVersionException(tableNameInException) {
+      DeltaTableV2.withEnrichedInvalidProtocolVersionException(tableNameInException) {
         DeltaLog.forTable(spark, rootPath, options)
       }
   }
@@ -125,7 +125,7 @@ case class DeltaTableV2(
    * WARNING: Because the snapshot is captured lazily, callers should explicitly access the snapshot
    * if they want to be certain it has been captured.
    */
-  lazy val initialSnapshot: Snapshot = DeltaTableV2.withEnhancedInvalidProtocolVersionException(
+  lazy val initialSnapshot: Snapshot = DeltaTableV2.withEnrichedInvalidProtocolVersionException(
     catalogTable.map(_.identifier.copy(catalog = None).unquotedString).orElse(tableIdentifier)) {
     timeTravelSpec.map { spec =>
       // By default, block using CDF + time-travel
@@ -355,7 +355,7 @@ object DeltaTableV2 {
    * When InvalidProtocolVersionException happens during the initialization (read)
    * it doesn't know the table name, so we need to update the message.
    */
-  def withEnhancedInvalidProtocolVersionException[T](tableName: Option[String])(thunk: => T): T = {
+  def withEnrichedInvalidProtocolVersionException[T](tableName: Option[String])(thunk: => T): T = {
     try thunk catch {
         case e: InvalidProtocolVersionException if tableName.isDefined =>
           throw e.copy(tableNameOrPath = tableName.get).initCause(e)
