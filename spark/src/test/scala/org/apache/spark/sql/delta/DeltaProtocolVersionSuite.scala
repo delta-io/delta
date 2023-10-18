@@ -518,7 +518,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         spark.range(0).write.format("delta").saveAsTable(tableName)
         val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val hadoopConf = deltaLog.newDeltaHadoopConf()
-        val txn = deltaLog.startTransaction(DeltaTableV2(spark, TableIdentifier(tableName)).catalogTable)
+        val catalogTable = DeltaTableV2(spark, TableIdentifier(tableName)).catalogTable
+        val txn = deltaLog.startTransaction(catalogTable)
         val currentVersion = txn.snapshot.version
         deltaLog.store.write(
           deltaFile(deltaLog.logPath, currentVersion + 1),
