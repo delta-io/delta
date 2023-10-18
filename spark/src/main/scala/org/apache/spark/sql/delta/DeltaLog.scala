@@ -436,11 +436,9 @@ class DeltaLog private(
   /**
    * Asserts that the client is up to date with the protocol and allowed to read the table that is
    * using the given `protocol`.
-   * @param tableProtocol: The protocol to be checked.
-   * @param catalogTable: optional catalog table of the Delta table protocol being checked.
    */
-  def protocolRead(protocol: Protocol, catalogTable: Option[CatalogTable] = None): Unit = {
-    protocolCheck(protocol, "read", catalogTable)
+  def protocolRead(protocol: Protocol): Unit = {
+    protocolCheck(protocol, "read", None)
   }
 
   /**

@@ -92,21 +92,8 @@ case class DeltaTableV2(
         case None => tableIdentifier
       }
 
-      try {
+      DeltaTableV2.withEnhancedInvalidProtocolVersionException(tableNameInException) {
         DeltaLog.forTable(spark, rootPath, options)
-      } catch {
-        // When InvalidProtocolVersionException happens during the initialization (read)
-        // we it doesn't know the table name, so we need to update the message.
-        case e: InvalidProtocolVersionException if tableNameInException.isDefined &&
-          // sanity check, the path should always be the same
-          rootPath.toString() == e.tableNameOrPath =>
-          throw new InvalidProtocolVersionException(
-            tableNameInException.get,
-            e.readerRequiredVersion,
-            e.writerRequiredVersion,
-            e.supportedReaderVersions,
-            e.supportedWriterVersions)
-            .initCause(e)
       }
   }
 
@@ -138,7 +125,8 @@ case class DeltaTableV2(
    * WARNING: Because the snapshot is captured lazily, callers should explicitly access the snapshot
    * if they want to be certain it has been captured.
    */
-  lazy val initialSnapshot: Snapshot = {
+  lazy val initialSnapshot: Snapshot = DeltaTableV2.withEnhancedInvalidProtocolVersionException(
+    catalogTable.map(_.identifier.copy(catalog = None).unquotedString).orElse(tableIdentifier)) {
     timeTravelSpec.map { spec =>
       // By default, block using CDF + time-travel
       if (CDCReader.isCDCRead(caseInsensitiveOptions) &&
@@ -361,6 +349,17 @@ object DeltaTableV2 {
     case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
       DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table))
     case _ => throw DeltaErrors.notADeltaTableException(cmd)
+  }
+
+  /**
+   * When InvalidProtocolVersionException happens during the initialization (read)
+   * it doesn't know the table name, so we need to update the message.
+   */
+  def withEnhancedInvalidProtocolVersionException[T](tableName: Option[String])(thunk: => T): T = {
+    try thunk catch {
+        case e: InvalidProtocolVersionException if tableName.isDefined =>
+          throw e.copy(tableNameOrPath = tableName.get).initCause(e)
+      }
   }
 }
 

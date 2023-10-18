@@ -3269,12 +3269,12 @@ class DeltaIndexOutOfBoundsException(
 }
 
 /** Thrown when the protocol version of a table is greater than supported by this client. */
-class InvalidProtocolVersionException(
-    val tableNameOrPath: String,
-    val readerRequiredVersion: Int,
-    val writerRequiredVersion: Int,
-    val supportedReaderVersions: Seq[Int],
-    val supportedWriterVersions: Seq[Int])
+case class InvalidProtocolVersionException(
+    tableNameOrPath: String,
+    readerRequiredVersion: Int,
+    writerRequiredVersion: Int,
+    supportedReaderVersions: Seq[Int],
+    supportedWriterVersions: Seq[Int])
   extends RuntimeException(DeltaThrowableHelper.getMessage(
     errorClass = "DELTA_INVALID_PROTOCOL_VERSION",
     messageParameters = Array(
