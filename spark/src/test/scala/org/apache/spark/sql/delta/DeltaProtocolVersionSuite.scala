@@ -3210,7 +3210,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     require(blob.nonEmpty, "Expecting a delta.protocol.change event but didn't see any.")
     blob.map(JsonUtils.fromJson[Map[String, Any]]).head
   }
-  */
 }
 
 class DeltaProtocolVersionSuite extends DeltaProtocolVersionSuiteBase
