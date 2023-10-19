@@ -31,6 +31,11 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
 	this.kernelSnapshot = kernelSnapshot;
     }
 
+    // Used for testing
+    protected io.delta.kernel.internal.SnapshotImpl getKernelSnapshot() {
+	return kernelSnapshot;
+    }
+
     /**
      * Converts the metadata in the kernel snapshot to a compatible Metadata type. The kernel
      * uses more optional types, which are converted to `null` if they are `None` since that's what

@@ -24,6 +24,10 @@ import org.apache.flink.core.fs.Path;
 import org.apache.flink.util.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 
+import io.delta.kernel.Table;
+import io.delta.kernel.TableNotFoundException;
+import io.delta.kernel.client.TableClient;
+import io.delta.kernel.defaults.client.DefaultTableClient;
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
 
@@ -276,20 +280,31 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      * should be read from Delta table.
      */
     protected SourceSchema getSourceSchema() {
+	String stringPath = SourceUtils.pathToString(tablePath);
         DeltaLog deltaLog =
-            DeltaLog.forTable(hadoopConfiguration, SourceUtils.pathToString(tablePath));
-        SnapshotSupplier snapshotSupplier = snapshotSupplierFactory.create(deltaLog, hadoopConfiguration, tablePath);
-        Snapshot snapshot = snapshotSupplier.getSnapshot(sourceConfiguration);
+            DeltaLog.forTable(hadoopConfiguration, stringPath);
+	TableClient tableClient = DefaultTableClient.create(hadoopConfiguration);
+	try {
+	    Table table = Table.forPath(tableClient, stringPath);
+	    SnapshotSupplier snapshotSupplier = snapshotSupplierFactory.create(deltaLog, tableClient, table);
+	    Snapshot snapshot = snapshotSupplier.getSnapshot(sourceConfiguration);
 
-        try {
-            return SourceSchema.fromSnapshot(userColumnNames, snapshot);
-        } catch (IllegalArgumentException e) {
-            throw DeltaSourceExceptions.generalSourceException(
-                SourceUtils.pathToString(tablePath),
-                snapshot.getVersion(),
-                e
-            );
-        }
+	    try {
+		return SourceSchema.fromSnapshot(userColumnNames, snapshot);
+	    } catch (IllegalArgumentException e) {
+		throw DeltaSourceExceptions.generalSourceException(
+		    stringPath,
+		    snapshot.getVersion(),
+		    e
+		    );
+	    }
+	} catch (TableNotFoundException e) {
+	    throw DeltaSourceExceptions.generalSourceException(
+		stringPath,
+		0,
+		e
+		);
+	}
     }
 
     @SuppressWarnings("unchecked")
