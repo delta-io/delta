@@ -444,7 +444,8 @@ abstract class DeltaInsertIntoTestsWithTempViews(
 
 }
 
-class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests {
+class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQLCommandTest {
+
   import testImplicits._
 
   override val supportsDynamicOverwrite = true
