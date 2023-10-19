@@ -72,7 +72,7 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
 	    fields[index] = new io.delta.standalone.types.StructField(
 		kernelField.getName(),
 		io.delta.standalone.types.DataType.fromJson(
-		    kernelField.toJson()
+		    kernelField.getDataType().toJson()
 		),
 		kernelField.isNullable(),
 		metadataBuilder.build()
