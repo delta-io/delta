@@ -1022,7 +1022,7 @@
   },
   "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES" : {
     "message" : [
-      "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema. <advice>"
+      "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema. Please use other characters and try again."
     ],
     "sqlState" : "42K05"
   },

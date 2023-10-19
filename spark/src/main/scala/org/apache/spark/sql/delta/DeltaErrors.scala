@@ -2021,7 +2021,7 @@ trait DeltaErrorsBase
   def foundInvalidCharsInColumnNames(cause: Throwable): Throwable =
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES",
-      messageParameters = Array(columnMappingAdviceMessage()),
+      messageParameters = Array.empty,
       cause = Some(cause))
 
   def foundViolatingConstraintsForColumnChange(
