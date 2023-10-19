@@ -34,7 +34,7 @@ class BoundedSourceSnapshotSupplierTest {
 
     @BeforeEach
     public void setUp() {
-        supplier = new BoundedSourceSnapshotSupplier(deltaLog);
+        supplier = new BoundedSourceSnapshotSupplier(deltaLog, null, null);
     }
 
     @Test

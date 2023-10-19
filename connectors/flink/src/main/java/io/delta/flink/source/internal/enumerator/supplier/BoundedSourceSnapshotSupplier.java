@@ -4,11 +4,13 @@ import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.utils.TransitiveOptional;
 
+import io.delta.kernel.Table;
+import io.delta.kernel.client.TableClient;
+
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
 
 import org.apache.flink.core.fs.Path;
-import org.apache.hadoop.conf.Configuration;
 
 /**
  * An implementation of {@link SnapshotSupplier} for {#link
@@ -17,8 +19,8 @@ import org.apache.hadoop.conf.Configuration;
  */
 public class BoundedSourceSnapshotSupplier extends SnapshotSupplier {
 
-    public BoundedSourceSnapshotSupplier(DeltaLog deltaLog, Configuration configuration, Path tablePath) {
-        super(deltaLog, configuration, tablePath);
+    public BoundedSourceSnapshotSupplier(DeltaLog deltaLog, TableClient tableClient, Table table) {
+        super(deltaLog, tableClient, table);
     }
 
     /**

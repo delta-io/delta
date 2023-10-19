@@ -1,14 +1,14 @@
 package io.delta.flink.source.internal.enumerator.supplier;
 
-import io.delta.standalone.DeltaLog;
+import io.delta.kernel.Table;
+import io.delta.kernel.client.TableClient;
 
-import org.apache.flink.core.fs.Path;
-import org.apache.hadoop.conf.Configuration;
+import io.delta.standalone.DeltaLog;
 
 public class BoundedSnapshotSupplierFactory implements SnapshotSupplierFactory {
 
     @Override
-    public BoundedSourceSnapshotSupplier create(DeltaLog deltaLog, Configuration configuration, Path tablePath) {
-        return new BoundedSourceSnapshotSupplier(deltaLog, configuration, tablePath);
+    public BoundedSourceSnapshotSupplier create(DeltaLog deltaLog, TableClient tableClient, Table table) {
+        return new BoundedSourceSnapshotSupplier(deltaLog, tableClient, table);
     }
 }
