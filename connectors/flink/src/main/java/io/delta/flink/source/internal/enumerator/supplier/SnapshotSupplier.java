@@ -6,14 +6,9 @@ import io.delta.flink.source.internal.utils.TransitiveOptional;
 import io.delta.kernel.Table;
 import io.delta.kernel.TableNotFoundException;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.defaults.client.DefaultTableClient;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
-
-import org.apache.flink.core.fs.Path;
-import org.apache.hadoop.conf.Configuration;
-
 /**
  * This class abstract's logic needed to acquirer Delta table {@link Snapshot} based on {@link
  * DeltaConnectorConfiguration} and any other implementation specific logic.
@@ -24,13 +19,13 @@ public abstract class SnapshotSupplier {
      * The {@link DeltaLog} instance that will be used to get the desire {@link Snapshot} instance.
      */
     protected final DeltaLog deltaLog;
-    protected final Configuration configuration;
-    protected final Path tablePath;
+    protected final TableClient tableClient;
+    protected final Table table;
 
-    protected SnapshotSupplier(DeltaLog deltaLog, Configuration configuration, Path tablePath) {
+    protected SnapshotSupplier(DeltaLog deltaLog, TableClient tableClient, Table table) {
         this.deltaLog = deltaLog;
-	this.configuration = configuration;
-	this.tablePath = tablePath;
+	this.tableClient = tableClient;
+	this.table = table;
     }
 
     /**
@@ -61,11 +56,9 @@ public abstract class SnapshotSupplier {
      * functions. All other calls on the returned snaphot will throw an Exception
      */
     protected TransitiveOptional<Snapshot> getHeadSnapshotViaKernel() {
-	TableClient client = DefaultTableClient.create(configuration);
 	try {
-	    Table table = Table.forPath(client, tablePath.getPath());
 	    io.delta.kernel.internal.SnapshotImpl kernelSnapshot =
-		(io.delta.kernel.internal.SnapshotImpl)table.getLatestSnapshot(client);
+		(io.delta.kernel.internal.SnapshotImpl)table.getLatestSnapshot(tableClient);
 	    return TransitiveOptional.ofNullable(new KernelSnapshotWrapper(kernelSnapshot));
 	} catch (TableNotFoundException e) {
 	    return TransitiveOptional.ofNullable(null);

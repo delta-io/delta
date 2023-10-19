@@ -5,12 +5,13 @@ import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.utils.TransitiveOptional;
 import static io.delta.flink.source.internal.DeltaSourceOptions.STARTING_TIMESTAMP;
 import static io.delta.flink.source.internal.DeltaSourceOptions.STARTING_VERSION;
+import static io.delta.flink.source.internal.DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS;
+
+import io.delta.kernel.Table;
+import io.delta.kernel.client.TableClient;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
-
-import org.apache.flink.core.fs.Path;
-import org.apache.hadoop.conf.Configuration;
 
 /**
  * An implementation of {@link SnapshotSupplier} for {#link
@@ -19,8 +20,8 @@ import org.apache.hadoop.conf.Configuration;
  */
 public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
 
-    public ContinuousSourceSnapshotSupplier(DeltaLog deltaLog, Configuration configuration, Path tablePath) {
-	super(deltaLog, configuration, tablePath);
+    public ContinuousSourceSnapshotSupplier(DeltaLog deltaLog, TableClient tableClient, Table table) {
+	super(deltaLog, tableClient, table);
     }
 
     /**
@@ -40,10 +41,15 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
      */
     @Override
     public Snapshot getSnapshot(DeltaConnectorConfiguration sourceConfiguration) {
-        return getSnapshotFromStartingVersionOption(sourceConfiguration)
-            .or(() -> getSnapshotFromStartingTimestampOption(sourceConfiguration))
-            .or(this::getHeadSnapshot)
-            .get();
+	TransitiveOptional<Snapshot> snapshot = getSnapshotFromStartingVersionOption(sourceConfiguration)
+	    .or(() -> getSnapshotFromStartingTimestampOption(sourceConfiguration));
+	boolean useKernel = sourceConfiguration.getValue(USE_KERNEL_FOR_SNAPSHOTS);
+	if (useKernel) {
+	    snapshot = snapshot.or(this::getHeadSnapshotViaKernel);
+	} else {
+	    snapshot = snapshot.or(this::getHeadSnapshot);
+	}
+        return snapshot.get();
     }
 
     private TransitiveOptional<Snapshot> getSnapshotFromStartingVersionOption(

@@ -192,6 +192,17 @@ public class DeltaSourceOptions {
             Integer.class,
             new NonNegativeNumberTypeConverter<>());
 
+
+    /**
+     * An option to control if the connector should use delta-kernel to retrieve the latest
+     * snapshot, rather than delta-standalone.
+     */
+    public static final DeltaConfigOption<Boolean> USE_KERNEL_FOR_SNAPSHOTS =
+        DeltaConfigOption.of(
+	    ConfigOptions.key("useKernelForSnapshots").booleanType().defaultValue(false),
+            Boolean.class,
+            new BooleanOptionTypeConverter());
+
     // ----- INNER ONLY OPTIONS ----- //
     // Inner options should not be set by user, and they are used internally by Flin connector.
 
