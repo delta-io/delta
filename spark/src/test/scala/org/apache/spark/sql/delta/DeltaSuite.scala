@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.fs.{FileSystem, FSDataInputStream, Path, PathHandle}
 
 import org.apache.spark.SparkException
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
@@ -1540,6 +1540,7 @@ class DeltaSuite extends QueryTest
       assert(thrown.getMessage.contains("FileNotFound"))
     }
   }
+
 
   test("ES-4716: Delta shouldn't be broken when users turn on case sensitivity") {
     withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
