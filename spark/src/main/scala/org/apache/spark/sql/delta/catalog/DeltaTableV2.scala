@@ -347,12 +347,12 @@ object DeltaTableV2 {
   }
 
   /**
-   * When Delta Log throws InvalidProtocolVersionException it doesn't know the table name and uses 
-   * the data path in the message, this wrapper throw a new InvalidProtocolVersionException with 
+   * When Delta Log throws InvalidProtocolVersionException it doesn't know the table name and uses
+   * the data path in the message, this wrapper throw a new InvalidProtocolVersionException with
    * table name and sets its Cause to the original InvalidProtocolVersionException.
    */
   def withEnrichedInvalidProtocolVersionException[T](
-    catalogTable: Option[CatalogTable], 
+    catalogTable: Option[CatalogTable],
     tableName: Option[String] = None)(thunk: => T): T = {
 
     val tableNameToUse = catalogTable match {
@@ -361,7 +361,8 @@ object DeltaTableV2 {
     }
 
     try thunk catch {
-      case e: InvalidProtocolVersionException if tableNameToUse.isDefined =>
+      case e: InvalidProtocolVersionException if tableNameToUse.isDefined &&
+        tableNameToUse.get != e.tableNameOrPath =>
         throw e.copy(tableNameOrPath = tableNameToUse.get).initCause(e)
     }
   }
