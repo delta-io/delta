@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollectio
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
+import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.Utils
 
 case class DeltaConfig[T](
@@ -80,31 +80,6 @@ case class DeltaConfig[T](
  * Contains list of reservoir configs and validation checks.
  */
 trait DeltaConfigsBase extends DeltaLogging {
-
-  /**
-   * Convert a string to [[CalendarInterval]]. This method is case-insensitive and will throw
-   * [[IllegalArgumentException]] when the input string is not a valid interval.
-   *
-   * TODO Remove this method and use `CalendarInterval.fromCaseInsensitiveString` instead when
-   * upgrading Spark. This is a fork version of `CalendarInterval.fromCaseInsensitiveString` which
-   * will be available in the next Spark release (See SPARK-27735).
-   *
-   * @throws IllegalArgumentException if the string is not a valid internal.
-   */
-  def parseCalendarInterval(s: String): CalendarInterval = {
-    if (s == null || s.trim.isEmpty) {
-      throw DeltaErrors.emptyCalendarInterval
-    }
-    val sInLowerCase = s.trim.toLowerCase(Locale.ROOT)
-    val interval =
-      if (sInLowerCase.startsWith("interval ")) sInLowerCase else "interval " + sInLowerCase
-    val cal = IntervalUtils.safeStringToInterval(UTF8String.fromString(interval))
-    if (cal == null) {
-      throw DeltaErrors.invalidInterval(s)
-    }
-    cal
-  }
-
   /**
    * The prefix for a category of special configs for delta universal format to support the
    * user facing config naming convention for different table formats:
@@ -351,7 +326,7 @@ trait DeltaConfigsBase extends DeltaLogging {
   val LOG_RETENTION = buildConfig[CalendarInterval](
     "logRetentionDuration",
     "interval 30 days",
-    parseCalendarInterval,
+    IntervalUtils.fromIntervalString,
     isValidIntervalConfigValue,
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
     "and years are not accepted. You may specify '365 days' for a year instead.")
@@ -362,7 +337,7 @@ trait DeltaConfigsBase extends DeltaLogging {
   val SAMPLE_RETENTION = buildConfig[CalendarInterval](
     "sampleRetentionDuration",
     "interval 7 days",
-    parseCalendarInterval,
+    IntervalUtils.fromIntervalString,
     isValidIntervalConfigValue,
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
       "and years are not accepted. You may specify '365 days' for a year instead.")
@@ -375,7 +350,7 @@ trait DeltaConfigsBase extends DeltaLogging {
   val CHECKPOINT_RETENTION_DURATION = buildConfig[CalendarInterval](
     "checkpointRetentionDuration",
     "interval 2 days",
-    parseCalendarInterval,
+    IntervalUtils.fromIntervalString,
     isValidIntervalConfigValue,
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
       "and years are not accepted. You may specify '365 days' for a year instead.")
@@ -438,7 +413,7 @@ trait DeltaConfigsBase extends DeltaLogging {
   val TOMBSTONE_RETENTION = buildConfig[CalendarInterval](
     "deletedFileRetentionDuration",
     "interval 1 week",
-    parseCalendarInterval,
+    IntervalUtils.fromIntervalString,
     isValidIntervalConfigValue,
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
     "and years are not accepted. You may specify '365 days' for a year instead.")
@@ -619,7 +594,7 @@ trait DeltaConfigsBase extends DeltaLogging {
   val TRANSACTION_ID_RETENTION_DURATION = buildConfig[Option[CalendarInterval]](
     "setTransactionRetentionDuration",
     null,
-    v => if (v == null) None else Some(parseCalendarInterval(v)),
+    v => if (v == null) None else Some(IntervalUtils.fromIntervalString(v)),
     opt => opt.forall(isValidIntervalConfigValue),
     "needs to be provided as a calendar interval such as '2 weeks'. Months " +
       "and years are not accepted. You may specify '365 days' for a year instead.")
