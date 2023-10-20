@@ -87,14 +87,9 @@ case class DeltaTableV2(
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
   lazy val deltaLog: DeltaLog = {
-      val tableNameInException = catalogTable match {
-        case Some(ct) => Some(ct.identifier.copy(catalog = None).unquotedString)
-        case None => tableIdentifier
-      }
-
-      DeltaTableV2.withEnrichedInvalidProtocolVersionException(tableNameInException) {
-        DeltaLog.forTable(spark, rootPath, options)
-      }
+    DeltaTableV2.withEnrichedInvalidProtocolVersionException(catalogTable, tableIdentifier) {
+      DeltaLog.forTable(spark, rootPath, options)
+    }
   }
 
   def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
@@ -126,7 +121,7 @@ case class DeltaTableV2(
    * if they want to be certain it has been captured.
    */
   lazy val initialSnapshot: Snapshot = DeltaTableV2.withEnrichedInvalidProtocolVersionException(
-    catalogTable.map(_.identifier.copy(catalog = None).unquotedString).orElse(tableIdentifier)) {
+    catalogTable, tableIdentifier) {
     timeTravelSpec.map { spec =>
       // By default, block using CDF + time-travel
       if (CDCReader.isCDCRead(caseInsensitiveOptions) &&
@@ -352,14 +347,23 @@ object DeltaTableV2 {
   }
 
   /**
-   * When InvalidProtocolVersionException happens during the initialization (read)
-   * it doesn't know the table name, so we need to update the message.
+   * When Delta Log throws InvalidProtocolVersionException it doesn't know the table name and uses 
+   * the data path in the message, this wrapper throw a new InvalidProtocolVersionException with 
+   * table name and sets its Cause to the original InvalidProtocolVersionException.
    */
-  def withEnrichedInvalidProtocolVersionException[T](tableName: Option[String])(thunk: => T): T = {
+  def withEnrichedInvalidProtocolVersionException[T](
+    catalogTable: Option[CatalogTable], 
+    tableName: Option[String] = None)(thunk: => T): T = {
+
+    val tableNameToUse = catalogTable match {
+      case Some(ct) => Some(ct.identifier.copy(catalog = None).unquotedString)
+      case None => tableName
+    }
+
     try thunk catch {
-        case e: InvalidProtocolVersionException if tableName.isDefined =>
-          throw e.copy(tableNameOrPath = tableName.get).initCause(e)
-      }
+      case e: InvalidProtocolVersionException if tableNameToUse.isDefined =>
+        throw e.copy(tableNameOrPath = tableNameToUse.get).initCause(e)
+    }
   }
 }
 

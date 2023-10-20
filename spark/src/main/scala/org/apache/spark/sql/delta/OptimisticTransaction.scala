@@ -1416,8 +1416,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case other => other
     }
 
-    DeltaTableV2.withEnrichedInvalidProtocolVersionException(
-      catalogTable.map(_.identifier.copy(catalog = None).unquotedString)) {
+    DeltaTableV2.withEnrichedInvalidProtocolVersionException(catalogTable) {
       deltaLog.protocolWrite(snapshot.protocol)
     }
 
@@ -1741,8 +1740,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         "delta.commit.retry.conflictCheck",
         tags = Map(TAG_LOG_STORE_CLASS -> deltaLog.store.getClass.getName)) {
 
-    DeltaTableV2.withEnrichedInvalidProtocolVersionException(
-      catalogTable.map(_.identifier.copy(catalog = None).unquotedString)) {
+    DeltaTableV2.withEnrichedInvalidProtocolVersionException(catalogTable) {
 
       val nextAttemptVersion = getNextAttemptVersion(checkVersion)
 
