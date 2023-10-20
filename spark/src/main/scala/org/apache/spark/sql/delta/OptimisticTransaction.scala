@@ -1416,7 +1416,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case other => other
     }
 
-    deltaLog.protocolWrite(snapshot.protocol, catalogTable)
+    DeltaTableV2.withEnrichedInvalidProtocolVersionException(
+      catalogTable.map(_.identifier.copy(catalog = None).unquotedString)) {
+      deltaLog.protocolWrite(snapshot.protocol)
+    }
 
     finalActions = RowId.assignFreshRowIds(protocol, snapshot, finalActions.toIterator).toList
     finalActions = DefaultRowCommitVersion
