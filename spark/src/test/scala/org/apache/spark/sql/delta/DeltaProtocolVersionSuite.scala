@@ -549,6 +549,38 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("external client upgrades protocol after initial snapshot is loaded - error message with table name") {
+    val tableName = "mytableprotocoltoohigh"
+    val incompatibleProtocol = Protocol(minReaderVersion = Int.MaxValue)
+
+    withTable(tableName) {
+      spark.range(0).write.format("delta").saveAsTable(tableName)
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+      val hadoopConf = deltaLog.newDeltaHadoopConf()
+      // val catalogTable = DeltaTableV2(spark, TableIdentifier(tableName)).catalogTable
+      // val txn = deltaLog.startTransaction(catalogTable)
+      // val currentVersion = txn.snapshot.version
+      deltaLog.store.write(
+        deltaFile(deltaLog.logPath, snapshot.version + 1),
+        Iterator(incompatibleProtocol.json),
+        overwrite = false,
+        hadoopConf)
+
+      // Should detect the above incompatible protocol change and fail
+      val exception = intercept[InvalidProtocolVersionException] {
+         spark.read.format("delta").table(tableName)
+      }
+
+      var pathInErrorMessage = "default." + tableName
+      val errorMessage = getExpectedProtocolErrorMessage(
+        pathInErrorMessage,
+        incompatibleProtocol.minReaderVersion,
+        incompatibleProtocol.minWriterVersion)
+
+      assert(exception.getMessage == errorMessage)
+    }
+  }
+
   private def overwriteDeltaLogWithVersion(
       log: DeltaLog,
       tableProtocolReaderVersion: Int,
