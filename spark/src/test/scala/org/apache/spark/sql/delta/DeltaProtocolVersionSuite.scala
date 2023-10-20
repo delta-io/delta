@@ -457,11 +457,13 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  def testInvalidProtocolErrorMessageWithTableName(warm: Boolean) = {
+  def testInvalidProtocolErrorMessageWithTableName(warm: Boolean): Unit = {
     val protocolTableName = "mytableprotocoltoohigh"
     withTable(protocolTableName) {
       spark.range(1).write.format("delta").saveAsTable(protocolTableName)
-      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(protocolTableName))
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(
+        spark,
+        TableIdentifier(protocolTableName))
 
       var tableReaderVersion = 4
       var tableWriterVersion = 7
@@ -526,7 +528,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     testInvalidProtocolErrorMessageWithTableName(false)
   }
 
-  test("InvalidProtocolVersionException - incompatible protocol change during the transaction - table name") {
+  test("InvalidProtocolVersionException - " +
+    "incompatible protocol change during the transaction - table name") {
     for (incompatibleProtocol <- Seq(
       Protocol(minReaderVersion = Int.MaxValue),
       Protocol(minWriterVersion = Int.MaxValue),
