@@ -339,13 +339,8 @@ class DeltaLog private(
    *
    * The operation type to be checked is passed as a string in `readOrWrite`. Valid values are
    * `read` and `write`.
-   * @param tableProtocol: The protocol to be checked.
-   * @param readOrWrite: The operation type to be checked: `read` or `write`.
-   * @param catalogTable: optional catalog table of the Delta table protocol being checked.
    */
-  private def protocolCheck(
-      tableProtocol: Protocol,
-      readOrWrite: String): Unit = {
+  private def protocolCheck(tableProtocol: Protocol, readOrWrite: String): Unit = {
     val clientSupportedProtocol = Action.supportedProtocolVersion()
     // Depending on the operation, pull related protocol versions out of Protocol objects.
     // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
@@ -393,7 +388,6 @@ class DeltaLog private(
         versionKey -> tableRequiredVersion,
         "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
         "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
-
     if (!clientSupportedVersions.contains(tableRequiredVersion)) {
       throw new InvalidProtocolVersionException(
         dataPath.toString(),
@@ -438,8 +432,6 @@ class DeltaLog private(
   /**
    * Asserts that the client is up to date with the protocol and allowed to write to the table
    * that is using the given `protocol`.
-   * @param tableProtocol: The protocol to be checked.
-   * @param catalogTable: optional catalog table of the Delta table protocol being checked.
    */
   def protocolWrite(protocol: Protocol): Unit = {
     protocolCheck(protocol, "write")
