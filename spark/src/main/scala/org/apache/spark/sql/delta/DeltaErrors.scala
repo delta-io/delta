@@ -2411,10 +2411,16 @@ trait DeltaErrorsBase
     new DeltaIllegalArgumentException(errorClass = "DELTA_UNRECOGNIZED_INVARIANT")
   }
 
-  def invalidSourceVersion(version: JValue): Throwable = {
+  def invalidSourceVersion(version: String): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_INVALID_SOURCE_VERSION",
-      messageParameters = Array(version.toString)
+      messageParameters = Array(version)
+    )
+  }
+
+  def invalidSourceOffsetFormat(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_INVALID_SOURCE_OFFSET_FORMAT"
     )
   }
 

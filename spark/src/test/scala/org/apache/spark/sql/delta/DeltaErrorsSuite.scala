@@ -1309,10 +1309,17 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalStateException] {
-        throw DeltaErrors.invalidSourceVersion(JString("xyz"))
+        throw DeltaErrors.invalidSourceVersion("xyz")
       }
       checkErrorMessage(e, Some("DELTA_INVALID_SOURCE_VERSION"), Some("XXKDS"),
-        Some("sourceVersion(JString(xyz)) is invalid"))
+        Some("sourceVersion(xyz) is invalid"))
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.invalidSourceOffsetFormat()
+      }
+      checkErrorMessage(e, Some("DELTA_INVALID_SOURCE_OFFSET_FORMAT"), Some("XXKDS"),
+        Some("The stored source offset format is invalid"))
     }
     {
       val e = intercept[DeltaIllegalStateException] {
