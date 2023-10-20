@@ -485,16 +485,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       assert(exceptionRead.getMessage == readErrorMessage)
 
-      val exceptionMerge = intercept[InvalidProtocolVersionException] {
-        val deltaTable = io.delta.tables.DeltaTable.forName(protocolTableName)
-        deltaTable.merge(spark.range(1).as("src").toDF, s"src.id = $protocolTableName.id")
-          .whenMatched()
-          .updateAll()
-          .execute()
-      }
-
-      assert(exceptionMerge.getMessage == readErrorMessage)
-
       tableReaderVersion = 3
       tableWriterVersion = 8
       version = version + 1

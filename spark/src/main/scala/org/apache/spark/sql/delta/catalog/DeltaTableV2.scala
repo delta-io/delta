@@ -122,6 +122,7 @@ case class DeltaTableV2(
    */
   lazy val initialSnapshot: Snapshot = DeltaTableV2.withEnrichedInvalidProtocolVersionException(
     catalogTable, tableIdentifier) {
+
     timeTravelSpec.map { spec =>
       // By default, block using CDF + time-travel
       if (CDCReader.isCDCRead(caseInsensitiveOptions) &&
@@ -352,17 +353,16 @@ object DeltaTableV2 {
    * table name and sets its Cause to the original InvalidProtocolVersionException.
    */
   def withEnrichedInvalidProtocolVersionException[T](
-    catalogTable: Option[CatalogTable],
-    tableName: Option[String] = None)(thunk: => T): T = {
+      catalogTable: Option[CatalogTable],
+      tableName: Option[String] = None)(thunk: => T): T = {
 
-    val tableNameToUse = catalogTable match {
+    lazy val tableNameToUse = catalogTable match {
       case Some(ct) => Some(ct.identifier.copy(catalog = None).unquotedString)
       case None => tableName
     }
 
     try thunk catch {
-      case e: InvalidProtocolVersionException if tableNameToUse.isDefined &&
-        tableNameToUse.get != e.tableNameOrPath =>
+      case e: InvalidProtocolVersionException if tableNameToUse.exists(_ != e.tableNameOrPath) =>
         throw e.copy(tableNameOrPath = tableNameToUse.get).initCause(e)
     }
   }
