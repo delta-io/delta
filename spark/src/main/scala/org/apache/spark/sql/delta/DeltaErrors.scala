@@ -3281,6 +3281,7 @@ case class InvalidProtocolVersionException(
       tableNameOrPath,
       readerRequiredVersion.toString,
       writerRequiredVersion.toString,
+      io.delta.VERSION,
       supportedReaderVersions.sorted.mkString(", "),
       supportedWriterVersions.sorted.mkString(", "))))
   with DeltaThrowable {
