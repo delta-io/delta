@@ -581,10 +581,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       requiredWriterVersion: Int): String = {
     // When testing flag is enabled Action.supportedReaderVersionNumbers includes 0.
     "[DELTA_INVALID_PROTOCOL_VERSION] " +
-      "Unsupported Delta protocol version: table \"" + tableNameOrPath + "\" requires " +
+      s"""Unsupported Delta protocol version: table "$tableNameOrPath" requires """ +
       s"reader version $requiredReaderVersion and " +
       s"writer version $requiredWriterVersion, " +
-      "but Delta Lake \"" + io.delta.VERSION + "\" supports reader versions 0, 1, 2, 3 " +
+      s"""but Delta Lake "${io.delta.VERSION}" supports reader versions 0, 1, 2, 3 """ +
       "and writer versions 0, 1, 2, 3, 4, 5, 7. Please upgrade to a newer release."
   }
 
