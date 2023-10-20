@@ -308,7 +308,8 @@ class StatsCollectionSuite
         val biggest = deltaLog.snapshot.allFiles.agg(max('size)).first().getLong(0)
 
         {
-          StatisticsCollection.recompute(spark, deltaLog, fileFilter = _.size == biggest)
+          StatisticsCollection.recompute(
+            spark, deltaLog, catalogTable = None, fileFilter = _.size == biggest)
         }
 
         checkAnswer(
