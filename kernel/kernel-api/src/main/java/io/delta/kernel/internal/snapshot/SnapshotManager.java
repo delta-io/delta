@@ -272,13 +272,15 @@ public class SnapshotManager
      * @return Some LogSegment to build a Snapshot if files do exist after the given
      * startCheckpoint. None, if the directory was missing or empty.
      */
-    private Optional<LogSegment> getLogSegmentForVersion(
+    public Optional<LogSegment> getLogSegmentForVersion(
         Path logPath,
         TableClient tableClient,
         Optional<Long> startCheckpoint,
         Optional<Long> versionToLoad) {
         // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
         // deltaVersion=0.
+        // TODO when implementing time-travel don't list from startCheckpoint if
+        //  startCheckpoint > versionToLoad
         final Optional<List<FileStatus>> newFiles =
             listDeltaAndCheckpointFiles(
                 logPath,
@@ -365,6 +367,7 @@ public class SnapshotManager
         );
 
         // Find the latest checkpoint in the listing that is not older than the versionToLoad
+        // todo this naming is really confusing
         final CheckpointInstance lastCheckpoint = versionToLoadOpt.map(CheckpointInstance::new)
             .orElse(CheckpointInstance.MAX_VALUE);
         logDebug(String.format("lastCheckpoint: %s", lastCheckpoint));
@@ -433,6 +436,7 @@ public class SnapshotManager
             )
         );
 
+        // todo again naming confusing (specify after checkpoint?)
         final LinkedList<Long> deltaVersions = deltasAfterCheckpoint
             .stream()
             .map(fileStatus -> FileNames.deltaVersion(new Path(fileStatus.getPath())))
@@ -446,7 +450,7 @@ public class SnapshotManager
             if (deltaVersions.getFirst() != newCheckpointVersion + 1) {
                 throw new RuntimeException(
                     String.format(
-                        "Log file not found.\nExpected: %s\nFound:%s",
+                        "Log file not found.\nExpected: %s\nFound: %s",
                         FileNames.deltaFile(logPath, newCheckpointVersion + 1),
                         FileNames.deltaFile(logPath, deltaVersions.get(0))
                     )
