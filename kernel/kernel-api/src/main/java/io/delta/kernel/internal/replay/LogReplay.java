@@ -248,7 +248,7 @@ public class LogReplay implements Logging {
             String filePath = fileStatus.getPath();
             if (!filePath.startsWith(logPathStr)) {
                 throw new RuntimeException("File (" + filePath + ") doesn't belong in the " +
-                    "transaction log at " + logPathStr + ". Please contact Databricks Support.");
+                    "transaction log at " + logPathStr + ".");
             }
         }
     }
