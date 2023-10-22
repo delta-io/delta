@@ -1,0 +1,14 @@
+  name: "Unidoc generation"
+  on: [pull_request]
+  jobs:
+    build:
+      name: "Generate unidoc"
+      runs-on: ubuntu-20.04
+      strategy:
+        matrix:
+        # These Scala versions must match those in the build.sbt
+          scala: [2.13.8, 2.12.17]
+      steps:
+        - name: generate unidoc
+          uses: actions/checkout@v3
+          run: build/sbt unidoc
