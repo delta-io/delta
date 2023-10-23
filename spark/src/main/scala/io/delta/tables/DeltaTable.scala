@@ -97,7 +97,7 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def vacuum(retentionHours: Double): DataFrame = {
-    executeVacuum(deltaLog, Some(retentionHours), false)
+    executeVacuum(deltaLog, Some(retentionHours), dryRun = false)
   }
 
   /**
@@ -110,20 +110,21 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def vacuum(): DataFrame = {
-    executeVacuum(deltaLog, None, false)
+    executeVacuum(deltaLog, retentionHours = None, dryRun = false)
   }
 
   /**
    * Recursively delete files and directories in the table that are not needed by the table for
    * maintaining older versions up to the given retention threshold. This method will return an
-   * empty DataFrame on successful completion.
+   * empty DataFrame on successful completion. If dryRun is true, return list of files to be
+   * deleted.
    *
    * @param retentionHours The retention threshold in hours. Files required by the table for
    *                       reading versions earlier than this will be preserved and the
    *                       rest of them will be deleted.
-   * @param dryRun If set to true, no files will be deleted. Instead, we will list all files and
-   *               directories that will be cleared.
-   * @since 0.3.0
+   * @param dryRun If set to true, no files will be deleted. Instead, returns a DataFrame
+   *               with "path" column containing files to be deleted.
+   * @since 3.1.0
    */
   def vacuum(retentionHours: Double, dryRun: Boolean): DataFrame = {
     executeVacuum(deltaLog, Some(retentionHours), dryRun)
@@ -132,16 +133,17 @@ class DeltaTable private[tables](
   /**
    * Recursively delete files and directories in the table that are not needed by the table for
    * maintaining older versions up to the given retention threshold. This method will return an
-   * empty DataFrame on successful completion.
+   * empty DataFrame on successful completion. If dryRun is true, return list of files to be
+   * deleted.
    *
    * note: This will use the default retention period of 7 days.
    *
-   * @param dryRun If set to true, no files will be deleted. Instead, we will list all files and
-   *               directories that will be cleared.
-   * @since 0.3.0
+   * @param dryRun If set to true, no files will be deleted. Instead, returns a DataFrame
+   *               with "path" column containing files to be deleted.
+   * @since 3.1.0
    */
   def vacuum(dryRun: Boolean): DataFrame = {
-    executeVacuum(deltaLog, None, dryRun)
+    executeVacuum(deltaLog, retentionHours = None, dryRun)
   }
 
   /**
