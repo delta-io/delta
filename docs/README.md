@@ -3,13 +3,16 @@ This directory contains scripts to generate API Docs for Scala, Java, and Python
 
 ## Setup Environment
 ### Install Conda (Skip if you already installed it)
-Follow [Conda Installation Guide](https://docs.conda.io/projects/continuumio-conda/en/latest/user-guide/install/macos.html) to install Anaconda.
+Follow [Conda Download](https://www.anaconda.com/download/) to install Anaconda.
 
 ### Create an environment from environment file
-Follow [Create Environment From Environment file](https://docs.conda.io/projects/conda/en/4.6.1/user-guide/tasks/manage-environments.html#create-env-from-file) to create a Conda environment from `/delta/docs/environment.yml` and activate the newly created `delta_docs` environment.
+Follow [Create Environment From Environment file](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#create-env-from-file) to create a Conda environment from `/delta/docs/environment.yml` and activate the newly created `delta_docs` environment.
 
 ```
-conda env create --name delta_docs --file=<delta root>/docs/environments.yml
+# Note the `--file` argument should be a fully qualified path. Using `~` in file
+# path doesn't work. Example valid path: `/Users/macuser/delta/docs/environment.yml`
+
+conda env create --name delta_docs --file=<delta root>/docs/environment.yml`
 ```
 
 ### Run Script
