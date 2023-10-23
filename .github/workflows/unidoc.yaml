@@ -11,4 +11,4 @@
       steps:
         - name: generate unidoc
           uses: actions/checkout@v3
-          run: build/sbt unidoc
+          run: build/sbt "++ ${{ matrix.scala }}" unidoc
