@@ -233,8 +233,12 @@ trait DeltaVacuumSuiteBase extends QueryTest
           case (None, Some(retention)) => deltaTable.vacuum(retention)
           case (None, None) => deltaTable.vacuum()
         }
-        val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
-        checkDatasetUnorderly(result.as[String], qualified: _*)
+        if(expectedDf == Seq() && !dryRun.getOrElse(false)) {
+          assert(result === spark.emptyDataFrame)
+        } else {
+          val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
+          checkDatasetUnorderly(result.as[String], qualified: _*)
+        }
       case AdvanceClock(timeToAdd: Long) =>
         Given(s"*** Advancing clock by $timeToAdd millis")
         clock.advance(timeToAdd)
@@ -299,8 +303,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
         dryRun = Some(true)),
       CheckFiles(Seq(committedFile, notCommittedFile)),
 
-      // Actual run should delete the not committed file and but not delete files.
-      ExecuteVacuumInScala(deltaTable, Seq(tablePath)),
+      // Actual run should delete notCommittedFile but not committedFile.
+      ExecuteVacuumInScala(deltaTable, Seq()), // Scuccessful run returns emptyDataframe
       CheckFiles(Seq(committedFile)),
       CheckFiles(Seq(notCommittedFile), exist = false), // file ts older than default retention
 
@@ -316,9 +320,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
         dryRun = Some(true)),
       CheckFiles(Seq(committedFile)),
 
-
       // Vacuum with 0 retention should actually delete the file.
-      ExecuteVacuumInScala(deltaTable, Seq(tablePath), Some(0)),
+      ExecuteVacuumInScala(deltaTable, Seq(), Some(0)),
       CheckFiles(Seq(committedFile), exist = false),
 
       // Check DRY RUN returns empty dataframe.
