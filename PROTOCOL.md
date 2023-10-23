@@ -49,6 +49,8 @@
   - [Row Commit Versions](#row-commit-versions)
   - [Reader Requirements for Row Tracking](#reader-requirements-for-row-tracking)
   - [Writer Requirements for Row Tracking](#writer-requirements-for-row-tracking)
+- [Clustered Table](#clustered-table)
+  - [Writer Requirements for Clustered Table](#writer-requirements-for-clustered-tale)
 - [Requirements for Writers](#requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
@@ -1046,6 +1048,31 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
   In particular, writers should set `delta.rowTracking.preserved` in the `tags` of the `commitInfo` action to `true` if no rows are updated or copied.
   Writers should set that flag to false otherwise.
 
+# Clustered Table
+
+The Clustered Table feature facilitates the physical clustering of rows that share similar values on a predefined set of clustering columns.
+This enhances query performance when selective filters are applied to these clustering columns through data skipping.
+Clustering columns must be specified during the initial definition of a clustered table, and they can be modified after the table has been created.
+
+A table is defined as a clustered table through the following criteria:
+- When the feature `clustering` exists in the table `protocol`'s `writerFeatures`, then we say that the table is a clustered table.
+  The feature `domainMetadata` is required in the table `protocol`'s `writerFeatures`.
+
+Enablement:
+- The table must be on Writer Version 7.
+- The feature `clustering` must exist in the table `protocol`'s `writerFeatures`.
+
+## Writer Requirements for Clustered Table
+
+When the Clustered Table is supported (when the `writerFeatures` field of a table's `protocol` action contains `clustering`), then:
+- Writers must write out [per-file statistics](#per-file-statistics) and per-column statistics for clustering columns in `add` action. 
+  Failure to collect per-column statistics for clustering columns will result in an error when defining a clustered table or making changes to the clustering columns.
+- Writers must track clustering column names in a `domainMetadata` action with `delta.clustering` as the `domain` and a `configuration` containing all clustering column names.
+  If [Column Mapping](#column-mapping) is enabled, the physical column names should be used.
+- When a clustering implementation clusters files, writers must incorporate a `tag`  with `CLUSTERED_BY` as the key and the name of the clustering implementation as the corresponding value in `add` action.
+  - A clustering implementation must only cluster files that belong to the implementation or files that do not have the `CLUSTERED_BY` tag (i.e., unclustered).
+  - A clustering implementation is free to add additional information such as adding a new metadata domain to keep track of its metadata.
+
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
 
@@ -1426,6 +1453,7 @@ Feature | Name | Readers or Writers?
 [Domain Metadata](#domain-metadata) | `domainMetadata` | Writers only
 [V2 Checkpoint](#v2-checkpoint-table-feature) | `v2Checkpoint` | Readers and writers
 [Iceberg Compatibility V1](#iceberg-compatibility-v1) | `icebergCompatV1` | Writers only
+[Clustered Table](#clustered-table) | `clustering` | Writers only
 
 ## Deletion Vector Format
 
