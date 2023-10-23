@@ -12,7 +12,7 @@ Follow [Create Environment From Environment file](https://docs.conda.io/projects
 # Note the `--file` argument should be a fully qualified path. Using `~` in file
 # path doesn't work. Example valid path: `/Users/macuser/delta/docs/environment.yml`
 
-conda env create --name delta_docs --file=<delta root>/docs/environment.yml`
+conda env create --name delta_docs --file=<absolute_path_to_delta_repo>/docs/environment.yml`
 ```
 
 ### Run Script
