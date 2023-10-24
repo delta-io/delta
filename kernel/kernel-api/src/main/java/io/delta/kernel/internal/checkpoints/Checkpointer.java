@@ -22,9 +22,9 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 import io.delta.kernel.client.FileReadContext;
+import io.delta.kernel.client.FileSystemClient;
 import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.client.FileSystemClient;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.AlwaysTrue;
@@ -101,7 +101,7 @@ public class Checkpointer {
         try {
             FileSystemClient fileSystemClient = tableClient.getFileSystemClient();
             FileStatus lastCheckpointFile = null;
-            try (CloseableIterator<FileStatus> lastCheckpointFileStatusIterator = 
+            try (CloseableIterator<FileStatus> lastCheckpointFileStatusIterator =
                 fileSystemClient.listFrom(
                     this.lastCheckpointFilePath.toString()
                 )
