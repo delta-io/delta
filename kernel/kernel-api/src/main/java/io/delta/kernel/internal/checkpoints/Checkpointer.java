@@ -24,6 +24,7 @@ import java.util.stream.Collectors;
 import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.client.TableClient;
+import io.delta.kernel.client.FileSystemClient;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.AlwaysTrue;
@@ -98,9 +99,18 @@ public class Checkpointer {
      */
     private Optional<CheckpointMetaData> loadMetadataFromFile(TableClient tableClient) {
         try {
-            // For now we use file size = 0 and modification time = 0, in the future we should use
-            // listFrom to retrieve the real values see delta-io/delta#2140
-            FileStatus lastCheckpointFile = FileStatus.of(lastCheckpointFilePath.toString(), 0, 0);
+            FileSystemClient fileSystemClient = tableClient.getFileSystemClient();
+            FileStatus lastCheckpointFile = null;
+            try (CloseableIterator<FileStatus> lastCheckpointFileStatusIterator = 
+                fileSystemClient.listFrom(
+                    this.lastCheckpointFilePath.toString()
+                )
+            ) {
+                while (lastCheckpointFileStatusIterator.hasNext()) {
+                    lastCheckpointFile = lastCheckpointFileStatusIterator.next();
+                }
+            }
+
             JsonHandler jsonHandler = tableClient.getJsonHandler();
             try (CloseableIterator<FileReadContext> fileReadContextIter =
                      jsonHandler.contextualizeFileReads(
