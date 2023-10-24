@@ -9,6 +9,6 @@
         # These Scala versions must match those in the build.sbt
           scala: [2.13.8, 2.12.17]
       steps:
+        - uses: actions/checkout@v3
         - name: generate unidoc
-          uses: actions/checkout@v3
           run: build/sbt "++ ${{ matrix.scala }}" unidoc
