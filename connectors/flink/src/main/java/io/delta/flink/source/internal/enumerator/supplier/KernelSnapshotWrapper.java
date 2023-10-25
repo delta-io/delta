@@ -27,7 +27,7 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
     private Optional<Metadata> metadata = Optional.empty();
     private io.delta.kernel.internal.SnapshotImpl kernelSnapshot;
     
-    protected KernelSnapshotWrapper(io.delta.kernel.internal.SnapshotImpl kernelSnapshot) {
+    public KernelSnapshotWrapper(io.delta.kernel.internal.SnapshotImpl kernelSnapshot) {
         this.kernelSnapshot = kernelSnapshot;
     }
 
