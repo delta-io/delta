@@ -280,31 +280,31 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      * should be read from Delta table.
      */
     protected SourceSchema getSourceSchema() {
-	String stringPath = SourceUtils.pathToString(tablePath);
+        String stringPath = SourceUtils.pathToString(tablePath);
         DeltaLog deltaLog =
             DeltaLog.forTable(hadoopConfiguration, stringPath);
-	TableClient tableClient = DefaultTableClient.create(hadoopConfiguration);
-	try {
-	    Table table = Table.forPath(tableClient, stringPath);
-	    SnapshotSupplier snapshotSupplier = snapshotSupplierFactory.create(deltaLog, tableClient, table);
-	    Snapshot snapshot = snapshotSupplier.getSnapshot(sourceConfiguration);
+        TableClient tableClient = DefaultTableClient.create(hadoopConfiguration);
+        try {
+            Table table = Table.forPath(tableClient, stringPath);
+            SnapshotSupplier snapshotSupplier = snapshotSupplierFactory.create(deltaLog, tableClient, table);
+            Snapshot snapshot = snapshotSupplier.getSnapshot(sourceConfiguration);
 
-	    try {
-		return SourceSchema.fromSnapshot(userColumnNames, snapshot);
-	    } catch (IllegalArgumentException e) {
-		throw DeltaSourceExceptions.generalSourceException(
-		    stringPath,
-		    snapshot.getVersion(),
-		    e
-		    );
-	    }
-	} catch (TableNotFoundException e) {
-	    throw DeltaSourceExceptions.generalSourceException(
-		stringPath,
-		0,
-		e
-		);
-	}
+            try {
+                return SourceSchema.fromSnapshot(userColumnNames, snapshot);
+            } catch (IllegalArgumentException e) {
+                throw DeltaSourceExceptions.generalSourceException(
+                    stringPath,
+                    snapshot.getVersion(),
+                    e
+                    );
+            }
+        } catch (TableNotFoundException e) {
+            throw DeltaSourceExceptions.generalSourceException(
+                stringPath,
+                0,
+                e
+                );
+        }
     }
 
     @SuppressWarnings("unchecked")

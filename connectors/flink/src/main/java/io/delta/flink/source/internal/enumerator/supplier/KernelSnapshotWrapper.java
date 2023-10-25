@@ -28,12 +28,12 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
     private io.delta.kernel.internal.SnapshotImpl kernelSnapshot;
     
     protected KernelSnapshotWrapper(io.delta.kernel.internal.SnapshotImpl kernelSnapshot) {
-	this.kernelSnapshot = kernelSnapshot;
+        this.kernelSnapshot = kernelSnapshot;
     }
 
     // Used for testing
     protected io.delta.kernel.internal.SnapshotImpl getKernelSnapshot() {
-	return kernelSnapshot;
+        return kernelSnapshot;
     }
 
     /**
@@ -42,56 +42,56 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
      * the standalone Metadata expects.
      */
     private Metadata convertMetadata() {
-	io.delta.kernel.internal.actions.Metadata kernelMetadata = kernelSnapshot.getMetadata();
+        io.delta.kernel.internal.actions.Metadata kernelMetadata = kernelSnapshot.getMetadata();
 
-	// Convert the format type
-	io.delta.kernel.internal.actions.Format kernelFormat = kernelMetadata.getFormat();
-	io.delta.standalone.actions.Format format = new io.delta.standalone.actions.Format(
-	    kernelFormat.getProvider(),
-	    java.util.Collections.emptyMap() // TODO: Kernel doesn't currently support options
-	);
+        // Convert the format type
+        io.delta.kernel.internal.actions.Format kernelFormat = kernelMetadata.getFormat();
+        io.delta.standalone.actions.Format format = new io.delta.standalone.actions.Format(
+            kernelFormat.getProvider(),
+            java.util.Collections.emptyMap() // TODO: Kernel doesn't currently support options
+        );
 
-	// Convert the partition columns from a ColumnVector to a List<String>
-	ColumnVector partitionsVec = kernelMetadata.getPartitionColumns().getElements();
-	ArrayList<String> partitionColumns = new ArrayList<String>(partitionsVec.getSize());
-	for(int i = 0; i < partitionsVec.getSize(); i++) {
-	    partitionColumns.add(partitionsVec.getString(i));
-	}
+        // Convert the partition columns from a ColumnVector to a List<String>
+        ColumnVector partitionsVec = kernelMetadata.getPartitionColumns().getElements();
+        ArrayList<String> partitionColumns = new ArrayList<String>(partitionsVec.getSize());
+        for(int i = 0; i < partitionsVec.getSize(); i++) {
+            partitionColumns.add(partitionsVec.getString(i));
+        }
 
-	// Convert over the schema StructType
-	List<io.delta.kernel.types.StructField> kernelFields = kernelMetadata.getSchema().fields();
-	io.delta.standalone.types.StructField[] fields =
-	    new io.delta.standalone.types.StructField[kernelFields.size()];
-	int index = 0;
-	for (io.delta.kernel.types.StructField kernelField: kernelFields) {
-	    io.delta.standalone.types.FieldMetadata.Builder metadataBuilder =
-		io.delta.standalone.types.FieldMetadata.builder();
-	    for (java.util.Map.Entry<String,String> entry : kernelField.getMetadata().entrySet()) {
-		metadataBuilder.putString(entry.getKey(), entry.getValue());
-	    }
-	    fields[index] = new io.delta.standalone.types.StructField(
-		kernelField.getName(),
-		io.delta.standalone.types.DataType.fromJson(
-		    kernelField.getDataType().toJson()
-		),
-		kernelField.isNullable(),
-		metadataBuilder.build()
-	    );
-	    index++;
-	}
-	io.delta.standalone.types.StructType schema =
-	    new io.delta.standalone.types.StructType(fields);
+        // Convert over the schema StructType
+        List<io.delta.kernel.types.StructField> kernelFields = kernelMetadata.getSchema().fields();
+        io.delta.standalone.types.StructField[] fields =
+            new io.delta.standalone.types.StructField[kernelFields.size()];
+        int index = 0;
+        for (io.delta.kernel.types.StructField kernelField: kernelFields) {
+            io.delta.standalone.types.FieldMetadata.Builder metadataBuilder =
+                io.delta.standalone.types.FieldMetadata.builder();
+            for (java.util.Map.Entry<String,String> entry : kernelField.getMetadata().entrySet()) {
+                metadataBuilder.putString(entry.getKey(), entry.getValue());
+            }
+            fields[index] = new io.delta.standalone.types.StructField(
+                kernelField.getName(),
+                io.delta.standalone.types.DataType.fromJson(
+                    kernelField.getDataType().toJson()
+                ),
+                kernelField.isNullable(),
+                metadataBuilder.build()
+            );
+            index++;
+        }
+        io.delta.standalone.types.StructType schema =
+            new io.delta.standalone.types.StructType(fields);
 
-	return new Metadata(
-	    kernelMetadata.getId(),
-	    kernelMetadata.getName().orElse(null),
-	    kernelMetadata.getDescription().orElse(null),
-	    format,
-	    partitionColumns,
-	    kernelMetadata.getConfiguration(),
-	    kernelMetadata.getCreatedTime(),
-	    schema
-	);	
+        return new Metadata(
+            kernelMetadata.getId(),
+            kernelMetadata.getName().orElse(null),
+            kernelMetadata.getDescription().orElse(null),
+            format,
+            partitionColumns,
+            kernelMetadata.getConfiguration(),
+            kernelMetadata.getCreatedTime(),
+            schema
+        );      
     }
     
     /**
@@ -100,10 +100,10 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
      */
     @Override
     public Metadata getMetadata() {
-	if (!metadata.isPresent()) {
-	    metadata = Optional.of(convertMetadata());
-	}
-	return metadata.get();
+        if (!metadata.isPresent()) {
+            metadata = Optional.of(convertMetadata());
+        }
+        return metadata.get();
     }
 
     /**
@@ -111,9 +111,9 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
      */
     @Override
     public long getVersion() {
-	// WARNING: getVersion in SnapshotImpl currently doesn't use the table client, so we can
-	// pass null, but if this changes this code could break
-	return kernelSnapshot.getVersion(null);
+        // WARNING: getVersion in SnapshotImpl currently doesn't use the table client, so we can
+        // pass null, but if this changes this code could break
+        return kernelSnapshot.getVersion(null);
     }
 
     /**
@@ -122,7 +122,7 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
      */
     @Override
     public DeltaScan scan() {
-	throw new UnsupportedOperationException("not supported");
+        throw new UnsupportedOperationException("not supported");
     }
 
     /**
@@ -133,7 +133,7 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
      */
     @Override
     public DeltaScan scan(Expression predicate) {
-	throw new UnsupportedOperationException("not supported");
+        throw new UnsupportedOperationException("not supported");
     }
 
     /**
@@ -142,7 +142,7 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
      */
     @Override
     public List<AddFile> getAllFiles() {
-	throw new UnsupportedOperationException("not supported");
+        throw new UnsupportedOperationException("not supported");
     }
 
     /**
@@ -154,6 +154,6 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
      */
     @Override
     public CloseableIterator<RowRecord> open() {
-	throw new UnsupportedOperationException("not supported");
+        throw new UnsupportedOperationException("not supported");
     }
 }
