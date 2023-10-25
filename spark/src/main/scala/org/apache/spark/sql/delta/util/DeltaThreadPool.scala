@@ -95,7 +95,7 @@ class NonFateSharingFuture[T](pool: DeltaThreadPool)(f: SparkSession => T)
         case outer: SparkException => outer.getCause match {
           case e: InterruptedException =>
             logWarning("Interrupted while waiting for future")
-            None
+            throw e
           case e: CancellationException =>
             logWarning("Future was cancelled")
             futureOpt = None
@@ -114,7 +114,7 @@ class NonFateSharingFuture[T](pool: DeltaThreadPool)(f: SparkSession => T)
               None
           }
         }
-        case e: Throwable =>
+        case NonFatal(e) =>
           logWarning("Unknown failure while waiting for future", e)
           None
       }
