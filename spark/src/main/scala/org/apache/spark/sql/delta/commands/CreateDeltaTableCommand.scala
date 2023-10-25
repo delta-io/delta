@@ -446,7 +446,8 @@ case class CreateDeltaTableCommand(
       if (tableDesc.properties.nonEmpty) {
         // When comparing properties of the existing table and the new table, remove some
         // internal column mapping properties for the sake of comparison.
-        val filteredTableProperties = filterColumnMappingProperties(tableDesc.properties)
+        val filteredTableProperties = filterColumnMappingProperties(
+          tableDesc.properties)
         val filteredExistingProperties = filterColumnMappingProperties(
           existingMetadata.configuration)
         if (filteredTableProperties != filteredExistingProperties) {

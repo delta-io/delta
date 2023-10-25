@@ -1268,8 +1268,8 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CREATE_TABLE_WITH_DIFFERENT_PROPERTY",
       messageParameters = Array(path.toString,
-        specifiedProperties.map { case (k, v) => s"$k=$v" }.mkString("\n"),
-        existingProperties.map { case (k, v) => s"$k=$v" }.mkString("\n"))
+        specifiedProperties.toSeq.sorted.map { case (k, v) => s"$k=$v" }.mkString("\n"),
+        existingProperties.toSeq.sorted.map { case (k, v) => s"$k=$v" }.mkString("\n"))
     )
   }
 
