@@ -48,7 +48,6 @@ def get_args():
 
 def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
     print("##### Running SBT tests #####")
-    is_running_spark_tests = test_group is None or test_group == "spark"
 
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     cmd = [sbt_path, "clean"]
@@ -68,9 +67,6 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
     else:
         # when no scala version is specified, run test with only the specified scala version
         cmd += ["++ %s" % scala_version, test_cmd]  # build/sbt ... "++ 2.13.8" "project/test" ...
-
-    if is_running_spark_tests:
-        cmd += ["unidoc"]
 
     if coverage:
         cmd += ["coverageAggregate", "coverageOff"]
