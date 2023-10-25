@@ -24,8 +24,8 @@ public abstract class SnapshotSupplier {
 
     protected SnapshotSupplier(DeltaLog deltaLog, TableClient tableClient, Table table) {
         this.deltaLog = deltaLog;
-	this.tableClient = tableClient;
-	this.table = table;
+        this.tableClient = tableClient;
+        this.table = table;
     }
 
     /**
@@ -56,12 +56,12 @@ public abstract class SnapshotSupplier {
      * functions. All other calls on the returned snaphot will throw an Exception
      */
     protected TransitiveOptional<Snapshot> getHeadSnapshotViaKernel() {
-	try {
-	    io.delta.kernel.internal.SnapshotImpl kernelSnapshot =
-		(io.delta.kernel.internal.SnapshotImpl)table.getLatestSnapshot(tableClient);
-	    return TransitiveOptional.ofNullable(new KernelSnapshotWrapper(kernelSnapshot));
-	} catch (TableNotFoundException e) {
-	    return TransitiveOptional.ofNullable(null);
-	}
+        try {
+            io.delta.kernel.internal.SnapshotImpl kernelSnapshot =
+                (io.delta.kernel.internal.SnapshotImpl)table.getLatestSnapshot(tableClient);
+            return TransitiveOptional.ofNullable(new KernelSnapshotWrapper(kernelSnapshot));
+        } catch (TableNotFoundException e) {
+            return TransitiveOptional.ofNullable(null);
+        }
     }
 }

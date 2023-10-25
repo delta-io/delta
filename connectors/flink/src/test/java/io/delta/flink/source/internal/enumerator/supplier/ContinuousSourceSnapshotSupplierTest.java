@@ -40,13 +40,13 @@ class ContinuousSourceSnapshotSupplierTest {
 
     @Test
     public void shouldGetSnapshotFromTableHead() {
-	DeltaConnectorConfiguration sourceConfig = new DeltaConnectorConfiguration();
+        DeltaConnectorConfiguration sourceConfig = new DeltaConnectorConfiguration();
         when(deltaLog.snapshot()).thenReturn(deltaSnapshot);
 
         Snapshot snapshot = supplier.getSnapshot(sourceConfig);
 
         assertThat(snapshot, equalTo(deltaSnapshot));
-	verify(deltaLog, never()).getSnapshotForTimestampAsOf(anyLong());
+        verify(deltaLog, never()).getSnapshotForTimestampAsOf(anyLong());
         verify(deltaLog, never()).getSnapshotForVersionAsOf(anyLong());
     }
 

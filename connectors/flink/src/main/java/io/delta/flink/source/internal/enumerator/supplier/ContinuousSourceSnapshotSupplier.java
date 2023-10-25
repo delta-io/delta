@@ -21,7 +21,7 @@ import io.delta.standalone.Snapshot;
 public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
 
     public ContinuousSourceSnapshotSupplier(DeltaLog deltaLog, TableClient tableClient, Table table) {
-	super(deltaLog, tableClient, table);
+        super(deltaLog, tableClient, table);
     }
 
     /**
@@ -41,14 +41,14 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
      */
     @Override
     public Snapshot getSnapshot(DeltaConnectorConfiguration sourceConfiguration) {
-	TransitiveOptional<Snapshot> snapshot = getSnapshotFromStartingVersionOption(sourceConfiguration)
-	    .or(() -> getSnapshotFromStartingTimestampOption(sourceConfiguration));
-	boolean useKernel = sourceConfiguration.getValue(USE_KERNEL_FOR_SNAPSHOTS);
-	if (useKernel) {
-	    snapshot = snapshot.or(this::getHeadSnapshotViaKernel);
-	} else {
-	    snapshot = snapshot.or(this::getHeadSnapshot);
-	}
+        TransitiveOptional<Snapshot> snapshot = getSnapshotFromStartingVersionOption(sourceConfiguration)
+            .or(() -> getSnapshotFromStartingTimestampOption(sourceConfiguration));
+        boolean useKernel = sourceConfiguration.getValue(USE_KERNEL_FOR_SNAPSHOTS);
+        if (useKernel) {
+            snapshot = snapshot.or(this::getHeadSnapshotViaKernel);
+        } else {
+            snapshot = snapshot.or(this::getHeadSnapshot);
+        }
         return snapshot.get();
     }
 

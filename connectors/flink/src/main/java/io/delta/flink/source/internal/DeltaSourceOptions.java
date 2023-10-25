@@ -199,7 +199,7 @@ public class DeltaSourceOptions {
      */
     public static final DeltaConfigOption<Boolean> USE_KERNEL_FOR_SNAPSHOTS =
         DeltaConfigOption.of(
-	    ConfigOptions.key("useKernelForSnapshots").booleanType().defaultValue(false),
+            ConfigOptions.key("useKernelForSnapshots").booleanType().defaultValue(false),
             Boolean.class,
             new BooleanOptionTypeConverter());
 
@@ -245,7 +245,7 @@ public class DeltaSourceOptions {
         USER_FACING_SOURCE_OPTIONS.put(IGNORE_DELETES.key(), IGNORE_DELETES);
         USER_FACING_SOURCE_OPTIONS.put(IGNORE_CHANGES.key(), IGNORE_CHANGES);
         USER_FACING_SOURCE_OPTIONS.put(PARQUET_BATCH_SIZE.key(), PARQUET_BATCH_SIZE);
-	USER_FACING_SOURCE_OPTIONS.put(USE_KERNEL_FOR_SNAPSHOTS.key(), USE_KERNEL_FOR_SNAPSHOTS);
+        USER_FACING_SOURCE_OPTIONS.put(USE_KERNEL_FOR_SNAPSHOTS.key(), USE_KERNEL_FOR_SNAPSHOTS);
     }
 
     static {
