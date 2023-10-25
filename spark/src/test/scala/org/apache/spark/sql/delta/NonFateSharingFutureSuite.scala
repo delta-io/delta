@@ -45,15 +45,22 @@ class NonFateSharingFutureSuite extends SparkFunSuite with SharedSparkSession {
         case i => i
       }
     }
-    spark.cloneSession().withActive {
-      assert(future.get(10.seconds) === 2)
+
+    // Make sure the future already failed before waiting on it. This should happen ~immediately
+    // unless the test runner is horribly overloaded/slow/etc, and stabilizes the assertions below.
+    eventually(timeout(100.seconds)) {
+      assert(count.get == 1)
     }
-    assert(future.get(10.seconds) === 3)
 
     spark.cloneSession().withActive {
-      assert(future.get(10.seconds) === 4)
+      assert(future.get(1.seconds) === 2)
     }
-    assert(future.get(10.seconds) === 5)
+    assert(future.get(1.seconds) === 3)
+
+    spark.cloneSession().withActive {
+      assert(future.get(1.seconds) === 4)
+    }
+    assert(future.get(1.seconds) === 5)
   }
 
   test("fatal exception in future only propagates once, and only to owning session") {
@@ -64,15 +71,22 @@ class NonFateSharingFutureSuite extends SparkFunSuite with SharedSparkSession {
         case i => i
       }
     }
+
+    // Make sure the future already failed before waiting on it. This should happen ~immediately
+    // unless the test runner is horribly overloaded/slow/etc, and stabilizes the assertions below.
+    eventually(timeout(100.seconds)) {
+      assert(count.get == 1)
+    }
+
     spark.cloneSession().withActive {
-      assert(future.get(10.seconds) === 2)
+      assert(future.get(1.seconds) === 2)
     }
     intercept[InternalError] {
-      future.get(10.seconds)
+      future.get(1.seconds)
     }
     spark.cloneSession().withActive {
-      assert(future.get(10.seconds) === 3)
+      assert(future.get(1.seconds) === 3)
     }
-    assert(future.get(10.seconds) === 4)
+    assert(future.get(1.seconds) === 4)
   }
 }
