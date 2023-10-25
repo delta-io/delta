@@ -29,7 +29,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.*;
 
 import io.delta.kernel.defaults.internal.data.vector.*;
-import static io.delta.kernel.defaults.internal.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 class ParquetConverters {
     public static Converter createConverter(

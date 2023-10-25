@@ -20,7 +20,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.types.FloatType;
 
-import static io.delta.kernel.defaults.internal.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for float type data.

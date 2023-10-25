@@ -36,7 +36,7 @@ import io.delta.kernel.types.DecimalType;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultDecimalVector;
 import io.delta.kernel.defaults.internal.parquet.ParquetConverters.BasePrimitiveColumnConverter;
-import static io.delta.kernel.defaults.internal.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public class DecimalConverters {
 

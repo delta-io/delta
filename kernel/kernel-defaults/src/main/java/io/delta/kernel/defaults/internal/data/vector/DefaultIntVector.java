@@ -22,7 +22,7 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.DateType;
 import io.delta.kernel.types.IntegerType;
 
-import static io.delta.kernel.defaults.internal.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for integer type data.
