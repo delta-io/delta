@@ -138,7 +138,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       dir.listFiles().filter(_.isFile).filter(_.getName.endsWith("snappy.parquet"))
     }
 
-    def verifySnapshot(
+    def verifySnapshotScanFiles(
       tablePath: String,
       expectedFiles: Array[File],
       expectedVersion: Int): Unit = {
@@ -158,14 +158,14 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     var data0_files: Array[File] = Array.empty
     withGoldenTable("snapshot-data0") { tablePath =>
       data0_files = getDirDataFiles(tablePath) // data0 files
-      verifySnapshot(tablePath, data0_files, 0)
+      verifySnapshotScanFiles(tablePath, data0_files, 0)
     }
 
     // Append data1
     var data0_data1_files: Array[File] = Array.empty
     withGoldenTable("snapshot-data1") { tablePath =>
       data0_data1_files = getDirDataFiles(tablePath) // data0 & data1 files
-      verifySnapshot(tablePath, data0_data1_files, 1)
+      verifySnapshotScanFiles(tablePath, data0_data1_files, 1)
     }
 
     // Overwrite with data2
@@ -174,7 +174,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       // we have overwritten files for data0 & data1; only data2 files should remain
       data2_files = getDirDataFiles(tablePath)
         .filterNot(f => data0_data1_files.exists(_.getName == f.getName))
-      verifySnapshot(tablePath, data2_files, 2)
+      verifySnapshotScanFiles(tablePath, data2_files, 2)
     }
 
     // Append data3
@@ -182,7 +182,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       // we have overwritten files for data0 & data1; only data2 & data3 files should remain
       val data2_data3_files = getDirDataFiles(tablePath)
         .filterNot(f => data0_data1_files.exists(_.getName == f.getName))
-      verifySnapshot(tablePath, data2_data3_files, 3)
+      verifySnapshotScanFiles(tablePath, data2_data3_files, 3)
     }
 
     // Delete data2 files
@@ -192,7 +192,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       val data3_files = getDirDataFiles(tablePath)
         .filterNot(f => data0_data1_files.exists(_.getName == f.getName))
         .filterNot(f => data2_files.exists(_.getName == f.getName))
-      verifySnapshot(tablePath, data3_files, 4)
+      verifySnapshotScanFiles(tablePath, data3_files, 4)
     }
 
     // Repartition into 2 files
@@ -208,7 +208,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     withGoldenTable("snapshot-vacuumed") { tablePath =>
       // all remaining dir data files should be needed for current snapshot version
       // vacuum doesn't change the snapshot version
-      verifySnapshot(tablePath, getDirDataFiles(tablePath), 5)
+      verifySnapshotScanFiles(tablePath, getDirDataFiles(tablePath), 5)
     }
   }
 
@@ -223,11 +223,23 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   }
 
   test("special characters in path") {
-    val snapshot = latestSnapshot(goldenTablePath("log-replay-special-characters"))
-    val scanFileRows = collectScanFileRows(
-      snapshot.getScanBuilder(defaultTableClient).build()
-    )
-    assert(scanFileRows.isEmpty)
+    withGoldenTable("log-replay-special-characters-a") { path =>
+      val snapshot = latestSnapshot(path)
+      val scanFileRows = collectScanFileRows(
+        snapshot.getScanBuilder(defaultTableClient).build()
+      )
+      assert(scanFileRows.isEmpty)
+    }
+    withGoldenTable("log-replay-special-characters-b") { path =>
+      val snapshot = latestSnapshot(path)
+      val scanFileRows = collectScanFileRows(
+        snapshot.getScanBuilder(defaultTableClient).build()
+      )
+      assert(scanFileRows.length == 1)
+      val addFileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRows.head)
+      // get the relative path to compare
+      assert(new File(addFileStatus.getPath).getName == "special%20p@%23h")
+    }
   }
 
   // TODO we need to canonicalize path during log replay see issue #2213

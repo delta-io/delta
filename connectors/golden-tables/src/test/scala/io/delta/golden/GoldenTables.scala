@@ -1199,7 +1199,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
-  generateGoldenTable("log-replay-special-characters") { tablePath =>
+  generateGoldenTable("log-replay-special-characters-a") { tablePath =>
     val log = DeltaLog.forTable(spark, new Path(tablePath))
     new File(log.logPath.toUri).mkdirs()
 
@@ -1209,6 +1209,16 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
     log.startTransaction().commitManually(add)
     log.startTransaction().commitManually(remove)
+  }
+
+  generateGoldenTable("log-replay-special-characters-b") { tablePath =>
+    val log = DeltaLog.forTable(spark, new Path(tablePath))
+    new File(log.logPath.toUri).mkdirs()
+
+    val add = AddFile(new Path("special p@#h").toUri.toString, Map.empty, 100L,
+      10L, dataChange = true)
+
+    log.startTransaction().commitManually(add)
   }
 
   generateGoldenTable("log-replay-dv-key-cases") { tablePath =>
