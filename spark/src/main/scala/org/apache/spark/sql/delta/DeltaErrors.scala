@@ -3277,10 +3277,21 @@ class DeltaIndexOutOfBoundsException(
 }
 
 /** Thrown when the protocol version of a table is greater than supported by this client. */
-class InvalidProtocolVersionException(requiredVersion: Int, supportedVersions: Seq[Int])
+case class InvalidProtocolVersionException(
+    tableNameOrPath: String,
+    readerRequiredVersion: Int,
+    writerRequiredVersion: Int,
+    supportedReaderVersions: Seq[Int],
+    supportedWriterVersions: Seq[Int])
   extends RuntimeException(DeltaThrowableHelper.getMessage(
     errorClass = "DELTA_INVALID_PROTOCOL_VERSION",
-    messageParameters = Array(requiredVersion.toString, supportedVersions.sorted.mkString(", "))))
+    messageParameters = Array(
+      tableNameOrPath,
+      readerRequiredVersion.toString,
+      writerRequiredVersion.toString,
+      io.delta.VERSION,
+      supportedReaderVersions.sorted.mkString(", "),
+      supportedWriterVersions.sorted.mkString(", "))))
   with DeltaThrowable {
   override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_VERSION"
 }

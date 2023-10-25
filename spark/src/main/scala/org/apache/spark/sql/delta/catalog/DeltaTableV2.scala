@@ -87,7 +87,9 @@ case class DeltaTableV2(
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
   lazy val deltaLog: DeltaLog = {
+    DeltaTableV2.withEnrichedInvalidProtocolVersionException(catalogTable, tableIdentifier) {
       DeltaLog.forTable(spark, rootPath, options)
+    }
   }
 
   def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
@@ -118,7 +120,9 @@ case class DeltaTableV2(
    * WARNING: Because the snapshot is captured lazily, callers should explicitly access the snapshot
    * if they want to be certain it has been captured.
    */
-  lazy val initialSnapshot: Snapshot = {
+  lazy val initialSnapshot: Snapshot = DeltaTableV2.withEnrichedInvalidProtocolVersionException(
+    catalogTable, tableIdentifier) {
+
     timeTravelSpec.map { spec =>
       // By default, block using CDF + time-travel
       if (CDCReader.isCDCRead(caseInsensitiveOptions) &&
@@ -341,6 +345,26 @@ object DeltaTableV2 {
     case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
       DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table))
     case _ => throw DeltaErrors.notADeltaTableException(cmd)
+  }
+
+  /**
+   * When Delta Log throws InvalidProtocolVersionException it doesn't know the table name and uses
+   * the data path in the message, this wrapper throw a new InvalidProtocolVersionException with
+   * table name and sets its Cause to the original InvalidProtocolVersionException.
+   */
+  def withEnrichedInvalidProtocolVersionException[T](
+      catalogTable: Option[CatalogTable],
+      tableName: Option[String] = None)(thunk: => T): T = {
+
+    lazy val tableNameToUse = catalogTable match {
+      case Some(ct) => Some(ct.identifier.copy(catalog = None).unquotedString)
+      case None => tableName
+    }
+
+    try thunk catch {
+      case e: InvalidProtocolVersionException if tableNameToUse.exists(_ != e.tableNameOrPath) =>
+        throw e.copy(tableNameOrPath = tableNameToUse.get).initCause(e)
+    }
   }
 }
 
