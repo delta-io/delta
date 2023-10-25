@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, IcebergConverterHook, PostCommitHook}
+import org.apache.spark.sql.delta.hooks.{CheckpointHook, AutoOptimizeHook, GenerateSymlinkManifest, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -1051,6 +1051,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
       if (DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.fromMetaData(metadata) && hasFileActions) {
         registerPostCommitHook(GenerateSymlinkManifest)
+      }
+
+      // For autoOptimize, session config is examined prior to table property.
+      lazy val autoOptimizeEnabled =
+        spark.sessionState.conf
+          .getConf(DeltaSQLConf.DELTA_AUTO_OPTIMIZE_ENABLED)
+          .getOrElse {
+            DeltaConfigs.AUTO_OPTIMIZE.fromMetaData(metadata).getOrElse(false)
+          }
+      if (!op.isInstanceOf[DeltaOperations.Optimize] && autoOptimizeEnabled && hasFileActions) {
+        registerPostCommitHook(AutoOptimizeHook)
       }
 
       commitAttemptStartTime = clock.getTimeMillis()

@@ -932,6 +932,20 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_AUTO_OPTIMIZE_ENABLED =
+    buildConf("autoOptimize.enabled")
+      .internal()
+      .doc("If enabled, optimize is triggered after every commit to the table.")
+      .booleanConf
+      .createOptional
+
+  val DELTA_AUTO_OPTIMIZE_THRESHOLD =
+    buildConf("autoOptimize.threshold")
+      .internal()
+      .doc("The threshold of the File Size Entropy above which auto optimize is triggered.")
+      .longConf
+      .createWithDefault(65536)
+
   val DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS =
     buildConf("alterTable.changeColumn.checkExpressions")
       .internal()

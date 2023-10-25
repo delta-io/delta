@@ -187,7 +187,8 @@ case class OptimizeTableCommand(
 case class DeltaOptimizeContext(
     isPurge: Boolean = false,
     minFileSize: Option[Long] = None,
-    maxDeletedRowsRatio: Option[Double] = None) {
+    maxDeletedRowsRatio: Option[Double] = None,
+    isAutoOptimize: Boolean = false) {
   if (isPurge) {
     require(
       minFileSize.contains(0L) && maxDeletedRowsRatio.contains(0d),
@@ -216,16 +217,43 @@ class OptimizeExecutor(
 
   private val isMultiDimClustering = zOrderByColumns.nonEmpty
 
-  def optimize(): Seq[Row] = {
-    recordDeltaOperation(txn.deltaLog, "delta.optimize") {
-      val minFileSize = optimizeContext.minFileSize.getOrElse(
+  def autoOptimize(prevCommitFiles : Seq[AddFile]): Unit = {
+    val maxFileSize = sparkSession.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE)
+    require(maxFileSize > 0, "DELTA_OPTIMIZE_MAX_FILE_SIZE must be greater than 0")
+    val minFileSize = sparkSession.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE)
+    require(minFileSize > 0, "DELTA_OPTIMIZE_MIN_FILE_SIZE must be greater than 0")
+
+    val autoOptimizeThreshold = sparkSession.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_AUTO_OPTIMIZE_THRESHOLD)
+    require(autoOptimizeThreshold > 0, "DELTA_AUTO_OPTIMIZE_THRESHOLD must be greater than 0")
+
+    lazy val addedFiles = prevCommitFiles.collect {case a: AddFile => a}
+    val eligiblePartitions = addedFiles.map(_.partitionValues).toSet
+    val candidatePartitions = txn.filterFiles().filter(
+      f => eligiblePartitions.contains(f.partitionValues)).groupBy(_.partitionValues).toSeq
+    val candidateFiles = pruneParitions(candidatePartitions, maxFileSize, autoOptimizeThreshold)
+
+    optimizeImpl(minFileSize, maxFileSize, candidateFiles)
+  }
+
+  def optimize() : Seq[Row] = {
+    val minFileSize = optimizeContext.minFileSize.getOrElse(
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE))
-      val maxFileSize =
+    val maxFileSize =
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE)
+
+    val candidateFiles = txn.filterFiles(partitionPredicate, keepNumRecords = true)
+    optimizeImpl(minFileSize, maxFileSize, candidateFiles)
+  }
+
+  def optimizeImpl(minFileSize: Long,
+    maxFileSize: Long,
+    candidateFiles: Seq[AddFile]): Seq[Row] = {
+    recordDeltaOperation(txn.deltaLog, "delta.optimize") {
       val maxDeletedRowsRatio = optimizeContext.maxDeletedRowsRatio.getOrElse(
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO))
-
-      val candidateFiles = txn.filterFiles(partitionPredicate, keepNumRecords = true)
       val partitionSchema = txn.metadata.partitionSchema
 
       val filesToProcess = pruneCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
@@ -370,6 +398,27 @@ class OptimizeExecutor(
     }
   }
 
+  private def pruneParitions(partitionsToCompact: Seq[(Map[String, String], Seq[AddFile])],
+    targetFileSize: Long, fileSizeEntropyThreshold: Long) : Seq[AddFile] = {
+      var candidateFiles = new ArrayBuffer[AddFile]()
+      partitionsToCompact.foreach {
+        case (partition, files) =>
+          val numFiles = files.size
+          var fileSizeEntropy = 0L
+          val smallFiles = files.filter(_.size < targetFileSize)
+          smallFiles.foreach {
+            file =>
+            val currentEntropy = (((targetFileSize - file.size) * (targetFileSize - file.size))
+             / numFiles).toLong
+            fileSizeEntropy += currentEntropy
+          }
+          if (fileSizeEntropy > fileSizeEntropyThreshold) {
+            candidateFiles.appendAll(smallFiles)
+          }
+      }
+      candidateFiles
+  }
+
   /**
    * Utility method to run a Spark job to compact the files in given bin
    *
@@ -458,7 +507,7 @@ class OptimizeExecutor(
     if (optimizeContext.isPurge) {
       DeltaOperations.Reorg(partitionPredicate)
     } else {
-      DeltaOperations.Optimize(partitionPredicate, zOrderByColumns)
+      DeltaOperations.Optimize(partitionPredicate, zOrderByColumns, false)
     }
   }
 
