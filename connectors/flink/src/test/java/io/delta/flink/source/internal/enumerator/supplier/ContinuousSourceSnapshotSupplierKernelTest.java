@@ -58,88 +58,88 @@ class ContinuousSourceSnapshotSupplierKernelTest {
     @Test
     public void shouldGetSnapshotFromTableHeadViaKernel() throws Exception {
         DeltaConnectorConfiguration sourceConfig = new DeltaConnectorConfiguration();
-	sourceConfig.addOption(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS, true);
-	when(table.getLatestSnapshot(tableClient)).thenReturn(kernelSnapshot);
+        sourceConfig.addOption(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS, true);
+        when(table.getLatestSnapshot(tableClient)).thenReturn(kernelSnapshot);
 
         Snapshot snapshot = supplier.getSnapshot(sourceConfig);
-	assertThat(snapshot, instanceOf(KernelSnapshotWrapper.class));
-	KernelSnapshotWrapper wrapped = (KernelSnapshotWrapper)snapshot;
-	assertThat(wrapped.getKernelSnapshot(), equalTo(kernelSnapshot));
+        assertThat(snapshot, instanceOf(KernelSnapshotWrapper.class));
+        KernelSnapshotWrapper wrapped = (KernelSnapshotWrapper)snapshot;
+        assertThat(wrapped.getKernelSnapshot(), equalTo(kernelSnapshot));
     }
 
     @Test
     public void kernelSnapshotShouldReturnCorrectVersion() {
         DeltaConnectorConfiguration sourceConfig = new DeltaConnectorConfiguration();
-	sourceConfig.addOption(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS, true);
-	when(kernelSnapshot.getVersion(null)).thenReturn(10L);
-	try {
-	    when(table.getLatestSnapshot(tableClient)).thenReturn(kernelSnapshot);
-	} catch (TableNotFoundException e) {
-	    assertThat("Table not found", false);
-	}
+        sourceConfig.addOption(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS, true);
+        when(kernelSnapshot.getVersion(null)).thenReturn(10L);
+        try {
+            when(table.getLatestSnapshot(tableClient)).thenReturn(kernelSnapshot);
+        } catch (TableNotFoundException e) {
+            assertThat("Table not found", false);
+        }
 
         Snapshot snapshot = supplier.getSnapshot(sourceConfig);
-	long version = snapshot.getVersion();
-	assertThat(version, equalTo(10L));
+        long version = snapshot.getVersion();
+        assertThat(version, equalTo(10L));
     }
 
     @Test
     public void kernelMetadataValidation() {
-	DeltaConnectorConfiguration sourceConfig = new DeltaConnectorConfiguration();
-	sourceConfig.addOption(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS, true);
-	when(kernelSnapshot.getMetadata()).thenReturn(KernelMetadataUtils.getKernelMetadata());
-	try {
-	    when(table.getLatestSnapshot(tableClient)).thenReturn(kernelSnapshot);
-	} catch (TableNotFoundException e) {
-	    assertThat("Table not found", false);
-	}
+        DeltaConnectorConfiguration sourceConfig = new DeltaConnectorConfiguration();
+        sourceConfig.addOption(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS, true);
+        when(kernelSnapshot.getMetadata()).thenReturn(KernelMetadataUtils.getKernelMetadata());
+        try {
+            when(table.getLatestSnapshot(tableClient)).thenReturn(kernelSnapshot);
+        } catch (TableNotFoundException e) {
+            assertThat("Table not found", false);
+        }
 
         Snapshot snapshot = supplier.getSnapshot(sourceConfig);
-	Metadata metadata = snapshot.getMetadata();
+        Metadata metadata = snapshot.getMetadata();
 
-	assertThat(metadata.getId(), equalTo("id"));
-	assertThat(metadata.getDescription(), equalTo("description"));
-	assertThat(metadata.getFormat(), equalTo(new io.delta.standalone.actions.Format()));
-	ArrayList<String> partitionCols = new ArrayList<String>();
-	partitionCols.add("Row 0");
-	partitionCols.add("Row 1");
-	assertThat(metadata.getPartitionColumns(), equalTo(partitionCols));
-	HashMap<Integer, Integer> config = new HashMap();
-	config.put(new Integer(1), new Integer(2));
-	assertThat(metadata.getConfiguration(), equalTo(config));
-	assertThat(metadata.getCreatedTime(), equalTo(Optional.of(1234L)));
+        assertThat(metadata.getId(), equalTo("id"));
+        assertThat(metadata.getDescription(), equalTo("description"));
+        assertThat(metadata.getFormat(), equalTo(new io.delta.standalone.actions.Format()));
+        ArrayList<String> partitionCols = new ArrayList<String>();
+        partitionCols.add("Row 0");
+        partitionCols.add("Row 1");
+        assertThat(metadata.getPartitionColumns(), equalTo(partitionCols));
+        HashMap<Integer, Integer> config = new HashMap();
+        config.put(new Integer(1), new Integer(2));
+        assertThat(metadata.getConfiguration(), equalTo(config));
+        assertThat(metadata.getCreatedTime(), equalTo(Optional.of(1234L)));
 
-	// Types below are all standalone types
-	FieldMetadata fmeta = FieldMetadata.builder().
-	    putString("key1", "value1").
-	    putString("key2", "value2").
-	    build();
-	ArrayList<DataType> expectedTypes = new ArrayList<DataType>();
-	ArrayType arrayType = new ArrayType(new IntegerType(), false);
-	expectedTypes.add(arrayType);
-	expectedTypes.add(new BinaryType());
-	expectedTypes.add(new BooleanType());
-	expectedTypes.add(new ByteType());
-	expectedTypes.add(new DateType());
-	expectedTypes.add(DecimalType.USER_DEFAULT);
-	expectedTypes.add(new DoubleType());
-	expectedTypes.add(new FloatType());
-	expectedTypes.add(new IntegerType());
-	expectedTypes.add(new LongType());
-	expectedTypes.add(new MapType(new ShortType(), arrayType, false));
-	expectedTypes.add(new ShortType());
-	expectedTypes.add(new StringType());
-	expectedTypes.add(new TimestampType());
-	StructType expectedSchema = new StructType();
-	int fnum = 1;
-	for (DataType dt : expectedTypes) {
-	    expectedSchema = expectedSchema.add(new StructField(
-						    "Field " + fnum,
-						    dt,
-						    false,
-						    fmeta));
-	    fnum++;
-	}
-	assertThat(metadata.getSchema(), equalTo(expectedSchema));
+        // Types below are all standalone types
+        FieldMetadata fmeta = FieldMetadata.builder().
+            putString("key1", "value1").
+            putString("key2", "value2").
+            build();
+        ArrayList<DataType> expectedTypes = new ArrayList<DataType>();
+        ArrayType arrayType = new ArrayType(new IntegerType(), false);
+        expectedTypes.add(arrayType);
+        expectedTypes.add(new BinaryType());
+        expectedTypes.add(new BooleanType());
+        expectedTypes.add(new ByteType());
+        expectedTypes.add(new DateType());
+        expectedTypes.add(DecimalType.USER_DEFAULT);
+        expectedTypes.add(new DoubleType());
+        expectedTypes.add(new FloatType());
+        expectedTypes.add(new IntegerType());
+        expectedTypes.add(new LongType());
+        expectedTypes.add(new MapType(new ShortType(), arrayType, false));
+        expectedTypes.add(new ShortType());
+        expectedTypes.add(new StringType());
+        expectedTypes.add(new TimestampType());
+        StructType expectedSchema = new StructType();
+        int fnum = 1;
+        for (DataType dt : expectedTypes) {
+            expectedSchema = expectedSchema.add(new StructField(
+                                                    "Field " + fnum,
+                                                    dt,
+                                                    false,
+                                                    fmeta));
+            fnum++;
+        }
+        assertThat(metadata.getSchema(), equalTo(expectedSchema));
     }
 }

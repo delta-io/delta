@@ -8,6 +8,6 @@ public class ContinuousSnapshotSupplierFactory implements SnapshotSupplierFactor
 
     @Override
     public ContinuousSourceSnapshotSupplier create(DeltaLog deltaLog, TableClient tableClient, Table table) {
-	return new ContinuousSourceSnapshotSupplier(deltaLog, tableClient, table);
+        return new ContinuousSourceSnapshotSupplier(deltaLog, tableClient, table);
     }
 }
