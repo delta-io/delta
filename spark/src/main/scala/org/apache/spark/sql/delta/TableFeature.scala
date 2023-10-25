@@ -222,7 +222,14 @@ sealed trait RemovableFeature { self: TableFeature =>
     // Use the snapshot at earliestCheckpointVersion to validate the checkpoint identified by
     // findEarliestReliableCheckpoint.
     val earliestSnapshot = deltaLog.getSnapshotAt(earliestCheckpointVersion)
-    if (containsFeatureTraces(earliestSnapshot.stateDS)) {
+
+    // Tombstones may contain traces of the removed feature. The earliest snapshot will include
+    // all tombstones within the tombstoneRetentionPeriod. This may disallow protocol downgrade
+    // because the log retention period is not aligned with the tombstoneRetentionPeriod.
+    // To resolve this issue, we filter out all tombstones from the earliest checkpoint.
+    // Tombstones at the earliest checkpoint should be irrelevant and should not be an
+    // issue for readers that do not support the feature.
+    if (containsFeatureTraces(earliestSnapshot.stateDS.filter("remove is null"))) {
       return true
     }
 
