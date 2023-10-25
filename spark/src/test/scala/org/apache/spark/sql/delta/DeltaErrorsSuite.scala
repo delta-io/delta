@@ -667,7 +667,7 @@ trait DeltaErrorsSuiteBase
           new InvariantViolationException("Invariant violated."))
       }
       checkErrorMessage(e, Some("DELTA_REPLACE_WHERE_MISMATCH"), Some("44000"),
-        Some("""Data written out does not match replaceWhere 'replaceWhere'.
+        Some("""Written data does not conform to partial table overwrite condition or constraint 'replaceWhere'.
         |Invariant violated.""".stripMargin))
     }
     {
@@ -675,7 +675,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.replaceWhereMismatchException("replaceWhere", "badPartitions")
       }
       checkErrorMessage(e, Some("DELTA_REPLACE_WHERE_MISMATCH"), Some("44000"),
-        Some("""Data written out does not match replaceWhere 'replaceWhere'.
+        Some("""Written data does not conform to partial table overwrite condition or constraint 'replaceWhere'.
         |Invalid data would be written to partitions badPartitions.""".stripMargin))
     }
     {

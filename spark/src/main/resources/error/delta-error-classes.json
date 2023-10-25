@@ -1622,7 +1622,7 @@
   },
   "DELTA_REPLACE_WHERE_MISMATCH" : {
     "message" : [
-      "Data written out does not match replaceWhere '<replaceWhere>'.",
+      "Written data does not conform to partial table overwrite condition or constraint '<replaceWhere>'.",
       "<message>"
     ],
     "sqlState" : "44000"

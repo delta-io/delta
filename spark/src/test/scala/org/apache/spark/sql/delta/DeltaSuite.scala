@@ -260,7 +260,7 @@ class DeltaSuite extends QueryTest
             .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
             .save(tempDir.toString)
         }.getMessage
-        assert(e1.contains("Data written out does not match replaceWhere"))
+        assert(e1.contains("does not conform to partial table overwrite condition or constraint"))
 
         val e2 = intercept[AnalysisException] {
           Seq(true).toDF("is_odd")
@@ -303,7 +303,9 @@ class DeltaSuite extends QueryTest
             .save(tempDir.toString)
         }.getMessage
         if (enabled) {
-          assert(e4.contains("Data written out does not match replaceWhere 'value = 1'"))
+          assert(e4.contains(
+            "Written data does not conform to partial table overwrite condition " +
+              "or constraint 'value = 1'"))
         } else {
           assert(e4.contains("Predicate references non-partition column 'value'. Only the " +
             "partition columns may be referenced: [is_odd]"))
@@ -2114,7 +2116,7 @@ class DeltaSuite extends QueryTest
           .saveAsTable(table)
       }
       assert(e.getMessage.startsWith("[DELTA_REPLACE_WHERE_MISMATCH] " +
-        "Data written out does not match replaceWhere"))
+        "Written data does not conform to partial table overwrite condition or constraint"))
 
       Seq(("a", "b", "c"), ("d", "e", "f"))
         .toDF("a.b", "c.d", "ab")
