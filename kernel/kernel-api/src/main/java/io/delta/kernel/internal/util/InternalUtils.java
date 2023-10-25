@@ -79,49 +79,6 @@ public class InternalUtils {
     }
 
     /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @throws IllegalArgumentException if {@code isValid} is false
-     */
-    public static void checkArgument(boolean isValid)
-        throws IllegalArgumentException {
-        if (!isValid) {
-            throw new IllegalArgumentException();
-        }
-    }
-
-    /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @param message A String message for the exception.
-     * @throws IllegalArgumentException if {@code isValid} is false
-     */
-    public static void checkArgument(boolean isValid, String message)
-        throws IllegalArgumentException {
-        if (!isValid) {
-            throw new IllegalArgumentException(message);
-        }
-    }
-
-    /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @param message A String message for the exception.
-     * @param args    Objects used to fill in {@code %s} placeholders in the message
-     * @throws IllegalArgumentException if {@code isValid} is false
-     */
-    public static void checkArgument(boolean isValid, String message, Object... args)
-        throws IllegalArgumentException {
-        if (!isValid) {
-            throw new IllegalArgumentException(
-                String.format(String.valueOf(message), args));
-        }
-    }
-
-    /**
      * Utility method to get the number of days since epoch this given date is.
      */
     public static int daysSinceEpoch(Date date) {

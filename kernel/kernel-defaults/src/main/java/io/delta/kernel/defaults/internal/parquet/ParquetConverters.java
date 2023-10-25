@@ -27,9 +27,9 @@ import org.apache.parquet.schema.Type;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.*;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.*;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 class ParquetConverters {
     public static Converter createConverter(

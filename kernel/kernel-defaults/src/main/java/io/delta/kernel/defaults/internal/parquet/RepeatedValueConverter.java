@@ -21,9 +21,9 @@ import org.apache.parquet.io.api.Converter;
 import org.apache.parquet.io.api.GroupConverter;
 
 import io.delta.kernel.data.ColumnVector;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.parquet.ParquetConverters.BaseConverter;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.defaults.internal.parquet.ParquetConverters.initNullabilityVector;
 import static io.delta.kernel.defaults.internal.parquet.ParquetConverters.setNullabilityToTrue;
 

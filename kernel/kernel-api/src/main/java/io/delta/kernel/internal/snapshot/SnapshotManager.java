@@ -38,7 +38,7 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Logging;
 import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.fs.Path.getName;
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public class SnapshotManager
     implements Logging {

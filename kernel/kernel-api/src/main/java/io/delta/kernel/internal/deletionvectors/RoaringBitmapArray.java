@@ -24,7 +24,7 @@ import java.util.ArrayList;
 import org.roaringbitmap.RoaringBitmap;
 
 import io.delta.kernel.internal.util.Tuple2;
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * A 64-bit extension of [[RoaringBitmap]] that is optimized for cases that usually fit within
