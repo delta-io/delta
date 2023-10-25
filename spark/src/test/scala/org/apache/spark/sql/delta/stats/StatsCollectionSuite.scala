@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.stats
 
 import java.math.BigDecimal
 import java.sql.Date
+import java.time.LocalDateTime
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
@@ -424,7 +425,6 @@ class StatsCollectionSuite
   Seq(
     ("BINARY", "BinaryType"),
     ("BOOLEAN", "BooleanType"),
-    ("TIMESTAMP_NTZ", "TimestampNTZType"),
     ("ARRAY<TINYINT>", "ArrayType(ByteType,true)"),
     ("MAP<DATE, INT>", "MapType(DateType,IntegerType,true)"),
     ("STRUCT<c60:INT, c61:ARRAY<INT>>", "ArrayType(IntegerType,true)")
@@ -501,7 +501,7 @@ class StatsCollectionSuite
 
   Seq(
     "BIGINT", "DATE", "DECIMAL(3, 2)", "DOUBLE", "FLOAT", "INT", "SMALLINT", "STRING",
-    "TIMESTAMP", "TINYINT"
+    "TIMESTAMP", "TIMESTAMP_NTZ", "TINYINT"
   ).foreach { validType =>
     val tableName1 = "delta_table_1"
     val tableName2 = "delta_table_2"
@@ -702,11 +702,10 @@ class StatsCollectionSuite
   test("Change Columns with delta statistics column") {
     Seq(
       "BIGINT", "DATE", "DECIMAL(3, 2)", "DOUBLE", "FLOAT", "INT", "SMALLINT", "STRING",
-      "TIMESTAMP", "TINYINT"
+      "TIMESTAMP", "TIMESTAMP_NTZ", "TINYINT"
     ).foreach { validType =>
       Seq(
-        "BINARY", "BOOLEAN", "ARRAY<TINYINT>", "MAP<DATE, INT>", "STRUCT<c60:INT, c61:ARRAY<INT>>",
-        "TIMESTAMP_NTZ"
+        "BINARY", "BOOLEAN", "ARRAY<TINYINT>", "MAP<DATE, INT>", "STRUCT<c60:INT, c61:ARRAY<INT>>"
       ).foreach { invalidType =>
         withTable("delta_table") {
           sql(
