@@ -85,22 +85,17 @@ class NonFateSharingFuture[T](pool: DeltaThreadPool)(f: SparkSession => T)
         Some(ThreadUtils.awaitResult(future, timeout))
       } catch {
         // NOTE: ThreadUtils.awaitResult wraps all non-fatal exceptions other than TimeoutException
-        // with SparkException. Meanwhile, Java Future.get only throws four exceptions, all
-        // non-fatal: CancellationException, ExecutionException, InterruptedException,
-        // TimeoutException. Any Throwable from the task itself will surface as ExecutionException,
-        // so task failure usually means SparkException(ExecutionException(OriginalException)).
-        case e: TimeoutException =>
-          logWarning("Timed out waiting for future")
-          None
+        // with SparkException. Meanwhile, Java Future.get only throws four exceptions:
+        // ExecutionException (non-fatal, wrapped, and itself wraps any Throwable from the task
+        // itself), CancellationException (non-fatal, wrapped), InterruptedException (fatal, not
+        // wrapped), and TimeoutException (non-fatal, but not wrapped). Thus, any "normal" failure
+        // of the future will surface as SparkException(ExecutionException(OriginalException)).
         case outer: SparkException => outer.getCause match {
-          case e: InterruptedException =>
-            logWarning("Interrupted while waiting for future")
-            throw e
           case e: CancellationException =>
             logWarning("Future was cancelled")
             futureOpt = None
             None
-          case inner: ExecutionException => inner.getCause match {
+          case inner: ExecutionException if inner.getCause != null => inner.getCause match {
             case NonFatal(e) =>
               logWarning("Future threw non-fatal exception", e)
               futureOpt = None
@@ -114,6 +109,9 @@ class NonFateSharingFuture[T](pool: DeltaThreadPool)(f: SparkSession => T)
               None
           }
         }
+        case e: TimeoutException =>
+          logWarning("Timed out waiting for future")
+          None
         case NonFatal(e) =>
           logWarning("Unknown failure while waiting for future", e)
           None
