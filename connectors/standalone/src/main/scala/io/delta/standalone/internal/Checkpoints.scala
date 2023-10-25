@@ -228,7 +228,7 @@ private[internal] object Checkpoints extends Logging {
     var numOfFiles = 0L
 
     // Use the string in the closure as Path is not Serializable.
-    val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
+    val path = checkpointFileSingular(snapshot.path, snapshot.version)
 
     // Exclude commitInfo, CDC
     val actions: Seq[SingleAction] = (
@@ -240,12 +240,12 @@ private[internal] object Checkpoints extends Logging {
 
     val writtenPath =
       if (useRename) {
-        val p = new Path(path)
+        val p = path
         // Two instances of the same task may run at the same time in some cases (e.g.,
         // speculation, stage retry), so generate the temp path here to avoid two tasks
         // using the same path.
         val tempPath = new Path(p.getParent, s".${p.getName}.${UUID.randomUUID}.tmp")
-        tempPath.toString
+        tempPath
       } else {
         path
       }
@@ -255,7 +255,9 @@ private[internal] object Checkpoints extends Logging {
       timeZone = deltaLog.timezone,
       hadoopConf = deltaLog.hadoopConf
     )
-    val writer = ParquetWriter.writer[SingleAction](writtenPath, writerOptions)
+    val writer = ParquetWriter.writer[SingleAction](
+      com.github.mjakubowski84.parquet4s.Path(
+      writtenPath), writerOptions)
 
     try {
       actions.foreach { singleAction =>
@@ -267,7 +269,7 @@ private[internal] object Checkpoints extends Logging {
       }
     } catch {
       case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
-        val p = new Path(writtenPath)
+        val p = writtenPath
         if (p.getFileSystem(deltaLog.hadoopConf).exists(p)) {
           // The file has been written by a zombie task. We can just use this checkpoint file
           // rather than failing a Delta commit.
@@ -279,8 +281,8 @@ private[internal] object Checkpoints extends Logging {
     }
 
     if (useRename) {
-      val src = new Path(writtenPath)
-      val dest = new Path(path)
+      val src = writtenPath
+      val dest = path
       val fs = dest.getFileSystem(deltaLog.hadoopConf)
       var renameDone = false
       try {

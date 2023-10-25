@@ -150,9 +150,12 @@ private[internal] case class CloseableParquetDataIterator(
         }
       }
     }
-
+    import  com.github.mjakubowski84.parquet4s._
     ParquetReader.read[RowParquetRecord](
-      nextDataFilePath, Options(timeZone = readTimeZone, hadoopConf = hadoopConf))
+      com.github.mjakubowski84.parquet4s.Path(
+      nextDataFilePath)
+      
+      , Options(timeZone = readTimeZone, hadoopConf = hadoopConf))(implicitly,???)
   }
 
   /**

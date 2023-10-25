@@ -56,7 +56,8 @@ private[internal] class MemoryOptimizedLogReplay(
         } else if (nextFile.getName.endsWith(".parquet")) {
           val fileVersion = FileNames.checkpointVersion(nextFile)
           val parquetIterable = ParquetReader.read[Parquet4sSingleActionWrapper](
-            nextFile.toString,
+            com.github.mjakubowski84.parquet4s.Path(
+            nextFile.toString),
             ParquetReader.Options(timeZone, hadoopConf)
           )
           Some(new CustomParquetIterator(parquetIterable, fileVersion))

@@ -18,7 +18,7 @@ package io.delta.standalone.internal.util
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.databind.{DeserializationFeature, ObjectMapper}
-import com.fasterxml.jackson.module.scala.{DefaultScalaModule, ScalaObjectMapper}
+import com.fasterxml.jackson.module.scala.{DefaultScalaModule, ClassTagExtensions}
 
 /** Useful json functions used around the Delta codebase. */
 private[internal] object JsonUtils {
@@ -30,7 +30,7 @@ private[internal] object JsonUtils {
    */
   // scalastyle:on
   lazy val mapper = {
-    val mapper = new ObjectMapper with ScalaObjectMapper
+    val mapper = new ObjectMapper with ClassTagExtensions//ScalaObjectMapper
     mapper.setSerializationInclusion(Include.NON_ABSENT)
     mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     mapper.registerModule(DefaultScalaModule)

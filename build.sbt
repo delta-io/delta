@@ -40,7 +40,7 @@ val flinkVersion = "1.16.1"
 val hadoopVersion = "3.3.1"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
-val parquet4sVersion = "1.9.4"
+val parquet4sVersion = "2.13.0"
 
 // Versions for Hive 3
 val hadoopVersionForHive3 = "3.1.0"
@@ -282,6 +282,7 @@ lazy val storage = (project in file("storage"))
     name := "delta-storage",
     commonSettings,
     javaOnlyReleaseSettings,
+    crossScalaVersions += "3.3.1",
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.
@@ -292,12 +293,12 @@ lazy val storage = (project in file("storage"))
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
 
       // Test Deps
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % Test,
     ),
 
     // Unidoc settings
-    unidocSourceFilePatterns += SourceFilePattern("/LogStore.java", "/CloseableIterator.java"),
-  ).configureUnidoc()
+    //unidocSourceFilePatterns += SourceFilePattern("/LogStore.java", "/CloseableIterator.java"),
+  )//.configureUnidoc()
 
 lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
   .dependsOn(storage % "compile->compile;test->test;provided->provided")
@@ -743,7 +744,7 @@ lazy val testParquetUtilsWithStandaloneCosmetic = project.dependsOn(standaloneCo
   )
 
 def scalaCollectionPar(version: String) = version match {
-  case v if v.startsWith("2.13.") =>
+  case v if v.startsWith("2.13.") || v.startsWith("3.") =>
     Seq("org.scala-lang.modules" %% "scala-parallel-collections" % "1.0.4")
   case _ => Seq()
 }
@@ -778,7 +779,7 @@ lazy val standaloneWithoutParquetUtils = project
 
 lazy val standalone = (project in file("connectors/standalone"))
   .dependsOn(storage % "compile->compile;provided->provided")
-  .dependsOn(goldenTables % "test")
+  //.dependsOn(goldenTables % "test")
   .settings(
     name := "delta-standalone-original",
     commonSettings,
@@ -791,12 +792,12 @@ lazy val standalone = (project in file("connectors/standalone"))
       "com.github.mjakubowski84" %% "parquet4s-core" % parquet4sVersion excludeAll (
         ExclusionRule("org.slf4j", "slf4j-api")
         ),
-      "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.12.3",
-      "org.json4s" %% "json4s-jackson" % "3.7.0-M11" excludeAll (
+      "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.13.0",
+      "org.json4s" %% "json4s-jackson" % "4.0.6" excludeAll (
         ExclusionRule("com.fasterxml.jackson.core"),
         ExclusionRule("com.fasterxml.jackson.module")
       ),
-      "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test",
+      "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % Test,
     ),
     Compile / sourceGenerators += Def.task {
       val file = (Compile / sourceManaged).value / "io" / "delta" / "standalone" / "package.scala"
@@ -873,8 +874,8 @@ lazy val standalone = (project in file("connectors/standalone"))
     addArtifact(assembly / artifact, assembly),
 
     // Unidoc setting
-    unidocSourceFilePatterns += SourceFilePattern("io/delta/standalone/"),
-  ).configureUnidoc()
+    //unidocSourceFilePatterns += SourceFilePattern("io/delta/standalone/"),
+  )//.configureUnidoc()
 
 
 /*
@@ -904,16 +905,17 @@ lazy val goldenTables = (project in file("connectors/golden-tables"))
   .dependsOn(spark % "test") // depends on delta-spark
   .settings(
     name := "golden-tables",
+    scalaVersion := "3.3.1",
     commonSettings,
     skipReleaseSettings,
     libraryDependencies ++= Seq(
       // Test Dependencies
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "test",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests"
+      ("org.apache.spark" %% "spark-sql" % sparkVersion % "test").cross(CrossVersion.for3Use2_13),
+      ("org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests").cross(CrossVersion.for3Use2_13),
+      ("org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests").cross(CrossVersion.for3Use2_13),
+      ("org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests").cross(CrossVersion.for3Use2_13)
     )
   )
 

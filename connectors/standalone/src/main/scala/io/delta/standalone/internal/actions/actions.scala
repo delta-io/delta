@@ -241,7 +241,7 @@ private[internal] case class CommitInfo(
     userId: Option[String],
     userName: Option[String],
     operation: String,
-    @JsonSerialize(using = classOf[JsonMapSerializer])
+    @JsonSerialize(`using` = classOf[JsonMapSerializer])
     operationParameters: Map[String, String],
     job: Option[JobInfo],
     notebook: Option[NotebookInfo],
