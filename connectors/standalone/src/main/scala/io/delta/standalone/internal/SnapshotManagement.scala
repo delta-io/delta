@@ -34,10 +34,15 @@ import io.delta.standalone.internal.util.FileNames._
  */
 private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
 
-  @volatile protected var currentSnapshot: SnapshotImpl = getSnapshotAtInit
+  @volatile protected var currentSnapshot: Option[SnapshotImpl] = None // getSnapshotAtInit
 
   /** Returns the current snapshot. Note this does not automatically `update()`. */
-  def snapshot: SnapshotImpl = currentSnapshot
+  def snapshot: SnapshotImpl = {
+    if (currentSnapshot.isEmpty) {
+      currentSnapshot = Some(getSnapshotAtInit)
+    }
+    currentSnapshot.get
+  }
 
   /**
    * Update DeltaLog by applying the new delta files if any.
@@ -65,8 +70,8 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
   private def updateInternal(): SnapshotImpl = {
     try {
       val newSegment = getLogSegmentForVersion(
-        startCheckpoint = currentSnapshot.logSegment.checkpointVersion)
-      if (newSegment != currentSnapshot.logSegment) {
+        startCheckpoint = snapshot.logSegment.checkpointVersion)
+      if (newSegment != snapshot.logSegment) {
         val startingFrom = newSegment.checkpointVersion
           .map(v => s" starting from checkpoint version $v.").getOrElse(".")
         logInfo(s"Loading version ${newSegment.version}$startingFrom")
@@ -74,17 +79,17 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
         val newSnapshot = createSnapshot(
           newSegment,
           newSegment.lastCommitTimestamp,
-          previousSnapshotOpt = Some(currentSnapshot) // We are updating to the newSegment!
+          previousSnapshotOpt = currentSnapshot
         )
 
-        if (currentSnapshot.version > -1 &&
-          currentSnapshot.metadataScala.id != newSnapshot.metadataScala.id) {
+        if (snapshot.version > -1 &&
+          snapshot.metadataScala.id != newSnapshot.metadataScala.id) {
           logError(s"Change in the table id detected while updating snapshot. " +
-            s"\nPrevious snapshot = $currentSnapshot\nNew snapshot = $newSnapshot.")
+            s"\nPrevious snapshot = $snapshot\nNew snapshot = $newSnapshot.")
         }
 
         logInfo(s"Updated snapshot to $newSnapshot")
-        currentSnapshot = newSnapshot
+        currentSnapshot = Some(newSnapshot)
       }
     } catch {
       case e: FileNotFoundException =>
@@ -93,9 +98,9 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
           throw e
         }
         logInfo(s"No delta log found for the Delta table at $logPath")
-        currentSnapshot = new InitialSnapshotImpl(hadoopConf, logPath, this)
+        currentSnapshot = Some(new InitialSnapshotImpl(hadoopConf, logPath, this))
     }
-    currentSnapshot
+    currentSnapshot.get
   }
 
   /**
@@ -254,7 +259,7 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
     // Thus, `snapshot.version` will always be > version. (If they were equal, we would have already
     // returned early above).
     val previousSnapshotOpt =
-      if (currentSnapshot.version <= version) Some(currentSnapshot) else None
+      if (snapshot.version <= version) currentSnapshot else None
 
     createSnapshot(
       segment,
