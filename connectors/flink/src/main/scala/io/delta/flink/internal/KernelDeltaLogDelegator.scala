@@ -17,7 +17,7 @@ import io.delta.standalone.internal.util.{Clock, SystemClock}
  * internally, so we need classes that extend those, and this is the one for DeltaLogImpl. It
  * provides features used by flink+startTransaction.
  */
-class KernelDeltaLogImpl(
+class KernelDeltaLogDelegator(
     tableClient: DefaultTableClient,
     table: TableImpl,
     hadoopConf: Configuration,
@@ -26,25 +26,24 @@ class KernelDeltaLogImpl(
     clock: Clock)
   extends DeltaLogImpl(hadoopConf, logPath, dataPath, clock) {
 
-  var currKernelSnapshot: Option[KernelSnapshotImpl] = None
+  val standaloneDeltaLog = new DeltaLogImpl(hadoopConf, logPath, dataPath, clock)
+  var currKernelSnapshot: Option[KernelSnapshotDelegator] = None
 
-  override def snapshot(): StandaloneSnapshotImpl = { // but is actually a KernelSnapshotImpl
+  override def snapshot(): StandaloneSnapshotImpl = { // but is actually a KernelSnapshotDelegator
     if (currKernelSnapshot.isEmpty) { update() }
     return currKernelSnapshot.get
   }
 
-  override def update(): StandaloneSnapshotImpl = { // but is actually a KernelSnapshotImpl
+  override def update(): StandaloneSnapshotImpl = { // but is actually a KernelSnapshotDelegator
     // get latest snapshot via kernel
     val kernelSnapshot = table.getLatestSnapshot(tableClient).asInstanceOf[SnapshotImplKernel]
-    currKernelSnapshot = Some(new KernelSnapshotImpl(
+    currKernelSnapshot = Some(new KernelSnapshotDelegator(
       kernelSnapshot,
       hadoopConf,
       logPath,
       kernelSnapshot.getVersion(tableClient), // note: tableClient isn't used
-      LogSegment.empty(logPath),
-      -1,
       this,
-      -1
+      standaloneDeltaLog
     ))
     currKernelSnapshot.get
   }
@@ -57,8 +56,8 @@ class KernelDeltaLogImpl(
   override def tableExists: Boolean = snapshot.version >= 0
 
   override def getChanges(startVersion: Long, failOnDataLoss: Boolean): java.util.Iterator[VersionLog] = {
-    logWarning("KernelDeltaLogImpl falling back to DeltaLogImpl for getChanges")
-    return super.getChanges(startVersion, failOnDataLoss);
+    logWarning("KernelDeltaLogDelegator falling back to DeltaLogImpl for getChanges")
+    return standaloneDeltaLog.getChanges(startVersion, failOnDataLoss);
   }
 
   override def getSnapshotForVersionAsOf(version: Long): StandaloneSnapshotImpl = {
@@ -72,14 +71,14 @@ class KernelDeltaLogImpl(
   }
 }
 
-object KernelDeltaLogImpl {
-  def forTable(hadoopConf: Configuration, dataPath: String): KernelDeltaLogImpl = {
+object KernelDeltaLogDelegator {
+  def forTable(hadoopConf: Configuration, dataPath: String): KernelDeltaLogDelegator = {
     val tableClient = DefaultTableClient.create(hadoopConf)
     val table = Table.forPath(tableClient, dataPath).asInstanceOf[TableImpl]
     // Todo: Potentially we could get the resolved paths out of the table above
     val rawPath = new Path(dataPath, "_delta_log")
     val fs = rawPath.getFileSystem(hadoopConf)
     val logPath = fs.makeQualified(rawPath)
-    new KernelDeltaLogImpl(tableClient, table, hadoopConf, logPath, logPath.getParent, new SystemClock)
+    new KernelDeltaLogDelegator(tableClient, table, hadoopConf, logPath, logPath.getParent, new SystemClock)
   }
 }

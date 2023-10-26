@@ -60,7 +60,7 @@ import io.delta.standalone.actions.Action;
 import io.delta.standalone.actions.AddFile;
 import io.delta.standalone.actions.Metadata;
 import io.delta.standalone.actions.SetTransaction;
-import io.delta.standalone.internal.KernelDeltaLogImpl;
+import io.delta.standalone.internal.KernelDeltaLogDelegator;
 import io.delta.standalone.types.StructType;
 
 
@@ -120,7 +120,7 @@ public class DeltaGlobalCommitter
      * A special log that uses the delta kernel to get protocol and metadata and make transactions
      * faster.
      */
-    private final transient KernelDeltaLogImpl kernelDeltaLog;
+    private final transient KernelDeltaLogDelegator kernelDeltaLog;
 
     private transient boolean firstCommit = true;
 
@@ -133,7 +133,7 @@ public class DeltaGlobalCommitter
         this.conf = conf;
         this.rowType = rowType;
         this.mergeSchema = mergeSchema;
-        this.kernelDeltaLog = KernelDeltaLogImpl.forTable(conf, basePath.toString());
+        this.kernelDeltaLog = KernelDeltaLogDelegator.forTable(conf, basePath.toString());
     }
 
     /**
