@@ -32,18 +32,17 @@ import io.delta.standalone.internal.util.ConversionUtils
  *  - numOfFiles (only used in verifySchemaCompatibility, which happens only when a metadata update occures)
  *  - allFilesScala (only used in verifySchemaCompatibility)
  */
-class KernelSnapshotImpl(
+class KernelSnapshotDelegator(
     kernelSnapshot: SnapshotImplKernel,
     hadoopConf: Configuration,
     path: Path,
     override val version: Long,
-    logSegment: LogSegment,
-    minFileRetentionTimestamp: Long,
-    deltaLog: DeltaLogImpl,
-    timestamp: Long)
-  extends SnapshotImpl(hadoopConf, path, version, logSegment, minFileRetentionTimestamp, deltaLog, timestamp) {
+    kernelDeltaLog: KernelDeltaLogDelegator,
+    standaloneDeltaLog: DeltaLogImpl)
+  extends SnapshotImpl(hadoopConf, path, -1, LogSegment.empty(path), -1, standaloneDeltaLog, -1) {
 
   val snapshotWrapper = new KernelSnapshotWrapper(kernelSnapshot)
+  lazy val standaloneSnapshot: SnapshotImpl = standaloneDeltaLog.getSnapshotForVersionAsOf(getVersion())
 
   /**
    * Internal vals we need to override
@@ -64,20 +63,20 @@ class KernelSnapshotImpl(
 
   // Internal apis that we need to verify don't get used often
   override def scanScala(): DeltaScanImpl = {
-    logInfo("Calling scanScala on KernelSnapshotImpl")
-    super.scanScala()
+    logInfo("Calling scanScala on KernelSnapshotDelegator")
+    standaloneSnapshot.scanScala()
   }
   override def setTransactionsScala: Seq[SetTransaction] = {
-    logInfo("Calling setTransactionsScala on KernelSnapshotImpl")
-    super.setTransactionsScala
+    logInfo("Calling setTransactionsScala on KernelSnapshotDelegator")
+    standaloneSnapshot.setTransactionsScala
   }
   override def numOfFiles: Long = {
-    logInfo("Calling numOfFiles on KernelSnapshotImpl")
-    super.numOfFiles
+    logInfo("Calling numOfFiles on KernelSnapshotDelegator")
+    standaloneSnapshot.numOfFiles
   }
   override def allFilesScala: Seq[AddFile] = {
-    logInfo("Calling allFilesScala on KernelSnapshotImpl")
-    super.allFilesScala
+    logInfo("Calling allFilesScala on KernelSnapshotDelegator")
+    standaloneSnapshot.allFilesScala
   }
 
 
