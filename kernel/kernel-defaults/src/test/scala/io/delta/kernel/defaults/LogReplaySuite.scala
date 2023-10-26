@@ -285,4 +285,14 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     assert(
       foundFiles.find(_.getPath.endsWith("foo")).exists(_.getModificationTime == 1700000000000L))
   }
+
+  test("get the last transaction version for appID") {
+    val unresolvedPath = GoldenTableUtils.goldenTablePath("deltalog-getChanges")
+    val table = io.delta.kernel.Table.forPath(tableClient, unresolvedPath)
+
+    val snapshot = table.getLatestSnapshot(tableClient)
+    assert(snapshot.getRecentTransactionVersion("fakeAppId") === Optional.of(3L))
+
+    assert(snapshot.getRecentTransactionVersion("nonExistentAppId") === Optional.empty())
+  }
 }

@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal;
 
+import java.util.Optional;
+
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.client.TableClient;
@@ -63,6 +65,11 @@ public class SnapshotImpl implements Snapshot {
     @Override
     public StructType getSchema(TableClient tableClient) {
         return getMetadata().getSchema();
+    }
+
+    @Override
+    public Optional<Long> getRecentTransactionVersion(String applicationId) {
+        return logReplay.loadRecentTransactionVersion(applicationId);
     }
 
     @Override

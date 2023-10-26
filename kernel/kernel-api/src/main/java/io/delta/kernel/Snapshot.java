@@ -20,6 +20,8 @@ import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.types.StructType;
 
+import java.util.Optional;
+
 /**
  * Represents the snapshot of a Delta table.
  *
@@ -43,6 +45,15 @@ public interface Snapshot {
      * @return Schema of the Delta table at this snapshot.
      */
     StructType getSchema(TableClient tableClient);
+
+    /**
+     * Get the recent transaction version for given <i>applicationId</i>. This information comes from
+     * the transactions identifiers stored in Delta transaction log.
+     *
+     * @param applicationId Identifier of the application that put transaction identifiers in Delta transaction log
+     * @return Last transaction version or null if no transaction identifier exists for this application.
+     */
+    Optional<Long> getRecentTransactionVersion(String applicationId);
 
     /**
      * Create a scan builder to construct a {@link Scan} to read data from this snapshot.

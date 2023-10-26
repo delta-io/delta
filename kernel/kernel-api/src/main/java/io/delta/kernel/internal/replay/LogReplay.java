@@ -18,6 +18,7 @@ package io.delta.kernel.internal.replay;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
@@ -62,6 +63,9 @@ public class LogReplay implements Logging {
     public static final StructType PROTOCOL_METADATA_READ_SCHEMA = new StructType()
         .add("protocol", Protocol.READ_SCHEMA)
         .add("metaData", Metadata.READ_SCHEMA);
+
+    public static final StructType SET_TRANSACTION_READ_SCHEMA = new StructType()
+        .add("txn", SetTransaction.READ_SCHEMA);
 
     /**
      * Read schema when searching for all the active AddFiles (need some RemoveFile info, too).
@@ -117,6 +121,11 @@ public class LogReplay implements Logging {
 
     public Tuple2<Protocol, Metadata> loadProtocolAndMetadata() {
         return this.protocolAndMetadata.get();
+    }
+
+    public Optional<Long> loadRecentTransactionVersion(String applicationId) {
+        // TODO: do we need to cache it? expected to call multiple times?
+        return loadRecentTransactionVersionHelper(applicationId);
     }
 
     /**
@@ -198,6 +207,35 @@ public class LogReplay implements Logging {
         throw new IllegalStateException(
             String.format("No metadata found at version %s", logSegment.version)
         );
+    }
+
+    private Optional<Long> loadRecentTransactionVersionHelper(String applicationId) {
+        try (CloseableIterator<Tuple2<FileDataReadResult, Boolean>> reverseIter =
+                     new ActionsIterator(
+                             tableClient,
+                             logSegment.allLogFilesReversed(),
+                             SET_TRANSACTION_READ_SCHEMA)) {
+            while (reverseIter.hasNext()) {
+                final ColumnarBatch columnarBatch = reverseIter.next()._1.getData();
+
+                assert(columnarBatch.getSchema().equals(SET_TRANSACTION_READ_SCHEMA));
+                final ColumnVector txnVector = columnarBatch.getColumnVector(0);
+                for (int i = 0; i < txnVector.getSize(); i++) {
+                    if (!txnVector.isNullAt(i)) {
+                        final Row row = txnVector.getStruct(i);
+                        SetTransaction txn = SetTransaction.fromRow(row);
+
+                        if (txn != null && applicationId.equals(txn.getAppId())) {
+                            return Optional.of(txn.getVersion());
+                        }
+                    }
+                }
+            }
+        } catch (IOException ex) {
+            throw new RuntimeException("Could not close iterator", ex);
+        }
+
+        return Optional.empty();
     }
 
     private void validateSupportedTable(Protocol protocol, Metadata metadata) {
