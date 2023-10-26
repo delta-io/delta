@@ -40,6 +40,7 @@ import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.parser.{AbstractSqlParser, AstBuilder, ParseException, ParserUtils}
 import org.apache.spark.sql.catalyst.parser.SqlBaseParser.MultipartIdentifierListContext
@@ -741,9 +742,10 @@ object StatisticsCollection extends DeltaCommand {
   def recompute(
       spark: SparkSession,
       deltaLog: DeltaLog,
+      catalogTable: Option[CatalogTable],
       predicates: Seq[Expression] = Seq(Literal(true)),
       fileFilter: AddFile => Boolean = af => true): Unit = {
-    val txn = deltaLog.startTransaction()
+    val txn = deltaLog.startTransaction(catalogTable)
     verifyPartitionPredicates(spark, txn.metadata.partitionColumns, predicates)
     // Save the current AddFiles that match the predicates so we can update their stats
     val files = txn.filterFiles(predicates).filter(fileFilter)

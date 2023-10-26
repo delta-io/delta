@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.fs.{FileSystem, FSDataInputStream, Path, PathHandle}
 
 import org.apache.spark.SparkException
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
@@ -260,7 +260,7 @@ class DeltaSuite extends QueryTest
             .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
             .save(tempDir.toString)
         }.getMessage
-        assert(e1.contains("Data written out does not match replaceWhere"))
+        assert(e1.contains("does not conform to partial table overwrite condition or constraint"))
 
         val e2 = intercept[AnalysisException] {
           Seq(true).toDF("is_odd")
@@ -303,7 +303,9 @@ class DeltaSuite extends QueryTest
             .save(tempDir.toString)
         }.getMessage
         if (enabled) {
-          assert(e4.contains("Data written out does not match replaceWhere 'value = 1'"))
+          assert(e4.contains(
+            "Written data does not conform to partial table overwrite condition " +
+              "or constraint 'value = 1'"))
         } else {
           assert(e4.contains("Predicate references non-partition column 'value'. Only the " +
             "partition columns may be referenced: [is_odd]"))
@@ -1541,6 +1543,7 @@ class DeltaSuite extends QueryTest
     }
   }
 
+
   test("ES-4716: Delta shouldn't be broken when users turn on case sensitivity") {
     withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
       withTempDir { tempDir =>
@@ -2113,7 +2116,7 @@ class DeltaSuite extends QueryTest
           .saveAsTable(table)
       }
       assert(e.getMessage.startsWith("[DELTA_REPLACE_WHERE_MISMATCH] " +
-        "Data written out does not match replaceWhere"))
+        "Written data does not conform to partial table overwrite condition or constraint"))
 
       Seq(("a", "b", "c"), ("d", "e", "f"))
         .toDF("a.b", "c.d", "ab")

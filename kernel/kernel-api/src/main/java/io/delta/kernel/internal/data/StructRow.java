@@ -19,7 +19,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
 
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * A {@link Row} abstraction for a struct type column vector and a specific {@code rowId}.

@@ -420,6 +420,174 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("InvalidProtocolVersionException - error message with protocol too high - table path") {
+    withTempDir { path =>
+      spark.range(1).write.format("delta").save(path.getCanonicalPath)
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, path.getCanonicalPath)
+
+      var tableReaderVersion = 4
+      var tableWriterVersion = 7
+      var version = snapshot.version + 1
+      untrackedChangeProtocolVersion(deltaLog, version, tableReaderVersion, tableWriterVersion)
+
+      val exceptionRead = intercept[InvalidProtocolVersionException] {
+        spark.read.format("delta").load(path.getCanonicalPath)
+      }
+      assert(exceptionRead.getMessage == getExpectedProtocolErrorMessage(
+        deltaLog.dataPath.toString,
+        tableReaderVersion,
+        tableWriterVersion))
+
+      tableReaderVersion = 3
+      tableWriterVersion = 8
+      version = version + 1
+      untrackedChangeProtocolVersion(deltaLog, version, tableReaderVersion, tableWriterVersion)
+
+      val exceptionWrite = intercept[InvalidProtocolVersionException] {
+        spark.range(1).write
+          .mode("append")
+          .option("mergeSchema", "true")
+          .format("delta")
+          .save(path.getCanonicalPath)
+      }
+      assert(exceptionWrite.getMessage == getExpectedProtocolErrorMessage(
+        deltaLog.dataPath.toString,
+        tableReaderVersion,
+        tableWriterVersion))
+    }
+  }
+
+  def testInvalidProtocolErrorMessageWithTableName(warm: Boolean): Unit = {
+    val protocolTableName = "mytableprotocoltoohigh"
+    withTable(protocolTableName) {
+      spark.range(1).write.format("delta").saveAsTable(protocolTableName)
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(
+        spark,
+        TableIdentifier(protocolTableName))
+
+      var tableReaderVersion = 4
+      var tableWriterVersion = 7
+      var version = snapshot.version + 1
+      untrackedChangeProtocolVersion(deltaLog, version, tableReaderVersion, tableWriterVersion)
+      if (!warm) {
+        DeltaLog.clearCache()
+      }
+
+      val exceptionRead = intercept[InvalidProtocolVersionException] {
+        spark.read.format("delta").table(protocolTableName)
+      }
+
+      var pathInErrorMessage = "default." + protocolTableName
+      val readErrorMessage = getExpectedProtocolErrorMessage(
+        pathInErrorMessage,
+        tableReaderVersion,
+        tableWriterVersion)
+
+      assert(exceptionRead.getMessage == readErrorMessage)
+
+      tableReaderVersion = 3
+      tableWriterVersion = 8
+      version = version + 1
+      untrackedChangeProtocolVersion(deltaLog, version, tableReaderVersion, tableWriterVersion)
+      if (!warm) {
+        DeltaLog.clearCache()
+      }
+
+      val exceptionWrite = intercept[InvalidProtocolVersionException] {
+        spark.range(1).write
+          .mode("append")
+          .option("mergeSchema", "true")
+          .format("delta")
+          .saveAsTable(protocolTableName)
+      }
+
+      assert(exceptionWrite.getMessage ==
+        getExpectedProtocolErrorMessage(pathInErrorMessage, tableReaderVersion, tableWriterVersion))
+
+      // Restore the protocol version or the clean-up fails
+      version = version + 1
+      untrackedChangeProtocolVersion(deltaLog, version, 1, 2)
+    }
+  }
+
+  test("InvalidProtocolVersionException - error message with table name - warm") {
+    testInvalidProtocolErrorMessageWithTableName(true)
+  }
+
+  test("InvalidProtocolVersionException - error message with table name - cold") {
+    testInvalidProtocolErrorMessageWithTableName(false)
+  }
+
+  test("InvalidProtocolVersionException - " +
+    "incompatible protocol change during the transaction - table name") {
+    for (incompatibleProtocol <- Seq(
+      Protocol(minReaderVersion = Int.MaxValue),
+      Protocol(minWriterVersion = Int.MaxValue),
+      Protocol(minReaderVersion = Int.MaxValue, minWriterVersion = Int.MaxValue)
+    )) {
+      val tableName = "mytableprotocoltoohigh"
+      withTable(tableName) {
+        spark.range(0).write.format("delta").saveAsTable(tableName)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val catalogTable = DeltaTableV2(spark, TableIdentifier(tableName)).catalogTable
+        val txn = deltaLog.startTransaction(catalogTable)
+        val currentVersion = txn.snapshot.version
+        untrackedChangeProtocolVersion(deltaLog, currentVersion + 1, incompatibleProtocol)
+
+        // Should detect the above incompatible protocol change and fail
+        val exception = intercept[InvalidProtocolVersionException] {
+          txn.commit(AddFile("test", Map.empty, 1, 1, dataChange = true) :: Nil, ManualUpdate)
+        }
+
+        var pathInErrorMessage = "default." + tableName
+        val errorMessage = getExpectedProtocolErrorMessage(
+          pathInErrorMessage,
+          incompatibleProtocol.minReaderVersion,
+          incompatibleProtocol.minWriterVersion)
+
+        assert(exception.getMessage == errorMessage)
+      }
+    }
+  }
+
+  private def untrackedChangeProtocolVersion(
+      log: DeltaLog,
+      version: Long,
+      tableProtocolReaderVersion: Int,
+      tableProtocolWriterVersion: Int)
+    {
+      untrackedChangeProtocolVersion(
+        log,
+        version,
+        Protocol(tableProtocolReaderVersion, tableProtocolWriterVersion))
+    }
+
+  private def untrackedChangeProtocolVersion(
+      log: DeltaLog,
+      version: Long,
+      protocol: Protocol): Unit = {
+    log.store.write(
+      deltaFile(log.logPath, version),
+      Iterator(
+        Metadata().json,
+        protocol.json),
+      overwrite = false,
+      log.newDeltaHadoopConf())
+  }
+
+  def getExpectedProtocolErrorMessage(
+      tableNameOrPath: String,
+      requiredReaderVersion: Int,
+      requiredWriterVersion: Int): String = {
+    // When testing flag is enabled Action.supportedReaderVersionNumbers includes 0.
+    "[DELTA_INVALID_PROTOCOL_VERSION] " +
+      s"""Unsupported Delta protocol version: table "$tableNameOrPath" requires """ +
+      s"reader version $requiredReaderVersion and " +
+      s"writer version $requiredWriterVersion, " +
+      s"""but Delta Lake "${io.delta.VERSION}" supports reader versions 0, 1, 2, 3 """ +
+      "and writer versions 0, 1, 2, 3, 4, 5, 7. Please upgrade to a newer release."
+  }
+
   test("protocol downgrade is a no-op") {
     withTempDir { path =>
       val log = createTableWithProtocol(Protocol(2, 3), path)
@@ -2032,7 +2200,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         spark.range(0).toDF)
       assert(intercept[InvalidProtocolVersionException] {
         sql(s"INSERT INTO delta.`${dir.getCanonicalPath}` VALUES (9)")
-      }.getMessage.contains(s"table requires 6"))
+      }.getMessage.contains(s" and writer version 6"))
     }
   }
 

@@ -83,9 +83,15 @@ class DeltaParseException(
 
 class DeltaArithmeticException(
     errorClass: String,
-    messageParameters: Map[String, String]) extends ArithmeticException with DeltaThrowable {
+    messageParameters: Array[String])
+  extends ArithmeticException(
+      DeltaThrowableHelper.getMessage(errorClass, messageParameters))
+    with DeltaThrowable {
   override def getErrorClass: String = errorClass
 
-  override def getMessageParameters: java.util.Map[String, String] = messageParameters.asJava
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)
+      .zip(messageParameters).toMap.asJava
+  }
 }
 

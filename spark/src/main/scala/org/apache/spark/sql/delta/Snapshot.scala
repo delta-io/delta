@@ -432,7 +432,7 @@ object Snapshot extends DeltaLogging {
       if (new Path(filePath.toUri).getParent != new Path(logBasePath.toUri)) {
         // scalastyle:off throwerror
         throw new AssertionError(s"File ($filePath) doesn't belong in the " +
-          s"transaction log at $logBasePath. Please contact Databricks Support.")
+          s"transaction log at $logBasePath.")
         // scalastyle:on throwerror
       }
     }

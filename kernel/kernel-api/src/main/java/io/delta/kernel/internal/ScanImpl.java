@@ -36,8 +36,8 @@ import io.delta.kernel.internal.types.TableSchemaSerDe;
 import io.delta.kernel.internal.util.InternalSchemaUtils;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * Implementation of {@link Scan}

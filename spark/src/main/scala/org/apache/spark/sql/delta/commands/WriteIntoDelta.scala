@@ -218,7 +218,8 @@ case class WriteIntoDelta(
     }
     val finalSchema = schemaInCatalog.getOrElse(dataSchema)
     updateMetadata(data.sparkSession, txn, finalSchema,
-      partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
+      partitionColumns, configuration, isOverwriteOperation, rearrangeOnly
+    )
 
     val replaceOnDataColsEnabled =
       sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED)

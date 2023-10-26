@@ -27,6 +27,7 @@ import scala.util.matching.Regex
 
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
@@ -489,9 +490,53 @@ trait DeltaDMLTestUtils
     dfw.save(tempPath)
   }
 
+  protected def withKeyValueData(
+      source: Seq[(Int, Int)],
+      target: Seq[(Int, Int)],
+      isKeyPartitioned: Boolean = false,
+      sourceKeyValueNames: (String, String) = ("key", "value"),
+      targetKeyValueNames: (String, String) = ("key", "value"))(
+      thunk: (String, String) => Unit = null): Unit = {
+
+    import testImplicits._
+
+    append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2).coalesce(2),
+      if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)
+    withTempView("source") {
+      source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
+      thunk("source", s"delta.`$tempPath`")
+    }
+  }
+
   protected def readDeltaTable(path: String): DataFrame = {
     spark.read.format("delta").load(path)
   }
 
   protected def getDeltaFileStmt(path: String): String = s"SELECT * FROM delta.`$path`"
+
+  /**
+   * Finds the latest operation of the given type that ran on the test table and returns the
+   * dataframe with the changes of the corresponding table version.
+   *
+   * @param operation Delta operation name, see [[DeltaOperations]].
+   */
+  protected def getCDCForLatestOperation(deltaLog: DeltaLog, operation: String): DataFrame = {
+    val latestOperation = deltaLog.history
+      .getHistory(None)
+      .find(_.operation == operation)
+    assert(latestOperation.nonEmpty, s"Couldn't find a ${operation} operation to check CDF")
+
+    val latestOperationVersion = latestOperation.get.version
+    assert(latestOperationVersion.nonEmpty,
+      s"Latest ${operation} operation doesn't have a version associated with it")
+
+    CDCReader
+      .changesToBatchDF(
+        deltaLog,
+        latestOperationVersion.get,
+        latestOperationVersion.get,
+        spark)
+      .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      .drop(CDCReader.CDC_COMMIT_VERSION)
+  }
 }
