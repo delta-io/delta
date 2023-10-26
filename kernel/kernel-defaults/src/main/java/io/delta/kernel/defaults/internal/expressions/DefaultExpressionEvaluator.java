@@ -26,9 +26,10 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.childAt;
 import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.compare;
 import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.evalNullability;

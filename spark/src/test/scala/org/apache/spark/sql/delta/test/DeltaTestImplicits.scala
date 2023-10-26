@@ -20,12 +20,14 @@ import java.io.File
 
 import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.util.Clock
 
 /**
@@ -123,5 +125,22 @@ object DeltaTestImplicits {
   implicit class DeltaTableV2TestHelper(deltaTable: DeltaTableV2) {
     /** For backward compatibility with existing unit tests */
     def snapshot: Snapshot = deltaTable.initialSnapshot
+  }
+
+  implicit class StatisticsCollectionObjectTestHelper(sc: StatisticsCollection.type) {
+
+    /**
+     * This is an implicit helper required for backward compatibility with existing
+     * unit tests. It allows to call [[StatisticsCollection.recompute]] without a
+     * catalog table and in the actual call, sets it to [[None]].
+     */
+    def recompute(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      predicates: Seq[Expression] = Seq(Literal(true)),
+      fileFilter: AddFile => Boolean = af => true): Unit = {
+      StatisticsCollection.recompute(
+        spark, deltaLog, catalogTable = None, predicates, fileFilter)
+    }
   }
 }

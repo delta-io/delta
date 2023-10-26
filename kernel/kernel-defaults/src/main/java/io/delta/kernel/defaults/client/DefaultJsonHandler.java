@@ -44,10 +44,10 @@ import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.util.Utils;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 
 /**
  * Default implementation of {@link JsonHandler} based on Hadoop APIs.

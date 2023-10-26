@@ -35,7 +35,7 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 
 import io.delta.kernel.internal.util.Utils;
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * Implementation of {@link JsonHandler} for testing Delta Kernel APIs

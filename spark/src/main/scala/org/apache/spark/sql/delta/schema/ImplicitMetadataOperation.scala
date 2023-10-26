@@ -57,7 +57,8 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       partitionColumns: Seq[String],
       configuration: Map[String, String],
       isOverwriteMode: Boolean,
-      rearrangeOnly: Boolean): Unit = {
+      rearrangeOnly: Boolean
+      ): Unit = {
     // To support the new column mapping mode, we drop existing metadata on data schema
     // so that all the column mapping related properties can be reinitialized in
     // OptimisticTransaction.updateMetadata
@@ -95,7 +96,8 @@ trait ImplicitMetadataOperation extends DeltaLogging {
           description = description,
           schemaString = dataSchema.json,
           partitionColumns = normalizedPartitionCols,
-          configuration = cleanedConfs,
+          configuration = cleanedConfs
+          ,
           createdTime = Some(System.currentTimeMillis())))
     } else if (isOverwriteMode && canOverwriteSchema && (isNewSchema || isPartitioningChanged)) {
       // Can define new partitioning in overwrite mode
@@ -115,7 +117,8 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       if (rearrangeOnly) {
         throw DeltaErrors.unexpectedDataChangeException("Change the Delta table schema")
       }
-      txn.updateMetadata(txn.metadata.copy(schemaString = mergedSchema.json))
+      txn.updateMetadata(txn.metadata.copy(schemaString = mergedSchema.json
+      ))
     } else if (isNewSchema || isNewPartitioning) {
       recordDeltaEvent(txn.deltaLog, "delta.schemaValidation.failure")
       val errorBuilder = new MetadataMismatchErrorBuilder
