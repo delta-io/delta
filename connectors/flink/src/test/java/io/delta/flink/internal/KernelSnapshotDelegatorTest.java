@@ -40,66 +40,66 @@ class KernelSnapshotDelegatorTest {
 
     private KernelDeltaLogDelegator getLog() throws Exception {
         String sourceTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
-	DeltaTestUtils.initTestForTableApiTable(sourceTablePath);
+        DeltaTestUtils.initTestForTableApiTable(sourceTablePath);
         return KernelDeltaLogDelegator.forTable(
-	    new Configuration(),
-	    sourceTablePath
-	    );
+            new Configuration(),
+            sourceTablePath
+            );
     }
     
     @Test
     public void testSnapshotVersion() throws Exception {
-	KernelDeltaLogDelegator kernelDeltaLog = getLog();
-	SnapshotImpl snapshot = kernelDeltaLog.snapshot();
-	assertEquals(snapshot.getVersion(), 0l);
+        KernelDeltaLogDelegator kernelDeltaLog = getLog();
+        SnapshotImpl snapshot = kernelDeltaLog.snapshot();
+        assertEquals(snapshot.getVersion(), 0l);
     }
 
     @Test
     public void testMetadata() throws Exception {
         KernelDeltaLogDelegator kernelDeltaLog = getLog();
-	SnapshotImpl snapshot = kernelDeltaLog.snapshot();
-	Metadata metadata = snapshot.getMetadata();
-	assertEquals(metadata.getId(), "eaf79abd-f74f-4618-a013-afd3a69c7ad2");
-	assertEquals(metadata.getName(), null);
-	Optional<Long> created = metadata.getCreatedTime();
-	assertThat(created.isPresent());
-	assertEquals(created.get(), 1641940596848L);
+        SnapshotImpl snapshot = kernelDeltaLog.snapshot();
+        Metadata metadata = snapshot.getMetadata();
+        assertEquals(metadata.getId(), "eaf79abd-f74f-4618-a013-afd3a69c7ad2");
+        assertEquals(metadata.getName(), null);
+        Optional<Long> created = metadata.getCreatedTime();
+        assertThat(created.isPresent());
+        assertEquals(created.get(), 1641940596848L);
     }
 
     @Test
     public void testProtocol() throws Exception {
         KernelDeltaLogDelegator kernelDeltaLog = getLog();
-	SnapshotImpl snapshot = kernelDeltaLog.snapshot();
-	Protocol protocol = snapshot.protocol();
-	assertEquals(protocol.getMinReaderVersion(), 1);
-	assertEquals(protocol.getMinWriterVersion(), 2);
+        SnapshotImpl snapshot = kernelDeltaLog.snapshot();
+        Protocol protocol = snapshot.protocol();
+        assertEquals(protocol.getMinReaderVersion(), 1);
+        assertEquals(protocol.getMinWriterVersion(), 2);
     }
 
     @Test
     public void testNumOfFiles() throws Exception {
         KernelDeltaLogDelegator kernelDeltaLog = getLog();
-	SnapshotImpl snapshot = kernelDeltaLog.snapshot();
-	Long n = snapshot.numOfFiles();
-	assertEquals(n, 1);
+        SnapshotImpl snapshot = kernelDeltaLog.snapshot();
+        Long n = snapshot.numOfFiles();
+        assertEquals(n, 1);
     }
 
     @Test
     public void testScanScala() throws Exception {
         KernelDeltaLogDelegator kernelDeltaLog = getLog();
-	SnapshotImpl snapshot = kernelDeltaLog.snapshot();
-	DeltaScanImpl scan = snapshot.scanScala();
-	CloseableIterator<AddFile> files = scan.getFiles();
-	assertThat(files.hasNext());
-	files.next();
-	assertThat(!files.hasNext());
+        SnapshotImpl snapshot = kernelDeltaLog.snapshot();
+        DeltaScanImpl scan = snapshot.scanScala();
+        CloseableIterator<AddFile> files = scan.getFiles();
+        assertThat(files.hasNext());
+        files.next();
+        assertThat(!files.hasNext());
     }
 
     // Just check these don't throw as the types get hairy
     @Test
     public void testCanCallScalaMethods() throws Exception {
         KernelDeltaLogDelegator kernelDeltaLog = getLog();
-	SnapshotImpl snapshot = kernelDeltaLog.snapshot();
-	snapshot.setTransactionsScala();
-	snapshot.allFilesScala();
+        SnapshotImpl snapshot = kernelDeltaLog.snapshot();
+        snapshot.setTransactionsScala();
+        snapshot.allFilesScala();
     }
 }
