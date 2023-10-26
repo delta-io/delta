@@ -48,14 +48,32 @@ class KernelSnapshotDelegator(
    * Internal vals we need to override
    */
   override lazy val protocolScala: Protocol = {
-    val kernelProtocol = kernelSnapshot.getProtocol()
-    new Protocol(kernelProtocol.getMinReaderVersion(), kernelProtocol.getMinWriterVersion())
+    if (kernelSnapshot.isInstanceOf[InitialKernelSnapshotImpl]) {
+      Protocol()
+    } else {
+      val kernelProtocol = kernelSnapshot.getProtocol()
+      new Protocol(kernelProtocol.getMinReaderVersion(), kernelProtocol.getMinWriterVersion())
+    }
   }
 
   override lazy val metadataScala: Metadata = {
-    val metadata = snapshotWrapper.getMetadata()
-    ConversionUtils.convertMetadataJ(metadata)
+    if (kernelSnapshot.isInstanceOf[InitialKernelSnapshotImpl]) {
+      Metadata()
+    } else {
+      val metadata = snapshotWrapper.getMetadata()
+      ConversionUtils.convertMetadataJ(metadata)
+    }
   }
+
+  // we provide a more efficient version of getting transactions
+  override lazy val transactions: Map[String, Long] = {
+    if (kernelSnapshot.isInstanceOf[InitialKernelSnapshotImpl]) {
+      Map()
+    } else {
+      standaloneSnapshot.transactions
+    }
+  }
+
 
   // Public APIS
   override def getMetadata: MetadataJ = snapshotWrapper.getMetadata()
@@ -71,8 +89,12 @@ class KernelSnapshotDelegator(
     standaloneSnapshot.setTransactionsScala
   }
   override def numOfFiles: Long = {
-    logInfo("Calling numOfFiles on KernelSnapshotDelegator")
-    standaloneSnapshot.numOfFiles
+    if (kernelSnapshot.isInstanceOf[InitialKernelSnapshotImpl]) {
+      0L
+    } else {
+      logInfo("Calling numOfFiles on KernelSnapshotDelegator")
+      standaloneSnapshot.numOfFiles
+    }
   }
   override def allFilesScala: Seq[AddFile] = {
     logInfo("Calling allFilesScala on KernelSnapshotDelegator")

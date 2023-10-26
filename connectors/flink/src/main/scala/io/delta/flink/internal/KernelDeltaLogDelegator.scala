@@ -3,13 +3,27 @@ package io.delta.standalone.internal
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import io.delta.kernel.Table
+import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.internal.{SnapshotImpl => SnapshotImplKernel, TableImpl}
+import io.delta.kernel.internal.fs.{Path => KernelPath}
 import io.delta.standalone.VersionLog
 import io.delta.standalone.actions.{CommitInfo => CommitInfoJ}
 import io.delta.standalone.internal.{SnapshotImpl => StandaloneSnapshotImpl}
 import io.delta.standalone.internal.util.{Clock, SystemClock}
+
+/**
+ *  Utility class to represent an "initial" snapshot as a kernel snapshot. This is equivalent to
+ *  InitialSnapshotImpl in standalone land.
+ */
+class InitialKernelSnapshotImpl(logPath: Path, dataPath: Path, tableClient: DefaultTableClient)
+    extends SnapshotImplKernel(
+      new KernelPath(logPath.toString()),
+      new KernelPath(dataPath.toString()),
+      -1,
+      io.delta.kernel.internal.snapshot.LogSegment.empty(new KernelPath(logPath.toString())),
+      tableClient,
+      -1)
 
 /**
  * We want to be able to construct an OptimisticTransactionImpl that uses a delta log and a snapshot
@@ -36,7 +50,12 @@ class KernelDeltaLogDelegator(
 
   override def update(): StandaloneSnapshotImpl = { // but is actually a KernelSnapshotDelegator
     // get latest snapshot via kernel
-    val kernelSnapshot = table.getLatestSnapshot(tableClient).asInstanceOf[SnapshotImplKernel]
+    val kernelSnapshot = try {
+      table.getLatestSnapshot(tableClient).asInstanceOf[SnapshotImplKernel]
+    } catch {
+      case e: TableNotFoundException =>
+        new InitialKernelSnapshotImpl(logPath, dataPath, tableClient)
+    }
     currKernelSnapshot = Some(new KernelSnapshotDelegator(
       kernelSnapshot,
       hadoopConf,
@@ -57,11 +76,12 @@ class KernelDeltaLogDelegator(
 
   override def getChanges(startVersion: Long, failOnDataLoss: Boolean): java.util.Iterator[VersionLog] = {
     logWarning("KernelDeltaLogDelegator falling back to DeltaLogImpl for getChanges")
-    return standaloneDeltaLog.getChanges(startVersion, failOnDataLoss);
+    standaloneDeltaLog.getChanges(startVersion, failOnDataLoss)
   }
 
   override def getSnapshotForVersionAsOf(version: Long): StandaloneSnapshotImpl = {
-    throw new RuntimeException()
+    logWarning("KernelDeltaLogDelegator falling back to DeltaLogImpl for getSnapshotForVersionAsOf")
+    standaloneDeltaLog.getSnapshotForVersionAsOf(version)
   }
   override def getSnapshotForTimestampAsOf(timestamp: Long): StandaloneSnapshotImpl = {
     throw new RuntimeException()
