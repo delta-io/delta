@@ -20,7 +20,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.types.ByteType;
 
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for byte type data.
