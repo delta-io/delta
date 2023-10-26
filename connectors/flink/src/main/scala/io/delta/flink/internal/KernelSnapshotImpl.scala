@@ -86,10 +86,4 @@ class KernelSnapshotImpl(
   override def scan(predicate: Expression): DeltaScan = throw new RuntimeException()
   override def getAllFiles: java.util.List[AddFileJ] = throw new RuntimeException()
   override def open(): CloseableIterator[RowParquetRecordJ] = throw new RuntimeException()
-
-
-
-
-
-
 }
