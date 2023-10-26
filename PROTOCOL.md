@@ -1346,7 +1346,7 @@ When enabled:
 
 ## Default Columns
 
-Delta supports defining default expressions for columns on Delta tables. Delta will generate default values for columns when users do not explicitly provide values for them when writing to such tables.
+Delta supports defining default expressions for columns on Delta tables. Delta will generate default values for columns when users do not explicitly provide values for them when writing to such tables, or when the user explicitly specifies the `DEFAULT` SQL keyword for the column.
  
 Enablement:
  - The table must be on Writer Version 7, and a feature name `allowColumnDefaults` must exist in the table `protocol`'s `writerFeatures`.
