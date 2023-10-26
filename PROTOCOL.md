@@ -1347,13 +1347,12 @@ When enabled:
 ## Default Columns
 
 Delta supports defining default expressions for columns on Delta tables. Delta will generate default values for columns when users do not explicitly provide values for them when writing to such tables. To enable Default Columns:
-- The table must be on Writer Version 4, or
 - The table must be on Writer Version 7, and a feature name `allowColumnDefaults` must exist in the table `protocol`'s `writerFeatures`.
 
 When enabled:
 - The `metadata` for the column in the table schema MAY contain the key `CURRENT_DEFAULT`.
 - The value of `CURRENT_DEFAULT` SHOULD be parsed as a SQL expression.
-- Writers MUST enforce that any data writing to the table satisfy the condition `(<value> <=> <default value>) IS TRUE` where the `default value` is the result of evaluating the default value expression at the time of writing each row. `<=>` is the NULL-safe equal operator which performs an equality comparison like the `=` operator but returns `TRUE` rather than NULL if both operands are `NULL`
+w- Writers MUST enforce that for before writing any rows to the table, for each such requested row that lacks any explicit value (including NULL) for columns with default values, the writing system will assign the result of evaluating the default value expression for each such column as the value for that column in the row.
 
 ## Identity Columns
 
