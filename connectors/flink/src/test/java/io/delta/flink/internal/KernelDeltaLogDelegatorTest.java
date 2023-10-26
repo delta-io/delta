@@ -37,13 +37,13 @@ class KernelDeltaLogDelegatorTest {
     @Test
     public void testKernelDetectsTable() throws Exception {
         String sourceTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
-	DeltaTestUtils.initTestForTableApiTable(sourceTablePath);
+        DeltaTestUtils.initTestForTableApiTable(sourceTablePath);
         KernelDeltaLogDelegator kernelDeltaLog = KernelDeltaLogDelegator.forTable(
-	    new Configuration(),
-	    sourceTablePath
+            new Configuration(),
+            sourceTablePath
         );
-	assertThat(kernelDeltaLog.tableExists())
-	    .withFailMessage(
+        assertThat(kernelDeltaLog.tableExists())
+            .withFailMessage(
                 "There should be Delta table files in test folder.")
             .isTrue();
     }
@@ -51,25 +51,24 @@ class KernelDeltaLogDelegatorTest {
     @Test
     public void testSnapshot() throws Exception {
         String sourceTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
-	DeltaTestUtils.initTestForTableApiTable(sourceTablePath);
+        DeltaTestUtils.initTestForTableApiTable(sourceTablePath);
         KernelDeltaLogDelegator kernelDeltaLog = KernelDeltaLogDelegator.forTable(
-	    new Configuration(),
-	    sourceTablePath
+            new Configuration(),
+            sourceTablePath
         );
-	SnapshotImpl snapshot = kernelDeltaLog.snapshot();
-	assertEquals(snapshot.getVersion(), 0l);
+        SnapshotImpl snapshot = kernelDeltaLog.snapshot();
+        assertEquals(snapshot.getVersion(), 0l);
     }
 
     @Test
     public void testGetChanges() throws Exception {
         String sourceTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
-	DeltaTestUtils.initTestForTableApiTable(sourceTablePath);
+        DeltaTestUtils.initTestForTableApiTable(sourceTablePath);
         KernelDeltaLogDelegator kernelDeltaLog = KernelDeltaLogDelegator.forTable(
-	    new Configuration(),
-	    sourceTablePath
+            new Configuration(),
+            sourceTablePath
         );
-	Iterator<VersionLog> changes = kernelDeltaLog.getChanges(0, true);
-	assertThat(changes.hasNext());
+        Iterator<VersionLog> changes = kernelDeltaLog.getChanges(0, true);
+        assertThat(changes.hasNext());
     }
-
 }
