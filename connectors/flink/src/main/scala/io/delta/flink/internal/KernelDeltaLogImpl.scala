@@ -41,8 +41,8 @@ class KernelDeltaLogImpl(
       hadoopConf,
       logPath,
       kernelSnapshot.getVersion(tableClient), // note: tableClient isn't used
-      null,
-      0L,
+      LogSegment.empty(logPath),
+      -1,
       this,
       -1
     ))
