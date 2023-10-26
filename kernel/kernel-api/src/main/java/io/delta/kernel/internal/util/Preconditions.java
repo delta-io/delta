@@ -15,8 +15,11 @@
  */
 package io.delta.kernel.internal.util;
 
+/**
+ * Static convenience methods that help a method or constructor check whether it was invoked
+ * correctly (that is, whether its preconditions were met).
+ */
 public class Preconditions {
-
     private Preconditions() {}
 
     /**
@@ -61,5 +64,4 @@ public class Preconditions {
                     String.format(String.valueOf(message), args));
         }
     }
-
 }
