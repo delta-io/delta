@@ -1346,13 +1346,15 @@ When enabled:
 
 ## Default Columns
 
-Delta supports defining default expressions for columns on Delta tables. Delta will generate default values for columns when users do not explicitly provide values for them when writing to such tables. To enable Default Columns:
-- The table must be on Writer Version 7, and a feature name `allowColumnDefaults` must exist in the table `protocol`'s `writerFeatures`.
+Delta supports defining default expressions for columns on Delta tables. Delta will generate default values for columns when users do not explicitly provide values for them when writing to such tables.
+ 
+Enablement:
+ - The table must be on Writer Version 7, and a feature name `allowColumnDefaults` must exist in the table `protocol`'s `writerFeatures`.
 
 When enabled:
-- The `metadata` for the column in the table schema MAY contain the key `CURRENT_DEFAULT`.
-- The value of `CURRENT_DEFAULT` SHOULD be parsed as a SQL expression.
-w- Writers MUST enforce that for before writing any rows to the table, for each such requested row that lacks any explicit value (including NULL) for columns with default values, the writing system will assign the result of evaluating the default value expression for each such column as the value for that column in the row.
+ - The `metadata` for the column in the table schema MAY contain the key `CURRENT_DEFAULT`.
+ - The value of `CURRENT_DEFAULT` SHOULD be parsed as a SQL expression. Any engine that assigns this value can use its own SQL dialect of choice to represent the expression as a string, and use that same dialect to evaluate that expression later for future writes. If one engine writes the string metadata using its own SQL dialect and another engine then reads it back later when performing writes, the results are undefined.
+ - Writers MUST enforce that for before writing any rows to the table, for each such requested row that lacks any explicit value (including NULL) for columns with default values, the writing system will assign the result of evaluating the default value expression for each such column as the value for that column in the row. By the same token, if the engine specified the explicit `DEFAULT` SQL keyword for any column, the expression result must be substituted in the same way.
 
 ## Identity Columns
 
