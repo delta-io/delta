@@ -159,6 +159,8 @@ public class DeltaGlobalCommitterTest {
         RowType updatedSchema =
             DeltaSinkTestUtils.addNewColumnToSchema(DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE);
 
+        deltaLog.snapshot(); // force cache of current snapshot
+
         DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
             DeltaTestUtils.getHadoopConf(),
             tablePath,
