@@ -197,7 +197,8 @@ class DeltaDataSource
       data = data,
       // empty catalogTable is acceptable as the code path is only for path based writes
       // (df.write.save("path")) which does not need to use/update catalog
-      catalogTableOpt = None).run(sqlContext.sparkSession)
+      catalogTableOpt = None
+      ).run(sqlContext.sparkSession)
 
     deltaLog.createRelation()
   }

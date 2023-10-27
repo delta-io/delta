@@ -99,7 +99,8 @@ trait ImplicitMetadataOperation extends DeltaLogging {
           configuration = cleanedConfs
           ,
           createdTime = Some(System.currentTimeMillis())))
-    } else if (isOverwriteMode && canOverwriteSchema && (isNewSchema || isPartitioningChanged)) {
+    } else if (isOverwriteMode && canOverwriteSchema && (isNewSchema || isPartitioningChanged
+        )) {
       // Can define new partitioning in overwrite mode
       val newMetadata = txn.metadata.copy(
         schemaString = dataSchema.json,
@@ -111,7 +112,8 @@ trait ImplicitMetadataOperation extends DeltaLogging {
           "change the partition schema")
       }
       txn.updateMetadataForTableOverwrite(newMetadata)
-    } else if (isNewSchema && canMergeSchema && !isNewPartitioning) {
+    } else if (isNewSchema && canMergeSchema && !isNewPartitioning
+        ) {
       logInfo(s"New merged schema: ${mergedSchema.treeString}")
       recordDeltaEvent(txn.deltaLog, "delta.ddl.mergeSchema")
       if (rearrangeOnly) {
@@ -119,7 +121,8 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       }
       txn.updateMetadata(txn.metadata.copy(schemaString = mergedSchema.json
       ))
-    } else if (isNewSchema || isNewPartitioning) {
+    } else if (isNewSchema || isNewPartitioning
+        ) {
       recordDeltaEvent(txn.deltaLog, "delta.schemaValidation.failure")
       val errorBuilder = new MetadataMismatchErrorBuilder
       if (isNewSchema) {
