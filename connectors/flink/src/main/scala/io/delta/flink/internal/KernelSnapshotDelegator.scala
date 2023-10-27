@@ -14,6 +14,28 @@ import io.delta.standalone.internal.scan.DeltaScanImpl
 import io.delta.standalone.internal.util.ConversionUtils
 
 /**
+ * Utility class for transactions method
+ */
+class AppIdDeferedMap(snapshot: SnapshotImplKernel)  extends Map[String, Long] {
+  def get(applicationId: String): Option[Long] = {
+    val versionJOpt = snapshot.getRecentTransactionVersion(applicationId)
+    if (versionJOpt.isPresent) {
+      Some(versionJOpt.get)
+    } else {
+      None
+    }
+  }
+
+  // we don't support iterating, so return an empty one (so that printing etc can work)
+  def iterator: Iterator[(String, Long)] = Iterator()
+
+  // we don't support add/remove, so throw exceptions for those
+  def +[V1 >: Long](kv: (String, V1)): Map[String,V1] = throw new RuntimeException()
+  def -(key: String): Map[String,Long] = throw new RuntimeException()
+
+}
+
+/**
  * This class is designed to be passed to OptimisticTransactionImpl, and provide exactly what that
  * needs to operate, but on a Kernel Snapshot rather than a standalone Snapshot.
  *
@@ -70,7 +92,10 @@ class KernelSnapshotDelegator(
     if (kernelSnapshot.isInstanceOf[InitialKernelSnapshotImpl]) {
       Map()
     } else {
-      standaloneSnapshot.transactions
+      // we use an optimized version to quickly read the most recent appId, but, since
+      // OptimisticTransactionImpl hasn't told us what appId it wants here yet, we return a map that
+      // will do the work when requested and that information is available
+      new AppIdDeferedMap(kernelSnapshot)
     }
   }
 
