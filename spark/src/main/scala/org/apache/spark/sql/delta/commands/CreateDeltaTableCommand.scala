@@ -34,6 +34,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.internal.SQLConf
@@ -429,7 +430,7 @@ case class CreateDeltaTableCommand(
         // existing metadata because new table desc will not have related metadata assigned yet
         val differences = SchemaUtils.reportDifferences(
           dropColumnMappingMetadata(existingMetadata.schema),
-          tableDesc.schema)
+          CharVarcharUtils.replaceCharVarcharWithStringInSchema(tableDesc.schema))
         if (differences.nonEmpty) {
           throw DeltaErrors.createTableWithDifferentSchemaException(
             path, tableDesc.schema, existingMetadata.schema, differences)
