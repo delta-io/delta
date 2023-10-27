@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
+import io.delta.kernel.Table;
+import io.delta.kernel.client.TableClient;
 import io.delta.flink.internal.options.DeltaConfigOption;
 import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.internal.options.DeltaOptionValidationException;
@@ -53,9 +55,17 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
 
     protected MockedStatic<DeltaLog> deltaLogStatic;
 
-    public void closeDeltaLogStatic() {
+    @Mock
+    private Table kernelTable;
+
+    protected MockedStatic<Table> kernelTableStatic;
+
+    public void closeStaticLogs() {
         if (deltaLogStatic != null) {
             deltaLogStatic.close();
+        }
+        if (kernelTableStatic != null) {
+            kernelTableStatic.close();
         }
     }
 
@@ -344,6 +354,10 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
             .thenReturn(
                 new StructType(fields)
             );
+
+        kernelTableStatic = Mockito.mockStatic(Table.class);
+        kernelTableStatic.when(() -> Table.forPath(any(TableClient.class), anyString()))
+            .thenReturn(kernelTable);
     }
 
     protected  <T> DeltaSourceBuilderBase<?, ?> setOptionOnBuilder(String optionName, T value,

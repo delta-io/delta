@@ -113,6 +113,7 @@ public class DeltaGlobalCommitterTestParametrized {
     @Test
     public void testCommitToDeltaTableInAppendMode() {
         //GIVEN
+        deltaLog.snapshot();
         DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
             DeltaTestUtils.getHadoopConf(),
             tablePath,
