@@ -16,11 +16,11 @@
 
 package io.delta.kernel;
 
+import java.util.Optional;
+
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.types.StructType;
-
-import java.util.Optional;
 
 /**
  * Represents the snapshot of a Delta table.
@@ -47,11 +47,13 @@ public interface Snapshot {
     StructType getSchema(TableClient tableClient);
 
     /**
-     * Get the recent transaction version for given <i>applicationId</i>. This information comes from
-     * the transactions identifiers stored in Delta transaction log.
+     * Get the recent transaction version for given <i>applicationId</i>. This information comes
+     * from the transactions identifiers stored in Delta transaction log.
      *
-     * @param applicationId Identifier of the application that put transaction identifiers in Delta transaction log
-     * @return Last transaction version or null if no transaction identifier exists for this application.
+     * @param applicationId Identifier of the application that put transaction identifiers in Delta
+     * transaction log
+     * @return Last transaction version or null if no transaction identifier exists for this
+     * application.
      */
     Optional<Long> getRecentTransactionVersion(String applicationId);
 
