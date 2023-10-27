@@ -1343,6 +1343,23 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_USE_MULTI_THREADED_STATS_COLLECTION =
+    buildConf("collectStats.useMultiThreadedStatsCollection")
+      .internal()
+      .doc("Whether to use multi-threaded statistics collection. If false, statistics will be " +
+        "collected sequentially within each partition.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_STATS_COLLECTION_NUM_FILES_PARTITION =
+    buildConf("collectStats.numFilesPerPartition")
+      .internal()
+      .doc("Controls the number of files that should be within a RDD partition " +
+        "during multi-threaded optimized statistics collection. A larger number will lead to " +
+        "less parallelism, but can reduce scheduling overhead.")
+      .intConf
+      .checkValue(v => v >= 1, "Must be at least 1.")
+      .createWithDefault(100)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
