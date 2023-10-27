@@ -396,7 +396,7 @@ class DeltaLog private(
         Action.supportedReaderVersionNumbers.toSeq,
         Action.supportedWriterVersionNumbers.toSeq)
     } else {
-      throw unsupportedFeaturesException(clientUnsupportedFeatureNames)
+      throw unsupportedFeaturesException(dataPath.toString(), clientUnsupportedFeatureNames)
     }
   }
 

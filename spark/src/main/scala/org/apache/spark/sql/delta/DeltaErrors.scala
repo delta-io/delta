@@ -2131,17 +2131,19 @@ trait DeltaErrorsBase
   }
 
   def unsupportedReaderTableFeaturesInTableException(
+    tableNameOrPath: String,
     unsupported: Iterable[String]): DeltaTableFeatureException = {
     new DeltaTableFeatureException(
       errorClass = "DELTA_UNSUPPORTED_FEATURES_FOR_READ",
-      messageParameters = Array(unsupported.mkString(", ")))
+      messageParameters = Array(tableNameOrPath, io.delta.VERSION, unsupported.mkString(", ")))
   }
 
   def unsupportedWriterTableFeaturesInTableException(
+    tableNameOrPath: String,
     unsupported: Iterable[String]): DeltaTableFeatureException = {
     new DeltaTableFeatureException(
       errorClass = "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE",
-      messageParameters = Array(unsupported.mkString(", ")))
+      messageParameters = Array(tableNameOrPath, io.delta.VERSION, unsupported.mkString(", ")))
   }
 
   def unsupportedTableFeatureConfigsException(

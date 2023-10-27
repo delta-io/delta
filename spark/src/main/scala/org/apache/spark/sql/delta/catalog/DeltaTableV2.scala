@@ -87,7 +87,7 @@ case class DeltaTableV2(
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
   lazy val deltaLog: DeltaLog = {
-    DeltaTableV2.withEnrichedInvalidProtocolVersionException(catalogTable, tableIdentifier) {
+    DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable, tableIdentifier) {
       DeltaLog.forTable(spark, rootPath, options)
     }
   }
@@ -120,7 +120,7 @@ case class DeltaTableV2(
    * WARNING: Because the snapshot is captured lazily, callers should explicitly access the snapshot
    * if they want to be certain it has been captured.
    */
-  lazy val initialSnapshot: Snapshot = DeltaTableV2.withEnrichedInvalidProtocolVersionException(
+  lazy val initialSnapshot: Snapshot = DeltaTableV2.withEnrichedUnsupportedTableException(
     catalogTable, tableIdentifier) {
 
     timeTravelSpec.map { spec =>
@@ -352,7 +352,7 @@ object DeltaTableV2 {
    * the data path in the message, this wrapper throw a new InvalidProtocolVersionException with
    * table name and sets its Cause to the original InvalidProtocolVersionException.
    */
-  def withEnrichedInvalidProtocolVersionException[T](
+  def withEnrichedUnsupportedTableException[T](
       catalogTable: Option[CatalogTable],
       tableName: Option[String] = None)(thunk: => T): T = {
 
@@ -364,6 +364,16 @@ object DeltaTableV2 {
     try thunk catch {
       case e: InvalidProtocolVersionException if tableNameToUse.exists(_ != e.tableNameOrPath) =>
         throw e.copy(tableNameOrPath = tableNameToUse.get).initCause(e)
+      case e: DeltaTableFeatureException if Seq(
+          "DELTA_UNSUPPORTED_FEATURES_FOR_READ",
+          "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE").contains(e.getErrorClass) &&
+          e.messageParameters.size == 3 &&
+          tableNameToUse.exists(_ != e.messageParameters(0)) =>
+        throw new DeltaTableFeatureException(
+          errorClass = e.getErrorClass,
+          messageParameters =
+            Array(tableNameToUse.get, e.messageParameters(1), e.messageParameters(2)))
+          .initCause(e)
     }
   }
 }
