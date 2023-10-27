@@ -253,6 +253,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
           conf = snapshot.deltaLog.newDeltaHadoopConf(),
           dataPath = snapshot.deltaLog.dataPath,
           addFiles = filesWithNoStats.toDS(spark),
+          numFilesOpt = Some(filesWithNoStats.size),
           columnMappingMode = snapshot.metadata.columnMappingMode,
           dataSchema = snapshot.dataSchema,
           statsSchema = snapshot.statsSchema,
