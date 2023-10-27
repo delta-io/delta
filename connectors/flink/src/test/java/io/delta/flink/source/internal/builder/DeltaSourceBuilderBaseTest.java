@@ -73,7 +73,7 @@ class DeltaSourceBuilderBaseTest {
         deltaLogStatic.when(() -> DeltaLog.forTable(any(Configuration.class), anyString()))
             .thenReturn(deltaLog);
 
-	kernelTableStatic = Mockito.mockStatic(Table.class);
+        kernelTableStatic = Mockito.mockStatic(Table.class);
         kernelTableStatic.when(() -> Table.forPath(any(TableClient.class), anyString()))
             .thenReturn(kernelTable);
 
@@ -86,13 +86,13 @@ class DeltaSourceBuilderBaseTest {
             DeltaTestUtils.getHadoopConf(),
             new ContinuousSnapshotSupplierFactory()
         );
-	builder.option("useKernelForSnapshots", false);
+        builder.option("useKernelForSnapshots", false);
     }
 
     @AfterEach
     public void after() {
         deltaLogStatic.close();
-	kernelTableStatic.close();
+        kernelTableStatic.close();
     }
 
     /**
