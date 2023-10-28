@@ -588,7 +588,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       "and writer versions 0, 1, 2, 3, 4, 5, 7. Please upgrade to a newer release."
   }
 
-  test("DeltaTableFeatureException - error message - table path") {
+  test("DeltaUnsupportedTableFeatureException - error message - table path") {
     withTempDir { path =>
       spark.range(1).write.format("delta").save(path.getCanonicalPath)
       val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, path.getCanonicalPath)
@@ -600,7 +600,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         .withReaderFeatures(Seq("NonExistingReaderFeature1", "NonExistingReaderFeature2"))
       untrackedChangeProtocolVersion(deltaLog, version, protocolReaderFeatures)
 
-      val exceptionRead = intercept[DeltaTableFeatureException] {
+      val exceptionRead = intercept[DeltaUnsupportedTableFeatureException] {
         spark.read.format("delta").load(path.getCanonicalPath)
       }
       assert(exceptionRead.getMessage ==
@@ -615,7 +615,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         .withWriterFeatures(Seq("NonExistingWriterFeature1", "NonExistingWriterFeature2"))
       untrackedChangeProtocolVersion(deltaLog, version, protocolWriterFeatures)
 
-      val exceptionWrite = intercept[DeltaTableFeatureException] {
+      val exceptionWrite = intercept[DeltaUnsupportedTableFeatureException] {
         spark.range(1).write
           .mode("append")
           .option("mergeSchema", "true")
@@ -645,7 +645,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         DeltaLog.clearCache()
       }
 
-      val exceptionRead = intercept[DeltaTableFeatureException] {
+      val exceptionRead = intercept[DeltaUnsupportedTableFeatureException] {
         spark.read.format("delta").table(featureTable)
       }
       val pathInErrorMessage = "default." + featureTable
@@ -664,7 +664,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         DeltaLog.clearCache()
       }
 
-      val exceptionWrite = intercept[DeltaTableFeatureException] {
+      val exceptionWrite = intercept[DeltaUnsupportedTableFeatureException] {
         spark.range(1).write
           .mode("append")
           .option("mergeSchema", "true")
@@ -682,15 +682,15 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  test("DeltaTableFeatureException - error message with table name - warm") {
+  test("DeltaUnsupportedTableFeatureException - error message with table name - warm") {
     testTableFeatureErrorMessageWithTableName(true)
   }
 
-  test("DeltaTableFeatureException - error message with table name - cold") {
+  test("DeltaUnsupportedTableFeatureException - error message with table name - cold") {
     testTableFeatureErrorMessageWithTableName(false)
   }
 
-  test("DeltaTableFeatureException - " +
+  test("DeltaUnsupportedTableFeatureException - " +
     "incompatible protocol change during the transaction - table name") {
     for ((incompatibleProtocol, read) <- Seq(
         (Protocol(
@@ -714,7 +714,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         untrackedChangeProtocolVersion(deltaLog, currentVersion + 1, incompatibleProtocol)
 
         // Should detect the above incompatible feature and fail
-        val exception = intercept[DeltaTableFeatureException] {
+        val exception = intercept[DeltaUnsupportedTableFeatureException] {
           txn.commit(AddFile("test", Map.empty, 1, 1, dataChange = true) :: Nil, ManualUpdate)
         }
 
