@@ -2,6 +2,7 @@ package io.delta.standalone.internal
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.slf4j.LoggerFactory;
 
 import io.delta.flink.source.internal.enumerator.supplier.KernelSnapshotWrapper
 import io.delta.kernel.internal.{SnapshotImpl => SnapshotImplKernel}
@@ -16,12 +17,17 @@ import io.delta.standalone.internal.util.ConversionUtils
 /**
  * Utility class for transactions method
  */
-class AppIdDeferedMap(snapshot: SnapshotImplKernel)  extends Map[String, Long] {
+class AppIdDeferedMap(snapshot: SnapshotImplKernel) extends Map[String, Long] {
   def get(applicationId: String): Option[Long] = {
+    AppIdDeferedMap.LOG.info("Starting getRecentTransactionVersion")
+    val start = System.nanoTime()
     val versionJOpt = snapshot.getRecentTransactionVersion(applicationId)
+    val timeElapsed = System.nanoTime() - start
     if (versionJOpt.isPresent) {
+      AppIdDeferedMap.LOG.info("got recent version in " + timeElapsed)
       Some(versionJOpt.get)
     } else {
+      AppIdDeferedMap.LOG.info("discovered doesn't exist in " + timeElapsed)
       None
     }
   }
@@ -32,7 +38,10 @@ class AppIdDeferedMap(snapshot: SnapshotImplKernel)  extends Map[String, Long] {
   // we don't support add/remove, so throw exceptions for those
   def +[V1 >: Long](kv: (String, V1)): Map[String,V1] = throw new RuntimeException()
   def -(key: String): Map[String,Long] = throw new RuntimeException()
+}
 
+object AppIdDeferedMap {
+  val LOG = LoggerFactory.getLogger(classOf[AppIdDeferedMap]);
 }
 
 /**
