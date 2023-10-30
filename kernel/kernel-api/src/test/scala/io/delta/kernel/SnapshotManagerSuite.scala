@@ -348,13 +348,13 @@ class SnapshotManagerSuite extends AnyFunSuite {
     testWithSingularAndMultipartCheckpoint(
       deltaVersions = (0L to 20L),
       checkpointVersions = Seq(10, 20),
-      startCheckpoint = Optional.of(20),
+      startCheckpoint = Optional.of(20)
     )
     // _last_checkpoint hasn't been updated yet
     testWithSingularAndMultipartCheckpoint(
       deltaVersions = (0L to 20L),
       checkpointVersions = Seq(10, 20),
-      startCheckpoint = Optional.of(10),
+      startCheckpoint = Optional.of(10)
     )
     testWithSingularAndMultipartCheckpoint(
       deltaVersions = (0L to 20L),
@@ -391,7 +391,7 @@ class SnapshotManagerSuite extends AnyFunSuite {
     testWithSingularAndMultipartCheckpoint(
       deltaVersions = (20L to 25L),
       checkpointVersions = Seq(20),
-      startCheckpoint = Optional.of(20),
+      startCheckpoint = Optional.of(20)
     )
     testWithSingularAndMultipartCheckpoint(
       deltaVersions = (20L to 25L),
@@ -472,7 +472,7 @@ class SnapshotManagerSuite extends AnyFunSuite {
       (0L to 50L),
       Seq(10, 30, 50),
       Seq(20, 40),
-      numParts = 5,
+      numParts = 5
     )
     testWithCheckpoints(
       (0L to 50L),
@@ -649,7 +649,7 @@ class SnapshotManagerSuite extends AnyFunSuite {
     testWithSingularAndMultipartCheckpoint(
       (0L until 25L),
       Seq(10L, 20L),
-      startCheckpoint = Optional.of(30),
+      startCheckpoint = Optional.of(30)
     )
   }
 
