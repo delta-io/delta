@@ -178,7 +178,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  // TODO for the below, when and what error should we throw?
+  // TODO for the below, when should we throw an exception? #2253
   //   - on Table creation?
   //   - on Snapshot creation?
 
@@ -199,7 +199,6 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  // TODO should this throw not a delta table exception instead?
   test("non-empty folder not a delta table") {
     intercept[TableNotFoundException] {
       latestSnapshot(goldenTablePath("no-delta-log-folder"))
