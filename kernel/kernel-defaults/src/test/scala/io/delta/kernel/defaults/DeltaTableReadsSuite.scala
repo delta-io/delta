@@ -158,7 +158,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     val ex = intercept[TableNotFoundException] {
       Table.forPath(defaultTableClient, invalidPath)
     }
-    assert(ex.getMessage().contains(s"Table at path `$invalidPath` is not found"))
+    assert(ex.getMessage().contains(s"Delta table at path `$invalidPath` is not found"))
   }
 
   test("table deleted after the `Table` creation") {
@@ -174,7 +174,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         table.getLatestSnapshot(defaultTableClient)
       }
       assert(ex.getMessage.contains(
-        s"Table at path `file:${target.getCanonicalPath}` is not found"))
+        s"Delta table at path `file:${target.getCanonicalPath}` is not found"))
     }
   }
 
