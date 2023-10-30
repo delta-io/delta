@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.utils
 
 import java.io.File
+import java.math.{BigDecimal => BigDecimalJ}
 import java.nio.file.Files
 import java.util.{Optional, TimeZone, UUID}
 import scala.collection.JavaConverters._
@@ -23,7 +24,7 @@ import scala.collection.mutable.ArrayBuffer
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.client.TableClient
-import io.delta.kernel.data.{ColumnVector, FilteredColumnarBatch, MapValue, Row}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.expressions.Predicate
@@ -35,6 +36,7 @@ import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{types => sparktypes}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.Assertions
 
@@ -52,7 +54,6 @@ trait TestUtils extends Assertions with SQLHelper {
     .getOrCreate()
 
   implicit class CloseableIteratorOps[T](private val iter: CloseableIterator[T]) {
-
     def forEach(f: T => Unit): Unit = {
       try {
         while (iter.hasNext) {
@@ -77,11 +78,20 @@ trait TestUtils extends Assertions with SQLHelper {
   }
 
   implicit class StructTypeOps(schema: StructType) {
-
     def withoutField(name: String): StructType = {
       val newFields = schema.fields().asScala
         .filter(_.getName != name).asJava
       new StructType(newFields)
+    }
+
+    def toSpark: sparktypes.StructType = {
+      toSparkSchema(schema)
+    }
+  }
+
+  implicit class ColumnarBatchOps(batch: ColumnarBatch) {
+    def toFiltered: FilteredColumnarBatch = {
+      new FilteredColumnarBatch(batch, Optional.empty())
     }
   }
 
@@ -331,7 +341,12 @@ trait TestUtils extends Assertions with SQLHelper {
         java.lang.Double.doubleToRawLongBits(a) == java.lang.Double.doubleToRawLongBits(b)
       case (a: Float, b: Float) =>
         java.lang.Float.floatToRawIntBits(a) == java.lang.Float.floatToRawIntBits(b)
-      case (a, b) => a.equals(b) // In scala == does not call equals for boxed numeric classes?
+      case (a, b) =>
+        if (!a.equals(b)) {
+          val sds = 200;
+        }
+        a.equals(b)
+      // In scala == does not call equals for boxed numeric classes?
     }
 
   private def genErrorMessage(expectedAnswer: Seq[TestRow], result: Seq[TestRow]): String = {
@@ -382,5 +397,172 @@ trait TestUtils extends Assertions with SQLHelper {
     }
 
     DefaultGenericVector.fromArray(dataType, mapValues.map(getMapValue).toArray)
+  }
+
+
+  /**
+   * Utility method to generate a [[dataType]] column vector of given size.
+   * The nullability of rows is determined by the [[testIsNullValue(dataType, rowId)]].
+   * The row values are determined by [[testColumnValue(dataType, rowId)]].
+   */
+  def testColumnVector(size: Int, dataType: DataType): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = dataType
+
+      override def getSize: Int = size
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = testIsNullValue(dataType, rowId)
+
+      override def getBoolean(rowId: Int): Boolean =
+        testColumnValue(dataType, rowId).asInstanceOf[Boolean]
+
+      override def getByte(rowId: Int): Byte = testColumnValue(dataType, rowId).asInstanceOf[Byte]
+
+      override def getShort(rowId: Int): Short =
+        testColumnValue(dataType, rowId).asInstanceOf[Short]
+
+      override def getInt(rowId: Int): Int = testColumnValue(dataType, rowId).asInstanceOf[Int]
+
+      override def getLong(rowId: Int): Long = testColumnValue(dataType, rowId).asInstanceOf[Long]
+
+      override def getFloat(rowId: Int): Float =
+        testColumnValue(dataType, rowId).asInstanceOf[Float]
+
+      override def getDouble(rowId: Int): Double =
+        testColumnValue(dataType, rowId).asInstanceOf[Double]
+
+      override def getBinary(rowId: Int): Array[Byte] =
+        testColumnValue(dataType, rowId).asInstanceOf[Array[Byte]]
+
+      override def getString(rowId: Int): String =
+        testColumnValue(dataType, rowId).asInstanceOf[String]
+
+      override def getDecimal(rowId: Int): BigDecimalJ =
+        testColumnValue(dataType, rowId).asInstanceOf[BigDecimalJ]
+    }
+  }
+
+  /** Utility method to generate a consistent `isNull` value for given column type and row id */
+  def testIsNullValue(dataType: DataType, rowId: Int): Boolean = {
+    dataType match {
+      case BooleanType.BOOLEAN => rowId % 4 == 0
+      case ByteType.BYTE => rowId % 8 == 0
+      case ShortType.SHORT => rowId % 12 == 0
+      case IntegerType.INTEGER => rowId % 20 == 0
+      case LongType.LONG => rowId % 25 == 0
+      case FloatType.FLOAT => rowId % 5 == 0
+      case DoubleType.DOUBLE => rowId % 10 == 0
+      case StringType.STRING => rowId % 2 == 0
+      case BinaryType.BINARY => rowId % 3 == 0
+      case DateType.DATE => rowId % 5 == 0
+      case TimestampType.TIMESTAMP => rowId % 3 == 0
+      case _ =>
+        if (dataType.isInstanceOf[DecimalType]) rowId % 6 == 0
+        else throw new UnsupportedOperationException(s"$dataType is not supported")
+    }
+  }
+
+  /** Utility method to generate a consistent column value for given column type and row id */
+  def testColumnValue(dataType: DataType, rowId: Int): Any = {
+    dataType match {
+      case BooleanType.BOOLEAN => rowId % 7 == 0
+      case ByteType.BYTE => (rowId * 7 / 17).toByte
+      case ShortType.SHORT => (rowId * 9 / 87).toShort
+      case IntegerType.INTEGER => rowId * 2876 / 176
+      case LongType.LONG => rowId * 287623L / 91
+      case FloatType.FLOAT => rowId * 7651.2323f / 91
+      case DoubleType.DOUBLE => rowId * 23423.23d / 17
+      case StringType.STRING => (rowId % 19).toString
+      case BinaryType.BINARY => Array[Byte]((rowId % 21).toByte, (rowId % 7 - 1).toByte)
+      case DateType.DATE => (rowId * 28234) % 2876
+      case TimestampType.TIMESTAMP => (rowId * 2342342L) % 23
+      case _ =>
+        if (dataType.isInstanceOf[DecimalType]) new BigDecimalJ(rowId * 22342.23)
+        else throw new UnsupportedOperationException(s"$dataType is not supported")
+    }
+  }
+
+  def testSingleValueVector(dataType: DataType, size: Int, value: Any): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = dataType
+
+      override def getSize: Int = size
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = value == null
+
+      override def getBoolean(rowId: Int): Boolean =
+        value.asInstanceOf[Boolean]
+
+      override def getByte(rowId: Int): Byte = value.asInstanceOf[Byte]
+
+      override def getShort(rowId: Int): Short =
+        value.asInstanceOf[Short]
+
+      override def getInt(rowId: Int): Int = value.asInstanceOf[Int]
+
+      override def getLong(rowId: Int): Long = value.asInstanceOf[Long]
+
+      override def getFloat(rowId: Int): Float =
+        value.asInstanceOf[Float]
+
+      override def getDouble(rowId: Int): Double =
+        value.asInstanceOf[Double]
+
+      override def getBinary(rowId: Int): Array[Byte] =
+        value.asInstanceOf[Array[Byte]]
+
+      override def getString(rowId: Int): String =
+        value.asInstanceOf[String]
+
+      override def getDecimal(rowId: Int): BigDecimalJ =
+        value.asInstanceOf[BigDecimalJ]
+    }
+  }
+
+  /**
+   * Converts a Delta Schema to a Spark Schema.
+   */
+  private def toSparkSchema(deltaSchema: StructType): sparktypes.StructType = {
+    toSparkType(deltaSchema).asInstanceOf[sparktypes.StructType]
+  }
+
+  /**
+   * Converts a Delta DataType to a Spark DataType.
+   */
+  private def toSparkType(deltaType: DataType): sparktypes.DataType = {
+    deltaType match {
+      case BooleanType.BOOLEAN => sparktypes.DataTypes.BooleanType
+      case ByteType.BYTE => sparktypes.DataTypes.ByteType
+      case ShortType.SHORT => sparktypes.DataTypes.ShortType
+      case IntegerType.INTEGER => sparktypes.DataTypes.IntegerType
+      case LongType.LONG => sparktypes.DataTypes.LongType
+      case FloatType.FLOAT => sparktypes.DataTypes.FloatType
+      case DoubleType.DOUBLE => sparktypes.DataTypes.DoubleType
+      case StringType.STRING => sparktypes.DataTypes.StringType
+      case BinaryType.BINARY => sparktypes.DataTypes.BinaryType
+      case DateType.DATE => sparktypes.DataTypes.DateType
+      case TimestampType.TIMESTAMP => sparktypes.DataTypes.TimestampType
+      case dt: DecimalType =>
+        sparktypes.DecimalType(dt.getPrecision, dt.getScale)
+      case at: ArrayType =>
+        sparktypes.ArrayType(toSparkType(at.getElementType), at.containsNull())
+      case mt: MapType =>
+        sparktypes.MapType(
+          toSparkType(mt.getKeyType),
+          toSparkType(mt.getValueType),
+          mt.isValueContainsNull)
+      case st: StructType =>
+        sparktypes.StructType(st.fields().asScala.map { field =>
+          sparktypes.StructField(
+            field.getName,
+            toSparkType(field.getDataType),
+            field.isNullable
+          )
+        })
+    }
   }
 }

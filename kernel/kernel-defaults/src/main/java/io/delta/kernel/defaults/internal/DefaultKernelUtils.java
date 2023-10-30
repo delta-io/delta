@@ -16,6 +16,9 @@
 package io.delta.kernel.defaults.internal;
 
 import java.time.LocalDate;
+import java.util.concurrent.TimeUnit;
+
+import io.delta.kernel.internal.util.Tuple2;
 
 public class DefaultKernelUtils {
     private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
@@ -37,6 +40,18 @@ public class DefaultKernelUtils {
         // use Long to avoid rounding errors
         return ((long) (days - JULIAN_DAY_OF_EPOCH)) * DateTimeConstants.MICROS_PER_DAY +
             nanos / DateTimeConstants.NANOS_PER_MICROS;
+    }
+
+    /**
+     * Returns Julian day and nanoseconds in a day from the number of microseconds
+     *
+     * Note: support timestamp since 4717 BC (without negative nanoseconds, compatible with Hive).
+     */
+    public static Tuple2<Integer, Long> toJulianDay(long micros) {
+        long julianUs = micros + JULIAN_DAY_OF_EPOCH * DateTimeConstants.MICROS_PER_DAY;
+        long days = julianUs / DateTimeConstants.MICROS_PER_DAY;
+        long us = julianUs % DateTimeConstants.MICROS_PER_DAY;
+        return new Tuple2<>((int) days, TimeUnit.MICROSECONDS.toNanos(us));
     }
 
     public static long millisToMicros(long millis) {
