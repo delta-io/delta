@@ -120,7 +120,9 @@ trait DeltaDDLUsingPathTests extends QueryTest
     val ex = intercept[AnalysisException] {
       spark.table(s"delta.`/path/to/delta`")
     }
-    assert(ex.getMessage.matches(".*Path does not exist: (file:)?/path/to/delta.?"))
+    assert(ex.getMessage.matches(
+      ".*Path does not exist: (file:)?/path/to/delta.?.*"),
+      "Found: " + ex.getMessage)
 
     withSQLConf(SQLConf.RUN_SQL_ON_FILES.key -> "false") {
       val ex = intercept[AnalysisException] {

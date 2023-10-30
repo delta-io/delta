@@ -29,7 +29,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.Utils;
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * Bitmap for a Deletion Vector, implemented as a thin wrapper around a Deletion Vector

@@ -34,8 +34,8 @@ import io.delta.kernel.types.StructType;
 
 import io.delta.kernel.internal.deletionvectors.Base85Codec;
 import io.delta.kernel.internal.fs.Path;
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * Information about a deletion vector attached to a file action.

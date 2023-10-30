@@ -389,7 +389,12 @@ class DeltaLog private(
         "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
         "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
     if (!clientSupportedVersions.contains(tableRequiredVersion)) {
-      throw new InvalidProtocolVersionException(tableRequiredVersion, clientSupportedVersions.toSeq)
+      throw new InvalidProtocolVersionException(
+        dataPath.toString(),
+        tableProtocol.minReaderVersion,
+        tableProtocol.minWriterVersion,
+        Action.supportedReaderVersionNumbers.toSeq,
+        Action.supportedWriterVersionNumbers.toSeq)
     } else {
       throw unsupportedFeaturesException(clientUnsupportedFeatureNames)
     }

@@ -57,17 +57,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
             checkAnswer(readDeltaTable(deltaPath), result.map { case (k, v) => Row(k, v) })
           }
           if (cdcEnabled) {
-            val latestVersion = DeltaLog.forTable(spark, tempPath).snapshot.version
-            checkAnswer(
-              CDCReader
-                .changesToBatchDF(
-                  DeltaLog.forTable(spark, tempPath),
-                  latestVersion,
-                  latestVersion,
-                  spark)
-                .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
-                .drop(CDCReader.CDC_COMMIT_VERSION),
-              cdc.toDF())
+            checkAnswer(getCDCForLatestOperation(deltaLog, DeltaOperations.OP_MERGE), cdc.toDF())
           }
         }
       }

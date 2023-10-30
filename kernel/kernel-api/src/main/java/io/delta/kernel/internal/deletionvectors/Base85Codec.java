@@ -21,7 +21,7 @@ import java.util.Arrays;
 import java.util.UUID;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * This implements Base85 using the 4 byte block aligned encoding and character set from Z85.
