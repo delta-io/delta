@@ -228,6 +228,7 @@ object CheckpointInstance {
     CheckpointInstance(
       version = metadata.version,
       format = metadata.getFormatEnum(),
+      fileName = metadata.v2Checkpoint.map(_.path),
       numParts = metadata.parts)
   }
 
