@@ -44,6 +44,7 @@ class KernelDeltaLogDelegator(
   var currKernelSnapshot: Option[KernelSnapshotDelegator] = None
 
   override def snapshot(): StandaloneSnapshotImpl = { // but is actually a KernelSnapshotDelegator
+    println("current snapshot: " + currKernelSnapshot)
     if (currKernelSnapshot.isEmpty) { update() }
     return currKernelSnapshot.get
   }

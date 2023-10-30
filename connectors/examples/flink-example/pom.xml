@@ -29,7 +29,7 @@ limitations under the License.-->
         <staging.repo.url>""</staging.repo.url>
         <scala.main.version>2.12</scala.main.version>
         <connectors.version>0.6.0-SNAPSHOT</connectors.version>
-        <flink-version>1.16.1</flink-version>
+        <flink-version>1.16.2</flink-version>
         <hadoop-version>3.1.0</hadoop-version>
         <log4j.version>2.12.1</log4j.version>
     </properties>
@@ -51,6 +51,11 @@ limitations under the License.-->
             <groupId>io.delta</groupId>
             <artifactId>delta-standalone_${scala.main.version}</artifactId>
             <version>${connectors.version}</version>
+        </dependency>
+        <dependency>
+          <groupId>com.fasterxml.jackson.core</groupId>
+          <artifactId>jackson-databind</artifactId>
+          <version>2.13.5</version>
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
