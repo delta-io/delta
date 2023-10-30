@@ -705,7 +705,7 @@ lazy val standaloneCosmetic = project
     Compile / packageSrc := (standalone / Compile / packageSrc).value,
     libraryDependencies ++= scalaCollectionPar(scalaVersion.value) ++ Seq(
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
-      "org.apache.parquet" % "parquet-hadoop" % "1.12.0" % "provided",
+      "org.apache.parquet" % "parquet-hadoop" % "1.12.3" % "provided",
       // parquet4s-core dependencies that are not shaded are added with compile scope.
       "com.chuusai" %% "shapeless" % "2.3.4",
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.4.3"
@@ -737,7 +737,7 @@ lazy val testParquetUtilsWithStandaloneCosmetic = project.dependsOn(standaloneCo
     skipReleaseSettings,
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion,
-      "org.apache.parquet" % "parquet-hadoop" % "1.12.0" % "provided",
+      "org.apache.parquet" % "parquet-hadoop" % "1.12.3" % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test",
     )
   )
@@ -760,7 +760,7 @@ lazy val standaloneParquet = (project in file("connectors/standalone-parquet"))
     commonSettings,
     skipReleaseSettings,
     libraryDependencies ++= Seq(
-      "org.apache.parquet" % "parquet-hadoop" % "1.12.0" % "provided",
+      "org.apache.parquet" % "parquet-hadoop" % "1.12.3" % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test"
     ),
     assemblyPackageScala / assembleArtifact := false
