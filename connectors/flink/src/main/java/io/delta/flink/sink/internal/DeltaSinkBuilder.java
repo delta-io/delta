@@ -93,7 +93,8 @@ public class DeltaSinkBuilder<IN> implements Serializable {
     protected static final long DEFAULT_BUCKET_CHECK_INTERVAL = 60L * 1000L;
 
     private static String generateNewAppId() {
-        return UUID.randomUUID().toString();
+        //return UUID.randomUUID().toString(); // MAKE THIS FOO
+	return "foo";
     }
 
     ///////////////////////////////////////////////////////////////////////////
