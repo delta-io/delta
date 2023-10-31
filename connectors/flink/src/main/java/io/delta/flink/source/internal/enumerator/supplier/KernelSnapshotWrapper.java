@@ -42,7 +42,10 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
      * the standalone Metadata expects.
      */
     private Metadata convertMetadata() {
+        long start = System.nanoTime();
         io.delta.kernel.internal.actions.Metadata kernelMetadata = kernelSnapshot.getMetadata();
+        long elap = System.nanoTime() - start;
+        System.out.println("kernelSnapshot.getMetadata " + elap);
 
         // Convert the format type
         io.delta.kernel.internal.actions.Format kernelFormat = kernelMetadata.getFormat();
