@@ -871,7 +871,7 @@ trait CDCReaderImpl extends DeltaLogging {
       spark: SparkSession,
       readSchemaSnapshot: Option[Snapshot] = None,
       useCoarseGrainedCDC: Boolean = false,
-      startVersionSnapshot: Option[Snapshot] = None): DataFrame = {
+      startVersionSnapshotOpt: Option[Snapshot] = None): DataFrame = {
 
     val changesWithinRange = deltaLog.getChanges(start).takeWhile { case (version, _) =>
       version <= end
@@ -884,7 +884,7 @@ trait CDCReaderImpl extends DeltaLogging {
       spark,
       isStreaming = false,
       useCoarseGrainedCDC = useCoarseGrainedCDC,
-      startVersionSnapshotOpt = startVersionSnapshot)
+      startVersionSnapshotOpt = startVersionSnapshotOpt)
       .fileChangeDf
   }
 
