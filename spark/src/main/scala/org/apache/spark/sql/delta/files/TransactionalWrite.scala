@@ -481,7 +481,6 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     writeOptions.flatMap(_.optimizeWrite)
       .getOrElse(TransactionalWrite.shouldOptimizeWrite(metadata, sessionConf))
   }
-
 }
 
 object TransactionalWrite {

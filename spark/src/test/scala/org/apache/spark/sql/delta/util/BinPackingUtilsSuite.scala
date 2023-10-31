@@ -33,5 +33,4 @@ class BinPackingUtilsSuite extends SparkFunSuite {
       assert(BinPackingUtils.binPackBySize(input, (x: Int) => x, (x: Int) => x, binSize) == expect)
     }
   }
-
 }
