@@ -250,15 +250,25 @@ public class DeltaGlobalCommitter
                     globalCommittables,
                     this.kernelDeltaLog);
 
+            long timeHere = System.nanoTime();
+            long elapsedHere = timeHere - start;
+            LOG.info("getCommittablesPerCheckpoint " + elapsedHere);
+            
             // We used SortedMap and SortedMap.values() maintain the sorted order.
             for (List<CheckpointData> checkpointData : committablesPerCheckpoint.values()) {
+                long preCom = System.nanoTime();
                 doCommit(
                     this.kernelDeltaLog.startTransaction(),
                     checkpointData,
                     this.kernelDeltaLog.tableExists());
+                long comTime = System.nanoTime() - preCom;
+                LOG.info("doCommit " + comTime);                
             }
+            long commitElapsed = System.nanoTime() - timeHere;
+            LOG.info("doCommit TOTAL " + commitElapsed);
         }
-        long timeElapsed = System.nanoTime() - start;
+        long timeEnd = System.nanoTime();
+        long timeElapsed = timeEnd - start;
         LOG.info("Commit finished in " + timeElapsed + ", was first: " + this.firstCommit);
         this.firstCommit = false;
         return Collections.emptyList();
@@ -437,9 +447,12 @@ public class DeltaGlobalCommitter
 
         logGlobalCommitterData(appId, checkpointId, logFiles);
 
+        long preMeta = System.nanoTime();
         List<String> partitionColumns = partitionColumnsSet == null
             ? Collections.emptyList() : new ArrayList<>(partitionColumnsSet);
         handleMetadataUpdate(tableExists, transaction, partitionColumns);
+        long metaTime = System.nanoTime() - preMeta;
+        LOG.info("MetaUpdate "+metaTime);
 
         Map<String, String> operationMetrics = prepareOperationMetrics(
             commitActions.size() - 1, //taking account one SetTransaction action
@@ -455,7 +468,10 @@ public class DeltaGlobalCommitter
         LOG.info(String.format(
             "Attempting to commit transaction (appId='%s', checkpointId='%s')",
             appId, checkpointId));
+        long preCom = System.nanoTime();
         transaction.commit(commitActions, operation, ENGINE_INFO);
+        long comTime = System.nanoTime() - preCom;
+        LOG.info("txn.commit " + comTime);
         LOG.info(String.format(
             "Successfully committed transaction (appId='%s', checkpointId='%s')",
             appId, checkpointId));

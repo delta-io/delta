@@ -2,7 +2,7 @@ package io.delta.standalone.internal
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import org.slf4j.LoggerFactory;
+import org.slf4j.LoggerFactory
 
 import io.delta.flink.source.internal.enumerator.supplier.KernelSnapshotWrapper
 import io.delta.kernel.internal.{SnapshotImpl => SnapshotImplKernel}
@@ -41,7 +41,7 @@ class AppIdDeferedMap(snapshot: SnapshotImplKernel) extends Map[String, Long] {
 }
 
 object AppIdDeferedMap {
-  val LOG = LoggerFactory.getLogger(classOf[AppIdDeferedMap]);
+  val LOG = LoggerFactory.getLogger(classOf[AppIdDeferedMap])
 }
 
 /**
@@ -91,8 +91,15 @@ class KernelSnapshotDelegator(
     if (kernelSnapshot.isInstanceOf[InitialKernelSnapshotImpl]) {
       Metadata()
     } else {
+      val mstart = System.nanoTime()
       val metadata = snapshotWrapper.getMetadata()
-      ConversionUtils.convertMetadataJ(metadata)
+      val melap = System.nanoTime() - mstart
+      KernelDeltaLogDelegator.LOG.info("wrapperMetadata " + melap)
+      val cstart = System.nanoTime()
+      val ret = ConversionUtils.convertMetadataJ(metadata)
+      val celap = System.nanoTime() - cstart
+      KernelDeltaLogDelegator.LOG.info("convertMetadata " + celap)
+      ret
     }
   }
 
@@ -141,4 +148,8 @@ class KernelSnapshotDelegator(
   override def scan(predicate: Expression): DeltaScan = throw new RuntimeException()
   override def getAllFiles: java.util.List[AddFileJ] = throw new RuntimeException()
   override def open(): CloseableIterator[RowParquetRecordJ] = throw new RuntimeException()
+}
+
+object KernelSnapshotDelegator {
+  val LOG = LoggerFactory.getLogger(classOf[KernelSnapshotDelegator])
 }
