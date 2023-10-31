@@ -28,7 +28,10 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA
-import org.apache.spark.sql.delta.stats.{DeltaJobStatisticsTracker, StatisticsCollection}
+import org.apache.spark.sql.delta.stats.{
+  DeltaJobStatisticsTracker,
+  StatisticsCollection
+}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
