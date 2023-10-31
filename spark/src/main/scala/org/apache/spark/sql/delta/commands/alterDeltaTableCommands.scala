@@ -249,9 +249,6 @@ case class AlterTableDropFeatureDeltaCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeature") {
-      // This guard is only temporary while the drop feature is in development.
-      require(sparkSession.conf.get(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED))
-
       val removableFeature = TableFeature.featureNameToFeature(featureName) match {
         case Some(feature: RemovableFeature) => feature
         case Some(_) => throw DeltaErrors.dropTableFeatureNonRemovableFeature(featureName)
