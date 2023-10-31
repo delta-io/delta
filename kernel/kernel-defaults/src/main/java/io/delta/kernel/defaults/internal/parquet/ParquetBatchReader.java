@@ -95,11 +95,11 @@ public class ParquetBatchReader {
                 do {
                     hasNotConsumedNextElement = false;
                     // hasNext reads to row to confirm there is a next element.
-                    try {
-                        batchReadSupport.finalizeCurrentRow(reader.getCurrentRowIndex());
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
+                    //try {
+                    batchReadSupport.finalizeCurrentRow(0);
+                    // } catch (IOException e) {
+                    //     throw new RuntimeException(e);
+                    // }
                     batchSize++;
                 }
                 while (batchSize < maxBatchSize && hasNext());
