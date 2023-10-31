@@ -73,6 +73,7 @@ singleStatement
 // If you add keywords here that should not be reserved, add them to 'nonReserved' list.
 statement
     : VACUUM (path=STRING | table=qualifiedName)
+        (USING INVENTORY (inventoryTable=qualifiedName | LEFT_PAREN inventoryQuery=subQuery RIGHT_PAREN))?
         (RETAIN number HOURS)? (DRY RUN)?                               #vacuumTable
     | (DESC | DESCRIBE) DETAIL (path=STRING | table=qualifiedName)      #describeDeltaDetail
     | GENERATE modeName=identifier FOR TABLE table=qualifiedName        #generate
@@ -213,6 +214,14 @@ predicateToken
     ;
 
 // We don't have an expression rule in our grammar here, so we just grab the tokens and defer
+// parsing them to later. Although this is the same as `exprToken`, `predicateToken`, we have to re-define it to
+// workaround an ANTLR issue (https://github.com/delta-io/delta/issues/1205). Should we remove this after
+// https://github.com/delta-io/delta/pull/1800
+subQuery
+    :  .+?
+    ;
+
+// We don't have an expression rule in our grammar here, so we just grab the tokens and defer
 // parsing them to later.
 exprToken
     :  .+?
@@ -221,7 +230,7 @@ exprToken
 // Add keywords here so that people's queries don't break if they have a column name as one of
 // these tokens
 nonReserved
-    : VACUUM | RETAIN | HOURS | DRY | RUN
+    : VACUUM | USING | INVENTORY | RETAIN | HOURS | DRY | RUN
     | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
@@ -264,6 +273,7 @@ HISTORY: 'HISTORY';
 HOURS: 'HOURS';
 ICEBERG_COMPAT_VERSION: 'ICEBERG_COMPAT_VERSION';
 IF: 'IF';
+INVENTORY: 'INVENTORY';
 LEFT_PAREN: '(';
 LIMIT: 'LIMIT';
 LOCATION: 'LOCATION';
@@ -293,6 +303,7 @@ TO: 'TO';
 TRUE: 'TRUE';
 UNIFORM: 'UNIFORM';
 UPGRADE: 'UPGRADE';
+USING: 'USING';
 VACUUM: 'VACUUM';
 VERSION: 'VERSION';
 WHERE: 'WHERE';

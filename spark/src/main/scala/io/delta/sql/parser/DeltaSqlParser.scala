@@ -319,10 +319,12 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    */
   override def visitVacuumTable(ctx: VacuumTableContext): AnyRef = withOrigin(ctx) {
     VacuumTableCommand(
-      Option(ctx.path).map(string),
-      Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.number).map(_.getText.toDouble),
-      ctx.RUN != null)
+      path = Option(ctx.path).map(string),
+      table = Option(ctx.table).map(visitTableIdentifier),
+      inventoryTable = Option(ctx.inventoryTable).map(visitTableIdentifier),
+      inventoryQuery = Option(ctx.inventoryQuery).map(extractRawText),
+      horizonHours = Option(ctx.number).map(_.getText.toDouble),
+      dryRun = ctx.RUN != null)
   }
 
   /** Provides a list of unresolved attributes for multi dimensional clustering. */
