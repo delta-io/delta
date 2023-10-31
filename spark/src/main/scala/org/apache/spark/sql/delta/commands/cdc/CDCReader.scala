@@ -411,6 +411,7 @@ trait CDCReaderImpl extends DeltaLogging {
    * @param useCoarseGrainedCDC - ignores checks related to CDC being disabled in any of the
    *         versions and computes CDC entirely from AddFiles/RemoveFiles (ignoring
    *         AddCDCFile actions)
+   * @param startVersionSnapshotOpt - The snapshot of the starting version.
    * @return CDCInfo which contains the DataFrame of the changes as well as the statistics
    *         related to the changes
    */
@@ -421,7 +422,8 @@ trait CDCReaderImpl extends DeltaLogging {
       changes: Iterator[(Long, Seq[Action])],
       spark: SparkSession,
       isStreaming: Boolean = false,
-      useCoarseGrainedCDC: Boolean = false): CDCVersionDiffInfo = {
+      useCoarseGrainedCDC: Boolean = false,
+      startVersionSnapshotOpt: Option[Snapshot] = None): CDCVersionDiffInfo = {
     val deltaLog = readSchemaSnapshot.deltaLog
 
     if (end < start) {
@@ -436,7 +438,9 @@ trait CDCReaderImpl extends DeltaLogging {
     val addFiles = ListBuffer[CDCDataSpec[AddFile]]()
     val removeFiles = ListBuffer[CDCDataSpec[RemoveFile]]()
 
-    val startVersionSnapshot = deltaLog.getSnapshotAt(start)
+    val startVersionSnapshot = startVersionSnapshotOpt.getOrElse {
+      deltaLog.getSnapshotAt(start)
+    }
     if (!useCoarseGrainedCDC && !isCDCEnabledOnTable(startVersionSnapshot.metadata, spark)) {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
     }
@@ -866,7 +870,8 @@ trait CDCReaderImpl extends DeltaLogging {
       end: Long,
       spark: SparkSession,
       readSchemaSnapshot: Option[Snapshot] = None,
-      useCoarseGrainedCDC: Boolean = false): DataFrame = {
+      useCoarseGrainedCDC: Boolean = false,
+      startVersionSnapshot: Option[Snapshot] = None): DataFrame = {
 
     val changesWithinRange = deltaLog.getChanges(start).takeWhile { case (version, _) =>
       version <= end
@@ -878,7 +883,8 @@ trait CDCReaderImpl extends DeltaLogging {
       changesWithinRange,
       spark,
       isStreaming = false,
-      useCoarseGrainedCDC)
+      useCoarseGrainedCDC = useCoarseGrainedCDC,
+      startVersionSnapshotOpt = startVersionSnapshot)
       .fileChangeDf
   }
 
