@@ -275,7 +275,8 @@ private[internal] class SnapshotImpl(
             .map { line => JsonUtils.mapper.readValue[SingleAction](line) }
         } else if (path.endsWith("parquet")) {
           val parquetIterable = ParquetReader.read[Parquet4sSingleActionWrapper](
-            path,
+            com.github.mjakubowski84.parquet4s.Path(
+            path),
             ParquetReader.Options(
               timeZone = deltaLog.timezone,
               hadoopConf = hadoopConf)
