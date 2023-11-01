@@ -101,7 +101,7 @@ public class SnapshotManager {
     /**
      * Updates the current `latestSnapshotHint` with the `newHint` if and only if the newHint is
      * newer (i.e. has a later table version).
-     * </p>
+     * <p>
      * This doesn't need to be thread-safe. Suppose the current `latestSnapshotHint` is at version
      * N. If three Snapshots (N-1, N+1, N+2) concurrently register their hints, only N+1 and N+2
      * will be able to replace the current. And either winning the update is fine.
