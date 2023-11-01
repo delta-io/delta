@@ -60,7 +60,8 @@ public class SnapshotImpl implements Snapshot {
             logSegment,
             snapshotHint);
         this.protocolAndMetadata = new Lazy<>(() -> {
-            // Construct the SnapshotHint lazily. i.e. do not eagerly load the protocol and metadata
+            // Construct the SnapshotHint lazily. i.e. only create it when some caller/consumer of
+            // this SnapshotImpl instance decides to load the protocol and metadata.
             final Tuple2<Protocol, Metadata> pAndM = logReplay.loadProtocolAndMetadata();
             final SnapshotHint hint = new SnapshotHint(version, pAndM._1, pAndM._2);
             snapshotManager.registerHint(hint);
