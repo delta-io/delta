@@ -27,6 +27,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.snapshot.SnapshotHint;
 
 /**
  * Implementation of {@link Snapshot}.
@@ -37,6 +38,7 @@ public class SnapshotImpl implements Snapshot {
     private final LogReplay logReplay;
     private final Protocol protocol;
     private final Metadata metadata;
+    private final Optional<SnapshotHint> snapshotHint;
 
     public SnapshotImpl(
             Path logPath,
@@ -44,7 +46,8 @@ public class SnapshotImpl implements Snapshot {
             long version,
             LogSegment logSegment,
             TableClient tableClient,
-            long timestamp) {
+            long timestamp,
+            Optional<SnapshotHint> snapshotHint) {
         this.dataPath = dataPath;
         this.version = version;
         this.logReplay = new LogReplay(
@@ -52,7 +55,6 @@ public class SnapshotImpl implements Snapshot {
             dataPath,
             tableClient,
             logSegment);
-
         this.protocol = logReplay.getProtocol();
         this.metadata = logReplay.getMetadata();
     }
