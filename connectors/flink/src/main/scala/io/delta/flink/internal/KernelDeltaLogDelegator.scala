@@ -2,7 +2,6 @@ package io.delta.standalone.internal
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import org.slf4j.LoggerFactory;
 
 import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.client.DefaultTableClient
@@ -54,13 +53,8 @@ class KernelDeltaLogDelegator(
 
   override def update(): StandaloneSnapshotImpl = { // but is actually a KernelSnapshotDelegator
     // get latest snapshot via kernel
-    val totalS = System.nanoTime()
     val kernelSnapshot = try {
-      val start = System.nanoTime()
-      val sn = table.getLatestSnapshot(tableClient).asInstanceOf[SnapshotImplKernel]
-      val timeElapsed = System.nanoTime() - start
-      KernelDeltaLogDelegator.LOG.info("Kernel updated snapshot in: " + timeElapsed)
-      sn
+      table.getLatestSnapshot(tableClient).asInstanceOf[SnapshotImplKernel]
     } catch {
       case e: TableNotFoundException =>
         new InitialKernelSnapshotImpl(logPath, dataPath, tableClient)
@@ -73,8 +67,6 @@ class KernelDeltaLogDelegator(
       this,
       standaloneDeltaLog
     ))
-    val totalE = System.nanoTime() - totalS
-    KernelDeltaLogDelegator.LOG.info("    Total kernel update in: " + totalE)
     currKernelSnapshot.get
   }
 
@@ -103,8 +95,6 @@ class KernelDeltaLogDelegator(
 }
 
 object KernelDeltaLogDelegator {
-  val LOG = LoggerFactory.getLogger(classOf[KernelDeltaLogDelegator]);
-
   def forTable(hadoopConf: Configuration, dataPath: String): KernelDeltaLogDelegator = {
     val tableClient = DefaultTableClient.create(hadoopConf)
     val table = Table.forPath(tableClient, dataPath).asInstanceOf[TableImpl]
