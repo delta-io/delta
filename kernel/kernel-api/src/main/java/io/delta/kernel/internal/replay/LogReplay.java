@@ -34,6 +34,7 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
@@ -222,8 +223,7 @@ public class LogReplay implements Logging {
                 final ColumnVector txnVector = columnarBatch.getColumnVector(0);
                 for (int i = 0; i < txnVector.getSize(); i++) {
                     if (!txnVector.isNullAt(i)) {
-                        final Row row = txnVector.getStruct(i);
-                        SetTransaction txn = SetTransaction.fromRow(row);
+                        SetTransaction txn = SetTransaction.fromColumnVector(txnVector, i);
 
                         if (txn != null && applicationId.equals(txn.getAppId())) {
                             return Optional.of(txn.getVersion());

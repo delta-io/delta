@@ -17,7 +17,7 @@ package io.delta.kernel.internal.actions;
 
 import java.util.Optional;
 
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
@@ -33,14 +33,19 @@ public class SetTransaction {
         .add("lastUpdated", LongType.LONG, true /* nullable*/);
 
 
-    public static SetTransaction fromRow(Row row) {
-        if (row == null) {
+    public static SetTransaction fromColumnVector(ColumnVector vector, int rowId) {
+        if (vector.isNullAt(rowId)) {
             return null;
         }
+        String appId = vector.getChild(0).getString(rowId);
+        Long version = vector.getChild(1).getLong(rowId);
+        Optional<Long> lastUpdated = vector.getChild(2).isNullAt(rowId) ? Optional.empty() :
+            Optional.of(vector.getChild(2).getLong(rowId));
         return new SetTransaction(
-            row.getString(0),
-            row.getLong(1),
-            row.isNullAt(2) ? Optional.empty() : Optional.of(row.getLong(2)));
+            appId,
+            version,
+            lastUpdated
+        );
     }
 
     private final String appId;

@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults
 
 import java.io.File
+import java.util.Optional;
 
 import scala.collection.JavaConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
@@ -287,10 +288,10 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   }
 
   test("get the last transaction version for appID") {
-    val unresolvedPath = GoldenTableUtils.goldenTablePath("deltalog-getChanges")
-    val table = io.delta.kernel.Table.forPath(tableClient, unresolvedPath)
+    val unresolvedPath = goldenTablePath("deltalog-getChanges")
+    val table = io.delta.kernel.Table.forPath(defaultTableClient, unresolvedPath)
 
-    val snapshot = table.getLatestSnapshot(tableClient)
+    val snapshot = table.getLatestSnapshot(defaultTableClient)
     assert(snapshot.getRecentTransactionVersion("fakeAppId") === Optional.of(3L))
 
     assert(snapshot.getRecentTransactionVersion("nonExistentAppId") === Optional.empty())
