@@ -61,8 +61,4 @@ public class Format {
     public Map<String, String> getOptions() {
         return Collections.unmodifiableMap(options);
     }
-
-    public String getProvider() {
-        return provider;
-    }
 }
