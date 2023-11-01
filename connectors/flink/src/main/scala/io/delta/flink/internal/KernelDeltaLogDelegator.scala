@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.internal.{SnapshotImpl => SnapshotImplKernel, TableImpl}
+import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.internal.fs.{Path => KernelPath}
 import io.delta.standalone.VersionLog
 import io.delta.standalone.actions.{CommitInfo => CommitInfoJ}
@@ -24,7 +25,9 @@ class InitialKernelSnapshotImpl(logPath: Path, dataPath: Path, tableClient: Defa
       -1,
       io.delta.kernel.internal.snapshot.LogSegment.empty(new KernelPath(logPath.toString())),
       tableClient,
-      -1)
+      -1,
+      new SnapshotManager(),
+      java.util.Optional.empty())
 
 /**
  * We want to be able to construct an OptimisticTransactionImpl that uses a delta log and a snapshot

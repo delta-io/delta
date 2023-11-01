@@ -243,13 +243,14 @@ public class LogReplay implements Logging {
     }
 
     private Optional<Long> loadRecentTransactionVersionHelper(String applicationId) {
-        try (CloseableIterator<Tuple2<FileDataReadResult, Boolean>> reverseIter =
+        try (CloseableIterator<ActionIterElem> reverseIter =
                      new ActionsIterator(
                              tableClient,
                              logSegment.allLogFilesReversed(),
                              SET_TRANSACTION_READ_SCHEMA)) {
             while (reverseIter.hasNext()) {
-                final ColumnarBatch columnarBatch = reverseIter.next()._1.getData();
+                final ActionIterElem nextElem = reverseIter.next();
+                final ColumnarBatch columnarBatch = nextElem.getFileDataReadResult().getData();
 
                 assert(columnarBatch.getSchema().equals(SET_TRANSACTION_READ_SCHEMA));
                 final ColumnVector txnVector = columnarBatch.getColumnVector(0);
