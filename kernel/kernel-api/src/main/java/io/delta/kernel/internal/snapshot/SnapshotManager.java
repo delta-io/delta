@@ -42,7 +42,12 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public class SnapshotManager
     implements Logging {
-    public SnapshotManager() {}
+
+    private Optional<SnapshotHint> latestSnapshotHint;
+
+    public SnapshotManager() {
+        this.latestSnapshotHint = Optional.empty();
+    }
 
     /**
      * - Verify the versions are contiguous.
@@ -50,9 +55,9 @@ public class SnapshotManager
      * - Verify the versions end with `expectedEndVersion` if it's specified.
      */
     public static void verifyDeltaVersions(
-        List<Long> versions,
-        Optional<Long> expectedStartVersion,
-        Optional<Long> expectedEndVersion) {
+            List<Long> versions,
+            Optional<Long> expectedStartVersion,
+            Optional<Long> expectedEndVersion) {
         if (!versions.isEmpty()) {
             List<Long> contVersions = LongStream
                     .rangeClosed(versions.get(0), versions.get(versions.size() -1))
@@ -88,6 +93,21 @@ public class SnapshotManager
     public Snapshot buildLatestSnapshot(TableClient tableClient, Path logPath, Path dataPath)
         throws TableNotFoundException {
         return getSnapshotAtInit(tableClient, logPath, dataPath);
+    }
+
+    /**
+     * Updates the current `latestSnapshotHint` with the `newHint` if and only if the newHint is
+     * newer (i.e. has a later table version).
+     * </p>
+     * This doesn't need to be thread-safe. Suppose the current `latestSnapshotHint` is at version
+     * N. If three Snapshots (N-1, N+1, N+2) concurrently register their hints, only N+1 and N+2
+     * will be able to replace the current. And either winning the update is fine.
+     */
+    public void registerHint(SnapshotHint newHint) {
+        if (!latestSnapshotHint.isPresent() ||
+                newHint.getVersion() > latestSnapshotHint.get().getVersion()) {
+            latestSnapshotHint = Optional.of(newHint);
+        }
     }
 
     /**
@@ -235,7 +255,9 @@ public class SnapshotManager
             initSegment.version,
             initSegment,
             tableClient,
-            initSegment.lastCommitTimestamp
+            initSegment.lastCommitTimestamp,
+            this,
+            latestSnapshotHint
         );
     }
 

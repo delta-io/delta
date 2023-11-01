@@ -28,6 +28,8 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.snapshot.SnapshotHint;
+import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.internal.util.Tuple2;
 
 /**
@@ -38,23 +40,33 @@ public class SnapshotImpl implements Snapshot {
     private final long version;
     private final LogReplay logReplay;
     private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
+    private final Optional<SnapshotHint> snapshotHint;
 
     public SnapshotImpl(
-        Path logPath,
-        Path dataPath,
-        long version,
-        LogSegment logSegment,
-        TableClient tableClient,
-        long timestamp) {
+            Path logPath,
+            Path dataPath,
+            long version,
+            LogSegment logSegment,
+            TableClient tableClient,
+            long timestamp,
+            SnapshotManager snapshotManager,
+            Optional<SnapshotHint> snapshotHint) {
         this.dataPath = dataPath;
         this.version = version;
-
         this.logReplay = new LogReplay(
             logPath,
             dataPath,
             tableClient,
-            logSegment);
-        this.protocolAndMetadata = new Lazy<>(logReplay::loadProtocolAndMetadata);
+            logSegment,
+            snapshotHint);
+        this.protocolAndMetadata = new Lazy<>(() -> {
+            // Construct the SnapshotHint lazily. i.e. do not eagerly load the protocol and metadata
+            final Tuple2<Protocol, Metadata> pAndM = logReplay.loadProtocolAndMetadata();
+            final SnapshotHint hint = new SnapshotHint(version, pAndM._1, pAndM._2);
+            snapshotManager.registerHint(hint);
+            return pAndM;
+        });
+        this.snapshotHint = snapshotHint;
     }
 
     @Override

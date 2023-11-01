@@ -23,7 +23,6 @@ import java.util.Optional;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
@@ -38,6 +37,7 @@ import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.Logging;
 import io.delta.kernel.internal.util.Tuple2;
 
@@ -100,20 +100,22 @@ public class LogReplay implements Logging {
     private final Path dataPath;
     private final LogSegment logSegment;
     private final TableClient tableClient;
-
     private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
 
     public LogReplay(
             Path logPath,
             Path dataPath,
             TableClient tableClient,
-            LogSegment logSegment) {
+            LogSegment logSegment,
+            Optional<SnapshotHint> snapshotHint) {
         assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
         this.dataPath = dataPath;
         this.logSegment = logSegment;
         this.tableClient = tableClient;
-        this.protocolAndMetadata = new Lazy<>(this::loadTableProtocolAndMetadata);
+        this.protocolAndMetadata = new Lazy<>(
+            () -> this.loadTableProtocolAndMetadata(snapshotHint)
+        );
     }
 
     /////////////////
@@ -134,7 +136,7 @@ public class LogReplay implements Logging {
      * {@link #ADD_ONLY_DATA_SCHEMA} representing all the active AddFiles in the table
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches() {
-        final CloseableIterator<Tuple2<FileDataReadResult, Boolean>> addRemoveIter =
+        final CloseableIterator<ActionIterElem> addRemoveIter =
             new ActionsIterator(
                 tableClient,
                 logSegment.allLogFilesReversed(),
@@ -146,51 +148,81 @@ public class LogReplay implements Logging {
     // Helper Methods //
     ////////////////////
 
-    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata() {
+    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
+            Optional<SnapshotHint> snapshotHint) {
         Protocol protocol = null;
         Metadata metadata = null;
 
-        try (CloseableIterator<Tuple2<FileDataReadResult, Boolean>> reverseIter =
+        try (CloseableIterator<ActionIterElem> reverseIter =
                  new ActionsIterator(
                      tableClient,
                      logSegment.allLogFilesReversed(),
                      PROTOCOL_METADATA_READ_SCHEMA)) {
             while (reverseIter.hasNext()) {
-                final ColumnarBatch columnarBatch = reverseIter.next()._1.getData();
+                final ActionIterElem nextElem = reverseIter.next();
+                final ColumnarBatch columnarBatch = nextElem.getFileDataReadResult().getData();
+                final long version = nextElem.getVersion();
 
                 assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
 
                 if (protocol == null) {
-                    final ColumnVector protocolVector = columnarBatch.getColumnVector(0);
+                    if (snapshotHint.isPresent() && version <= snapshotHint.get().getVersion()) {
+                        // Our snapshot hint already tells us the latest Protocol at that hint's
+                        // table version. If we haven't yet found a newer protocol, then we can
+                        // short circuit and use the hint's protocol.
+                        protocol = snapshotHint.get().getProtocol();
 
-                    for (int i = 0; i < protocolVector.getSize(); i++) {
-                        if (!protocolVector.isNullAt(i)) {
-                            protocol = Protocol.fromColumnVector(protocolVector, i);
+                        if (metadata != null) {
+                            // Stop since we have found the latest Protocol and Metadata.
+                            validateSupportedTable(protocol, metadata);
+                            return new Tuple2<>(protocol, metadata);
+                        }
+                    } else {
+                        final ColumnVector protocolVector = columnarBatch.getColumnVector(0);
 
-                            if (metadata != null) {
-                                // Stop since we have found the latest Protocol and Metadata.
-                                validateSupportedTable(protocol, metadata);
-                                return new Tuple2<>(protocol, metadata);
+                        for (int i = 0; i < protocolVector.getSize(); i++) {
+                            if (!protocolVector.isNullAt(i)) {
+                                protocol = Protocol.fromColumnVector(protocolVector, i);
+
+                                if (metadata != null) {
+                                    // Stop since we have found the latest Protocol and Metadata.
+                                    validateSupportedTable(protocol, metadata);
+                                    return new Tuple2<>(protocol, metadata);
+                                }
+
+                                break; // We already found the protocol, exit this for-loop
                             }
-
-                            break; // We already found the protocol, exit this for-loop
                         }
                     }
                 }
                 if (metadata == null) {
-                    final ColumnVector metadataVector = columnarBatch.getColumnVector(1);
+                    if (snapshotHint.isPresent() && version <= snapshotHint.get().getVersion()) {
+                        // Our snapshot hint already tells us the latest Metadata at that hint's
+                        // table version. If we haven't yet found a newer protocol, then we can
+                        // short circuit and use the hint's metadata.
+                        metadata = snapshotHint.get().getMetadata();
 
-                    for (int i = 0; i < metadataVector.getSize(); i++) {
-                        if (!metadataVector.isNullAt(i)) {
-                            metadata = Metadata.fromColumnVector(metadataVector, i, tableClient);
+                        if (protocol != null) {
+                            // Stop since we have found the latest Protocol and Metadata.
+                            validateSupportedTable(protocol, metadata);
+                            return new Tuple2<>(protocol, metadata);
+                        }
+                    } else {
+                        final ColumnVector metadataVector = columnarBatch.getColumnVector(1);
 
-                            if (protocol != null) {
-                                // Stop since we have found the latest Protocol and Metadata.
-                                validateSupportedTable(protocol, metadata);
-                                return new Tuple2<>(protocol, metadata);
+                        for (int i = 0; i < metadataVector.getSize(); i++) {
+                            if (!metadataVector.isNullAt(i)) {
+                                metadata =
+                                    Metadata.fromColumnVector(metadataVector, i, tableClient);
+
+                                if (protocol != null) {
+                                    // Stop since we have found the latest Protocol and Metadata.
+                                    validateSupportedTable(protocol, metadata);
+                                    return new Tuple2<>(protocol, metadata);
+                                }
+
+                                break; // We already found the metadata, exit this for-loop
                             }
-
-                            break; // We already found the metadata, exit this for-loop
                         }
                     }
                 }
