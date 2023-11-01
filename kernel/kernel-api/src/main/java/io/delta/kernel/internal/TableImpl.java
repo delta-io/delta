@@ -47,14 +47,16 @@ public class TableImpl implements Table, Logging {
 
     private final Path logPath;
     private final Path dataPath;
+    private final SnapshotManager snapshotManager;
 
     public TableImpl(Path logPath, Path dataPath) {
         this.logPath = logPath;
         this.dataPath = dataPath;
+        this.snapshotManager = new SnapshotManager();
     }
 
     @Override
     public Snapshot getLatestSnapshot(TableClient tableClient) throws TableNotFoundException {
-        return new SnapshotManager().buildLatestSnapshot(tableClient, logPath, dataPath);
+        return snapshotManager.buildLatestSnapshot(tableClient, logPath, dataPath);
     }
 }
