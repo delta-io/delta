@@ -37,8 +37,7 @@ import org.apache.spark.sql.{AnalysisException, Encoders, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedTable}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.trees.UnaryLike
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -134,7 +133,7 @@ case class OptimizeTableCommand(
     userPartitionPredicates: Seq[String],
     optimizeContext: DeltaOptimizeContext
 )(val zOrderBy: Seq[UnresolvedAttribute])
-  extends OptimizeTableCommandBase with RunnableCommand with UnaryLike[LogicalPlan] {
+  extends OptimizeTableCommandBase with RunnableCommand with UnaryNode {
 
   override val otherCopyArgs: Seq[AnyRef] = zOrderBy :: Nil
 
