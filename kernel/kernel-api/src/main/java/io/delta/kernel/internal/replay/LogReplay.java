@@ -108,7 +108,7 @@ public class LogReplay {
         this.dataPath = dataPath;
         this.logSegment = logSegment;
         this.tableClient = tableClient;
-        this.protocolAndMetadata = loadTableProtocolAndMetadata();
+        this.protocolAndMetadata = loadTableProtocolAndMetadata(snapshotHint);
     }
 
     /////////////////
@@ -156,6 +156,14 @@ public class LogReplay {
     // Helper Methods //
     ////////////////////
 
+    /**
+     * Returns the latest Protocol and Metadata from the delta files in the `logSegment`.
+     * Does *not* validate that this delta-kernel connector understands the table at that protocol.
+     *
+     * Uses the `snapshotHint` to bound how many delta files it reads. i.e. we only need to read
+     * delta files newer than the hint to search for any new P & M. If we don't find them, we can
+     * just use the P and/or M from the hint.
+     */
     private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
             Optional<SnapshotHint> snapshotHint) {
         Protocol protocol = null;
@@ -168,13 +176,13 @@ public class LogReplay {
                      PROTOCOL_METADATA_READ_SCHEMA)) {
             while (reverseIter.hasNext()) {
                 final ActionIterElem nextElem = reverseIter.next();
-                final ColumnarBatch columnarBatch = nextElem.getFileDataReadResult().getData();
                 final long version = nextElem.getVersion();
 
-                assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
+                // Load this lazily (as needed). We may be able to just use the hint.
+                ColumnarBatch columnarBatch = null;
 
                 if (protocol == null) {
-                    if (snapshotHint.isPresent() && version <= snapshotHint.get().getVersion()) {
+                    if (snapshotHint.isPresent() && version == snapshotHint.get().getVersion()) {
                         // Our snapshot hint already tells us the latest Protocol at that hint's
                         // table version. If we haven't yet found a newer protocol, then we can
                         // short circuit and use the hint's protocol.
@@ -182,10 +190,12 @@ public class LogReplay {
 
                         if (metadata != null) {
                             // Stop since we have found the latest Protocol and Metadata.
-                            validateSupportedTable(protocol, metadata);
                             return new Tuple2<>(protocol, metadata);
                         }
                     } else {
+                        columnarBatch = nextElem.getFileDataReadResult().getData();
+                        assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
+
                         final ColumnVector protocolVector = columnarBatch.getColumnVector(0);
 
                         for (int i = 0; i < protocolVector.getSize(); i++) {
@@ -194,11 +204,10 @@ public class LogReplay {
 
                                 if (metadata != null) {
                                     // Stop since we have found the latest Protocol and Metadata.
-                                    validateSupportedTable(protocol, metadata);
                                     return new Tuple2<>(protocol, metadata);
                                 }
 
-                                break; // We already found the protocol, exit this for-loop
+                                break; // We just found the protocol, exit this for-loop
                             }
                         }
                     }
@@ -216,6 +225,10 @@ public class LogReplay {
                             return new Tuple2<>(protocol, metadata);
                         }
                     } else {
+                        if (columnarBatch == null) {
+                            columnarBatch = nextElem.getFileDataReadResult().getData();
+                            assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
+                        }
                         final ColumnVector metadataVector = columnarBatch.getColumnVector(1);
 
                         for (int i = 0; i < metadataVector.getSize(); i++) {
@@ -229,7 +242,7 @@ public class LogReplay {
                                     return new Tuple2<>(protocol, metadata);
                                 }
 
-                                break; // We already found the metadata, exit this for-loop
+                                break; // We just found the metadata, exit this for-loop
                             }
                         }
                     }
