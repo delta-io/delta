@@ -1351,7 +1351,7 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(v => v >= 1, "Must be at least 1.")
       .createWithDefault(100)
-  
+
   /////////////////////
   // Optimized Write
   /////////////////////
