@@ -247,7 +247,8 @@ case class CreateDeltaTableCommand(
       (actions, op)
     }
 
-    val updatedWriter = UniversalFormat.enforceInvariantsAndDependenciesForCTAS(deltaWriter)
+    val updatedWriter =
+      UniversalFormat.enforceInvariantsAndDependenciesForCTAS(deltaWriter, txn.snapshot)
 
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {

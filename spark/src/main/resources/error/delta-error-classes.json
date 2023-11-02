@@ -923,6 +923,16 @@
         "message" : [
           "IcebergCompatV1 requires table property '<key>' to be set to '<requiredValue>'. Current value: '<actualValue>'."
         ]
+      },
+      "ICEBERG_DELETION_VECTORS_SHOULD_BE_DISABLED" : {
+        "message" : [
+          "IcebergCompatV1 requires Deletion Vectors to be disabled on the table. Please use the ALTER TABLE DROP FEATURE command to disable Deletion Vectors and to remove the existing Deletion Vectors from the table."
+        ]
+      },
+      "ICEBERG_DELETION_VECTORS_NOT_PURGED" : {
+        "message" : [
+          "IcebergCompatV1 requires Deletion Vectors to be completely purged from the table. Please run the REORG TABLE APPLY (PURGE) command."
+        ]
       }
     },
     "sqlState" : "KD00E"

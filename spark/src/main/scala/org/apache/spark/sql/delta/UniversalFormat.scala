@@ -152,7 +152,8 @@ object UniversalFormat extends DeltaLogging {
    * @param writer delta writer used to write CTAS data.
    * @return updated writer
    */
-  def enforceInvariantsAndDependenciesForCTAS(writer: WriteIntoDelta): WriteIntoDelta = {
+  def enforceInvariantsAndDependenciesForCTAS(
+      writer: WriteIntoDelta, snapshot: Snapshot): WriteIntoDelta = {
     var metadata = Metadata(configuration = writer.configuration)
 
     // Check UniversalFormat related property dependencies
@@ -168,8 +169,7 @@ object UniversalFormat extends DeltaLogging {
 
     // UniversalFormat relies on IcebergV1, check its dependencies
     val (_, icebergMetadata) = IcebergCompatV1.enforceInvariantsAndDependencies(
-      prevProtocol = Protocol(),
-      prevMetadata = Metadata(),
+      prevSnapshot = snapshot,
       newestProtocol = Protocol(),
       newestMetadata = metadata,
       isCreatingNewTable = true,

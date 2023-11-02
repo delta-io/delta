@@ -1345,8 +1345,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     newMetadata = metadataUpdate1.orElse(newMetadata)
 
     val (protocolUpdate2, metadataUpdate2) = IcebergCompatV1.enforceInvariantsAndDependencies(
-      prevProtocol = snapshot.protocol,
-      prevMetadata = snapshot.metadata,
+      snapshot,
       newestProtocol = protocol, // Note: this will try to use `newProtocol`
       newestMetadata = metadata, // Note: this will try to use `newMetadata`
       isCreatingNewTable,
