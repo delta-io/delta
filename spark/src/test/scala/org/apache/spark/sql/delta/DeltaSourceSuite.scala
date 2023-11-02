@@ -34,6 +34,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 import org.scalatest.time.{Seconds, Span}
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
@@ -642,6 +643,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     // Set unknown sourceVersion as the max allowed version plus 1.
     val unknownVersion = 4
 
+    // Note: "isStartingVersion" corresponds to DeltaSourceOffset.isInitialSnapshot.
     val json =
       s"""
          |{
@@ -651,16 +653,18 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
          |  "isStartingVersion": true
          |}
       """.stripMargin
-    val e = intercept[IllegalStateException] {
+    val e = intercept[SparkThrowable] {
       DeltaSourceOffset(
         UUID.randomUUID().toString,
         SerializedOffset(json)
       )
     }
-    assert(e.getMessage.contains("Please upgrade to newer version of Delta"))
+    assert(e.getErrorClass == "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION")
+    assert(e.toString.contains("Please upgrade to newer version of Delta"))
   }
 
   test("invalid sourceVersion value") {
+    // Note: "isStartingVersion" corresponds to DeltaSourceOffset.isInitialSnapshot.
     val json =
       """
         |{
@@ -670,18 +674,18 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         |  "isStartingVersion": true
         |}
       """.stripMargin
-    val e = intercept[IllegalStateException] {
+    val e = intercept[SparkThrowable] {
       DeltaSourceOffset(
         UUID.randomUUID().toString,
         SerializedOffset(json)
       )
     }
-    for (msg <- Seq("foo", "invalid")) {
-      assert(e.getMessage.contains(msg))
-    }
+    assert(e.getErrorClass == "DELTA_INVALID_SOURCE_OFFSET_FORMAT")
+    assert(e.toString.contains("source offset format is invalid"))
   }
 
   test("missing sourceVersion") {
+    // Note: "isStartingVersion" corresponds to DeltaSourceOffset.isInitialSnapshot.
     val json =
       """
         |{
@@ -690,18 +694,20 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         |  "isStartingVersion": true
         |}
       """.stripMargin
-    val e = intercept[IllegalStateException] {
+    val e = intercept[SparkThrowable] {
       DeltaSourceOffset(
         UUID.randomUUID().toString,
         SerializedOffset(json)
       )
     }
-    for (msg <- Seq("Cannot find", "sourceVersion")) {
-      assert(e.getMessage.contains(msg))
+    assert(e.getErrorClass == "DELTA_INVALID_SOURCE_VERSION")
+    for (msg <- "is invalid") {
+      assert(e.toString.contains(msg))
     }
   }
 
   test("unmatched reservoir id") {
+    // Note: "isStartingVersion" corresponds to DeltaSourceOffset.isInitialSnapshot.
     val json =
       s"""
         |{
@@ -712,15 +718,156 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         |  "isStartingVersion": true
         |}
       """.stripMargin
-    val e = intercept[IllegalStateException] {
+    val e = intercept[SparkThrowable] {
       DeltaSourceOffset(
         UUID.randomUUID().toString,
         SerializedOffset(json)
       )
     }
+    assert(e.getErrorClass == "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE")
     for (msg <- Seq("delete", "checkpoint", "restart")) {
-      assert(e.getMessage.contains(msg))
+      assert(e.toString.contains(msg))
     }
+  }
+
+  test("isInitialSnapshot serializes as isStartingVersion") {
+    for (isStartingVersion <- Seq(false, true)) {
+      // From serialized to object
+      val reservoirId = UUID.randomUUID().toString
+      val json =
+        s"""
+           |{
+           |  "reservoirId": "$reservoirId",
+           |  "sourceVersion": 1,
+           |  "reservoirVersion": 1,
+           |  "index": 1,
+           |  "isStartingVersion": $isStartingVersion
+           |}
+      """.stripMargin
+      val offsetDeserialized = DeltaSourceOffset(reservoirId, SerializedOffset(json))
+      assert(offsetDeserialized.isInitialSnapshot === isStartingVersion)
+
+      // From object to serialized
+      val offset = DeltaSourceOffset(
+        reservoirId = reservoirId,
+        reservoirVersion = 7,
+        index = 13,
+        isInitialSnapshot = isStartingVersion)
+      assert(offset.json.contains(s""""isStartingVersion":$isStartingVersion"""))
+    }
+  }
+
+  test("DeltaSourceOffset deserialization") {
+    // Source version 1 with BASE_INDEX_V1
+    val reservoirId = UUID.randomUUID().toString
+    val jsonV1 =
+      s"""
+         |{
+         |  "reservoirId": "$reservoirId",
+         |  "sourceVersion": 1,
+         |  "reservoirVersion": 3,
+         |  "index": -1,
+         |  "isStartingVersion": false
+         |}
+    """.stripMargin
+    val offsetDeserializedV1 = JsonUtils.fromJson[DeltaSourceOffset](jsonV1)
+    assert(offsetDeserializedV1 ==
+      DeltaSourceOffset(reservoirId, 3, DeltaSourceOffset.BASE_INDEX, false))
+
+    // Source version 3 with BASE_INDEX_V3
+    val jsonV3 =
+      s"""
+         |{
+         |  "reservoirId": "$reservoirId",
+         |  "sourceVersion": 3,
+         |  "reservoirVersion": 7,
+         |  "index": -100,
+         |  "isStartingVersion": false
+         |}
+    """.stripMargin
+    val offsetDeserializedV3 = JsonUtils.fromJson[DeltaSourceOffset](jsonV3)
+    assert(offsetDeserializedV3 ==
+      DeltaSourceOffset(reservoirId, 7, DeltaSourceOffset.BASE_INDEX, false))
+
+    // Source version 3 with METADATA_CHANGE_INDEX
+    val jsonV3metadataChange =
+      s"""
+         |{
+         |  "reservoirId": "$reservoirId",
+         |  "sourceVersion": 3,
+         |  "reservoirVersion": 7,
+         |  "index": -20,
+         |  "isStartingVersion": false
+         |}
+    """.stripMargin
+    val offsetDeserializedV3metadataChange =
+      JsonUtils.fromJson[DeltaSourceOffset](jsonV3metadataChange)
+    assert(offsetDeserializedV3metadataChange ==
+      DeltaSourceOffset(reservoirId, 7, DeltaSourceOffset.METADATA_CHANGE_INDEX, false))
+
+    // Source version 3 with regular index and isStartingVersion = true
+    val jsonV3start =
+      s"""
+         |{
+         |  "reservoirId": "$reservoirId",
+         |  "sourceVersion": 3,
+         |  "reservoirVersion": 9,
+         |  "index": 23,
+         |  "isStartingVersion": true
+         |}
+    """.stripMargin
+    val offsetDeserializedV3start = JsonUtils.fromJson[DeltaSourceOffset](jsonV3start)
+    assert(offsetDeserializedV3start == DeltaSourceOffset(reservoirId, 9, 23, true))
+  }
+
+  test("DeltaSourceOffset deserialization error") {
+    val reservoirId = UUID.randomUUID().toString
+    // This is missing a double quote so it's unbalanced.
+    val jsonV1 =
+      s"""
+         |{
+         |  "reservoirId": "$reservoirId",
+         |  "sourceVersion": 23x,
+         |  "reservoirVersion": 3,
+         |  "index": -1,
+         |  "isStartingVersion": false
+         |}
+    """.stripMargin
+    val e = intercept[SparkThrowable] {
+      JsonUtils.fromJson[DeltaSourceOffset](jsonV1)
+    }
+    assert(e.getErrorClass == "DELTA_INVALID_SOURCE_OFFSET_FORMAT")
+  }
+
+  test("DeltaSourceOffset serialization") {
+    val reservoirId = UUID.randomUUID().toString
+    // BASE_INDEX is always serialized as V1.
+    val offsetV1 = DeltaSourceOffset(reservoirId, 3, DeltaSourceOffset.BASE_INDEX, false)
+    assert(JsonUtils.toJson(offsetV1) ===
+      s"""{"sourceVersion":1,"reservoirId":"$reservoirId","reservoirVersion":3,"index":-1,""" +
+      s""""isStartingVersion":false}"""
+    )
+    // The same serializer should be used by both methods.
+    assert(JsonUtils.toJson(offsetV1) === offsetV1.json)
+
+    // METADATA_CHANGE_INDEX is always serialized as V3
+    val offsetV3metadataChange =
+      DeltaSourceOffset(reservoirId, 7, DeltaSourceOffset.METADATA_CHANGE_INDEX, false)
+    assert(JsonUtils.toJson(offsetV3metadataChange) ===
+      s"""{"sourceVersion":3,"reservoirId":"$reservoirId","reservoirVersion":7,"index":-20,""" +
+      s""""isStartingVersion":false}"""
+    )
+    // The same serializer should be used by both methods.
+    assert(JsonUtils.toJson(offsetV3metadataChange) === offsetV3metadataChange.json)
+
+    // Regular index and isStartingVersion = true, serialized as V1
+    val offsetV1start = DeltaSourceOffset(reservoirId, 9, 23, true)
+    assert(JsonUtils.toJson(offsetV1start) ===
+      s"""{"sourceVersion":1,"reservoirId":"$reservoirId","reservoirVersion":9,"index":23,""" +
+      s""""isStartingVersion":true}"""
+    )
+    // The same serializer should be used by both methods.
+    assert(JsonUtils.toJson(offsetV1start) === offsetV1start.json)
   }
 
   testQuietly("recreate the reservoir should fail the query") {
@@ -1632,9 +1779,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
               SerializedOffset(offsetJson)
             ))
           assert(endOffsets.toList ==
-            DeltaSourceOffset(id, 1, 0, isStartingVersion = false)
+            DeltaSourceOffset(id, 1, 0, isInitialSnapshot = false)
               // When we reach the end of version 1, we will jump to version 2 with index -1
-              :: DeltaSourceOffset(id, 2, -1, isStartingVersion = false)
+              :: DeltaSourceOffset(id, 2, -1, isInitialSnapshot = false)
               :: Nil)
         } finally {
           q.stop()
@@ -1909,27 +2056,27 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       try {
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
-        // source2: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
+        // source1: DeltaSourceOffset(reservoirVersion=1,index=0,isInitialSnapshot=true)
+        // source2: DeltaSourceOffset(reservoirVersion=1,index=0,isInitialSnapshot=true)
 
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir1.getCanonicalPath)
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
-        // source2: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
+        // source2: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
         // Note: version 2 doesn't exist in source1
 
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
-        // source2: DeltaSourceOffset(reservoirVersion=3,index=-1,isStartingVersion=false)
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
+        // source2: DeltaSourceOffset(reservoirVersion=3,index=-1,isInitialSnapshot=false)
         // Note: version 2 doesn't exist in source1
 
         q.stop()
         // Restart the query. It will call `getBatch` on the previous two offsets of `source1` which
-        // are both DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // are both DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
         // As version 2 doesn't exist, we should not try to load version 2 in this case.
         q = startQuery()
         q.processAllAvailable()
@@ -1945,24 +2092,24 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         reservoirId = "foo",
         reservoirVersion = 4,
         index = 10,
-        isStartingVersion = false),
+        isInitialSnapshot = false),
       currentOffset = DeltaSourceOffset(
         reservoirId = "foo",
         reservoirVersion = 4,
         index = 10,
-        isStartingVersion = false)
+        isInitialSnapshot = false)
     )
     DeltaSourceOffset.validateOffsets(
       previousOffset = DeltaSourceOffset(
         reservoirId = "foo",
         reservoirVersion = 4,
         index = 10,
-        isStartingVersion = false),
+        isInitialSnapshot = false),
       currentOffset = DeltaSourceOffset(
         reservoirId = "foo",
         reservoirVersion = 5,
         index = 1,
-        isStartingVersion = false)
+        isInitialSnapshot = false)
     )
 
     assert(intercept[IllegalStateException] {
@@ -1971,26 +2118,26 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
-          isStartingVersion = false),
+          isInitialSnapshot = false),
         currentOffset = DeltaSourceOffset(
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
-          isStartingVersion = true)
+          isInitialSnapshot = true)
       )
-    }.getMessage.contains("Found invalid offsets: 'isStartingVersion' fliped incorrectly."))
+    }.getMessage.contains("Found invalid offsets: 'isInitialSnapshot' fliped incorrectly."))
     assert(intercept[IllegalStateException] {
       DeltaSourceOffset.validateOffsets(
         previousOffset = DeltaSourceOffset(
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
-          isStartingVersion = false),
+          isInitialSnapshot = false),
         currentOffset = DeltaSourceOffset(
           reservoirId = "foo",
           reservoirVersion = 1,
           index = 10,
-          isStartingVersion = false)
+          isInitialSnapshot = false)
       )
     }.getMessage.contains("Found invalid offsets: 'reservoirVersion' moved back."))
     assert(intercept[IllegalStateException] {
@@ -1999,12 +2146,12 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
-          isStartingVersion = false),
+          isInitialSnapshot = false),
         currentOffset = DeltaSourceOffset(
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 9,
-          isStartingVersion = false)
+          isInitialSnapshot = false)
       )
     }.getMessage.contains("Found invalid offsets. 'index' moved back."))
   }

@@ -20,18 +20,24 @@ import java.io.IOException;
 import java.util.List;
 
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.data.*;
-import io.delta.kernel.fs.FileStatus;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.FileDataReadResult;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
+import io.delta.kernel.utils.FileStatus;
 
-import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Logging;
+import io.delta.kernel.internal.util.Tuple2;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
@@ -66,7 +72,7 @@ public class LogReplay implements Logging {
         // the whether stats are needed or not: https://github.com/delta-io/delta/issues/1961
         .add("add", AddFile.SCHEMA)
         .add("remove", new StructType()
-            .add("path", StringType.INSTANCE, false /* nullable */)
+            .add("path", StringType.STRING, false /* nullable */)
             .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */)
         );
 
@@ -149,8 +155,7 @@ public class LogReplay implements Logging {
 
                     for (int i = 0; i < protocolVector.getSize(); i++) {
                         if (!protocolVector.isNullAt(i)) {
-                            final Row row = protocolVector.getStruct(i);
-                            protocol = Protocol.fromRow(row);
+                            protocol = Protocol.fromColumnVector(protocolVector, i);
 
                             if (metadata != null) {
                                 // Stop since we have found the latest Protocol and Metadata.
@@ -167,8 +172,7 @@ public class LogReplay implements Logging {
 
                     for (int i = 0; i < metadataVector.getSize(); i++) {
                         if (!metadataVector.isNullAt(i)) {
-                            final Row row = metadataVector.getStruct(i);
-                            metadata = Metadata.fromRow(row, tableClient);
+                            metadata = Metadata.fromColumnVector(metadataVector, i, tableClient);
 
                             if (protocol != null) {
                                 // Stop since we have found the latest Protocol and Metadata.
@@ -226,7 +230,8 @@ public class LogReplay implements Logging {
 
     private void verifySupportedColumnMappingMode(Metadata metadata) {
         // Check if the mode is name. Id mode is not yet supported
-        String cmMode = metadata.getConfiguration().get("delta.columnMapping.mode");
+        String cmMode = metadata.getConfiguration()
+                .getOrDefault("delta.columnMapping.mode", "none");
         if (!"none".equalsIgnoreCase(cmMode) &&
             !"name".equalsIgnoreCase(cmMode)) {
             throw new UnsupportedOperationException(

@@ -67,7 +67,7 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
         cmd += ["+ %s" % test_cmd]  # build/sbt ... "+ project/test" ...
     else:
         # when no scala version is specified, run test with only the specified scala version
-        cmd += ["++ %s" % scala_version, test_cmd]  # build/sbt ... "++ 2.13.5" "project/test" ...
+        cmd += ["++ %s" % scala_version, test_cmd]  # build/sbt ... "++ 2.13.8" "project/test" ...
 
     if is_running_spark_tests:
         cmd += ["unidoc"]
@@ -118,7 +118,7 @@ def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
             # Python 3 produces bytes which needs to be converted to str
             stdout = stdout.decode("utf-8")
             stderr = stderr.decode("utf-8")
-        if throw_on_error and exit_code is not 0:
+        if throw_on_error and exit_code != 0:
             raise Exception(
                 "Non-zero exitcode: %s\n\nSTDOUT:\n%s\n\nSTDERR:%s" %
                 (exit_code, stdout, stderr))

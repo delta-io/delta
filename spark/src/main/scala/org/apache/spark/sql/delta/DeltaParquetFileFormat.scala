@@ -164,14 +164,26 @@ case class DeltaParquetFileFormat(
     val useOffHeapBuffers = sparkSession.sessionState.conf.offHeapColumnVectorEnabled
     (partitionedFile: PartitionedFile) => {
       val rowIteratorFromParquet = parquetDataReader(partitionedFile)
-      val iterToReturn =
-        iteratorWithAdditionalMetadataColumns(
-          partitionedFile,
-          rowIteratorFromParquet,
-          isRowDeletedColumn,
-          useOffHeapBuffers = useOffHeapBuffers,
-          rowIndexColumn = rowIndexColumn)
-      iterToReturn.asInstanceOf[Iterator[InternalRow]]
+      try {
+        val iterToReturn =
+          iteratorWithAdditionalMetadataColumns(
+            partitionedFile,
+            rowIteratorFromParquet,
+            isRowDeletedColumn,
+            useOffHeapBuffers = useOffHeapBuffers,
+            rowIndexColumn = rowIndexColumn)
+        iterToReturn.asInstanceOf[Iterator[InternalRow]]
+      } catch {
+        case NonFatal(e) =>
+          // Close the iterator if it is a closeable resource. The `ParquetFileFormat` opens
+          // the file and returns `RecordReaderIterator` (which implements `AutoCloseable` and
+          // `Iterator`) instance as a `Iterator`.
+          rowIteratorFromParquet match {
+            case resource: AutoCloseable => closeQuietly(resource)
+            case _ => // do nothing
+          }
+          throw e
+      }
     }
   }
 
@@ -179,6 +191,12 @@ case class DeltaParquetFileFormat(
     if (columnMappingMode != NoMapping) true else super.supportFieldName(name)
   }
 
+  override def metadataSchemaFields: Seq[StructField] = {
+    // Parquet reader in Spark has a bug where a file containing 2b+ rows in a single rowgroup
+    // causes it to run out of the `Integer` range (TODO: Create a SPARK issue)
+    // For Delta Parquet readers don't expose the row_index field as a metadata field.
+    super.metadataSchemaFields.filter(field => field != ParquetFileFormat.ROW_INDEX_FIELD)
+  }
   def copyWithDVInfo(
       tablePath: String,
       broadcastDvMap: Broadcast[Map[URI, DeletionVectorDescriptorWithFilterType]],

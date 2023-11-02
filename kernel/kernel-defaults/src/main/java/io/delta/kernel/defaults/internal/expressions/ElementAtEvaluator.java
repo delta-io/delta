@@ -19,14 +19,16 @@ import java.util.Arrays;
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.ScalarExpression;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
-import io.delta.kernel.utils.Utils;
 
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import io.delta.kernel.internal.util.Utils;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**
@@ -73,7 +75,7 @@ class ElementAtEvaluator {
             // The general pattern is call `isNullAt(rowId)` followed by `getString`.
             // So the cache of one value is enough.
             private int lastLookupRowId = -1;
-            private Object lastLookupValue = null;
+            private String lastLookupValue = null;
 
             @Override
             public DataType getDataType() {
@@ -101,19 +103,36 @@ class ElementAtEvaluator {
             @Override
             public String getString(int rowId) {
                 lookupValue(rowId);
-                return lastLookupValue == null ? null : (String) lastLookupValue;
+                return lastLookupValue == null ? null : lastLookupValue;
             }
 
             private Object lookupValue(int rowId) {
                 if (rowId == lastLookupRowId) {
                     return lastLookupValue;
                 }
-                // TODO: this needs to be updated after the new way of accessing the complex
-                //  types is merged.
                 lastLookupRowId = rowId;
                 String keyValue = lookupKey.getString(rowId);
-                lastLookupValue = map.getMap(rowId).get(keyValue);
+                lastLookupValue = findValueForKey(map.getMap(rowId), keyValue);
                 return lastLookupValue;
+            }
+
+            /**
+             * Given a {@link MapValue} and string {@code key} find the corresponding value.
+             * Returns null if the key is not in the map.
+             * @param mapValue String->String map to search
+             * @param key the key to look up the value for; may be null
+             */
+            private String findValueForKey(MapValue mapValue, String key) {
+                ColumnVector keyVector = mapValue.getKeys();
+                for (int i = 0; i < mapValue.getSize(); i++) {
+                    if ((keyVector.isNullAt(i) && key == null) ||
+                            (!keyVector.isNullAt(i) && keyVector.getString(i).equals(key))) {
+                        return mapValue.getValues().isNullAt(i) ? null :
+                                mapValue.getValues().getString(i);
+                    }
+                }
+                // If the key is not in the map return null
+                return null;
             }
         };
     }
@@ -123,10 +142,10 @@ class ElementAtEvaluator {
             mapInputType instanceof MapType,
             "expected a map type input as first argument: " + elementAt);
         MapType asMapType = (MapType) mapInputType;
-        // TODO: we may extend type support in future, but currently the need is just a lookup
-        // in map column of type `map(string -> string)`.
-        if (asMapType.getKeyType().equivalent(StringType.INSTANCE) &&
-            asMapType.getValueType().equivalent(StringType.INSTANCE)) {
+        // For now we only need to support lookup in columns of type `map(string -> string)`.
+        // Additional type support may be added later
+        if (asMapType.getKeyType().equivalent(StringType.STRING) &&
+            asMapType.getValueType().equivalent(StringType.STRING)) {
             return asMapType;
         }
         throw new UnsupportedOperationException(

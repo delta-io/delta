@@ -146,7 +146,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
             |)""".stripMargin)
       }
       assert(e.getMessage.contains("expects a table. Please use ALTER VIEW instead.") ||
-        e.getMessage.contains("does not support ALTER TABLE ... SET TBLPROPERTIES"))
+        e.getMessage.contains("EXPECT_TABLE_NOT_VIEW.USE_ALTER_VIEW"))
     }
   }
 
@@ -1549,7 +1549,8 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
   override protected def createTable(schema: String, tblProperties: Map[String, String]): String = {
       val tmpDir = Utils.createTempDir().getCanonicalPath
       val (deltaLog, snapshot) = getDeltaLogWithSnapshot(tmpDir)
-      val txn = deltaLog.startTransaction(Some(snapshot))
+      // This is a path-based table so we don't need to pass the catalogTable here
+      val txn = deltaLog.startTransaction(None, Some(snapshot))
       val metadata = Metadata(
         schemaString = StructType.fromDDL(schema).json,
         configuration = tblProperties)

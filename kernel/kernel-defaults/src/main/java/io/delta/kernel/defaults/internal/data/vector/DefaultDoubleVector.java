@@ -20,7 +20,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.types.DoubleType;
 
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for double type data.
@@ -38,7 +38,7 @@ public class DefaultDoubleVector
      * @param values      column vector values.
      */
     public DefaultDoubleVector(int size, Optional<boolean[]> nullability, double[] values) {
-        super(size, DoubleType.INSTANCE, nullability);
+        super(size, DoubleType.DOUBLE, nullability);
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
             "invalid number of values (%s) for given size (%s)", values.length, size);

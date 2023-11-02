@@ -16,16 +16,15 @@
 package io.delta.kernel.defaults.internal.data.vector;
 
 import java.math.BigDecimal;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.types.DataType;
 
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * Abstract implementation of {@link ColumnVector} that provides the default functionality
@@ -130,20 +129,17 @@ public abstract class AbstractColumnVector
     }
 
     @Override
-    public <K, V> Map<K, V> getMap(int rowId) {
+    public MapValue getMap(int rowId) {
         throw unsupportedDataAccessException("map");
     }
 
     @Override
-    public Row getStruct(int rowId) {
-        throw unsupportedDataAccessException("struct");
-    }
-
-    @Override
-    public <T> List<T> getArray(int rowId) {
+    public ArrayValue getArray(int rowId) {
         throw unsupportedDataAccessException("array");
     }
 
+    // TODO no need to override these here; update default implementations in `ColumnVector`
+    //   to have a more informative exception message
     protected UnsupportedOperationException unsupportedDataAccessException(String accessType) {
         String msg = String.format(
             "Trying to access a `%s` value from vector of type `%s`",

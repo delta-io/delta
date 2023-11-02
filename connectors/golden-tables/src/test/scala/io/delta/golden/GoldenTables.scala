@@ -104,7 +104,10 @@ class GoldenTables extends QueryTest with SharedSparkSession {
   private implicit class OptimisticTxnTestHelper(txn: OptimisticTransaction) {
     def commitManually(actions: Action*): Long = {
       if (txn.readVersion == -1 && !actions.exists(_.isInstanceOf[Metadata])) {
-        txn.commit(Metadata() +: actions, ManualUpdate)
+        val schema = new StructType()
+          .add("intCol", IntegerType)
+          .json
+        txn.commit(Metadata(schemaString = schema) +: actions, ManualUpdate)
       } else {
         txn.commit(actions, ManualUpdate)
       }
@@ -211,14 +214,10 @@ class GoldenTables extends QueryTest with SharedSparkSession {
         new File(log.logPath.toUri).mkdirs()
 
         val add = AddFile(path, Map.empty, 100L, 10L, dataChange = true)
-        val rm = RemoveFile(s"$scheme$path", Some(200L), dataChange = false)
+        val rm = RemoveFile(s"$scheme$path", Some(200L))
 
-        log.store.write(
-          FileNames.deltaFile(log.logPath, 0L),
-          Iterator(Protocol(), Metadata(), add).map(a => JsonUtils.toJson(a.wrap)))
-        log.store.write(
-          FileNames.deltaFile(log.logPath, 1L),
-          Iterator(JsonUtils.toJson(rm.wrap)))
+        log.startTransaction().commitManually(add)
+        log.startTransaction().commitManually(rm)
       }
     }
 
@@ -277,7 +276,10 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       val selectedAction = if (action == "metadata") {
         Protocol()
       } else {
-        Metadata()
+        val schema = new StructType()
+          .add("intCol", IntegerType)
+          .json
+        Metadata(schemaString = schema)
       }
 
       val file = AddFile("abc", Map.empty, 1, 1, true)
@@ -851,8 +853,6 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
-  // TODO: requires bug fix in delta-io/delta#1886
-  /*
   generateGoldenTable("dv-with-columnmapping") { tablePath =>
     withSQLConf(
       ("spark.databricks.delta.properties.defaults.columnMapping.mode", "name"),
@@ -867,7 +867,6 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       }
     }
   }
-  */
 
   def writeBasicTimestampTable(path: String, timeZone: TimeZone): Unit = {
     TimeZone.setDefault(timeZone)
@@ -1177,6 +1176,86 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       spark.range(1).repartition(1).write.format("delta").save(tablePath)
       spark.range(30).repartition(9).write.format("delta").mode("append").save(tablePath)
     }
+  }
+
+  generateGoldenTable("log-replay-latest-metadata-protocol") { tablePath =>
+    spark.range(20).toDF("col1")
+      .write.format("delta").save(tablePath)
+    // update the table schema
+    spark.range(20).toDF("col1").withColumn("col2", 'col1 % 2)
+      .write.format("delta").mode("append").option("mergeSchema", "true").save(tablePath)
+    // update the protocol version
+    DeltaTable.forPath(spark, tablePath).upgradeTableProtocol(3, 7)
+  }
+
+  generateGoldenTable("only-checkpoint-files") { tablePath =>
+    withSQLConf(("spark.databricks.delta.properties.defaults.checkpointInterval", "1")) {
+      spark.range(10).repartition(10).write.format("delta").save(tablePath)
+      spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id < 5")
+      spark.range(20).write.format("delta").mode("append").save(tablePath)
+    }
+  }
+
+  generateGoldenTable("log-replay-special-characters-a") { tablePath =>
+    val log = DeltaLog.forTable(spark, new Path(tablePath))
+    new File(log.logPath.toUri).mkdirs()
+
+    val add = AddFile(new Path("special p@#h").toUri.toString, Map.empty, 100L,
+      10L, dataChange = true)
+    val remove = add.remove
+
+    log.startTransaction().commitManually(add)
+    log.startTransaction().commitManually(remove)
+  }
+
+  generateGoldenTable("log-replay-special-characters-b") { tablePath =>
+    val log = DeltaLog.forTable(spark, new Path(tablePath))
+    new File(log.logPath.toUri).mkdirs()
+
+    val add = AddFile(new Path("special p@#h").toUri.toString, Map.empty, 100L,
+      10L, dataChange = true)
+
+    log.startTransaction().commitManually(add)
+  }
+
+  generateGoldenTable("log-replay-dv-key-cases") { tablePath =>
+    withSQLConf(("spark.databricks.delta.properties.defaults.enableDeletionVectors", "true")) {
+      spark.range(50).repartition(1).write.format("delta").save(tablePath)
+      (0 until 3).foreach { n =>
+        spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id = ${n*7}")
+      }
+    }
+  }
+
+  generateGoldenTable("basic-with-inserts-updates") { tablePath =>
+    val data = (0 until 100).map(x => (x, s"val=$x"))
+    data.toDF("id", "str").write.format("delta").save(tablePath)
+    sql(s"UPDATE delta.`$tablePath` SET str = 'N/A' WHERE id < 50")
+  }
+
+  generateGoldenTable("basic-with-inserts-merge") { tablePath =>
+    val data = (0 until 100).map(x => (x, s"val=$x"))
+    data.toDF("id", "str").write.format("delta").save(tablePath)
+    spark.range(50, 150).createTempView("source")
+    sql(
+      s"""
+         |MERGE INTO delta.`$tablePath` t
+         |USING source
+         |ON source.id = t.id
+         |WHEN MATCHED
+         |  THEN UPDATE SET str = 'N/A'
+         |WHEN NOT MATCHED
+         |  THEN INSERT (id, str) VALUES (source.id, 'EXT')
+         |WHEN NOT MATCHED BY SOURCE AND t.id < 10
+         |  THEN DELETE
+         |""".stripMargin)
+  }
+
+  generateGoldenTable("basic-with-inserts-overwrite-restore") { tablePath =>
+    spark.range(100).write.format("delta").save(tablePath)
+    spark.range(100, 200).write.format("delta").mode("append").save(tablePath)
+    spark.range(500, 1000).write.format("delta").mode("overwrite").save(tablePath)
+    sql(s"RESTORE TABLE delta.`$tablePath` TO VERSION AS OF 1")
   }
 }
 

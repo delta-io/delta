@@ -25,7 +25,8 @@ import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.Utils;
+
+import io.delta.kernel.internal.util.Utils;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 
@@ -39,7 +40,7 @@ public class DefaultPredicateEvaluator implements PredicateEvaluator {
     private static final String EXISTING_SEL_VECTOR_COL_NAME =
         "____existing_selection_vector_value____";
     private static final StructField EXISTING_SEL_VECTOR_FIELD =
-        new StructField(EXISTING_SEL_VECTOR_COL_NAME, BooleanType.INSTANCE, false, emptyMap());
+        new StructField(EXISTING_SEL_VECTOR_COL_NAME, BooleanType.BOOLEAN, false, emptyMap());
 
     private final ExpressionEvaluator expressionEvaluator;
 
@@ -54,7 +55,7 @@ public class DefaultPredicateEvaluator implements PredicateEvaluator {
             predicate);
         StructType rewrittenInputSchema = inputSchema.add(EXISTING_SEL_VECTOR_FIELD);
         this.expressionEvaluator = new DefaultExpressionEvaluator(
-            rewrittenInputSchema, rewrittenPredicate, BooleanType.INSTANCE);
+            rewrittenInputSchema, rewrittenPredicate, BooleanType.BOOLEAN);
     }
 
     @Override
@@ -63,7 +64,7 @@ public class DefaultPredicateEvaluator implements PredicateEvaluator {
         Optional<ColumnVector> existingSelectionVector) {
         try {
             ColumnVector newVector = existingSelectionVector.orElse(
-                new DefaultConstantVector(BooleanType.INSTANCE, inputData.getSize(), true));
+                new DefaultConstantVector(BooleanType.BOOLEAN, inputData.getSize(), true));
             ColumnarBatch withExistingSelVector =
                 inputData.withNewColumn(
                     inputData.getSchema().length(), EXISTING_SEL_VECTOR_FIELD, newVector);

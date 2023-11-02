@@ -31,7 +31,6 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
@@ -41,6 +40,7 @@ import io.delta.kernel.internal.data.SelectionColumnVector;
 import io.delta.kernel.internal.deletionvectors.DeletionVectorUtils;
 import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray;
 import io.delta.kernel.internal.util.PartitionUtils;
+import io.delta.kernel.internal.util.Tuple2;
 
 /**
  * Represents a scan of a Delta table.
@@ -86,7 +86,7 @@ public interface Scan {
      *  </ul></li>
      *  <li><ul>
      *      <li>name: {@code tableRoot}, type: {@code string}</li>
-     *      <li>Description: Absolute path of the table location. TODO: this is temporary. Will
+     *      <li>Description: Absolute path of the table location. NOTE: this is temporary. Will
      *      be removed in future. @see <a href=https://github.com/delta-io/delta/issues/2089>
      *          </a></li>
      *  </ul></li>
@@ -143,9 +143,10 @@ public interface Scan {
                 physicalSchema,
                 partitionColumnsSet);
 
+        // request the row_index column for DV filtering
         StructType readSchema = readSchemaWithoutPartitionColumns
             // TODO: do we only want to request row_index_col when there is at least 1 DV?
-            .add(StructField.ROW_INDEX_COLUMN); // request the row_index column for DV filtering
+            .add(StructField.METADATA_ROW_INDEX_COLUMN);
 
         ParquetHandler parquetHandler = tableClient.getParquetHandler();
 
@@ -183,7 +184,7 @@ public interface Scan {
                     InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFileRow);
 
                 int rowIndexOrdinal = fileDataReadResult.getData().getSchema()
-                    .indexOf(StructField.ROW_INDEX_COLUMN_NAME);
+                    .indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME);
 
                 // Get the selectionVector if DV is present
                 Optional<ColumnVector> selectionVector;

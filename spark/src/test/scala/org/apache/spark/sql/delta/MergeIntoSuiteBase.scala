@@ -932,22 +932,6 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  protected def withKeyValueData(
-      source: Seq[(Int, Int)],
-      target: Seq[(Int, Int)],
-      isKeyPartitioned: Boolean = false,
-      sourceKeyValueNames: (String, String) = ("key", "value"),
-      targetKeyValueNames: (String, String) = ("key", "value"))(
-      thunk: (String, String) => Unit = null): Unit = {
-
-    append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2).coalesce(2),
-      if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)
-    withTempView("source") {
-      source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
-      thunk("source", s"delta.`$tempPath`")
-    }
-  }
-
   test("merge into cached table") {
     // Merge with a cached target only works in the join-based implementation right now
     withTable("source") {

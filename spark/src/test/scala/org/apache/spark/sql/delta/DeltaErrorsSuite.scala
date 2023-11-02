@@ -667,7 +667,7 @@ trait DeltaErrorsSuiteBase
           new InvariantViolationException("Invariant violated."))
       }
       checkErrorMessage(e, Some("DELTA_REPLACE_WHERE_MISMATCH"), Some("44000"),
-        Some("""Data written out does not match replaceWhere 'replaceWhere'.
+        Some("""Written data does not conform to partial table overwrite condition or constraint 'replaceWhere'.
         |Invariant violated.""".stripMargin))
     }
     {
@@ -675,7 +675,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.replaceWhereMismatchException("replaceWhere", "badPartitions")
       }
       checkErrorMessage(e, Some("DELTA_REPLACE_WHERE_MISMATCH"), Some("44000"),
-        Some("""Data written out does not match replaceWhere 'replaceWhere'.
+        Some("""Written data does not conform to partial table overwrite condition or constraint 'replaceWhere'.
         |Invalid data would be written to partitions badPartitions.""".stripMargin))
     }
     {
@@ -1309,10 +1309,17 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalStateException] {
-        throw DeltaErrors.invalidSourceVersion(JString("xyz"))
+        throw DeltaErrors.invalidSourceVersion("xyz")
       }
       checkErrorMessage(e, Some("DELTA_INVALID_SOURCE_VERSION"), Some("XXKDS"),
-        Some("sourceVersion(JString(xyz)) is invalid"))
+        Some("sourceVersion(xyz) is invalid"))
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.invalidSourceOffsetFormat()
+      }
+      checkErrorMessage(e, Some("DELTA_INVALID_SOURCE_OFFSET_FORMAT"), Some("XXKDS"),
+        Some("The stored source offset format is invalid"))
     }
     {
       val e = intercept[DeltaIllegalStateException] {

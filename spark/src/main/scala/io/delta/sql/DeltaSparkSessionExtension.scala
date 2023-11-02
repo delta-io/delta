@@ -92,6 +92,11 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       session.sessionState.conf.setConf(SQLConf.PARQUET_FIELD_ID_WRITE_ENABLED, true)
       new DeltaAnalysis(session)
     }
+    // [SPARK-45383] Spark CheckAnalysis rule misses a case for RelationTimeTravel, and so a
+    // non-existent table throws an internal spark error instead of the expected AnalysisException.
+    extensions.injectCheckRule { session =>
+      new CheckUnresolvedRelationTimeTravel(session)
+    }
     extensions.injectCheckRule { session =>
       new DeltaUnsupportedOperationsCheck(session)
     }

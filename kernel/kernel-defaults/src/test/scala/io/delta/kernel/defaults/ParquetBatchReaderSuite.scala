@@ -18,13 +18,12 @@ package io.delta.kernel.defaults
 import java.io.File
 import java.math.BigDecimal
 
-import org.scalatest.funsuite.AnyFunSuite
-import org.apache.hadoop.conf.Configuration
 import io.delta.golden.GoldenTableUtils.goldenTableFile
-
-import io.delta.kernel.types.{DecimalType, IntegerType, StructType}
 import io.delta.kernel.defaults.internal.parquet.ParquetBatchReader
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.types.{DecimalType, IntegerType, StructType}
+import org.apache.hadoop.conf.Configuration
+import org.scalatest.funsuite.AnyFunSuite
 
 class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
 
@@ -50,7 +49,7 @@ class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
     }
 
     val readSchema = new StructType()
-      .add("id", IntegerType.INSTANCE)
+      .add("id", IntegerType.INTEGER)
       .add("col1", new DecimalType(9, 0)) // INT32: 1 <= precision <= 9
       .add("col2", new DecimalType(12, 0)) // INT64: 10 <= precision <= 18
       .add("col3", new DecimalType(25, 0)) // FIXED_LEN_BYTE_ARRAY
@@ -93,7 +92,7 @@ class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
     }
 
     val readSchema = new StructType()
-      .add("id", IntegerType.INSTANCE)
+      .add("id", IntegerType.INTEGER)
       .add("col1", new DecimalType(5, 1)) // INT32: 1 <= precision <= 9
       .add("col2", new DecimalType(10, 5)) // INT64: 10 <= precision <= 18
       .add("col3", new DecimalType(20, 5)) // FIXED_LEN_BYTE_ARRAY

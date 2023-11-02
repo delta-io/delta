@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.DeleteFromTable
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
@@ -66,6 +67,7 @@ import org.apache.spark.sql.types.{StringType, StructType}
  *   - If a `replaceWhere` option is provided, and dynamic partition overwrite mode is enabled in
  *   the spark conf, data will be overwritten according to the `replaceWhere` expression
  *
+ * @param catalogTableOpt Should explicitly be set when table is accessed from catalog
  * @param schemaInCatalog The schema created in Catalog. We will use this schema to update metadata
  *                        when it is set (in CTAS code path), and otherwise use schema from `data`.
  */
@@ -76,7 +78,9 @@ case class WriteIntoDelta(
     partitionColumns: Seq[String],
     configuration: Map[String, String],
     data: DataFrame,
-    schemaInCatalog: Option[StructType] = None)
+    catalogTableOpt: Option[CatalogTable] = None,
+    schemaInCatalog: Option[StructType] = None
+    )
   extends LeafRunnableCommand
   with ImplicitMetadataOperation
   with DeltaCommand {
@@ -90,12 +94,14 @@ case class WriteIntoDelta(
 
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    deltaLog.withNewTransaction { txn =>
+    deltaLog.withNewTransaction(catalogTableOpt) { txn =>
       if (hasBeenExecuted(txn, sparkSession, Some(options))) {
         return Seq.empty
       }
 
-      val actions = write(txn, sparkSession)
+      val actions = write(
+        txn, sparkSession
+      )
       val operation = DeltaOperations.Write(
         mode, Option(partitionColumns),
         options.replaceWhere, options.userMetadata
@@ -215,7 +221,8 @@ case class WriteIntoDelta(
     }
     val finalSchema = schemaInCatalog.getOrElse(dataSchema)
     updateMetadata(data.sparkSession, txn, finalSchema,
-      partitionColumns, configuration, isOverwriteOperation, rearrangeOnly)
+      partitionColumns, configuration, isOverwriteOperation, rearrangeOnly
+    )
 
     val replaceOnDataColsEnabled =
       sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED)
@@ -414,7 +421,8 @@ case class WriteIntoDelta(
       txn: OptimisticTransaction,
       condition: Seq[Expression]): Seq[Action] = {
     val relation = LogicalRelation(
-        txn.deltaLog.createRelation(snapshotToUseOpt = Some(txn.snapshot)))
+        txn.deltaLog.createRelation(snapshotToUseOpt = Some(txn.snapshot),
+          catalogTableOpt = txn.catalogTable))
     val processedCondition = condition.reduceOption(And)
     val command = spark.sessionState.analyzer.execute(
       DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))

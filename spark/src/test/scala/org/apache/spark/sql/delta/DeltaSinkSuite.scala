@@ -21,7 +21,7 @@ import java.util.Locale
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.CommitInfo
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._
@@ -30,8 +30,8 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.DataSourceScanExec
 import org.apache.spark.sql.execution.datasources._
-
-import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.execution.streaming.{MemoryStream, MicroBatchExecution, StreamingQueryWrapper}
+import org.apache.spark.sql.execution.streaming.sources.WriteToMicroBatchDataSourceV1
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
@@ -430,6 +430,47 @@ class DeltaSinkSuite
       }
       assert(wrapperException.cause.isInstanceOf[AnalysisException])
       assert(wrapperException.cause.getMessage.contains("incompatible"))
+    }
+  }
+
+  private def verifyDeltaSinkCatalog(f: DataStreamWriter[_] => StreamingQuery): Unit = {
+    // Create a Delta sink whose target table is defined by our caller.
+    val input = MemoryStream[Int]
+    val streamWriter = input.toDF
+      .writeStream
+      .format("delta")
+      .option(
+        "checkpointLocation",
+        Utils.createTempDir(namePrefix = "tahoe-test").getCanonicalPath)
+    val q = f(streamWriter).asInstanceOf[StreamingQueryWrapper]
+
+    // WARNING: Only the query execution thread is allowed to initialize the logical plan (enforced
+    // by an assertion in MicroBatchExecution.scala). To avoid flaky failures, run the stream to
+    // completion, to guarantee the query execution thread ran before we try to access the plan.
+    try {
+      input.addData(1, 2, 3)
+      q.processAllAvailable()
+    } finally {
+      q.stop()
+    }
+
+    val plan = q.streamingQuery.logicalPlan
+    val WriteToMicroBatchDataSourceV1(catalogTable, sink: DeltaSink, _, _, _, _, _) = plan
+    assert(catalogTable === sink.catalogTable)
+  }
+
+  test("DeltaSink.catalogTable is correctly populated - catalog-based table") {
+    withTable("tab") {
+      verifyDeltaSinkCatalog(_.toTable("tab"))
+    }
+  }
+
+  test("DeltaSink.catalogTable is correctly populated - path-based table") {
+    withTempDir { tempDir =>
+      if (tempDir.exists()) {
+        assert(tempDir.delete())
+      }
+      verifyDeltaSinkCatalog(_.start(tempDir.getCanonicalPath))
     }
   }
 

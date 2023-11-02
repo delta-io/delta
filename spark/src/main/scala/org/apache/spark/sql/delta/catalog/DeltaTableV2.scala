@@ -35,6 +35,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
@@ -86,7 +87,9 @@ case class DeltaTableV2(
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
   lazy val deltaLog: DeltaLog = {
+    DeltaTableV2.withEnrichedInvalidProtocolVersionException(catalogTable, tableIdentifier) {
       DeltaLog.forTable(spark, rootPath, options)
+    }
   }
 
   def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
@@ -117,7 +120,9 @@ case class DeltaTableV2(
    * WARNING: Because the snapshot is captured lazily, callers should explicitly access the snapshot
    * if they want to be certain it has been captured.
    */
-  lazy val initialSnapshot: Snapshot = {
+  lazy val initialSnapshot: Snapshot = DeltaTableV2.withEnrichedInvalidProtocolVersionException(
+    catalogTable, tableIdentifier) {
+
     timeTravelSpec.map { spec =>
       // By default, block using CDF + time-travel
       if (CDCReader.isCDCRead(caseInsensitiveOptions) &&
@@ -244,14 +249,15 @@ case class DeltaTableV2(
 
     cdcRelation.getOrElse {
       deltaLog.createRelation(
-        partitionPredicates, Some(initialSnapshot), timeTravelSpec.isDefined)
+        partitionPredicates, Some(initialSnapshot), catalogTable, timeTravelSpec.isDefined)
     }
   }
 
   /** Creates a [[LogicalRelation]] that represents this table */
   lazy val toLogicalRelation: LogicalRelation = {
     val relation = this.toBaseRelation
-    LogicalRelation(relation, relation.schema.toAttributes, ttSafeCatalogTable, isStreaming = false)
+    LogicalRelation(
+      relation, toAttributes(relation.schema), ttSafeCatalogTable, isStreaming = false)
   }
 
   /** Creates a [[DataFrame]] that uses the requested spark session to read from this table */
@@ -317,8 +323,9 @@ case class DeltaTableV2(
 
 object DeltaTableV2 {
   /** Resolves a path into a DeltaTableV2, leveraging standard v2 table resolution. */
-  def apply(spark: SparkSession, tablePath: Path, cmd: String): DeltaTableV2 =
-    resolve(spark, UnresolvedPathBasedDeltaTable(tablePath.toString, cmd), cmd)
+  def apply(spark: SparkSession, tablePath: Path, options: Map[String, String], cmd: String)
+      : DeltaTableV2 =
+    resolve(spark, UnresolvedPathBasedDeltaTable(tablePath.toString, options, cmd), cmd)
 
   /** Resolves a table identifier into a DeltaTableV2, leveraging standard v2 table resolution. */
   def apply(spark: SparkSession, tableId: TableIdentifier, cmd: String): DeltaTableV2 = {
@@ -338,6 +345,26 @@ object DeltaTableV2 {
     case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
       DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table))
     case _ => throw DeltaErrors.notADeltaTableException(cmd)
+  }
+
+  /**
+   * When Delta Log throws InvalidProtocolVersionException it doesn't know the table name and uses
+   * the data path in the message, this wrapper throw a new InvalidProtocolVersionException with
+   * table name and sets its Cause to the original InvalidProtocolVersionException.
+   */
+  def withEnrichedInvalidProtocolVersionException[T](
+      catalogTable: Option[CatalogTable],
+      tableName: Option[String] = None)(thunk: => T): T = {
+
+    lazy val tableNameToUse = catalogTable match {
+      case Some(ct) => Some(ct.identifier.copy(catalog = None).unquotedString)
+      case None => tableName
+    }
+
+    try thunk catch {
+      case e: InvalidProtocolVersionException if tableNameToUse.exists(_ != e.tableNameOrPath) =>
+        throw e.copy(tableNameOrPath = tableNameToUse.get).initCause(e)
+    }
   }
 }
 
@@ -395,7 +422,8 @@ private class WriteIntoDeltaBuilder(
             new DeltaOptions(options.toMap, session.sessionState.conf),
             Nil,
             table.deltaLog.unsafeVolatileSnapshot.metadata.configuration,
-            data).run(session)
+            data,
+            table.catalogTable).run(session)
 
           // TODO: Push this to Apache Spark
           // Re-cache all cached plans(including this relation itself, if it's cached) that refer

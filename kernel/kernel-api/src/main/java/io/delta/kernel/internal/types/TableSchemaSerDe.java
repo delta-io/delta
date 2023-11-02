@@ -15,30 +15,25 @@
  */
 package io.delta.kernel.internal.types;
 
-import java.util.List;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import io.delta.kernel.client.JsonHandler;
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.BasePrimitiveType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.DecimalType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.MixedDataType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Utils;
+
+import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.internal.util.VectorUtils;
 
 /**
  * Utility class to serialize and deserialize the table schema which is of type {@link StructType}.
@@ -77,11 +72,12 @@ public class TableSchemaSerDe {
     private static StructType parseStructType(JsonHandler jsonHandler,
                                               String serializedStructType) {
         Function<Row, StructType> evalMethod = (row) -> {
-            final List<Row> fields = row.getArray(0);
-            return new StructType(
-                fields.stream()
-                    .map(field -> parseStructField(jsonHandler, field))
-                    .collect(Collectors.toList()));
+            final ArrayValue fieldsArrayValue = row.getArray(0);
+            ArrayList<StructField> parsedFields = new ArrayList<>(fieldsArrayValue.getSize());
+            for (int i = 0; i < fieldsArrayValue.getSize(); i ++) {
+                parsedFields.add(parseStructField(jsonHandler, fieldsArrayValue.getElements(), i));
+            }
+            return new StructType(parsedFields);
         };
         return parseAndEvalSingleRow(
             jsonHandler, serializedStructType, STRUCT_TYPE_SCHEMA, evalMethod);
@@ -90,13 +86,15 @@ public class TableSchemaSerDe {
     /**
      * Utility method to parse a {@link StructField} from the {@link Row}
      */
-    private static StructField parseStructField(JsonHandler jsonHandler, Row row) {
-        String name = row.getString(0);
-        String serializedDataType = row.getString(1);
-        DataType type = parseDataType(jsonHandler, serializedDataType);
-        boolean nullable = row.getBoolean(2);
-        Map<String, String> metadata = row.getMap(3);
+    private static StructField parseStructField(
+            JsonHandler jsonHandler, ColumnVector vector, int rowId) {
 
+        String name = vector.getChild(0).getString(rowId);
+        String serializedDataType = vector.getChild(1).getString(rowId);
+        DataType type = parseDataType(jsonHandler, serializedDataType);
+        boolean nullable = vector.getChild(2).getBoolean(rowId);
+        Map<String, String> metadata = vector.getChild(3).isNullAt(rowId) ? Collections.emptyMap() :
+            VectorUtils.toJavaMap(vector.getChild(3).getMap(rowId));
         return new StructField(name, type, nullable, metadata);
     }
 
@@ -188,7 +186,7 @@ public class TableSchemaSerDe {
         String jsonString,
         StructType outputSchema,
         Function<Row, R> evalFunction) {
-        ColumnVector columnVector = Utils.singletonColumnVector(jsonString);
+        ColumnVector columnVector = InternalUtils.singletonStringColumnVector(jsonString);
         ColumnarBatch result = jsonHandler.parseJson(columnVector, outputSchema);
 
         assert result.getSize() == 1;
@@ -205,11 +203,11 @@ public class TableSchemaSerDe {
      * Schema of the one member ({@link StructField}) in {@link StructType}.
      */
     private static final StructType STRUCT_FIELD_SCHEMA = new StructType()
-        .add("name", StringType.INSTANCE)
+        .add("name", StringType.STRING)
         .add("type", MixedDataType.INSTANCE) // Data type can be a string or a object.
-        .add("nullable", BooleanType.INSTANCE)
+        .add("nullable", BooleanType.BOOLEAN)
         .add("metadata",
-            new MapType(StringType.INSTANCE, StringType.INSTANCE, false /* valueContainsNull */));
+            new MapType(StringType.STRING, StringType.STRING, false /* valueContainsNull */));
 
     /**
      * Schema of the serialized {@link StructType}.
@@ -236,9 +234,9 @@ public class TableSchemaSerDe {
      */
     private static StructType ARRAY_TYPE_SCHEMA =
         new StructType()
-            .add("type", StringType.INSTANCE)
+            .add("type", StringType.STRING)
             .add("elementType", MixedDataType.INSTANCE)
-            .add("containsNull", BooleanType.INSTANCE);
+            .add("containsNull", BooleanType.BOOLEAN);
 
     /**
      * Example Map Type in serialized format
@@ -251,10 +249,10 @@ public class TableSchemaSerDe {
      */
     private static StructType MAP_TYPE_SCHEMA =
         new StructType()
-            .add("type", StringType.INSTANCE)
+            .add("type", StringType.STRING)
             .add("keyType", MixedDataType.INSTANCE)
             .add("valueType", MixedDataType.INSTANCE)
-            .add("valueContainsNull", BooleanType.INSTANCE);
+            .add("valueContainsNull", BooleanType.BOOLEAN);
 
     private static Pattern DECIMAL_TYPE_PATTERN =
         Pattern.compile("decimal\\(\\s*(?<precision>[0-9]+),\\s*(?<scale>[0-9]+)\\s*\\)");

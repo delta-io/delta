@@ -15,27 +15,12 @@
  */
 package io.delta.kernel.internal.types;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.BasePrimitiveType;
-import io.delta.kernel.types.BinaryType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.DateType;
-import io.delta.kernel.types.DecimalType;
-import io.delta.kernel.types.FloatType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 
 public class TestTableSchemaSerDe {
     @Test
@@ -63,14 +48,14 @@ public class TestTableSchemaSerDe {
     public void complexTypesRoundTrip() {
         List<StructField> fieldList = new ArrayList<>();
 
-        ArrayType arrayType = array(IntegerType.INSTANCE, true);
+        ArrayType arrayType = array(IntegerType.INTEGER, true);
         ArrayType arrayArrayType = array(arrayType, false);
-        MapType mapType = map(FloatType.INSTANCE, BinaryType.INSTANCE, false);
-        MapType mapMapType = map(mapType, BinaryType.INSTANCE, true);
+        MapType mapType = map(FloatType.FLOAT, BinaryType.BINARY, false);
+        MapType mapMapType = map(mapType, BinaryType.BINARY, true);
         StructType structType = new StructType()
-            .add("simple", DateType.INSTANCE);
+            .add("simple", DateType.DATE);
         StructType structAllType = new StructType()
-            .add("prim", BooleanType.INSTANCE)
+            .add("prim", BooleanType.BOOLEAN)
             .add("arr", arrayType)
             .add("map", mapType)
             .add("struct", structType);

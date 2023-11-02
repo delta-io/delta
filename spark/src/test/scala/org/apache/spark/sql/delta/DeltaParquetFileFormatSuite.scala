@@ -153,9 +153,9 @@ class DeltaParquetFileFormatSuite extends QueryTest
   /** Helper method to run the test with vectorized and non-vectorized Parquet readers */
   private def testWithBothParquetReaders(name: String)(f: => Any): Unit = {
     for (enableVectorizedParquetReader <- BOOLEAN_DOMAIN) {
-      withSQLConf(
-        "spark.sql.parquet.enableVectorizedReader" -> enableVectorizedParquetReader.toString) {
-        test(s"$name, with vectorized Parquet reader=$enableVectorizedParquetReader)") {
+      test(s"$name, with vectorized Parquet reader=$enableVectorizedParquetReader)") {
+        withSQLConf(
+          "spark.sql.parquet.enableVectorizedReader" -> enableVectorizedParquetReader.toString) {
           f
         }
       }

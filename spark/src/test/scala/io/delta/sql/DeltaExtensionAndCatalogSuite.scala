@@ -104,12 +104,11 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
     withTempDir { dir =>
       withSparkSession("" -> "") { spark =>
         val path = new Path(dir.getCanonicalPath)
-        val e = intercept[java.util.concurrent.ExecutionException] {
+        val e = intercept[DeltaAnalysisException] {
           DeltaLog.forTable(spark, path)
         }
-        assert(e.getCause.isInstanceOf[DeltaAnalysisException])
-        assert(e.getCause.asInstanceOf[DeltaAnalysisException].getErrorClass() ==
-          "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
+        assert(e.isInstanceOf[DeltaAnalysisException])
+        assert(e.getErrorClass() == "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
       }
     }
   }

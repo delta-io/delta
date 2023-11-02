@@ -38,7 +38,7 @@ public class SelectionColumnVector
 
     @Override
     public DataType getDataType() {
-        return BooleanType.INSTANCE;
+        return BooleanType.BOOLEAN;
     }
 
     @Override

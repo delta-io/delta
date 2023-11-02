@@ -66,7 +66,8 @@ case class MergeIntoCommand(
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
-    migratedSchema: Option[StructType]) extends MergeIntoCommandBase
+    migratedSchema: Option[StructType])
+  extends MergeIntoCommandBase
   with InsertOnlyMergeExecutor
   with ClassicMergeExecutor {
 
@@ -109,7 +110,7 @@ case class MergeIntoCommand(
         val mergeActions = {
           if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
             // This is a single-job execution so there is no WriteChanges.
-            metrics("numSourceRowsInSecondScan").set(-1)
+            performedSecondSourceScan = false
             writeOnlyInserts(
               spark, deltaTxn, filterMatchedRows = true, numSourceRowsMetric = "numSourceRows")
           } else {
@@ -139,9 +140,15 @@ case class MergeIntoCommand(
       spark.sharedState.cacheManager.recacheByPlan(spark, target)
     }
     sendDriverMetrics(spark, metrics)
-    Seq(Row(metrics("numTargetRowsUpdated").value + metrics("numTargetRowsDeleted").value +
-            metrics("numTargetRowsInserted").value, metrics("numTargetRowsUpdated").value,
-            metrics("numTargetRowsDeleted").value, metrics("numTargetRowsInserted").value))
+    val num_affected_rows =
+      metrics("numTargetRowsUpdated").value +
+        metrics("numTargetRowsDeleted").value +
+        metrics("numTargetRowsInserted").value
+    Seq(Row(
+      num_affected_rows,
+      metrics("numTargetRowsUpdated").value,
+      metrics("numTargetRowsDeleted").value,
+      metrics("numTargetRowsInserted").value))
   }
 
   /**

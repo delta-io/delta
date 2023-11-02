@@ -24,8 +24,8 @@ import org.apache.hadoop.conf.Configuration;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 
 import static io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getTestResourceFilePath;
 

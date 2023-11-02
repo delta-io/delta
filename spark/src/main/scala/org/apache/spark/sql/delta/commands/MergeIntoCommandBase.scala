@@ -39,7 +39,7 @@ import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StructType
 
-abstract class MergeIntoCommandBase extends LeafRunnableCommand
+trait MergeIntoCommandBase extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging
   with PredicateHelper
@@ -191,7 +191,8 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       matchedClauses,
       notMatchedClauses,
       notMatchedBySourceClauses,
-      isPartitioned = deltaTxn.metadata.partitionColumns.nonEmpty)
+      isPartitioned = deltaTxn.metadata.partitionColumns.nonEmpty,
+      performedSecondSourceScan = performedSecondSourceScan)
     stats.copy(
       materializeSourceReason = Some(materializeSourceReason.toString),
       materializeSourceAttempts = Some(attempt))
@@ -240,7 +241,7 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   }
 
   /**
-   * Build a new logical plan to read the given `files` instead of the whole target table.
+   * Builds a new logical plan to read the given `files` instead of the whole target table.
    * The plan returned has the same output columns (exprIds) as the `target` logical plan, so that
    * existing update/insert expressions can be applied on this new plan. Unneeded non-partition
    * columns may be dropped.
@@ -268,10 +269,11 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   }
 
   /**
-   * Build a new logical plan to read the target table using the given `fileIndex`.
+   * Builds a new logical plan to read the target table using the given `fileIndex`.
    * The plan returned has the same output columns (exprIds) as the `target` logical plan, so that
-   * existing update/insert expressions can be applied on this new plan. Unneeded non-partition
-   * columns may be dropped.
+   * existing update/insert expressions can be applied on this new plan.
+   *
+   * @param columnsToDrop unneeded non-partition columns to be dropped
    */
   protected def buildTargetPlanWithIndex(
     spark: SparkSession,
@@ -338,9 +340,22 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
     }
   }
 
-  /** Expressions to increment SQL metrics */
-  protected def incrementMetricAndReturnBool(name: String, valueToReturn: Boolean): Expression =
+  /** @return An `Expression` to increment a SQL metric */
+  protected def incrementMetricAndReturnBool(
+      name: String,
+      valueToReturn: Boolean): Expression = {
     IncrementMetric(Literal(valueToReturn), metrics(name))
+  }
+
+  /** @return An `Expression` to increment SQL metrics */
+  protected def incrementMetricsAndReturnBool(
+      names: Seq[String],
+      valueToReturn: Boolean): Expression = {
+    val incExpr = incrementMetricAndReturnBool(names.head, valueToReturn)
+    names.tail.foldLeft(incExpr) { case (expr, name) =>
+      IncrementMetric(expr, metrics(name))
+    }
+  }
 
   protected def getTargetOnlyPredicates(spark: SparkSession): Seq[Expression] = {
     val targetOnlyPredicatesOnCondition =
@@ -350,12 +365,12 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       targetOnlyPredicatesOnCondition
     } else {
       val targetOnlyMatchedPredicate = matchedClauses
-        .map(clause => clause.condition.getOrElse(Literal(true)))
+        .map(_.condition.getOrElse(Literal.TrueLiteral))
         .map { condition =>
           splitConjunctivePredicates(condition)
             .filter(_.references.subsetOf(target.outputSet))
             .reduceOption(And)
-            .getOrElse(Literal(true))
+            .getOrElse(Literal.TrueLiteral)
         }
         .reduceOption(Or)
       targetOnlyPredicatesOnCondition ++ targetOnlyMatchedPredicate
@@ -417,6 +432,10 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
     }
   }
 
+  // Whether we actually scanned the source twice or the value in numSourceRowsInSecondScan is
+  // uninitialised.
+  protected var performedSecondSourceScan: Boolean = true
+
   /**
    * Throws an exception if merge metrics indicate that the source table changed between the first
    * and the second source table scans.
@@ -427,8 +446,8 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
     // in both jobs.
     // If numSourceRowsInSecondScan is < 0 then it hasn't run, e.g. for insert-only merges.
     // In that case we have only read the source table once.
-    if (metrics("numSourceRowsInSecondScan").value >= 0 &&
-      metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
+    if (performedSecondSourceScan &&
+        metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
       log.warn(s"Merge source has ${metrics("numSourceRows")} rows in initial scan but " +
         s"${metrics("numSourceRowsInSecondScan")} rows in second scan")
       if (conf.getConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED)) {
