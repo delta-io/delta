@@ -19,6 +19,7 @@ package io.delta.kernel.internal.snapshot;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 
@@ -44,10 +45,14 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public class SnapshotManager {
 
-    private Optional<SnapshotHint> latestSnapshotHint;
+    /**
+     * The latest {@link SnapshotHint} for this table. The initial value inside the AtomicReference
+     * is `null`.
+     */
+    private AtomicReference<SnapshotHint> latestSnapshotHint;
 
     public SnapshotManager() {
-        this.latestSnapshotHint = Optional.empty();
+        this.latestSnapshotHint = new AtomicReference<>();
     }
 
     private static final Logger logger = LoggerFactory.getLogger(SnapshotManager.class);
@@ -101,16 +106,15 @@ public class SnapshotManager {
     /**
      * Updates the current `latestSnapshotHint` with the `newHint` if and only if the newHint is
      * newer (i.e. has a later table version).
-     * <p>
-     * This doesn't need to be thread-safe. Suppose the current `latestSnapshotHint` is at version
-     * N. If three Snapshots (N-1, N+1, N+2) concurrently register their hints, only N+1 and N+2
-     * will be able to replace the current. And either winning the update is fine.
+     *
+     * Must be thread-safe.
      */
     public void registerHint(SnapshotHint newHint) {
-        if (!latestSnapshotHint.isPresent() ||
-                newHint.getVersion() > latestSnapshotHint.get().getVersion()) {
-            latestSnapshotHint = Optional.of(newHint);
-        }
+        latestSnapshotHint.updateAndGet(currHint -> {
+            if (currHint == null) return newHint; // the initial reference value is null
+            if (newHint.getVersion() > currHint.getVersion()) return newHint;
+            return currHint;
+        });
     }
 
     /**
@@ -260,7 +264,7 @@ public class SnapshotManager {
             tableClient,
             initSegment.lastCommitTimestamp,
             this,
-            latestSnapshotHint
+            Optional.ofNullable(latestSnapshotHint.get())
         );
     }
 
