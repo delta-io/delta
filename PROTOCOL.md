@@ -649,20 +649,18 @@ The schema of `sidecar` action is as follows:
 
 Field Name | Data Type | Description | optional/required
 -|-|-|-
-fileName | String | Name of the sidecar file (not a path). The file must reside in the _delta_log/_sidecars directory. | required
+path | String | URI-encoded path to the sidecar file. Because sidecar files must always reside in the table's own _delta_log/_sidecars directory, implementations are encouraged to store only the file's name (without scheme or parent directories). | required
 sizeInBytes | Long | Size of the sidecar file. | required
 modificationTime | Long | The time this logical file was created, as milliseconds since the epoch. | required
-type | String | Type of sidecar. Valid values are: "fileaction". This could be extended in future to allow different kinds of sidecars. | required
 tags|`Map[String, String]`|Map containing any additional metadata about the checkpoint sidecar file. | optional
 
 The following is an example `sidecar` action:
 ```json
 {
   "sidecar":{
-    "fileName": "016ae953-37a9-438e-8683-9a9a4a79a395.parquet",
+    "path": "016ae953-37a9-438e-8683-9a9a4a79a395.parquet",
     "sizeInBytes": 2304522,
     "modificationTime": 1512909768000,
-    "type": "fileaction",
     "tags": {}
   }
 }
@@ -674,14 +672,14 @@ It describes the details about the checkpoint. It has the following schema:
 
 Field Name | Data Type | Description | optional/required
 -|-|-|-
-flavor|`String`|The flavor of the V2 checkpoint. Allowed values: "flat".| required
+version|`Long`|The checkpoint version.| required
 tags|`Map[String, String]`|Map containing any additional metadata about the v2 spec checkpoint.| optional
 
 E.g.
 ```json
 {
   "checkpointMetadata":{
-    "flavor":"flat",
+    "version":1,
     "tags":{}
   }
 }
@@ -1125,18 +1123,18 @@ the `_last_checkpoint` file, so that readers don't have to read the V2 Checkpoin
 
 E.g. showing the content of V2 spec checkpoint:
 ```
-{"checkpointMetadata":{"flavor":"flat","tags":{}}}
+{"checkpointMetadata":{"version":364475,"tags":{}}}
 {"metaData":{...}}
 {"protocol":{...}}
 {"txn":{"appId":"3ba13872-2d47-4e17-86a0-21afd2a22395","version":364475}}
 {"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4389}}
-{"sidecar":{"path":"3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet","sizeInBytes":2341330,"modificationTime":1512909768000,"type":"fileaction","tags":{}}
-{"sidecar":{"path":"016ae953-37a9-438e-8683-9a9a4a79a395.parquet","sizeInBytes":8468120,"modificationTime":1512909848000,"type":"fileaction","tags":{}}
+{"sidecar":{"path":"3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet","sizeInBytes":2341330,"modificationTime":1512909768000,"tags":{}}
+{"sidecar":{"path":"016ae953-37a9-438e-8683-9a9a4a79a395.parquet","sizeInBytes":8468120,"modificationTime":1512909848000,"tags":{}}
 ```
 
 Another example of a v2 spec checkpoint without sidecars:
 ```
-{"checkpointMetadata":{"flavor":"flat","tags":{}}}
+{"checkpointMetadata":{"version":364475,"tags":{}}}
 {"metaData":{...}}
 {"protocol":{...}}
 {"txn":{"appId":"3ba13872-2d47-4e17-86a0-21afd2a22395","version":364475}}
