@@ -144,14 +144,8 @@ object IcebergCompatV1 extends DeltaLogging {
         // Deletion Vectors cannot be writeable; Note concurrent txns are also convered
         // to NOT write deletion vectors as that txn would need to make DVs writable, which
         // would conflict with current txn because of metadata change.
-        // If Deletion Vector is not writable but supported, check if Deletion Vectors are
-        // completely purged from the table.
         if (DeletionVectorUtils.deletionVectorsWritable(newestProtocol, newestMetadata)) {
           throw DeltaErrors.icebergCompatV1DeletionVectorsShouldBeDisabledException()
-        }
-        if (newestProtocol.isFeatureSupported(DeletionVectorsTableFeature) &&
-          !DeletionVectorsTableFeature.validateRemoval(prevSnapshot)) {
-          throw DeltaErrors.icebergCompatV1DeletionVectorsNotPurgedException()
         }
 
         // Check we have all required delta table properties

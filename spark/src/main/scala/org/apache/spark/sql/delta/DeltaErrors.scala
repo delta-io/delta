@@ -3035,13 +3035,13 @@ trait DeltaErrorsBase
 
   def icebergCompatV1DeletionVectorsShouldBeDisabledException(): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_ICEBERG_COMPAT_V1_VIOLATION.ICEBERG_DELETION_VECTORS_SHOULD_BE_DISABLED"
+      errorClass = "DELTA_ICEBERG_COMPAT_V1_VIOLATION.DELETION_VECTORS_SHOULD_BE_DISABLED"
     )
   }
 
   def icebergCompatV1DeletionVectorsNotPurgedException(): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_ICEBERG_COMPAT_V1_VIOLATION.ICEBERG_DELETION_VECTORS_NOT_PURGED"
+      errorClass = "DELTA_ICEBERG_COMPAT_V1_VIOLATION.DELETION_VECTORS_NOT_PURGED"
     )
   }
 
