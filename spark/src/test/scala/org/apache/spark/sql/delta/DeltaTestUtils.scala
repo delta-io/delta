@@ -41,6 +41,7 @@ import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.test.SharedSparkSession
@@ -243,22 +244,28 @@ trait DeltaTestUtilsBase {
 trait DeltaCheckpointTestUtils
   extends DeltaTestUtilsBase { self: SparkFunSuite with SharedSparkSession =>
 
-  def testDifferentCheckpoints(testName: String)
+  def testDifferentCheckpoints(testName: String, quiet: Boolean = false)
       (f: (CheckpointPolicy.Policy, Option[V2Checkpoint.Format]) => Unit): Unit = {
     test(s"$testName [Checkpoint V1]") {
-      withSQLConf(DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey ->
-        CheckpointPolicy.Classic.name) {
-        f(CheckpointPolicy.Classic, None)
+      def testFunc(): Unit = {
+        withSQLConf(DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey ->
+          CheckpointPolicy.Classic.name) {
+          f(CheckpointPolicy.Classic, None)
+        }
       }
+      if (quiet) quietly { testFunc() } else testFunc()
     }
     for (checkpointFormat <- V2Checkpoint.Format.ALL)
     test(s"$testName [Checkpoint V2, format: ${checkpointFormat.name}]") {
-      withSQLConf(
-        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
-        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> checkpointFormat.name
-      ) {
-        f(CheckpointPolicy.V2, Some(checkpointFormat))
+      def testFunc(): Unit = {
+        withSQLConf(
+          DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+          DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> checkpointFormat.name
+        ) {
+          f(CheckpointPolicy.V2, Some(checkpointFormat))
+        }
       }
+      if (quiet) quietly { testFunc() } else testFunc()
     }
   }
 

@@ -64,7 +64,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
 
       // If nothing to do when not matched, then nothing to insert, that is, no new files to write
       if (!includesInserts && !filterMatchedRows) {
-        metrics("numSourceRowsInSecondScan").set(-1)
+        performedSecondSourceScan = false
         return Seq.empty
       }
 
