@@ -266,7 +266,7 @@ trait MetadataCleanup extends DeltaLogging {
     val sidecarFilesIterator = new Iterator[FileStatus] {
       // Hadoop's RemoteIterator is neither java nor scala Iterator, so have to wrap it
       val remoteIterator = fs.listStatusIterator(sidecarDirPath)
-      override def hasNext(): Boolean = remoteIterator.hasNext()
+      override def hasNext: Boolean = remoteIterator.hasNext()
       override def next(): FileStatus = remoteIterator.next()
     }
     val sidecarFilesToDelete = sidecarFilesIterator
