@@ -1071,7 +1071,8 @@ When the Clustered Table is supported (when the `writerFeatures` field of a tabl
   If [Column Mapping](#column-mapping) is enabled, the physical column names should be used.
 - When a clustering implementation clusters files, writers must incorporate a `tag`  with `CLUSTERED_BY` as the key and the name of the clustering implementation as the corresponding value in `add` action.
   - A clustering implementation must only cluster files that belong to the implementation or files that do not have the `CLUSTERED_BY` tag (i.e., unclustered).
-  - A clustering implementation is free to add additional information such as adding a new metadata domain to keep track of its metadata.
+  - Writer is not required to cluster a specific file at any specific moment though it is still obligated to record accurate statistics. However, if it decides to cluster a particular file, it must include the CLUSTERED_BY tag.
+  - A clustering implementation is free to add additional information such as adding a new user-controlled metadata domain to keep track of its metadata.
 
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
