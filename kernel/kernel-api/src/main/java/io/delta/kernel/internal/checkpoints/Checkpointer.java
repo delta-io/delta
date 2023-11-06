@@ -127,6 +127,7 @@ public class Checkpointer {
                 return checkpointRow.map(row -> CheckpointMetaData.fromRow(row));
             }
         } catch (Exception ex) {
+            // TODO: log the exception, once https://github.com/delta-io/delta/issues/2230 is resolved
             return Optional.empty();
         }
     }
