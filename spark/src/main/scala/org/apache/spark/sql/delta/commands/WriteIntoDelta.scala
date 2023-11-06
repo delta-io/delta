@@ -79,7 +79,8 @@ case class WriteIntoDelta(
     configuration: Map[String, String],
     data: DataFrame,
     catalogTableOpt: Option[CatalogTable] = None,
-    schemaInCatalog: Option[StructType] = None)
+    schemaInCatalog: Option[StructType] = None
+    )
   extends LeafRunnableCommand
   with ImplicitMetadataOperation
   with DeltaCommand {
@@ -98,7 +99,9 @@ case class WriteIntoDelta(
         return Seq.empty
       }
 
-      val actions = write(txn, sparkSession)
+      val actions = write(
+        txn, sparkSession
+      )
       val operation = DeltaOperations.Write(
         mode, Option(partitionColumns),
         options.replaceWhere, options.userMetadata

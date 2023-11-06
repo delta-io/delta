@@ -411,6 +411,7 @@ trait CDCReaderImpl extends DeltaLogging {
    * @param useCoarseGrainedCDC - ignores checks related to CDC being disabled in any of the
    *         versions and computes CDC entirely from AddFiles/RemoveFiles (ignoring
    *         AddCDCFile actions)
+   * @param startVersionSnapshot - The snapshot of the starting version.
    * @return CDCInfo which contains the DataFrame of the changes as well as the statistics
    *         related to the changes
    */
@@ -421,7 +422,8 @@ trait CDCReaderImpl extends DeltaLogging {
       changes: Iterator[(Long, Seq[Action])],
       spark: SparkSession,
       isStreaming: Boolean = false,
-      useCoarseGrainedCDC: Boolean = false): CDCVersionDiffInfo = {
+      useCoarseGrainedCDC: Boolean = false,
+      startVersionSnapshot: Option[SnapshotDescriptor] = None): CDCVersionDiffInfo = {
     val deltaLog = readSchemaSnapshot.deltaLog
 
     if (end < start) {
@@ -436,8 +438,10 @@ trait CDCReaderImpl extends DeltaLogging {
     val addFiles = ListBuffer[CDCDataSpec[AddFile]]()
     val removeFiles = ListBuffer[CDCDataSpec[RemoveFile]]()
 
-    val startVersionSnapshot = deltaLog.getSnapshotAt(start)
-    if (!useCoarseGrainedCDC && !isCDCEnabledOnTable(startVersionSnapshot.metadata, spark)) {
+    val startVersionMetadata = startVersionSnapshot.map(_.metadata).getOrElse {
+      deltaLog.getSnapshotAt(start).metadata
+    }
+    if (!useCoarseGrainedCDC && !isCDCEnabledOnTable(startVersionMetadata, spark)) {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
     }
 
@@ -611,8 +615,7 @@ trait CDCReaderImpl extends DeltaLogging {
     //    the range, BUT time-travel is used so the read schema could also be arbitrary.
     // It is sufficient to just verify with the start version schema because we have already
     // verified that all data being queries is read-compatible with start schema.
-    checkBatchCdfReadSchemaIncompatibility(
-      startVersionSnapshot.metadata, startVersionSnapshot.version, isSchemaChange = false)
+    checkBatchCdfReadSchemaIncompatibility(startVersionMetadata, start, isSchemaChange = false)
 
     val dfs = ListBuffer[DataFrame]()
     if (changeFiles.nonEmpty) {
@@ -866,7 +869,8 @@ trait CDCReaderImpl extends DeltaLogging {
       end: Long,
       spark: SparkSession,
       readSchemaSnapshot: Option[Snapshot] = None,
-      useCoarseGrainedCDC: Boolean = false): DataFrame = {
+      useCoarseGrainedCDC: Boolean = false,
+      startVersionSnapshot: Option[SnapshotDescriptor] = None): DataFrame = {
 
     val changesWithinRange = deltaLog.getChanges(start).takeWhile { case (version, _) =>
       version <= end
@@ -878,7 +882,8 @@ trait CDCReaderImpl extends DeltaLogging {
       changesWithinRange,
       spark,
       isStreaming = false,
-      useCoarseGrainedCDC)
+      useCoarseGrainedCDC = useCoarseGrainedCDC,
+      startVersionSnapshot = startVersionSnapshot)
       .fileChangeDf
   }
 

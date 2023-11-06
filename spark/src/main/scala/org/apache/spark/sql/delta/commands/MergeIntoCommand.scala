@@ -110,7 +110,7 @@ case class MergeIntoCommand(
         val mergeActions = {
           if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
             // This is a single-job execution so there is no WriteChanges.
-            metrics("numSourceRowsInSecondScan").set(-1)
+            performedSecondSourceScan = false
             writeOnlyInserts(
               spark, deltaTxn, filterMatchedRows = true, numSourceRowsMetric = "numSourceRows")
           } else {

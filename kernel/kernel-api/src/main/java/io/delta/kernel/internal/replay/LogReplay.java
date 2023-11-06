@@ -224,7 +224,7 @@ public class LogReplay implements Logging {
                 break;
             default:
                 throw new UnsupportedOperationException(
-                    "Unsupported protocol version: " + protocol.getMinReaderVersion());
+                    "Unsupported reader protocol version: " + protocol.getMinReaderVersion());
         }
     }
 

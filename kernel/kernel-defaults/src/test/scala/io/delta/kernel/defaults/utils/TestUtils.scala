@@ -22,6 +22,7 @@ import java.util.{Optional, TimeZone, UUID}
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
+import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.client.TableClient
 import io.delta.kernel.data.{ColumnVector, MapValue, Row}
@@ -73,9 +74,19 @@ trait TestUtils extends Assertions {
     }
   }
 
+  def withGoldenTable(tableName: String)(testFunc: String => Unit): Unit = {
+    val tablePath = GoldenTableUtils.goldenTablePath(tableName)
+    testFunc(tablePath)
+  }
+
   def latestSnapshot(path: String): Snapshot = {
     Table.forPath(defaultTableClient, path)
       .getLatestSnapshot(defaultTableClient)
+  }
+
+  def collectScanFileRows(scan: Scan, tableClient: TableClient = defaultTableClient): Seq[Row] = {
+    scan.getScanFiles(tableClient).toSeq
+      .flatMap(_.getRows.toSeq)
   }
 
   def readSnapshot(
@@ -190,6 +201,7 @@ trait TestUtils extends Assertions {
    * @param filter Filter to select a subset of rows form the table
    * @param expectedRemainingFilter Remaining predicate out of the `filter` that is not enforced
    *                                by Kernel.
+   * @param expectedVersion expected version of the latest snapshot for the table
    */
   def checkTable(
     path: String,
@@ -198,8 +210,8 @@ trait TestUtils extends Assertions {
     tableClient: TableClient = defaultTableClient,
     expectedSchema: StructType = null,
     filter: Predicate = null,
-    expectedRemainingFilter: Predicate = null
-    // version
+    expectedRemainingFilter: Predicate = null,
+    expectedVersion: Option[Long] = None
   ): Unit = {
 
     val snapshot = latestSnapshot(path)
@@ -220,6 +232,12 @@ trait TestUtils extends Assertions {
            |Actual schema: ${snapshot.getSchema(tableClient)}
            |""".stripMargin
       )
+    }
+
+    expectedVersion.foreach { version =>
+      assert(version == snapshot.getVersion(defaultTableClient),
+        s"Expected version $version does not match actual version" +
+          s" ${snapshot.getVersion(defaultTableClient)}")
     }
 
     val result = readSnapshot(snapshot, readSchema, filter, expectedRemainingFilter, tableClient)
