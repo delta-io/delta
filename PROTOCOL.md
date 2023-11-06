@@ -1348,6 +1348,8 @@ When enabled:
 
 Delta supports defining default expressions for columns on Delta tables. Delta will generate default values for columns when users do not explicitly provide values for them when writing to such tables, or when the user explicitly specifies the `DEFAULT` SQL keyword for any such column.
 
+Note that this metadata only applies for write operations, not read operations. For example, SQL DML operations such as INSERT, UPDATE, and MERGE will use the default values, but ALTER TABLE ... ADD COLUMN commands may not specify default values for the new columns at the time of creation (it is acceptable to specify default values for new columns in a later ALTER TABLE ... ALTER COLUMN command, however). Similarly, when reading data from a Delta table, the default values will not be returned for columns that are missing from the data files.
+
 Enablement:
 - The table must be on Writer Version 7, and a feature name `allowColumnDefaults` must exist in the table `protocol`'s `writerFeatures`.
 
