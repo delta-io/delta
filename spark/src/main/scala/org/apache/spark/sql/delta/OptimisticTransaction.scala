@@ -388,6 +388,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * Can this transaction still update the metadata?
+   * This is allowed only once per transaction.
+   */
+  def canUpdateMetadata: Boolean = {
+    !hasWritten && newMetadata.isEmpty
+  }
+
+  /**
    * This updates the protocol for the table with a given protocol.
    * Note that the protocol set by this method can be overwritten by other methods,
    * such as [[updateMetadata]].
