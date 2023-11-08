@@ -36,6 +36,8 @@ sealed trait IsolationLevel {
  */
 case object Serializable extends IsolationLevel
 
+val x = 5 // some change 5
+
 /**
  * This isolation level will ensure snapshot isolation consistency guarantee between write
  * operations only. In other words, if only the write operations are considered, then
