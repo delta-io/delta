@@ -520,6 +520,27 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }
 
+/**
+ * This table feature represents support for column DEFAULT values for Delta Lake. With this
+ * feature, it is possible to assign default values to columns either at table creation time or
+ * later by using commands of the form: ALTER TABLE t ALTER COLUMN c SET DEFAULT v. Thereafter,
+ * queries from the table will return the specified default value instead of NULL when the
+ * corresponding field is not present in storage.
+ *
+ * We create this as a writer-only feature rather than a reader/writer feature in order to simplify
+ * the query execution implementation for scanning Delta tables. This means that commands of the
+ * following form are not allowed: ALTER TABLE t ADD COLUMN c DEFAULT v. The reason is that when
+ * commands of that form execute (such as for other data sources like CSV or JSON), then the data
+ * source scan implementation must take responsibility to return the supplied default value for all
+ * rows, including those previously present in the table before the command executed. We choose to
+ * avoid this complexity for Delta table scans, so we make this a writer-only feature instead.
+ * Therefore, the analyzer can take care of the entire job when processing commands that introduce
+ * new rows into the table by injecting the column default value (if present) into the corresponding
+ * query plan. This comes at the expense of preventing ourselves from easily adding a default value
+ * to an existing non-empty table, because all data files would need to be rewritten to include the
+ * new column value in an expensive backfill.
+ */
+object AllowColumnDefaultsTableFeature extends WriterFeature(name = "allowColumnDefaults")
 
 /**
  * V2 Checkpoint table feature is for checkpoints with sidecars and the new format and

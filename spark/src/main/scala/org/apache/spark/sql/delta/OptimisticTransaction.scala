@@ -26,7 +26,7 @@ import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
-import org.apache.spark.sql.delta.DeltaOperations.Operation
+import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -46,8 +46,8 @@ import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.catalyst.util.CharVarcharUtils
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
+import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{Clock, Utils}
 
 /** Record metrics about a successful commit. */
@@ -1433,6 +1433,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
     actions.foreach(assertDeletionVectorWellFormed)
 
+    // Make sure this operation does not include default column values if the corresponding table
+    // feature is not enabled.
+    if (!protocol.isFeatureSupported(AllowColumnDefaultsTableFeature)) {
+      checkNoColumnDefaults(op)
+    }
+
     finalActions
   }
 
@@ -1874,5 +1880,41 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   override def logError(msg: => String, throwable: Throwable): Unit = {
     super.logError(logPrefix + msg, throwable)
+  }
+
+  /**
+   * If the operation assigns or modifies column default values, this method checks that the
+   * corresponding table feature is enabled and throws an error if not.
+   */
+  protected def checkNoColumnDefaults(op: DeltaOperations.Operation): Unit = {
+    def usesDefaults(column: StructField): Boolean = {
+      column.metadata.contains(ResolveDefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY) ||
+        column.metadata.contains(ResolveDefaultColumns.EXISTS_DEFAULT_COLUMN_METADATA_KEY)
+    }
+
+    def throwError(errorClass: String, parameters: Map[String, String]): Unit = {
+      throw new AnalysisException(
+        errorClass = errorClass,
+        messageParameters = parameters)
+    }
+
+    op match {
+      case change: ChangeColumn if usesDefaults(change.newColumn) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Map("commandType" -> "ALTER TABLE"))
+      case create: CreateTable if create.metadata.schema.fields.exists(usesDefaults) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Map("commandType" -> "CREATE TABLE"))
+      case replace: ReplaceColumns if replace.columns.exists(usesDefaults) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Map("commandType" -> "CREATE TABLE"))
+      case replace: ReplaceTable if replace.metadata.schema.fields.exists(usesDefaults) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Map("commandType" -> "CREATE TABLE"))
+      case update: UpdateSchema if update.newSchema.fields.exists(usesDefaults) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Map("commandType" -> "ALTER TABLE"))
+      case _ =>
+    }
   }
 }
