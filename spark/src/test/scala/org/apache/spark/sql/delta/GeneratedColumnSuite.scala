@@ -1724,6 +1724,30 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     }
   }
 
+  test("MERGE INSERT with schema evolution on different name case") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(src, None, "c1 INT, c2 INT", Map.empty, Seq.empty)
+        sql(s"INSERT INTO ${src} values (2, 4);")
+        createTable(tgt, None, "c1 INT, c3 INT", Map("c3" -> "c1 + 1"), Seq.empty)
+        sql(s"INSERT INTO ${tgt} values (1, 2);")
+
+        withSQLConf(("spark.databricks.delta.schema.autoMerge.enabled", "true")) {
+          sql(s"""
+             |MERGE INTO ${tgt}
+             |USING ${src}
+             |on ${tgt}.c1 = ${src}.c1
+             |WHEN NOT MATCHED THEN INSERT (c1, C2) VALUES (${src}.c1, ${src}.c2)
+             |""".stripMargin)
+        }
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 2, null), Row(2, 3, 4))
+        )
+      }
+    }
+  }
+
   test("generated columns with cdf") {
     val tableName1 = "gcEnabledCDCOn"
     val tableName2 = "gcEnabledCDCOff"
