@@ -216,7 +216,7 @@ sealed trait RemovableFeature { self: TableFeature =>
       downgradeTxnReadSnapshot: Snapshot): Boolean = {
     require(isReaderWriterFeature)
     val deltaLog = downgradeTxnReadSnapshot.deltaLog
-    val earliestCheckpointVersion = deltaLog.findEarliestReliableCheckpoint().getOrElse(0L)
+    val earliestCheckpointVersion = deltaLog.findEarliestReliableCheckpoint.getOrElse(0L)
     val toVersion = downgradeTxnReadSnapshot.version
 
     // Use the snapshot at earliestCheckpointVersion to validate the checkpoint identified by

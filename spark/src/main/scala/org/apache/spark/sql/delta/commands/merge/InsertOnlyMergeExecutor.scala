@@ -71,7 +71,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       // Expression to update metrics
       val incrSourceRowCountExpr = incrementMetricAndReturnBool(numSourceRowsMetric, true)
       // source DataFrame
-      var sourceDF = getSourceDF.filter(Column(incrSourceRowCountExpr))
+      var sourceDF = getSourceDF().filter(Column(incrSourceRowCountExpr))
       // If there is only one insert clause, then filter out the source rows that do not
       // satisfy the clause condition because those rows will not be written out.
       if (notMatchedClauses.size == 1 && notMatchedClauses.head.condition.isDefined) {

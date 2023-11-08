@@ -302,7 +302,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     }
 
     logDebug(s"Materializing MERGE with pruned columns $referencedSourceColumns.")
-    logDebug(s"Materialized MERGE source plan:\n${getSourceDF.queryExecution}")
+    logDebug(s"Materialized MERGE source plan:\n${getSourceDF().queryExecution}")
     materializeReason
   }
 

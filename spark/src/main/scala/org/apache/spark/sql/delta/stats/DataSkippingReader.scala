@@ -1074,7 +1074,7 @@ trait DataSkippingReaderBase
       val filesToScan = ArrayBuffer[AddFile]()
       val filesToIgnore = ArrayBuffer[AddFile]()
       while (iter.hasNext && logicalRowsToScan < limit) {
-        val file = iter.next
+        val file = iter.next()
         if (file._2.numPhysicalRecords == null || file._2.numLogicalRecords == null) {
           // this file has no stats, ignore for now
           bytesToIgnore += file._1.size

@@ -271,7 +271,7 @@ object LogStore extends LogStoreProvider
     // scalastyle:off deltahadoopconfiguration
     // Ensure that the LogStore's hadoopConf has the values from the SQLConf.
     // This ensures that io.delta.storage LogStore (Java) hadoopConf's are configured correctly.
-    apply(spark.sparkContext.getConf, spark.sessionState.newHadoopConf)
+    apply(spark.sparkContext.getConf, spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
   }
 
@@ -395,7 +395,7 @@ trait LogStoreProvider {
  */
 class LogStoreAdaptor(val logStoreImpl: io.delta.storage.LogStore) extends LogStore {
 
-  private def getHadoopConfiguration(): Configuration = {
+  private def getHadoopConfiguration: Configuration = {
     // scalastyle:off deltahadoopconfiguration
     SparkSession.getActiveSession.map(_.sessionState.newHadoopConf())
       .getOrElse(logStoreImpl.initHadoopConf())

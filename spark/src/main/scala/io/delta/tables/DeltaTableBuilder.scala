@@ -175,7 +175,7 @@ class DeltaTableBuilder private[tables](
   @Evolving
   def addColumn(colName: String, dataType: String): DeltaTableBuilder = {
     addColumn(
-      DeltaTable.columnBuilder(spark, colName).dataType(dataType).build
+      DeltaTable.columnBuilder(spark, colName).dataType(dataType).build()
     )
     this
   }
@@ -192,7 +192,7 @@ class DeltaTableBuilder private[tables](
   @Evolving
   def addColumn(colName: String, dataType: DataType): DeltaTableBuilder = {
     addColumn(
-      DeltaTable.columnBuilder(spark, colName).dataType(dataType).build
+      DeltaTable.columnBuilder(spark, colName).dataType(dataType).build()
     )
     this
   }
@@ -210,7 +210,7 @@ class DeltaTableBuilder private[tables](
   @Evolving
   def addColumn(colName: String, dataType: String, nullable: Boolean): DeltaTableBuilder = {
     addColumn(
-      DeltaTable.columnBuilder(spark, colName).dataType(dataType).nullable(nullable).build
+      DeltaTable.columnBuilder(spark, colName).dataType(dataType).nullable(nullable).build()
     )
     this
   }
@@ -228,7 +228,7 @@ class DeltaTableBuilder private[tables](
   @Evolving
   def addColumn(colName: String, dataType: DataType, nullable: Boolean): DeltaTableBuilder = {
     addColumn(
-      DeltaTable.columnBuilder(spark, colName).dataType(dataType).nullable(nullable).build
+      DeltaTable.columnBuilder(spark, colName).dataType(dataType).nullable(nullable).build()
     )
     this
   }

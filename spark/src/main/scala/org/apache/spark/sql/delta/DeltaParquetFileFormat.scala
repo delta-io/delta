@@ -96,7 +96,7 @@ case class DeltaParquetFileFormat(
   override def isSplitable(
     sparkSession: SparkSession, options: Map[String, String], path: Path): Boolean = isSplittable
 
-  def hasDeletionVectorMap(): Boolean = broadcastDvMap.isDefined && broadcastHadoopConf.isDefined
+  def hasDeletionVectorMap: Boolean = broadcastDvMap.isDefined && broadcastHadoopConf.isDefined
 
   /**
    * We sometimes need to replace FileFormat within LogicalPlans, so we have to override

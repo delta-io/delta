@@ -324,7 +324,7 @@ trait MetadataCleanup extends DeltaLogging {
    * Finds a checkpoint such that we are able to construct table snapshot for all versions at or
    * greater than the checkpoint version returned.
    */
-  def findEarliestReliableCheckpoint(): Option[Long] = {
+  def findEarliestReliableCheckpoint: Option[Long] = {
     val hadoopConf = newDeltaHadoopConf()
     var earliestCheckpointVersionOpt: Option[Long] = None
     // This is used to collect the checkpoint files from the current version that we are listing.

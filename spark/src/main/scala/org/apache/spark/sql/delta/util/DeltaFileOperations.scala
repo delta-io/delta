@@ -368,7 +368,7 @@ object DeltaFileOperations extends DeltaLogging {
   def registerTempFileDeletionTaskFailureListener(
       conf: Configuration,
       tempPath: Path): Unit = {
-    val tc = TaskContext.get
+    val tc = TaskContext.get()
     if (tc == null) {
       throw DeltaErrors.sparkTaskThreadNotFound
     }
