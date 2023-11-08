@@ -160,18 +160,23 @@ object OptimisticTransaction {
   def getActive(): Option[OptimisticTransaction] = Option(active.get())
 
   /**
-   * Runs the passed block of code with the given active transaction
+   * Runs the passed block of code with the given active transaction. This fails if a transaction is
+   * already active unless `overrideExistingTransaction` is set.
    */
-  def withActive[T](activeTransaction: OptimisticTransaction)(block: => T): T = {
+  def withActive[T](
+      activeTransaction: OptimisticTransaction,
+      overrideExistingTransaction: Boolean = false)(block: => T): T = {
     val original = getActive()
+    if (overrideExistingTransaction) {
+      clearActive()
+    }
     setActive(activeTransaction)
     try {
       block
     } finally {
+      clearActive()
       if (original.isDefined) {
         setActive(original.get)
-      } else {
-        clearActive()
       }
     }
   }
