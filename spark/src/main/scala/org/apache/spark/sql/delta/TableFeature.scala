@@ -325,6 +325,7 @@ object TableFeature {
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
       CheckConstraintsTableFeature,
+      ClusteringTableFeature,
       DomainMetadataTableFeature,
       GeneratedColumnsTableFeature,
       InvariantsTableFeature,
@@ -518,6 +519,13 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
       spark: SparkSession): Boolean = IcebergCompatV1.isEnabled(metadata)
 
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
+}
+
+/**
+ * Clustering table feature is enabled when a table is created with CLUSTER BY clause.
+ */
+object ClusteringTableFeature extends WriterFeature("clustering") {
+  override val requiredFeatures: Set[TableFeature] = Set(DomainMetadataTableFeature)
 }
 
 
