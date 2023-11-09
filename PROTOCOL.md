@@ -1070,12 +1070,12 @@ Enablement:
 ## Writer Requirements for Clustered Table
 
 When the Clustered Table is supported (when the `writerFeatures` field of a table's `protocol` action contains `clustering`), then:
-- Writers must write out [per-file statistics](#per-file-statistics) and per-column statistics for clustering columns in `add` action. 
-  Failure to collect per-column statistics for clustering columns will result in an error when defining a clustered table or making changes to the clustering columns.
 - Writers must track clustering column names in a `domainMetadata` action with `delta.clustering` as the `domain` and a `configuration` containing all clustering column names.
   If [Column Mapping](#column-mapping) is enabled, the physical column names should be used.
-- When a clustering implementation clusters files, writers must incorporate a `tag`  with `CLUSTERED_BY` as the key and the name of the clustering implementation as the corresponding value in `add` action.
-  - A clustering implementation must only cluster files that belong to the implementation or files that do not have the `CLUSTERED_BY` tag (i.e., unclustered).
+- Writers must write out [per-file statistics](#per-file-statistics) and per-column statistics for clustering columns in `add` action. 
+  If a new column is included in the clustering columns list, it is required for all table files to have statistics for these added columns.
+- When a clustering implementation clusters files, writers must incorporate a `tag`  with `CLUSTERED_BY` as the key and the name of the clustering implementation as the corresponding value in the `add` actions for the clustered files.
+  - By default, a clustering implementation must only recluster files that have tag `CLUSTERED_BY` set to the name of the same clustering implementation, or to the names of other clustering implementations that are superseded by the current clustering implementation. In addition, a clustering implementation may cluster any files that do not have the `CLUSTERED_BY` tag (i.e., unclustered files).
   - Writer is not required to cluster a specific file at any specific moment though it is still obligated to record accurate statistics. However, if it decides to cluster a particular file, it must include the CLUSTERED_BY tag.
   - A clustering implementation is free to add additional information such as adding a new user-controlled metadata domain to keep track of its metadata.
 
