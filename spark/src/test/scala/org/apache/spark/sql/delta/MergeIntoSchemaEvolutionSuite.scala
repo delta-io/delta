@@ -451,6 +451,24 @@ trait MergeIntoSchemaEvolutionBaseTests {
     expectedWithoutEvolution = ((0, 0) +: (2, 2) +: (3, 30) +: (1, 1) +: Nil).toDF("key", "value")
   )
 
+  testEvolution(s"case-insensitive insert")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
+    clauses = insert("(key, value, VALUE) VALUES (s.key, s.value, s.VALUE)") :: Nil,
+    expected = ((0, 0) +: (1, 10) +: (3, 30) +: (2, 2) +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution = ((0, 0) +: (1, 10) +: (3, 30) +: (2, 2) +: Nil).toDF("key", "value"),
+    confs = Seq(SQLConf.CASE_SENSITIVE.key -> "false")
+  )
+
+  testEvolution(s"case-sensitive insert")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
+    clauses = insert("(key, value, VALUE) VALUES (s.key, s.value, s.VALUE)") :: Nil,
+    expectErrorContains = "Cannot resolve s.value in INSERT clause",
+    expectErrorWithoutEvolutionContains = "Cannot resolve s.value in INSERT clause",
+    confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
+  )
+
   testEvolution("evolve partitioned table")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
