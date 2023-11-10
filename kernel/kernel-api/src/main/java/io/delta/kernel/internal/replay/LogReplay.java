@@ -241,8 +241,16 @@ public class LogReplay implements Logging {
 
     /**
      * Verifies that a set of delta or checkpoint files to be read actually belongs to this table.
+     * Visible only for testing.
      */
-    private static void assertLogFilesBelongToTable(Path logPath, List<FileStatus> allFiles) {
-        // TODO:
+    protected static void assertLogFilesBelongToTable(Path logPath, List<FileStatus> allFiles) {
+        String logPathStr = logPath.toString(); // fully qualified path
+        for (FileStatus fileStatus : allFiles) {
+            String filePath = fileStatus.getPath();
+            if (!filePath.startsWith(logPathStr)) {
+                throw new RuntimeException("File (" + filePath + ") doesn't belong in the " +
+                    "transaction log at " + logPathStr + ".");
+            }
+        }
     }
 }
