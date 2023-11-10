@@ -39,7 +39,7 @@ import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StructType
 
-abstract class MergeIntoCommandBase extends LeafRunnableCommand
+trait MergeIntoCommandBase extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging
   with PredicateHelper
@@ -191,7 +191,8 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       matchedClauses,
       notMatchedClauses,
       notMatchedBySourceClauses,
-      isPartitioned = deltaTxn.metadata.partitionColumns.nonEmpty)
+      isPartitioned = deltaTxn.metadata.partitionColumns.nonEmpty,
+      performedSecondSourceScan = performedSecondSourceScan)
     stats.copy(
       materializeSourceReason = Some(materializeSourceReason.toString),
       materializeSourceAttempts = Some(attempt))
@@ -427,6 +428,10 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
     }
   }
 
+  // Whether we actually scanned the source twice or the value in numSourceRowsInSecondScan is
+  // uninitialised.
+  protected var performedSecondSourceScan: Boolean = true
+
   /**
    * Throws an exception if merge metrics indicate that the source table changed between the first
    * and the second source table scans.
@@ -437,8 +442,8 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
     // in both jobs.
     // If numSourceRowsInSecondScan is < 0 then it hasn't run, e.g. for insert-only merges.
     // In that case we have only read the source table once.
-    if (metrics("numSourceRowsInSecondScan").value >= 0 &&
-      metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
+    if (performedSecondSourceScan &&
+        metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
       log.warn(s"Merge source has ${metrics("numSourceRows")} rows in initial scan but " +
         s"${metrics("numSourceRowsInSecondScan")} rows in second scan")
       if (conf.getConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED)) {

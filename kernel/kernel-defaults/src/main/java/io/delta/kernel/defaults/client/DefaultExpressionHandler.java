@@ -28,11 +28,11 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.expressions.PredicateEvaluator;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.expressions.DefaultExpressionEvaluator;
 import io.delta.kernel.defaults.internal.expressions.DefaultPredicateEvaluator;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 
 /**
  * Default implementation of {@link ExpressionHandler}

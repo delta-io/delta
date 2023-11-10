@@ -520,113 +520,6 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  test("non-correlated scalar subquery in source query") {
-    withTable("source") {
-      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
-        .createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = "(SELECT * FROM source WHERE value = (SELECT max(value) FROM source)) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(21, 26) :: // UPDATE
-          Nil)
-    }
-  }
-
-  test("correlated scalar subquery in source query") {
-    withTable("source") {
-      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
-        .createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = "(SELECT * FROM source WHERE " +
-          s"value = (SELECT MAX(value) FROM delta.`$tempPath` WHERE key1 = key2)) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(1, 4) :: // No change
-          Nil)
-    }
-  }
-
-  test("non-correlated exists subquery in source query") {
-    withTable("source") {
-      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
-        .createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = s"(SELECT * FROM source WHERE EXISTS (SELECT * FROM delta.`$tempPath`)) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(
-        readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(21, 26) :: // Update
-          Row(-10, 13) :: // Insert
-          Nil)
-    }
-  }
-
-  test("correlated exists subquery in source query") {
-    withTable("source") {
-      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
-        .createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = s"(SELECT * FROM source WHERE " +
-          s"EXISTS (SELECT * FROM delta.`$tempPath` WHERE key1 = key2)) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(
-        readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(21, 26) :: // Update
-          Nil)
-    }
-  }
-
-  test("in subquery in source query") {
-    withTable("source") {
-      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
-        .createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = s"(SELECT * FROM source WHERE " +
-          s"key1 IN (SELECT key2 FROM delta.`$tempPath`)) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(
-        readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(21, 26) :: // Update
-          Nil)
-    }
-  }
-
   testQuietly("Negative case - more than one source rows match the same target row") {
     withTable("source") {
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
@@ -1036,22 +929,6 @@ abstract class MergeIntoSuiteBase
             Row(-10, 13) :: // Insert
             Nil)
       }
-    }
-  }
-
-  protected def withKeyValueData(
-      source: Seq[(Int, Int)],
-      target: Seq[(Int, Int)],
-      isKeyPartitioned: Boolean = false,
-      sourceKeyValueNames: (String, String) = ("key", "value"),
-      targetKeyValueNames: (String, String) = ("key", "value"))(
-      thunk: (String, String) => Unit = null): Unit = {
-
-    append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2).coalesce(2),
-      if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)
-    withTempView("source") {
-      source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
-      thunk("source", s"delta.`$tempPath`")
     }
   }
 

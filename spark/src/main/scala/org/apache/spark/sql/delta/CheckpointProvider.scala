@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames._
-import org.apache.spark.sql.delta.util.NonFateSharingFuture
+import org.apache.spark.sql.delta.util.threads.NonFateSharingFuture
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 

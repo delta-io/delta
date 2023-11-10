@@ -628,14 +628,16 @@ trait DeltaErrorsBase
       columnName: String): ArithmeticException = {
     new DeltaArithmeticException(
       errorClass = "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE",
-      messageParameters = Map(
-        "sourceType" -> toSQLType(from),
-        "targetType" -> toSQLType(to),
-        "columnName" -> toSQLId(columnName),
-        "storeAssignmentPolicyFlag" -> SQLConf.STORE_ASSIGNMENT_POLICY.key,
-        "updateAndMergeCastingFollowsAnsiEnabledFlag" ->
-          DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
-        "ansiEnabledFlag" -> SQLConf.ANSI_ENABLED.key))
+      messageParameters = Array(
+        toSQLType(from), // sourceType
+        toSQLType(to), // targetType
+        toSQLId(columnName), // columnName
+        SQLConf.STORE_ASSIGNMENT_POLICY.key, // storeAssignmentPolicyFlag
+        // updateAndMergeCastingFollowsAnsiEnabledFlag
+        DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
+        SQLConf.ANSI_ENABLED.key // ansiEnabledFlag
+      )
+    )
   }
 
   def notADeltaTable(table: String): Throwable = {
@@ -1266,8 +1268,8 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CREATE_TABLE_WITH_DIFFERENT_PROPERTY",
       messageParameters = Array(path.toString,
-        specifiedProperties.map { case (k, v) => s"$k=$v" }.mkString("\n"),
-        existingProperties.map { case (k, v) => s"$k=$v" }.mkString("\n"))
+        specifiedProperties.toSeq.sorted.map { case (k, v) => s"$k=$v" }.mkString("\n"),
+        existingProperties.toSeq.sorted.map { case (k, v) => s"$k=$v" }.mkString("\n"))
     )
   }
 
@@ -2019,7 +2021,7 @@ trait DeltaErrorsBase
   def foundInvalidCharsInColumnNames(cause: Throwable): Throwable =
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES",
-      messageParameters = Array(columnMappingAdviceMessage()),
+      messageParameters = Array.empty,
       cause = Some(cause))
 
   def foundViolatingConstraintsForColumnChange(
@@ -2409,10 +2411,16 @@ trait DeltaErrorsBase
     new DeltaIllegalArgumentException(errorClass = "DELTA_UNRECOGNIZED_INVARIANT")
   }
 
-  def invalidSourceVersion(version: JValue): Throwable = {
+  def invalidSourceVersion(version: String): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_INVALID_SOURCE_VERSION",
-      messageParameters = Array(version.toString)
+      messageParameters = Array(version)
+    )
+  }
+
+  def invalidSourceOffsetFormat(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_INVALID_SOURCE_OFFSET_FORMAT"
     )
   }
 
@@ -3269,10 +3277,21 @@ class DeltaIndexOutOfBoundsException(
 }
 
 /** Thrown when the protocol version of a table is greater than supported by this client. */
-class InvalidProtocolVersionException(requiredVersion: Int, supportedVersions: Seq[Int])
+case class InvalidProtocolVersionException(
+    tableNameOrPath: String,
+    readerRequiredVersion: Int,
+    writerRequiredVersion: Int,
+    supportedReaderVersions: Seq[Int],
+    supportedWriterVersions: Seq[Int])
   extends RuntimeException(DeltaThrowableHelper.getMessage(
     errorClass = "DELTA_INVALID_PROTOCOL_VERSION",
-    messageParameters = Array(requiredVersion.toString, supportedVersions.sorted.mkString(", "))))
+    messageParameters = Array(
+      tableNameOrPath,
+      readerRequiredVersion.toString,
+      writerRequiredVersion.toString,
+      io.delta.VERSION,
+      supportedReaderVersions.sorted.mkString(", "),
+      supportedWriterVersions.sorted.mkString(", "))))
   with DeltaThrowable {
   override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_VERSION"
 }

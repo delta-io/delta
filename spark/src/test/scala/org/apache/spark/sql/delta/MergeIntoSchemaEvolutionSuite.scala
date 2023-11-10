@@ -25,7 +25,7 @@ import org.apache.spark.sql.functions.{array, current_date, lit, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, NullType, StringType, StructType}
+import org.apache.spark.sql.types.{ArrayType, IntegerType, LongType, MapType, NullType, StringType, StructType}
 
 
 /**
@@ -630,6 +630,31 @@ trait MergeIntoSchemaEvolutionBaseTests {
     // Disable ANSI as this test needs to cast Double.PositiveInfinity to int
     confs = Seq(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "LEGACY")
   )
+
+  testEvolution("multiple casts with storeAssignmentPolicy = STRICT")(
+    targetData = Seq((0L, "0"), (1L, "10"), (3L, "30")).toDF("key", "value"),
+    sourceData = Seq((1, 1L), (2, 2L)).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected =
+      ((0L, "0") +: (1L, "1") +: (2L, "2") +: (3L, "30") +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution =
+      ((0L, "0") +: (1L, "1") +: (2L, "2") +: (3L, "30") +: Nil).toDF("key", "value"),
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false"))
+
+  testEvolution("new column with storeAssignmentPolicy = STRICT")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "one"), (2, 2, "two")).toDF("key", "value", "extra"),
+    clauses = update("value = CAST(s.value AS short)") :: insert("*") :: Nil,
+    expected =
+      ((0, 0, null) +: (1, 1, null) +: (2, 2, "two") +: (3, 30, null) +: Nil)
+        .toDF("key", "value", "extra"),
+    expectedWithoutEvolution =
+      ((0, 0) +: (1, 1) +: (2, 2) +: (3, 30) +: Nil).toDF("key", "value"),
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false"))
 
   testEvolution("extra nested column in source - insert")(
     targetData = Seq((1, (1, 10))).toDF("key", "x"),
@@ -2835,4 +2860,24 @@ trait MergeIntoNestedStructEvolutionTests {
       .add("key", StringType)
       .add("value", IntegerType, nullable = false),
     resultWithoutEvolution = """{ "key": "A" }""")
+
+  testNestedStructsEvolution("struct in array with storeAssignmentPolicy = STRICT")(
+    target = """{ "key": "A", "value": [ { "a": 1 } ] }""",
+    source = """{ "key": "A", "value": [ { "a": 2 } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        ArrayType(new StructType()
+          .add("a", LongType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        ArrayType(new StructType()
+          .add("a", IntegerType))),
+    clauses = update("*") :: Nil,
+    result = """{ "key": "A", "value": [ { "a": 2 } ] }""",
+    resultWithoutEvolution = """{ "key": "A", "value": [ { "a": 2 } ] }""",
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false"))
 }

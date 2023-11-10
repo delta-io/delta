@@ -63,10 +63,12 @@ public class DefaultParquetHandler extends DefaultFileHandler implements Parquet
 
             @Override
             public boolean hasNext() {
-                // There is no file in reading or the current file being read has no more data
-                // initialize the next file reader or return false if there are no more files to
-                // read.
-                if (currentFileReader == null || !currentFileReader.hasNext()) {
+                if (currentFileReader != null && currentFileReader.hasNext()) {
+                    return true;
+                } else {
+                    // There is no file in reading or the current file being read has no more data.
+                    // Initialize the next file reader or return false if there are no more files to
+                    // read.
                     Utils.closeCloseables(currentFileReader);
                     currentFileReader = null;
                     if (fileIter.hasNext()) {
@@ -74,12 +76,11 @@ public class DefaultParquetHandler extends DefaultFileHandler implements Parquet
                         FileStatus fileStatus =
                             InternalScanFileUtils.getAddFileStatus(currentFile.getScanFileRow());
                         currentFileReader = batchReader.read(fileStatus.getPath(), physicalSchema);
+                        return hasNext(); // recurse since it's possible the loaded file is empty
                     } else {
                         return false;
                     }
                 }
-
-                return currentFileReader.hasNext();
             }
 
             @Override

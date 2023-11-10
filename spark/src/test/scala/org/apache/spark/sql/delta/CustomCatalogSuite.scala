@@ -187,6 +187,28 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
       assert(result(0).getAs[Long]("version") == 1)
     }
   }
+
+  test("SELECT Table Changes from DummyCatalog") {
+    val dummyTableName = "dummy_table"
+    val sparkTableName = "spark_catalog.default.spark_table"
+    withTable(dummyTableName, sparkTableName) {
+      sql("SET CATALOG spark_catalog")
+      sql(f"CREATE TABLE $sparkTableName (id bigint, s string) USING delta" +
+        f" TBLPROPERTIES(delta.enableChangeDataFeed=true)")
+      sql(f"INSERT INTO $sparkTableName VALUES (0, 'a')")
+      sql(f"INSERT INTO $sparkTableName VALUES (1, 'b')")
+      sql("SET CATALOG dummy")
+      // Since the dummy catalog doesn't pass through the TBLPROPERTIES 'delta.enableChangeDataFeed'
+      // here we clone a table with the same schema as the spark table to test the table changes.
+      sql(f"CREATE TABLE $dummyTableName SHALLOW CLONE $sparkTableName")
+      // table_changes() should be able to read the table changes from the dummy catalog
+      Seq(dummyTableName, f"dummy.default.$dummyTableName").foreach { name =>
+        val rows = sql(f"SELECT * from table_changes('$name', 1)").collect()
+        assert(rows.length == 2)
+      }
+    }
+  }
+
 }
 
 class DummyCatalog extends TableCatalog {

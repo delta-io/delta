@@ -83,7 +83,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
   /**
    * Run the Merge with retries in case it detects an RDD block lost error of the
    * materialized source RDD.
-   * It will also record out of disk error, if such happen - possibly because of increased disk
+   * It will also record out of disk error, if such happens - possibly because of increased disk
    * pressure from the materialized source RDD.
    */
   protected def runWithMaterializedSourceLostRetries(

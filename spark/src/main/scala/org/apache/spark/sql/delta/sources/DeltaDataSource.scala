@@ -100,7 +100,7 @@ class DeltaDataSource
       // streaming dataframe. We only need to merge consecutive schema changes here because the
       // process would create a new entry in the schema log such that when the schema log is
       // looked up again in the execution phase, we would use the correct schema.
-      getMetadataTrackingLogForDeltaSource(
+      DeltaDataSource.getMetadataTrackingLogForDeltaSource(
           sqlContext.sparkSession, snapshot, parameters,
           mergeConsecutiveSchemaChanges = shouldMergeConsecutiveSchemas)
         .flatMap(_.getCurrentTrackedMetadata.map(_.dataSchema))
@@ -135,7 +135,7 @@ class DeltaDataSource
     val (deltaLog, snapshot) =
       DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, new Path(path))
     val schemaTrackingLogOpt =
-      getMetadataTrackingLogForDeltaSource(
+      DeltaDataSource.getMetadataTrackingLogForDeltaSource(
         sqlContext.sparkSession, snapshot, parameters,
         // Pass in the metadata path opt so we can use it for validation
         sourceMetadataPathOpt = Some(metadataPath))
@@ -197,7 +197,8 @@ class DeltaDataSource
       data = data,
       // empty catalogTable is acceptable as the code path is only for path based writes
       // (df.write.save("path")) which does not need to use/update catalog
-      catalogTableOpt = None).run(sqlContext.sparkSession)
+      catalogTableOpt = None
+      ).run(sqlContext.sparkSession)
 
     deltaLog.createRelation()
   }
@@ -253,34 +254,6 @@ class DeltaDataSource
 
   override def shortName(): String = {
     DeltaSourceUtils.ALT_NAME
-  }
-
-  /**
-   * Create a schema log for Delta streaming source if possible
-   */
-  private def getMetadataTrackingLogForDeltaSource(
-      spark: SparkSession,
-      sourceSnapshot: Snapshot,
-      parameters: Map[String, String],
-      sourceMetadataPathOpt: Option[String] = None,
-      mergeConsecutiveSchemaChanges: Boolean = false): Option[DeltaSourceMetadataTrackingLog] = {
-    val options = new CaseInsensitiveStringMap(parameters.asJava)
-
-    DeltaDataSource.extractSchemaTrackingLocationConfig(spark, parameters)
-      .map { schemaTrackingLocation =>
-        if (!spark.sessionState.conf.getConf(
-          DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING)) {
-          throw new UnsupportedOperationException(
-            "Schema tracking location is not supported for Delta streaming source")
-        }
-
-        DeltaSourceMetadataTrackingLog.create(
-          spark, schemaTrackingLocation, sourceSnapshot,
-          Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)),
-          sourceMetadataPathOpt,
-          mergeConsecutiveSchemaChanges
-        )
-      }
   }
 
 }
@@ -468,5 +441,33 @@ object DeltaDataSource extends DatabricksLogging {
 
     Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION))
       .orElse(Option(options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS)))
+  }
+
+  /**
+   * Create a schema log for Delta streaming source if possible
+   */
+  def getMetadataTrackingLogForDeltaSource(
+      spark: SparkSession,
+      sourceSnapshot: SnapshotDescriptor,
+      parameters: Map[String, String],
+      sourceMetadataPathOpt: Option[String] = None,
+      mergeConsecutiveSchemaChanges: Boolean = false): Option[DeltaSourceMetadataTrackingLog] = {
+    val options = new CaseInsensitiveStringMap(parameters.asJava)
+
+    DeltaDataSource.extractSchemaTrackingLocationConfig(spark, parameters)
+      .map { schemaTrackingLocation =>
+        if (!spark.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING)) {
+          throw new UnsupportedOperationException(
+            "Schema tracking location is not supported for Delta streaming source")
+        }
+
+        DeltaSourceMetadataTrackingLog.create(
+          spark, schemaTrackingLocation, sourceSnapshot,
+          Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)),
+          sourceMetadataPathOpt,
+          mergeConsecutiveSchemaChanges
+        )
+      }
   }
 }

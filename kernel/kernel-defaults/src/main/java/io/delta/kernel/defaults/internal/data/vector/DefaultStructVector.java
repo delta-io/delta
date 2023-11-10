@@ -21,7 +21,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for struct type data.

@@ -70,6 +70,7 @@
   - [Column Invariants](#column-invariants)
   - [CHECK Constraints](#check-constraints)
   - [Generated Columns](#generated-columns)
+  - [Default Columns](#default-columns)
   - [Identity Columns](#identity-columns)
   - [Writer Version Requirements](#writer-version-requirements)
 - [Requirements for Readers](#requirements-for-readers)
@@ -1343,6 +1344,18 @@ When enabled:
  - The value of `delta.generationExpression` SHOULD be parsed as a SQL expression.
  - Writers MUST enforce that any data writing to the table satisfy the condition `(<value> <=> <generation expression>) IS TRUE`. `<=>` is the NULL-safe equal operator which performs an equality comparison like the `=` operator but returns `TRUE` rather than NULL if both operands are `NULL`
 
+## Default Columns
+
+Delta supports defining default expressions for columns on Delta tables. Delta will generate default values for columns when users do not explicitly provide values for them when writing to such tables, or when the user explicitly specifies the `DEFAULT` SQL keyword for any such column.
+
+Enablement:
+- The table must be on Writer Version 7, and a feature name `allowColumnDefaults` must exist in the table `protocol`'s `writerFeatures`.
+
+When enabled:
+- The `metadata` for the column in the table schema MAY contain the key `CURRENT_DEFAULT`.
+- The value of `CURRENT_DEFAULT` SHOULD be parsed as a SQL expression.
+- Writers MUST enforce that before writing any rows to the table, for each such requested row that lacks any explicit value (including NULL) for columns with default values, the writing system will assign the result of evaluating the default value expression for each such column as the value for that column in the row. By the same token, if the engine specified the explicit `DEFAULT` SQL keyword for any column, the expression result must be substituted in the same way.
+
 ## Identity Columns
 
 Delta supports defining Identity columns on Delta tables. Delta will generate unique values for Identity columns when users do not explicitly provide values for them when writing to such tables. To enable Identity Columns:
@@ -1403,6 +1416,7 @@ Feature | Name | Readers or Writers?
 [Column Invariants](#column-invariants) | `invariants` | Writers only
 [`CHECK` constraints](#check-constraints) | `checkConstraints` | Writers only
 [Generated Columns](#generated-columns) | `generatedColumns` | Writers only
+[Default Columns](#default-columns) | `allowColumnDefaults` | Writers only
 [Change Data Feed](#add-cdc-file) | `changeDataFeed` | Writers only
 [Column Mapping](#column-mapping) | `columnMapping` | Readers and writers
 [Identity Columns](#identity-columns) | `identityColumns` | Writers only
@@ -1600,7 +1614,7 @@ valueType| The type of element used for the key of this map, represented as a st
 
 ### Column Metadata
 A column metadata stores various information about the column.
-For example, this MAY contain some keys like [`delta.columnMapping`](#column-mapping) or [`delta.generationExpression`](#generated-columns).  
+For example, this MAY contain some keys like [`delta.columnMapping`](#column-mapping) or [`delta.generationExpression`](#generated-columns) or [`CURRENT_DEFAULT`](#default-columns).  
 Field Name | Description
 -|-
 delta.columnMapping.*| These keys are used to store information about the mapping between the logical column name to  the physical name. See [Column Mapping](#column-mapping) for details.
