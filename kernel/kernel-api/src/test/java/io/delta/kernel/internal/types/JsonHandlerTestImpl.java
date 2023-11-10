@@ -51,6 +51,11 @@ public class JsonHandlerTestImpl
     }
 
     @Override
+    public StructType parseStructType(String schemaString) {
+        throw new UnsupportedOperationException("not yet implemented");
+    }
+
+    @Override
     public ColumnarBatch parseJson(ColumnVector jsonStringVector, StructType outputSchema) {
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < jsonStringVector.getSize(); i++) {
@@ -103,15 +108,6 @@ public class JsonHandlerTestImpl
         private static Object decodeElement(JsonNode jsonValue, DataType dataType) {
             if (jsonValue.isNull()) {
                 return null;
-            }
-
-            if (dataType.equals(MixedDataType.INSTANCE)) {
-                if (jsonValue.isTextual()) {
-                    return jsonValue.textValue();
-                } else if (jsonValue instanceof ObjectNode) {
-                    return jsonValue.toString();
-                }
-                throwIfTypeMismatch("object or string", false, jsonValue);
             }
 
             if (dataType instanceof BooleanType) {

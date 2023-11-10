@@ -46,6 +46,7 @@ import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.defaults.internal.DataTypeParser;
 import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
 
@@ -74,6 +75,15 @@ public class DefaultJsonHandler
             rows.add(parseJson(jsonStringVector.getString(i), outputSchema));
         }
         return new DefaultRowBasedColumnarBatch(outputSchema, rows);
+    }
+
+    @Override
+    public StructType parseStructType(String schemaString) {
+        try {
+            return DataTypeParser.parseSchema(objectMapper.readTree(schemaString));
+        } catch (JsonProcessingException ex) {
+            throw new RuntimeException(String.format("Could not parse JSON: %s", schemaString), ex);
+        }
     }
 
     @Override
