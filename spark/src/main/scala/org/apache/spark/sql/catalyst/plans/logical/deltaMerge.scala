@@ -607,7 +607,7 @@ object DeltaMergeInto {
           // Helper method to check if a given field path is a prefix of another path. Delegates
           // equality to conf.resolver to correctly handle case sensitivity.
           def isPrefix(prefix: Seq[String], path: Seq[String]): Boolean =
-             prefix.length <= path.length && prefix.zip(path).forall {
+            prefix.length <= path.length && prefix.zip(path).forall {
               case (prefixNamePart, pathNamePart) => conf.resolver(prefixNamePart, pathNamePart)
             }
 

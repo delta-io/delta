@@ -1727,9 +1727,21 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
   test("MERGE INSERT with schema evolution on different name case") {
     withTableName("source") { src =>
       withTableName("target") { tgt =>
-        createTable(src, None, "c1 INT, c2 INT", Map.empty, Seq.empty)
+        createTable(
+          tableName = src,
+          path = None,
+          schemaString = "c1 INT, c2 INT",
+          generatedColumns = Map.empty,
+          partitionColumns = Seq.empty
+        )
         sql(s"INSERT INTO ${src} values (2, 4);")
-        createTable(tgt, None, "c1 INT, c3 INT", Map("c3" -> "c1 + 1"), Seq.empty)
+        createTable(
+          tableName = tgt,
+          path = None,
+          schemaString = "c1 INT, c3 INT",
+          generatedColumns = Map("c3" -> "c1 + 1"),
+          partitionColumns = Seq.empty
+        )
         sql(s"INSERT INTO ${tgt} values (1, 2);")
 
         withSQLConf(("spark.databricks.delta.schema.autoMerge.enabled", "true")) {
