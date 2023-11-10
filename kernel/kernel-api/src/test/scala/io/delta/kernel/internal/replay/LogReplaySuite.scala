@@ -15,78 +15,41 @@
  */
 package io.delta.kernel.internal.replay
 
-import java.util.Optional
-
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.utils.FileStatus
-import io.delta.kernel.internal.snapshot.LogSegment
-import io.delta.kernel.internal.replay.LogReplay
 
 import org.scalatest.funsuite.AnyFunSuite
-import org.junit.Assert.assertThrows
 
 class TestLogReplay extends AnyFunSuite {
 
+  private val tablePath = new Path("s3://bucket/logPath")
+
   test("assertLogFilesBelongToTable should pass for correct log paths") {
-    /*
-      Test public LogSegment constructor rather than assertLogFilesBelongToTable
-      method directly because method is private
-    */
+    val logFiles = List(
+      FileStatus.of("s3://bucket/logPath/deltafile1", 0L, 0L),
+      FileStatus.of("s3://bucket/logPath/deltafile2", 0L, 0L),
+      FileStatus.of("s3://bucket/logPath/checkpointfile1", 0L, 0L),
+      FileStatus.of("s3://bucket/logPath/checkpointfile2", 0L, 0L)
+    ).asJava
 
-    val logSegment = new LogSegment(
-      new Path("s3://bucket/logPath"),
-      0,
-      List(
-        FileStatus.of("s3://bucket/logPath/deltafile1", 0L, 0L),
-        FileStatus.of("s3://bucket/logPath/deltafile2", 0L, 0L)
-      ).asJava,
-      List(
-        FileStatus.of("s3://bucket/logPath/checkpointfile1", 0L, 0L),
-        FileStatus.of("s3://bucket/logPath/checkpointfile2", 0L, 0L)
-      ).asJava,
-      Optional.of(0L),
-      0L
-    )
-
-    // Test that files with the correct log path pass the assertion
-    val logReplay = new LogReplay(
-      new Path("s3://bucket/logPath"),
-      new Path("s3://bucket/dataPath"),
-      null,
-      logSegment
-    )
+    LogReplay.assertLogFilesBelongToTable(tablePath, logFiles)
   }
 
   test("assertLogFilesBelongToTable should fail for incorrect log paths") {
-    /*
-      Test public LogSegment constructor rather than assertLogFilesBelongToTable
-      method directly because method is private
-    */
-    val logSegment = new LogSegment(
-      new Path("s3://bucket/logPath"),
-      0,
-      List(
-        FileStatus.of("s3://bucket/invalidLogPath/deltafile1", 0L, 0L),
-        FileStatus.of("s3://bucket/invalidLogPath/deltafile2", 0L, 0L)
-      ).asJava,
-      List(
-        FileStatus.of("s3://bucket/invalidLogPath/checkpointfile1", 0L, 0L),
-        FileStatus.of("s3://bucket/invalidLogPath/checkpointfile2", 0L, 0L)
-      ).asJava,
-      Optional.of(0L),
-      0L
-    )
+    val logFiles = List(
+      FileStatus.of("s3://bucket/logPath/deltafile1", 0L, 0L),
+      FileStatus.of("s3://bucket/invalidLogPath/deltafile2", 0L, 0L),
+      FileStatus.of("s3://bucket/logPath/checkpointfile1", 0L, 0L),
+      FileStatus.of("s3://bucket/invalidLogPath/checkpointfile2", 0L, 0L)
+    ).asJava
 
     // Test that files with incorrect log paths trigger the assertion
-    assertThrows[RuntimeException] {
-      val logReplay = new LogReplay(
-        new Path("s3://bucket/logPath"),
-        new Path("s3://bucket/dataPath"),
-        null,
-        logSegment
-      )
+    val ex = intercept[RuntimeException] {
+      LogReplay.assertLogFilesBelongToTable(tablePath, logFiles)
     }
+    assert(ex.getMessage.contains("File (s3://bucket/invalidLogPath/deltafile2) " +
+      s"doesn't belong in the transaction log at $tablePath"))
   }
 }
