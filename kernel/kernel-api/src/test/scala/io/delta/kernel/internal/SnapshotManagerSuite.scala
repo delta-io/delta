@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel
+package io.delta.kernel.internal
 
 import java.io.ByteArrayInputStream
 import java.util.{Arrays, Collections, Optional}
@@ -23,11 +23,12 @@ import scala.reflect.ClassTag
 
 import org.scalatest.funsuite.AnyFunSuite
 
-import io.delta.kernel.client.{ExpressionHandler, FileReadRequest, FileSystemClient, JsonHandler, ParquetHandler, TableClient}
-import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
+import io.delta.kernel.client._
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
 import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
 
 class SnapshotManagerSuite extends AnyFunSuite {
   import SnapshotManagerSuite._
@@ -113,7 +114,7 @@ class SnapshotManagerSuite extends AnyFunSuite {
   private val logPath = new Path("/fake/path/to/table/_delta_log")
 
   private def deltaFileStatuses(deltaVersions: Seq[Long]): Seq[FileStatus] = {
-    assert(deltaVersions.size == deltaVersions.toSet.size)
+    assert(deltaVersions.size === deltaVersions.toSet.size)
     deltaVersions.map(v => FileStatus.of(FileNames.deltaFile(logPath, v), v, v))
   }
 
@@ -627,17 +628,17 @@ class SnapshotManagerSuite extends AnyFunSuite {
 
   test("getLogSegmentForVersion: corrupt log but reading outside corrupted range") {
     testNoCheckpoint(
-      (0L until 5L) ++ (6L until 9L),
-      Optional.of(4)
+      deltaVersions = (0L until 5L) ++ (6L until 9L),
+      versionToLoad = Optional.of(4)
     )
     testWithSingularAndMultipartCheckpoint(
-      15L until 25L,
-      Seq(20),
+      deltaVersions = 15L until 25L,
+      checkpointVersions = Seq(20),
       versionToLoad = Optional.of(22)
     )
     testWithSingularAndMultipartCheckpoint(
-      15L until 25L,
-      Seq(20),
+      deltaVersions = 15L until 25L,
+      checkpointVersions = Seq(20),
       startCheckpoint = Optional.of(20),
       versionToLoad = Optional.of(22)
     )
@@ -758,22 +759,7 @@ object SnapshotManagerSuite {
     new FileSystemClient {
 
       override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
-        val fileStatuses = listFromPath(filePath)
-
-        new CloseableIterator[FileStatus] {
-          private var idx = -1
-
-          override def hasNext: Boolean = {
-            idx + 1 < fileStatuses.length
-          }
-
-          override def next(): FileStatus = {
-            idx += 1
-            fileStatuses(idx)
-          }
-
-          override def close(): Unit = {}
-        }
+        toCloseableIterator(listFromPath(filePath).iterator.asJava)
       }
 
       override def resolvePath(path: String): String = {

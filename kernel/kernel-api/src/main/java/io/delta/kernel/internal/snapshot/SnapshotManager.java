@@ -299,7 +299,7 @@ public class SnapshotManager
      * Helper function for the getLogSegmentForVersion above. Called with a provided files list,
      * and will then try to construct a new LogSegment using that.
      */
-    private Optional<LogSegment> getLogSegmentForVersion(
+    protected Optional<LogSegment> getLogSegmentForVersion(
         Path logPath,
         TableClient tableClient,
         Optional<Long> startCheckpointOpt,
