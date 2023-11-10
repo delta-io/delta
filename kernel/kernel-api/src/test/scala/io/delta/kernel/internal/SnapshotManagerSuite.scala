@@ -418,13 +418,13 @@ class SnapshotManagerSuite extends AnyFunSuite {
       .map(FileStatus.of(_, 10, 10))
     testExpectedError[RuntimeException](
       files,
-      // TODO this message seems misleading
+      // TODO error message is misleading (delta-io/delta#2283)
       expectedErrorMessageContains = "Empty directory: /fake/path/to/table/_delta_log"
     )
   }
 
   test("getLogSegmentForVersion: versionToLoad higher than possible") {
-    // TODO improve error message? not very clear
+    // TODO throw more informative error message (delta-io/delta#2283)
     testExpectedError[IllegalArgumentException](
       files = deltaFileStatuses(Seq(0)),
       versionToLoad = Optional.of(15),
@@ -486,7 +486,7 @@ class SnapshotManagerSuite extends AnyFunSuite {
 
   test("getLogSegmentForVersion: versionToLoad not constructable from history") {
     val files = deltaFileStatuses(20L until 25L) ++ singularCheckpointFileStatuses(Seq(20))
-    // TODO this error message is not helpful
+    // TODO this error message is misleading (delta-io/delta#2283)
     testExpectedError[RuntimeException](
       files,
       versionToLoad = Optional.of(15),
@@ -517,7 +517,8 @@ class SnapshotManagerSuite extends AnyFunSuite {
     }
   }
 
-  // TODO address the inconsistent behaviors? better error messages?
+  // TODO address the inconsistent behaviors and throw better error messages for corrupt listings?
+  //  (delta-io/delta#2283)
   test("getLogSegmentForVersion: corrupt listing 000.json...009.json + checkpoint(10)") {
     val fileList = deltaFileStatuses((0L until 10L)) ++ singularCheckpointFileStatuses(Seq(10))
 

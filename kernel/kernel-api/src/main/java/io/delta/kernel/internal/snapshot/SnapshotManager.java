@@ -367,10 +367,9 @@ public class SnapshotManager
         );
 
         // Find the latest checkpoint in the listing that is not older than the versionToLoad
-        // todo this naming is really confusing
-        final CheckpointInstance lastCheckpoint = versionToLoadOpt.map(CheckpointInstance::new)
+        final CheckpointInstance maxCheckpoint = versionToLoadOpt.map(CheckpointInstance::new)
             .orElse(CheckpointInstance.MAX_VALUE);
-        logDebug(String.format("lastCheckpoint: %s", lastCheckpoint));
+        logDebug(String.format("lastCheckpoint: %s", maxCheckpoint));
 
         final List<CheckpointInstance> checkpointFiles = checkpoints
             .stream()
@@ -380,7 +379,7 @@ public class SnapshotManager
             String.format("checkpointFiles: %s", Arrays.toString(checkpointFiles.toArray())));
 
         final Optional<CheckpointInstance> newCheckpointOpt =
-            Checkpointer.getLatestCompleteCheckpointFromList(checkpointFiles, lastCheckpoint);
+            Checkpointer.getLatestCompleteCheckpointFromList(checkpointFiles, maxCheckpoint);
         logDebug(String.format("newCheckpointOpt: %s", newCheckpointOpt));
 
         final long newCheckpointVersion = newCheckpointOpt
@@ -437,33 +436,36 @@ public class SnapshotManager
         );
 
         // todo again naming confusing (specify after checkpoint?)
-        final LinkedList<Long> deltaVersions = deltasAfterCheckpoint
+        final LinkedList<Long> deltaVersionsAfterCheckpoint = deltasAfterCheckpoint
             .stream()
             .map(fileStatus -> FileNames.deltaVersion(new Path(fileStatus.getPath())))
             .collect(Collectors.toCollection(LinkedList::new));
 
         logDebug(() ->
-            String.format("deltaVersions: %s", Arrays.toString(deltaVersions.toArray())));
+            String.format("deltaVersions: %s",
+                Arrays.toString(deltaVersionsAfterCheckpoint.toArray())));
 
         // We may just be getting a checkpoint file after the filtering
-        if (!deltaVersions.isEmpty()) {
-            if (deltaVersions.getFirst() != newCheckpointVersion + 1) {
+        if (!deltaVersionsAfterCheckpoint.isEmpty()) {
+            if (deltaVersionsAfterCheckpoint.getFirst() != newCheckpointVersion + 1) {
                 throw new RuntimeException(
                     String.format(
                         "Log file not found.\nExpected: %s\nFound: %s",
                         FileNames.deltaFile(logPath, newCheckpointVersion + 1),
-                        FileNames.deltaFile(logPath, deltaVersions.get(0))
+                        FileNames.deltaFile(logPath, deltaVersionsAfterCheckpoint.get(0))
                     )
                 );
             }
             verifyDeltaVersions(
-                deltaVersions, Optional.of(newCheckpointVersion + 1), versionToLoadOpt);
+                deltaVersionsAfterCheckpoint,
+                Optional.of(newCheckpointVersion + 1),
+                versionToLoadOpt);
         }
 
         // TODO: double check newCheckpointOpt.get() won't error out
 
-        final long newVersion = deltaVersions.isEmpty() ?
-            newCheckpointOpt.get().version : deltaVersions.getLast();
+        final long newVersion = deltaVersionsAfterCheckpoint.isEmpty() ?
+            newCheckpointOpt.get().version : deltaVersionsAfterCheckpoint.getLast();
 
         // In the case where `deltasAfterCheckpoint` is empty, `deltas` should still not be empty,
         // they may just be before the checkpoint version unless we have a bug in log cleanup.
