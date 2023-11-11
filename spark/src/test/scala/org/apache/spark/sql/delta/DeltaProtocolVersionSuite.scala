@@ -2381,7 +2381,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         spark.range(0).toDF)
       assert(intercept[DeltaTableFeatureException] {
         sql(s"INSERT INTO delta.`${dir.getCanonicalPath}` VALUES (9)")
-      }.getMessage.contains(s"""unsupported by Delta Lake "${io.delta.VERSION}": "$featureName""""))
+      }.getMessage.contains(s"""unsupported by Delta Lake "${io.delta.VERSION}": $featureName"""))
     }
   }
 
