@@ -3317,9 +3317,9 @@ case class DeltaUnsupportedTableFeatureException(
     errorClass: String,
     tableNameOrPath: String,
     unsupported: Iterable[String])
-extends DeltaTableFeatureException(
-  errorClass,
-  Array(tableNameOrPath, io.delta.VERSION, unsupported.mkString(", ")))
+  extends DeltaTableFeatureException(
+    errorClass,
+    Array(tableNameOrPath, io.delta.VERSION, unsupported.mkString(", ")))
 
 class DeltaRuntimeException(
     errorClass: String,
