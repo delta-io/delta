@@ -2226,13 +2226,13 @@
   },
   "DELTA_UNSUPPORTED_FEATURES_FOR_READ" : {
     "message" : [
-      "Unsupported Delta read feature: table \"<tableNameOrPath>\" requires reader table feature(s) that are unsupported by Delta Lake \"<deltaVersion>\": \"<unsupported>\"."
+      "Unsupported Delta read feature: table \"<tableNameOrPath>\" requires reader table feature(s) that are unsupported by Delta Lake \"<deltaVersion>\": <unsupported>."
     ],
     "sqlState" : "56038"
   },
   "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE" : {
     "message" : [
-      "Unsupported Delta write feature: table \"<tableNameOrPath>\" requires writer table feature(s) that are unsupported by Delta Lake \"<deltaVersion>\": \"<unsupported>\"."
+      "Unsupported Delta write feature: table \"<tableNameOrPath>\" requires writer table feature(s) that are unsupported by Delta Lake \"<deltaVersion>\": <unsupported>."
     ],
     "sqlState" : "56038"
   },

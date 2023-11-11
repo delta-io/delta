@@ -737,7 +737,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     "[DELTA_UNSUPPORTED_FEATURES_FOR_READ] " +
     s"""Unsupported Delta read feature: table "$tableNameOrPath" """ +
     "requires reader table feature(s) that are unsupported " +
-    s"""by Delta Lake "${io.delta.VERSION}": "$unsupportedFeatures"."""
+    s"""by Delta Lake "${io.delta.VERSION}": $unsupportedFeatures."""
   }
 
   def getExpectedWriterFeatureErrorMessage(
@@ -746,7 +746,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     "[DELTA_UNSUPPORTED_FEATURES_FOR_WRITE] " +
     s"""Unsupported Delta write feature: table "$tableNameOrPath" """ +
     "requires writer table feature(s) that are unsupported " +
-    s"""by Delta Lake "${io.delta.VERSION}": "$unsupportedFeatures"."""
+    s"""by Delta Lake "${io.delta.VERSION}": $unsupportedFeatures."""
   }
 
   test("protocol downgrade is a no-op") {
