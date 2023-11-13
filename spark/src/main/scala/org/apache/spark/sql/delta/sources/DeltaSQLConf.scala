@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.network.util.ByteUnit
+import org.apache.spark.sql.catalyst.FileSourceOptions
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
 
@@ -477,6 +478,20 @@ trait DeltaSQLConfBase {
       .transform(_.toLowerCase(Locale.ROOT))
       .checkValues(MergeMaterializeSource.list)
       .createWithDefault(MergeMaterializeSource.AUTO)
+
+  val MERGE_FORCE_SOURCE_MATERIALIZATION_WITH_UNREADABLE_FILES =
+    buildConf("merge.forceSourceMaterializationWithUnreadableFilesConfig")
+      .internal()
+      .doc(
+        s"""
+           |When set to true, merge command will force source materialization if Spark configs
+           |${SQLConf.IGNORE_CORRUPT_FILES.key}, ${SQLConf.IGNORE_MISSING_FILES.key} or
+           |file source read options ${FileSourceOptions.IGNORE_CORRUPT_FILES}
+           |${FileSourceOptions.IGNORE_MISSING_FILES} are enabled on the source.
+           |This is done so to prevent irrecoverable data loss or unexpected results.
+           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL =
     buildConf("merge.materializeSource.rddStorageLevel")
