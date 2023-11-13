@@ -274,7 +274,7 @@ trait StatisticsCollection extends DeltaLogging {
         case (_, _, false) => count(new Column("*"))
       }) ++ tightBoundsColOpt
 
-    struct(statCols: _*).as('stats)
+    struct(statCols: _*).as("stats")
   }
 
 
