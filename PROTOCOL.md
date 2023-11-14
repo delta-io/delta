@@ -623,13 +623,16 @@ Enablement:
 - A feature name `domainMetadata` must exist in the table's `writerFeatures`.
 
 #### Reader Requirements for Domain Metadata
-- Readers must preserve all domains even if they don't understand them, i.e. the snapshot read must include them.
-- Any system-controlled domain that requires special attention from a reader is a [breaking change](#protocol-evolution), and must be part of a reader-writer table feature that specifies the desired behavior.
+- Readers are not required to support domain metadata.
+- Readers who choose not to support domain metadata should ignore metadata domain actions as unrecognized (see [Protocol Evolution](#protocol-evolution)) and snapshots should not include any metadata domains.
+- Readers who choose to support domain metadata must apply [Action Reconciliation](#action-reconciliation) to all metadata domains and snapshots must include them -- even if the reader does not understand them.
+- Any system-controlled domain that imposes any requirements on readers is a [breaking change](#protocol-evolution), and must be part of a reader-writer table feature that specifies the desired behavior.
 
 #### Writer Requirements for Domain Metadata
+- Writers must preserve all domains even if they don't understand them.
 - Writers must not allow users to modify or delete system-controlled domains.
 - Writers must only modify or delete system-controlled domains they understand.
-- Any system-controlled domain that needs special attention from a writer is a [breaking change](#protocol-evolution), and must be part of a writer table feature that specifies the desired behavior.
+- Any system-controlled domain that imposes additional requirements on the writer is a [breaking change](#protocol-evolution), and must be part of a writer table feature that specifies the desired behavior.
 
 The following is an example `domainMetadata` action:
 ```json
