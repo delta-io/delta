@@ -10,18 +10,6 @@
       "nodes": [
         {
           "location": {
-            "x": 5525.4,
-            "y": 86
-          },
-          "nodeIndex": "PQ_DataTypes",
-          "size": {
-            "height": 128,
-            "width": 234
-          },
-          "zIndex": 0
-        },
-        {
-          "location": {
             "x": 8037.4,
             "y": 0
           },

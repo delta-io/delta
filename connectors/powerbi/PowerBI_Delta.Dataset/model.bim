@@ -8,7 +8,7 @@
       },
       {
         "name": "PBI_QueryOrder",
-        "value": "[\"fn_ReadDeltaTable\",\"DeltaTableFolderContent\",\"DeltaTableOptions\",\"Option_PartitionFilterFunction\",\"Option_StatsFilterFunction\",\"PartitionFilterFunction\",\"StatsFilterFunction\",\"DeltaTableVersion\",\"UseFileBuffer\",\"IterateFolderContent\",\"TimeZoneOffset\",\"TimeZoneOffsetDuration\",\"fn_AddColumnsToTable\",\"fn_GetPowerBIDataTypeInformation\",\"DeltaTableFolderContent_wFullPath\",\"Delimiter\",\"DeltaProtocol\",\"PQ_DataTypes\",\"DeltaTablePath\",\"_delta_log Folder\",\"metadata_columns\",\"TableSchema\",\"PhysicalTableSchema\",\"LogSchema\",\"_last_checkpoint\",\"Checkpoint Files\",\"Logs Checkpoint\",\"Latest Log Files\",\"Logs JSON\",\"Logs ALL\",\"Files with Stats\",\"Data\",\"Content_ADLS_DimProduct\",\"Content_ADLS_DimProduct_Clone\",\"Content_ADLS_DimProduct_ShallowClone\",\"Content_ADLS_FactInternetSales_part\",\"Content_ADLS_FactInternetSales_part_Hierarchical\",\"Content_LocalFolder\",\"DeltaTableData_CurrentFunction\",\"DeltaTableData_CurrentDebug\",\"Content_Blob_part\",\"Content_Blob_BasicDataTypes\",\"Option_Version\",\"Content_Blob_AllDataTypes\",\"Option_UseFileBuffer\",\"Option_IterateFolderContent\",\"Option_TimeZoneOffset\",\"Content_Blob_BasicDataTypes_Combine\",\"Steps_fn_AddColumnsToTable\",\"RowCounts\",\"OnSelectRows_Selector\",\"Content_Blob_DimProduct_Clone\",\"Content_Blob_DimProduct_ShallowClone\",\"Content_ColumnMapping_flat\",\"Content_ColumnMapping_complex\",\"SampleFiltering\",\"fn_test_UIFiltering\",\"test_UIFiltering\",\"Content_Blob_with_file_name\",\"GoldenDatasetsRootPath\",\"Content_multi-part-checkpoint\",\"Content_data-reader-nested-struct\",\"Content_data-reader-array-complex-objects\",\"GoldenTables\",\"Content_data-reader-partition-values\",\"Content_ADLS_BugBrackets\",\"URI_Decode\"]"
+        "value": "[\"fn_ReadDeltaTable\",\"DeltaTableFolderContent\",\"DeltaTableOptions\",\"Option_PartitionFilterFunction\",\"Option_StatsFilterFunction\",\"PartitionFilterFunction\",\"StatsFilterFunction\",\"DeltaTableVersion\",\"UseFileBuffer\",\"IterateFolderContent\",\"TimeZoneOffset\",\"TimeZoneOffsetDuration\",\"fn_AddColumnsToTable\",\"fn_GetPowerBIDataTypeInformation\",\"fn_URIDecode\",\"DeltaTableFolderContent_wFullPath\",\"Delimiter\",\"DeltaProtocol\",\"PQ_DataTypes\",\"DeltaTablePath\",\"_delta_log Folder\",\"metadata_columns\",\"TableSchema\",\"PhysicalTableSchema\",\"LogSchema\",\"_last_checkpoint\",\"Checkpoint Files\",\"Logs Checkpoint\",\"Latest Log Files\",\"Logs JSON\",\"Logs ALL\",\"Files with Stats\",\"Data\",\"Content_ADLS_DimProduct\",\"Content_ADLS_DimProduct_Clone\",\"Content_ADLS_DimProduct_ShallowClone\",\"Content_ADLS_FactInternetSales_part\",\"Content_ADLS_FactInternetSales_part_Hierarchical\",\"Content_LocalFolder\",\"DeltaTableData_CurrentFunction\",\"DeltaTableData_CurrentDebug\",\"Content_Blob_part\",\"Content_Blob_BasicDataTypes\",\"Option_Version\",\"Content_Blob_AllDataTypes\",\"Option_UseFileBuffer\",\"Option_IterateFolderContent\",\"Option_TimeZoneOffset\",\"Content_Blob_BasicDataTypes_Combine\",\"Steps_fn_AddColumnsToTable\",\"RowCounts\",\"OnSelectRows_Selector\",\"Content_Blob_DimProduct_Clone\",\"Content_Blob_DimProduct_ShallowClone\",\"Content_ColumnMapping_flat\",\"Content_ColumnMapping_complex\",\"SampleFiltering\",\"fn_test_UIFiltering\",\"test_UIFiltering\",\"Content_Blob_with_file_name\",\"GoldenDatasetsRootPath\",\"Content_multi-part-checkpoint\",\"Content_data-reader-nested-struct\",\"Content_data-reader-array-complex-objects\",\"GoldenTables\",\"Content_data-reader-partition-values\",\"Content_ADLS_BugBrackets\"]"
       },
       {
         "name": "PBIDesktopVersion",
@@ -349,7 +349,7 @@
           "",
           "        Delimiter = if Text.Contains(DeltaTableFolderContent{0}[Folder Path], \"//\") then \"/\" else \"\\\",",
           "",
-          "        URL_Decode = (data as text) as text => Uri.Parts(\"http://powerbi?txt=\" & data)[Query][txt],",
+          "        fn_URIDecode = (data as text) as text => Uri.Parts(\"http://powerbi?txt=\" & data)[Query][txt],",
           "",
           "        DeltaProtocol =",
           "        let",
@@ -378,7 +378,7 @@
           "",
           "            Content = if IterateFolderContent then fn_ReadContentRecursive(Source) else Source,",
           "",
-          "            #\"Added Full_Path\" = Table.AddColumn(Content, \"Full_Path\", each URI_Decode([Folder Path]) & [Name], Text.Type),",
+          "            #\"Added Full_Path\" = Table.AddColumn(Content, \"Full_Path\", each fn_URIDecode([Folder Path]) & [Name], Text.Type),",
           "            #\"Added File_Name\" = Table.AddColumn(#\"Added Full_Path\", \"File_Name\", each if Text.Length([Extension]) > 0 then List.Last(Text.Split([Full_Path], Delimiter)) else null, type text),",
           "            Buffered = Table.Buffer(#\"Added File_Name\")",
           "        in",
@@ -621,7 +621,7 @@
           "            #\"Added Counter\" = Table.AddColumn(Source, \"Counter\", each if [remove] <> null then -1 else if [add] <> null then 1 else null, Int8.Type),",
           "            #\"Added file_name\" = Table.AddColumn(#\"Added Counter\", \"file_name\", each if [add] <> null then Record.Field([add], \"path\") else if [remove] <> null then Record.Field([remove], \"path\") else null, Text.Type),",
           "            #\"Filtered Rows\" = Table.SelectRows(#\"Added file_name\", each ([file_name] <> null)),",
-          "            #\"URI Decoded\" = Table.TransformColumns(#\"Filtered Rows\",{{\"file_name\", URI_Decode, type text}}),",
+          "            #\"URI Decoded\" = Table.TransformColumns(#\"Filtered Rows\",{{\"file_name\", fn_URIDecode, type text}}),",
           "            #\"Added partitionValuesTable\" = Table.AddColumn(#\"URI Decoded\", \"partitionValuesTable\", each if [add] <> null then if Value.Is(Record.Field([add], \"partitionValues\"), Record.Type) then Record.ToTable(Record.Field([add], \"partitionValues\")) else Table.RenameColumns(Record.Field([add], \"partitionValues\"), {\"Key\", \"Name\"}) else null, type nullable table),",
           "            #\"Added partitionValuesJSON\" = Table.AddColumn(#\"Added partitionValuesTable\", \"partitionValuesJSON\", each Text.FromBinary(Json.FromValue([partitionValuesTable]))),",
           "            #\"Added stats\" = Table.AddColumn(#\"Added partitionValuesJSON\", \"stats\", each if [add] <> null and Record.HasFields([add], \"stats\") and Value.Is(Record.Field([add], \"stats\"), type text) ",
@@ -852,10 +852,6 @@
         "name": "DeltaTableFolderContent_wFullPath",
         "annotations": [
           {
-            "name": "PBI_NavigationStepName",
-            "value": "Navigation"
-          },
-          {
             "name": "PBI_ResultType",
             "value": "Table"
           }
@@ -874,7 +870,7 @@
           "",
           "    Content = if IterateFolderContent then fn_ReadContentRecursive(Source) else Source,",
           "",
-          "    #\"Added Full_Path\" = Table.AddColumn(Content, \"Full_Path\", each URI_Decode([Folder Path]) & [Name], Text.Type),",
+          "    #\"Added Full_Path\" = Table.AddColumn(Content, \"Full_Path\", each fn_URIDecode([Folder Path]) & [Name], Text.Type),",
           "    #\"Added File_Name\" = Table.AddColumn(#\"Added Full_Path\", \"File_Name\", each if Text.Length([Extension]) > 0 then List.Last(Text.Split([Full_Path], Delimiter)) else null, type text),",
           "    Buffered = Table.Buffer(#\"Added File_Name\")",
           "in",
@@ -1356,10 +1352,6 @@
         "name": "Files with Stats",
         "annotations": [
           {
-            "name": "PBI_NavigationStepName",
-            "value": "Navigation"
-          },
-          {
             "name": "PBI_ResultType",
             "value": "Table"
           }
@@ -1370,7 +1362,7 @@
           "    #\"Added Counter\" = Table.AddColumn(Source, \"Counter\", each if [remove] <> null then -1 else if [add] <> null then 1 else null, Int8.Type),",
           "    #\"Added file_name\" = Table.AddColumn(#\"Added Counter\", \"file_name\", each if [add] <> null then Record.Field([add], \"path\") else if [remove] <> null then Record.Field([remove], \"path\") else null, Text.Type),",
           "    #\"Filtered Rows\" = Table.SelectRows(#\"Added file_name\", each ([file_name] <> null)),",
-          "    #\"URI Decoded\" = Table.TransformColumns(#\"Filtered Rows\",{{\"file_name\", URI_Decode, type text}}),",
+          "    #\"URI Decoded\" = Table.TransformColumns(#\"Filtered Rows\",{{\"file_name\", fn_URIDecode, type text}}),",
           "    #\"Added partitionValuesTable\" = Table.AddColumn(#\"URI Decoded\", \"partitionValuesTable\", each if [add] <> null then if Value.Is(Record.Field([add], \"partitionValues\"), Record.Type) then Record.ToTable(Record.Field([add], \"partitionValues\")) else Table.RenameColumns(Record.Field([add], \"partitionValues\"), {\"Key\", \"Name\"}) else null, type nullable table),",
           "    #\"Added partitionValuesJSON\" = Table.AddColumn(#\"Added partitionValuesTable\", \"partitionValuesJSON\", each Text.FromBinary(Json.FromValue([partitionValuesTable]))),",
           "    #\"Added stats\" = Table.AddColumn(#\"Added partitionValuesJSON\", \"stats\", each if [add] <> null and Record.HasFields([add], \"stats\") and Value.Is(Record.Field([add], \"stats\"), type text) ",
@@ -1938,7 +1930,7 @@
         "queryGroup": "Sources"
       },
       {
-        "name": "URI_Decode",
+        "name": "fn_URIDecode",
         "annotations": [
           {
             "name": "PBI_NavigationStepName",
@@ -1952,6 +1944,56 @@
         "expression": "(data as text) as text => Uri.Parts(\"http://powerbi?txt=\" & data)[Query][txt]",
         "kind": "m",
         "lineageTag": "1ec75613-27ea-4fd2-beea-d8ce24d9a51f",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "PQ_DataTypes",
+        "annotations": [
+          {
+            "name": "PBI_ResultType",
+            "value": "Record"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = [",
+          "Any.Type = Any.Type,",
+          "None.Type = None.Type,",
+          "Day.Type = Day.Type,",
+          "Duration.Type = Duration.Type,",
+          "Record.Type = Record.Type,",
+          "Precision.Type = Precision.Type,",
+          "Number.Type = Number.Type,",
+          "Binary.Type = Binary.Type,",
+          "Byte.Type = Byte.Type,",
+          "Character.Type = Character.Type,",
+          "Text.Type = Text.Type,",
+          "Function.Type = Function.Type,",
+          "Null.Type = Null.Type,",
+          "List.Type = List.Type,",
+          "Type.Type = Type.Type,",
+          "Logical.Type = Logical.Type,",
+          "Int8.Type = Int8.Type,",
+          "Int16.Type = Int16.Type,",
+          "Int32.Type = Int32.Type,",
+          "Int64.Type = Int64.Type,",
+          "Single.Type = Single.Type,",
+          "Double.Type = Double.Type,",
+          "Decimal.Type = Decimal.Type,",
+          "Currency.Type = Currency.Type,",
+          "Percentage.Type = Percentage.Type,",
+          "Guid.Type = Guid.Type,",
+          "Date.Type = Date.Type,",
+          "DateTime.Type = DateTime.Type,",
+          "DateTimeZone.Type = DateTimeZone.Type,",
+          "Time.Type = Time.Type,",
+          "Table.Type = Table.Type",
+          "]",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "f0c17dfb-9e84-4f23-b7f2-d2a8224a6bd0",
         "queryGroup": "FunctionSteps"
       }
     ],
@@ -2078,92 +2120,6 @@
               "expression": [
                 "let",
                 "    Source = fn_ReadDeltaTable(DeltaTableFolderContent, DeltaTableOptions)",
-                "in",
-                "    Source"
-              ],
-              "type": "m"
-            }
-          }
-        ]
-      },
-      {
-        "name": "PQ_DataTypes",
-        "annotations": [
-          {
-            "name": "PBI_ResultType",
-            "value": "Record"
-          }
-        ],
-        "columns": [
-          {
-            "name": "Name",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ],
-            "dataType": "string",
-            "lineageTag": "825595f5-9aeb-4a13-9b42-60d4c635da6a",
-            "sourceColumn": "Name",
-            "summarizeBy": "none"
-          },
-          {
-            "name": "Value",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ],
-            "dataType": "string",
-            "lineageTag": "bc04e580-bd38-407a-892a-ce7723f0a6cc",
-            "sourceColumn": "Value",
-            "summarizeBy": "none"
-          }
-        ],
-        "lineageTag": "afd85ce3-a9f6-4a4f-a6cf-94e912c37c17",
-        "partitions": [
-          {
-            "name": "PQ_DataTypes-40412685-9f45-4fa6-99d0-374b1d5adc33",
-            "mode": "import",
-            "queryGroup": "FunctionSteps",
-            "source": {
-              "expression": [
-                "let",
-                "    Source = [",
-                "Any.Type = Any.Type,",
-                "None.Type = None.Type,",
-                "Day.Type = Day.Type,",
-                "Duration.Type = Duration.Type,",
-                "Record.Type = Record.Type,",
-                "Precision.Type = Precision.Type,",
-                "Number.Type = Number.Type,",
-                "Binary.Type = Binary.Type,",
-                "Byte.Type = Byte.Type,",
-                "Character.Type = Character.Type,",
-                "Text.Type = Text.Type,",
-                "Function.Type = Function.Type,",
-                "Null.Type = Null.Type,",
-                "List.Type = List.Type,",
-                "Type.Type = Type.Type,",
-                "Logical.Type = Logical.Type,",
-                "Int8.Type = Int8.Type,",
-                "Int16.Type = Int16.Type,",
-                "Int32.Type = Int32.Type,",
-                "Int64.Type = Int64.Type,",
-                "Single.Type = Single.Type,",
-                "Double.Type = Double.Type,",
-                "Decimal.Type = Decimal.Type,",
-                "Currency.Type = Currency.Type,",
-                "Percentage.Type = Percentage.Type,",
-                "Guid.Type = Guid.Type,",
-                "Date.Type = Date.Type,",
-                "DateTime.Type = DateTime.Type,",
-                "DateTimeZone.Type = DateTimeZone.Type,",
-                "Time.Type = Time.Type,",
-                "Table.Type = Table.Type",
-                "]",
                 "in",
                 "    Source"
               ],
