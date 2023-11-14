@@ -50,7 +50,7 @@
   - [Reader Requirements for Row Tracking](#reader-requirements-for-row-tracking)
   - [Writer Requirements for Row Tracking](#writer-requirements-for-row-tracking)
 - [Clustered Table](#clustered-table)
-  - [Writer Requirements for Clustered Table](#writer-requirements-for-clustered-tale)
+  - [Writer Requirements for Clustered Table](#writer-requirements-for-clustered-table)
 - [Requirements for Writers](#requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
