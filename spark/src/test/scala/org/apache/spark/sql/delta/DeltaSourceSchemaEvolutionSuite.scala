@@ -142,8 +142,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
   protected def testSchemaEvolution(
       testName: String,
-      columnMapping: Boolean = true)(f: DeltaLog => Unit): Unit = {
-    super.test(testName) {
+      columnMapping: Boolean = true,
+      tags: Seq[org.scalatest.Tag] = Seq.empty)(f: DeltaLog => Unit): Unit = {
+    super.test(testName, tags: _*) {
       if (columnMapping) {
         withStarterTable { log =>
           f(log)
@@ -1415,7 +1416,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     }
   }
 
-  testSchemaEvolution("multiple sources with schema evolution") { implicit log =>
+  testSchemaEvolution("multiple sources with schema evolution"
+    ) { implicit log =>
     val v5 = log.update().version // v5 has an ADD file action with value (4, 4)
     renameColumn("b", "c")
     addData(5 until 10)
