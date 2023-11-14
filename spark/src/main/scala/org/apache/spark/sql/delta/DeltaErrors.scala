@@ -2910,6 +2910,14 @@ trait DeltaErrorsBase
       pos = 0)
   }
 
+  def deletionVectorNonIncrementalUpdate(): Throwable = {
+    new DeltaIllegalStateException(errorClass = "DELTA_DELETION_VECTOR_NON_INCREMENTAL_UPDATE")
+  }
+
+  def deletionVectorOverlappingRows(): Throwable = {
+    new DeltaIllegalStateException(errorClass = "DELTA_DELETION_VECTOR_OVERLAPPING_ROWS")
+  }
+
   def statsRecomputeNotSupportedOnDvTables(): Throwable = {
     new DeltaCommandUnsupportedWithDeletionVectorsException(
       errorClass = "DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS",
