@@ -29,19 +29,20 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.types.TableSchemaSerDe;
+import io.delta.kernel.internal.util.VectorUtils;
 
 /**
  * Encapsulate the scan state (common info for all scan files) as a {@link Row}
  */
 public class ScanStateRow extends GenericRow {
     private static final StructType SCHEMA = new StructType()
-        .add("configuration", new MapType(StringType.INSTANCE, StringType.INSTANCE, false))
-        .add("logicalSchemaString", StringType.INSTANCE)
-        .add("physicalSchemaString", StringType.INSTANCE)
-        .add("partitionColumns", new ArrayType(StringType.INSTANCE, false))
-        .add("minReaderVersion", IntegerType.INSTANCE)
-        .add("minWriterVersion", IntegerType.INSTANCE)
-        .add("tablePath", StringType.INSTANCE);
+        .add("configuration", new MapType(StringType.STRING, StringType.STRING, false))
+        .add("logicalSchemaString", StringType.STRING)
+        .add("physicalSchemaString", StringType.STRING)
+        .add("partitionColumns", new ArrayType(StringType.STRING, false))
+        .add("minReaderVersion", IntegerType.INTEGER)
+        .add("minWriterVersion", IntegerType.INTEGER)
+        .add("tablePath", StringType.STRING);
 
     private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
         IntStream.range(0, SCHEMA.length())
@@ -55,7 +56,7 @@ public class ScanStateRow extends GenericRow {
         String readSchemaPhysicalJson,
         String tablePath) {
         HashMap<Integer, Object> valueMap = new HashMap<>();
-        valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfiguration());
+        valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
         valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), readSchemaLogicalJson);
         valueMap.put(COL_NAME_TO_ORDINAL.get("physicalSchemaString"), readSchemaPhysicalJson);
         valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
@@ -105,7 +106,8 @@ public class ScanStateRow extends GenericRow {
      * @return List of partition column names according to the scan state.
      */
     public static List<String> getPartitionColumns(Row scanState) {
-        return scanState.getArray(COL_NAME_TO_ORDINAL.get("partitionColumns"));
+        return VectorUtils.toJavaList(
+                scanState.getArray(COL_NAME_TO_ORDINAL.get("partitionColumns")));
     }
 
     /**
@@ -113,10 +115,9 @@ public class ScanStateRow extends GenericRow {
      * {@link Scan#getScanState(TableClient)}.
      */
     public static String getColumnMappingMode(Row scanState) {
-        Map<String, String> configuration =
-            scanState.getMap(COL_NAME_TO_ORDINAL.get("configuration"));
-        String cmMode = configuration.get("delta.columnMapping.mode");
-        return cmMode == null ? "none" : cmMode;
+        Map<String, String> configuration = VectorUtils.toJavaMap(
+                scanState.getMap(COL_NAME_TO_ORDINAL.get("configuration")));
+        return configuration.getOrDefault("delta.columnMapping.mode", "none");
     }
 
     /**

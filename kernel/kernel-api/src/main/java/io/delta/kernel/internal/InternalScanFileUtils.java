@@ -22,16 +22,18 @@ import java.util.Map;
 import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.fs.FileStatus;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.util.VectorUtils;
 
 /**
  * Utilities to extract information out of the scan file rows returned by
@@ -41,7 +43,12 @@ public class InternalScanFileUtils {
     private InternalScanFileUtils() {}
 
     private static final String TABLE_ROOT_COL_NAME = "tableRoot";
-    private static final DataType TABLE_ROOT_DATA_TYPE = StringType.INSTANCE;
+    private static final DataType TABLE_ROOT_DATA_TYPE = StringType.STRING;
+    /**
+     * {@link Column} expression referring to the `partitionValues` in scan `add` file.
+     */
+    public static final Column ADD_FILE_PARTITION_COL_REF =
+        new Column(new String[] {"add", "partitionValues"});
 
     public static StructField TABLE_ROOT_STRUCT_FIELD = new StructField(
         TABLE_ROOT_COL_NAME,
@@ -51,7 +58,7 @@ public class InternalScanFileUtils {
 
     public static final StructType SCAN_FILE_SCHEMA = new StructType()
         .add("add", AddFile.SCHEMA)
-        // TODO: table root is temporary, until the path in `add.path` is converted to
+        // NOTE: table root is temporary, until the path in `add.path` is converted to
         // an absolute path. https://github.com/delta-io/delta/issues/2089
         .add(TABLE_ROOT_COL_NAME, TABLE_ROOT_DATA_TYPE);
 
@@ -105,7 +112,7 @@ public class InternalScanFileUtils {
      */
     public static Map<String, String> getPartitionValues(Row scanFileInfo) {
         Row addFile = getAddFileEntry(scanFileInfo);
-        return addFile.getMap(ADD_FILE_PARTITION_VALUES_ORDINAL);
+        return VectorUtils.toJavaMap(addFile.getMap(ADD_FILE_PARTITION_VALUES_ORDINAL));
     }
 
     /**

@@ -116,7 +116,7 @@ object RowId {
       // Iterators are lazy, so the first call to `hasNext` won't happen until after we
       // exhaust the remapped actions iterator. At that point, the watermark (changed or not)
       // decides whether the iterator is empty or infinite; take(1) below to bound it.
-      override def hasNext(): Boolean = newHighWatermark != oldHighWatermark
+      override def hasNext: Boolean = newHighWatermark != oldHighWatermark
       override def next(): Action = RowTrackingMetadataDomain(newHighWatermark).toDomainMetadata
     }
     actionsWithFreshRowIds ++ newHighWatermarkAction.take(1)

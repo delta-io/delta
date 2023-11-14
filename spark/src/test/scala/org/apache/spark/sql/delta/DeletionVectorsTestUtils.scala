@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBi
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.util.PathWithFileSystem
+import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, QueryTest, RuntimeConfig, SparkSession}
@@ -34,12 +35,19 @@ import org.apache.spark.sql.test.SharedSparkSession
 /** Collection of test utilities related with persistent Deletion Vectors. */
 trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
 
-  def enableDeletionVectorsForDeletes(spark: SparkSession, enabled: Boolean = true): Unit = {
-    val enabledStr = enabled.toString
+  def enableDeletionVectors(
+      spark: SparkSession,
+      delete: Boolean = false,
+      update: Boolean = false): Unit = {
+    val global = delete | update
     spark.conf
-      .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, enabledStr)
-    spark.conf.set(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key, enabledStr)
+      .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, global.toString)
+    spark.conf.set(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key, delete.toString)
+    spark.conf.set(DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key, update.toString)
   }
+
+  def enableDeletionVectorsForAllSupportedOperations(spark: SparkSession): Unit =
+    enableDeletionVectors(spark, delete = true, update = true)
 
   def testWithDVs(testName: String, testTags: org.scalatest.Tag*)(thunk: => Unit): Unit = {
     test(testName, testTags : _*) {
@@ -54,7 +62,8 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
     val enabledStr = enabled.toString
     withSQLConf(
       DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> enabledStr,
-      DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> enabledStr) {
+      DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> enabledStr,
+      DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key -> enabledStr) {
       thunk
     }
   }
@@ -315,6 +324,13 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
       dvDescriptor,
       updateStats = true
     )
+  }
+
+  /** Delete the DV file in the given [[AddFile]]. Assumes the [[AddFile]] has a valid DV. */
+  protected def deleteDVFile(tablePath: String, addFile: AddFile): Unit = {
+    assert(addFile.deletionVector != null)
+    val dvPath = addFile.deletionVector.absolutePath(new Path(tablePath))
+    FileUtils.delete(new File(dvPath.toString))
   }
 
   /**

@@ -35,6 +35,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.storage.LogStoreProvider
+import org.apache.spark.sql.delta.util.FileNames
 import com.google.common.cache.{CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
@@ -85,6 +86,14 @@ class DeltaLog private(
 
   import org.apache.spark.sql.delta.files.TahoeFileIndex
   import org.apache.spark.sql.delta.util.FileNames._
+
+  /**
+   * Path to sidecar directory.
+   * This is intentionally kept `lazy val` as otherwise any other constructor codepaths in DeltaLog
+   * (e.g. SnapshotManagement etc) will see it as null as they are executed before this line is
+   * called.
+   */
+  lazy val sidecarDirPath: Path = FileNames.sidecarDirPath(logPath)
 
 
   protected def spark = SparkSession.active
@@ -205,12 +214,8 @@ class DeltaLog private(
 
   /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
   @deprecated("Please use the CatalogTable overload instead", "3.0")
-  def startTransaction(): OptimisticTransaction = startTransaction(snapshotOpt = None)
-
-  /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
-  @deprecated("Please use the CatalogTable overload instead", "3.0")
-  def startTransaction(snapshotOpt: Option[Snapshot]): OptimisticTransaction = {
-    startTransaction(catalogTableOpt = None, snapshotOpt)
+  def startTransaction(): OptimisticTransaction = {
+    startTransaction(catalogTableOpt = None, snapshotOpt = None)
   }
 
   /**
@@ -218,9 +223,28 @@ class DeltaLog private(
    * be recorded for this table, and all other tables will be read
    * at a snapshot that is pinned on the first access.
    *
+   * @param catalogTableOpt The [[CatalogTable]] for the table this transaction updates. Passing
+   * None asserts this is a path-based table with no catalog entry.
+   *
+   * @param snapshotOpt THe [[Snapshot]] this transaction should use, if not latest.
    * @note This uses thread-local variable to make the active transaction visible. So do not use
    *       multi-threaded code in the provided thunk.
    */
+  def withNewTransaction[T](
+      catalogTableOpt: Option[CatalogTable],
+      snapshotOpt: Option[Snapshot] = None)(
+      thunk: OptimisticTransaction => T): T = {
+    try {
+      val txn = startTransaction(catalogTableOpt, snapshotOpt)
+      OptimisticTransaction.setActive(txn)
+      thunk(txn)
+    } finally {
+      OptimisticTransaction.clearActive()
+    }
+  }
+
+  /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
+  @deprecated("Please use the CatalogTable overload instead", "3.0")
   def withNewTransaction[T](thunk: OptimisticTransaction => T): T = {
     try {
       val txn = startTransaction()
@@ -234,9 +258,11 @@ class DeltaLog private(
 
   /**
    * Upgrade the table's protocol version, by default to the maximum recognized reader and writer
-   * versions in this DBR release.
+   * versions in this Delta release. This method only upgrades protocol version, and will fail if
+   * the new protocol version is not a superset of the original one used by the snapshot.
    */
   def upgradeProtocol(
+      catalogTable: Option[CatalogTable],
       snapshot: Snapshot,
       newVersion: Protocol): Unit = {
     val currentVersion = snapshot.protocol
@@ -244,8 +270,11 @@ class DeltaLog private(
       logConsole(s"Table $dataPath is already at protocol version $newVersion.")
       return
     }
+    if (!currentVersion.canUpgradeTo(newVersion)) {
+      throw new ProtocolDowngradeException(currentVersion, newVersion)
+    }
 
-    val txn = startTransaction(Some(snapshot))
+    val txn = startTransaction(catalogTable, Some(snapshot))
     try {
       SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
     } catch {
@@ -254,11 +283,6 @@ class DeltaLog private(
     }
     txn.commit(Seq(newVersion), DeltaOperations.UpgradeProtocol(newVersion))
     logConsole(s"Upgraded table at $dataPath to $newVersion.")
-  }
-
-  // Test-only!!
-  private[delta] def upgradeProtocol(newVersion: Protocol): Unit = {
-    upgradeProtocol(unsafeVolatileSnapshot, newVersion)
   }
 
   /**
@@ -365,7 +389,12 @@ class DeltaLog private(
         "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
         "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
     if (!clientSupportedVersions.contains(tableRequiredVersion)) {
-      throw new InvalidProtocolVersionException(tableRequiredVersion, clientSupportedVersions.toSeq)
+      throw new InvalidProtocolVersionException(
+        dataPath.toString(),
+        tableProtocol.minReaderVersion,
+        tableProtocol.minWriterVersion,
+        Action.supportedReaderVersionNumbers.toSeq,
+        Action.supportedWriterVersionNumbers.toSeq)
     } else {
       throw unsupportedFeaturesException(clientUnsupportedFeatureNames)
     }
@@ -471,6 +500,7 @@ class DeltaLog private(
   def createRelation(
       partitionFilters: Seq[Expression] = Nil,
       snapshotToUseOpt: Option[Snapshot] = None,
+      catalogTableOpt: Option[CatalogTable] = None,
       isTimeTravelQuery: Boolean = false): BaseRelation = {
 
     /** Used to link the files present in the table into the query planner. */
@@ -503,7 +533,8 @@ class DeltaLog private(
           new DeltaOptions(Map.empty[String, String], spark.sessionState.conf),
           partitionColumns = Seq.empty,
           configuration = Map.empty,
-          data = data).run(spark)
+          data = data,
+          catalogTableOpt = catalogTableOpt).run(spark)
       }
     }
   }
@@ -651,11 +682,6 @@ object DeltaLog extends DeltaLogging {
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
-  def forTable(spark: SparkSession, dataPath: String, options: Map[String, String]): DeltaLog = {
-    apply(spark, logPathFor(dataPath), options, new SystemClock)
-  }
-
-  /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path): DeltaLog = {
     apply(spark, logPathFor(dataPath), new SystemClock)
   }
@@ -694,20 +720,6 @@ object DeltaLog extends DeltaLogging {
     apply(spark, logPathFor(new Path(table.location)), clock)
   }
 
-  /** Helper for creating a log for the table. */
-  def forTable(spark: SparkSession, deltaTable: DeltaTableIdentifier): DeltaLog = {
-    forTable(spark, deltaTable, new SystemClock)
-  }
-
-  /** Helper for creating a log for the table. */
-  def forTable(spark: SparkSession, deltaTable: DeltaTableIdentifier, clock: Clock): DeltaLog = {
-    if (deltaTable.path.isDefined) {
-      forTable(spark, new Path(deltaTable.path.get), clock)
-    } else {
-      forTable(spark, deltaTable.table.get, clock)
-    }
-  }
-
   private def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog =
     apply(spark, rawPath, Map.empty, clock)
 
@@ -724,12 +736,6 @@ object DeltaLog extends DeltaLogging {
   def forTableWithSnapshot(
       spark: SparkSession,
       tableName: TableIdentifier): (DeltaLog, Snapshot) =
-    withFreshSnapshot { forTable(spark, tableName, _) }
-
-  /** Helper for getting a log, as well as the latest snapshot, of the table */
-  def forTableWithSnapshot(
-      spark: SparkSession,
-      tableName: DeltaTableIdentifier): (DeltaLog, Snapshot) =
     withFreshSnapshot { forTable(spark, tableName, _) }
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
@@ -800,8 +806,8 @@ object DeltaLog extends DeltaLogging {
           }
         )
       } catch {
-        case e: com.google.common.util.concurrent.UncheckedExecutionException =>
-          throw e.getCause
+        case e: com.google.common.util.concurrent.UncheckedExecutionException => throw e.getCause
+        case e: java.util.concurrent.ExecutionException => throw e.getCause
       }
     }
 

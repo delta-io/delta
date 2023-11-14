@@ -30,6 +30,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
@@ -56,6 +57,15 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     (CDCReader.CDC_COLUMNS_IN_DATA ++ Seq(
       CDCReader.CDC_COMMIT_VERSION,
       CDCReader.CDC_COMMIT_TIMESTAMP,
+      /**
+       * Whenever `_metadata` column is selected, Spark adds the format generated metadata
+       * columns to `ParquetFileFormat`'s required output schema. Column `_metadata` contains
+       * constant value subfields metadata such as `file_path` and format specific custom metadata
+       * subfields such as `row_index` in Parquet. Spark creates the file format object with
+       * data schema plus additional custom metadata columns required from file format to fill up
+       * the `_metadata` column.
+       */
+      ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME,
       DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME,
       DeltaParquetFileFormat.ROW_INDEX_COLUMN_NAME)
     ).map(_.toLowerCase(Locale.ROOT)).toSet
@@ -581,6 +591,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
 
   /**
    * Compare the old metadata's schema with new metadata's schema for column mapping schema changes.
+   * Also check for repartition because we need to fail fast when repartition detected.
    *
    * newMetadata's snapshot version must be >= oldMetadata's snapshot version so we could reliably
    * detect the difference between ADD COLUMN and DROP COLUMN.
@@ -589,12 +600,20 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * no rename column or drop column has happened in-between.
    */
   def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
+    // Helper function to check no column mapping schema change and no repartition
+    def hasNoColMappingAndRepartitionSchemaChange(
+       newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
+      isRenameColumnOperation(newMetadata, oldMetadata) ||
+        isDropColumnOperation(newMetadata, oldMetadata) ||
+        !SchemaUtils.isPartitionCompatible(
+          newMetadata.partitionColumns, oldMetadata.partitionColumns)
+    }
+
     val (oldMode, newMode) = (oldMetadata.columnMappingMode, newMetadata.columnMappingMode)
     if (oldMode != NoMapping && newMode != NoMapping) {
       require(oldMode == newMode, "changing mode is not supported")
       // Both changes are post column mapping enabled
-      !isRenameColumnOperation(newMetadata, oldMetadata) &&
-        !isDropColumnOperation(newMetadata, oldMetadata)
+      !hasNoColMappingAndRepartitionSchemaChange(newMetadata, oldMetadata)
     } else if (oldMode == NoMapping && newMode != NoMapping) {
       // The old metadata does not have column mapping while the new metadata does, in this case
       // we assume an upgrade has happened in between.
@@ -611,8 +630,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
           Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> newMetadata.columnMappingMode.name)
       )
       // use the same check
-      !isRenameColumnOperation(newMetadata, upgradedMetadata) &&
-        !isDropColumnOperation(newMetadata, upgradedMetadata)
+      !hasNoColMappingAndRepartitionSchemaChange(newMetadata, upgradedMetadata)
     } else {
       // Not column mapping, don't block
       // TODO: support column mapping downgrade check once that's rolled out.

@@ -94,8 +94,6 @@ statement
     | REORG TABLE table=qualifiedName
         (WHERE partitionPredicate=predicateToken)?
         APPLY LEFT_PAREN PURGE RIGHT_PAREN                              #reorgTable
-    | SHOW COLUMNS (IN | FROM) tableName=qualifiedName
-        ((IN | FROM) schemaName=identifier)?                            #showColumns
     | cloneTableHeader SHALLOW CLONE source=qualifiedName clause=temporalClause?
        (TBLPROPERTIES tableProps=propertyList)?
        (LOCATION location=stringLit)?                                   #clone
@@ -223,7 +221,7 @@ nonReserved
     | REORG | APPLY | PURGE
     | RESTORE | AS | OF
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
-    | SHOW | COLUMNS | IN | FROM | NO | STATISTICS
+    | NO | STATISTICS
     | CLONE | SHALLOW
     | FEATURE | TRUNCATE
     ;
@@ -236,7 +234,6 @@ AS: 'AS';
 BY: 'BY';
 CHECK: 'CHECK';
 CLONE: 'CLONE';
-COLUMNS: 'COLUMNS';
 COMMA: ',';
 COMMENT: 'COMMENT';
 CONSTRAINT: 'CONSTRAINT';
@@ -253,12 +250,10 @@ EXISTS: 'EXISTS';
 FALSE: 'FALSE';
 FEATURE: 'FEATURE';
 FOR: 'FOR';
-FROM: 'FROM';
 GENERATE: 'GENERATE';
 HISTORY: 'HISTORY';
 HOURS: 'HOURS';
 IF: 'IF';
-IN: 'IN';
 LEFT_PAREN: '(';
 LIMIT: 'LIMIT';
 LOCATION: 'LOCATION';
@@ -278,7 +273,6 @@ RETAIN: 'RETAIN';
 RIGHT_PAREN: ')';
 RUN: 'RUN';
 SHALLOW: 'SHALLOW';
-SHOW: 'SHOW';
 SYSTEM_TIME: 'SYSTEM_TIME';
 SYSTEM_VERSION: 'SYSTEM_VERSION';
 TABLE: 'TABLE';

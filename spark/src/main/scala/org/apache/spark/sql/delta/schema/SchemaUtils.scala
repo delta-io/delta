@@ -229,11 +229,25 @@ object SchemaUtils extends DeltaLogging {
   }
 
   /**
+   * A helper function to check if partition columns are the same.
+   * This function only checks for partition column names.
+   * Please use with other schema check functions for detecting type change etc.
+   */
+  def isPartitionCompatible(
+      newPartitionColumns: Seq[String] = Seq.empty,
+      oldPartitionColumns: Seq[String] = Seq.empty): Boolean = {
+    (newPartitionColumns.isEmpty && oldPartitionColumns.isEmpty) ||
+      (newPartitionColumns == oldPartitionColumns)
+  }
+
+  /**
    * As the Delta snapshots update, the schema may change as well. This method defines whether the
    * new schema of a Delta table can be used with a previously analyzed LogicalPlan. Our
    * rules are to return false if:
    *   - Dropping any column that was present in the existing schema, if not allowMissingColumns
    *   - Any change of datatype
+   *   - Change of partition columns. Although analyzed LogicalPlan is not changed,
+   *     physical structure of data is changed and thus is considered not read compatible.
    *   - If `forbidTightenNullability` = true:
    *      - Forbids tightening the nullability (existing nullable=true -> read nullable=false)
    *      - Typically Used when the existing schema refers to the schema of written data, such as
@@ -251,7 +265,9 @@ object SchemaUtils extends DeltaLogging {
       existingSchema: StructType,
       readSchema: StructType,
       forbidTightenNullability: Boolean = false,
-      allowMissingColumns: Boolean = false): Boolean = {
+      allowMissingColumns: Boolean = false,
+      newPartitionColumns: Seq[String] = Seq.empty,
+      oldPartitionColumns: Seq[String] = Seq.empty): Boolean = {
 
     def isNullabilityCompatible(existingNullable: Boolean, readNullable: Boolean): Boolean = {
       if (forbidTightenNullability) {
@@ -289,7 +305,9 @@ object SchemaUtils extends DeltaLogging {
         "Delta tables don't allow field names that only differ by case")
       // scalastyle:on caselocale
 
-      if (!allowMissingColumns && !existingFieldNames.subsetOf(newFields)) {
+      if (!allowMissingColumns &&
+        !(existingFieldNames.subsetOf(newFields) &&
+          isPartitionCompatible(newPartitionColumns, oldPartitionColumns))) {
         // Dropped a column that was present in the DataFrame schema
         return false
       }

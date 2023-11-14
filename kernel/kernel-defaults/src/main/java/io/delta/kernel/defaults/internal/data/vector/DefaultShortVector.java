@@ -20,7 +20,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.types.ShortType;
 
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for short type data.
@@ -38,7 +38,7 @@ public class DefaultShortVector
      * @param values      column vector values.
      */
     public DefaultShortVector(int size, Optional<boolean[]> nullability, short[] values) {
-        super(size, ShortType.INSTANCE, nullability);
+        super(size, ShortType.SHORT, nullability);
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
             "invalid number of values (%s) for given size (%s)", values.length, size);

@@ -287,7 +287,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   test("replace table - errors if not exists") {
-    intercept[CannotReplaceMissingTableException] {
+    intercept[AnalysisException] {
       defaultReplaceTableBuilder(orCreate = false, Some("testTable")).execute()
     }
   }

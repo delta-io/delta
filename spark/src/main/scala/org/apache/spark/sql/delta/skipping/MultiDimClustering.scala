@@ -32,7 +32,9 @@ trait MultiDimClustering extends Logging {
   def cluster(
       df: DataFrame,
       colNames: Seq[String],
-      approxNumPartitions: Int): DataFrame
+      approxNumPartitions: Int,
+      randomizationExpressionOpt: Option[Column]
+  ): DataFrame
 }
 
 object MultiDimClustering {
@@ -42,7 +44,7 @@ object MultiDimClustering {
       approxNumPartitions: Int,
       colNames: Seq[String]): DataFrame = {
     assert(colNames.nonEmpty, "Cannot cluster by zero columns!")
-    ZOrderClustering.cluster(df, colNames, approxNumPartitions)
+    ZOrderClustering.cluster(df, colNames, approxNumPartitions, randomizationExpressionOpt = None)
   }
 }
 
@@ -54,7 +56,8 @@ trait SpaceFillingCurveClustering extends MultiDimClustering {
   override def cluster(
       df: DataFrame,
       colNames: Seq[String],
-      approxNumPartitions: Int): DataFrame = {
+      approxNumPartitions: Int,
+      randomizationExpressionOpt: Option[Column]): DataFrame = {
     val conf = df.sparkSession.sessionState.conf
     val numRanges = conf.getConf(DeltaSQLConf.MDC_NUM_RANGE_IDS)
     val addNoise = conf.getConf(DeltaSQLConf.MDC_ADD_NOISE)
@@ -65,7 +68,7 @@ trait SpaceFillingCurveClustering extends MultiDimClustering {
 
     var repartitionedDf = if (addNoise) {
       val randByteColName = s"${UUID.randomUUID().toString}-rpKey2"
-      val randByteCol = (rand() * 255 - 128).cast(ByteType)
+      val randByteCol = randomizationExpressionOpt.getOrElse((rand() * 255 - 128).cast(ByteType))
       df.withColumn(repartitionKeyColName, mdcCol).withColumn(randByteColName, randByteCol)
         .repartitionByRange(approxNumPartitions, col(repartitionKeyColName), col(randByteColName))
         .drop(randByteColName)

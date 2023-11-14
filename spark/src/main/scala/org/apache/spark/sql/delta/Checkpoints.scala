@@ -54,10 +54,16 @@ import org.apache.spark.util.Utils
 /**
  * A class to help with comparing checkpoints with each other, where we may have had concurrent
  * writers that checkpoint with different number of parts.
+ * The `numParts` field will be present only for multipart checkpoints (represented by
+ * Format.WITH_PARTS).
+ * The `fileName` field is present only for V2 Checkpoints (represented by Format.V2)
+ * These additional fields are used as a tie breaker when comparing multiple checkpoint
+ * instance of same Format for the same `version`.
  */
 case class CheckpointInstance(
     version: Long,
     format: CheckpointInstance.Format,
+    fileName: Option[String] = None,
     numParts: Option[Int] = None) extends Ordered[CheckpointInstance] {
 
   // Assert that numParts are present when checkpoint format is Format.WITH_PARTS.
@@ -65,6 +71,11 @@ case class CheckpointInstance(
   require((format == CheckpointInstance.Format.WITH_PARTS) == numParts.isDefined,
     s"numParts ($numParts) must be present for checkpoint format" +
       s" ${CheckpointInstance.Format.WITH_PARTS.name}")
+  // Assert that filePath is present only when checkpoint format is Format.V2.
+  // For other formats, filePath must be None.
+  require((format == CheckpointInstance.Format.V2) == fileName.isDefined,
+    s"fileName ($fileName) must be present for checkpoint format" +
+      s" ${CheckpointInstance.Format.V2.name}")
 
   /**
    * Returns a [[CheckpointProvider]] which can tell the files corresponding to this
@@ -81,7 +92,26 @@ case class CheckpointInstance(
     val lastCheckpointInfo = lastCheckpointInfoHint.filter(cm => CheckpointInstance(cm) == this)
     val cpFiles = filterFiles(deltaLog, filesForCheckpointConstruction)
     format match {
-      case CheckpointInstance.Format.WITH_PARTS | CheckpointInstance.Format.SINGLE =>
+      // Treat single file checkpoints also as V2 Checkpoints because we don't know if it is
+      // actually a V2 checkpoint until we read it.
+      case CheckpointInstance.Format.V2 | CheckpointInstance.Format.SINGLE =>
+        assert(cpFiles.size == 1)
+        val fileStatus = cpFiles.head
+        if (format == CheckpointInstance.Format.V2) {
+          val hadoopConf = deltaLog.newDeltaHadoopConf()
+          UninitializedV2CheckpointProvider(
+            version,
+            fileStatus,
+            logPath,
+            hadoopConf,
+            deltaLog.options,
+            deltaLog.store,
+            lastCheckpointInfo)
+        } else {
+          UninitializedV1OrV2ParquetCheckpointProvider(
+            version, fileStatus, logPath, lastCheckpointInfo)
+        }
+      case CheckpointInstance.Format.WITH_PARTS =>
         PreloadedCheckpointProvider(cpFiles, lastCheckpointInfo)
       case CheckpointInstance.Format.SENTINEL =>
         throw DeltaErrors.assertionFailedError(
@@ -93,6 +123,23 @@ case class CheckpointInstance(
                   filesForCheckpointConstruction: Seq[FileStatus]) : Seq[FileStatus] = {
     val logPath = deltaLog.logPath
     format match {
+      // Treat Single File checkpoints also as V2 Checkpoints because we don't know if it is
+      // actually a V2 checkpoint until we read it.
+      case format if format.usesSidecars =>
+        val checkpointFileName = format match {
+          case CheckpointInstance.Format.V2 => fileName.get
+          case CheckpointInstance.Format.SINGLE => checkpointFileSingular(logPath, version).getName
+          case other =>
+            throw new IllegalStateException(s"Unknown checkpoint format $other supporting sidecars")
+        }
+        val fileStatus = filesForCheckpointConstruction
+          .find(_.getPath.getName == checkpointFileName)
+          .getOrElse {
+            throw new IllegalStateException("Failed in getting the file information for:\n" +
+              fileName.get + "\namong\n" +
+              filesForCheckpointConstruction.map(_.getPath.getName).mkString(" -", "\n -", ""))
+          }
+        Seq(fileStatus)
       case CheckpointInstance.Format.WITH_PARTS | CheckpointInstance.Format.SINGLE =>
         val filePaths = if (format == CheckpointInstance.Format.WITH_PARTS) {
           checkpointFileWithParts(logPath, version, numParts.get).toSet
@@ -119,28 +166,35 @@ case class CheckpointInstance(
    *    Single part checkpoint.
    * 3. For Multi-part [[CheckpointInstance]]s corresponding to same version, the one with more
    *    parts is greater than the one with less parts.
+   * 4. For V2 Checkpoints corresponding to same version, we use the fileName as tie breaker.
    */
   override def compare(other: CheckpointInstance): Int = {
-    (version, format, numParts) compare (other.version, other.format, other.numParts)
+      (version, format, numParts, fileName) compare
+        (other.version, other.format, other.numParts, other.fileName)
   }
 }
 
 object CheckpointInstance {
   sealed abstract class Format(val ordinal: Int, val name: String) extends Ordered[Format] {
     override def compare(other: Format): Int = ordinal compare other.ordinal
+    def usesSidecars: Boolean = this.isInstanceOf[FormatUsesSidecars]
   }
+  trait FormatUsesSidecars
 
   object Format {
     def unapply(name: String): Option[Format] = name match {
       case SINGLE.name => Some(SINGLE)
       case WITH_PARTS.name => Some(WITH_PARTS)
+      case V2.name => Some(V2)
       case _ => None
     }
 
     /** single-file checkpoint format */
-    object SINGLE extends Format(0, "SINGLE")
+    object SINGLE extends Format(0, "SINGLE") with FormatUsesSidecars
     /** multi-file checkpoint format */
     object WITH_PARTS extends Format(1, "WITH_PARTS")
+    /** V2 Checkpoint format */
+    object V2 extends Format(2, "V2") with FormatUsesSidecars
     /** Sentinel, for internal use only */
     object SENTINEL extends Format(Int.MaxValue, "SENTINEL")
   }
@@ -149,7 +203,14 @@ object CheckpointInstance {
     // Three formats to worry about:
     // * <version>.checkpoint.parquet
     // * <version>.checkpoint.<i>.<n>.parquet
+    // * <version>.checkpoint.<u>.parquet where u is a unique string
     path.getName.split("\\.") match {
+      case Array(v, "checkpoint", uniqueStr, format) if Seq("json", "parquet").contains(format) =>
+        CheckpointInstance(
+          version = v.toLong,
+          format = Format.V2,
+          numParts = None,
+          fileName = Some(path.getName))
       case Array(v, "checkpoint", "parquet") =>
         CheckpointInstance(v.toLong, Format.SINGLE, numParts = None)
       case Array(v, "checkpoint", _, n, "parquet") =>
@@ -167,6 +228,7 @@ object CheckpointInstance {
     CheckpointInstance(
       version = metadata.version,
       format = metadata.getFormatEnum(),
+      fileName = metadata.v2Checkpoint.map(_.path),
       numParts = metadata.parts)
   }
 
@@ -384,6 +446,8 @@ trait Checkpoints extends DeltaLogging {
          case CheckpointInstance.Format.WITH_PARTS =>
            assert(ci.numParts.nonEmpty, "Multi-Part Checkpoint must have non empty numParts")
            matchingCheckpointInstances.length == ci.numParts.get
+         case CheckpointInstance.Format.V2 =>
+           matchingCheckpointInstances.length == 1
          case CheckpointInstance.Format.SENTINEL =>
            false
        }
@@ -508,7 +572,7 @@ object Checkpoints
       .executedPlan
       .execute()
       .mapPartitions { case iter =>
-        val actualNumParts = Option(TaskContext.get).map(_.numPartitions())
+        val actualNumParts = Option(TaskContext.get()).map(_.numPartitions())
           .getOrElse(numParts)
         val partition = TaskContext.getPartitionId()
         val (writtenPath, finalPath) = Checkpoints.getCheckpointWritePath(
@@ -779,7 +843,7 @@ object Checkpoints
       .executedPlan
       .execute()
       .mapPartitions { iter =>
-        val actualNumParts = Option(TaskContext.get).map(_.numPartitions()).getOrElse(1)
+        val actualNumParts = Option(TaskContext.get()).map(_.numPartitions()).getOrElse(1)
         require(actualNumParts == 1, "The parquet V2 checkpoint must be written in 1 file")
         val partition = TaskContext.getPartitionId()
         val finalPath = finalSparkPath.toPath

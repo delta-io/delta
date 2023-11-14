@@ -280,6 +280,11 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.UPDATE
 
     override def changesData: Boolean = true
+
+    override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
+      val dvMetrics = transformDeletionVectorMetrics(metrics)
+      super.transformMetrics(metrics) ++ dvMetrics
+    }
   }
   /** Recorded when the table is created. */
   case class CreateTable(
@@ -746,6 +751,9 @@ private[delta] object DeltaOperationMetrics {
     "numAddedFiles", // number of files added
     "numRemovedFiles", // number of files removed
     "numAddedChangeFiles", // number of CDC files
+    "numDeletionVectorsAdded", // number of deletion vectors added
+    "numDeletionVectorsRemoved", // number of deletion vectors removed
+    "numDeletionVectorsUpdated", // number of deletion vectors updated
     "numUpdatedRows", // number of rows updated
     "numCopiedRows", // number of rows just copied over in the process of updating files.
     "executionTimeMs",  // time taken to execute the entire operation

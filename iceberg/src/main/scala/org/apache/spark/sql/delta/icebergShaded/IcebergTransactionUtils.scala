@@ -22,11 +22,16 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import shadedForDelta.org.apache.iceberg.{DataFile, DataFiles, FileFormat, PartitionSpec, Schema => IcebergSchema}
+// scalastyle:off import.ordering.noEmptyLine
+import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
+// scalastyle:on import.ordering.noEmptyLine
+import shadedForDelta.org.apache.iceberg.hive.HiveCatalog
 
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.types._
+import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier => SparkTableIdentifier}
+import org.apache.spark.sql.types.StructType
 
 object IcebergTransactionUtils
     extends DeltaLogging
@@ -171,5 +176,31 @@ object IcebergTransactionUtils
     }
 
     builder
+  }
+
+  /**
+   * Create an Iceberg HiveCatalog
+   * @param conf: Hadoop Configuration
+   * @return
+   */
+  def createHiveCatalog(conf : Configuration) : HiveCatalog = {
+    val catalog = new HiveCatalog()
+    catalog.setConf(conf)
+    catalog.initialize("spark_catalog", Map.empty[String, String].asJava)
+    catalog
+  }
+
+  /**
+   * Encode Spark table identifier to Iceberg table identifier by putting
+   * only "database" to the "namespace" in Iceberg table identifier.
+   * See [[HiveCatalog.isValidateNamespace]]
+   */
+  def convertSparkTableIdentifierToIcebergHive(
+      identifier: SparkTableIdentifier): IcebergTableIdentifier = {
+    val namespace = (identifier.database) match {
+      case Some(database) => Namespace.of(database)
+      case _ => Namespace.empty()
+    }
+    IcebergTableIdentifier.of(namespace, identifier.table)
   }
 }

@@ -35,7 +35,6 @@ public class StructField {
     // Static Fields / Methods
     ////////////////////////////////////////////////////////////////////////////////
 
-    // TODO: for now we introduce isMetadataColumn as a field in the column metadata
     /**
      * Indicates a metadata column when present in the field metadata and the value is true
      */
@@ -45,10 +44,10 @@ public class StructField {
      * The name of a row index metadata column. When present this column must be populated with
      * row index of each row when reading from parquet.
      */
-    public static String ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
-    public static StructField ROW_INDEX_COLUMN = new StructField(
-        ROW_INDEX_COLUMN_NAME,
-        LongType.INSTANCE,
+    public static String METADATA_ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
+    public static StructField METADATA_ROW_INDEX_COLUMN = new StructField(
+        METADATA_ROW_INDEX_COLUMN_NAME,
+        LongType.LONG,
         false,
         Collections.singletonMap(IS_METADATA_COLUMN_KEY, "true"));
 

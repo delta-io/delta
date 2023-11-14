@@ -100,7 +100,7 @@ trait DeletionVectorStoreSuiteBase
       // make sure this is our exception not ChecksumFileSystem's
       assert(e.getErrorClass == "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH")
       assert(e.getSqlState == "XXKDS")
-      assert(e.getMessage ==
+      assert(e.getMessage == "[DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH] " +
         "Could not verify deletion vector integrity, CRC checksum verification failed.")
     }
   }
@@ -124,7 +124,8 @@ trait DeletionVectorStoreSuiteBase
       }
       assert(e.getErrorClass == "DELTA_DELETION_VECTOR_SIZE_MISMATCH")
       assert(e.getSqlState == "XXKDS")
-      assert(e.getMessage == "Deletion vector integrity check failed. Encountered a size mismatch.")
+      assert(e.getMessage == "[DELTA_DELETION_VECTOR_SIZE_MISMATCH] " +
+        "Deletion vector integrity check failed. Encountered a size mismatch.")
     }
   }
 
@@ -175,8 +176,8 @@ trait DeletionVectorStoreSuiteBase
         }
         assert(e.getErrorClass == "DELTA_DELETION_VECTOR_INVALID_ROW_INDEX")
         assert(e.getSqlState == "XXKDS")
-        assert(e.getMessage ==
-          "Deletion vector integrity check failed. Encountered an invalid row index.")
+        assert(e.getMessage == "[DELTA_DELETION_VECTOR_INVALID_ROW_INDEX] " +
+            "Deletion vector integrity check failed. Encountered an invalid row index.")
       }
     }
   }

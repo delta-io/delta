@@ -113,6 +113,7 @@ case class LastCheckpointInfo(
 
   @JsonIgnore
   def getFormatEnum(): CheckpointInstance.Format = parts match {
+    case _ if v2Checkpoint.nonEmpty => CheckpointInstance.Format.V2
     case Some(_) => CheckpointInstance.Format.WITH_PARTS
     case None => CheckpointInstance.Format.SINGLE
   }

@@ -179,8 +179,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
           // - fail to get an alternative LogSegment
           // - cannot find log file 0 so throw the above checkpoint 1 read failure
           // Guava cache wraps the root cause
-          assert(e.isInstanceOf[ExecutionException] &&
-            e.getCause.isInstanceOf[SparkException] &&
+          assert(e.isInstanceOf[SparkException] &&
             e.getMessage.contains("0001.checkpoint") &&
             e.getMessage.contains(".parquet is not a Parquet file"))
         }

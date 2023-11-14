@@ -637,11 +637,9 @@ trait DeltaConfigsBase extends DeltaLogging {
     "must be Serializable"
   )
 
-  val CHECKPOINT_POLICY_CONFIG_KEY = "checkpointPolicy-dev"
-
   /** Policy to decide what kind of checkpoint to write to a table. */
   val CHECKPOINT_POLICY = buildConfig[CheckpointPolicy.Policy](
-    key = CHECKPOINT_POLICY_CONFIG_KEY,
+    key = "checkpointPolicy",
     defaultValue = CheckpointPolicy.Classic.name,
     fromString = str => CheckpointPolicy.fromName(str),
     validationFunction = (v => CheckpointPolicy.ALL.exists(_.name == v.name)),
@@ -679,6 +677,18 @@ trait DeltaConfigsBase extends DeltaLogging {
 
   val ICEBERG_COMPAT_V1_ENABLED = buildConfig[Option[Boolean]](
     "enableIcebergCompatV1",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean."
+  )
+
+  /**
+   * Enable optimized writes into a Delta table. Optimized writes adds an adaptive shuffle before
+   * the write to write compacted files into a Delta table during a write.
+   */
+  val OPTIMIZE_WRITE = buildConfig[Option[Boolean]](
+    "autoOptimize.optimizeWrite",
     null,
     v => Option(v).map(_.toBoolean),
     _ => true,

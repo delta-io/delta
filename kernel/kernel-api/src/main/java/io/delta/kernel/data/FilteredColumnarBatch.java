@@ -69,6 +69,7 @@ public class FilteredColumnarBatch {
 
     /**
      * Iterator of rows that survived the filter.
+     *
      * @return Closeable iterator of rows that survived the filter. It is responsibility of the
      * caller to the close the iterator.
      */
@@ -85,7 +86,9 @@ public class FilteredColumnarBatch {
             @Override
             public boolean hasNext() {
                 for (; rowId < maxRowId && nextRowId == -1; rowId++) {
-                    if (selectionVector.get().getBoolean(rowId)) {
+                    boolean isSelected = !selectionVector.get().isNullAt(rowId) &&
+                        selectionVector.get().getBoolean(rowId);
+                    if (isSelected) {
                         nextRowId = rowId;
                         rowId++;
                         break;

@@ -24,12 +24,12 @@ import io.delta.kernel.client.ParquetHandler;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Utils;
+import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.util.Utils;
 
 import io.delta.kernel.defaults.internal.parquet.ParquetBatchReader;
 
@@ -63,10 +63,12 @@ public class DefaultParquetHandler extends DefaultFileHandler implements Parquet
 
             @Override
             public boolean hasNext() {
-                // There is no file in reading or the current file being read has no more data
-                // initialize the next file reader or return false if there are no more files to
-                // read.
-                if (currentFileReader == null || !currentFileReader.hasNext()) {
+                if (currentFileReader != null && currentFileReader.hasNext()) {
+                    return true;
+                } else {
+                    // There is no file in reading or the current file being read has no more data.
+                    // Initialize the next file reader or return false if there are no more files to
+                    // read.
                     Utils.closeCloseables(currentFileReader);
                     currentFileReader = null;
                     if (fileIter.hasNext()) {
@@ -74,12 +76,11 @@ public class DefaultParquetHandler extends DefaultFileHandler implements Parquet
                         FileStatus fileStatus =
                             InternalScanFileUtils.getAddFileStatus(currentFile.getScanFileRow());
                         currentFileReader = batchReader.read(fileStatus.getPath(), physicalSchema);
+                        return hasNext(); // recurse since it's possible the loaded file is empty
                     } else {
                         return false;
                     }
                 }
-
-                return currentFileReader.hasNext();
             }
 
             @Override

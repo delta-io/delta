@@ -29,8 +29,8 @@ import java.util.regex.Pattern;
  * <p>
  * Taken from https://github.com/apache/hadoop/blob/branch-3.3
  * .4/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Path.java
- * TODO: remove unused parts
  */
+// TODO remove this class
 public class Path
     implements Comparable<Path>, Serializable, ObjectInputValidation {
 

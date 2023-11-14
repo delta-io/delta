@@ -18,24 +18,15 @@ package io.delta.kernel.internal.snapshot;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableNotFoundException;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
+import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
@@ -45,8 +36,9 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Logging;
+import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.fs.Path.getName;
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public class SnapshotManager
     implements Logging {
@@ -280,13 +272,15 @@ public class SnapshotManager
      * @return Some LogSegment to build a Snapshot if files do exist after the given
      * startCheckpoint. None, if the directory was missing or empty.
      */
-    private Optional<LogSegment> getLogSegmentForVersion(
+    public Optional<LogSegment> getLogSegmentForVersion(
         Path logPath,
         TableClient tableClient,
         Optional<Long> startCheckpoint,
         Optional<Long> versionToLoad) {
         // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
         // deltaVersion=0.
+        // TODO when implementing time-travel don't list from startCheckpoint if
+        //  startCheckpoint > versionToLoad
         final Optional<List<FileStatus>> newFiles =
             listDeltaAndCheckpointFiles(
                 logPath,
@@ -305,7 +299,7 @@ public class SnapshotManager
      * Helper function for the getLogSegmentForVersion above. Called with a provided files list,
      * and will then try to construct a new LogSegment using that.
      */
-    private Optional<LogSegment> getLogSegmentForVersion(
+    protected Optional<LogSegment> getLogSegmentForVersion(
         Path logPath,
         TableClient tableClient,
         Optional<Long> startCheckpointOpt,
@@ -373,9 +367,9 @@ public class SnapshotManager
         );
 
         // Find the latest checkpoint in the listing that is not older than the versionToLoad
-        final CheckpointInstance lastCheckpoint = versionToLoadOpt.map(CheckpointInstance::new)
+        final CheckpointInstance maxCheckpoint = versionToLoadOpt.map(CheckpointInstance::new)
             .orElse(CheckpointInstance.MAX_VALUE);
-        logDebug(String.format("lastCheckpoint: %s", lastCheckpoint));
+        logDebug(String.format("lastCheckpoint: %s", maxCheckpoint));
 
         final List<CheckpointInstance> checkpointFiles = checkpoints
             .stream()
@@ -385,7 +379,7 @@ public class SnapshotManager
             String.format("checkpointFiles: %s", Arrays.toString(checkpointFiles.toArray())));
 
         final Optional<CheckpointInstance> newCheckpointOpt =
-            Checkpointer.getLatestCompleteCheckpointFromList(checkpointFiles, lastCheckpoint);
+            Checkpointer.getLatestCompleteCheckpointFromList(checkpointFiles, maxCheckpoint);
         logDebug(String.format("newCheckpointOpt: %s", newCheckpointOpt));
 
         final long newCheckpointVersion = newCheckpointOpt
@@ -441,33 +435,37 @@ public class SnapshotManager
             )
         );
 
-        final LinkedList<Long> deltaVersions = deltasAfterCheckpoint
+        // todo again naming confusing (specify after checkpoint?)
+        final LinkedList<Long> deltaVersionsAfterCheckpoint = deltasAfterCheckpoint
             .stream()
             .map(fileStatus -> FileNames.deltaVersion(new Path(fileStatus.getPath())))
             .collect(Collectors.toCollection(LinkedList::new));
 
         logDebug(() ->
-            String.format("deltaVersions: %s", Arrays.toString(deltaVersions.toArray())));
+            String.format("deltaVersions: %s",
+                Arrays.toString(deltaVersionsAfterCheckpoint.toArray())));
 
         // We may just be getting a checkpoint file after the filtering
-        if (!deltaVersions.isEmpty()) {
-            if (deltaVersions.getFirst() != newCheckpointVersion + 1) {
+        if (!deltaVersionsAfterCheckpoint.isEmpty()) {
+            if (deltaVersionsAfterCheckpoint.getFirst() != newCheckpointVersion + 1) {
                 throw new RuntimeException(
                     String.format(
-                        "Log file not found.\nExpected: %s\nFound:%s",
+                        "Log file not found.\nExpected: %s\nFound: %s",
                         FileNames.deltaFile(logPath, newCheckpointVersion + 1),
-                        FileNames.deltaFile(logPath, deltaVersions.get(0))
+                        FileNames.deltaFile(logPath, deltaVersionsAfterCheckpoint.get(0))
                     )
                 );
             }
             verifyDeltaVersions(
-                deltaVersions, Optional.of(newCheckpointVersion + 1), versionToLoadOpt);
+                deltaVersionsAfterCheckpoint,
+                Optional.of(newCheckpointVersion + 1),
+                versionToLoadOpt);
         }
 
         // TODO: double check newCheckpointOpt.get() won't error out
 
-        final long newVersion = deltaVersions.isEmpty() ?
-            newCheckpointOpt.get().version : deltaVersions.getLast();
+        final long newVersion = deltaVersionsAfterCheckpoint.isEmpty() ?
+            newCheckpointOpt.get().version : deltaVersionsAfterCheckpoint.getLast();
 
         // In the case where `deltasAfterCheckpoint` is empty, `deltas` should still not be empty,
         // they may just be before the checkpoint version unless we have a bug in log cleanup.

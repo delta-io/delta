@@ -485,7 +485,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
             query1.lastProgress.sources.head.endOffset
           )
           var expectedReservoirVersion = 1
-          var expectedIndex = 1
+          var expectedIndex = 1L
           assert(endOffset.reservoirVersion === expectedReservoirVersion)
           assert(endOffset.index === expectedIndex)
         }
@@ -978,27 +978,27 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       try {
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
-        // source2: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
+        // source1: DeltaSourceOffset(reservoirVersion=1,index=0,isInitialSnapshot=true)
+        // source2: DeltaSourceOffset(reservoirVersion=1,index=0,isInitialSnapshot=true)
 
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir1.getCanonicalPath)
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
-        // source2: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
+        // source2: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
         // Note: version 2 doesn't exist in source1
 
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
-        // source2: DeltaSourceOffset(reservoirVersion=3,index=-1,isStartingVersion=false)
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
+        // source2: DeltaSourceOffset(reservoirVersion=3,index=-1,isInitialSnapshot=false)
         // Note: version 2 doesn't exist in source1
 
         q.stop()
         // Restart the query. It will call `getBatch` on the previous two offsets of `source1` which
-        // are both DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // are both DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
         // As version 2 doesn't exist, we should not try to load version 2 in this case.
         q = startQuery()
         q.processAllAvailable()
@@ -1047,7 +1047,7 @@ class DeltaCDCStreamDeletionVectorSuite extends DeltaCDCStreamSuite
   with DeletionVectorsTestUtils {
   override def beforeAll(): Unit = {
     super.beforeAll()
-    enableDeletionVectorsForDeletes(spark)
+    enableDeletionVectorsForAllSupportedOperations(spark)
   }
 }
 
