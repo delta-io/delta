@@ -408,6 +408,7 @@ tags | Map[String, String] | Map containing metadata about this logical file | o
 deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
 baseRowId | Long  | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids) | optional
 defaultRowCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table. | optional
+clusteringProvider | String | The name of the clustering implementation. See also [Clustered Table](#clustered-table)| optional
 
 The following is an example `add` action:
 ```json
@@ -420,6 +421,7 @@ The following is an example `add` action:
     "dataChange": true,
     "baseRowId": 4071,
     "defaultRowCommitVersion": 41,
+    "clusteringProvider": "liquid",
     "stats": "{\"numRecords\":1,\"minValues\":{\"val..."
   }
 }
@@ -1074,10 +1076,21 @@ When the Clustered Table is supported (when the `writerFeatures` field of a tabl
   If [Column Mapping](#column-mapping) is enabled, the physical column names should be used.
 - Writers must write out [per-file statistics](#per-file-statistics) and per-column statistics for clustering columns in `add` action. 
   If a new column is included in the clustering columns list, it is required for all table files to have statistics for these added columns.
-- When a clustering implementation clusters files, writers must incorporate a `tag`  with `CLUSTERED_BY` as the key and the name of the clustering implementation as the corresponding value in the `add` actions for the clustered files.
-  - By default, a clustering implementation must only recluster files that have tag `CLUSTERED_BY` set to the name of the same clustering implementation, or to the names of other clustering implementations that are superseded by the current clustering implementation. In addition, a clustering implementation may cluster any files that do not have the `CLUSTERED_BY` tag (i.e., unclustered files).
-  - Writer is not required to cluster a specific file at any specific moment though it is still obligated to record accurate statistics. However, if it decides to cluster a particular file, it must include the CLUSTERED_BY tag.
+- When a clustering implementation clusters files, writers must set the name of the clustering implementation in the `clusteringProvider` field when adding `add` actions for clustered files.
+  - By default, a clustering implementation must only recluster files that have the field `clusteringProvider` set to the name of the same clustering implementation, or to the names of other clustering implementations that are superseded by the current clustering implementation. In addition, a clustering implementation may cluster any files with an unset `clusteringProvider` field (i.e., unclustered files).
+  - Writer is not required to cluster a specific file at any specific moment.
   - A clustering implementation is free to add additional information such as adding a new user-controlled metadata domain to keep track of its metadata.
+
+The following is an example for the `domainMetadata` action defintion of a table that leverages column mapping.
+```json
+{
+  "domainMetadata": {
+    "domain": "delta.clustering",
+    "configuration": "{\"clusteringColumns\":[{\"physicalName\":[\"col-daadafd7-7c20-4697-98f8-bff70199b1f9\"]}]}",
+    "removed": false
+  }
+}
+```
 
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
@@ -1774,6 +1787,7 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |-- tags: map<string,string>
 |    |-- baseRowId: long
 |    |-- defaultRowCommitVersion: long
+|    |-- clusteringProvider: string
 |    |-- partitionValues_parsed: struct
 |    |    |-- date: date
 |    |    |-- region: string
@@ -1863,6 +1877,7 @@ Checkpoint schema (just the `add` column):
 |    |-- tags: map<string,string>
 |    |-- baseRowId: long
 |    |-- defaultRowCommitVersion: long
+|    |-- clusteringProvider: string
 |    |-- partitionValues_parsed: struct
 |    |    |-- col-798f4abc-c63f-444c-9a04-e2cf1ecba115: date
 |    |    |-- col-19034dc3-8e3d-4156-82fc-8e05533c088e: string
