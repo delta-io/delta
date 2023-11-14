@@ -16,7 +16,7 @@ let
 
         Delimiter = if Text.Contains(DeltaTableFolderContent{0}[Folder Path], "//") then "/" else "\",
 
-        URL_Decode = (data as text) as text => Uri.Parts("http://powerbi?txt=" & data)[Query][txt],
+        fn_URIDecode = (data as text) as text => Uri.Parts("http://powerbi?txt=" & data)[Query][txt],
 
         DeltaProtocol =
         let
@@ -45,7 +45,7 @@ let
 
             Content = if IterateFolderContent then fn_ReadContentRecursive(Source) else Source,
 
-            #"Added Full_Path" = Table.AddColumn(Content, "Full_Path", each URI_Decode([Folder Path]) & [Name], Text.Type),
+            #"Added Full_Path" = Table.AddColumn(Content, "Full_Path", each fn_URIDecode([Folder Path]) & [Name], Text.Type),
             #"Added File_Name" = Table.AddColumn(#"Added Full_Path", "File_Name", each if Text.Length([Extension]) > 0 then List.Last(Text.Split([Full_Path], Delimiter)) else null, type text),
             Buffered = Table.Buffer(#"Added File_Name")
         in
@@ -288,7 +288,7 @@ let
             #"Added Counter" = Table.AddColumn(Source, "Counter", each if [remove] <> null then -1 else if [add] <> null then 1 else null, Int8.Type),
             #"Added file_name" = Table.AddColumn(#"Added Counter", "file_name", each if [add] <> null then Record.Field([add], "path") else if [remove] <> null then Record.Field([remove], "path") else null, Text.Type),
             #"Filtered Rows" = Table.SelectRows(#"Added file_name", each ([file_name] <> null)),
-            #"URI Decoded" = Table.TransformColumns(#"Filtered Rows",{{"file_name", URI_Decode, type text}}),
+            #"URI Decoded" = Table.TransformColumns(#"Filtered Rows",{{"file_name", fn_URIDecode, type text}}),
             #"Added partitionValuesTable" = Table.AddColumn(#"URI Decoded", "partitionValuesTable", each if [add] <> null then if Value.Is(Record.Field([add], "partitionValues"), Record.Type) then Record.ToTable(Record.Field([add], "partitionValues")) else Table.RenameColumns(Record.Field([add], "partitionValues"), {"Key", "Name"}) else null, type nullable table),
             #"Added partitionValuesJSON" = Table.AddColumn(#"Added partitionValuesTable", "partitionValuesJSON", each Text.FromBinary(Json.FromValue([partitionValuesTable]))),
             #"Added stats" = Table.AddColumn(#"Added partitionValuesJSON", "stats", each if [add] <> null and Record.HasFields([add], "stats") and Value.Is(Record.Field([add], "stats"), type text) 
