@@ -201,7 +201,8 @@ class DomainMetadataSuite
         deltaTable.startTransactionWithInitialSnapshot().commit(domainMetadata, Truncate())
       }
       assertEquals(e.getMessage,
-        "Internal error: two DomainMetadata actions within the same transaction have " +
+        "[DELTA_DUPLICATE_DOMAIN_METADATA_INTERNAL_ERROR] " +
+          "Internal error: two DomainMetadata actions within the same transaction have " +
           "the same domain testDomain1")
     }
   }
@@ -215,7 +216,8 @@ class DomainMetadataSuite
         deltaLog.startTransaction().commit(domainMetadata, Truncate())
       }
       assertEquals(e.getMessage,
-        "Detected DomainMetadata action(s) for domains [testDomain1], " +
+        "[DELTA_DOMAIN_METADATA_NOT_SUPPORTED] " +
+          "Detected DomainMetadata action(s) for domains [testDomain1], " +
           "but DomainMetadataTableFeature is not enabled.")
     }
   }

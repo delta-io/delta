@@ -336,7 +336,7 @@ abstract class DeltaLogSuiteBase extends FunSuite {
     }
 
     assert(e.getMessage === new DeltaErrors.InvalidProtocolVersionException(Action.protocolVersion,
-      Protocol(99)).getMessage)
+      Protocol(99, 7)).getMessage)
   }
 
   test("get commit info") {

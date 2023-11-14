@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.commands.merge
 
+import org.apache.spark.sql.util.ScalaExtensions._
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -119,7 +120,8 @@ object MergeStats {
       matchedClauses: Seq[DeltaMergeIntoMatchedClause],
       notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
       notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
-      isPartitioned: Boolean): MergeStats = {
+      isPartitioned: Boolean,
+      performedSecondSourceScan: Boolean): MergeStats = {
 
     def metricValueIfPartitioned(metricName: String): Option[Long] = {
       if (isPartitioned) Some(metrics(metricName).value) else None
@@ -152,7 +154,7 @@ object MergeStats {
           bytes = Some(metrics("numTargetBytesAfterSkipping").value),
           partitions = metricValueIfPartitioned("numTargetPartitionsAfterSkipping")),
       sourceRowsInSecondScan =
-        metrics.get("numSourceRowsInSecondScan").map(_.value).filter(_ >= 0),
+        Option.when(performedSecondSourceScan)(metrics("numSourceRowsInSecondScan").value),
 
       // Data change sizes
       targetFilesAdded = metrics("numTargetFilesAdded").value,

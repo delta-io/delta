@@ -17,13 +17,17 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import java.math.BigDecimal
+import java.sql.Date
 
-import org.scalatest.funsuite.AnyFunSuite
+import scala.collection.JavaConverters._
+
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
+import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
@@ -31,10 +35,10 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   // Timestamp type tests
   //////////////////////////////////////////////////////////////////////////////////
 
-  // TODO: for now we do not support timestamp partition columns, make sure it's blocked
+  // For now we do not support timestamp partition columns, make sure it's blocked
   test("cannot read partition column of timestamp type") {
     val path = goldenTablePath("kernel-timestamp-TIMESTAMP_MICROS")
-    val snapshot = latestSnapshot(path);
+    val snapshot = latestSnapshot(path)
 
     val e = intercept[UnsupportedOperationException] {
       readSnapshot(snapshot) // request entire schema
@@ -146,22 +150,15 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   }
 
   //////////////////////////////////////////////////////////////////////////////////
-  // Misc tests
+  // Table/Snapshot tests
   //////////////////////////////////////////////////////////////////////////////////
-
-  test("end to end: multi-part checkpoint") {
-    checkTable(
-      path = goldenTablePath("multi-part-checkpoint"),
-      expectedAnswer = (Seq(0L) ++ (0L until 30L)).map(TestRow(_))
-    )
-  }
 
   test("invalid path") {
     val invalidPath = "/path/to/non-existent-directory"
     val ex = intercept[TableNotFoundException] {
       Table.forPath(defaultTableClient, invalidPath)
     }
-    assert(ex.getMessage().contains(s"Table at path `$invalidPath` is not found"))
+    assert(ex.getMessage().contains(s"Delta table at path `$invalidPath` is not found"))
   }
 
   test("table deleted after the `Table` creation") {
@@ -177,7 +174,197 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         table.getLatestSnapshot(defaultTableClient)
       }
       assert(ex.getMessage.contains(
-        s"Table at path `file:${target.getCanonicalPath}` is not found"))
+        s"Delta table at path `file:${target.getCanonicalPath}` is not found"))
     }
+  }
+
+  // TODO for the below, when should we throw an exception? #2253
+  //   - on Table creation?
+  //   - on Snapshot creation?
+
+  test("empty _delta_log folder") {
+    withTempDir { dir =>
+      new File(dir, "_delta_log").mkdirs()
+      intercept[TableNotFoundException] {
+        latestSnapshot(dir.getAbsolutePath)
+      }
+    }
+  }
+
+  test("empty folder with no _delta_log dir") {
+    withTempDir { dir =>
+      intercept[TableNotFoundException] {
+        latestSnapshot(dir.getAbsolutePath)
+      }
+    }
+  }
+
+  test("non-empty folder not a delta table") {
+    intercept[TableNotFoundException] {
+      latestSnapshot(goldenTablePath("no-delta-log-folder"))
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////
+  // Misc tests
+  //////////////////////////////////////////////////////////////////////////////////
+
+  test("end to end: multi-part checkpoint") {
+    checkTable(
+      path = goldenTablePath("multi-part-checkpoint"),
+      expectedAnswer = (Seq(0L) ++ (0L until 30L)).map(TestRow(_))
+    )
+  }
+
+  test("read partitioned table") {
+    val path = "file:" + goldenTablePath("data-reader-partition-values")
+
+    // for now we don't support timestamp type partition columns so remove from read columns
+    val readCols = Table.forPath(defaultTableClient, path).getLatestSnapshot(defaultTableClient)
+      .getSchema(defaultTableClient)
+      .withoutField("as_timestamp")
+      .fields()
+      .asScala
+      .map(_.getName)
+
+    val expectedAnswer = Seq(0, 1).map { i =>
+      TestRow(
+        i,
+        i.toLong,
+        i.toByte,
+        i.toShort,
+        i % 2 == 0,
+        i.toFloat,
+        i.toDouble,
+        i.toString,
+        "null",
+        daysSinceEpoch(Date.valueOf("2021-09-08")),
+        new BigDecimal(i),
+        Seq(TestRow(i), TestRow(i), TestRow(i)),
+        TestRow(i.toString, i.toString, TestRow(i, i.toLong)),
+        i.toString
+      )
+    } ++ (TestRow(
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      Seq(TestRow(2), TestRow(2), TestRow(2)),
+      TestRow("2", "2", TestRow(2, 2L)),
+      "2"
+    ) :: Nil)
+
+    checkTable(
+      path = path,
+      expectedAnswer = expectedAnswer,
+      readCols = readCols
+    )
+  }
+
+  test("table with complex array types") {
+    val path = "file:" + goldenTablePath("data-reader-array-complex-objects")
+
+    val expectedAnswer = (0 until 10).map { i =>
+      TestRow(
+        i,
+        Seq(Seq(Seq(i, i, i), Seq(i, i, i)), Seq(Seq(i, i, i), Seq(i, i, i))),
+        Seq(
+          Seq(Seq(Seq(i, i, i), Seq(i, i, i)), Seq(Seq(i, i, i), Seq(i, i, i))),
+          Seq(Seq(Seq(i, i, i), Seq(i, i, i)), Seq(Seq(i, i, i), Seq(i, i, i)))
+        ),
+        Seq(
+          Map[String, Long](i.toString -> i.toLong),
+          Map[String, Long](i.toString -> i.toLong)
+        ),
+        Seq(TestRow(i), TestRow(i), TestRow(i))
+      )
+    }
+
+    checkTable(
+      path = path,
+      expectedAnswer = expectedAnswer
+    )
+  }
+
+  test("table with complex map types") {
+    val path = "file:" + goldenTablePath("data-reader-map")
+
+    val expectedAnswer = (0 until 10).map { i =>
+      TestRow(
+        i,
+        Map(i -> i),
+        Map(i.toLong -> i.toByte),
+        Map(i.toShort -> (i % 2 == 0)),
+        Map(i.toFloat -> i.toDouble),
+        Map(i.toString -> new BigDecimal(i)),
+        Map(i -> Seq(TestRow(i), TestRow(i), TestRow(i)))
+      )
+    }
+
+    checkTable(
+      path = path,
+      expectedAnswer = expectedAnswer
+    )
+  }
+
+  test("table with array of primitives") {
+    val expectedAnswer = (0 until 10).map { i =>
+      TestRow(
+        Seq(i), Seq(i.toLong), Seq(i.toByte), Seq(i.toShort),
+        Seq(i % 2 == 0), Seq(i.toFloat), Seq(i.toDouble), Seq(i.toString),
+        Seq(Array(i.toByte, i.toByte)), Seq(new BigDecimal(i))
+      )
+    }
+    checkTable(
+      path = goldenTablePath("data-reader-array-primitives"),
+      expectedAnswer = expectedAnswer
+    )
+  }
+
+  test("table with nested struct") {
+    val expectedAnswer = (0 until 10).map { i =>
+      TestRow(TestRow(i.toString, i.toString, TestRow(i, i.toLong)), i)
+    }
+    checkTable(
+      path = goldenTablePath("data-reader-nested-struct"),
+      expectedAnswer = expectedAnswer
+    )
+  }
+
+  test("table with empty parquet files") {
+    checkTable(
+      path = goldenTablePath("125-iterator-bug"),
+      expectedAnswer = (1 to 5).map(TestRow(_))
+    )
+  }
+
+  test("handle corrupted '_last_checkpoint' file") {
+    checkTable(
+      path = goldenTablePath("corrupted-last-checkpoint-kernel"),
+      expectedAnswer = (0L until 100L).map(TestRow(_))
+    )
+  }
+
+  test("error - version not contiguous") {
+    val e = intercept[IllegalStateException] {
+      latestSnapshot(goldenTablePath("versions-not-contiguous"))
+    }
+    assert(e.getMessage.contains("Versions ([0, 2]) are not continuous"))
+  }
+
+  test("table protocol version greater than reader protocol version") {
+    val e = intercept[Exception] {
+      latestSnapshot(goldenTablePath("deltalog-invalid-protocol-version"))
+        .getScanBuilder(defaultTableClient)
+        .build()
+    }
+    assert(e.getMessage.contains("Unsupported reader protocol version"))
   }
 }

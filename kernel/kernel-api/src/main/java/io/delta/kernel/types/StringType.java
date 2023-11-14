@@ -24,7 +24,7 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class StringType extends BasePrimitiveType {
-    public static final StringType INSTANCE = new StringType();
+    public static final StringType STRING = new StringType();
 
     private StringType() {
         super("string");

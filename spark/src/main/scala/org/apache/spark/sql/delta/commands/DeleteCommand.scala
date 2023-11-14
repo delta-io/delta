@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.commands
 
+import java.util.concurrent.TimeUnit
+
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction}
@@ -28,6 +30,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, EqualNullSafe, Expression, If, Literal, Not}
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.QueryPlan
@@ -102,6 +105,7 @@ trait DeleteCommandMetrics { self: LeafRunnableCommand =>
  */
 case class DeleteCommand(
     deltaLog: DeltaLog,
+    catalogTable: Option[CatalogTable],
     target: LogicalPlan,
     condition: Option[Expression])
   extends LeafRunnableCommand with DeltaCommand with DeleteCommandMetrics {
@@ -114,7 +118,7 @@ case class DeleteCommand(
 
   final override def run(sparkSession: SparkSession): Seq[Row] = {
     recordDeltaOperation(deltaLog, "delta.dml.delete") {
-      deltaLog.withNewTransaction { txn =>
+      deltaLog.withNewTransaction(catalogTable) { txn =>
         DeltaLog.assertRemovable(txn.snapshot)
         if (hasBeenExecuted(txn, sparkSession)) {
           sendDriverMetrics(sparkSession, metrics)
@@ -251,7 +255,7 @@ case class DeleteCommand(
           val fileIndex = new TahoeBatchFileIndex(
             sparkSession, "delete", candidateFiles, deltaLog, deltaLog.dataPath, txn.snapshot)
           if (shouldWriteDVs) {
-            val targetDf = DeleteWithDeletionVectorsHelper.createTargetDfForScanningForMatches(
+            val targetDf = DMLWithDeletionVectorsHelper.createTargetDfForScanningForMatches(
               sparkSession,
               target,
               fileIndex)
@@ -260,21 +264,22 @@ case class DeleteCommand(
             // with deletion vectors.
             val mustReadDeletionVectors = DeletionVectorUtils.deletionVectorsReadable(txn.snapshot)
 
-            val touchedFiles = DeleteWithDeletionVectorsHelper.findTouchedFiles(
+            val touchedFiles = DMLWithDeletionVectorsHelper.findTouchedFiles(
               sparkSession,
               txn,
               mustReadDeletionVectors,
               deltaLog,
               targetDf,
               fileIndex,
-              cond)
+              cond,
+              opName = "DELETE")
 
             if (touchedFiles.nonEmpty) {
-              val (actions, metricMap) = DeleteWithDeletionVectorsHelper.processUnmodifiedData(
+              val (actions, metricMap) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
                 sparkSession,
                 touchedFiles,
                 txn.snapshot)
-              metrics("numDeletedRows").set(metricMap("numDeletedRows"))
+              metrics("numDeletedRows").set(metricMap("numModifiedRows"))
               numDeletionVectorsAdded = metricMap("numDeletionVectorsAdded")
               numDeletionVectorsRemoved = metricMap("numDeletionVectorsRemoved")
               numDeletionVectorsUpdated = metricMap("numDeletionVectorsUpdated")
@@ -340,7 +345,8 @@ case class DeleteCommand(
               }
               numAddedChangeFiles = changeFiles.size
               changeFileBytes = changeFiles.collect { case f: AddCDCFile => f.size }.sum
-              rewriteTimeMs = (System.nanoTime() - startTime) / 1000 / 1000 - scanTimeMs
+              rewriteTimeMs =
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime) - scanTimeMs
               numDeletedRows = Some(metrics("numDeletedRows").value)
               numCopiedRows =
                 Some(metrics("numTouchedRows").value - metrics("numDeletedRows").value)
@@ -460,13 +466,12 @@ case class DeleteCommand(
 
 object DeleteCommand {
   def apply(delete: DeltaDelete): DeleteCommand = {
-    val index = EliminateSubqueryAliases(delete.child) match {
-      case DeltaFullTable(tahoeFileIndex) =>
-        tahoeFileIndex
+    EliminateSubqueryAliases(delete.child) match {
+      case DeltaFullTable(relation, fileIndex) =>
+        DeleteCommand(fileIndex.deltaLog, relation.catalogTable, delete.child, delete.condition)
       case o =>
         throw DeltaErrors.notADeltaSourceException("DELETE", Some(o))
     }
-    DeleteCommand(index.deltaLog, delete.child, delete.condition)
   }
 
   val FILE_NAME_COLUMN: String = "_input_file_name_"

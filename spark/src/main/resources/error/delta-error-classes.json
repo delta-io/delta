@@ -556,6 +556,12 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_DELETION_VECTOR_CARDINALITY_MISMATCH" : {
+    "message" : [
+      "Deletion vector integrity check failed. Encountered a cardinality mismatch."
+    ],
+    "sqlState" : "XXKDS"
+  },
   "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH" : {
     "message" : [
       "Could not verify deletion vector integrity, CRC checksum verification failed."
@@ -1016,7 +1022,7 @@
   },
   "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES" : {
     "message" : [
-      "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema. <advice>"
+      "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema. Please use other characters and try again."
     ],
     "sqlState" : "42K05"
   },
@@ -1121,9 +1127,15 @@
   },
   "DELTA_INVALID_PROTOCOL_VERSION" : {
     "message" : [
-      "Delta protocol version is not supported by this version of Delta Lake: table requires <required>, client supports <supported>. Please upgrade to a newer release."
+      "Unsupported Delta protocol version: table \"<tableNameOrPath>\" requires reader version <readerRequired> and writer version <writerRequired>, but Delta Lake \"<deltaVersion>\" supports reader versions <supportedReaders> and writer versions <supportedWriters>. Please upgrade to a newer release."
     ],
     "sqlState" : "KD004"
+  },
+  "DELTA_INVALID_SOURCE_OFFSET_FORMAT" : {
+    "message" : [
+      "The stored source offset format is invalid"
+    ],
+    "sqlState" : "XXKDS"
   },
   "DELTA_INVALID_SOURCE_VERSION" : {
     "message" : [
@@ -1610,7 +1622,7 @@
   },
   "DELTA_REPLACE_WHERE_MISMATCH" : {
     "message" : [
-      "Data written out does not match replaceWhere '<replaceWhere>'.",
+      "Written data does not conform to partial table overwrite condition or constraint '<replaceWhere>'.",
       "<message>"
     ],
     "sqlState" : "44000"

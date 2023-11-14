@@ -15,12 +15,11 @@
  */
 package io.delta.kernel
 
-import collection.JavaConverters._
+import scala.collection.JavaConverters._
 
-import org.scalatest.funsuite.AnyFunSuite
-
-import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
+import org.scalatest.funsuite.AnyFunSuite
 
 class FileNamesSuite extends AnyFunSuite {
 

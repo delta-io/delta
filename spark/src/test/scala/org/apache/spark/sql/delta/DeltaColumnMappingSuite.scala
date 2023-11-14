@@ -1487,7 +1487,8 @@ class DeltaColumnMappingSuite extends QueryTest
         val e = intercept[DeltaUnsupportedOperationException] {
           txn.commit(Seq(action), DeltaOperations.ManualUpdate)
         }.getMessage
-        assert(e == "Operation \"Manual Update\" is not allowed when the table has enabled " +
+        assert(e == "[DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION] " +
+          "Operation \"Manual Update\" is not allowed when the table has enabled " +
           "change data feed (CDF) and has undergone schema changes using DROP COLUMN or RENAME " +
           "COLUMN.")
       } else {
@@ -1607,7 +1608,8 @@ class DeltaColumnMappingSuite extends QueryTest
               AddFile("foo", Map.empty, 1L, 1L, dataChange = true) :: Nil,
               DeltaOperations.ManualUpdate)
           }.getMessage
-          assert(e == "Operation \"Manual Update\" is not allowed when the table has enabled " +
+          assert(e == "[DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION] " +
+            "Operation \"Manual Update\" is not allowed when the table has enabled " +
             "change data feed (CDF) and has undergone schema changes using DROP COLUMN or RENAME " +
             "COLUMN.")
         } else {

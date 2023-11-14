@@ -24,9 +24,10 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
 
+import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedAttribute, UnresolvedLeafNode, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
@@ -57,15 +58,15 @@ object DeltaTable {
  * Extractor Object for pulling out the full table scan of a Delta table.
  */
 object DeltaFullTable {
-  def unapply(a: LogicalPlan): Option[TahoeLogFileIndex] = a match {
+  def unapply(a: LogicalPlan): Option[(LogicalRelation, TahoeLogFileIndex)] = a match {
     // `DeltaFullTable` is not only used to match a certain query pattern, but also does
     // some validations to throw errors. We need to match both Project and Filter here,
     // so that we can check if Filter is present or not during validations.
-    case NodeWithOnlyDeterministicProjectAndFilter(DeltaTable(index: TahoeLogFileIndex)) =>
+    case NodeWithOnlyDeterministicProjectAndFilter(lr @ DeltaTable(index: TahoeLogFileIndex)) =>
       if (!index.deltaLog.tableExists) return None
       val hasFilter = a.find(_.isInstanceOf[Filter]).isDefined
       if (index.partitionFilters.isEmpty && index.versionToUse.isEmpty && !hasFilter) {
-        Some(index)
+        Some(lr -> index)
       } else if (index.versionToUse.nonEmpty) {
         throw DeltaErrors.failedScanWithHistoricalVersion(index.versionToUse.get)
       } else {
@@ -546,18 +547,16 @@ object DeltaTableUtils extends PredicateHelper
   }
 }
 
-// TODO: Use `UnresolvedNode` in Spark 3.5 once it is released.
-sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends LeafNode {
+sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends UnresolvedLeafNode {
   def identifier: Identifier = Identifier.of(Array(DeltaSourceUtils.ALT_NAME), path)
   def deltaTableIdentifier: DeltaTableIdentifier = DeltaTableIdentifier(Some(path), None)
 
-  override lazy val resolved: Boolean = false
-  override val output: Seq[Attribute] = Nil
 }
 
 /** Resolves to a [[ResolvedTable]] if the DeltaTable exists */
 case class UnresolvedPathBasedDeltaTable(
     path: String,
+    options: Map[String, String],
     commandName: String) extends UnresolvedPathBasedDeltaTableBase(path)
 
 /** Resolves to a [[DataSourceV2Relation]] if the DeltaTable exists */
@@ -572,6 +571,7 @@ case class UnresolvedPathBasedDeltaTableRelation(
  */
 case class UnresolvedPathBasedTable(
     path: String,
+    options: Map[String, String],
     commandName: String) extends LeafNode {
   override lazy val resolved: Boolean = false
   override val output: Seq[Attribute] = Nil
@@ -585,6 +585,7 @@ case class UnresolvedPathBasedTable(
  */
 case class ResolvedPathBasedNonDeltaTable(
     path: String,
+    options: Map[String, String],
     commandName: String) extends LeafNode {
   override val output: Seq[Attribute] = Nil
 }
@@ -601,7 +602,7 @@ object UnresolvedDeltaPathOrIdentifier {
       tableIdentifier: Option[TableIdentifier],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
-      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, cmd)
+      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, Map.empty, cmd)
       case (None, Some(t)) =>
         UnresolvedTable(t.nameParts, cmd, None)
       case _ => throw new IllegalArgumentException(
@@ -626,7 +627,7 @@ object UnresolvedPathOrIdentifier {
     (path, tableIdentifier) match {
       case (_, Some(t)) =>
         UnresolvedTable(t.nameParts, cmd, None)
-      case (Some(p), None) => UnresolvedPathBasedTable(p, cmd)
+      case (Some(p), None) => UnresolvedPathBasedTable(p, Map.empty, cmd)
       case _ => throw new IllegalArgumentException(
         s"At least one of path or tableIdentifier must be provided to $cmd")
     }

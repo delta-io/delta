@@ -15,15 +15,14 @@
  */
 package io.delta.kernel.defaults.internal.data.vector;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Optional;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.DataType;
 
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for array type data.
@@ -64,19 +63,29 @@ public class DefaultArrayVector
      * @return
      */
     @Override
-    public <T> List<T> getArray(int rowId) {
+    public ArrayValue getArray(int rowId) {
+        checkValidRowId(rowId);
         if (isNullAt(rowId)) {
             return null;
         }
-        checkValidRowId(rowId);
+        // use the offsets array to find the starting and ending index in the underlying vector
+        // for this rowId
         int start = offsets[rowId];
         int end = offsets[rowId + 1];
+        return new ArrayValue() {
 
-        List<T> values = new ArrayList<>();
-        for (int entry = start; entry < end; entry++) {
-            Object key = VectorUtils.getValueAsObject(elementVector, entry);
-            values.add((T) key);
-        }
-        return values;
+            // create a view over the elements for this rowId
+            private final ColumnVector elements = new DefaultViewVector(elementVector, start, end);
+
+            @Override
+            public int getSize() {
+                return elements.getSize();
+            }
+
+            @Override
+            public ColumnVector getElements() {
+                return elements;
+            }
+        };
     }
 }

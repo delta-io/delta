@@ -380,11 +380,10 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   override def visitDescribeDeltaHistory(
       ctx: DescribeDeltaHistoryContext): LogicalPlan = withOrigin(ctx) {
-    DescribeDeltaHistoryCommand(
+    DescribeDeltaHistory(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.limit).map(_.getText.toInt),
-      Map.empty)
+      Option(ctx.limit).map(_.getText.toInt))
   }
 
   override def visitGenerate(ctx: GenerateContext): LogicalPlan = withOrigin(ctx) {
@@ -519,42 +518,6 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
         "ALTER TABLE ... DROP FEATURE"),
       visitFeatureNameValue(ctx.featureName),
       truncateHistory)
-  }
-
-  /**
- * Create a [[ShowTableColumnsCommand]] logical plan.
- *
- * Syntax:
- * {{{
- *   SHOW COLUMNS (FROM | IN) tableName [(FROM | IN) schemaName];
- * }}}
- * Examples:
- * {{{
- *   SHOW COLUMNS IN delta.`test_table`
- *   SHOW COLUMNS IN `test_table` IN `test_database`
- * }}}
- */
-  override def visitShowColumns(
-      ctx: ShowColumnsContext): LogicalPlan = withOrigin(ctx) {
-    val spark = SparkSession.active
-    val tableName = visitTableIdentifier(ctx.tableName)
-    val schemaName = Option(ctx.schemaName).map(db => db.getText)
-
-    val tableIdentifier = if (tableName.database.isEmpty) {
-      schemaName match {
-        case Some(db) =>
-          TableIdentifier(tableName.identifier, Some(db))
-        case None => tableName
-      }
-    } else tableName
-
-    DeltaTableIdentifier(spark, tableIdentifier).map { id =>
-      val resolver = spark.sessionState.analyzer.resolver
-      if (schemaName.nonEmpty && tableName.database.exists(!resolver(_, schemaName.get))) {
-        throw DeltaErrors.showColumnsWithConflictDatabasesError(schemaName.get, tableName)
-      }
-      ShowTableColumnsCommand(id)
-    }.orNull
   }
 
   protected def typedVisit[T](ctx: ParseTree): T = {

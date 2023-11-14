@@ -26,6 +26,7 @@ import scala.language.existentials
 import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, DeltaUDF, NoMapping}
 import org.apache.spark.sql.delta.DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
+import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.DeltaCommand
@@ -39,6 +40,7 @@ import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.parser.{AbstractSqlParser, AstBuilder, ParseException, ParserUtils}
 import org.apache.spark.sql.catalyst.parser.SqlBaseParser.MultipartIdentifierListContext
@@ -703,6 +705,33 @@ object StatisticsCollection extends DeltaCommand {
   }
 
   /**
+   * Compute the AddFile entries with delta statistics entries by aggregating the data skipping
+   * columns of each parquet file.
+   */
+  private def computeNewAddFiles(
+      deltaLog: DeltaLog,
+      txn: OptimisticTransaction,
+      files: Seq[AddFile]): Array[AddFile] = {
+    val dataPath = deltaLog.dataPath
+    val pathToAddFileMap = generateCandidateFileMap(dataPath, files)
+    val persistentDVsReadable = DeletionVectorUtils.deletionVectorsReadable(txn.snapshot)
+    // Throw error when the table contains DVs, because existing method of stats
+    // recomputation doesn't work on tables with DVs. It needs to take into consideration of
+    // DV files (TODO).
+    if (persistentDVsReadable) {
+      throw DeltaErrors.statsRecomputeNotSupportedOnDvTables()
+    }
+    val fileDataFrame = deltaLog
+      .createDataFrame(txn.snapshot, addFiles = files, isStreaming = false)
+      .withColumn("path", col("_metadata.file_path"))
+    val newStats = fileDataFrame.groupBy(col("path")).agg(to_json(txn.statsCollector))
+    newStats.collect().map { r =>
+      val add = getTouchedFile(dataPath, r.getString(0), pathToAddFileMap)
+      add.copy(dataChange = false, stats = r.getString(1))
+    }
+  }
+
+  /**
    * Recomputes statistics for a Delta table. This can be used to compute stats if they were never
    * collected or to recompute corrupted statistics.
    * @param deltaLog Delta log for the table to update.
@@ -713,42 +742,14 @@ object StatisticsCollection extends DeltaCommand {
   def recompute(
       spark: SparkSession,
       deltaLog: DeltaLog,
+      catalogTable: Option[CatalogTable],
       predicates: Seq[Expression] = Seq(Literal(true)),
       fileFilter: AddFile => Boolean = af => true): Unit = {
-    val txn = deltaLog.startTransaction()
+    val txn = deltaLog.startTransaction(catalogTable)
     verifyPartitionPredicates(spark, txn.metadata.partitionColumns, predicates)
-
     // Save the current AddFiles that match the predicates so we can update their stats
     val files = txn.filterFiles(predicates).filter(fileFilter)
-    val pathToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, files)
-    val persistentDVsReadable = DeletionVectorUtils.deletionVectorsReadable(txn.snapshot)
-
-    // Use the stats collector to recompute stats
-    val dataPath = deltaLog.dataPath
-    val snapshot = txn.snapshot
-    val newAddFiles = {
-      // Throw error when the table contains DVs, because existing method of stats
-      // recomputation doesn't work on tables with DVs. It needs to take into consideration of
-      // DV files (TODO).
-      if (persistentDVsReadable) {
-        throw DeltaErrors.statsRecomputeNotSupportedOnDvTables()
-      }
-      {
-        val fileDataFrame = deltaLog
-          .createDataFrame(txn.snapshot, addFiles = files, isStreaming = false)
-          .withColumn("path", col("_metadata.file_path"))
-        val newStats =
-          {
-            fileDataFrame.groupBy(col("path")).agg(to_json(txn.statsCollector))
-          }
-        // Use the new stats to update the AddFiles and commit back to the DeltaLog
-        newStats.collect().map { r =>
-          val add = getTouchedFile(dataPath, r.getString(0), pathToAddFileMap)
-          add.copy(dataChange = false, stats = r.getString(1))
-        }
-      }
-    }
-
+    val newAddFiles = computeNewAddFiles(deltaLog, txn, files)
     txn.commit(newAddFiles, ComputeStats(predicates))
   }
 

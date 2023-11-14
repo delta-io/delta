@@ -476,7 +476,10 @@ trait DeltaTimeTravelTests extends QueryTest
         val e = intercept[AnalysisException] {
           f
         }
-          assert(e.getMessage.contains("path-based tables"), s"Returned instead:\n$e")
+        assert(
+          e.getMessage.contains("path-based tables") ||
+            e.message.contains("[UNSUPPORTED_FEATURE.TIME_TRAVEL] The feature is not supported"),
+          s"Returned instead:\n$e")
       }
 
       assertFormatFailure {
@@ -505,8 +508,8 @@ trait DeltaTimeTravelTests extends QueryTest
         val e = intercept[Exception] {
           sql(s"select * from ${versionAsOf(tblName, 0)}").collect()
         }
-        var catalogName = ""
-        val catalogPrefix = if (catalogName == "") "" else catalogName + "."
+        val catalogName = CatalogManager.SESSION_CATALOG_NAME
+        val catalogPrefix = catalogName + "."
         assert(e.getMessage.contains(
           s"Table ${catalogPrefix}default.parq_table does not support time travel") ||
           e.getMessage.contains(s"Time travel on the relation: `$catalogName`.`default`.`parq_table`"))

@@ -17,21 +17,19 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, Snapshot, UnresolvedPathOrIdentifier}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot, UnresolvedPathOrIdentifier}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, TableIdentifier}
-import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchTableException}
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.trees.UnaryLike
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.types.StructType
 
@@ -72,11 +70,11 @@ case class DescribeDeltaDetailCommand(
     override val child: LogicalPlan,
     hadoopConf: Map[String, String])
   extends RunnableCommand
-    with UnaryLike[LogicalPlan]
+    with UnaryNode
     with DeltaLogging
     with DeltaCommand
 {
-  override val output: Seq[Attribute] = TableDetail.schema.toAttributes
+  override val output: Seq[Attribute] = toAttributes(TableDetail.schema)
 
   override protected def withNewChildInternal(newChild: LogicalPlan): DescribeDeltaDetailCommand =
     copy(child = newChild)

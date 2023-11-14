@@ -165,6 +165,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
         withDb.partitionColumnNames,
         withDb.properties ++ commentOpt.map("comment" -> _),
         df,
+        Some(tableDesc),
         schemaInCatalog = if (newSchema != schema) Some(newSchema) else None)
     }
 

@@ -18,20 +18,24 @@ package io.delta.kernel.internal.actions;
 
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.*;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.IntStream;
 import static java.util.stream.Collectors.toMap;
 
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-import static io.delta.kernel.utils.Utils.requireNonNull;
 
 import io.delta.kernel.internal.deletionvectors.Base85Codec;
 import io.delta.kernel.internal.fs.Path;
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * Information about a deletion vector attached to a file action.
@@ -57,17 +61,36 @@ public class DeletionVectorDescriptor {
             sizeInBytes, cardinality);
     }
 
+    public static DeletionVectorDescriptor fromColumnVector(ColumnVector vector, int rowId) {
+        if (vector.isNullAt(rowId)) {
+            return null;
+        }
+
+        final String storageType = requireNonNull(vector.getChild(0), rowId, "storageType")
+            .getString(rowId);
+        final String pathOrInlineDv = requireNonNull(vector.getChild(1), rowId, "pathOrInlineDv")
+            .getString(rowId);
+        final Optional<Integer> offset = Optional.ofNullable(
+            vector.getChild(2).isNullAt(rowId) ? null : vector.getChild(2).getInt(rowId));
+        final int sizeInBytes = requireNonNull(vector.getChild(3), rowId, "sizeInBytes")
+            .getInt(rowId);
+        final long cardinality = requireNonNull(vector.getChild(4), rowId, "cardinality")
+            .getLong(rowId);
+        return new DeletionVectorDescriptor(storageType, pathOrInlineDv, offset,
+            sizeInBytes, cardinality);
+    }
+
     // Markers to separate different kinds of DV storage.
     public static final String PATH_DV_MARKER = "p";
     public static final String INLINE_DV_MARKER = "i";
     public static final String UUID_DV_MARKER = "u";
 
     public static final StructType READ_SCHEMA = new StructType()
-        .add("storageType", StringType.INSTANCE, false /* nullable*/)
-        .add("pathOrInlineDv", StringType.INSTANCE, false /* nullable*/)
-        .add("offset", IntegerType.INSTANCE, true /* nullable*/)
-        .add("sizeInBytes", IntegerType.INSTANCE, false /* nullable*/)
-        .add("cardinality", LongType.INSTANCE, false /* nullable*/);
+        .add("storageType", StringType.STRING, false /* nullable*/)
+        .add("pathOrInlineDv", StringType.STRING, false /* nullable*/)
+        .add("offset", IntegerType.INTEGER, true /* nullable*/)
+        .add("sizeInBytes", IntegerType.INTEGER, false /* nullable*/)
+        .add("cardinality", LongType.LONG, false /* nullable*/);
 
     private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
         IntStream.range(0, READ_SCHEMA.length())

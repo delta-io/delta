@@ -32,7 +32,7 @@ public class DefaultFileHandler implements FileHandler {
         CloseableIterator<Row> fileIter, Predicate filter) {
         requireNonNull(fileIter, "fileIter is null");
         requireNonNull(filter, "filter is null");
-        // TODO: we are not using the filter now, will be used later.
+        // Note: we are not currently using the filter but it may be used later
         return fileIter.map(scanFileRow -> new DefaultFileReadContext(scanFileRow));
     }
 }

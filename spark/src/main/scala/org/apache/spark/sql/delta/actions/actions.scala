@@ -101,7 +101,7 @@ object Action {
     JsonUtils.mapper.readValue[SingleAction](json).unwrap
   }
 
-  lazy val logSchema = ExpressionEncoder[SingleAction].schema
+  lazy val logSchema = ExpressionEncoder[SingleAction]().schema
   lazy val addFileSchema = logSchema("add").dataType.asInstanceOf[StructType]
 }
 

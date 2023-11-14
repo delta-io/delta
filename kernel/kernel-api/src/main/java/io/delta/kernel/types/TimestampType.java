@@ -28,7 +28,7 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class TimestampType extends BasePrimitiveType {
-    public static final TimestampType INSTANCE = new TimestampType();
+    public static final TimestampType TIMESTAMP = new TimestampType();
 
     private TimestampType() {
         super("timestamp");

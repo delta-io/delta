@@ -24,7 +24,7 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class IntegerType extends BasePrimitiveType {
-    public static final IntegerType INSTANCE = new IntegerType();
+    public static final IntegerType INTEGER = new IntegerType();
 
     private IntegerType() {
         super("integer");

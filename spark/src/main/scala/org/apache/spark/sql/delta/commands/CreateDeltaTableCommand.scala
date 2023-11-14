@@ -160,7 +160,8 @@ case class CreateDeltaTableCommand(
           options,
           partitionColumns = table.partitionColumnNames,
           configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
-          data = data)
+          data = data,
+          Some(tableWithLocation))
         handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
         Nil
       case _ =>
@@ -192,7 +193,7 @@ case class CreateDeltaTableCommand(
 
 
     if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata)) {
-      deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, None)
+      deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, tableWithLocation)
     }
   }
 
@@ -233,22 +234,24 @@ case class CreateDeltaTableCommand(
         txn,
         sparkSession
       )
-      val newDomainMetadata = Seq.empty[DomainMetadata]
-      if (isReplace) {
+      // Metadata updates for CREATE TABLE (with any writer) and REPLACE TABLE
+      // (only with V1 writer) will be handled inside WriteIntoDelta.
+      if (!isV1Writer && isReplace) {
+        val newDomainMetadata = Seq.empty[DomainMetadata]
         // Ensure to remove any domain metadata for REPLACE TABLE.
         actions = actions ++ DomainMetadataUtils.handleDomainMetadataForReplaceTable(
           txn.snapshot.domainMetadata, newDomainMetadata)
-      } else {
-        actions = actions ++ newDomainMetadata
       }
       val op = getOperation(txn.metadata, isManagedTable, Some(options)
       )
       (actions, op)
     }
 
+    val updatedWriter = UniversalFormat.enforceInvariantsAndDependenciesForCTAS(deltaWriter)
+
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
-      val (actions, op) = doDeltaWrite(deltaWriter, deltaWriter.data.schema.asNullable)
+      val (actions, op) = doDeltaWrite(updatedWriter, updatedWriter.data.schema.asNullable)
       txn.commit(actions, op)
     }
   }
@@ -443,7 +446,8 @@ case class CreateDeltaTableCommand(
       if (tableDesc.properties.nonEmpty) {
         // When comparing properties of the existing table and the new table, remove some
         // internal column mapping properties for the sake of comparison.
-        val filteredTableProperties = filterColumnMappingProperties(tableDesc.properties)
+        val filteredTableProperties = filterColumnMappingProperties(
+          tableDesc.properties)
         val filteredExistingProperties = filterColumnMappingProperties(
           existingMetadata.configuration)
         if (filteredTableProperties != filteredExistingProperties) {
@@ -611,7 +615,7 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    val txn = deltaLog.startTransaction(snapshotOpt)
+    val txn = deltaLog.startTransaction(None, snapshotOpt)
 
     // During CREATE/REPLACE, we synchronously run conversion (if Uniform is enabled) so
     // we always remove the post commit hook here.

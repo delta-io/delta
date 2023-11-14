@@ -17,10 +17,11 @@
 package io.delta.kernel.internal.data;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Map;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.data.ArrayValue;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
@@ -31,6 +32,13 @@ public class GenericRow implements Row {
     private final StructType schema;
     private final Map<Integer, Object> ordinalToValue;
 
+
+    /**
+     * @param schema the schema of the row
+     * @param ordinalToValue a mapping of column ordinal to objects; for each column the object
+     *                       must be of the return type corresponding to the data type's getter
+     *                       method in the Row interface
+     */
     public GenericRow(StructType schema, Map<Integer, Object> ordinalToValue) {
         this.schema = requireNonNull(schema, "schema is null");
         this.ordinalToValue = requireNonNull(ordinalToValue, "ordinalToValue is null");
@@ -113,17 +121,17 @@ public class GenericRow implements Row {
     }
 
     @Override
-    public <T> List<T> getArray(int ordinal) {
+    public ArrayValue getArray(int ordinal) {
         // TODO: not sufficient check, also need to check the element type
         throwIfUnsafeAccess(ordinal, ArrayType.class, "array");
-        return (List<T>) getValue(ordinal);
+        return (ArrayValue) getValue(ordinal);
     }
 
     @Override
-    public <K, V> Map<K, V> getMap(int ordinal) {
+    public MapValue getMap(int ordinal) {
         // TODO: not sufficient check, also need to check the element types
         throwIfUnsafeAccess(ordinal, MapType.class, "map");
-        return (Map<K, V>) getValue(ordinal);
+        return (MapValue) getValue(ordinal);
     }
 
     private Object getValue(int ordinal) {

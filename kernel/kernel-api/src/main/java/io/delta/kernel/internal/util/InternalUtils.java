@@ -21,8 +21,11 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.utils.CloseableIterator;
 
 public class InternalUtils {
@@ -76,53 +79,63 @@ public class InternalUtils {
     }
 
     /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @throws IllegalArgumentException if {@code isValid} is false
-     */
-    public static void checkArgument(boolean isValid)
-        throws IllegalArgumentException {
-        if (!isValid) {
-            throw new IllegalArgumentException();
-        }
-    }
-
-    /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @param message A String message for the exception.
-     * @throws IllegalArgumentException if {@code isValid} is false
-     */
-    public static void checkArgument(boolean isValid, String message)
-        throws IllegalArgumentException {
-        if (!isValid) {
-            throw new IllegalArgumentException(message);
-        }
-    }
-
-    /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @param message A String message for the exception.
-     * @param args    Objects used to fill in {@code %s} placeholders in the message
-     * @throws IllegalArgumentException if {@code isValid} is false
-     */
-    public static void checkArgument(boolean isValid, String message, Object... args)
-        throws IllegalArgumentException {
-        if (!isValid) {
-            throw new IllegalArgumentException(
-                String.format(String.valueOf(message), args));
-        }
-    }
-
-    /**
      * Utility method to get the number of days since epoch this given date is.
      */
     public static int daysSinceEpoch(Date date) {
         LocalDate localDate = date.toLocalDate();
         return (int) ChronoUnit.DAYS.between(EPOCH, localDate);
+    }
+
+    /**
+     * Utility method to create a singleton string {@link ColumnVector}
+     *
+     * @param value the string element to create the vector with
+     * @return A {@link ColumnVector} with a single element {@code value}
+     */
+    public static ColumnVector singletonStringColumnVector(String value) {
+        return new ColumnVector() {
+            @Override
+            public DataType getDataType() {
+                return StringType.STRING;
+            }
+
+            @Override
+            public int getSize() {
+                return 1;
+            }
+
+            @Override
+            public void close() {
+            }
+
+            @Override
+            public boolean isNullAt(int rowId) {
+                return value == null;
+            }
+
+            @Override
+            public String getString(int rowId) {
+                if (rowId != 0) {
+                    throw new IllegalArgumentException("Invalid row id: " + rowId);
+                }
+                return value;
+            }
+        };
+    }
+
+    public static Row requireNonNull(Row row, int ordinal, String columnName) {
+        if (row.isNullAt(ordinal)) {
+            throw new IllegalArgumentException(
+                "Expected a non-null value for column: " + columnName);
+        }
+        return row;
+    }
+
+    public static ColumnVector requireNonNull(ColumnVector vector, int rowId, String columnName) {
+        if (vector.isNullAt(rowId)) {
+            throw new IllegalArgumentException(
+                "Expected a non-null value for column: " + columnName);
+        }
+        return vector;
     }
 }

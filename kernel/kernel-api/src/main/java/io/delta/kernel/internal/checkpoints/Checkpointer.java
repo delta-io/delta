@@ -27,13 +27,13 @@ import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.AlwaysTrue;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Utils;
+import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.Utils;
 
 /**
  * Class to load the {@link CheckpointMetaData} from `_last_checkpoint` file.
@@ -98,9 +98,8 @@ public class Checkpointer {
      */
     private Optional<CheckpointMetaData> loadMetadataFromFile(TableClient tableClient) {
         try {
-            // TODO: we have no way to get the file size and modification time within the api
-            // module. Should we have a client API for that or make use of the
-            // `FileSystemClient#listFrom`?
+            // For now we use file size = 0 and modification time = 0, in the future we should use
+            // listFrom to retrieve the real values see delta-io/delta#2140
             FileStatus lastCheckpointFile = FileStatus.of(lastCheckpointFilePath.toString(), 0, 0);
             JsonHandler jsonHandler = tableClient.getJsonHandler();
             try (CloseableIterator<FileReadContext> fileReadContextIter =

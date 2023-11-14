@@ -204,7 +204,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     } else {
       // If this query is running inside an active transaction and is touching the same table
       // as the transaction, then mark that the entire table as tainted to be safe.
-      OptimisticTransaction.getActive.foreach { txn =>
+      OptimisticTransaction.getActive().foreach { txn =>
         val logsInPlan = plan.collect { case DeltaTable(fileIndex) => fileIndex.deltaLog }
         if (logsInPlan.exists(_.isSameLogAs(txn.deltaLog))) {
           txn.readWholeTable()

@@ -22,20 +22,26 @@ import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
 import scala.collection.concurrent
+import scala.reflect.ClassTag
 import scala.util.matching.Regex
 
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
-import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
+import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.FileNames
 import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.SparkContext
+import org.apache.spark.SparkFunSuite
 import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.test.SharedSparkSession
@@ -222,6 +228,77 @@ trait DeltaTestUtilsBase {
   @deprecated("Use checkError() instead")
   protected def errorContains(errMsg: String, str: String): Unit = {
     assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
+  }
+
+  /** Utility method to check exception `e` is of type `E` or a cause of it is of type `E` */
+  def findIfResponsible[E <: Throwable: ClassTag](e: Throwable): Option[E] = e match {
+    case culprit: E => Some(culprit)
+    case _ =>
+      val children = Option(e.getCause).iterator ++ e.getSuppressed.iterator
+      children
+        .map(findIfResponsible[E](_))
+        .collectFirst { case Some(culprit) => culprit }
+  }
+}
+
+trait DeltaCheckpointTestUtils
+  extends DeltaTestUtilsBase { self: SparkFunSuite with SharedSparkSession =>
+
+  def testDifferentCheckpoints(testName: String, quiet: Boolean = false)
+      (f: (CheckpointPolicy.Policy, Option[V2Checkpoint.Format]) => Unit): Unit = {
+    test(s"$testName [Checkpoint V1]") {
+      def testFunc(): Unit = {
+        withSQLConf(DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey ->
+          CheckpointPolicy.Classic.name) {
+          f(CheckpointPolicy.Classic, None)
+        }
+      }
+      if (quiet) quietly { testFunc() } else testFunc()
+    }
+    for (checkpointFormat <- V2Checkpoint.Format.ALL)
+    test(s"$testName [Checkpoint V2, format: ${checkpointFormat.name}]") {
+      def testFunc(): Unit = {
+        withSQLConf(
+          DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+          DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> checkpointFormat.name
+        ) {
+          f(CheckpointPolicy.V2, Some(checkpointFormat))
+        }
+      }
+      if (quiet) quietly { testFunc() } else testFunc()
+    }
+  }
+
+  /**
+   * Helper method to get the dataframe corresponding to the files which has the file actions for a
+   * given checkpoint.
+   */
+  def getCheckpointDfForFilesContainingFileActions(
+      log: DeltaLog,
+      checkpointFile: Path): DataFrame = {
+    val ci = CheckpointInstance.apply(checkpointFile)
+    val allCheckpointFiles = log
+        .listFrom(ci.version)
+        .filter(FileNames.isCheckpointFile)
+        .filter(f => CheckpointInstance(f.getPath) == ci)
+        .toSeq
+    val fileActionsFileIndex = ci.format match {
+      case CheckpointInstance.Format.V2 =>
+        val incompleteCheckpointProvider = ci.getCheckpointProvider(log, allCheckpointFiles)
+        val df = log.loadIndex(incompleteCheckpointProvider.topLevelFileIndex.get, Action.logSchema)
+        val sidecarFileStatuses = df.as[SingleAction].collect().map(_.unwrap).collect {
+          case sf: SidecarFile => sf
+        }.map(sf => sf.toFileStatus(log.logPath))
+        DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, sidecarFileStatuses)
+      case CheckpointInstance.Format.SINGLE | CheckpointInstance.Format.WITH_PARTS =>
+        DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET,
+          allCheckpointFiles.toArray)
+      case _ =>
+        throw new Exception(s"Unexpected checkpoint format for file $checkpointFile")
+    }
+    fileActionsFileIndex.files
+      .map(fileStatus => spark.read.parquet(fileStatus.getPath.toString))
+      .reduce(_.union(_))
   }
 }
 
@@ -420,9 +497,53 @@ trait DeltaDMLTestUtils
     dfw.save(tempPath)
   }
 
+  protected def withKeyValueData(
+      source: Seq[(Int, Int)],
+      target: Seq[(Int, Int)],
+      isKeyPartitioned: Boolean = false,
+      sourceKeyValueNames: (String, String) = ("key", "value"),
+      targetKeyValueNames: (String, String) = ("key", "value"))(
+      thunk: (String, String) => Unit = null): Unit = {
+
+    import testImplicits._
+
+    append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2).coalesce(2),
+      if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)
+    withTempView("source") {
+      source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
+      thunk("source", s"delta.`$tempPath`")
+    }
+  }
+
   protected def readDeltaTable(path: String): DataFrame = {
     spark.read.format("delta").load(path)
   }
 
   protected def getDeltaFileStmt(path: String): String = s"SELECT * FROM delta.`$path`"
+
+  /**
+   * Finds the latest operation of the given type that ran on the test table and returns the
+   * dataframe with the changes of the corresponding table version.
+   *
+   * @param operation Delta operation name, see [[DeltaOperations]].
+   */
+  protected def getCDCForLatestOperation(deltaLog: DeltaLog, operation: String): DataFrame = {
+    val latestOperation = deltaLog.history
+      .getHistory(None)
+      .find(_.operation == operation)
+    assert(latestOperation.nonEmpty, s"Couldn't find a ${operation} operation to check CDF")
+
+    val latestOperationVersion = latestOperation.get.version
+    assert(latestOperationVersion.nonEmpty,
+      s"Latest ${operation} operation doesn't have a version associated with it")
+
+    CDCReader
+      .changesToBatchDF(
+        deltaLog,
+        latestOperationVersion.get,
+        latestOperationVersion.get,
+        spark)
+      .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      .drop(CDCReader.CDC_COMMIT_VERSION)
+  }
 }

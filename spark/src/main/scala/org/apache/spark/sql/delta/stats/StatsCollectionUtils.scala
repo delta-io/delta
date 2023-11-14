@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.stats
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+import scala.concurrent.duration.Duration
 import scala.language.existentials
 import scala.util.control.NonFatal
 
@@ -27,6 +28,7 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils}
+import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
@@ -55,6 +57,7 @@ object StatsCollectionUtils
    * @param conf The Hadoop configuration used to access file system.
    * @param dataPath The data path of table, to which these AddFile(s) belong.
    * @param addFiles The list of target AddFile(s) to be processed.
+   * @param numFilesOpt The number of AddFile(s) to process if known. Speeds up the query.
    * @param columnMappingMode The column mapping mode of table.
    * @param dataSchema The data schema of table.
    * @param statsSchema The stats schema to be collected.
@@ -70,13 +73,20 @@ object StatsCollectionUtils
       conf: Configuration,
       dataPath: Path,
       addFiles: Dataset[AddFile],
+      numFilesOpt: Option[Long],
       columnMappingMode: DeltaColumnMappingMode,
       dataSchema: StructType,
       statsSchema: StructType,
       ignoreMissingStats: Boolean = true,
       setBoundsToWide: Boolean = false): Dataset[AddFile] = {
 
-    import org.apache.spark.sql.delta.implicits._
+    val useMultiThreadedStatsCollection = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_USE_MULTI_THREADED_STATS_COLLECTION)
+    val preparedAddFiles = if (useMultiThreadedStatsCollection) {
+      prepareRDDForMultiThreadedStatsCollection(spark, addFiles, numFilesOpt)
+    } else {
+      addFiles
+    }
 
     val parquetRebaseMode =
       spark.sessionState.conf.getConf(SQLConf.PARQUET_REBASE_MODE_IN_READ)
@@ -91,17 +101,60 @@ object StatsCollectionUtils
     val broadcastConf = spark.sparkContext.broadcast(serializableConf)
 
     val dataRootDir = dataPath.toString
-    addFiles.mapPartitions { addFileIter =>
+
+    import org.apache.spark.sql.delta.implicits._
+    preparedAddFiles.mapPartitions { addFileIter =>
       val defaultFileSystem = new Path(dataRootDir).getFileSystem(broadcastConf.value.value)
-      addFileIter.map { addFile =>
-        computeStatsForFile(
-          addFile,
-          dataRootDir,
-          defaultFileSystem,
-          broadcastConf.value,
-          setBoundsToWide,
-          statsCollector)
+      if (useMultiThreadedStatsCollection) {
+        ParallelFetchPool.parallelMap(spark, addFileIter.toSeq) { addFile =>
+          computeStatsForFile(
+            addFile,
+            dataRootDir,
+            defaultFileSystem,
+            broadcastConf.value,
+            setBoundsToWide,
+            statsCollector)
+        }.toIterator
+      } else {
+        addFileIter.map { addFile =>
+          computeStatsForFile(
+            addFile,
+            dataRootDir,
+            defaultFileSystem,
+            broadcastConf.value,
+            setBoundsToWide,
+            statsCollector)
+        }
       }
+    }
+  }
+
+  /**
+   * Prepares the underlying RDD of [[addFiles]] for multi-threaded stats collection by splitting
+   * them up into more partitions if necessary.
+   * If the number of partitions is too small, not every executor might
+   * receive a partition, which reduces the achievable parallelism. By increasing the number of
+   * partitions we can achieve more parallelism.
+   */
+  private def prepareRDDForMultiThreadedStatsCollection(
+      spark: SparkSession,
+      addFiles: Dataset[AddFile],
+      numFilesOpt: Option[Long]): Dataset[AddFile] = {
+
+    val numFiles = numFilesOpt.getOrElse(addFiles.count())
+    val currNumPartitions = addFiles.rdd.getNumPartitions
+    val numFilesPerPartition = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_STATS_COLLECTION_NUM_FILES_PARTITION)
+
+    // We should not create more partitions than the cluster can currently handle.
+    val minNumPartitions = Math.min(
+      spark.sparkContext.defaultParallelism,
+      numFiles / numFilesPerPartition + 1).toInt
+    // Only repartition if it would increase the achievable parallelism
+    if (currNumPartitions < minNumPartitions) {
+      addFiles.repartition(minNumPartitions)
+    } else {
+      addFiles
     }
   }
 
@@ -135,6 +188,20 @@ object StatsCollectionUtils
 
     addFile.copy(stats = JsonUtils.toJson(statsWithTightBoundsCol))
   }
+}
+
+object ParallelFetchPool {
+  val NUM_THREADS_PER_CORE = 10
+  val MAX_THREADS = 1024
+
+  val NUM_THREADS = Math.min(
+    Runtime.getRuntime.availableProcessors() * NUM_THREADS_PER_CORE, MAX_THREADS)
+
+  lazy val threadPool = DeltaThreadPool("stats-collection", NUM_THREADS)
+  def parallelMap[T, R](
+      spark: SparkSession,
+      items: Iterable[T])(
+      f: T => R): Iterable[R] = threadPool.parallelMap(spark, items)(f)
 }
 
 /**

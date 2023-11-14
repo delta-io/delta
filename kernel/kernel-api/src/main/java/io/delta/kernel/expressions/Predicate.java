@@ -96,12 +96,12 @@ public class Predicate extends ScalarExpression {
 
     @Override
     public String toString() {
-        if (COMPARATORS.contains(name)) {
+        if (BINARY_OPERATORS.contains(name)) {
             return String.format("(%s %s %s)", children.get(0), name, children.get(1));
         }
         return super.toString();
     }
 
-    private static final Set<String> COMPARATORS =
-        Stream.of("<", "<=", ">", ">=", "=").collect(Collectors.toSet());
+    private static final Set<String> BINARY_OPERATORS =
+        Stream.of("<", "<=", ">", ">=", "=", "AND", "OR").collect(Collectors.toSet());
 }

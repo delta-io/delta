@@ -40,6 +40,6 @@ public class TableNotFoundException
 
     @Override
     public String getMessage() {
-        return String.format("Table at path `%s` is not found", tablePath);
+        return String.format("Delta table at path `%s` is not found", tablePath);
     }
 }

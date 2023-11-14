@@ -50,6 +50,8 @@ import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
 import org.apache.spark.sql.catalyst.plans.logical.RestoreTableStatement
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.WriteToStream
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttribute
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
@@ -188,13 +190,15 @@ class DeltaAnalysis(session: SparkSession)
           None
         }
       val newDeltaCatalog = new DeltaCatalog()
+      val existingTableOpt = newDeltaCatalog.getExistingTableIfExists(catalogTableTarget.identifier)
+      val newTable = newDeltaCatalog
+        .verifyTableAndSolidify(
+          catalogTableTarget,
+          None
+        )
       CreateDeltaTableCommand(
-        table = newDeltaCatalog
-          .verifyTableAndSolidify(
-            catalogTableTarget,
-            None
-          ),
-        existingTableOpt = newDeltaCatalog.getExistingTableIfExists(catalogTableTarget.identifier),
+        table = newTable,
+        existingTableOpt = existingTableOpt,
         mode = saveMode,
         query = None,
         output = ctl.output,
@@ -364,10 +368,6 @@ class DeltaAnalysis(session: SparkSession)
             if tt.expressions.forall(_.resolved) =>
           val ttSpec = DeltaTimeTravelSpec(tt.timestamp, tt.version, tt.creationSource)
           val traveledTable = tbl.copy(timeTravelOpt = Some(ttSpec))
-          val tblIdent = tbl.catalogTable match {
-            case Some(existingCatalog) => existingCatalog.identifier
-            case None => TableIdentifier(tbl.path.toString, Some("delta"))
-          }
           // restoring to same version as latest should be a no-op.
           val sourceSnapshot = try {
             traveledTable.initialSnapshot
@@ -391,7 +391,7 @@ class DeltaAnalysis(session: SparkSession)
             return LocalRelation(restoreStatement.output)
           }
 
-          RestoreTableCommand(traveledTable, tblIdent)
+          RestoreTableCommand(traveledTable)
 
         case u: UnresolvedRelation =>
           u.tableNotFound(u.multipartIdentifier)
@@ -407,20 +407,19 @@ class DeltaAnalysis(session: SparkSession)
     // path and pass it along in a ResolvedPathBasedNonDeltaTable. This is needed as DESCRIBE DETAIL
     // supports both delta and non delta paths.
     case u: UnresolvedPathBasedTable =>
-      val table = getPathBasedDeltaTable(u.path)
-      val tableExists = Try(table.tableExists).getOrElse(false)
-      if (tableExists) {
+      val table = getPathBasedDeltaTable(u.path, u.options)
+      if (Try(table.tableExists).getOrElse(false)) {
         // Resolve it as a path-based Delta table
         val catalog = session.sessionState.catalogManager.currentCatalog.asTableCatalog
         ResolvedTable.create(
           catalog, Identifier.of(Array(DeltaSourceUtils.ALT_NAME), u.path), table)
       } else {
         // Resolve it as a placeholder, to identify it as a non-Delta table.
-        ResolvedPathBasedNonDeltaTable(u.path, u.commandName)
+        ResolvedPathBasedNonDeltaTable(u.path, u.options, u.commandName)
       }
 
     case u: UnresolvedPathBasedDeltaTable =>
-      val table = getPathBasedDeltaTable(u.path)
+      val table = getPathBasedDeltaTable(u.path, u.options)
       if (!table.tableExists) {
         throw DeltaErrors.notADeltaTableException(u.commandName, u.deltaTableIdentifier)
       }
@@ -434,6 +433,7 @@ class DeltaAnalysis(session: SparkSession)
       }
       DataSourceV2Relation.create(table, None, Some(u.identifier), u.options)
 
+    case d: DescribeDeltaHistory if d.childrenResolved => d.toCommand
 
     // This rule falls back to V1 nodes, since we don't have a V2 reader for Delta right now
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
@@ -450,7 +450,7 @@ class DeltaAnalysis(session: SparkSession)
       // rewrites Delta from V2 to V1
       val newTarget = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
       val indices = newTarget.collect {
-        case DeltaFullTable(index) => index
+        case DeltaFullTable(_, index) => index
       }
       if (indices.isEmpty) {
         // Not a Delta table at all, do not transform
@@ -468,7 +468,7 @@ class DeltaAnalysis(session: SparkSession)
       // rewrites Delta from V2 to V1
       val newTable = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
         newTable.collectLeaves().headOption match {
-          case Some(DeltaFullTable(index)) =>
+          case Some(DeltaFullTable(_, index)) =>
             DeltaUpdateTable(newTable, cols, expressions, condition)
           case o =>
             // not a Delta table
@@ -545,6 +545,18 @@ class DeltaAnalysis(session: SparkSession)
     case DeltaReorgTable(ResolvedTable(_, _, t, _)) =>
       throw DeltaErrors.notADeltaTable(t.name())
 
+    case cmd @ ShowColumns(child @ ResolvedTable(_, _, table: DeltaTableV2, _), namespace, _) =>
+      // Adapted from the rule in spark ResolveSessionCatalog.scala, which V2 tables don't trigger.
+      // NOTE: It's probably a spark bug to check head instead of tail, for 3-part identifiers.
+      val resolver = session.sessionState.analyzer.resolver
+      val v1TableName = child.identifier.asTableIdentifier
+      namespace.foreach { ns =>
+        if (v1TableName.database.exists(!resolver(_, ns.head))) {
+          throw QueryCompilationErrors.showColumnsWithConflictDatabasesError(ns, v1TableName)
+        }
+      }
+      ShowDeltaTableColumnsCommand(child)
+
     case deltaMerge: DeltaMergeInto =>
       val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
         DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
@@ -552,7 +564,18 @@ class DeltaAnalysis(session: SparkSession)
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))
 
-    case streamWrite: WriteToStream =>
+    case origStreamWrite: WriteToStream =>
+      // The command could have Delta as source and/or sink. We need to look at both.
+      val streamWrite = origStreamWrite match {
+        case WriteToStream(_, _, sink @ DeltaSink(_, _, _, _, _, None), _, _, _, _, Some(ct)) =>
+          // The command has a catalog table, but the DeltaSink does not. This happens because
+          // DeltaDataSource.createSink (Spark API) didn't have access to the catalog table when it
+          // created the DeltaSink. Fortunately we can fix it up here.
+          origStreamWrite.copy(sink = sink.copy(catalogTable = Some(ct)))
+        case _ => origStreamWrite
+      }
+
+      // We also need to validate the source schema location, if the command has a Delta source.
       verifyDeltaSourceSchemaLocation(
         streamWrite.inputQuery, streamWrite.resolvedCheckpointLocation)
       streamWrite
@@ -602,9 +625,7 @@ class DeltaAnalysis(session: SparkSession)
     )
   }
 
-  private def getPathBasedDeltaTable(
-      path: String,
-      options: Map[String, String] = Map.empty): DeltaTableV2 = {
+  private def getPathBasedDeltaTable(path: String, options: Map[String, String]): DeltaTableV2 = {
     DeltaTableV2(session, new Path(path), options = options)
   }
 
@@ -1119,7 +1140,7 @@ object DeltaRelation extends DeltaLogging {
       val relation = d.withOptions(options.asScala.toMap).toBaseRelation
       val output = if (CDCReader.isCDCRead(options)) {
         // Handles cdc for the spark.read.options().table() code path
-        relation.schema.toAttributes
+        toAttributes(relation.schema)
       } else {
         v2Relation.output
       }
@@ -1219,7 +1240,8 @@ case class DeltaDynamicPartitionOverwriteCommand(
       deltaOptions,
       partitionColumns = Nil,
       deltaTable.deltaLog.unsafeVolatileSnapshot.metadata.configuration,
-      Dataset.ofRows(sparkSession, query)
+      Dataset.ofRows(sparkSession, query),
+      deltaTable.catalogTable
     ).run(sparkSession)
   }
 }

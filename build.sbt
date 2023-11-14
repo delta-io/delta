@@ -21,21 +21,21 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala212 = "2.12.15"
-val scala213 = "2.13.5"
+val scala212 = "2.12.17"
+val scala213 = "2.13.8"
 val all_scala_versions = Seq(scala212, scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
 // It was necessary to change default_scala_version to scala213 in build.sbt
 // to build the project with Scala 2.13 only
 // As a setting, it's possible to set it on command line easily
-// sbt 'set default_scala_version := 2.13.5' [commands]
+// sbt 'set default_scala_version := 2.13.8' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
 // Dependent library versions
-val sparkVersion = "3.4.0"
+val sparkVersion = "3.5.0"
 val flinkVersion = "1.16.1"
 val hadoopVersion = "3.3.1"
 val scalaTestVersion = "3.2.15"
@@ -115,6 +115,8 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
     ),
+    // For adding staged Spark RC versions, Ex:
+    // resolvers += "Apche Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
@@ -223,18 +225,10 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
 
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.11" % "test",
+      "junit" % "junit" % "4.13" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
     ),
-
-    // Can be run explicitly via: build/sbt $module/checkstyle
-    // Will automatically be run during compilation (e.g. build/sbt compile)
-    // and during tests (e.g. build/sbt test)
-    checkstyleConfigLocation := CheckstyleConfigLocation.File("kernel/dev/checkstyle.xml"),
-    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
-    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
-    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value,
-
+    javaCheckstyleSettings("kernel/dev/checkstyle.xml"),
     // Unidoc settings
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kernel/")),
   ).configureUnidoc(docTitle = "Delta Kernel")
@@ -255,19 +249,11 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.11" % "test",
+      "junit" % "junit" % "4.13" % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test"
     ),
-
-    // Can be run explicitly via: build/sbt $module/checkstyle
-    // Will automatically be run during compilation (e.g. build/sbt compile)
-    // and during tests (e.g. build/sbt test)
-    checkstyleConfigLocation := CheckstyleConfigLocation.File("kernel/dev/checkstyle.xml"),
-    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
-    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
-    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value,
-
+    javaCheckstyleSettings("kernel/dev/checkstyle.xml"),
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
@@ -363,7 +349,7 @@ lazy val iceberg = (project in file("iceberg"))
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
-      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.3.0" % "provided",
+      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.4.0" % "provided",
       "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3"
     ),
     Compile / unmanagedJars += (icebergShaded / assembly).value,
@@ -375,9 +361,10 @@ lazy val iceberg = (project in file("iceberg"))
     assembly / assemblyExcludedJars := {
       // Note: the input here is only `libraryDependencies` jars, not `.dependsOn(_)` jars.
       val allowedJars = Seq(
-        "iceberg-shaded_2.12-3.0.0-SNAPSHOT.jar",
-        "scala-library-2.12.15.jar",
-        "scala-collection-compat_2.12-2.1.1.jar",
+        s"iceberg-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
+        s"scala-library-${scala212}.jar",
+        s"scala-library-${scala213}.jar",
+        s"scala-collection-compat_${scalaBinaryVersion.value}-2.1.1.jar",
         "caffeine-2.9.3.jar",
         // Note: We are excluding
         // - antlr4-runtime-4.9.3.jar
@@ -773,6 +760,7 @@ lazy val standaloneWithoutParquetUtils = project
     Compile / packageBin := (standalone / assembly).value
   )
 
+// TODO scalastyle settings
 lazy val standalone = (project in file("connectors/standalone"))
   .dependsOn(storage % "compile->compile;provided->provided")
   .dependsOn(goldenTables % "test")
@@ -871,6 +859,7 @@ lazy val standalone = (project in file("connectors/standalone"))
 
     // Unidoc setting
     unidocSourceFilePatterns += SourceFilePattern("io/delta/standalone/"),
+    javaCheckstyleSettings("connectors/dev/checkstyle.xml")
   ).configureUnidoc()
 
 
@@ -1051,6 +1040,9 @@ lazy val flink = (project in file("connectors/flink"))
 
     // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/flink/"),
+    // TODO: this is the config that was used before archiving connectors but it has
+    //  standalone-specific import orders
+    javaCheckstyleSettings("connectors/dev/checkstyle.xml")
   ).configureUnidoc()
 
 /**
@@ -1081,7 +1073,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
@@ -1121,6 +1113,24 @@ lazy val scalaStyleSettings = Seq(
 
   Test / test := ((Test / test) dependsOn testScalastyle).value
 )
+
+/*
+ ****************************
+ * Java checkstyle settings *
+ ****************************
+ */
+
+def javaCheckstyleSettings(checkstyleFile: String): Def.SettingsDefinition = {
+  // Can be run explicitly via: build/sbt $module/checkstyle
+  // Will automatically be run during compilation (e.g. build/sbt compile)
+  // and during tests (e.g. build/sbt test)
+  Seq(
+    checkstyleConfigLocation := CheckstyleConfigLocation.File(checkstyleFile),
+    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
+    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
+    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
+  )
+}
 
 /*
  ********************

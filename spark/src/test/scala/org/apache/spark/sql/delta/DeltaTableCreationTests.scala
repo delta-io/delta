@@ -2060,6 +2060,7 @@ class DeltaTableCreationSuite
         // create table, alter tbl property, tbl comment
         assert(sql(s"DESCRIBE HISTORY $emptyTableName").collect().length == 3)
 
+        checkAnswer(sql(s"SHOW COLUMNS IN $emptyTableName"), Nil)
       }
 
       // schema evolution ddl should work

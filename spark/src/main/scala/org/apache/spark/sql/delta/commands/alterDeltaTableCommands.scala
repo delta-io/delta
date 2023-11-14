@@ -231,7 +231,8 @@ case class AlterTableDropFeatureDeltaCommand(
     val log = table.deltaLog
     val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTime))
     val emptyCommitTS = System.nanoTime()
-    log.startTransaction(Some(snapshot)).commit(Nil, DeltaOperations.EmptyCommit)
+    log.startTransaction(table.catalogTable, Some(snapshot))
+      .commit(Nil, DeltaOperations.EmptyCommit)
     log.checkpoint(log.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
   }
 
@@ -248,9 +249,6 @@ case class AlterTableDropFeatureDeltaCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeature") {
-      // This guard is only temporary while the drop feature is in development.
-      require(sparkSession.conf.get(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED))
-
       val removableFeature = TableFeature.featureNameToFeature(featureName) match {
         case Some(feature: RemovableFeature) => feature
         case Some(_) => throw DeltaErrors.dropTableFeatureNonRemovableFeature(featureName)
