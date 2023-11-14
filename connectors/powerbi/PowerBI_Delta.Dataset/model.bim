@@ -8,7 +8,7 @@
       },
       {
         "name": "PBI_QueryOrder",
-        "value": "[\"fn_ReadDeltaTable\",\"DeltaTableFolderContent\",\"DeltaTableOptions\",\"Option_PartitionFilterFunction\",\"Option_StatsFilterFunction\",\"PartitionFilterFunction\",\"StatsFilterFunction\",\"DeltaTableVersion\",\"UseFileBuffer\",\"IterateFolderContent\",\"TimeZoneOffset\",\"TimeZoneOffsetDuration\",\"fn_AddColumnsToTable\",\"fn_GetPowerBIDataTypeInformation\",\"DeltaTableFolderContent_wFullPath\",\"Delimiter\",\"DeltaProtocol\",\"PQ_DataTypes\",\"DeltaTablePath\",\"_delta_log Folder\",\"metadata_columns\",\"TableSchema\",\"PhysicalTableSchema\",\"LogSchema\",\"_last_checkpoint\",\"Checkpoint Files\",\"Logs Checkpoint\",\"Latest Log Files\",\"Logs JSON\",\"Logs ALL\",\"Files with Stats\",\"Data\",\"Content_ADLS_DimProduct\",\"Content_ADLS_DimProduct_Clone\",\"Content_ADLS_DimProduct_ShallowClone\",\"Content_ADLS_FactInternetSales_part\",\"Content_ADLS_FactInternetSales_part_Hierarchical\",\"Content_LocalFolder\",\"DeltaTableData_CurrentFunction\",\"DeltaTableData_CurrentDebug\",\"Content_Blob_part\",\"Content_Blob_BasicDataTypes\",\"Option_Version\",\"Content_Blob_AllDataTypes\",\"Option_UseFileBuffer\",\"Option_IterateFolderContent\",\"Option_TimeZoneOffset\",\"Content_Blob_BasicDataTypes_Combine\",\"Steps_fn_AddColumnsToTable\",\"RowCounts\",\"OnSelectRows_Selector\",\"Content_Blob_DimProduct_Clone\",\"Content_Blob_DimProduct_ShallowClone\",\"Content_ColumnMapping_flat\",\"Content_ColumnMapping_complex\",\"SampleFiltering\",\"fn_test_UIFiltering\",\"test_UIFiltering\",\"Content_Blob_with_file_name\",\"GoldenDatasetsRootPath\",\"Content_multi-part-checkpoint\",\"Content_data-reader-nested-struct\",\"Content_data-reader-array-complex-objects\",\"GoldenTables\",\"Content_data-reader-partition-values\"]"
+        "value": "[\"fn_ReadDeltaTable\",\"DeltaTableFolderContent\",\"DeltaTableOptions\",\"Option_PartitionFilterFunction\",\"Option_StatsFilterFunction\",\"PartitionFilterFunction\",\"StatsFilterFunction\",\"DeltaTableVersion\",\"UseFileBuffer\",\"IterateFolderContent\",\"TimeZoneOffset\",\"TimeZoneOffsetDuration\",\"fn_AddColumnsToTable\",\"fn_GetPowerBIDataTypeInformation\",\"DeltaTableFolderContent_wFullPath\",\"Delimiter\",\"DeltaProtocol\",\"PQ_DataTypes\",\"DeltaTablePath\",\"_delta_log Folder\",\"metadata_columns\",\"TableSchema\",\"PhysicalTableSchema\",\"LogSchema\",\"_last_checkpoint\",\"Checkpoint Files\",\"Logs Checkpoint\",\"Latest Log Files\",\"Logs JSON\",\"Logs ALL\",\"Files with Stats\",\"Data\",\"Content_ADLS_DimProduct\",\"Content_ADLS_DimProduct_Clone\",\"Content_ADLS_DimProduct_ShallowClone\",\"Content_ADLS_FactInternetSales_part\",\"Content_ADLS_FactInternetSales_part_Hierarchical\",\"Content_LocalFolder\",\"DeltaTableData_CurrentFunction\",\"DeltaTableData_CurrentDebug\",\"Content_Blob_part\",\"Content_Blob_BasicDataTypes\",\"Option_Version\",\"Content_Blob_AllDataTypes\",\"Option_UseFileBuffer\",\"Option_IterateFolderContent\",\"Option_TimeZoneOffset\",\"Content_Blob_BasicDataTypes_Combine\",\"Steps_fn_AddColumnsToTable\",\"RowCounts\",\"OnSelectRows_Selector\",\"Content_Blob_DimProduct_Clone\",\"Content_Blob_DimProduct_ShallowClone\",\"Content_ColumnMapping_flat\",\"Content_ColumnMapping_complex\",\"SampleFiltering\",\"fn_test_UIFiltering\",\"test_UIFiltering\",\"Content_Blob_with_file_name\",\"GoldenDatasetsRootPath\",\"Content_multi-part-checkpoint\",\"Content_data-reader-nested-struct\",\"Content_data-reader-array-complex-objects\",\"GoldenTables\",\"Content_data-reader-partition-values\",\"Content_ADLS_BugBrackets\",\"URI_Decode\"]"
       },
       {
         "name": "PBIDesktopVersion",
@@ -349,6 +349,8 @@
           "",
           "        Delimiter = if Text.Contains(DeltaTableFolderContent{0}[Folder Path], \"//\") then \"/\" else \"\\\",",
           "",
+          "        URL_Decode = (data as text) as text => Uri.Parts(\"http://powerbi?txt=\" & data)[Query][txt],",
+          "",
           "        DeltaProtocol =",
           "        let",
           "            Source = #\"Logs ALL\",",
@@ -376,7 +378,7 @@
           "",
           "            Content = if IterateFolderContent then fn_ReadContentRecursive(Source) else Source,",
           "",
-          "            #\"Added Full_Path\" = Table.AddColumn(Content, \"Full_Path\", each Text.Replace([Folder Path] & [Name], \"=\", \"%3D\"), Text.Type),",
+          "            #\"Added Full_Path\" = Table.AddColumn(Content, \"Full_Path\", each URI_Decode([Folder Path]) & [Name], Text.Type),",
           "            #\"Added File_Name\" = Table.AddColumn(#\"Added Full_Path\", \"File_Name\", each if Text.Length([Extension]) > 0 then List.Last(Text.Split([Full_Path], Delimiter)) else null, type text),",
           "            Buffered = Table.Buffer(#\"Added File_Name\")",
           "        in",
@@ -619,7 +621,8 @@
           "            #\"Added Counter\" = Table.AddColumn(Source, \"Counter\", each if [remove] <> null then -1 else if [add] <> null then 1 else null, Int8.Type),",
           "            #\"Added file_name\" = Table.AddColumn(#\"Added Counter\", \"file_name\", each if [add] <> null then Record.Field([add], \"path\") else if [remove] <> null then Record.Field([remove], \"path\") else null, Text.Type),",
           "            #\"Filtered Rows\" = Table.SelectRows(#\"Added file_name\", each ([file_name] <> null)),",
-          "            #\"Added partitionValuesTable\" = Table.AddColumn(#\"Filtered Rows\", \"partitionValuesTable\", each if [add] <> null then if Value.Is(Record.Field([add], \"partitionValues\"), Record.Type) then Record.ToTable(Record.Field([add], \"partitionValues\")) else Table.RenameColumns(Record.Field([add], \"partitionValues\"), {\"Key\", \"Name\"}) else null, type nullable table),",
+          "            #\"URI Decoded\" = Table.TransformColumns(#\"Filtered Rows\",{{\"file_name\", URI_Decode, type text}}),",
+          "            #\"Added partitionValuesTable\" = Table.AddColumn(#\"URI Decoded\", \"partitionValuesTable\", each if [add] <> null then if Value.Is(Record.Field([add], \"partitionValues\"), Record.Type) then Record.ToTable(Record.Field([add], \"partitionValues\")) else Table.RenameColumns(Record.Field([add], \"partitionValues\"), {\"Key\", \"Name\"}) else null, type nullable table),",
           "            #\"Added partitionValuesJSON\" = Table.AddColumn(#\"Added partitionValuesTable\", \"partitionValuesJSON\", each Text.FromBinary(Json.FromValue([partitionValuesTable]))),",
           "            #\"Added stats\" = Table.AddColumn(#\"Added partitionValuesJSON\", \"stats\", each if [add] <> null and Record.HasFields([add], \"stats\") and Value.Is(Record.Field([add], \"stats\"), type text) ",
           "                then Record.Field([add], \"stats\") ",
@@ -641,7 +644,7 @@
           "",
           "    #\"Data\" = ",
           "        let",
-          "            #\"Added Full_Path\" = Table.AddColumn(#\"Files with Stats\", \"Full_Path\", each Text.Replace(DeltaTablePath & Text.Replace([file_name], \"=\", \"%3D\"), \"/\", Delimiter), Text.Type),",
+          "            #\"Added Full_Path\" = Table.AddColumn(#\"Files with Stats\", \"Full_Path\", each Text.Replace(DeltaTablePath & [file_name], \"/\", Delimiter), Text.Type),",
           "            #\"Removed FilteringColumns\" = Table.RemoveColumns(#\"Added Full_Path\",{\"file_name\", \"minValues\", \"maxValues\", \"numRecords\", \"nullCount\"}),",
           "            #\"Buffered RelevantFiles\" = Table.Buffer(#\"Removed FilteringColumns\"),",
           "            #\"Merged Queries\" = Table.NestedJoin(#\"Buffered RelevantFiles\", {\"Full_Path\"}, DeltaTableFolderContent_wFullPath, {\"Full_Path\"}, \"DeltaTable Folder\", JoinKind.Inner),",
@@ -788,7 +791,7 @@
         ],
         "expression": [
           "let",
-          "    Source = #\"Content_LocalFolder\"",
+          "    Source = #\"Content_ADLS_BugBrackets\"",
           "in",
           "    Source"
         ],
@@ -871,7 +874,7 @@
           "",
           "    Content = if IterateFolderContent then fn_ReadContentRecursive(Source) else Source,",
           "",
-          "    #\"Added Full_Path\" = Table.AddColumn(Content, \"Full_Path\", each Text.Replace([Folder Path] & [Name], \"=\", \"%3D\"), Text.Type),",
+          "    #\"Added Full_Path\" = Table.AddColumn(Content, \"Full_Path\", each URI_Decode([Folder Path]) & [Name], Text.Type),",
           "    #\"Added File_Name\" = Table.AddColumn(#\"Added Full_Path\", \"File_Name\", each if Text.Length([Extension]) > 0 then List.Last(Text.Split([Full_Path], Delimiter)) else null, type text),",
           "    Buffered = Table.Buffer(#\"Added File_Name\")",
           "in",
@@ -1367,7 +1370,8 @@
           "    #\"Added Counter\" = Table.AddColumn(Source, \"Counter\", each if [remove] <> null then -1 else if [add] <> null then 1 else null, Int8.Type),",
           "    #\"Added file_name\" = Table.AddColumn(#\"Added Counter\", \"file_name\", each if [add] <> null then Record.Field([add], \"path\") else if [remove] <> null then Record.Field([remove], \"path\") else null, Text.Type),",
           "    #\"Filtered Rows\" = Table.SelectRows(#\"Added file_name\", each ([file_name] <> null)),",
-          "    #\"Added partitionValuesTable\" = Table.AddColumn(#\"Filtered Rows\", \"partitionValuesTable\", each if [add] <> null then if Value.Is(Record.Field([add], \"partitionValues\"), Record.Type) then Record.ToTable(Record.Field([add], \"partitionValues\")) else Table.RenameColumns(Record.Field([add], \"partitionValues\"), {\"Key\", \"Name\"}) else null, type nullable table),",
+          "    #\"URI Decoded\" = Table.TransformColumns(#\"Filtered Rows\",{{\"file_name\", URI_Decode, type text}}),",
+          "    #\"Added partitionValuesTable\" = Table.AddColumn(#\"URI Decoded\", \"partitionValuesTable\", each if [add] <> null then if Value.Is(Record.Field([add], \"partitionValues\"), Record.Type) then Record.ToTable(Record.Field([add], \"partitionValues\")) else Table.RenameColumns(Record.Field([add], \"partitionValues\"), {\"Key\", \"Name\"}) else null, type nullable table),",
           "    #\"Added partitionValuesJSON\" = Table.AddColumn(#\"Added partitionValuesTable\", \"partitionValuesJSON\", each Text.FromBinary(Json.FromValue([partitionValuesTable]))),",
           "    #\"Added stats\" = Table.AddColumn(#\"Added partitionValuesJSON\", \"stats\", each if [add] <> null and Record.HasFields([add], \"stats\") and Value.Is(Record.Field([add], \"stats\"), type text) ",
           "        then Record.Field([add], \"stats\") ",
@@ -1876,7 +1880,7 @@
         ],
         "expression": [
           "let",
-          "    #\"Added Full_Path\" = Table.AddColumn(#\"Files with Stats\", \"Full_Path\", each Text.Replace(DeltaTablePath & Text.Replace([file_name], \"=\", \"%3D\"), \"/\", Delimiter), Text.Type),",
+          "    #\"Added Full_Path\" = Table.AddColumn(#\"Files with Stats\", \"Full_Path\", each Text.Replace(DeltaTablePath & [file_name], \"/\", Delimiter), Text.Type),",
           "    #\"Removed FilteringColumns\" = Table.RemoveColumns(#\"Added Full_Path\",{\"minValues\", \"maxValues\", \"numRecords\", \"nullCount\", \"file_name\"}),",
           "    #\"Buffered RelevantFiles\" = Table.Buffer(#\"Removed FilteringColumns\"),",
           "    #\"Merged Queries\" = Table.NestedJoin(#\"Buffered RelevantFiles\", {\"Full_Path\"}, DeltaTableFolderContent_wFullPath, {\"Full_Path\"}, \"DeltaTable Folder\", JoinKind.Inner),",
@@ -1909,6 +1913,45 @@
         ],
         "kind": "m",
         "lineageTag": "b6598977-52e0-4812-9047-62e3c68ecd25",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Content_ADLS_BugBrackets",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = AzureStorage.DataLake(\"https://gbadls01.dfs.core.windows.net/data/powerbi_delta/BugBrackets.delta\", [HierarchicalNavigation = false])",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "953fe840-f321-4de7-87e4-c37f94a7498c",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "URI_Decode",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Function"
+          }
+        ],
+        "expression": "(data as text) as text => Uri.Parts(\"http://powerbi?txt=\" & data)[Query][txt]",
+        "kind": "m",
+        "lineageTag": "1ec75613-27ea-4fd2-beea-d8ce24d9a51f",
         "queryGroup": "FunctionSteps"
       }
     ],
@@ -1984,21 +2027,7 @@
         ],
         "columns": [
           {
-            "name": "PriceCalculation_IdDWH",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ],
-            "dataType": "int64",
-            "formatString": "0",
-            "lineageTag": "09ff3922-8386-49b1-aa9c-68bb50346764",
-            "sourceColumn": "PriceCalculation_IdDWH",
-            "summarizeBy": "sum"
-          },
-          {
-            "name": "PriceCalculation_IdOrig",
+            "name": "product",
             "annotations": [
               {
                 "name": "SummarizationSetBy",
@@ -2006,12 +2035,12 @@
               }
             ],
             "dataType": "string",
-            "lineageTag": "0f7e44d8-fba4-4a2a-891c-82f089beef6a",
-            "sourceColumn": "PriceCalculation_IdOrig",
+            "lineageTag": "76c9e6eb-5030-4e15-adc1-55a50f56b02b",
+            "sourceColumn": "product",
             "summarizeBy": "none"
           },
           {
-            "name": "PriceCalculation_Name",
+            "name": "users",
             "annotations": [
               {
                 "name": "SummarizationSetBy",
@@ -2019,21 +2048,8 @@
               }
             ],
             "dataType": "string",
-            "lineageTag": "85610a6c-069f-4c52-ad85-403b990af434",
-            "sourceColumn": "PriceCalculation_Name",
-            "summarizeBy": "none"
-          },
-          {
-            "name": "PriceCalculationCategory_Name",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ],
-            "dataType": "string",
-            "lineageTag": "e214da61-8de2-4431-8a3f-97b2b4964b06",
-            "sourceColumn": "PriceCalculationCategory_Name",
+            "lineageTag": "e5c72b40-ccde-4311-91c0-7b494b5bc047",
+            "sourceColumn": "users",
             "summarizeBy": "none"
           }
         ],
@@ -2162,10 +2178,6 @@
           {
             "name": "PBI_ResultType",
             "value": "Table"
-          },
-          {
-            "name": "PBI_NavigationStepName",
-            "value": "Navigation"
           }
         ],
         "columns": [
@@ -2221,31 +2233,13 @@
         "name": "DeltaTableData_CurrentDebug",
         "annotations": [
           {
-            "name": "PBI_NavigationStepName",
-            "value": "Navigation"
-          },
-          {
             "name": "PBI_ResultType",
             "value": "Table"
           }
         ],
         "columns": [
           {
-            "name": "PriceCalculation_IdDWH",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ],
-            "dataType": "int64",
-            "formatString": "0",
-            "lineageTag": "eaf7f92e-290f-4e46-8ea2-a001e8fb9af3",
-            "sourceColumn": "PriceCalculation_IdDWH",
-            "summarizeBy": "sum"
-          },
-          {
-            "name": "PriceCalculation_IdOrig",
+            "name": "product",
             "annotations": [
               {
                 "name": "SummarizationSetBy",
@@ -2253,12 +2247,12 @@
               }
             ],
             "dataType": "string",
-            "lineageTag": "57a85523-d932-4d20-b319-a261925e917d",
-            "sourceColumn": "PriceCalculation_IdOrig",
+            "lineageTag": "ff67f5a0-eadd-4391-aa68-060fb5cda460",
+            "sourceColumn": "product",
             "summarizeBy": "none"
           },
           {
-            "name": "PriceCalculation_Name",
+            "name": "users",
             "annotations": [
               {
                 "name": "SummarizationSetBy",
@@ -2266,21 +2260,8 @@
               }
             ],
             "dataType": "string",
-            "lineageTag": "7e1ad4fd-a49a-4f89-acf7-eda401332a13",
-            "sourceColumn": "PriceCalculation_Name",
-            "summarizeBy": "none"
-          },
-          {
-            "name": "PriceCalculationCategory_Name",
-            "annotations": [
-              {
-                "name": "SummarizationSetBy",
-                "value": "Automatic"
-              }
-            ],
-            "dataType": "string",
-            "lineageTag": "dbf8ae7e-c81e-4e1e-84d2-dd8355b88a14",
-            "sourceColumn": "PriceCalculationCategory_Name",
+            "lineageTag": "1217c4ea-017f-4131-b18b-8a20d74b3844",
+            "sourceColumn": "users",
             "summarizeBy": "none"
           }
         ],
