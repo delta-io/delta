@@ -54,6 +54,8 @@ case class CapturedSnapshot(snapshot: Snapshot, updateTimestamp: Long)
 trait SnapshotManagement { self: DeltaLog =>
   import SnapshotManagement.verifyDeltaVersions
 
+  // test
+
   @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
 
   @volatile protected var currentSnapshot: CapturedSnapshot = getSnapshotAtInit
