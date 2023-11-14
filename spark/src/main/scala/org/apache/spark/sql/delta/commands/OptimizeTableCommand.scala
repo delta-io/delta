@@ -37,8 +37,7 @@ import org.apache.spark.sql.{AnalysisException, Encoders, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedTable}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.trees.UnaryLike
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -134,7 +133,7 @@ case class OptimizeTableCommand(
     userPartitionPredicates: Seq[String],
     optimizeContext: DeltaOptimizeContext
 )(val zOrderBy: Seq[UnresolvedAttribute])
-  extends OptimizeTableCommandBase with RunnableCommand with UnaryLike[LogicalPlan] {
+  extends OptimizeTableCommandBase with RunnableCommand with UnaryNode {
 
   override val otherCopyArgs: Seq[AnyRef] = zOrderBy :: Nil
 
@@ -244,7 +243,7 @@ class OptimizeExecutor(
       val removedDVs = filesToProcess.filter(_.deletionVector != null).map(_.deletionVector).toSeq
       if (addedFiles.size > 0) {
         val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles, removedDVs)
-        commitAndRetry(txn, getOperation, updates, metrics) { newTxn =>
+        commitAndRetry(txn, getOperation(), updates, metrics) { newTxn =>
           val newPartitionSchema = newTxn.metadata.partitionSchema
           val candidateSetOld = candidateFiles.map(_.path).toSet
           val candidateSetNew = newTxn.filterFiles(partitionPredicate).map(_.path).toSet
@@ -411,7 +410,7 @@ class OptimizeExecutor(
       sparkSession.sparkContext.getLocalProperty(SPARK_JOB_GROUP_ID),
       description)
 
-    val addFiles = txn.writeFiles(repartitionDF).collect {
+    val addFiles = txn.writeFiles(repartitionDF, None, isOptimize = true, Nil).collect {
       case a: AddFile =>
         a.copy(dataChange = false)
       case other =>

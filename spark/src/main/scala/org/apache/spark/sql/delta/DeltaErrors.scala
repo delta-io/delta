@@ -929,7 +929,7 @@ trait DeltaErrorsBase
       spark: SparkSession, deltaVersions: Seq[Long]): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_VERSIONS_NOT_CONTIGUOUS",
-      messageParameters = Array(deltaVersions.toString())
+      messageParameters = Array(deltaVersions.mkString(", "))
     )
   }
 

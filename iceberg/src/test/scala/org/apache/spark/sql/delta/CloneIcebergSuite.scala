@@ -83,7 +83,8 @@ trait CloneIcebergSuiteBase extends QueryTest
     withTable(table, cloneTable) {
       spark.sql(
         s"""CREATE TABLE $table (id bigint, data string)
-           |USING iceberg PARTITIONED BY (data)""".stripMargin)
+           |USING iceberg PARTITIONED BY (data)
+           |TBLPROPERTIES ('write.format.default' = 'PARQUET')""".stripMargin)
       spark.sql(s"INSERT INTO $table VALUES (1, 'a'), (2, 'b'), (3, 'c')")
       spark.sql(s"DELETE FROM $table WHERE data > 'a'")
       checkAnswer(spark.sql(s"SELECT * from $table"), Row(1, "a") :: Nil)

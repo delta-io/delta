@@ -2421,7 +2421,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // Verify commits before the checkpoint are cleaned.
       val earliestExpectedCommitVersion =
         if (advanceClockPastRetentionPeriod) {
-          deltaLog.findEarliestReliableCheckpoint().get
+          deltaLog.findEarliestReliableCheckpoint.get
         } else {
           0L
         }
@@ -2808,7 +2808,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         TestRemovableReaderWriterFeature.name).run(spark)
 
       // Verify commits before the checkpoint are cleaned.
-      val earliestExpectedCommitVersion = deltaLog.findEarliestReliableCheckpoint().get
+      val earliestExpectedCommitVersion = deltaLog.findEarliestReliableCheckpoint.get
       assert(getEarliestCommitVersion(deltaLog) === earliestExpectedCommitVersion)
 
       // Reader+writer feature is removed from the features set.
@@ -2916,7 +2916,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         TestRemovableReaderWriterFeature.name).run(spark)
 
       // Verify commits before the checkpoint are cleaned.
-      val earliestExpectedCommitVersion = deltaLog.findEarliestReliableCheckpoint().get
+      val earliestExpectedCommitVersion = deltaLog.findEarliestReliableCheckpoint.get
       assert(getEarliestCommitVersion(deltaLog) === earliestExpectedCommitVersion)
     }
   }

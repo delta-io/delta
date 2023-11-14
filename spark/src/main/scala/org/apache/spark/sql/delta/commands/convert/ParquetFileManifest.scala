@@ -191,7 +191,7 @@ class MetadataLogFileManifest(
   protected def doList(): Dataset[SerializableFileStatus] = {
     import org.apache.spark.sql.delta.implicits._
 
-    val rdd = spark.sparkContext.parallelize(index.allFiles).mapPartitions { _
+    val rdd = spark.sparkContext.parallelize(index.allFiles()).mapPartitions { _
         .map(SerializableFileStatus.fromStatus)
     }
     spark.createDataset(rdd)

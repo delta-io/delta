@@ -36,7 +36,7 @@ class LineClosableIterator(_reader: Reader) extends ClosableIterator[String] {
   // Whether we have consumed all data in the reader.
   private var finished = false
 
-  override def hasNext(): Boolean = {
+  override def hasNext: Boolean = {
     if (!finished) {
       // Check whether we have closed the reader before reading. Even if `nextValue` is valid, we
       // still don't return `nextValue` after a reader is closed. Otherwise, it would be confusing.

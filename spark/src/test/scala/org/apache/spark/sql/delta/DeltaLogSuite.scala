@@ -354,7 +354,7 @@ class DeltaLogSuite extends QueryTest
       val ex = intercept[IllegalStateException] {
         staleLog.update()
       }
-      assert(ex.getMessage.contains("Versions (Vector(0, 2)) are not contiguous."))
+      assert(ex.getMessage.contains("Versions (0, 2) are not contiguous."))
     }
   }
 

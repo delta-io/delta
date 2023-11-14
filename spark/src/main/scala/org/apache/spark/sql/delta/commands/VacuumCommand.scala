@@ -242,7 +242,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           .where(col("count") === 1)
 
 
-        val sizeOfDataToDeleteRow = diff.agg(sum("length").cast("long")).first
+        val sizeOfDataToDeleteRow = diff.agg(sum("length").cast("long")).first()
         val sizeOfDataToDelete = if (sizeOfDataToDeleteRow.isNullAt(0)) {
           0L
         } else {
