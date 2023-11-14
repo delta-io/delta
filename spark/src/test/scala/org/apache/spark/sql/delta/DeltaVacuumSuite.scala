@@ -628,10 +628,15 @@ class DeltaVacuumSuite
       txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
       // Create a Seq of Rows containing the data
       val data = Seq(
+        Row(s"${deltaLog.dataPath}", 300000L, true, 0L),
         Row(s"${deltaLog.dataPath}/file1.txt", 300000L, false, 0L),
         Row(s"${deltaLog.dataPath}/file2.txt", 300000L, false, 0L),
         Row(s"${deltaLog.dataPath}/_underscore_col_=10/test.txt", 300000L, false, 0L),
-        Row(s"${deltaLog.dataPath}/_underscore_col_=10/test2.txt", 300000L, false, 0L)
+        Row(s"${deltaLog.dataPath}/_underscore_col_=10/test2.txt", 300000L, false, 0L),
+        // Below file is not within Delta table path and should be ignored by vacuum
+        Row(s"/tmp/random/_underscore_col_=10/test2.txt", 300000L, false, 0L),
+        // Below are Delta table root location and vacuum must safely handle them
+        Row(s"${deltaLog.dataPath}", 300000L, true, 0L)
       )
       val inventory = spark.createDataFrame(spark.sparkContext.parallelize(data),
         VacuumCommand.INVENTORY_SCHEMA)
@@ -644,11 +649,15 @@ class DeltaVacuumSuite
         CheckFiles(Seq("file2.txt", "_underscore_col_=10")),
         LogicallyDeleteFile("_underscore_col_=10/test.txt"),
         AdvanceClock(defaultTombstoneInterval + 1000),
+        GCByInventory(dryRun = true, expectedDf = Seq(
+          s"${deltaLog.dataPath}/file2.txt",
+          s"${deltaLog.dataPath}/_underscore_col_=10/test.txt",
+          s"${deltaLog.dataPath}/_underscore_col_=10/test2.txt"
+        ), inventory = Some(inventory)),
         GCByInventory(dryRun = false, expectedDf = Seq(tempDir), inventory = Some(inventory)),
         CheckFiles(Seq("file1.txt")),
-        CheckFiles(Seq("file2.txt"), exist = false),
-        CheckFiles(Seq("_underscore_col_=10/test.txt"), exist = false),
-        CheckFiles(Seq("_underscore_col_=10/test2.txt"), exist = false)
+        CheckFiles(Seq("file2.txt", "_underscore_col_=10/test.txt",
+          "_underscore_col_=10/test2.txt"), exist = false)
       )
     }
   }
@@ -694,11 +703,9 @@ class DeltaVacuumSuite
         )
         sql(s"vacuum delta.`$path` using inventory delta.`$inventoryPath` retain 0 hours")
         gcTest(deltaLog, clock)(
-          CheckFiles(Seq("file1.txt"), exist = false),
-          CheckFiles(Seq("file2.txt"), exist = false),
+          CheckFiles(Seq("file1.txt", "file2.txt"), exist = false),
           // hidden files must not be dropped
-          CheckFiles(Seq("_underscore_col_=10/test.txt")),
-          CheckFiles(Seq("_underscore_col_=10/test2.txt"))
+          CheckFiles(Seq("_underscore_col_=10/test.txt", "_underscore_col_=10/test2.txt"))
         )
       }
     }
@@ -747,11 +754,9 @@ class DeltaVacuumSuite
              |retain 0 hours""".stripMargin)
         gcTest(deltaLog, clock)(
           AdvanceClock(defaultTombstoneInterval + 1000),
-          CheckFiles(Seq("file1.txt"), exist = false),
-          CheckFiles(Seq("file2.txt"), exist = false),
+          CheckFiles(Seq("file1.txt", "file2.txt"), exist = false),
           // hidden files must not be dropped
-          CheckFiles(Seq("_underscore_col_=10/test.txt")),
-          CheckFiles(Seq("_underscore_col_=10/test2.txt"))
+          CheckFiles(Seq("_underscore_col_=10/test.txt", "_underscore_col_=10/test2.txt"))
         )
       }
     }

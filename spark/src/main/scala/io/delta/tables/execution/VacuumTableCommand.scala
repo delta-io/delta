@@ -40,13 +40,9 @@ import org.apache.spark.sql.types.StringType
 case class VacuumTableCommand(
     override val child: LogicalPlan,
     horizonHours: Option[Double],
-<<<<<<< HEAD
-    dryRun: Boolean) extends RunnableCommand with UnaryNode with DeltaCommand {
-=======
     inventoryTable: Option[LogicalPlan],
     inventoryQuery: Option[String],
-    dryRun: Boolean) extends RunnableCommand with UnaryLike[LogicalPlan]{
->>>>>>> c73b704b (Use inventory reservior as source for all files and dirs)
+    dryRun: Boolean) extends RunnableCommand with UnaryNode with DeltaCommand {
 
   override val output: Seq[Attribute] =
     Seq(AttributeReference("path", StringType, nullable = true)())
