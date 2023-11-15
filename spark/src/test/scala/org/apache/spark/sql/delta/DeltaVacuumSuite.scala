@@ -645,8 +645,7 @@ class DeltaVacuumSuite
         CreateFile("file2.txt", commitToActionLog = false, Map("_underscore_col_" -> "10")),
         CreateFile("_underscore_col_=10/test.txt", true, Map("_underscore_col_" -> "10")),
         CreateFile("_underscore_col_=10/test2.txt", false, Map("_underscore_col_" -> "10")),
-        CheckFiles(Seq("file1.txt", "_underscore_col_=10")),
-        CheckFiles(Seq("file2.txt", "_underscore_col_=10")),
+        CheckFiles(Seq("file1.txt", "_underscore_col_=10", "file2.txt")),
         LogicallyDeleteFile("_underscore_col_=10/test.txt"),
         AdvanceClock(defaultTombstoneInterval + 1000),
         GCByInventory(dryRun = true, expectedDf = Seq(
@@ -697,6 +696,7 @@ class DeltaVacuumSuite
         gcTest(deltaLog, clock)(
           CreateFile("file1.txt", commitToActionLog = false),
           CreateFile("file2.txt", commitToActionLog = false),
+          // Delta marks dirs starting with `_` as hidden unless specified as partition folder
           CreateFile("_underscore_col_=10/test.txt", false),
           CreateFile("_underscore_col_=10/test2.txt", false),
           AdvanceClock(defaultTombstoneInterval + 1000)
@@ -746,6 +746,7 @@ class DeltaVacuumSuite
         gcTest(deltaLog, clock)(
           CreateFile("file1.txt", commitToActionLog = false),
           CreateFile("file2.txt", commitToActionLog = false),
+          // Delta marks dirs starting with `_` as hidden unless specified as partition folder
           CreateFile("_underscore_col_=10/test.txt", false),
           CreateFile("_underscore_col_=10/test2.txt", false)
         )

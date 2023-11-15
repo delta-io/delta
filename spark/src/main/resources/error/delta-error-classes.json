@@ -1150,7 +1150,7 @@
     "message" : [
       "The schema for the specified INVENTORY does not contain all of the required fields. Required fields are: <expectedSchema>"
     ],
-    "sqlState" : "22000"
+    "sqlState" : "42000"
   },
   "DELTA_INVALID_ISOLATION_LEVEL" : {
     "message" : [
