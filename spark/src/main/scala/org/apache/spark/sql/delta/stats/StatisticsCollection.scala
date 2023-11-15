@@ -631,9 +631,19 @@ object StatisticsCollection extends DeltaCommand {
       cols.get(field.name).flatMap { paths =>
         field.dataType match {
           case _ if paths.forall(_.isEmpty) =>
-            val fullPath = (parentPath:+ field.name).mkString(".")
+            // Convert full path to lower cases to avoid schema name contains upper case
+            // characters.
+            val fullPath = (parentPath :+ field.name).mkString(".").toLowerCase(Locale.ROOT)
             Some(convertToPhysicalName(fullPath, field, schemaNames, mappingMode))
           case fieldSchema: StructType =>
+            // Convert full path to lower cases to avoid schema name contains upper case
+            // characters.
+            val fullPath = (parentPath :+ field.name).mkString(".").toLowerCase(Locale.ROOT)
+            val physicalName = if (mappingMode == NoMapping || schemaNames.contains(fullPath)) {
+              field.name
+            } else {
+              field.metadata.getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+            }
             // Recurse into the child fields of this struct.
             val newSchema = filterSchema(
               schemaNames,
@@ -642,7 +652,7 @@ object StatisticsCollection extends DeltaCommand {
               mappingMode,
               parentPath:+ field.name
             )
-            Some(field.copy(dataType = newSchema))
+            Some(field.copy(name = physicalName, dataType = newSchema))
           case _ =>
             // Filter expected a nested field and this isn't nested. No match
             None
@@ -664,7 +674,9 @@ object StatisticsCollection extends DeltaCommand {
       mappingMode: DeltaColumnMappingMode): StructType = {
     spec.deltaStatsColumnNamesOpt
       .map { indexedColNames =>
-        val indexedColPaths = indexedColNames.map(_.nameParts)
+        // convert all index columns to lower case characters to avoid user assigning any upper
+        // case characters.
+        val indexedColPaths = indexedColNames.map(_.nameParts.map(_.toLowerCase(Locale.ROOT)))
         filterSchema(schemaNames, schema, indexedColPaths, mappingMode)
       }
       .getOrElse {
