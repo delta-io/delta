@@ -88,7 +88,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite {
     val e = intercept[IllegalArgumentException] {
       jsonHandler.parseStructType(new ArrayType(StringType.STRING, true).toJson())
     }
-    assert(e.getMessage.contains("as a valid StructType"))
+    assert(e.getMessage.contains("Could not parse the following JSON as a valid StructType"))
   }
 
   test("parseStructType: invalid JSON") {

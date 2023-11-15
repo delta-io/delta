@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.internal;
+package io.delta.kernel.defaults.internal.types;
 
 import java.util.*;
 import java.util.function.Function;
@@ -39,8 +39,8 @@ public class DataTypeParser {
         if (parsedType instanceof StructType) {
             return (StructType) parsedType;
         } else {
-            throw new IllegalArgumentException(
-                String.format("Could not parse %s as a valid StructType", json));
+            throw new IllegalArgumentException(String.format(
+                "Could not parse the following JSON as a valid StructType:\n%s", json));
         }
     }
 
@@ -72,7 +72,7 @@ public class DataTypeParser {
      * }
      * </pre>
      */
-    public static DataType parseDataType(JsonNode json) {
+    protected static DataType parseDataType(JsonNode json) {
         switch (json.getNodeType()) {
             case STRING:
                 // simple types are stored as just a string
@@ -89,8 +89,8 @@ public class DataTypeParser {
                         return parseMapType(json);
                 }
             default:
-                throw new IllegalArgumentException(
-                    String.format("Could not parse %s as a valid Delta data type", json));
+                throw new IllegalArgumentException(String.format(
+                    "Could not parse the following JSON as a valid Delta data type:\n%s", json));
         }
     }
 
@@ -100,7 +100,8 @@ public class DataTypeParser {
      */
     private static ArrayType parseArrayType(JsonNode json) {
         checkArgument(json.isObject() && json.size() == 3,
-            String.format("Expected JSON object with 3 fields for array data type %s", json));
+            String.format(
+                "Expected JSON object with 3 fields for array data type but got:\n%s", json));
         boolean containsNull = getBooleanField(json, "containsNull");
         DataType dataType = parseDataType(getNonNullField(json, "elementType"));
         return new ArrayType(dataType, containsNull);
@@ -112,7 +113,8 @@ public class DataTypeParser {
      */
     private static MapType parseMapType(JsonNode json) {
         checkArgument(json.isObject() && json.size() == 4,
-            String.format("Expected JSON object with 4 fields for map data type %s", json));
+            String.format(
+                "Expected JSON object with 4 fields for map data type but got:\n%s", json));
         boolean valueContainsNull = getBooleanField(json, "valueContainsNull");
         DataType keyType = parseDataType(getNonNullField(json, "keyType"));
         DataType valueType = parseDataType(getNonNullField(json, "valueType"));
@@ -125,10 +127,11 @@ public class DataTypeParser {
      */
     private static StructType parseStructType(JsonNode json) {
         checkArgument(json.isObject() && json.size() == 2,
-            String.format("Expected JSON object with 2 fields for struct data type %s", json));
+            String.format(
+                "Expected JSON object with 2 fields for struct data type but got:\n%s", json));
         JsonNode fieldsNode = getNonNullField(json, "fields");
         checkArgument(fieldsNode.isArray(),
-            String.format("Expected array for fieldName=%s in %s", "fields", json));
+            String.format("Expected array for fieldName=%s in:\n%s", "fields", json));
         Iterator<JsonNode> fields = fieldsNode.elements();
         List<StructField> parsedFields = new ArrayList<>();
         while (fields.hasNext()) {
@@ -273,7 +276,7 @@ public class DataTypeParser {
         JsonNode node = rootNode.get(fieldName);
         if (node == null || node.isNull()) {
             throw new IllegalArgumentException(
-                String.format("Expected non-null for fieldName=%s in %s", fieldName, rootNode));
+                String.format("Expected non-null for fieldName=%s in:\n%s", fieldName, rootNode));
         }
         return node;
     }
@@ -281,14 +284,14 @@ public class DataTypeParser {
     private static String getStringField(JsonNode rootNode, String fieldName) {
         JsonNode node = getNonNullField(rootNode, fieldName);
         checkArgument(node.isTextual(),
-            String.format("Expected string for fieldName=%s in %s", fieldName, rootNode));
+            String.format("Expected string for fieldName=%s in:\n%s", fieldName, rootNode));
         return node.textValue(); // double check this only works for string values! and isTextual()!
     }
 
     private static boolean getBooleanField(JsonNode rootNode, String fieldName) {
         JsonNode node = getNonNullField(rootNode, fieldName);
         checkArgument(node.isBoolean(),
-            String.format("Expected boolean for fieldName=%s in %s", fieldName, rootNode));
+            String.format("Expected boolean for fieldName=%s in:\n%s", fieldName, rootNode));
         return node.booleanValue();
     }
 

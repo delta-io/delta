@@ -13,13 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.client
+package io.delta.kernel.defaults.internal.types
 
 import scala.reflect.ClassTag
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import io.delta.kernel.defaults.internal.DataTypeParser
 import org.scalatest.funsuite.AnyFunSuite
+
 import io.delta.kernel.types._
 
 class DataTypeParserSuite extends AnyFunSuite {
@@ -188,14 +188,14 @@ class DataTypeParserSuite extends AnyFunSuite {
         |  "two" : "val2"
         |}
         |""".stripMargin,
-      "a valid Delta data type"
+      "Could not parse the following JSON as a valid Delta data type"
     )
   }
 
   test("parseDataType: not a valid JSON node (not a string or object)") {
     checkError[IllegalArgumentException](
       "0",
-      "Could not parse 0 as a valid Delta data type"
+      "Could not parse the following JSON as a valid Delta data type"
     )
   }
 }

@@ -59,9 +59,9 @@ public class StructField {
     private final FieldMetadata metadata;
 
     public StructField(
-        String name,
-        DataType dataType,
-        boolean nullable) {
+            String name,
+            DataType dataType,
+            boolean nullable) {
         this.name = name;
         this.dataType = dataType;
         this.nullable = nullable;
@@ -69,10 +69,10 @@ public class StructField {
     }
 
     public StructField(
-        String name,
-        DataType dataType,
-        boolean nullable,
-        FieldMetadata metadata) {
+            String name,
+            DataType dataType,
+            boolean nullable,
+            FieldMetadata metadata) {
         this.name = name;
         this.dataType = dataType;
         this.nullable = nullable;
