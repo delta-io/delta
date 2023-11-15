@@ -80,7 +80,7 @@ public class ScanStateRow extends GenericRow {
     public static StructType getLogicalSchema(TableClient tableClient, Row scanState) {
         String serializedSchema =
             scanState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
-        return tableClient.getJsonHandler().parseStructType(serializedSchema);
+        return tableClient.getJsonHandler().deserializeStructType(serializedSchema);
     }
 
     /**
@@ -94,7 +94,7 @@ public class ScanStateRow extends GenericRow {
     public static StructType getPhysicalSchema(TableClient tableClient, Row scanState) {
         String serializedSchema =
             scanState.getString(COL_NAME_TO_ORDINAL.get("physicalSchemaString"));
-        return tableClient.getJsonHandler().parseStructType(serializedSchema);
+        return tableClient.getJsonHandler().deserializeStructType(serializedSchema);
     }
 
     /**

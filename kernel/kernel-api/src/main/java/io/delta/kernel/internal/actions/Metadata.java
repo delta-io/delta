@@ -40,7 +40,7 @@ public class Metadata {
 
         final String schemaJson = requireNonNull(vector.getChild(4), rowId, "schemaString")
             .getString(rowId);
-        StructType schema = tableClient.getJsonHandler().parseStructType(schemaJson);
+        StructType schema = tableClient.getJsonHandler().deserializeStructType(schemaJson);
 
         return new Metadata(
             requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),

@@ -78,11 +78,12 @@ public class DefaultJsonHandler
     }
 
     @Override
-    public StructType parseStructType(String schemaString) {
+    public StructType deserializeStructType(String structTypeJson) {
         try {
-            return DataTypeParser.parseSchema(objectMapper.readTree(schemaString));
+            return DataTypeParser.parseSchema(objectMapper.readTree(structTypeJson));
         } catch (JsonProcessingException ex) {
-            throw new RuntimeException(String.format("Could not parse JSON: %s", schemaString), ex);
+            throw new RuntimeException(
+                String.format("Could not parse JSON: %s", structTypeJson), ex);
         }
     }
 

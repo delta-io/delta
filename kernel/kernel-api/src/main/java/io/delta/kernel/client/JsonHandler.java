@@ -57,11 +57,10 @@ public interface JsonHandler
      * <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types">
      *    schema serialization rules </a>.
      *
-     * @param schemaString the JSON formatted schema string to parse
+     * @param structTypeJson the JSON formatted schema string to parse
      * @return the parsed {@link StructType}
      */
-    // TODO solidify method name
-    StructType parseStructType(String schemaString);
+    StructType deserializeStructType(String structTypeJson);
 
     /**
      * Read and parse the JSON format file at given locations and return the data as a

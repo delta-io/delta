@@ -29,7 +29,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite {
   val jsonHandler = new DefaultJsonHandler(new Configuration());
 
   //////////////////////////////////////////////////////////////////////////////////
-  // END-TO-END TESTS FOR parseStructType (more tests in DataTypeParserSuite)
+  // END-TO-END TESTS FOR deserializeStructType (more tests in DataTypeParserSuite)
   //////////////////////////////////////////////////////////////////////////////////
 
   private def sampleMetadata: FieldMetadata = FieldMetadata.builder()
@@ -40,7 +40,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite {
     .putString("string", "value")
     .build()
 
-  test("parseStructType: primitive type round trip") {
+  test("deserializeStructType: primitive type round trip") {
     val fields = BasePrimitiveType.getAllPrimitiveTypes().asScala.flatMap { dataType =>
       Seq(
         new StructField("col1" + dataType, dataType, true),
@@ -55,11 +55,11 @@ class DefaultJsonHandlerSuite extends AnyFunSuite {
 
     val expSchema = new StructType(fields.asJava);
     val serializedSchema = expSchema.toJson
-    val actSchema = jsonHandler.parseStructType(serializedSchema)
+    val actSchema = jsonHandler.deserializeStructType(serializedSchema)
     assert(expSchema == actSchema)
   }
 
-  test("parseStructType: complex type round trip") {
+  test("deserializeStructType: complex type round trip") {
     val arrayType = new ArrayType(IntegerType.INTEGER, true)
     val arrayArrayType = new ArrayType(arrayType, false)
     val mapType = new MapType(FloatType.FLOAT, BinaryType.BINARY, false)
@@ -80,20 +80,20 @@ class DefaultJsonHandlerSuite extends AnyFunSuite {
       .add("col6", structAllType, false)
 
     val serializedSchema = expSchema.toJson
-    val actSchema = jsonHandler.parseStructType(serializedSchema)
+    val actSchema = jsonHandler.deserializeStructType(serializedSchema)
     assert(expSchema == actSchema)
   }
 
-  test("parseStructType: not a StructType") {
+  test("deserializeStructType: not a StructType") {
     val e = intercept[IllegalArgumentException] {
-      jsonHandler.parseStructType(new ArrayType(StringType.STRING, true).toJson())
+      jsonHandler.deserializeStructType(new ArrayType(StringType.STRING, true).toJson())
     }
     assert(e.getMessage.contains("Could not parse the following JSON as a valid StructType"))
   }
 
-  test("parseStructType: invalid JSON") {
+  test("deserializeStructType: invalid JSON") {
     val e = intercept[RuntimeException] {
-      jsonHandler.parseStructType(
+      jsonHandler.deserializeStructType(
         """
           |{
           |  "type" : "struct,
