@@ -111,28 +111,6 @@ class SnapshotManagerSuite extends AnyFunSuite {
 
   /* ------------------HELPER METHODS------------------ */
 
-  private val logPath = new Path("/fake/path/to/table/_delta_log")
-
-  private def deltaFileStatuses(deltaVersions: Seq[Long]): Seq[FileStatus] = {
-    assert(deltaVersions.size === deltaVersions.toSet.size)
-    deltaVersions.map(v => FileStatus.of(FileNames.deltaFile(logPath, v), v, v))
-  }
-
-  private def singularCheckpointFileStatuses(checkpointVersions: Seq[Long]): Seq[FileStatus] = {
-    assert(checkpointVersions.size == checkpointVersions.toSet.size)
-    checkpointVersions.map(v =>
-      FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v))
-  }
-
-  private def multiCheckpointFileStatuses(
-      checkpointVersions: Seq[Long], numParts: Int): Seq[FileStatus] = {
-    assert(checkpointVersions.size == checkpointVersions.toSet.size)
-    checkpointVersions.flatMap { v =>
-      FileNames.checkpointFileWithParts(logPath, v, numParts).asScala
-        .map(p => FileStatus.of(p.toString, v, v))
-    }
-  }
-
   private def checkLogSegment(
       logSegment: LogSegment,
       expectedVersion: Long,
@@ -723,6 +701,28 @@ class SnapshotManagerSuite extends AnyFunSuite {
 }
 
 object SnapshotManagerSuite {
+
+  private val logPath = new Path("/fake/path/to/table/_delta_log")
+
+  private def deltaFileStatuses(deltaVersions: Seq[Long]): Seq[FileStatus] = {
+    assert(deltaVersions.size == deltaVersions.toSet.size)
+    deltaVersions.map(v => FileStatus.of(FileNames.deltaFile(logPath, v), v, v))
+  }
+
+  private def singularCheckpointFileStatuses(checkpointVersions: Seq[Long]): Seq[FileStatus] = {
+    assert(checkpointVersions.size == checkpointVersions.toSet.size)
+    checkpointVersions.map(v =>
+      FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v))
+  }
+
+  private def multiCheckpointFileStatuses(
+    checkpointVersions: Seq[Long], numParts: Int): Seq[FileStatus] = {
+    assert(checkpointVersions.size == checkpointVersions.toSet.size)
+    checkpointVersions.flatMap { v =>
+      FileNames.checkpointFileWithParts(logPath, v, numParts).asScala
+        .map(p => FileStatus.of(p.toString, v, v))
+    }
+  }
 
   /**
    * Create input function for createMockTableClient to implement listFrom from a list of
