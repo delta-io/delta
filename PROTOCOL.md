@@ -1080,15 +1080,25 @@ When the Clustered Table is supported (when the `writerFeatures` field of a tabl
   - By default, a clustering implementation must only recluster files that have the field `clusteringProvider` set to the name of the same clustering implementation, or to the names of other clustering implementations that are superseded by the current clustering implementation. In addition, a clustering implementation may cluster any files with an unset `clusteringProvider` field (i.e., unclustered files).
   - Writer is not required to cluster a specific file at any specific moment.
   - A clustering implementation is free to add additional information such as adding a new user-controlled metadata domain to keep track of its metadata.
+- Writers must not define clustered and partitioned table at the same time.
 
 The following is an example for the `domainMetadata` action defintion of a table that leverages column mapping.
 ```json
 {
   "domainMetadata": {
     "domain": "delta.clustering",
-    "configuration": "{\"clusteringColumns\":[{\"physicalName\":[\"col-daadafd7-7c20-4697-98f8-bff70199b1f9\"]}]}",
+    "configuration": "{\"clusteringColumns\":[\"col-daadafd7-7c20-4697-98f8-bff70199b1f9\", \"col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e\"]}",
     "removed": false
   }
+}
+```
+The example above converts `configuration` field into JSON format, including escaping characters. Here's how it looks in plain JSON for better understanding.
+```json
+{
+  "clusteringColumns": [
+    "col-daadafd7-7c20-4697-98f8-bff70199b1f9",
+    "col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e"
+  ]
 }
 ```
 
@@ -1787,7 +1797,6 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |-- tags: map<string,string>
 |    |-- baseRowId: long
 |    |-- defaultRowCommitVersion: long
-|    |-- clusteringProvider: string
 |    |-- partitionValues_parsed: struct
 |    |    |-- date: date
 |    |    |-- region: string
@@ -1877,7 +1886,6 @@ Checkpoint schema (just the `add` column):
 |    |-- tags: map<string,string>
 |    |-- baseRowId: long
 |    |-- defaultRowCommitVersion: long
-|    |-- clusteringProvider: string
 |    |-- partitionValues_parsed: struct
 |    |    |-- col-798f4abc-c63f-444c-9a04-e2cf1ecba115: date
 |    |    |-- col-19034dc3-8e3d-4156-82fc-8e05533c088e: string
