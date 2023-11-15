@@ -44,12 +44,6 @@ class CheckpointsSuite
   with DeltaCheckpointTestUtils
   with DeltaSQLCommandTest {
 
-  protected override def sparkConf = {
-    // Set the gs LogStore impl to `LocalLogStore` so that it will work with `FakeGCSFileSystem`.
-    // The default one is `HDFSLogStore` which requires a `FileContext` but we don't have one.
-    super.sparkConf.set("spark.delta.logStore.gs.impl", classOf[LocalLogStore].getName)
-  }
-
   def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
     for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
       test(s"$testName [v2CheckpointFormat: $checkpointFormat]") {
@@ -80,6 +74,12 @@ class CheckpointsSuite
         throw new IllegalStateException(s"The underlying checkpoint is not a v2 checkpoint. " +
           s"It is: ${other.getClass.getName}")
     }
+  }
+
+  protected override def sparkConf = {
+    // Set the gs LogStore impl to `LocalLogStore` so that it will work with `FakeGCSFileSystem`.
+    // The default one is `HDFSLogStore` which requires a `FileContext` but we don't have one.
+    super.sparkConf.set("spark.delta.logStore.gs.impl", classOf[LocalLogStore].getName)
   }
 
   test("checkpoint metadata - checkpoint schema above the configured threshold are not" +
