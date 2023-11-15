@@ -1059,7 +1059,7 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
 
 The Clustered Table feature facilitates the physical clustering of rows that share similar values on a predefined set of clustering columns.
 This enhances query performance when selective filters are applied to these clustering columns through data skipping.
-Clustering columns must be specified during the initial definition of a clustered table, and they can be modified after the table has been created.
+Clustering columns can be sprecified when creating a table or later, as long as the table doesn't have partition columns.
 
 A table is defined as a clustered table through the following criteria:
 - When the feature `clustering` exists in the table `protocol`'s `writerFeatures`, then we say that the table is a clustered table.
@@ -1067,7 +1067,7 @@ A table is defined as a clustered table through the following criteria:
 
 Enablement:
 - The table must be on Writer Version 7.
-- The feature `clustering` must exist in the table `protocol`'s `writerFeatures`.
+- The feature `clustering` must exist in the table `protocol`'s `writerFeatures`, either during its creation or at a later stage, provided the table does not have partition columns.
 
 ## Writer Requirements for Clustered Table
 
