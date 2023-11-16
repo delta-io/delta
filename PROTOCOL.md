@@ -408,8 +408,9 @@ tags | Map[String, String] | Map containing metadata about this logical file | o
 deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
 baseRowId | Long  | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids) | optional
 defaultRowCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table. | optional
+clusteringProvider | String | The name of the clustering implementation. See also [Clustered Table](#clustered-table)| optional
 
-The following is an example `add` action:
+The following is an example `add` action for a partitioned table:
 ```json
 {
   "add": {
@@ -420,6 +421,23 @@ The following is an example `add` action:
     "dataChange": true,
     "baseRowId": 4071,
     "defaultRowCommitVersion": 41,
+    "stats": "{\"numRecords\":1,\"minValues\":{\"val..."
+  }
+}
+```
+
+The following is an example `add` action for a clustered table:
+```json
+{
+  "add": {
+    "path": "date=2017-12-10/part-000...c000.gz.parquet",
+    "partitionValues": {},
+    "size": 841454,
+    "modificationTime": 1512909768000,
+    "dataChange": true,
+    "baseRowId": 4071,
+    "defaultRowCommitVersion": 41,
+    "clusteringProvider": "liquid",
     "stats": "{\"numRecords\":1,\"minValues\":{\"val..."
   }
 }
@@ -1060,7 +1078,7 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
 
 The Clustered Table feature facilitates the physical clustering of rows that share similar values on a predefined set of clustering columns.
 This enhances query performance when selective filters are applied to these clustering columns through data skipping.
-Clustering columns must be specified during the initial definition of a clustered table, and they can be modified after the table has been created.
+Clustering columns can be specified during the initial creation of a table, or they can be added later, provided that the table doesn't have partition columns.
 
 A table is defined as a clustered table through the following criteria:
 - When the feature `clustering` exists in the table `protocol`'s `writerFeatures`, then we say that the table is a clustered table.
@@ -1068,19 +1086,40 @@ A table is defined as a clustered table through the following criteria:
 
 Enablement:
 - The table must be on Writer Version 7.
-- The feature `clustering` must exist in the table `protocol`'s `writerFeatures`.
+- The feature `clustering` must exist in the table `protocol`'s `writerFeatures`, either during its creation or at a later stage, provided the table does not have partition columns.
 
 ## Writer Requirements for Clustered Table
 
 When the Clustered Table is supported (when the `writerFeatures` field of a table's `protocol` action contains `clustering`), then:
-- Writers must write out [per-file statistics](#per-file-statistics) and per-column statistics for clustering columns in `add` action. 
-  Failure to collect per-column statistics for clustering columns will result in an error when defining a clustered table or making changes to the clustering columns.
 - Writers must track clustering column names in a `domainMetadata` action with `delta.clustering` as the `domain` and a `configuration` containing all clustering column names.
   If [Column Mapping](#column-mapping) is enabled, the physical column names should be used.
-- When a clustering implementation clusters files, writers must incorporate a `tag`  with `CLUSTERED_BY` as the key and the name of the clustering implementation as the corresponding value in `add` action.
-  - A clustering implementation must only cluster files that belong to the implementation or files that do not have the `CLUSTERED_BY` tag (i.e., unclustered).
-  - Writer is not required to cluster a specific file at any specific moment though it is still obligated to record accurate statistics. However, if it decides to cluster a particular file, it must include the CLUSTERED_BY tag.
+- Writers must write out [per-file statistics](#per-file-statistics) and per-column statistics for clustering columns in `add` action. 
+  If a new column is included in the clustering columns list, it is required for all table files to have statistics for these added columns.
+- When a clustering implementation clusters files, writers must set the name of the clustering implementation in the `clusteringProvider` field when adding `add` actions for clustered files.
+  - By default, a clustering implementation must only recluster files that have the field `clusteringProvider` set to the name of the same clustering implementation, or to the names of other clustering implementations that are superseded by the current clustering implementation. In addition, a clustering implementation may cluster any files with an unset `clusteringProvider` field (i.e., unclustered files).
+  - Writer is not required to cluster a specific file at any specific moment.
   - A clustering implementation is free to add additional information such as adding a new user-controlled metadata domain to keep track of its metadata.
+- Writers must not define clustered and partitioned table at the same time.
+
+The following is an example for the `domainMetadata` action defintion of a table that leverages column mapping.
+```json
+{
+  "domainMetadata": {
+    "domain": "delta.clustering",
+    "configuration": "{\"clusteringColumns\":[\"col-daadafd7-7c20-4697-98f8-bff70199b1f9\", \"col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e\"]}",
+    "removed": false
+  }
+}
+```
+The example above converts `configuration` field into JSON format, including escaping characters. Here's how it looks in plain JSON for better understanding.
+```json
+{
+  "clusteringColumns": [
+    "col-daadafd7-7c20-4697-98f8-bff70199b1f9",
+    "col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e"
+  ]
+}
+```
 
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
