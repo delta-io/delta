@@ -1059,7 +1059,7 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
 
 The Clustered Table feature facilitates the physical clustering of rows that share similar values on a predefined set of clustering columns.
 This enhances query performance when selective filters are applied to these clustering columns through data skipping.
-Clustering columns can be sprecified when creating a table or later, as long as the table doesn't have partition columns.
+Clustering columns can be specified during the initial creation of a table, or they can be added later, provided that the table doesn't have partition columns.
 
 A table is defined as a clustered table through the following criteria:
 - When the feature `clustering` exists in the table `protocol`'s `writerFeatures`, then we say that the table is a clustered table.
