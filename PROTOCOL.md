@@ -431,6 +431,8 @@ The following is an example `add` action for a clustered table:
 {
   "add": {
     "path": "date=2017-12-10/part-000...c000.gz.parquet",
+    "partitionValues": {},
+    "size": 841454,
     "size": 841454,
     "modificationTime": 1512909768000,
     "dataChange": true,
