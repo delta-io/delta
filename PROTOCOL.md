@@ -410,12 +410,27 @@ baseRowId | Long  | Default generated Row ID of the first row in the file. The d
 defaultRowCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table. | optional
 clusteringProvider | String | The name of the clustering implementation. See also [Clustered Table](#clustered-table)| optional
 
-The following is an example `add` action:
+The following is an example `add` action for a partitioned table:
 ```json
 {
   "add": {
     "path": "date=2017-12-10/part-000...c000.gz.parquet",
     "partitionValues": {"date": "2017-12-10"},
+    "size": 841454,
+    "modificationTime": 1512909768000,
+    "dataChange": true,
+    "baseRowId": 4071,
+    "defaultRowCommitVersion": 41,
+    "stats": "{\"numRecords\":1,\"minValues\":{\"val..."
+  }
+}
+```
+
+The following is an example `add` action for a clustered table:
+```json
+{
+  "add": {
+    "path": "date=2017-12-10/part-000...c000.gz.parquet",
     "size": 841454,
     "modificationTime": 1512909768000,
     "dataChange": true,
