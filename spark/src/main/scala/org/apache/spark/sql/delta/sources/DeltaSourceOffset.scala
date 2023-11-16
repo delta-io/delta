@@ -114,6 +114,11 @@ object DeltaSourceOffset extends Logging {
   // The index for an IndexedFile that is right after a metadata change. (from VERSION_3)
   val POST_METADATA_CHANGE_INDEX: Long = -19
 
+  // A value close to the end of the Long space. This is used to indicate that we are at the end of
+  // a reservoirVersion and need to move on to the next one. This should never be serialized into
+  // the offset log.
+  val END_INDEX: Long = Long.MaxValue - 100
+
   /**
    * The ONLY external facing constructor to create a DeltaSourceOffset in memory.
    * @param reservoirId Table id
@@ -230,6 +235,8 @@ object DeltaSourceOffset extends Logging {
       } else {
         o.index
       }
+      assert(offsetIndex != END_INDEX, "Should not deserialize END_INDEX")
+
       // Leverage the only external facing constructor to initialize with latest sourceVersion
       DeltaSourceOffset(
         reservoirId = o.reservoirId,
@@ -248,6 +255,8 @@ object DeltaSourceOffset extends Logging {
         o: DeltaSourceOffset,
         gen: JsonGenerator,
         provider: SerializerProvider): Unit = {
+      assert(o.index != END_INDEX, "Should not serialize END_INDEX")
+
       // We handle a few backward compatibility scenarios during Serialization here:
       // 1. [Backward compatibility] If the source index is a schema changing base index, then
       //    replace it with index = -1 and use VERSION_1. This allows older Delta to at least be

@@ -61,7 +61,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     }
 
     private def noMatchesRegex(indexedFile: IndexedFile): Boolean = {
-      if (hasNoFileActionAndStartIndex(indexedFile)) return true
+      if (hasNoFileActionAndStartOrEndIndex(indexedFile)) return true
 
       excludeRegex.forall(_.findFirstIn(indexedFile.getFileAction.path).isEmpty)
     }
@@ -70,8 +70,10 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       indexedFile.getFileAction != null
     }
 
-    private def hasNoFileActionAndStartIndex(indexedFile: IndexedFile): Boolean = {
-      !indexedFile.hasFileAction && indexedFile.index == DeltaSourceOffset.BASE_INDEX
+    private def hasNoFileActionAndStartOrEndIndex(indexedFile: IndexedFile): Boolean = {
+      !indexedFile.hasFileAction &&
+        (indexedFile.index == DeltaSourceOffset.BASE_INDEX ||
+          indexedFile.index == DeltaSourceOffset.END_INDEX)
     }
 
     private def hasAddsOrRemoves(indexedFile: IndexedFile): Boolean = {
@@ -90,7 +92,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         endOffset: Option[DeltaSourceOffset]): Boolean = {
       !indexedFile.shouldSkip &&
         (hasFileAction(indexedFile) ||
-          hasNoFileActionAndStartIndex(indexedFile) ||
+          hasNoFileActionAndStartOrEndIndex(indexedFile) ||
           isSchemaChangeIndexedFile(indexedFile)) &&
         moreThanFrom(indexedFile, fromVersion, fromIndex) &&
         lessThanEnd(indexedFile, endOffset) && noMatchesRegex(indexedFile) &&
@@ -112,11 +114,9 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       }
       val admissionControl = limits.get
       if (isInitialSnapshot) {
-        // In this case we only have AddFiles as we are returning the snapshot of the table.
         // NOTE: the initial snapshot can be huge hence we do not do a toSeq here.
         fileActionsItr.filter(isValidIndexedFile(_, fromVersion, fromIndex, endOffset))
-          .takeWhile { indexedFile =>
-            admissionControl.admit(Some(indexedFile.add))
+          .takeWhile { indexedFile => admissionControl.admit(Option(indexedFile.getFileAction))
           }
       } else {
         // Change data for a commit can be either recorded by a Seq[AddCDCFiles] or
@@ -150,7 +150,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           // file action based entries are present.
           val filteredFiles = fileActions
             .filter { indexedFile =>
-              hasAddsOrRemoves(indexedFile) || hasNoFileActionAndStartIndex(indexedFile)
+              hasAddsOrRemoves(indexedFile) || hasNoFileActionAndStartOrEndIndex(indexedFile)
             }
             .filter(isValidIndexedFile(_, fromVersion, fromIndex, endOffset))
           val filteredFileActions = filteredFiles.flatMap(f => Option(f.getFileAction))
@@ -245,35 +245,30 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           filterCDCActions(
             actions, version, fromVersion, endOffset.map(_.reservoirVersion),
             verifyMetadataAction && !trackingMetadataChange)
-        val itr =
-            Iterator(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, null)) ++
+        val itr = addBeginAndEndIndexOffsetsForVersion(version,
               getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
-              fileActions
-            .zipWithIndex.map {
-              case (action: AddFile, index) =>
-                IndexedFile(
-                  version,
-                  index.toLong,
-                  action,
-                  isLast = index + 1 == fileActions.size,
-                  shouldSkip = skipIndexedFile)
-              case (cdcFile: AddCDCFile, index) =>
-                IndexedFile(
-                  version,
-                  index.toLong,
-                  add = null,
-                  cdc = cdcFile,
-                  isLast = index + 1 == fileActions.size,
-                  shouldSkip = skipIndexedFile)
-              case (remove: RemoveFile, index) =>
-                IndexedFile(
-                  version,
-                  index.toLong,
-                  add = null,
-                  remove = remove,
-                  isLast = index + 1 == fileActions.size,
-                  shouldSkip = skipIndexedFile)
-            }
+              fileActions.zipWithIndex.map {
+                case (action: AddFile, index) =>
+                  IndexedFile(
+                    version,
+                    index.toLong,
+                    action,
+                    shouldSkip = skipIndexedFile)
+                case (cdcFile: AddCDCFile, index) =>
+                  IndexedFile(
+                    version,
+                    index.toLong,
+                    add = null,
+                    cdc = cdcFile,
+                    shouldSkip = skipIndexedFile)
+                case (remove: RemoveFile, index) =>
+                  IndexedFile(
+                    version,
+                    index.toLong,
+                    add = null,
+                    remove = remove,
+                    shouldSkip = skipIndexedFile)
+            })
         (version, new IndexedChangeFileSeq(itr, isInitialSnapshot = false))
       }
     }
