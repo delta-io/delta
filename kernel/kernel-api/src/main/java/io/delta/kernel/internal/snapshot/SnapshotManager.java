@@ -22,6 +22,9 @@ import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableNotFoundException;
 import io.delta.kernel.client.TableClient;
@@ -35,14 +38,14 @@ import io.delta.kernel.internal.checkpoints.Checkpointer;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.internal.util.Logging;
 import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.fs.Path.getName;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-public class SnapshotManager
-    implements Logging {
+public class SnapshotManager {
     public SnapshotManager() {}
+
+    private static final Logger logger = LoggerFactory.getLogger(SnapshotManager.class);
 
     /**
      * - Verify the versions are contiguous.
@@ -98,7 +101,7 @@ public class SnapshotManager
         TableClient tableClient,
         long startVersion)
         throws IOException {
-        logDebug(String.format("startVersion: %s", startVersion));
+        logger.debug("startVersion: {}", startVersion);
         return tableClient
             .getFileSystemClient()
             .listFrom(FileNames.listingPrefix(logPath, startVersion));
@@ -158,7 +161,7 @@ public class SnapshotManager
         TableClient tableClient,
         long startVersion,
         Optional<Long> versionToLoad) {
-        logDebug(String.format("startVersion: %s, versionToLoad: %s", startVersion, versionToLoad));
+        logger.debug("startVersion: {}, versionToLoad{}", startVersion, versionToLoad);
 
         return listFromOrNone(
             logPath,
@@ -227,7 +230,7 @@ public class SnapshotManager
             .checkpointVersionOpt
             .map(v -> String.format(" starting from checkpoint version %s.", v))
             .orElse(".");
-        logInfo(() -> String.format("Loading version %s%s", initSegment.version, startingFromStr));
+        logger.info("Loading version {}{}", initSegment.version, startingFromStr);
 
         return new SnapshotImpl(
             logPath,
@@ -324,13 +327,13 @@ public class SnapshotManager
             // recursive call to [[getLogSegmentForVersion]] below (same as before the refactor).
             newFiles = Collections.emptyList();
         }
-        logDebug(() ->
+        logger.atDebug().setMessage(() ->
             String.format(
                 "newFiles: %s",
                 Arrays.toString(newFiles.stream()
                     .map(x -> new Path(x.getPath()).getName()).toArray())
             )
-        );
+        ).log();
 
         if (newFiles.isEmpty() && !startCheckpointOpt.isPresent()) {
             // We can't construct a snapshot because the directory contained no usable commit
@@ -356,7 +359,7 @@ public class SnapshotManager
         final List<FileStatus> checkpoints = checkpointsAndDeltas._1;
         final List<FileStatus> deltas = checkpointsAndDeltas._2;
 
-        logDebug(() ->
+        logger.atDebug().setMessage(() ->
             String.format(
                 "\ncheckpoints: %s\ndeltas: %s",
                 Arrays.toString(checkpoints.stream().map(
@@ -364,23 +367,24 @@ public class SnapshotManager
                 Arrays.toString(deltas.stream().map(
                     x -> new Path(x.getPath()).getName()).toArray())
             )
-        );
+        ).log();
 
         // Find the latest checkpoint in the listing that is not older than the versionToLoad
         final CheckpointInstance maxCheckpoint = versionToLoadOpt.map(CheckpointInstance::new)
             .orElse(CheckpointInstance.MAX_VALUE);
-        logDebug(String.format("lastCheckpoint: %s", maxCheckpoint));
+        logger.debug("lastCheckpoint: {}", maxCheckpoint);
 
         final List<CheckpointInstance> checkpointFiles = checkpoints
             .stream()
             .map(f -> new CheckpointInstance(f.getPath()))
             .collect(Collectors.toList());
-        logDebug(() ->
-            String.format("checkpointFiles: %s", Arrays.toString(checkpointFiles.toArray())));
+        logger.atDebug().setMessage(() ->
+            String.format("checkpointFiles: %s", Arrays.toString(checkpointFiles.toArray()))
+        ).log();
 
         final Optional<CheckpointInstance> newCheckpointOpt =
             Checkpointer.getLatestCompleteCheckpointFromList(checkpointFiles, maxCheckpoint);
-        logDebug(String.format("newCheckpointOpt: %s", newCheckpointOpt));
+        logger.debug("newCheckpointOpt: {}", newCheckpointOpt);
 
         final long newCheckpointVersion = newCheckpointOpt
             .map(c -> c.version)
@@ -415,7 +419,7 @@ public class SnapshotManager
 
                 return -1L;
             });
-        logDebug(String.format("newCheckpointVersion: %s", newCheckpointVersion));
+        logger.debug("newCheckpointVersion: {}", newCheckpointVersion);
 
         // TODO: we can calculate deltasAfterCheckpoint and deltaVersions more efficiently
         // If there is a new checkpoint, start new lineage there. If `newCheckpointVersion` is -1,
@@ -427,13 +431,13 @@ public class SnapshotManager
                     new Path(fileStatus.getPath())) > newCheckpointVersion)
             .collect(Collectors.toList());
 
-        logDebug(() ->
+        logger.atDebug().setMessage(() ->
             String.format(
                 "deltasAfterCheckpoint: %s",
                 Arrays.toString(deltasAfterCheckpoint.stream().map(
                     x -> new Path(x.getPath()).getName()).toArray())
             )
-        );
+        ).log();
 
         // todo again naming confusing (specify after checkpoint?)
         final LinkedList<Long> deltaVersionsAfterCheckpoint = deltasAfterCheckpoint
@@ -441,9 +445,10 @@ public class SnapshotManager
             .map(fileStatus -> FileNames.deltaVersion(new Path(fileStatus.getPath())))
             .collect(Collectors.toCollection(LinkedList::new));
 
-        logDebug(() ->
+        logger.atDebug().setMessage(() ->
             String.format("deltaVersions: %s",
-                Arrays.toString(deltaVersionsAfterCheckpoint.toArray())));
+                Arrays.toString(deltaVersionsAfterCheckpoint.toArray()))
+        ).log();
 
         // We may just be getting a checkpoint file after the filtering
         if (!deltaVersionsAfterCheckpoint.isEmpty()) {

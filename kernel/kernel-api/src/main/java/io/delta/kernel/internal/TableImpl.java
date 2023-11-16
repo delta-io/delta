@@ -25,9 +25,8 @@ import io.delta.kernel.client.TableClient;
 
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
-import io.delta.kernel.internal.util.Logging;
 
-public class TableImpl implements Table, Logging {
+public class TableImpl implements Table {
     public static Table forPath(TableClient tableClient, String path)
         throws TableNotFoundException {
         // Resolve the path to fully qualified table path using the `TableClient` APIs
