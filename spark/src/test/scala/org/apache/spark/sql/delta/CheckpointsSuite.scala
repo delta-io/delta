@@ -38,7 +38,12 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
-trait CheckpointsSuiteBase extends QueryTest with SharedSparkSession {
+class CheckpointsSuite
+  extends QueryTest
+  with SharedSparkSession
+  with DeltaCheckpointTestUtils
+  with DeltaSQLCommandTest {
+
   def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
     for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
       test(s"$testName [v2CheckpointFormat: $checkpointFormat]") {
@@ -70,12 +75,6 @@ trait CheckpointsSuiteBase extends QueryTest with SharedSparkSession {
           s"It is: ${other.getClass.getName}")
     }
   }
-}
-
-class CheckpointsSuite
-  extends CheckpointsSuiteBase
-  with DeltaCheckpointTestUtils
-  with DeltaSQLCommandTest {
 
   protected override def sparkConf = {
     // Set the gs LogStore impl to `LocalLogStore` so that it will work with `FakeGCSFileSystem`.
