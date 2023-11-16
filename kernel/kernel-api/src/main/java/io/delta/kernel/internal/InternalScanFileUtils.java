@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -52,7 +53,8 @@ public class InternalScanFileUtils {
     public static StructField TABLE_ROOT_STRUCT_FIELD = new StructField(
         TABLE_ROOT_COL_NAME,
         TABLE_ROOT_DATA_TYPE,
-        false /* nullable */);
+        false, /* nullable */
+        Collections.emptyMap());
 
     public static final StructType SCAN_FILE_SCHEMA = new StructType()
         .add("add", AddFile.SCHEMA)

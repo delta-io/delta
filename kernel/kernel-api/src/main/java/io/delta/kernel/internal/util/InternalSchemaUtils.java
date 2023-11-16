@@ -56,7 +56,7 @@ public class InternalSchemaUtils {
                     } else {
                         newType = oldType;
                     }
-                    String physicalName = (String) fieldFromMetadata
+                    String physicalName = fieldFromMetadata
                         .getMetadata()
                         .get("delta.columnMapping.physicalName");
                     newSchema = newSchema.add(physicalName, newType);

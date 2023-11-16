@@ -21,7 +21,6 @@ import org.scalatest.funsuite.AnyFunSuite
 import io.delta.kernel.types._
 import org.apache.hadoop.conf.Configuration
 
-
 // NOTE: currently tests are split across scala and java; additional tests are in
 // TestDefaultJsonHandler.java
 class DefaultJsonHandlerSuite extends AnyFunSuite {
@@ -32,13 +31,12 @@ class DefaultJsonHandlerSuite extends AnyFunSuite {
   // END-TO-END TESTS FOR deserializeStructType (more tests in DataTypeParserSuite)
   //////////////////////////////////////////////////////////////////////////////////
 
-  private def sampleMetadata: FieldMetadata = FieldMetadata.builder()
-    .putNull("null")
-    .putLong("long", 1000L)
-    .putDouble("double", 2.222)
-    .putBoolean("boolean", true)
-    .putString("string", "value")
-    .build()
+  // TODO once we add full support for field metadata update this to include other types
+  private def sampleMetadata: java.util.Map[String, String] =
+    Map(
+      "key1" -> "value1",
+      "key2" -> "value2"
+    ).asJava
 
   test("deserializeStructType: primitive type round trip") {
     val fields = BasePrimitiveType.getAllPrimitiveTypes().asScala.flatMap { dataType =>

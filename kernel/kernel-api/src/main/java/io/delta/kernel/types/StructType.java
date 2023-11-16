@@ -58,14 +58,14 @@ public final class StructType extends DataType {
     }
 
     public StructType add(String name, DataType dataType) {
-        return add(new StructField(name, dataType, true /* nullable */));
+        return add(new StructField(name, dataType, true /* nullable */, new HashMap<>()));
     }
 
     public StructType add(String name, DataType dataType, boolean nullable) {
-        return add(new StructField(name, dataType, nullable));
+        return add(new StructField(name, dataType, nullable, new HashMap<>()));
     }
 
-    public StructType add(String name, DataType dataType, FieldMetadata metadata) {
+    public StructType add(String name, DataType dataType, Map<String, String> metadata) {
         return add(new StructField(name, dataType, true /* nullable */, metadata));
     }
 
@@ -73,7 +73,7 @@ public final class StructType extends DataType {
             String name,
             DataType dataType,
             boolean nullable,
-            FieldMetadata metadata) {
+            Map<String, String> metadata) {
         return add(new StructField(name, dataType, nullable, metadata));
     }
 
