@@ -69,7 +69,6 @@ private[delta] case class IndexedFile(
     add: AddFile,
     remove: RemoveFile = null,
     cdc: AddCDCFile = null,
-    isLast: Boolean = false,
     shouldSkip: Boolean = false) {
 
   def getFileAction: FileAction = {
@@ -450,14 +449,15 @@ trait DeltaSourceBase extends Source
       indexedFile: IndexedFile,
       version: Long,
       isInitialSnapshot: Boolean): Option[DeltaSourceOffset] = {
-    val (v, i, isLastFileInVersion) = (indexedFile.version, indexedFile.index, indexedFile.isLast)
+    val (v, i) = (indexedFile.version, indexedFile.index)
     assert(v >= version,
       s"buildOffsetFromIndexedFile returns an invalid version: $v (expected: >= $version), " +
         s"tableId: $tableId")
 
-    // If the last file in previous batch is the last file of that version, automatically bump
-    // to next version to skip accessing that version file altogether.
-    val offset = if (isLastFileInVersion) {
+    // If the last file in previous batch is the end index of that version, automatically bump
+    // to next version to skip accessing that version file altogether. The END_INDEX should never
+    // be returned as an offset.
+    val offset = if (indexedFile.index == DeltaSourceOffset.END_INDEX) {
       // isInitialSnapshot must be false here as we have bumped the version.
       Some(DeltaSourceOffset(
         tableId,
@@ -748,7 +748,7 @@ case class DeltaSource(
             .processAndClose { actionsIter =>
               validateCommitAndDecideSkipping(
                 actionsIter, version,
-                fromVersion, endOffset.map(_.reservoirVersion),
+                fromVersion, endOffset,
                 verifyMetadataAction && !trackingMetadataChange
               )
             }
@@ -796,6 +796,18 @@ case class DeltaSource(
   }
 
   /**
+   * Adds dummy BEGIN_INDEX and END_INDEX IndexedFiles for @version before and after the
+   * contents of the iterator. The contents of the iterator must be the IndexedFiles that correspond
+   * to this version.
+   */
+  protected def addBeginAndEndIndexOffsetsForVersion(
+      version: Long, iterator: Iterator[IndexedFile]): Iterator[IndexedFile] = {
+    Iterator.single(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, add = null)) ++
+      iterator ++
+      Iterator.single(IndexedFile(version, DeltaSourceOffset.END_INDEX, add = null))
+  }
+
+  /**
    * This method computes the initial snapshot to read when Delta Source was initialized on a fresh
    * stream.
    */
@@ -832,7 +844,7 @@ case class DeltaSource(
         )
       }
     }
-    initialState.iterator()
+    addBeginAndEndIndexOffsetsForVersion(version, initialState.iterator())
   }
 
   /**
@@ -931,13 +943,13 @@ case class DeltaSource(
       override def next(): IndexedFile = {
         index += 1 // pre-increment the index (so it starts from 0)
         val add = filteredIterator.next().copy(stats = null)
-        IndexedFile(version, index, add, isLast = !filteredIterator.hasNext)
+        IndexedFile(version, index, add)
       }
     }
-
-    Iterator.single(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, null)) ++
-    getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
-    indexedFiles
+    addBeginAndEndIndexOffsetsForVersion(
+      version,
+      getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
+        indexedFiles)
   }
 
   /**
@@ -952,9 +964,16 @@ case class DeltaSource(
       actions: Iterator[Action],
       version: Long,
       batchStartVersion: Long,
-      batchEndVersionOpt: Option[Long] = None,
+      batchEndOffsetOpt: Option[DeltaSourceOffset] = None,
       verifyMetadataAction: Boolean = true
   ): (Boolean, Option[Metadata], Option[Protocol]) = {
+    // If the batch end is at the beginning of this exact version, then we actually stop reading
+    // just _before_ this version. So then we can ignore the version contents entirely.
+    if (batchEndOffsetOpt.exists(end =>
+      end.reservoirVersion == version && end.index == DeltaSourceOffset.BASE_INDEX)) {
+      return (false, None, None)
+    }
+
     /** A check on the source table that disallows changes on the source data. */
     val shouldAllowChanges = options.ignoreChanges || ignoreFileDeletion || skipChangeCommits
     /** A check on the source table that disallows commits that only include deletes to the data. */
@@ -975,7 +994,8 @@ case class DeltaSource(
         }
       case m: Metadata =>
         if (verifyMetadataAction) {
-          checkReadIncompatibleSchemaChanges(m, version, batchStartVersion, batchEndVersionOpt)
+          checkReadIncompatibleSchemaChanges(
+            m, version, batchStartVersion, batchEndOffsetOpt.map(_.reservoirVersion))
         }
         assert(metadataAction.isEmpty,
           "Should not encounter two metadata actions in the same commit")
@@ -1206,7 +1226,9 @@ case class DeltaSource(
       val shouldAdmit = hasCapacity
 
       if (fileAction.isEmpty) {
-        return shouldAdmit
+        // Don't count placeholders. They are not files. If we have empty commits, then we should
+        // not count the placeholders as files, or else we'll end up with under-filled batches.
+        return true
       }
 
       take(files = 1, bytes = getSize(fileAction.get))
