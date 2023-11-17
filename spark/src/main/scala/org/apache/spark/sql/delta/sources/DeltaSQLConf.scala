@@ -890,6 +890,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED =
+    buildConf("uniform.iceberg.sync.convert.enabled")
+      .doc("If enabled, iceberg conversion will be done synchronously. " +
+        "This can cause slow down in Delta commits and should only be used " +
+        "for debugging or in test suites.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()
