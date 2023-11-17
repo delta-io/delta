@@ -34,13 +34,13 @@ class InitialKernelSnapshotImpl(logPath: Path, dataPath: Path, tableClient: Defa
 class KernelDeltaLogDelegator(
     tableClient: DefaultTableClient,
     table: TableImpl,
+    standaloneDeltaLog: DeltaLogImpl,
     hadoopConf: Configuration,
     logPath: Path,
     dataPath: Path,
     clock: Clock)
   extends DeltaLogImpl(hadoopConf, logPath, dataPath, clock) {
 
-  val standaloneDeltaLog = new DeltaLogImpl(hadoopConf, logPath, dataPath, clock)
   var currKernelSnapshot: Option[KernelSnapshotDelegator] = None
 
   override def snapshot(): StandaloneSnapshotImpl = { // but is actually a KernelSnapshotDelegator
@@ -93,12 +93,18 @@ class KernelDeltaLogDelegator(
 
 object KernelDeltaLogDelegator {
   def forTable(hadoopConf: Configuration, dataPath: String): KernelDeltaLogDelegator = {
-    val tableClient = DefaultTableClient.create(hadoopConf)
-    val table = Table.forPath(tableClient, dataPath).asInstanceOf[TableImpl]
-    // Todo: Potentially we could get the resolved paths out of the table above
     val rawPath = new Path(dataPath, "_delta_log")
     val fs = rawPath.getFileSystem(hadoopConf)
     val logPath = fs.makeQualified(rawPath)
-    new KernelDeltaLogDelegator(tableClient, table, hadoopConf, logPath, logPath.getParent, new SystemClock)
+    val dataPathFromLog = logPath.getParent
+    val clock = new SystemClock
+    // Create this first as we use it to it create the specified table if it doesn't exist, which
+    // the kernel does not
+    val standaloneDeltaLog = new DeltaLogImpl(hadoopConf, logPath, dataPathFromLog, clock)
+    standaloneDeltaLog.ensureLogDirectoryExist()
+    val tableClient = DefaultTableClient.create(hadoopConf)
+    val table = Table.forPath(tableClient, dataPath).asInstanceOf[TableImpl]
+    // Todo: Potentially we could get the resolved paths out of the table above
+    new KernelDeltaLogDelegator(tableClient, table, standaloneDeltaLog, hadoopConf, logPath, dataPathFromLog, clock)
   }
 }
