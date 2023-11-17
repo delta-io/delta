@@ -53,7 +53,7 @@ public interface JsonHandler
     ColumnarBatch parseJson(ColumnVector jsonStringVector, StructType outputSchema);
 
     /**
-     * Deserialize the Delta schema from {@code schemaString} according to the Delta Protocol
+     * Deserialize the Delta schema from {@code structTypeJson} according to the Delta Protocol
      * <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types">
      *    schema serialization rules </a>.
      *

@@ -25,7 +25,7 @@ import io.delta.kernel.types.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
- * Parses Delta data types based on the
+ * Parses JSON serialized Delta data types to their {@link DataType} class based on the
  * <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types">
  *     serialization rules </a> outlined in the Delta Protocol.
  */
@@ -71,7 +71,7 @@ public class DataTypeParser {
      * }
      * </pre>
      */
-    protected static DataType parseDataType(JsonNode json) {
+    static DataType parseDataType(JsonNode json) {
         switch (json.getNodeType()) {
             case STRING:
                 // simple types are stored as just a string
@@ -183,7 +183,8 @@ public class DataTypeParser {
         return metadata;
     }
 
-    private static String FIXED_DECIMAL = "decimal\\(\\s*(\\d+)\\s*,\\s*(\\-?\\d+)\\s*\\)";
+    private static String FIXED_DECIMAL_REGEX = "decimal\\(\\s*(\\d+)\\s*,\\s*(\\-?\\d+)\\s*\\)";
+    private static Pattern FIXED_DECIMAL_PATTERN = Pattern.compile(FIXED_DECIMAL_REGEX);
 
     /**
      * Parses primitive string type names to a {@link DataType}
@@ -193,16 +194,15 @@ public class DataTypeParser {
             return BasePrimitiveType.createPrimitive(name);
         } else if (name.equals("decimal")) {
             return DecimalType.USER_DEFAULT;
-        } else if (name.matches(FIXED_DECIMAL)) {
-            Matcher matcher = Pattern.compile(FIXED_DECIMAL).matcher(name);
-            if (!matcher.matches()) {
-                throw new IllegalStateException(
-                    String.format("%s did not match decimal pattern", name));
-            }
-            int precision = Integer.parseInt(matcher.group(1));
-            int scale = Integer.parseInt(matcher.group(2));
-            return new DecimalType(precision, scale);
         } else {
+            // decimal has a special pattern with a precision and scale
+            Matcher decimalMatcher = FIXED_DECIMAL_PATTERN.matcher(name);
+            if (decimalMatcher.matches()) {
+                int precision = Integer.parseInt(decimalMatcher.group(1));
+                int scale = Integer.parseInt(decimalMatcher.group(2));
+                return new DecimalType(precision, scale);
+            }
+
             throw new IllegalArgumentException(
                 String.format("%s is not a supported delta data type", name));
         }
