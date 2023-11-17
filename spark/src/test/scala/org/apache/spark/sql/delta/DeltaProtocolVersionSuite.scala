@@ -433,10 +433,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val exceptionRead = intercept[InvalidProtocolVersionException] {
         spark.read.format("delta").load(path.getCanonicalPath)
       }
-      assert(exceptionRead.getMessage == getExpectedProtocolErrorMessage(
+
+      validateInvalidProtocolVersionException(
+        exceptionRead,
         deltaLog.dataPath.toString,
         tableReaderVersion,
-        tableWriterVersion))
+        tableWriterVersion)
 
       tableReaderVersion = 3
       tableWriterVersion = 8
@@ -450,10 +452,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           .format("delta")
           .save(path.getCanonicalPath)
       }
-      assert(exceptionWrite.getMessage == getExpectedProtocolErrorMessage(
+
+      validateInvalidProtocolVersionException(
+        exceptionWrite,
         deltaLog.dataPath.toString,
         tableReaderVersion,
-        tableWriterVersion))
+        tableWriterVersion)
     }
   }
 
@@ -478,12 +482,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       }
 
       var pathInErrorMessage = "default." + protocolTableName
-      val readErrorMessage = getExpectedProtocolErrorMessage(
+
+      validateInvalidProtocolVersionException(
+        exceptionRead,
         pathInErrorMessage,
         tableReaderVersion,
         tableWriterVersion)
-
-      assert(exceptionRead.getMessage == readErrorMessage)
 
       tableReaderVersion = 3
       tableWriterVersion = 8
@@ -501,8 +505,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           .saveAsTable(protocolTableName)
       }
 
-      assert(exceptionWrite.getMessage ==
-        getExpectedProtocolErrorMessage(pathInErrorMessage, tableReaderVersion, tableWriterVersion))
+      validateInvalidProtocolVersionException(
+        exceptionWrite,
+        pathInErrorMessage,
+        tableReaderVersion,
+        tableWriterVersion)
 
       // Restore the protocol version or the clean-up fails
       version = version + 1
@@ -540,12 +547,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         }
 
         var pathInErrorMessage = "default." + tableName
-        val errorMessage = getExpectedProtocolErrorMessage(
+
+        validateInvalidProtocolVersionException(
+          exception,
           pathInErrorMessage,
           incompatibleProtocol.minReaderVersion,
           incompatibleProtocol.minWriterVersion)
-
-        assert(exception.getMessage == errorMessage)
       }
     }
   }
@@ -575,17 +582,15 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       log.newDeltaHadoopConf())
   }
 
-  def getExpectedProtocolErrorMessage(
+  def validateInvalidProtocolVersionException(
+      exception: InvalidProtocolVersionException,
       tableNameOrPath: String,
-      requiredReaderVersion: Int,
-      requiredWriterVersion: Int): String = {
-    // When testing flag is enabled Action.supportedReaderVersionNumbers includes 0.
-    "[DELTA_INVALID_PROTOCOL_VERSION] " +
-      s"""Unsupported Delta protocol version: table "$tableNameOrPath" requires """ +
-      s"reader version $requiredReaderVersion and " +
-      s"writer version $requiredWriterVersion, " +
-      s"""but Delta Lake "${io.delta.VERSION}" supports reader versions 0, 1, 2, 3 """ +
-      "and writer versions 0, 1, 2, 3, 4, 5, 7. Please upgrade to a newer release."
+      readerRequiredVersion: Int,
+      writerRequiredVersion: Int): Unit = {
+    assert(exception.getErrorClass == "DELTA_INVALID_PROTOCOL_VERSION")
+    assert(exception.tableNameOrPath == tableNameOrPath)
+    assert(exception.readerRequiredVersion == readerRequiredVersion)
+    assert(exception.writerRequiredVersion == writerRequiredVersion)
   }
 
   test("DeltaUnsupportedTableFeatureException - error message - table path") {
