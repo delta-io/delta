@@ -18,8 +18,6 @@ package org.apache.spark.sql.catalyst.plans.logical
 
 import java.util.Locale
 
-import scala.collection.mutable
-
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaIllegalArgumentException, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -526,26 +524,22 @@ object DeltaMergeInto {
             // If clause allows nested field to be target, then this will return the all the
             // parts of the name (e.g., "a.b" -> Seq("a", "b")). Otherwise, this will
             // return only one string.
-            val resolvedKey = try {
-              resolveSingleExprOrFail(
+            val resolvedNameParts = try {
+              val resolvedKey = resolveSingleExprOrFail(
                 expr = unresolvedAttrib,
                 plansToResolveExpr = Seq(target),
                 mergeClauseType = s"$typ clause")
+              DeltaUpdateTable.getTargetColNameParts(resolvedKey, resolutionErrorMsg)
             } catch {
               // Allow schema evolution for update and insert non-star when the column is not in
-              // the target.
+              // the target. Any column path is allowed, merging the actions' schemas later will
+              // check for compatibility.
               case _: AnalysisException
                 if canAutoMigrate && (clause.isInstanceOf[DeltaMergeIntoMatchedUpdateClause] ||
                   clause.isInstanceOf[DeltaMergeIntoNotMatchedClause]) =>
-                resolveSingleExprOrFail(
-                  expr = unresolvedAttrib,
-                  plansToResolveExpr = Seq(source),
-                  mergeClauseType = s"$typ clause")
+                colNameParts
               case e: Throwable => throw e
             }
-
-            val resolvedNameParts =
-              DeltaUpdateTable.getTargetColNameParts(resolvedKey, resolutionErrorMsg)
 
             val resolvedExpr = resolveExprs(Seq(expr), plansToResolveAction).head
             assertResolved(resolvedExpr, plansToResolveAction, s"$typ clause")
@@ -586,62 +580,33 @@ object DeltaMergeInto {
     val finalSchema = if (canAutoMigrate) {
       // When schema evolution is enabled, add to the target table new columns or nested fields that
       // are assigned to in merge actions and not already part of the target schema. This is done by
-      // collecting all assignments from merge actions and using them to filter out the source
-      // schema before merging it with the target schema. We don't consider NOT MATCHED BY SOURCE
+      // collecting all assignments from merge actions, creating schemas based on the expressions,
+      // and merging them into the target schema. We don't consider NOT MATCHED BY SOURCE
       // clauses since these can't by definition reference source columns and thus can't introduce
       // new columns in the target schema.
-      val actions = (matchedClauses ++ notMatchedClauses).flatMap(_.actions)
-      val assignments = actions.collect { case a: DeltaMergeAction => a.targetColNameParts }
-      val containsStarAction = actions.exists {
-        case _: UnresolvedStar => true
-        case _ => false
-      }
+      val actions = (resolvedMatchedClauses ++ resolvedNotMatchedClauses).flatMap(_.resolvedActions)
 
-
-      // Filter the source schema to retain only fields that are referenced by at least one merge
-      // clause, then merge this schema with the target to give the final schema.
-      def filterSchema(sourceSchema: StructType, basePath: Seq[String]): StructType =
-        StructType(sourceSchema.flatMap { field =>
-          val fieldPath = basePath :+ field.name
-
-          // Helper method to check if a given field path is a prefix of another path. Delegates
-          // equality to conf.resolver to correctly handle case sensitivity.
-          def isPrefix(prefix: Seq[String], path: Seq[String]): Boolean =
-            prefix.length <= path.length && prefix.zip(path).forall {
-              case (prefixNamePart, pathNamePart) => conf.resolver(prefixNamePart, pathNamePart)
-            }
-
-          // Helper method to check if a given field path is equal to another path.
-          def isEqual(path1: Seq[String], path2: Seq[String]): Boolean =
-            path1.length == path2.length && isPrefix(path1, path2)
-
-
-          field.dataType match {
-            // Specifically assigned to in one clause: always keep, including all nested attributes
-            case _ if assignments.exists(isEqual(_, fieldPath)) => Some(field)
-            // If this is a struct and one of the children is being assigned to in a merge clause,
-            // keep it and continue filtering children.
-            case struct: StructType if assignments.exists(isPrefix(fieldPath, _)) =>
-              Some(field.copy(dataType = filterSchema(struct, fieldPath)))
-            // The field isn't assigned to directly or indirectly (i.e. its children) in any non-*
-            // clause. Check if it should be kept with any * action.
-            case struct: StructType if containsStarAction =>
-              Some(field.copy(dataType = filterSchema(struct, fieldPath)))
-            case _ if containsStarAction => Some(field)
-            // The field and its children are not assigned to in any * or non-* action, drop it.
-            case _ => None
+      // Merge each assignment expression into the target schema
+      actions.foldLeft(target.schema) {
+        case (schema, DeltaMergeAction(targetColNameParts, expr, _)) =>
+          // Generate the schema for this target assignment
+          var assignmentSchema = StructType(StructField(targetColNameParts.last, expr.dataType,
+            expr.nullable) :: Nil)
+          assignmentSchema = targetColNameParts.init.foldRight(assignmentSchema) {
+            case (part, schema) =>
+              // We will always write the outer structs when writing to an inner field, so we can
+              // set it to non-nullable
+              StructType(StructField(part, schema, false) :: Nil)
           }
-        })
-
-      val migrationSchema = filterSchema(source.schema, Seq.empty)
-      // The implicit conversions flag allows any type to be merged from source to target if Spark
-      // SQL considers the source type implicitly castable to the target. Normally, mergeSchemas
-      // enforces Parquet-level write compatibility, which would mean an INT source can't be merged
-      // into a LONG target.
-      SchemaMergingUtils.mergeSchemas(
-        target.schema,
-        migrationSchema,
-        allowImplicitConversions = true)
+          // The implicit conversions flag allows any type to be merged from source to target if
+          // Spark SQL considers the source type implicitly castable to the target. Normally,
+          // mergeSchemas enforces Parquet-level write compatibility, which would mean an INT
+          // source can't be merged into a LONG target.
+          SchemaMergingUtils.mergeSchemas(
+            schema,
+            assignmentSchema,
+            allowImplicitConversions = true)
+      }
     } else {
       target.schema
     }

@@ -358,19 +358,20 @@ trait MergeIntoSchemaEvolutionBaseTests {
       .asInstanceOf[List[(Integer, Integer)]]
       .toDF("key", "value"))
 
-  // Column doesn't exist with UPDATE/INSERT alone.
   testEvolution("update set nonexistent column")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
     clauses = update(set = "nonexistent = s.extra") :: Nil,
-    expectErrorContains = "cannot resolve nonexistent in UPDATE clause",
+    expected = ((0, 0, null) +: (1, 10, "extra1") +: (3, 30, null) +: Nil).toDF("key", "value", "nonexistent"),
     expectErrorWithoutEvolutionContains = "cannot resolve nonexistent in UPDATE clause")
 
   testEvolution("insert values nonexistent column")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
     clauses = insert(values = "(nonexistent) VALUES (s.extra)") :: Nil,
-    expectErrorContains = "cannot resolve nonexistent in INSERT clause",
+    expected = ((0, 0, null) +: (1, 10, null) +: (3, 30, null) +: (null, null, "extra2") +: Nil)
+      .asInstanceOf[List[(Integer, Integer, String)]]
+      .toDF("key", "value", "nonexistent"),
     expectErrorWithoutEvolutionContains = "cannot resolve nonexistent in INSERT clause")
 
   testEvolution("new column with update set and update *")(
@@ -1109,6 +1110,28 @@ trait MergeIntoNestedStructEvolutionTests {
         .add("c", IntegerType)),
     clauses = insert("(value.b) VALUES (s.value.b)") :: Nil,
     expectErrorContains = "Nested field is not supported in the INSERT clause of MERGE operation",
+    expectErrorWithoutEvolutionContains = "No such struct field")
+
+  // Nested schema evolution with nonexistent field
+  testNestedStructsEvolution("new nested update field not in source schema")(
+    target = """{ "key": "A", "value": { "a": 1 } }""",
+    source = """{ "key": "A", "value": { "a": 2, "b": 3 } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)),
+    clauses = update("value.c = s.value.b") :: Nil,
+    result = """{ "key": "A", "value": { "a": 1, "c": 3 } }""",
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)
+        .add("c", IntegerType)),
     expectErrorWithoutEvolutionContains = "No such struct field")
 
   // scalastyle:off line.size.limit
