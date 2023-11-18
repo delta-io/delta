@@ -362,7 +362,8 @@ trait MergeIntoSchemaEvolutionBaseTests {
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
     clauses = update(set = "nonexistent = s.extra") :: Nil,
-    expected = ((0, 0, null) +: (1, 10, "extra1") +: (3, 30, null) +: Nil).toDF("key", "value", "nonexistent"),
+    expected = ((0, 0, null) +: (1, 10, "extra1") +: (3, 30, null) +: Nil)
+      .toDF("key", "value", "nonexistent"),
     expectErrorWithoutEvolutionContains = "cannot resolve nonexistent in UPDATE clause")
 
   testEvolution("insert values nonexistent column")(
