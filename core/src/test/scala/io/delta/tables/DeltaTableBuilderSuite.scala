@@ -456,4 +456,41 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
     }
   }
 
+  test("Test schema external table delta glue catalog conf activated") {
+    withSQLConf(DeltaSQLConf.DELTA_SAVE_SCHEMA_GLUE_CATALOG_ENABLED.key -> "true") {
+      withTable("deltaTable") {
+        withTempDir { dir =>
+          spark.range(10).toDF("key").write.format("delta")
+          .option("mergeSchema", true)
+          .mode("overwrite")
+          .save(dir.getAbsolutePath)
+          val existingSchema = spark.read.format("delta").load(dir.getAbsolutePath).schema
+          verifyTestTableMetadata(s"delta.`${dir.getAbsolutePath}`",
+            "key bigint", colNullables = Set("key"))
+        }
+      }
+    }
+  }
+
+  test("Test schema delta glue catalog conf activated") {
+    withSQLConf(DeltaSQLConf.DELTA_SAVE_SCHEMA_GLUE_CATALOG_ENABLED.key -> "true") {
+      withTable("table2") {
+        withTempDir { dir =>
+          spark.range(10).toDF("key").write.format("delta")
+          .mode("overwrite")
+          .saveAsTable("tableA")
+          val existingSchema = spark.read.format("delta")
+          .table("tableA").schema
+          io.delta.tables.DeltaTable.create()
+            .tableName("tableB")
+            .location(dir.getAbsolutePath)
+            .addColumns(existingSchema)
+            .addColumn("value", "string", false)
+            .execute()
+          verifyTestTableMetadata(s"delta.`${dir.getAbsolutePath}`",
+            "key bigint, value string", colNullables = Set("key"))
+        }
+      }
+    }
+  }
 }
