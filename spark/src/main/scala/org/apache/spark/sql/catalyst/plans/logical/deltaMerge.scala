@@ -590,13 +590,11 @@ object DeltaMergeInto {
       actions.foldLeft(target.schema) {
         case (schema, DeltaMergeAction(targetColNameParts, expr, _)) =>
           // Generate the schema for this target assignment
-          var assignmentSchema = StructType(StructField(targetColNameParts.last, expr.dataType,
-            expr.nullable) :: Nil)
+          var assignmentSchema =
+            StructType(StructField(targetColNameParts.last, expr.dataType) :: Nil)
           assignmentSchema = targetColNameParts.init.foldRight(assignmentSchema) {
             case (part, schema) =>
-              // We will always write the outer structs when writing to an inner field, so we can
-              // set it to non-nullable
-              StructType(StructField(part, schema, false) :: Nil)
+              StructType(StructField(part, schema) :: Nil)
           }
           // The implicit conversions flag allows any type to be merged from source to target if
           // Spark SQL considers the source type implicitly castable to the target. Normally,
