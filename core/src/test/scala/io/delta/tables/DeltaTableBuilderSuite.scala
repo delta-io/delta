@@ -476,8 +476,11 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
     withSQLConf(DeltaSQLConf.DELTA_SAVE_SCHEMA_GLUE_CATALOG_ENABLED.key -> "true") {
       withTable("table2") {
         withTempDir { dir =>
-          spark.range(10).toDF("key").write.format("delta").mode("overwrite").saveAsTable("tableA")
-          val existingSchema = spark.read.format("delta").table("tableA").schema
+          spark.range(10).toDF("key").write.format("delta")
+          .mode("overwrite")
+          .saveAsTable("tableA")
+          val existingSchema = spark.read.format("delta")
+          .table("tableA").schema
           io.delta.tables.DeltaTable.create()
             .tableName("tableB")
             .location(dir.getAbsolutePath)
