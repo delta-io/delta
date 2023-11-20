@@ -86,6 +86,7 @@ public class DataTypeParser {
                         return parseArrayType(json);
                     case "map":
                         return parseMapType(json);
+                    // No default case here; fall through to the following error when no match
                 }
             default:
                 throw new IllegalArgumentException(String.format(
