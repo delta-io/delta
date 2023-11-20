@@ -762,9 +762,9 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
   }
 
   test("DESCRIBE and SHOW CREATE TABLE with column defaults") {
-    val properties = "tblproperties('delta.feature.allowColumnDefaults' = 'enabled')"
     withTable("t") {
-      spark.sql(s"CREATE TABLE t (id bigint default 42) using $v2Format $properties")
+      spark.sql(s"CREATE TABLE t (id bigint default 42) " +
+        s"using $v2Format $tblPropertiesAllowDefaults")
       val descriptionDf = spark.sql(s"DESCRIBE TABLE EXTENDED t")
       assert(descriptionDf.schema.map { field =>
         (field.name, field.dataType)
@@ -786,7 +786,7 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
         ))
     }
     withTable("t") {
-      sql(s"create table t(a int default 42) using $v2Format $properties")
+      sql(s"create table t(a int default 42) using $v2Format $tblPropertiesAllowDefaults")
       val descriptionDf = sql("describe table extended t a")
       QueryTest.checkAnswer(
         descriptionDf,
@@ -813,7 +813,7 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
            |)
            |USING parquet
            |COMMENT 'This is a comment'
-           |$properties
+           |$tblPropertiesAllowDefaults
         """.stripMargin)
       val currentCatalog = spark.sessionState.catalogManager.currentCatalog.name()
       QueryTest.checkAnswer(sql("SHOW CREATE TABLE T"),
@@ -826,7 +826,8 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
                |USING parquet
                |COMMENT 'This is a comment'
                |TBLPROPERTIES (
-               |  'delta.feature.allowColumnDefaults' = 'enabled')
+               |  'delta.feature.allowColumnDefaults' = 'enabled',
+               |  'delta.columnMapping.mode' = 'name')
                |""".stripMargin)))
     }
   }
