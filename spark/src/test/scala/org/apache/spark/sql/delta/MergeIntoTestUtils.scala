@@ -95,12 +95,18 @@ trait MergeIntoSQLTestUtils extends SQLTestUtils with MergeIntoTestUtils {
       insert: String): Unit =
     sql(basicMergeStmt(target, source, condition, update, insert))
 
+  protected def mergeStmt(
+      target: String,
+      source: String,
+      condition: String,
+      clauses: MergeClause*): String =
+    s"MERGE INTO $target USING $source ON $condition\n" + clauses.map(_.sql).mkString("\n")
+
   override protected def executeMerge(
       tgt: String,
       src: String,
       cond: String,
-      clauses: MergeClause*): Unit =
-    sql(s"MERGE INTO $tgt USING $src ON $cond\n" + clauses.map(_.sql).mkString("\n"))
+      clauses: MergeClause*): Unit = sql(mergeStmt(tgt, src, cond, clauses: _*))
 }
 
 trait MergeIntoScalaTestUtils extends MergeIntoTestUtils {

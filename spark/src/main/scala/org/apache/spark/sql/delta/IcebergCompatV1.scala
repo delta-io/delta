@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
@@ -36,8 +37,6 @@ import org.apache.spark.sql.types.{ArrayType, MapType, NullType}
 object IcebergCompatV1 extends DeltaLogging {
 
   val REQUIRED_TABLE_FEATURES = Seq(ColumnMappingTableFeature)
-
-  val INCOMPATIBLE_TABLE_FEATURES = Seq(DeletionVectorsTableFeature)
 
   val REQUIRED_DELTA_TABLE_PROPERTIES = Seq(
     RequiredDeltaTableProperty(
@@ -70,12 +69,13 @@ object IcebergCompatV1 extends DeltaLogging {
    *         updates need to be applied, will return None.
    */
   def enforceInvariantsAndDependencies(
-      prevProtocol: Protocol,
-      prevMetadata: Metadata,
+      prevSnapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
       isCreatingNewTable: Boolean,
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
+    val prevProtocol = prevSnapshot.protocol
+    val prevMetadata = prevSnapshot.metadata
     val wasEnabled = IcebergCompatV1.isEnabled(prevMetadata)
     val isEnabled = IcebergCompatV1.isEnabled(newestMetadata)
     val tableId = newestMetadata.id
@@ -140,11 +140,12 @@ object IcebergCompatV1 extends DeltaLogging {
           }
         }
 
-        // Check we haven't added any incompatible table features
-        INCOMPATIBLE_TABLE_FEATURES.foreach { f =>
-          if (newestProtocol.isFeatureSupported(f)) {
-            throw DeltaErrors.icebergCompatV1IncompatibleTableFeatureException(f)
-          }
+        // Check for incompatible table features;
+        // Deletion Vectors cannot be writeable; Note that concurrent txns are also covered
+        // to NOT write deletion vectors as that txn would need to make DVs writable, which
+        // would conflict with current txn because of metadata change.
+        if (DeletionVectorUtils.deletionVectorsWritable(newestProtocol, newestMetadata)) {
+          throw DeltaErrors.icebergCompatV1DeletionVectorsShouldBeDisabledException()
         }
 
         // Check we have all required delta table properties

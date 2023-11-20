@@ -101,7 +101,7 @@ object Action {
     JsonUtils.mapper.readValue[SingleAction](json).unwrap
   }
 
-  lazy val logSchema = ExpressionEncoder[SingleAction].schema
+  lazy val logSchema = ExpressionEncoder[SingleAction]().schema
   lazy val addFileSchema = logSchema("add").dataType.asInstanceOf[StructType]
 }
 
@@ -842,6 +842,14 @@ object AddFile {
 
     /** [[OPTIMIZE_TARGET_SIZE]]: target file size the file was optimized to. */
     object OPTIMIZE_TARGET_SIZE extends AddFile.Tags.KeyType("OPTIMIZE_TARGET_SIZE")
+
+    /**
+     * [[CLUSTERED_BY]]: the name of the clustering implementation.
+     *
+     * A clustering implementation should only cluster files that belong to the implementation
+     * or files that do not have the [[CLUSTERED_BY]] tag (i.e., unclustered).
+     */
+    object CLUSTERED_BY extends AddFile.Tags.KeyType("CLUSTERED_BY")
 
   }
 

@@ -234,20 +234,21 @@ case class CreateDeltaTableCommand(
         txn,
         sparkSession
       )
-      val newDomainMetadata = Seq.empty[DomainMetadata]
-      if (isReplace) {
+      // Metadata updates for CREATE TABLE (with any writer) and REPLACE TABLE
+      // (only with V1 writer) will be handled inside WriteIntoDelta.
+      if (!isV1Writer && isReplace) {
+        val newDomainMetadata = Seq.empty[DomainMetadata]
         // Ensure to remove any domain metadata for REPLACE TABLE.
         actions = actions ++ DomainMetadataUtils.handleDomainMetadataForReplaceTable(
           txn.snapshot.domainMetadata, newDomainMetadata)
-      } else {
-        actions = actions ++ newDomainMetadata
       }
       val op = getOperation(txn.metadata, isManagedTable, Some(options)
       )
       (actions, op)
     }
 
-    val updatedWriter = UniversalFormat.enforceInvariantsAndDependenciesForCTAS(deltaWriter)
+    val updatedWriter =
+      UniversalFormat.enforceInvariantsAndDependenciesForCTAS(deltaWriter, txn.snapshot)
 
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {

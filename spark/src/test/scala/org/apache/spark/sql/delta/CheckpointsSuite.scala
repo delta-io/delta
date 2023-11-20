@@ -136,9 +136,13 @@ class CheckpointsSuite
         val fileActions = getCheckpointDfForFilesContainingFileActions(deltaLog, checkpointFile)
         assert(fileActions.where("add is not null or remove is not null").collect().size === 0)
         if (checkpointPolicy == CheckpointPolicy.V2) {
-          val v2CheckpointProvider =
-            snapshot.checkpointProvider.asInstanceOf[LazyCompleteCheckpointProvider]
-              .underlyingCheckpointProvider.asInstanceOf[V2CheckpointProvider]
+          val v2CheckpointProvider = snapshot.checkpointProvider match {
+            case lazyCompleteCheckpointProvider: LazyCompleteCheckpointProvider =>
+              lazyCompleteCheckpointProvider.underlyingCheckpointProvider
+                .asInstanceOf[V2CheckpointProvider]
+            case cp: V2CheckpointProvider => cp
+            case _ => throw new IllegalStateException("Unexpected checkpoint provider")
+          }
           assert(v2CheckpointProvider.sidecarFiles.size === 1)
           val sidecar = v2CheckpointProvider.sidecarFiles.head.toFileStatus(deltaLog.logPath)
           assert(spark.read.parquet(sidecar.getPath.toString).count() === 0)

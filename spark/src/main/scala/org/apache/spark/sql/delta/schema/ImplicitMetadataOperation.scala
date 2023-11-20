@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.schema
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils
@@ -135,6 +136,37 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         errorBuilder.addOverwriteBit()
       }
       errorBuilder.finalizeAndThrow(spark.sessionState.conf)
+    }
+  }
+
+  /**
+   * Returns a sequence of new DomainMetadata if canUpdateMetadata is true and the operation is
+   * either create table or replace the whole table (not replaceWhere operation). This is because
+   * we only update Domain Metadata when creating or replacing table, and replace table for DDL
+   * and DataFrameWriterV2 are already handled in CreateDeltaTableCommand. In that case,
+   * canUpdateMetadata is false, so we don't update again.
+   *
+   * @param txn [[OptimisticTransaction]] being used to create or replace table.
+   * @param canUpdateMetadata true if the metadata is not updated yet.
+   * @param isReplacingTable true if the operation is replace table without replaceWhere option.
+   * @param clusterBySpecOpt optional ClusterBySpec containing user-specified clustering columns.
+   */
+  protected final def getNewDomainMetadata(
+      txn: OptimisticTransaction,
+      canUpdateMetadata: Boolean,
+      isReplacingTable: Boolean
+      ): Seq[DomainMetadata] = {
+    if (canUpdateMetadata && (!txn.deltaLog.tableExists || isReplacingTable)) {
+      val newDomainMetadata = Seq.empty[DomainMetadata]
+      if (!txn.deltaLog.tableExists) {
+        newDomainMetadata
+      } else {
+        // Handle domain metadata for replacing a table.
+        DomainMetadataUtils.handleDomainMetadataForReplaceTable(
+          txn.snapshot.domainMetadata, newDomainMetadata)
+      }
+    } else {
+      Seq.empty
     }
   }
 }

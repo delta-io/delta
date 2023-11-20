@@ -266,7 +266,7 @@ trait MetadataCleanup extends DeltaLogging {
     val sidecarFilesIterator = new Iterator[FileStatus] {
       // Hadoop's RemoteIterator is neither java nor scala Iterator, so have to wrap it
       val remoteIterator = fs.listStatusIterator(sidecarDirPath)
-      override def hasNext(): Boolean = remoteIterator.hasNext()
+      override def hasNext: Boolean = remoteIterator.hasNext()
       override def next(): FileStatus = remoteIterator.next()
     }
     val sidecarFilesToDelete = sidecarFilesIterator
@@ -324,7 +324,7 @@ trait MetadataCleanup extends DeltaLogging {
    * Finds a checkpoint such that we are able to construct table snapshot for all versions at or
    * greater than the checkpoint version returned.
    */
-  def findEarliestReliableCheckpoint(): Option[Long] = {
+  def findEarliestReliableCheckpoint: Option[Long] = {
     val hadoopConf = newDeltaHadoopConf()
     var earliestCheckpointVersionOpt: Option[Long] = None
     // This is used to collect the checkpoint files from the current version that we are listing.

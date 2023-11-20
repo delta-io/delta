@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.{IOException, ObjectInputStream}
 
-import org.apache.spark.sql.delta.DeltaErrorsBase
+import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
@@ -63,7 +63,7 @@ trait StoredBitmap {
 case class DeletionVectorStoredBitmap(
     dvDescriptor: DeletionVectorDescriptor,
     tableDataPath: Option[Path] = None
-) extends StoredBitmap with DeltaLogging with DeltaErrorsBase {
+) extends StoredBitmap with DeltaLogging {
   require(tableDataPath.isDefined || !dvDescriptor.isOnDisk,
     "Table path is required for on-disk deletion vectors")
 
@@ -87,7 +87,7 @@ case class DeletionVectorStoredBitmap(
           "deletionVectorCardinality" -> bitmap.cardinality,
           "deletionVectorDescriptor" -> dvDescriptor),
         path = tableDataPath)
-      throw deletionVectorCardinalityMismatch()
+      throw DeltaErrors.deletionVectorCardinalityMismatch()
     }
 
     bitmap

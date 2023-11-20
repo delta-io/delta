@@ -771,7 +771,7 @@ trait DataSkippingReaderBase
     val ds = if (keepNumRecords) {
       withStats // use withStats instead of allFiles so the `stats` column is already parsed
         // keep only the numRecords field as a Json string in the stats field
-        .withColumn("stats", to_json(struct(col("stats.numRecords") as 'numRecords)))
+        .withColumn("stats", to_json(struct(col("stats.numRecords") as "numRecords")))
     } else {
       allFiles.withColumn("stats", nullStringLiteral)
     }
@@ -807,7 +807,7 @@ trait DataSkippingReaderBase
         DeltaLog.filterFileList(metadata.partitionSchema, withStats, partitionFilters)
       filteredFiles
         // keep only the numRecords field as a Json string in the stats field
-        .withColumn("stats", to_json(struct(col("stats.numRecords") as 'numRecords)))
+        .withColumn("stats", to_json(struct(col("stats.numRecords") as "numRecords")))
     } else {
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, allFiles.toDF(), partitionFilters)
@@ -845,7 +845,7 @@ trait DataSkippingReaderBase
 
     val statsColumn = if (keepNumRecords) {
       // keep only the numRecords field as a Json string in the stats field
-      to_json(struct(col("stats.numRecords") as 'numRecords))
+      to_json(struct(col("stats.numRecords") as "numRecords"))
     } else nullStringLiteral
 
     val files =
@@ -1074,7 +1074,7 @@ trait DataSkippingReaderBase
       val filesToScan = ArrayBuffer[AddFile]()
       val filesToIgnore = ArrayBuffer[AddFile]()
       while (iter.hasNext && logicalRowsToScan < limit) {
-        val file = iter.next
+        val file = iter.next()
         if (file._2.numPhysicalRecords == null || file._2.numLogicalRecords == null) {
           // this file has no stats, ignore for now
           bytesToIgnore += file._1.size

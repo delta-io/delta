@@ -216,7 +216,7 @@ sealed trait RemovableFeature { self: TableFeature =>
       downgradeTxnReadSnapshot: Snapshot): Boolean = {
     require(isReaderWriterFeature)
     val deltaLog = downgradeTxnReadSnapshot.deltaLog
-    val earliestCheckpointVersion = deltaLog.findEarliestReliableCheckpoint().getOrElse(0L)
+    val earliestCheckpointVersion = deltaLog.findEarliestReliableCheckpoint.getOrElse(0L)
     val toVersion = downgradeTxnReadSnapshot.version
 
     // Use the snapshot at earliestCheckpointVersion to validate the checkpoint identified by
@@ -325,6 +325,7 @@ object TableFeature {
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
       CheckConstraintsTableFeature,
+      ClusteringTableFeature,
       DomainMetadataTableFeature,
       GeneratedColumnsTableFeature,
       InvariantsTableFeature,
@@ -521,6 +522,13 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
 }
 
 /**
+ * Clustering table feature is enabled when a table is created with CLUSTER BY clause.
+ */
+object ClusteringTableFeature extends WriterFeature("clustering") {
+  override val requiredFeatures: Set[TableFeature] = Set(DomainMetadataTableFeature)
+}
+
+/**
  * This table feature represents support for column DEFAULT values for Delta Lake. With this
  * feature, it is possible to assign default values to columns either at table creation time or
  * later by using commands of the form: ALTER TABLE t ALTER COLUMN c SET DEFAULT v. Thereafter,
@@ -548,6 +556,7 @@ object AllowColumnDefaultsTableFeature extends WriterFeature(name = "allowColumn
  */
 object V2CheckpointTableFeature
   extends ReaderWriterFeature(name = "v2Checkpoint")
+  with RemovableFeature
   with FeatureAutomaticallyEnabledByMetadata {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
@@ -558,6 +567,31 @@ object V2CheckpointTableFeature
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
       spark: SparkSession): Boolean = isV2CheckpointSupportNeededByMetadata(metadata)
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    // Fail validation if v2 checkpoints are still enabled in the current snapshot
+    if (isV2CheckpointSupportNeededByMetadata(snapshot.metadata)) return false
+
+    // Validation also fails if the current snapshot might depend on a v2 checkpoint.
+    // NOTE: Empty and preloaded checkpoint providers never reference v2 checkpoints.
+    snapshot.checkpointProvider match {
+      case p if p.isEmpty => true
+      case _: PreloadedCheckpointProvider => true
+      case lazyProvider: LazyCompleteCheckpointProvider =>
+        lazyProvider.underlyingCheckpointProvider.isInstanceOf[PreloadedCheckpointProvider]
+      case _ => false
+    }
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = action match {
+    case m: Metadata => isV2CheckpointSupportNeededByMetadata(m)
+    case _: CheckpointMetadata => true
+    case _: SidecarFile => true
+    case _ => false
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    V2CheckpointPreDowngradeCommand(table)
 }
 
 /**

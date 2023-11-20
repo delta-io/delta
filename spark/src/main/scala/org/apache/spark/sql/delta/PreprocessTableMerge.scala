@@ -413,7 +413,9 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     if (implicitColumns.isEmpty) {
       return (allActions, Set[String]())
     }
-    assert(finalSchema.size == allActions.size)
+    assert(finalSchema.size == allActions.size,
+      "Invalid number of columns in INSERT clause with generated columns. Expected schema: " +
+      s"$finalSchema, INSERT actions: $allActions")
 
     val track = mutable.Set[String]()
 

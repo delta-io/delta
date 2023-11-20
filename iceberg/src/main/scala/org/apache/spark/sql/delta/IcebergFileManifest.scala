@@ -69,7 +69,7 @@ class IcebergFileManifest(
       .getOrDefault(
         TableProperties.DEFAULT_FILE_FORMAT, TableProperties.DEFAULT_FILE_FORMAT_DEFAULT)
 
-    if (format != "parquet") {
+    if (format.toLowerCase() != "parquet") {
       throw new UnsupportedOperationException(
         s"Cannot convert Iceberg tables with file format $format. Only parquet is supported.")
     }

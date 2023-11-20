@@ -160,18 +160,23 @@ object OptimisticTransaction {
   def getActive(): Option[OptimisticTransaction] = Option(active.get())
 
   /**
-   * Runs the passed block of code with the given active transaction
+   * Runs the passed block of code with the given active transaction. This fails if a transaction is
+   * already active unless `overrideExistingTransaction` is set.
    */
-  def withActive[T](activeTransaction: OptimisticTransaction)(block: => T): T = {
+  def withActive[T](
+      activeTransaction: OptimisticTransaction,
+      overrideExistingTransaction: Boolean = false)(block: => T): T = {
     val original = getActive()
+    if (overrideExistingTransaction) {
+      clearActive()
+    }
     setActive(activeTransaction)
     try {
       block
     } finally {
+      clearActive()
       if (original.isDefined) {
         setActive(original.get)
-      } else {
-        clearActive()
       }
     }
   }
@@ -385,6 +390,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
     updateMetadataInternal(proposedNewMetadata, ignoreDefaultProperties)
+  }
+
+  /**
+   * Can this transaction still update the metadata?
+   * This is allowed only once per transaction.
+   */
+  def canUpdateMetadata: Boolean = {
+    !hasWritten && newMetadata.isEmpty
   }
 
   /**
@@ -1345,8 +1358,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     newMetadata = metadataUpdate1.orElse(newMetadata)
 
     val (protocolUpdate2, metadataUpdate2) = IcebergCompatV1.enforceInvariantsAndDependencies(
-      prevProtocol = snapshot.protocol,
-      prevMetadata = snapshot.metadata,
+      snapshot,
       newestProtocol = protocol, // Note: this will try to use `newProtocol`
       newestMetadata = metadata, // Note: this will try to use `newMetadata`
       isCreatingNewTable,

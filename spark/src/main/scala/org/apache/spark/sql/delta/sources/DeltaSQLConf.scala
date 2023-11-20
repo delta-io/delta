@@ -23,6 +23,7 @@ import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.util.Utils
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -1351,6 +1352,62 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(v => v >= 1, "Must be at least 1.")
       .createWithDefault(100)
+
+  /////////////////////
+  // Optimized Write
+  /////////////////////
+
+  val DELTA_OPTIMIZE_WRITE_ENABLED =
+    buildConf("optimizeWrite.enabled")
+      .doc("Whether to optimize writes made into Delta tables from this session.")
+      .booleanConf
+      .createOptional
+
+  val DELTA_OPTIMIZE_WRITE_SHUFFLE_BLOCKS =
+    buildConf("optimizeWrite.numShuffleBlocks")
+      .internal()
+      .doc("Maximum number of shuffle blocks to target for the adaptive shuffle " +
+        "in optimized writes.")
+      .intConf
+      .createWithDefault(50000000)
+
+  val DELTA_OPTIMIZE_WRITE_MAX_SHUFFLE_PARTITIONS =
+    buildConf("optimizeWrite.maxShufflePartitions")
+      .internal()
+      .doc("Max number of output buckets (reducers) that can be used by optimized writes. This " +
+        "can be thought of as: 'how many target partitions are we going to write to in our " +
+        "table in one write'. This should not be larger than " +
+        "spark.shuffle.minNumPartitionsToHighlyCompress. Otherwise, partition coalescing and " +
+        "skew split may not work due to incomplete stats from HighlyCompressedMapStatus")
+      .intConf
+      .createWithDefault(2000)
+
+  val DELTA_OPTIMIZE_WRITE_BIN_SIZE =
+    buildConf("optimizeWrite.binSize")
+      .internal()
+      .doc("Bin size for the adaptive shuffle in optimized writes in megabytes.")
+      .bytesConf(ByteUnit.MiB)
+      .createWithDefault(512)
+
+  //////////////////
+  // Clustered Table
+  //////////////////
+
+  // This is temporary conf to make sure clustering table is not used by anyone other than devs as
+  // the feature is not fully ready.
+  val EXPOSE_CLUSTERING_TABLE_FOR_TESTING =
+    buildConf("clusteringTable.exposeClusteringTableForTesting")
+      .internal()
+      .doc(
+        """
+          |This conf controls whether clustering table is exposed or not. Note that
+          | clustering table is in development and this config should be used only for
+          | testing/benchmarking.
+          |""".stripMargin)
+      .booleanConf
+      .checkValue(v => !v || Utils.isTesting,
+        "Exposing clustering table is only allowed in testing.")
+      .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

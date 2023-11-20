@@ -929,7 +929,7 @@ trait DeltaErrorsBase
       spark: SparkSession, deltaVersions: Seq[Long]): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_VERSIONS_NOT_CONTIGUOUS",
-      messageParameters = Array(deltaVersions.toString())
+      messageParameters = Array(deltaVersions.mkString(", "))
     )
   }
 
@@ -2910,6 +2910,14 @@ trait DeltaErrorsBase
       pos = 0)
   }
 
+  def deletionVectorNonIncrementalUpdate(): Throwable = {
+    new DeltaIllegalStateException(errorClass = "DELTA_DELETION_VECTOR_NON_INCREMENTAL_UPDATE")
+  }
+
+  def deletionVectorOverlappingRows(): Throwable = {
+    new DeltaIllegalStateException(errorClass = "DELTA_DELETION_VECTOR_OVERLAPPING_ROWS")
+  }
+
   def statsRecomputeNotSupportedOnDvTables(): Throwable = {
     new DeltaCommandUnsupportedWithDeletionVectorsException(
       errorClass = "DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS",
@@ -3030,6 +3038,18 @@ trait DeltaErrorsBase
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_V1_VIOLATION.INCOMPATIBLE_TABLE_FEATURE",
       messageParameters = Array(tf.toString)
+    )
+  }
+
+  def icebergCompatV1DeletionVectorsShouldBeDisabledException(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_V1_VIOLATION.DELETION_VECTORS_SHOULD_BE_DISABLED"
+    )
+  }
+
+  def icebergCompatV1DeletionVectorsNotPurgedException(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_V1_VIOLATION.DELETION_VECTORS_NOT_PURGED"
     )
   }
 
