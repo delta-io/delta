@@ -2481,5 +2481,17 @@
       "<config> to false."
     ],
     "sqlState" : "42939"
+  },
+  "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED" : {
+    "message" : [
+      "Failed to execute <commandType> command because it assigned a column DEFAULT value, but the corresponding table feature was not enabled. Please retry the command again after executing ALTER TABLE tableName SET TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED" : {
+    "message" : [
+      "Failed to execute the command because DEFAULT values are not supported when adding new columns to previously existing Delta tables; please add the column without a default value first, then run a second ALTER TABLE ALTER COLUMN SET DEFAULT command to apply for future inserted rows instead."
+    ],
+    "sqlState" : "0AKDC"
   }
 }

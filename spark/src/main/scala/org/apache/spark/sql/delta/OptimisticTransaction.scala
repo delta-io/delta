@@ -1375,6 +1375,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // `assertMetadata` call above.
     performCdcColumnMappingCheck(finalActions, op)
 
+    // Make sure this operation does not include default column values if the corresponding table
+    // feature is not enabled.
+    if (!protocol.isFeatureSupported(AllowColumnDefaultsTableFeature)) {
+      checkNoColumnDefaults(op)
+    }
+
     if (snapshot.version == -1) {
       deltaLog.ensureLogDirectoryExist()
       // If this is the first commit and no protocol is specified, initialize the protocol version.
@@ -1444,12 +1450,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
     actions.foreach(assertDeletionVectorWellFormed)
-
-    // Make sure this operation does not include default column values if the corresponding table
-    // feature is not enabled.
-    if (!protocol.isFeatureSupported(AllowColumnDefaultsTableFeature)) {
-      checkNoColumnDefaults(op)
-    }
 
     finalActions
   }
@@ -1904,8 +1904,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         column.metadata.contains(ResolveDefaultColumns.EXISTS_DEFAULT_COLUMN_METADATA_KEY)
     }
 
-    def throwError(errorClass: String, parameters: Map[String, String]): Unit = {
-      throw new AnalysisException(
+    def throwError(errorClass: String, parameters: Array[String]): Unit = {
+      throw new DeltaAnalysisException(
         errorClass = errorClass,
         messageParameters = parameters)
     }
@@ -1913,19 +1913,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     op match {
       case change: ChangeColumn if usesDefaults(change.newColumn) =>
         throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
-          Map("commandType" -> "ALTER TABLE"))
+          Array("ALTER TABLE"))
       case create: CreateTable if create.metadata.schema.fields.exists(usesDefaults) =>
         throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
-          Map("commandType" -> "CREATE TABLE"))
+          Array("CREATE TABLE"))
       case replace: ReplaceColumns if replace.columns.exists(usesDefaults) =>
         throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
-          Map("commandType" -> "CREATE TABLE"))
+          Array("CREATE TABLE"))
       case replace: ReplaceTable if replace.metadata.schema.fields.exists(usesDefaults) =>
         throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
-          Map("commandType" -> "CREATE TABLE"))
+          Array("CREATE TABLE"))
       case update: UpdateSchema if update.newSchema.fields.exists(usesDefaults) =>
         throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
-          Map("commandType" -> "ALTER TABLE"))
+          Array("ALTER TABLE"))
       case _ =>
     }
   }

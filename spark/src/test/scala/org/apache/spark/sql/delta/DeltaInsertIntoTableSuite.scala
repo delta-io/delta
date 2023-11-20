@@ -545,28 +545,29 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
   test("Column DEFAULT value support with Delta Lake, negative tests") {
     withSQLConf(SQLConf.ENABLE_DEFAULT_COLUMNS.key -> "true") {
       // The table feature is not enabled via TBLPROPERTIES.
-      checkError(
-        exception = intercept[AnalysisException] {
-          sql(s"create table t3(i boolean, s bigint, q int default 42) using $v2Format " +
-            "partitioned by (i)")
-        },
-        errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
-        parameters = Map("commandType" -> "CREATE TABLE"))
-      withTable("alterTableTest") {
-        sql(s"create table alterTableTest(a int) using $v2Format")
+      withTable("createTableWithDefaultFeatureNotEnabled") {
         checkError(
-          exception = intercept[AnalysisException] {
-            sql("alter table alterTableTest alter column a set default 42")
+          exception = intercept[DeltaAnalysisException] {
+            sql(s"create table createTableWithDefaultFeatureNotEnabled(" +
+              s"i boolean, s bigint, q int default 42) using $v2Format " +
+              "partitioned by (i)")
           },
-          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
-          parameters = Map("commandType" -> "ALTER TABLE"))
+          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED")
+      }
+      withTable("alterTableSetDefaultFeatureNotEnabled") {
+        sql(s"create table alterTableSetDefaultFeatureNotEnabled(a int) using $v2Format")
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("alter table alterTableSetDefaultFeatureNotEnabled alter column a set default 42")
+          },
+          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED")
       }
       // Adding a new column with a default value to an existing table is not allowed.
       withTable("alterTableTest") {
         sql(s"create table alterTableTest(i boolean, s bigint, q int default 42) using $v2Format " +
           s"partitioned by (i) $tblPropertiesAllowDefaults")
         checkError(
-          exception = intercept[AnalysisException] {
+          exception = intercept[DeltaAnalysisException] {
             sql("alter table alterTableTest add column z int default 42")
           },
           errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED")
