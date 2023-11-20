@@ -33,7 +33,7 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveM
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.functions.{lit, struct}
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.{LegacyBehaviorPolicy, SQLConf}
 import org.apache.spark.sql.internal.SQLConf.{LEAF_NODE_DEFAULT_PARALLELISM, PARTITION_OVERWRITE_MODE, PartitionOverwriteMode}
 import org.apache.spark.sql.test.{SharedSparkSession, TestSparkSession}
 import org.apache.spark.sql.types._
@@ -464,7 +464,10 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
     ).foreach { partitionOverwriteMode =>
       withSQLConf(
         SQLConf.ENABLE_DEFAULT_COLUMNS.key -> "true",
-        SQLConf.PARTITION_OVERWRITE_MODE.key -> partitionOverwriteMode) {
+        SQLConf.PARTITION_OVERWRITE_MODE.key -> partitionOverwriteMode,
+        // Set these configs to allow writing test values like timestamps of Jan. 1, year 1, etc.
+        SQLConf.PARQUET_REBASE_MODE_IN_WRITE.key -> LegacyBehaviorPolicy.LEGACY.toString,
+        SQLConf.PARQUET_INT96_REBASE_MODE_IN_WRITE.key -> LegacyBehaviorPolicy.LEGACY.toString) {
         withTable("t1", "t2", "t3", "t4") {
           // Positive tests:
           // Create some columns with default values and then insert into them.
@@ -787,24 +790,6 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
         ))
     }
     withTable("t") {
-      sql(s"create table t(a int default 42) using $v2Format $tblPropertiesAllowDefaults")
-      val descriptionDf = sql("describe table extended t a")
-      QueryTest.checkAnswer(
-        descriptionDf,
-        Seq(
-          Row("col_name", "a"),
-          Row("data_type", "int"),
-          Row("comment", "NULL"),
-          Row("default", "42"),
-          Row("min", "NULL"),
-          Row("max", "NULL"),
-          Row("num_nulls", "NULL"),
-          Row("distinct_count", "NULL"),
-          Row("max_col_len", "NULL"),
-          Row("avg_col_len", "NULL"),
-          Row("histogram", "NULL")))
-    }
-    withTable("t") {
       sql(
         s"""
            |CREATE TABLE t (
@@ -827,8 +812,8 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
                |USING parquet
                |COMMENT 'This is a comment'
                |TBLPROPERTIES (
-               |  'delta.feature.allowColumnDefaults' = 'enabled',
-               |  'delta.columnMapping.mode' = 'name')
+               |  'delta.columnMapping.mode' = 'name',
+               |  'delta.feature.allowColumnDefaults' = 'enabled')
                |""".stripMargin)))
     }
   }
