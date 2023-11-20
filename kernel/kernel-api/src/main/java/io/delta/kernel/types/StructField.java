@@ -62,10 +62,17 @@ public class StructField {
     private final Map<String, String> metadata;
 
     public StructField(
-        String name,
-        DataType dataType,
-        boolean nullable,
-        Map<String, String> metadata) {
+            String name,
+            DataType dataType,
+            boolean nullable) {
+        this(name, dataType, nullable, Collections.emptyMap());
+    }
+
+    public StructField(
+            String name,
+            DataType dataType,
+            boolean nullable,
+            Map<String, String> metadata) {
         this.name = name;
         this.dataType = dataType;
         this.nullable = nullable;

@@ -31,8 +31,6 @@ import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
-import io.delta.kernel.internal.types.MixedDataType;
-
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 
 public class DefaultJsonRow implements Row {
@@ -137,15 +135,6 @@ public class DefaultJsonRow implements Row {
             return null;
         }
 
-        if (dataType.equals(MixedDataType.INSTANCE)) {
-            if (jsonValue.isTextual()) {
-                return jsonValue.textValue();
-            } else if (jsonValue instanceof ObjectNode) {
-                return jsonValue.toString();
-            }
-            throwIfTypeMismatch("object or string", false, jsonValue);
-        }
-
         if (dataType instanceof BooleanType) {
             throwIfTypeMismatch("boolean", jsonValue.isBoolean(), jsonValue);
             return jsonValue.booleanValue();
@@ -163,10 +152,9 @@ public class DefaultJsonRow implements Row {
         }
 
         if (dataType instanceof StringType) {
-            // TODO: sometimes the Delta Log contains config as String -> String or String -> Int
             throwIfTypeMismatch(
                 "string",
-                jsonValue.isTextual() | jsonValue.isIntegralNumber(),
+                jsonValue.isTextual(),
                 jsonValue);
             return jsonValue.asText();
         }

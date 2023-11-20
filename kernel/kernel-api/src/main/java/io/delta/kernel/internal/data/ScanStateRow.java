@@ -28,7 +28,6 @@ import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.types.TableSchemaSerDe;
 import io.delta.kernel.internal.util.VectorUtils;
 
 /**
@@ -81,7 +80,7 @@ public class ScanStateRow extends GenericRow {
     public static StructType getLogicalSchema(TableClient tableClient, Row scanState) {
         String serializedSchema =
             scanState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
-        return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
+        return tableClient.getJsonHandler().deserializeStructType(serializedSchema);
     }
 
     /**
@@ -95,7 +94,7 @@ public class ScanStateRow extends GenericRow {
     public static StructType getPhysicalSchema(TableClient tableClient, Row scanState) {
         String serializedSchema =
             scanState.getString(COL_NAME_TO_ORDINAL.get("physicalSchemaString"));
-        return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
+        return tableClient.getJsonHandler().deserializeStructType(serializedSchema);
     }
 
     /**
