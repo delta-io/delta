@@ -322,6 +322,7 @@ object TableFeature {
    */
   private[delta] val allSupportedFeaturesMap: Map[String, TableFeature] = {
     var features: Set[TableFeature] = Set(
+      AllowColumnDefaultsTableFeature,
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
       CheckConstraintsTableFeature,
