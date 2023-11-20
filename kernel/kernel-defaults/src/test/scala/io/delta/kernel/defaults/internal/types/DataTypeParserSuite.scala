@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.defaults.internal.types
 
-import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -107,7 +106,7 @@ class DataTypeParserSuite extends AnyFunSuite {
         val parsedType = parse(structTypeJson(fieldsJson))
         val expectedType = new StructType()
           .add("col1", col1Type, false)
-          .add("col2", col2Type, true, Map("int" -> "0").asJava)
+          .add("col2", col2Type, true, FieldMetadata.builder().putLong("int", 0).build())
         assert(parsedType == expectedType)
       }
     }
@@ -131,6 +130,54 @@ class DataTypeParserSuite extends AnyFunSuite {
         |}
         |""".stripMargin
     assert(parse(str) == new StructType())
+  }
+
+  test("parseDataType: parsing FieldMetadata") {
+    def testFieldMetadata(fieldMetadataJson: String, expectedFieldMetadata: FieldMetadata): Unit = {
+      val parsedMetadata = parse(structTypeJson(
+        Seq(structFieldJson("testCol", "\"string\"", true, Some(fieldMetadataJson)))
+      )).asInstanceOf[StructType].get("testCol").getMetadata
+
+      assert(parsedMetadata == expectedFieldMetadata)
+    }
+
+    val fieldMetadataAllTypesJson =
+      """
+        |{
+        |  "null" : null,
+        |  "int" : 10,
+        |  "double" : 2.22,
+        |  "boolean" : true,
+        |  "string" : "10",
+        |  "metadata" : { "nestedInt" : 200 },
+        |  "empty_arr" : [],
+        |  "int_arr" : [1, 2, 0],
+        |  "double_arr" : [1.0, 2.0, 3.0],
+        |  "boolean_arr" : [true],
+        |  "string_arr" : ["one", "two"],
+        |  "metadata_arr" : [{ "one" : 1, "two" : true }, {}]
+        |}
+        |""".stripMargin
+    val expectedFieldMetadataAllTypes = FieldMetadata.builder()
+      .putNull("null")
+      .putLong("int", 10)
+      .putDouble("double", 2.22)
+      .putBoolean("boolean", true)
+      .putString("string", "10")
+      .putMetadata("metadata", FieldMetadata.builder().putLong("nestedInt", 200).build())
+      .putLongArray("empty_arr", Array())
+      .putLongArray("int_arr", Array(1, 2, 0))
+      .putDoubleArray("double_arr", Array(1.0, 2.0, 3.0))
+      .putBooleanArray("boolean_arr", Array(true))
+      .putStringArray("string_arr", Array("one", "two"))
+      .putMetadataArray("metadata_arr",
+        Array(
+          FieldMetadata.builder().putLong("one", 1).putBoolean("two", true).build(),
+          FieldMetadata.builder().build()))
+      .build()
+
+    testFieldMetadata(fieldMetadataAllTypesJson, expectedFieldMetadataAllTypes)
+    testFieldMetadata("{}", FieldMetadata.builder().build())
   }
 
   test("parseDataType: invalid field for type") {
@@ -166,7 +213,7 @@ object DataTypeParserSuite {
       structFieldJson("col2", "\"string\"", false, Some("{ \"int\" : 0 }")))),
       new StructType()
         .add("col1", StringType.STRING, true)
-        .add("col2", StringType.STRING, false, Map("int" -> "0").asJava)
+        .add("col2", StringType.STRING, false, FieldMetadata.builder().putLong("int", 0).build())
     )
   )
 

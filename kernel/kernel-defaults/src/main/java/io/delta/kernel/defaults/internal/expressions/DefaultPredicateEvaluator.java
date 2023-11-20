@@ -17,7 +17,6 @@ package io.delta.kernel.defaults.internal.expressions;
 
 import java.util.Arrays;
 import java.util.Optional;
-import static java.util.Collections.emptyMap;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -40,7 +39,7 @@ public class DefaultPredicateEvaluator implements PredicateEvaluator {
     private static final String EXISTING_SEL_VECTOR_COL_NAME =
         "____existing_selection_vector_value____";
     private static final StructField EXISTING_SEL_VECTOR_FIELD =
-        new StructField(EXISTING_SEL_VECTOR_COL_NAME, BooleanType.BOOLEAN, false, emptyMap());
+        new StructField(EXISTING_SEL_VECTOR_COL_NAME, BooleanType.BOOLEAN, false);
 
     private final ExpressionEvaluator expressionEvaluator;
 
