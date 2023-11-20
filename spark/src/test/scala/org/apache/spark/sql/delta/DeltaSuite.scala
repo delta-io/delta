@@ -1193,7 +1193,7 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
+      spark.range(100).select('id, 'id % 4 as "by4", 'id % 8 as "by8")
         .write
         .format("delta")
         .partitionBy("by4", "by8")
@@ -1213,7 +1213,7 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4)
+      spark.range(100).select('id, 'id % 4 as "by4")
         .write
         .format("delta")
         .partitionBy("by4")
@@ -1266,14 +1266,14 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
+      spark.range(100).select('id, 'id % 4 as "by4", 'id % 8 as "by8")
         .write
         .format("delta")
         .partitionBy("by4", "by8")
         .save(tempDir.toString)
 
       val e = intercept[AnalysisException] {
-        spark.range(100).select('id, 'id % 4 as 'by4)
+        spark.range(100).select('id, 'id % 4 as "by4")
           .write
           .format("delta")
           .partitionBy("by4")
@@ -1290,13 +1290,13 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, ('id * 3).cast("string") as 'value)
+      spark.range(100).select('id, ('id * 3).cast("string") as "value")
         .write
         .format("delta")
         .save(tempDir.toString)
 
       val e = intercept[AnalysisException] {
-        spark.range(100).select('id, 'id * 3 as 'value)
+        spark.range(100).select('id, 'id * 3 as "value")
           .write
           .format("delta")
           .mode("append")
@@ -1312,7 +1312,7 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4)
+      spark.range(100).select('id, 'id % 4 as "by4")
         .write
         .format("delta")
         .partitionBy("by4")
@@ -1323,7 +1323,7 @@ class DeltaSuite extends QueryTest
       val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
       assertPartitionExists("by4", deltaLog, files)
 
-      spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
+      spark.range(101, 200).select('id, 'id % 4 as "by4", 'id % 8 as "by8")
         .write
         .format("delta")
         .option(DeltaOptions.MERGE_SCHEMA_OPTION, "true")
@@ -1332,7 +1332,7 @@ class DeltaSuite extends QueryTest
 
       checkAnswer(
         spark.read.format("delta").load(tempDir.toString),
-        spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8))
+        spark.range(101, 200).select('id, 'id % 4 as "by4", 'id % 8 as "by8"))
     }
   }
 
@@ -1342,7 +1342,7 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4)
+      spark.range(100).select('id, 'id % 4 as "by4")
         .write
         .format("delta")
         .partitionBy("by4")
@@ -1354,7 +1354,7 @@ class DeltaSuite extends QueryTest
       assertPartitionExists("by4", deltaLog, files)
 
       val e = intercept[AnalysisException] {
-        spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
+        spark.range(101, 200).select('id, 'id % 4 as "by4", 'id % 8 as "by8")
           .write
           .format("delta")
           .partitionBy("by4", "by8")
@@ -1374,7 +1374,7 @@ class DeltaSuite extends QueryTest
         }
 
         val e = intercept[AnalysisException] {
-          spark.range(100).select('id, 'id % 4 as 'by4)
+          spark.range(100).select('id, 'id % 4 as "by4")
             .write
             .format("delta")
             .partitionBy("by4", "id")

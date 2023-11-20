@@ -419,7 +419,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
       q.stop()
 
       // Add non-streaming data: this should not be ignored in conversion.
-      spark.range(11, 21).select('id.cast("int") as 'col1)
+      spark.range(11, 21).select('id.cast("int") as "col1")
         .write.mode("append").parquet(dataLocation)
 
       withSQLConf(("spark.databricks.delta.convert.useMetadataLog", "false")) {
