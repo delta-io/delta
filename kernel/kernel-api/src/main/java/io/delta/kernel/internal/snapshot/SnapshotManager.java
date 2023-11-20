@@ -161,7 +161,7 @@ public class SnapshotManager {
         TableClient tableClient,
         long startVersion,
         Optional<Long> versionToLoad) {
-        logger.debug("startVersion: {}, versionToLoad{}", startVersion, versionToLoad);
+        logger.debug("startVersion: {}, versionToLoad: {}", startVersion, versionToLoad);
 
         return listFromOrNone(
             logPath,
@@ -228,9 +228,9 @@ public class SnapshotManager {
         TableClient tableClient) {
         final String startingFromStr = initSegment
             .checkpointVersionOpt
-            .map(v -> String.format(" starting from checkpoint version %s.", v))
+            .map(v -> String.format("starting from checkpoint version %s.", v))
             .orElse(".");
-        logger.info("Loading version {}{}", initSegment.version, startingFromStr);
+        logger.info("Loading version {} {}", initSegment.version, startingFromStr);
 
         return new SnapshotImpl(
             logPath,
