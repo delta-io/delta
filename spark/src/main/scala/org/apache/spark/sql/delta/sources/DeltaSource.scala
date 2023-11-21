@@ -1197,7 +1197,7 @@ case class DeltaSource(
       commitProcessedInBatch = true
 
       if (!indexedFile.hasFileAction) {
-        return shouldAdmit
+        return true
       }
 
       // We always admit a file if we still have capacity _before_ we take it. This ensures that we
