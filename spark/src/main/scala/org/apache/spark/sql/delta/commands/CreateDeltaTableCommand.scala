@@ -234,9 +234,11 @@ case class CreateDeltaTableCommand(
         txn,
         sparkSession
       )
-      // Metadata updates for CREATE TABLE (with any writer) and REPLACE TABLE
+      // Metadata updates for creating table (with any writer) and replacing table
       // (only with V1 writer) will be handled inside WriteIntoDelta.
-      if (!isV1Writer && isReplace) {
+      // For createOrReplace operation, metadata updates are handled here if the table already
+      // exists (replacing table), otherwise it is handled inside WriteIntoDelta (creating table).
+      if (!isV1Writer && isReplace && txn.readVersion > -1L) {
         val newDomainMetadata = Seq.empty[DomainMetadata]
         // Ensure to remove any domain metadata for REPLACE TABLE.
         actions = actions ++ DomainMetadataUtils.handleDomainMetadataForReplaceTable(
