@@ -485,12 +485,16 @@ When available, change data readers should use the `cdc` actions in a given tabl
 Specifically, to read the row-level changes made in a version, the following strategy should be used:
 1. If there are `cdc` actions in this version, then read only those to get the row-level changes, and skip the remaining `add` and `remove` actions in this version.
 2. Otherwise, if there are no `cdc` actions in this version, read and treat all the rows in the `add` and `remove` actions as inserted and deleted rows, respectively.
-3. The following extra columns should also be generated:
+3. Change data readers should return the following extra columns:
 
-Field Name | Data Type | Description
--|-|-
-_commit_version|`Long`| The table version containing the change. This can be got from the name of the Delta log file that contains actions.
-_commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. This can be got from the file modification time of the Delta log file that contains actions.
+    Field Name | Data Type | Description
+    -|-|-
+    _commit_version|`Long`| The table version containing the change. This can be got from the name of the Delta log file that contains actions.
+    _commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. This can be got from the file modification time of the Delta log file that contains actions.
+
+##### Note for non-change data readers
+
+A table with Change Data Feed enabled may have Parquet files referenced by `add` and `remove` actions within the Delta log. These files can contain an extra column `_change_type`. This column is not represented in the metadata of the table and will consistently have a `null` value. When accessing these files, readers not designed for change data should disregard this column and only process columns defined within the table's metadata schema.
 
 ### Transaction Identifiers
 Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
