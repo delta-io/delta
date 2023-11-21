@@ -479,6 +479,9 @@ object DeltaTableUtils extends PredicateHelper
     IdentityTransform(FieldReference(Seq(col)))
   }
 
+  // Workaround for withActive not being visible in io/delta.
+  def withActiveSession[T](spark: SparkSession)(body: => T): T = spark.withActive(body)
+
   /**
    * Uses org.apache.hadoop.fs.Path(Path, String) to concatenate a base path
    * and a relative child path and safely handles the case where the base path represents
