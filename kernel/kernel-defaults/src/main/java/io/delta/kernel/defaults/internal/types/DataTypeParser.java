@@ -195,7 +195,6 @@ public class DataTypeParser {
                     builder.putLongArray(key, new Long[0]);
                 } else {
                     final JsonNode head = fields.next();
-                    // TODO could these have null elements?
                     if (head.isInt()) {
                         builder.putLongArray(
                             key,
