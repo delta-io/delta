@@ -72,6 +72,9 @@ private[delta] case class IndexedFile(
     isLast: Boolean = false,
     shouldSkip: Boolean = false) {
 
+  require(Option(add).size + Option(remove).size + Option(cdc).size <= 1,
+    "IndexedFile must have at most one of add, remove, or cdc")
+
   def getFileAction: FileAction = {
     if (add != null) {
       add
@@ -279,10 +282,7 @@ trait DeltaSourceBase extends Source
         changes
       } else {
         val admissionControl = limits.get
-        changes.withClose { it =>
-          it.takeWhile { index =>
-            admissionControl.admit(Option(index.add))
-          }
+        changes.withClose { it => it.takeWhile { admissionControl.admit(_) }
         }
       }
     }
@@ -1170,47 +1170,41 @@ case class DeltaSource(
      * This overloaded method checks if all the FileActions for a commit can be accommodated by
      * the rate limit.
      */
-    def admit(fileActions: Seq[FileAction]): Boolean = {
-      def getSize(actions: Seq[FileAction]): Long = {
-        actions.foldLeft(0L) { (l, r) => l + r.getFileSize }
+    def admit(indexedFiles: Seq[IndexedFile]): Boolean = {
+      def getSize(actions: Seq[IndexedFile]): Long = {
+        actions.filter(_.hasFileAction).foldLeft(0L) { (l, r) => l + r.getFileAction.getFileSize }
       }
-      if (fileActions.isEmpty) {
+      if (indexedFiles.isEmpty) {
         true
       } else {
         // if no files have been admitted, then admit all to avoid deadlock
         // else check if all of the files together satisfy the limit, only then admit
+        val bytesInFiles = getSize(indexedFiles)
         val shouldAdmit = !commitProcessedInBatch ||
-          (filesToTake - fileActions.size >= 0 && bytesToTake - getSize(fileActions) >= 0)
+          (filesToTake - indexedFiles.size >= 0 && bytesToTake - bytesInFiles >= 0)
 
         commitProcessedInBatch = true
-        take(files = fileActions.size, bytes = getSize(fileActions))
+        take(files = indexedFiles.size, bytes = bytesInFiles)
         shouldAdmit
       }
     }
 
-    /** Whether to admit the next file */
-    def admit(fileAction: Option[FileAction]): Boolean = {
+    /**
+     * Whether to admit the next file. Dummy IndexedFile entries with no attached file action are
+     * always admitted.
+     */
+    def admit(indexedFile: IndexedFile): Boolean = {
       commitProcessedInBatch = true
 
-      def getSize(action: FileAction): Long = {
-        action match {
-          case a: AddFile =>
-            a.size
-          case r: RemoveFile =>
-            r.size.getOrElse(0L)
-          case cdc: AddCDCFile =>
-            cdc.size
-        }
+      if (!indexedFile.hasFileAction) {
+        return true
       }
 
+      // We always admit a file if we still have capacity _before_ we take it. This ensures that we
+      // will even admit a file when it is larger than the remaining capacity, and that we will
+      // admit at least one file.
       val shouldAdmit = hasCapacity
-
-      if (fileAction.isEmpty) {
-        return shouldAdmit
-      }
-
-      take(files = 1, bytes = getSize(fileAction.get))
-
+      take(files = 1, bytes = indexedFile.getFileAction.getFileSize)
       shouldAdmit
     }
 
