@@ -35,7 +35,6 @@ object HilbertUtils {
 
   @inline
   private[expressions] def getBits(key: Array[Byte], offset: Int, n: Int): Int = {
-//     assert(offset + n <= (key.length * 8), s"offset: $offset n: $n keyLen: ${key.length}")
     // [    ][    ][    ][    ][    ]
     // <---offset---> [  n-bits  ]      <- this is the result
     var result = 0
@@ -67,7 +66,6 @@ object HilbertUtils {
       offset: Int,
       newBits: Int,
       n: Int): Array[Byte] = {
-//    assert(offset + n <= (key.length * 8), s"offset: $offset n: $n keyLen: ${key.length}")
     // bits: [   meaningless bits   ][  n meaningful bits  ]
     //
     // [    ][    ][    ][    ][    ]

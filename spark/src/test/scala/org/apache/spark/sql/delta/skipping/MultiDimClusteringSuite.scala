@@ -79,7 +79,8 @@ class MultiDimClusteringSuite extends QueryTest
         val outputDf = MultiDimClustering.cluster(
           inputDf,
           approxNumPartitions = 4,
-          colNames = Seq("c1", "c2"), "zorder")
+          colNames = Seq("c1", "c2"),
+          curve = "zorder")
         outputDf.write.parquet(new File(tempDir, "source").getCanonicalPath)
 
         // Load the partition 0 and verify that it contains (a, 20), (a, 20), (b, 20)
@@ -129,8 +130,7 @@ class MultiDimClusteringSuite extends QueryTest
           inputDf,
           approxNumPartitions = 2,
           colNames = Seq("c1", "c2"),
-          "hilbert"
-        )
+          curve = "hilbert")
         outputDf.write.parquet(new File(tempDir, "source").getCanonicalPath)
 
         // Load the partition 0 and verify its records.

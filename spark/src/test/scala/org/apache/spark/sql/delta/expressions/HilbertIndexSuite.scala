@@ -170,7 +170,6 @@ class HilbertIndexSuite extends SparkFunSuite {
       var lastPoint: Array[Int] = null
 
       for (_ <- 0 until 1000) {
-
         val pArray = d2p.translateDKeyArrayToNPoint(dArray, k)
         val pLong = d2p.translateDKeyToNPoint(dLong, k)
         assert(util.Arrays.equals(pArray, pLong), s"points should be the same at $dLong")

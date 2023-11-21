@@ -35,7 +35,7 @@ import org.apache.spark.sql.types.{AbstractDataType, DataType, DataTypes}
 private[sql] case class HilbertLongIndex(numBits: Int, children: Seq[Expression])
     extends Expression with ExpectsInputTypes with CodegenFallback {
 
-  private val n = children.size
+  private val n: Int = children.size
   private val nullValue: Int = 0
 
   override def nullable: Boolean = false
@@ -75,7 +75,7 @@ private[sql] case class HilbertLongIndex(numBits: Int, children: Seq[Expression]
 private[sql] case class HilbertByteArrayIndex(numBits: Int, children: Seq[Expression])
     extends Expression with ExpectsInputTypes with CodegenFallback {
 
-  private val n = children.size
+  private val n: Int = children.size
   private val nullValue: Int = 0
 
   override def nullable: Boolean = false
