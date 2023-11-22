@@ -62,7 +62,7 @@ public class StructField {
             String name,
             DataType dataType,
             boolean nullable) {
-        this(name, dataType, nullable, FieldMetadata.builder().build());
+        this(name, dataType, nullable, FieldMetadata.empty());
     }
 
     public StructField(
@@ -116,7 +116,7 @@ public class StructField {
     @Override
     public String toString() {
         return String.format("StructField(name=%s,type=%s,nullable=%s,metadata=%s)",
-            name, dataType, nullable, metadata.toString());
+            name, dataType, nullable, metadata.toJson());
     }
 
     public String toJson() {

@@ -41,22 +41,20 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * The metadata for a given {@link StructField}.
+ * The metadata for a given {@link StructField}. The contents are immutable.
  */
 public final class FieldMetadata {
     private final Map<String, Object> metadata;
 
     private FieldMetadata(Map<String, Object> metadata) {
-        this.metadata = metadata;
+        this.metadata = Collections.unmodifiableMap(metadata);
     }
-
-    // TODO should we include typed getters like in Spark?
 
     /**
      * @return list of the key-value pairs in this {@link FieldMetadata}
      */
     public Map<String, Object> getEntries() {
-        return Collections.unmodifiableMap(metadata);
+        return metadata;
     }
 
     /**
@@ -133,6 +131,13 @@ public final class FieldMetadata {
     }
 
     /**
+     * @return an empty {@link FieldMetadata} instance
+     */
+    public static FieldMetadata empty() {
+        return builder().build();
+    }
+
+    /**
      * Builder class for {@link FieldMetadata}.
      */
     public static class Builder {
@@ -163,7 +168,7 @@ public final class FieldMetadata {
             return this;
         }
 
-        public Builder putMetadata(String key, FieldMetadata value) {
+        public Builder putFieldMetadata(String key, FieldMetadata value) {
             metadata.put(key, value);
             return this;
         }
@@ -188,7 +193,7 @@ public final class FieldMetadata {
             return this;
         }
 
-        public Builder putMetadataArray(String key, FieldMetadata[] value) {
+        public Builder putFieldMetadataArray(String key, FieldMetadata[] value) {
             metadata.put(key, value);
             return this;
         }

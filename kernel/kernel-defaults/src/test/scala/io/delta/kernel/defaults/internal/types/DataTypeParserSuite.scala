@@ -164,20 +164,20 @@ class DataTypeParserSuite extends AnyFunSuite {
       .putDouble("double", 2.22)
       .putBoolean("boolean", true)
       .putString("string", "10")
-      .putMetadata("metadata", FieldMetadata.builder().putLong("nestedInt", 200).build())
+      .putFieldMetadata("metadata", FieldMetadata.builder().putLong("nestedInt", 200).build())
       .putLongArray("empty_arr", Array())
       .putLongArray("int_arr", Array(1, 2, 0))
       .putDoubleArray("double_arr", Array(1.0, 2.0, 3.0))
       .putBooleanArray("boolean_arr", Array(true))
       .putStringArray("string_arr", Array("one", "two"))
-      .putMetadataArray("metadata_arr",
+      .putFieldMetadataArray("metadata_arr",
         Array(
           FieldMetadata.builder().putLong("one", 1).putBoolean("two", true).build(),
-          FieldMetadata.builder().build()))
+          FieldMetadata.empty()))
       .build()
 
     testFieldMetadata(fieldMetadataAllTypesJson, expectedFieldMetadataAllTypes)
-    testFieldMetadata("{}", FieldMetadata.builder().build())
+    testFieldMetadata("{}", FieldMetadata.empty())
   }
 
   test("parseDataType: invalid field for type") {

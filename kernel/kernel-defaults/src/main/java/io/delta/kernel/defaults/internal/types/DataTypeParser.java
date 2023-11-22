@@ -164,7 +164,7 @@ public class DataTypeParser {
      */
     private static FieldMetadata parseFieldMetadata(JsonNode json) {
         if (json == null || json.isNull()) {
-            return FieldMetadata.builder().build();
+            return FieldMetadata.empty();
         }
 
         checkArgument(json.isObject(), "Expected JSON object for struct field metadata");
@@ -186,7 +186,7 @@ public class DataTypeParser {
             } else if (value.isTextual()) {
                 builder.putString(key, value.textValue());
             } else if (value.isObject()) {
-                builder.putMetadata(key, parseFieldMetadata(value));
+                builder.putFieldMetadata(key, parseFieldMetadata(value));
             } else if (value.isArray()) {
                 final Iterator<JsonNode> fields = value.elements();
                 if (!fields.hasNext()) {
@@ -216,7 +216,7 @@ public class DataTypeParser {
                             buildList(value, JsonNode::textValue).toArray(new String[0])
                         );
                     } else if (head.isObject()) {
-                        builder.putMetadataArray(
+                        builder.putFieldMetadataArray(
                             key,
                             buildList(value, DataTypeParser::parseFieldMetadata)
                                 .toArray(new FieldMetadata[0])
