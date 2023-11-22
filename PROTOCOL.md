@@ -489,12 +489,12 @@ Specifically, to read the row-level changes made in a version, the following str
 
     Field Name | Data Type | Description
     -|-|-
-    _commit_version|`Long`| The table version containing the change. This can be got from the name of the Delta log file that contains actions.
-    _commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. This can be got from the file modification time of the Delta log file that contains actions.
+    _commit_version|`Long`| The table version containing the change. This can be derived from the name of the Delta log file that contains actions.
+    _commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. This can be derived from the file modification time of the Delta log file that contains actions.
 
 ##### Note for non-change data readers
 
-A table with Change Data Feed enabled may have Parquet files referenced by `add` and `remove` actions within the Delta log. These files can contain an extra column `_change_type`. This column is not represented in the metadata of the table and will consistently have a `null` value. When accessing these files, readers not designed for change data should disregard this column and only process columns defined within the table's metadata schema.
+In a table with Change Data Feed enabled, the data Parquet files referenced by `add` and `remove` actions are allowed to contain an extra column `_change_type`. This column is not present in the table's schema and will consistently have a `null` value. When accessing these files, readers should disregard this column and only process columns defined within the table's schema.
 
 ### Transaction Identifiers
 Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
