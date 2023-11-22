@@ -311,11 +311,11 @@ case class AlterTableDropFeatureDeltaCommand(
       if (isReaderWriterFeature) {
         // Clean up expired logs before checking history. This also makes sure there is no
         // concurrent metadataCleanup during findEarliestReliableCheckpoint. Note, this
-        // cleanUpExpiredLogs call truncates the cutoff at an hour granularity.
+        // cleanUpExpiredLogs call truncates the cutoff at a minute granularity.
         deltaLog.cleanUpExpiredLogs(
           snapshot,
           truncateHistoryLogRetentionMillis(txn),
-          TruncationGranularity.HOUR)
+          TruncationGranularity.MINUTE)
 
         val historyContainsFeature = removableFeature.historyContainsFeature(
           spark = sparkSession,

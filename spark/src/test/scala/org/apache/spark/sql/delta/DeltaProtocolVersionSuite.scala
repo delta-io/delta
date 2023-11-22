@@ -2387,7 +2387,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         } else {
           deltaLog.deltaRetentionMillis(deltaLog.update().metadata)
         }
-        clock.advance(clockAdvanceMillis + TimeUnit.HOURS.toMillis(1))
+        clock.advance(clockAdvanceMillis + TimeUnit.MINUTES.toMillis(5))
       }
 
       val dropCommand = AlterTableDropFeatureDeltaCommand(
@@ -2715,7 +2715,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // The retention period has passed since the disablement.
       clock.advance(
-        deltaRetentionMillis - TimeUnit.DAYS.toMillis(10) + TimeUnit.HOURS.toMillis(1))
+        deltaRetentionMillis - TimeUnit.DAYS.toMillis(10) + TimeUnit.MINUTES.toMillis(5))
 
       // Cleanup logs.
       deltaLog.cleanUpExpiredLogs(deltaLog.update())
@@ -2802,7 +2802,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // Pretend retention period has passed.
       clock.advance(
         deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
-        TimeUnit.HOURS.toMillis(1))
+        TimeUnit.MINUTES.toMillis(5))
 
       // History is now clean. We should be able to remove the feature.
       AlterTableDropFeatureDeltaCommand(
@@ -2906,7 +2906,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // Pretend retention period has passed.
       clock.advance(deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
-        TimeUnit.HOURS.toMillis(1))
+        TimeUnit.MINUTES.toMillis(5))
 
       // Perform an unrelated metadata change.
       sql(s"ALTER TABLE delta.`${deltaLog.dataPath}` ADD COLUMN (value INT)")
@@ -3241,7 +3241,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         // Pretend retention period has passed.
         clock.advance(
           targetLog.deltaRetentionMillis(targetLog.update().metadata) +
-            TimeUnit.HOURS.toMillis(1))
+            TimeUnit.MINUTES.toMillis(5))
 
         // History is now clean. We should be able to remove the feature.
         dropV2CheckpointsTableFeature(spark, targetLog)
