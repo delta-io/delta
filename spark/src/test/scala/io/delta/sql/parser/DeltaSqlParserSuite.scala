@@ -18,6 +18,8 @@ package io.delta.sql.parser
 
 import io.delta.tables.execution.VacuumTableCommand
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
+
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.{UnresolvedPathBasedDeltaTable, UnresolvedPathBasedTable}
@@ -28,7 +30,8 @@ import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRe
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTableDropFeature, CloneTableStatement, RestoreTableStatement}
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableDropFeature, CloneTableStatement, CreateTable, CreateTableAsSelect, LogicalPlan, ReplaceTable, ReplaceTableAsSelect, RestoreTableStatement}
+import org.apache.spark.sql.execution.SparkSqlParser
 
 class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
@@ -374,6 +377,136 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     } else {
       assert(schema != null)
       new TableIdentifier(tblName, Some(schema), Some(catalog))
+    }
+  }
+
+  private def clusterByStatement(
+      createOrReplaceClause: String,
+      asSelect: Boolean,
+      schema: String,
+      clusterByClause: String): String = {
+    val tableSchema = if (asSelect) {
+      ""
+    } else {
+      s"($schema)"
+    }
+    val select = if (asSelect) {
+      "AS SELECT * FROM tbl2"
+    } else {
+      ""
+    }
+    s"$createOrReplaceClause TABLE tbl $tableSchema USING DELTA $clusterByClause $select"
+  }
+
+  private def validateClusterByTableProperty(
+      clause: String,
+      asSelect: Boolean,
+      plan: LogicalPlan,
+      clusteringColumn: String): Unit = {
+    val tableProperties = if (clause == "CREATE") {
+      if (asSelect) {
+        plan.asInstanceOf[CreateTableAsSelect].tableSpec.properties
+      } else {
+        plan.asInstanceOf[CreateTable].tableSpec.properties
+      }
+    } else {
+      if (asSelect) {
+        plan.asInstanceOf[ReplaceTableAsSelect].tableSpec.properties
+      } else {
+        plan.asInstanceOf[ReplaceTable].tableSpec.properties
+      }
+    }
+    assert(
+      tableProperties.get(ClusteredTableUtils.PROP_CLUSTERING_COLUMNS) ===
+      Some(clusteringColumn))
+  }
+
+  for (asSelect <- BOOLEAN_DOMAIN) {
+    Seq("CREATE", "REPLACE").foreach { clause =>
+      test(s"CLUSTER BY - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql = clusterByStatement(clause, asSelect, "a int, b string", "CLUSTER BY (a)")
+        val parsedPlan = parser.parsePlan(sql)
+        validateClusterByTableProperty(clause, asSelect, parsedPlan, """[["a"]]""")
+      }
+
+      test(s"CLUSTER BY nested column - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(clause, asSelect, "a struct<b int, c string>", "CLUSTER BY (a.b, a.c)")
+        val parsedPlan = parser.parsePlan(sql)
+        validateClusterByTableProperty(clause, asSelect, parsedPlan, """[["a","b"],["a","c"]]""")
+      }
+
+      test(s"CLUSTER BY backquoted column - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(clause, asSelect, "`a.b.c` int", "CLUSTER BY (`a.b.c`)")
+        val parsedPlan = parser.parsePlan(sql)
+        validateClusterByTableProperty(clause, asSelect, parsedPlan, """[["a.b.c"]]""")
+      }
+
+      test(s"CLUSTER BY comma column - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(clause, asSelect, "`a,b` int", "CLUSTER BY (`a,b`)")
+        val parsedPlan = parser.parsePlan(sql)
+        validateClusterByTableProperty(clause, asSelect, parsedPlan, """[["a,b"]]""")
+      }
+
+      test(s"CLUSTER BY duplicated clauses - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(clause, asSelect, "a int, b string", "CLUSTER BY (a) CLUSTER BY (b)")
+        checkError(exception = intercept[ParseException] {
+          parser.parsePlan(sql)
+        }, errorClass = "DUPLICATE_CLAUSES", parameters = Map("clauseName" -> "CLUSTER BY"))
+      }
+
+      test("CLUSTER BY set clustering column property is ignored - " +
+        s"$clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(
+            clause,
+            asSelect,
+            "a int, b string",
+            "CLUSTER BY (a) " +
+            s"TBLPROPERTIES ('${ClusteredTableUtils.PROP_CLUSTERING_COLUMNS}' = 'b')")
+        val parsedPlan = parser.parsePlan(sql)
+        validateClusterByTableProperty(clause, asSelect, parsedPlan, """[["a"]]""")
+      }
+
+      test(s"CLUSTER BY with PARTITIONED BY - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(
+            clause,
+            asSelect,
+            "a int, b string",
+            "CLUSTER BY (a) PARTITIONED BY (b)")
+        val errorMsg = "Clustering and partitioning cannot both be specified. " +
+          "Please remove PARTITIONED BY if you want to create a Delta table with clustering"
+        checkError(exception = intercept[ParseException] {
+          parser.parsePlan(sql)
+        }, errorClass = "_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
+      }
+
+      test(s"CLUSTER BY with bucketing - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(
+            clause,
+            asSelect,
+            "a int, b string",
+            "CLUSTER BY (a) CLUSTERED BY (b) INTO 2 BUCKETS")
+        val errorMsg = "Clustering and bucketing cannot both be specified. " +
+          "Please remove CLUSTERED BY INTO BUCKETS if you " +
+          "want to create a Delta table with clustering"
+        checkError(exception = intercept[ParseException] {
+          parser.parsePlan(sql)
+        }, errorClass = "_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
+      }
     }
   }
 }

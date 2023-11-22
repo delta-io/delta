@@ -43,6 +43,7 @@ import java.util.Locale
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.catalyst.TimeTravel
+import org.apache.spark.sql.delta.skipping.clustering.{ClusterByParserUtils, ClusterByPlan, ClusterBySpec}
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands._
@@ -58,7 +59,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
-import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
+import org.apache.spark.sql.catalyst.parser.ParserUtils.{checkDuplicateClauses, string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, AlterTableDropFeature, CloneTableStatement, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
@@ -76,6 +77,8 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
 
   override def parsePlan(sqlText: String): LogicalPlan = parse(sqlText) { parser =>
     builder.visit(parser.singleStatement()) match {
+      case clusterByPlan: ClusterByPlan =>
+        ClusterByParserUtils(clusterByPlan, delegate).parsePlan(sqlText)
       case plan: LogicalPlan => plan
       case _ => delegate.parsePlan(sqlText)
     }
@@ -404,6 +407,33 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     val tableRelation = UnresolvedRelation(visitTableIdentifier(ctx.table).nameParts)
     val timeTravelTableRelation = maybeTimeTravelChild(ctx.clause, tableRelation)
     RestoreTableStatement(timeTravelTableRelation.asInstanceOf[TimeTravel])
+  }
+
+  /**
+   * Captures any CLUSTER BY clause and creates a [[ClusterByPlan]] logical plan.
+   * The plan will be used as a sentinel for DeltaSqlParser to process it further.
+   */
+  override def visitClusterBy(ctx: ClusterByContext): LogicalPlan = withOrigin(ctx) {
+    val clusterBySpecCtx = ctx.clusterBySpec.asScala.head
+    checkDuplicateClauses(ctx.clusterBySpec, "CLUSTER BY", clusterBySpecCtx)
+    val columnNames =
+      clusterBySpecCtx.interleave.asScala
+        .map(_.identifier.asScala.map(_.getText).toSeq)
+        .map(_.asInstanceOf[Seq[String]]).toSeq
+    // get CLUSTER BY clause positions.
+    val startIndex = clusterBySpecCtx.getStart.getStartIndex
+    val stopIndex = clusterBySpecCtx.getStop.getStopIndex
+
+    // get CLUSTER BY parenthesis positions.
+    val parenStartIndex = clusterBySpecCtx.LEFT_PAREN().getSymbol.getStartIndex
+    val parenStopIndex = clusterBySpecCtx.RIGHT_PAREN().getSymbol.getStopIndex
+    ClusterByPlan(
+      ClusterBySpec(columnNames),
+      startIndex,
+      stopIndex,
+      parenStartIndex,
+      parenStopIndex,
+      clusterBySpecCtx)
   }
 
   /**
