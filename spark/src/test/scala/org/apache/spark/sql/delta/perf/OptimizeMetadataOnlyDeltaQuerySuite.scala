@@ -21,7 +21,7 @@ import io.delta.tables.DeltaTable
 import org.apache.spark.sql.{DataFrame, Dataset, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
-import org.apache.spark.sql.delta.{DeltaColumnMappingEnableIdMode, 
+import org.apache.spark.sql.delta.{DeltaColumnMappingEnableIdMode,
   DeltaColumnMappingEnableNameMode, DeltaLog, DeltaTestUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -114,11 +114,10 @@ class OptimizeMetadataOnlyDeltaQuerySuite
         min(col("DoubleColumn")), max(col("DoubleColumn")),
         min(col("DateColumn")), max(col("DateColumn"))),
       expectedPlan = "LocalRelation [none#0L, none#1L, none#2, none#3, none#4, none#5, none#6" +
-      ", none#7, none#8L, none#9L, none#10, none#11, none#12, none#13, none#14, none#15]"),
-    )
+      ", none#7, none#8L, none#9L, none#10, none#11, none#12, none#13, none#14, none#15]"))
     .foreach { testParams =>
       test(s"optimization supported - Scala - ${testParams.name}") {
-        checkResultsAndOptimizedPlan(testParams.queryScala, testParams.expectedPlan)     
+        checkResultsAndOptimizedPlan(testParams.queryScala, testParams.expectedPlan)
     }
   }
 
@@ -228,7 +227,8 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       expectedPlan = "LocalRelation [none#0L, none#1L, none#2L]"),
     new SqlTestParams(
       name = "count-min-max - duplicated functions",
-      querySql = s"SELECT COUNT(*), COUNT(*), MIN(id), MIN(id), MAX(id), MAX(id) FROM $testTableName",
+      querySql = s"SELECT COUNT(*), COUNT(*), MIN(id), MIN(id), MAX(id), MAX(id)" +
+        s" FROM $testTableName",
       expectedPlan = "LocalRelation [none#0L, none#1L, none#2L, none#3L, none#4L, none#5L]"),
     new SqlTestParams(
       name = "count - empty table",
@@ -241,9 +241,12 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     new SqlTestParams(
       name = "min-max - date columns",
       querySetup = Some(Seq(
-        "CREATE TABLE TestDateValues (Column1 DATE, Column2 DATE, Column3 DATE) USING DELTA;",
-        "INSERT INTO TestDateValues (Column1, Column2, Column3) VALUES (NULL, current_date(), current_date());",
-        "INSERT INTO TestDateValues (Column1, Column2, Column3) VALUES (NULL, NULL, current_date());")),
+        "CREATE TABLE TestDateValues" +
+        " (Column1 DATE, Column2 DATE, Column3 DATE) USING DELTA;",
+        "INSERT INTO TestDateValues" +
+        " (Column1, Column2, Column3) VALUES (NULL, current_date(), current_date());",
+        "INSERT INTO TestDateValues" +
+        " (Column1, Column2, Column3) VALUES (NULL, NULL, current_date());")),
       querySql = "SELECT COUNT(*), MIN(Column1), MAX(Column1), MIN(Column2)" +
       ", MAX(Column2), MIN(Column3), MAX(Column3) FROM TestDateValues",
       expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6]"),
@@ -347,10 +350,14 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       querySetup = Some(Seq(
         "CREATE TABLE TestPartitionedTable (Column1 INT, Column2 INT, Column3 INT, Column4 INT)" +
         " USING DELTA PARTITIONED BY (Column2, Column3)",
-        "INSERT INTO TestPartitionedTable (Column1, Column2, Column3, Column4) VALUES (1, 2, 3, 4);",
-        "INSERT INTO TestPartitionedTable (Column1, Column2, Column3, Column4) VALUES (2, 2, 3, 5);",
-        "INSERT INTO TestPartitionedTable (Column1, Column2, Column3, Column4) VALUES (3, 3, 2, 6);",
-        "INSERT INTO TestPartitionedTable (Column1, Column2, Column3, Column4) VALUES (4, 3, 2, 7);"
+        "INSERT INTO TestPartitionedTable" +
+        " (Column1, Column2, Column3, Column4) VALUES (1, 2, 3, 4);",
+        "INSERT INTO TestPartitionedTable" +
+        " (Column1, Column2, Column3, Column4) VALUES (2, 2, 3, 5);",
+        "INSERT INTO TestPartitionedTable" +
+        " (Column1, Column2, Column3, Column4) VALUES (3, 3, 2, 6);",
+        "INSERT INTO TestPartitionedTable" +
+        " (Column1, Column2, Column3, Column4) VALUES (4, 3, 2, 7);"
       )),
       querySql = "SELECT COUNT(*)" +
         ", MIN(Column1), MAX(Column1)" +
@@ -365,13 +372,18 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     new SqlTestParams(
       name = "count-min-max - partitioned table - no stats",
       querySetup = Some(Seq(
-        "CREATE TABLE TestPartitionedTableNoStats (Column1 INT, Column2 INT, Column3 INT, Column4 INT)" +
+        "CREATE TABLE TestPartitionedTableNoStats" +
+        " (Column1 INT, Column2 INT, Column3 INT, Column4 INT)" +
         " USING DELTA PARTITIONED BY (Column2, Column3)" +
         " TBLPROPERTIES('delta.dataSkippingNumIndexedCols' = 0)",
-        "INSERT INTO TestPartitionedTableNoStats (Column1, Column2, Column3, Column4) VALUES (1, 2, 3, 4);",
-        "INSERT INTO TestPartitionedTableNoStats (Column1, Column2, Column3, Column4) VALUES (2, 2, 3, 5);",
-        "INSERT INTO TestPartitionedTableNoStats (Column1, Column2, Column3, Column4) VALUES (3, 3, 2, 6);",
-        "INSERT INTO TestPartitionedTableNoStats (Column1, Column2, Column3, Column4) VALUES (4, 3, 2, 7);"
+        "INSERT INTO TestPartitionedTableNoStats" +
+        " (Column1, Column2, Column3, Column4) VALUES (1, 2, 3, 4);",
+        "INSERT INTO TestPartitionedTableNoStats" +
+        " (Column1, Column2, Column3, Column4) VALUES (2, 2, 3, 5);",
+        "INSERT INTO TestPartitionedTableNoStats" +
+        " (Column1, Column2, Column3, Column4) VALUES (3, 3, 2, 6);",
+        "INSERT INTO TestPartitionedTableNoStats" +
+        " (Column1, Column2, Column3, Column4) VALUES (4, 3, 2, 7);"
       )),
       querySql = "SELECT COUNT(*)" +
         ", MIN(Column2), MAX(Column2)" +
@@ -386,10 +398,12 @@ class OptimizeMetadataOnlyDeltaQuerySuite
         "FLOATColumn FLOAT, DOUBLEColumn DOUBLE, DATEColumn DATE, Data INT) USING DELTA" +
         "  PARTITIONED BY (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
         " FLOATColumn, DOUBLEColumn, DATEColumn)",
-        "INSERT INTO TestAllTypesPartitionedTable (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
+        "INSERT INTO TestAllTypesPartitionedTable" +
+        " (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
         " FLOATColumn, DOUBLEColumn, DATEColumn, Data)" +
         " VALUES (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);",
-        "INSERT INTO TestAllTypesPartitionedTable (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
+        "INSERT INTO TestAllTypesPartitionedTable" +
+        " (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
         " FLOATColumn, DOUBLEColumn, DATEColumn, Data)" +
         " VALUES (-128, -32768, -2147483648, -9223372036854775808," +
         " -3.4028235E38, -1.7976931348623157E308, CAST('1582-10-15' AS DATE), 1);"
@@ -414,7 +428,8 @@ class OptimizeMetadataOnlyDeltaQuerySuite
         "FLOATColumn FLOAT, DOUBLEColumn DOUBLE, DATEColumn DATE, Data INT) USING DELTA" +
         "  PARTITIONED BY (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
         " FLOATColumn, DOUBLEColumn, DATEColumn)",
-        "INSERT INTO TestOnlyNullValuesPartitioned (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
+        "INSERT INTO TestOnlyNullValuesPartitioned" +
+        " (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
         " FLOATColumn, DOUBLEColumn, DATEColumn, Data)" +
         " VALUES (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);"
       )),
@@ -448,16 +463,19 @@ class OptimizeMetadataOnlyDeltaQuerySuite
         "CREATE TABLE TestPunctuationColumnName (`My.!?Column` INT) USING DELTA",
         "INSERT INTO TestPunctuationColumnName (`My.!?Column`) VALUES (1), (2), (3);"
       )),
-      querySql = "SELECT COUNT(*), MIN(`My.!?Column`), MAX(`My.!?Column`) FROM TestPunctuationColumnName",
+      querySql = "SELECT COUNT(*), MIN(`My.!?Column`), MAX(`My.!?Column`)" +
+        " FROM TestPunctuationColumnName",
       expectedPlan = "LocalRelation [none#0L, none#1, none#2]"),
     new SqlTestParams(
       name = "min-max - partitioned table - column name containing punctuation",
       querySetup = Some(Seq(
         "CREATE TABLE TestPartitionedPunctuationColumnName (`My.!?Column` INT, Data INT)" +
         " USING DELTA PARTITIONED BY (`My.!?Column`)",
-        "INSERT INTO TestPartitionedPunctuationColumnName (`My.!?Column`, Data) VALUES (1, 1), (2, 1), (3, 1);"
+        "INSERT INTO TestPartitionedPunctuationColumnName" +
+        " (`My.!?Column`, Data) VALUES (1, 1), (2, 1), (3, 1);"
       )),
-      querySql = "SELECT COUNT(*), MIN(`My.!?Column`), MAX(`My.!?Column`) FROM TestPartitionedPunctuationColumnName",
+      querySql = "SELECT COUNT(*), MIN(`My.!?Column`), MAX(`My.!?Column`)" +
+        " FROM TestPartitionedPunctuationColumnName",
       expectedPlan = "LocalRelation [none#0L, none#1, none#2]"),
     new SqlTestParams(
       name = "min-max - partitioned table - special characters in column name",
@@ -466,15 +484,18 @@ class OptimizeMetadataOnlyDeltaQuerySuite
         " (Column1 INT, Column2 INT, `Column3 .,;{}()\n\t=` INT, Column4 INT)" +
         " USING DELTA PARTITIONED BY (Column2, `Column3 .,;{}()\n\t=`)" +
         " TBLPROPERTIES('delta.columnMapping.mode' = 'name')",
-        "INSERT INTO TestColumnMappingPartitioned (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
+        "INSERT INTO TestColumnMappingPartitioned" +
+        " (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
         " VALUES (1, 2, 3, 4);",
-        "INSERT INTO TestColumnMappingPartitioned (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
+        "INSERT INTO TestColumnMappingPartitioned" +
+        " (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
         " VALUES (2, 2, 3, 5);",
-        "INSERT INTO TestColumnMappingPartitioned (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
+        "INSERT INTO TestColumnMappingPartitioned" +
+        " (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
         " VALUES (3, 3, 2, 6);",
-        "INSERT INTO TestColumnMappingPartitioned (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
-        " VALUES (4, 3, 2, 7);",
-      )),
+        "INSERT INTO TestColumnMappingPartitioned" +
+        " (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
+        " VALUES (4, 3, 2, 7);")),
       querySql = "SELECT COUNT(*)" +
         ", MIN(Column1), MAX(Column1)" +
         ", MIN(Column2), MAX(Column2)" +
@@ -482,11 +503,10 @@ class OptimizeMetadataOnlyDeltaQuerySuite
         ", MIN(Column4), MAX(Column4)" +
         " FROM TestColumnMappingPartitioned",
       expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3," +
-        " none#4, none#5, none#6, none#7, none#8]"),
-    )
+        " none#4, none#5, none#6, none#7, none#8]"))
     .foreach { testParams =>
       test(s"optimization supported - SQL - ${testParams.name}") {
-        if(testParams.querySetup.isDefined) {
+        if (testParams.querySetup.isDefined) {
           testParams.querySetup.get.foreach(spark.sql)
         }
         checkResultsAndOptimizedPlan(testParams.querySql, testParams.expectedPlan)
@@ -503,6 +523,27 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       checkResultsAndOptimizedPlan(
         s"SELECT COUNT(*), MIN(id), MAX(id) FROM delta.`$testTablePath`",
         "LocalRelation [none#0L, none#1L, none#2L]")
+    }
+  }
+
+  test("min-max - partitioned column stats disabled") {
+    withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+      val tableName = "TestPartitionedNoStats"
+
+      spark.sql(s"CREATE TABLE $tableName (Column1 INT, Column2 INT)" +
+        " USING DELTA PARTITIONED BY (Column2)")
+
+      spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (1, 3);")
+      spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (2, 4);")
+
+      // Has no stats, including COUNT
+      checkOptimizationIsNotTriggered(
+        s"SELECT COUNT(*), MIN(Column2), MAX(Column2) FROM $tableName")
+
+      // Should work for partitioned columns even without stats
+      checkResultsAndOptimizedPlan(
+        s"SELECT MIN(Column2), MAX(Column2) FROM $tableName",
+        "LocalRelation [none#0, none#1]")
     }
   }
 
@@ -747,14 +788,14 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (3, 3);")
     spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (4, 3);")
 
-    //Filter by partition column
+    // Filter by partition column
     checkOptimizationIsNotTriggered(
       "SELECT COUNT(*)" +
         ", MIN(Column1), MAX(Column1)" +
         ", MIN(Column2), MAX(Column2)" +
         s" FROM $tableName WHERE Column2 = 2")
 
-    //Filter both partition and data columns
+    // Filter both partition and data columns
     checkOptimizationIsNotTriggered(
       "SELECT COUNT(*)" +
         ", MIN(Column1), MAX(Column1)" +
@@ -886,14 +927,17 @@ class OptimizeMetadataOnlyDeltaQuerySuite
   }
 }
 
-trait OptimizeMetadataOnlyDeltaQueryColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
+trait OptimizeMetadataOnlyDeltaQueryColumnMappingSuiteBase
+  extends DeltaColumnMappingSelectedTestMixin {
   override protected def runAllTests = true
 }
 
-class OptimizeMetadataOnlyDeltaQueryIdColumnMappingSuite extends OptimizeMetadataOnlyDeltaQuerySuite
+class OptimizeMetadataOnlyDeltaQueryIdColumnMappingSuite
+  extends OptimizeMetadataOnlyDeltaQuerySuite
   with DeltaColumnMappingEnableIdMode
   with OptimizeMetadataOnlyDeltaQueryColumnMappingSuiteBase
 
-class OptimizeMetadataOnlyDeltaQueryNameColumnMappingSuite extends OptimizeMetadataOnlyDeltaQuerySuite
+class OptimizeMetadataOnlyDeltaQueryNameColumnMappingSuite
+  extends OptimizeMetadataOnlyDeltaQuerySuite
   with DeltaColumnMappingEnableNameMode
   with OptimizeMetadataOnlyDeltaQueryColumnMappingSuiteBase
