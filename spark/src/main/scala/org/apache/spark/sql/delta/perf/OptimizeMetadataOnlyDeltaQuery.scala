@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.perf
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Literal, ToPrettyString}
+import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -30,8 +30,17 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 
 import java.sql.Date
-import scala.collection.immutable.HashSet
 
+/** Optimize COUNT, MIN and MAX expressions on Delta tables.
+ * This optimization is only applied when the following conditions are met:
+ * - The MIN/MAX columns data type is supported by the optimization (ByteType, ShortType,
+ * IntegerType, LongType, FloatType, DoubleType, DateType).
+ * - Table has no deletion vectors, or query has no MIN/MAX expressions.
+ * - COUNT has no DISTINCT.
+ * - Query has no filters.
+ * - Query has no GROUP BY.
+ * Example of valid query: SELECT COUNT(*), MIN(id), MAX(id) FROM MyDeltaTable
+ */
 trait OptimizeMetadataOnlyDeltaQuery {
   def optimizeQueryWithMetadata(plan: LogicalPlan): LogicalPlan = {
     plan.transformUpWithSubqueries {
@@ -42,32 +51,32 @@ trait OptimizeMetadataOnlyDeltaQuery {
 
   protected def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator
 
-  protected def createLocalRelationPlan(
+  private def createLocalRelationPlan(
     plan: Aggregate,
     tahoeLogFileIndex: TahoeLogFileIndex): LogicalPlan = {
     val rowCount = extractGlobalCount(tahoeLogFileIndex)
 
     if (rowCount.isDefined) {
-      lazy val columnStats = extractGlobalColumnStats(tahoeLogFileIndex)
+      lazy val columnStats = extractMinMaxFromDeltaLog(tahoeLogFileIndex)
 
-      def checkStatsExists(reference: AttributeReference): Boolean = {
-        columnStats.contains(reference.name) &&
+      def checkStatsExists(attrRef: AttributeReference): Boolean = {
+        columnStats.contains(attrRef.name) &&
           // Avoid StructType, it is not supported by this optimization
           // Sanity check only. If reference is nested column it would be GetStructType
           // instead of AttributeReference
-          reference.references.size == 1 &&
-          reference.references.head.dataType != StructType
+          attrRef.references.size == 1 &&
+          attrRef.references.head.dataType != StructType
       }
 
-      def convertValueIfRequired(reference: AttributeReference, value: Any): Any = {
-        if (reference.dataType == DateType && value != null) {
+      def convertValueIfRequired(attrRef: AttributeReference, value: Any): Any = {
+        if (attrRef.dataType == DateType && value != null) {
           DateTimeUtils.fromJavaDate(value.asInstanceOf[Date])
         } else {
           value
         }
       }
 
-      val aggregatedValues = plan.aggregateExpressions.collect {
+      val rewrittenAggregationValues = plan.aggregateExpressions.collect {
         case Alias(AggregateExpression(
         Count(Seq(Literal(1, _))), Complete, false, None, _), _) =>
           rowCount.get
@@ -94,10 +103,10 @@ trait OptimizeMetadataOnlyDeltaQuery {
             tps.copy(child = Literal(v)).eval()
       }
 
-      if (plan.aggregateExpressions.size == aggregatedValues.size) {
+      if (plan.aggregateExpressions.size == rewrittenAggregationValues.size) {
         val r = LocalRelation(
           plan.output,
-          Seq(InternalRow.fromSeq(aggregatedValues)))
+          Seq(InternalRow.fromSeq(rewrittenAggregationValues)))
         r
       } else {
         plan
@@ -127,199 +136,203 @@ trait OptimizeMetadataOnlyDeltaQuery {
     Some(numRecords)
   }
 
-  val columnStatsSupportedDataTypes: HashSet[DataType] = HashSet(
-    ByteType,
-    ShortType,
-    IntegerType,
-    LongType,
-    FloatType,
-    DoubleType,
-    DateType)
+  /**
+   * Min and max values from Delta Log stats or partitionValues.
+  */
+  case class DeltaColumnStat(min: Any, max: Any)
 
-  case class DeltaColumnStat(
-    min: Any,
-    max: Any)
-
-  def extractGlobalColumnStats(tahoeLogFileIndex: TahoeLogFileIndex):
-  CaseInsensitiveMap[DeltaColumnStat] = {
-
+  private def extractMinMaxFromStats(deltaScanGenerator: DeltaScanGenerator):
+    Map[String, DeltaColumnStat] = {
     // TODO Update this to work with DV (https://github.com/delta-io/delta/issues/1485)
+    val snapshot = deltaScanGenerator.snapshotToScan
+    val dataColumns = snapshot.statCollectionPhysicalSchema
+      .filter(col => AggregateDeltaTable.isSupportedDataType(col.dataType))
 
+    // Validate all the files has stats
+    lazy val filesStatsCount = deltaScanGenerator.filesWithStatsForScan(Nil).select(
+      count(when(col("stats.numRecords").isNull, 1)).as("missingNumRecords"),
+      count(when(col("stats.numRecords") > 0, 1)).as("countNonEmptyFiles")).head
+
+    lazy val allRecordsHasStats = filesStatsCount.getAs[Long]("missingNumRecords") == 0
+    lazy val numFiles: Long = filesStatsCount.getAs[Long]("countNonEmptyFiles")
+
+    // DELETE operations creates AddFile records with 0 rows, and no column stats.
+    // We can safely ignore it since there is no data.
+    lazy val files = deltaScanGenerator.filesWithStatsForScan(Nil)
+      .filter(col("stats.numRecords") > 0)
+    lazy val statsMinMaxNullColumns = files.select(col("stats.*"))
+    if (dataColumns.isEmpty
+      || !isTableDVFree(snapshot)
+      || !allRecordsHasStats
+      || numFiles == 0
+      || !statsMinMaxNullColumns.columns.contains("minValues")
+      || !statsMinMaxNullColumns.columns.contains("maxValues")
+      || !statsMinMaxNullColumns.columns.contains("nullCount")) {
+      Map.empty
+    } else {
+      // dataColumns can contain columns without stats if dataSkippingNumIndexedCols
+      // has been increased
+      val columnsWithStats = files.select(
+        col("stats.minValues.*"),
+        col("stats.maxValues.*"),
+        col("stats.nullCount.*"))
+        .columns.groupBy(identity).mapValues(_.size)
+        .filter(x => x._2 == 3) // 3: minValues, maxValues, nullCount
+        .map(x => x._1).toSet
+
+      // Creates a tuple with physical name to avoid recalculating it multiple times
+      val dataColumnsWithStats = dataColumns.map(x => (x, DeltaColumnMapping.getPhysicalName(x)))
+        .filter(x => columnsWithStats.contains(x._2))
+
+      val columnsToQuery = dataColumnsWithStats.flatMap { columnAndPhysicalName =>
+        val dataType = columnAndPhysicalName._1.dataType
+        val physicalName = columnAndPhysicalName._2
+
+        Seq(col(s"stats.minValues.`$physicalName`").cast(dataType).as(s"min.$physicalName"),
+          col(s"stats.maxValues.`$physicalName`").cast(dataType).as(s"max.$physicalName"),
+          col(s"stats.nullCount.`$physicalName`").as(s"nullCount.$physicalName"))
+      } ++ Seq(col(s"stats.numRecords").as(s"numRecords"))
+
+      val minMaxExpr = dataColumnsWithStats.flatMap { columnAndPhysicalName =>
+        val physicalName = columnAndPhysicalName._2
+
+        // To validate if the column has stats we do two validation:
+        // 1-) COUNT(nullCount.columnName) should be equals to numFiles,
+        // since nullCount is always non-null.
+        // 2-) The number of files with non-null min/max:
+        // a. count(min.columnName)|count(max.columnName) +
+        // the number of files where all rows are NULL:
+        // b. count of (ISNULL(min.columnName) and nullCount.columnName == numRecords)
+        // should be equals to numFiles
+        Seq(
+          s"""case when $numFiles = count(`nullCount.$physicalName`)
+              | AND $numFiles = (count(`min.$physicalName`) + sum(case when
+              |  ISNULL(`min.$physicalName`) and `nullCount.$physicalName` = numRecords
+              |   then 1 else 0 end))
+              | AND $numFiles = (count(`max.$physicalName`) + sum(case when
+              |  ISNULL(`max.$physicalName`) AND `nullCount.$physicalName` = numRecords
+              |   then 1 else 0 end))
+              | then TRUE else FALSE end as `complete_$physicalName`""".stripMargin,
+          s"min(`min.$physicalName`) as `min_$physicalName`",
+          s"max(`max.$physicalName`) as `max_$physicalName`")
+      }
+
+      val statsResults = files.select(columnsToQuery: _*).selectExpr(minMaxExpr: _*).head
+
+      dataColumnsWithStats
+        .filter(x => statsResults.getAs[Boolean](s"complete_${x._2}"))
+        .map { columnAndPhysicalName =>
+          val column = columnAndPhysicalName._1
+          val physicalName = columnAndPhysicalName._2
+          column.name ->
+            DeltaColumnStat(
+              statsResults.getAs(s"min_$physicalName"),
+              statsResults.getAs(s"max_$physicalName"))
+        }.toMap
+    }
+  }
+
+  private def extractMinMaxFromPartitionValue(snapshot: Snapshot):
+    Map[String, DeltaColumnStat] = {
+
+    val partitionedColumns = snapshot.metadata.partitionSchema
+      .filter(x => AggregateDeltaTable.isSupportedDataType(x.dataType))
+      .map(x => (x, DeltaColumnMapping.getPhysicalName(x)))
+
+    if (partitionedColumns.isEmpty) {
+      Map.empty
+    } else {
+      val partitionedColumnsValues = partitionedColumns.map { partitionedColumn =>
+        val physicalName = partitionedColumn._2
+        col(s"partitionValues.`$physicalName`")
+          .cast(partitionedColumn._1.dataType).as(physicalName)
+      }
+
+      val partitionedColumnsAgg = partitionedColumns.flatMap { partitionedColumn =>
+        val physicalName = partitionedColumn._2
+
+        Seq(min(s"`$physicalName`").as(s"min_$physicalName"),
+          max(s"`$physicalName`").as(s"max_$physicalName"))
+      }
+
+      val partitionedColumnsQuery = snapshot.allFiles
+        .select(partitionedColumnsValues: _*)
+        .agg(partitionedColumnsAgg.head, partitionedColumnsAgg.tail: _*)
+        .head()
+
+      partitionedColumns.map { partitionedColumn =>
+        val physicalName = partitionedColumn._2
+
+        partitionedColumn._1.name ->
+          DeltaColumnStat(
+            partitionedColumnsQuery.getAs(s"min_$physicalName"),
+            partitionedColumnsQuery.getAs(s"max_$physicalName"))
+      }.toMap
+    }
+  }
+
+  private def extractMinMaxFromDeltaLog(tahoeLogFileIndex: TahoeLogFileIndex):
+  CaseInsensitiveMap[DeltaColumnStat] = {
     val deltaScanGenerator = getDeltaScanGenerator(tahoeLogFileIndex)
     val snapshot = deltaScanGenerator.snapshotToScan
 
-    def extractGlobalColumnStatsDeltaLog(snapshot: Snapshot):
-    Map[String, DeltaColumnStat] = {
-
-      val dataColumns = snapshot.statCollectionPhysicalSchema
-        .filter(col => columnStatsSupportedDataTypes.contains(col.dataType))
-
-      // Validate all the files has stats
-      lazy val filesStatsCount = deltaScanGenerator.filesWithStatsForScan(Nil).select(
-        count(when(col("stats.numRecords").isNull, 1)).as("missingNumRecords"),
-        count(when(col("stats.numRecords") > 0, 1)).as("countNonEmptyFiles")).head
-
-      lazy val allRecordsHasStats = filesStatsCount.getAs[Long]("missingNumRecords") == 0
-      lazy val numFiles: Long = filesStatsCount.getAs[Long]("countNonEmptyFiles")
-
-      // DELETE operations creates AddFile records with 0 rows, and no column stats.
-      // We can safely ignore it since there is no data.
-      lazy val files = deltaScanGenerator.filesWithStatsForScan(Nil)
-        .filter(col("stats.numRecords") > 0)
-      lazy val statsMinMaxNullColumns = files.select(col("stats.*"))
-      if (!isTableDVFree(snapshot)
-        || dataColumns.isEmpty
-        || !allRecordsHasStats
-        || numFiles == 0
-        || !statsMinMaxNullColumns.columns.contains("minValues")
-        || !statsMinMaxNullColumns.columns.contains("maxValues")
-        || !statsMinMaxNullColumns.columns.contains("nullCount")) {
-        Map.empty
-      } else {
-        // dataColumns can contain columns without stats if dataSkippingNumIndexedCols
-        // has been increased
-        val columnsWithStats = files.select(
-          col("stats.minValues.*"),
-          col("stats.maxValues.*"),
-          col("stats.nullCount.*"))
-          .columns.groupBy(identity).mapValues(_.size)
-          .filter(x => x._2 == 3) // 3: minValues, maxValues, nullCount
-          .map(x => x._1).toSet
-
-        // Creates a tuple with physical name to avoid recalculating it multiple times
-        val dataColumnsWithStats = dataColumns.map(x => (x, DeltaColumnMapping.getPhysicalName(x)))
-          .filter(x => columnsWithStats.contains(x._2))
-
-        val columnsToQuery = dataColumnsWithStats.flatMap { columnAndPhysicalName =>
-          val dataType = columnAndPhysicalName._1.dataType
-          val physicalName = columnAndPhysicalName._2
-
-          Seq(col(s"stats.minValues.`$physicalName`").cast(dataType).as(s"min.$physicalName"),
-            col(s"stats.maxValues.`$physicalName`").cast(dataType).as(s"max.$physicalName"),
-            col(s"stats.nullCount.`$physicalName`").as(s"nullCount.$physicalName"))
-        } ++ Seq(col(s"stats.numRecords").as(s"numRecords"))
-
-        val minMaxExpr = dataColumnsWithStats.flatMap { columnAndPhysicalName =>
-          val physicalName = columnAndPhysicalName._2
-
-          // To validate if the column has stats we do two validation:
-          // 1-) COUNT(nullCount.columnName) should be equals to numFiles,
-          // since nullCount is always non-null.
-          // 2-) The number of files with non-null min/max:
-          // a. count(min.columnName)|count(max.columnName) +
-          // the number of files where all rows are NULL:
-          // b. count of (ISNULL(min.columnName) and nullCount.columnName == numRecords)
-          // should be equals to numFiles
-          Seq(
-            s"""case when $numFiles = count(`nullCount.$physicalName`)
-               | AND $numFiles = (count(`min.$physicalName`) + sum(case when
-               |  ISNULL(`min.$physicalName`) and `nullCount.$physicalName` = numRecords
-               |   then 1 else 0 end))
-               | AND $numFiles = (count(`max.$physicalName`) + sum(case when
-               |  ISNULL(`max.$physicalName`) AND `nullCount.$physicalName` = numRecords
-               |   then 1 else 0 end))
-               | then TRUE else FALSE end as `complete_$physicalName`""".stripMargin,
-            s"min(`min.$physicalName`) as `min_$physicalName`",
-            s"max(`max.$physicalName`) as `max_$physicalName`")
-        }
-
-        val statsResults = files.select(columnsToQuery: _*).selectExpr(minMaxExpr: _*).head
-
-        dataColumnsWithStats
-          .filter(x => statsResults.getAs[Boolean](s"complete_${x._2}"))
-          .map { columnAndPhysicalName =>
-            val column = columnAndPhysicalName._1
-            val physicalName = columnAndPhysicalName._2
-            column.name ->
-              DeltaColumnStat(
-                statsResults.getAs(s"min_$physicalName"),
-                statsResults.getAs(s"max_$physicalName"))
-          }.toMap
-      }
-    }
-
-    def extractGlobalPartitionedColumnStatsDeltaLog(snapshot: Snapshot):
-    Map[String, DeltaColumnStat] = {
-
-      val partitionedColumns = snapshot.metadata.partitionSchema
-        .filter(x => columnStatsSupportedDataTypes.contains(x.dataType))
-        .map(x => (x, DeltaColumnMapping.getPhysicalName(x)))
-
-      if (partitionedColumns.isEmpty) {
-        Map.empty
-      } else {
-        val partitionedColumnsValues = partitionedColumns.map { partitionedColumn =>
-          val physicalName = partitionedColumn._2
-          col(s"partitionValues.`$physicalName`")
-            .cast(partitionedColumn._1.dataType).as(physicalName)
-        }
-
-        val partitionedColumnsAgg = partitionedColumns.flatMap { partitionedColumn =>
-          val physicalName = partitionedColumn._2
-
-          Seq(min(s"`$physicalName`").as(s"min_$physicalName"),
-            max(s"`$physicalName`").as(s"max_$physicalName"))
-        }
-
-        val partitionedColumnsQuery = snapshot.allFiles
-          .select(partitionedColumnsValues: _*)
-          .agg(partitionedColumnsAgg.head, partitionedColumnsAgg.tail: _*)
-          .head()
-
-        partitionedColumns.map { partitionedColumn =>
-          val physicalName = partitionedColumn._2
-
-          partitionedColumn._1.name ->
-            DeltaColumnStat(
-              partitionedColumnsQuery.getAs(s"min_$physicalName"),
-              partitionedColumnsQuery.getAs(s"max_$physicalName"))
-        }.toMap
-      }
-    }
-
     CaseInsensitiveMap(
-      extractGlobalColumnStatsDeltaLog(snapshot).++
-      (extractGlobalPartitionedColumnStatsDeltaLog(snapshot)))
+      extractMinMaxFromStats(deltaScanGenerator).++
+      (extractMinMaxFromPartitionValue(snapshot)))
   }
 
-
   object AggregateDeltaTable {
-    def unapply(plan: Aggregate): Option[TahoeLogFileIndex] = plan match {
-      case Aggregate(
-      Nil,
-      aggExpr: Seq[Alias],
-      // Fields should be AttributeReference to avoid getting the incorrect column name from stats
-      // when we create the Local Relation, example
+
+    /** Only data type that are stored in stats without any loss of precision are supported. */
+    def isSupportedDataType(dataType: DataType): Boolean = {
+      // DecimalType is not supported because not all the values are correctly stored
+      // For example -99999999999999999999999999999999999999 in stats is -1e38
+      (dataType.isInstanceOf[NumericType] && !dataType.isInstanceOf[DecimalType]) ||
+      dataType.isInstanceOf[DateType]
+    }
+
+    private def isAggExprOptimizable(aggExpr: AggregateExpression): Boolean = aggExpr match {
+      case AggregateExpression(
+        Count(Seq(Literal(1, _))), Complete, false, None, _) => true
+      case AggregateExpression(
+        Min(min), Complete, false, None, _) => isSupportedDataType(min.dataType)
+      case AggregateExpression(
+        Max(max), Complete, false, None, _) => isSupportedDataType(max.dataType)
+      case _ => false
+    }
+
+    private def isStatsOptimizable(aggExpr: Seq[Alias]): Boolean = aggExpr.forall {
+      case Alias(aggExpr: AggregateExpression, _) => isAggExprOptimizable(aggExpr)
+      case Alias(ToPrettyString(aggExpr: AggregateExpression, _), _) =>
+        isAggExprOptimizable(aggExpr)
+      case _ => false
+    }
+
+    private def fieldsAreAttributeReference(fields: Seq[NamedExpression]): Boolean = fields.forall {
+      // Fields should be AttributeReference to avoid getting the incorrect column name
+      // from stats when we create the Local Relation, example
       // SELECT MAX(Column2) FROM (SELECT Column1 AS Column2 FROM TableName)
       // the AggregateExpression contains a reference to Column2, instead of Column1
-      PhysicalOperation(fields, Nil, DeltaTable(i: TahoeLogFileIndex)))
-        if i.partitionFilters.isEmpty
-          && fields.forall {
-          case _: AttributeReference => true
-          case _ => false
-        }
-          && aggExpr.forall {
-          case Alias(AggregateExpression(
-            Count(Seq(Literal(1, _))) | Min(_) | Max(_), Complete, false, None, _), _) => true
-          case Alias(ToPrettyString(AggregateExpression(
-            Count(Seq(Literal(1, _))) | Min(_) | Max(_), Complete, false, None, _), _), _) => true
-          case _ => false
-        } =>
-        Some(i)
-      // When all columns are selected, there are no Project/PhysicalOperation
+      case _: AttributeReference => true
+      case _ => false
+    }
+
+    def unapply(plan: Aggregate): Option[TahoeLogFileIndex] = plan match {
       case Aggregate(
-      Nil,
-      aggExpr: Seq[Alias],
-      DeltaTable(i: TahoeLogFileIndex))
-        if i.partitionFilters.isEmpty
-          && aggExpr.forall {
-          case Alias(AggregateExpression(
-            Count(Seq(Literal(1, _))) | Min(_) | Max(_), Complete, false, None, _), _) => true
-          case Alias(ToPrettyString(AggregateExpression(
-            Count(Seq(Literal(1, _))) | Min(_) | Max(_), Complete, false, None, _), _), _) => true
-          case _ => false
-        } =>
-        Some(i)
+        Nil, // GROUP BY not supported
+        aggExpr: Seq[Alias @unchecked], // Underlying type is not checked because of type erasure.
+        // Alias type check is done in isStatsOptimizable.
+        PhysicalOperation(fields, Nil, DeltaTable(fileIndex: TahoeLogFileIndex)))
+          if fileIndex.partitionFilters.isEmpty &&
+            fieldsAreAttributeReference(fields) &&
+            isStatsOptimizable(aggExpr) => Some(fileIndex)
+      case Aggregate(
+        Nil,
+        aggExpr: Seq[Alias @unchecked],
+        // When all columns are selected, there are no Project/PhysicalOperation
+        DeltaTable(fileIndex: TahoeLogFileIndex))
+          if fileIndex.partitionFilters.isEmpty &&
+            isStatsOptimizable(aggExpr) => Some(fileIndex)
       case _ => None
     }
   }
