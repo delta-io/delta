@@ -223,6 +223,18 @@ private[delta] class ConflictChecker(
    * and returns the first file that is matching.
    */
   protected def getFirstFileMatchingPartitionPredicates(files: Seq[AddFile]): Option[AddFile] = {
+    // Blind appends do not read the table.
+    if (currentTransactionInfo.commitInfo.flatMap(_.isBlindAppend).getOrElse(false)) {
+      assert(currentTransactionInfo.readPredicates.isEmpty)
+      return None
+    }
+
+    // There is no reason to filter files if the table is not partitioned.
+    if (currentTransactionInfo.readWholeTable ||
+        currentTransactionInfo.readSnapshot.metadata.partitionColumns.isEmpty) {
+      return files.headOption
+    }
+
     import org.apache.spark.sql.delta.implicits._
     val filesDf = files.toDF(spark)
 
