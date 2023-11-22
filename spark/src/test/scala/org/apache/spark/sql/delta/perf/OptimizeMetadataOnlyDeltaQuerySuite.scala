@@ -725,6 +725,17 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     )
   }
 
+  test("optimization not supported - min-max column without stats") {
+    val tableName = "TestColumnWithoutStats"
+
+    spark.sql(s"CREATE TABLE $tableName (Column1 INT, Column2 INT) USING DELTA" +
+      s" TBLPROPERTIES('delta.dataSkippingNumIndexedCols' = 1)")
+    spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (1, 2);")
+
+    checkOptimizationIsNotTriggered(
+      s"SELECT MAX(Column2) FROM $tableName")
+  }
+
   test("optimization not supported - filter on partitioned column") {
     val tableName = "TestPartitionedFilter"
 

@@ -30,6 +30,7 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 
 import java.sql.Date
+import java.util.Locale
 
 /** Optimize COUNT, MIN and MAX expressions on Delta tables.
  * This optimization is only applied when the following conditions are met:
@@ -57,7 +58,8 @@ trait OptimizeMetadataOnlyDeltaQuery {
     val rowCount = extractGlobalCount(tahoeLogFileIndex)
 
     if (rowCount.isDefined) {
-      lazy val columnStats = extractMinMaxFromDeltaLog(tahoeLogFileIndex)
+      val aggColumnsNames = Set(extractMinMaxFieldNames(plan).map(_.toLowerCase(Locale.ROOT)) : _*)
+      val columnStats = extractMinMaxFromDeltaLog(tahoeLogFileIndex, aggColumnsNames)
 
       def checkStatsExists(attrRef: AttributeReference): Boolean = {
         columnStats.contains(attrRef.name) &&
@@ -117,6 +119,23 @@ trait OptimizeMetadataOnlyDeltaQuery {
     }
   }
 
+  private def extractMinMaxFieldNames(plan: Aggregate): Seq[String] = {
+    plan.aggregateExpressions.collect {
+      case Alias(AggregateExpression(
+        Min(minReference: AttributeReference), _, _, _, _), _) =>
+        minReference.name
+      case Alias(AggregateExpression(
+        Max(maxReference: AttributeReference), _, _, _, _), _) =>
+        maxReference.name
+      case Alias(ToPrettyString(AggregateExpression(
+        Min(minReference: AttributeReference), _, _, _, _), _), _) =>
+        minReference.name
+      case Alias(ToPrettyString(AggregateExpression(
+        Max(maxReference: AttributeReference), _, _, _, _), _), _) =>
+        maxReference.name
+    }
+  }
+
   /** Return the number of rows in the table or `None` if we cannot calculate it from stats */
   private def extractGlobalCount(tahoeLogFileIndex: TahoeLogFileIndex): Option[Long] = {
     // account for deleted rows according to deletion vectors
@@ -141,12 +160,15 @@ trait OptimizeMetadataOnlyDeltaQuery {
   */
   case class DeltaColumnStat(min: Any, max: Any)
 
-  private def extractMinMaxFromStats(deltaScanGenerator: DeltaScanGenerator):
-    Map[String, DeltaColumnStat] = {
+  private def extractMinMaxFromStats(
+    deltaScanGenerator: DeltaScanGenerator,
+    lowerCaseColumnNames: Set[String]): Map[String, DeltaColumnStat] = {
+
     // TODO Update this to work with DV (https://github.com/delta-io/delta/issues/1485)
     val snapshot = deltaScanGenerator.snapshotToScan
-    val dataColumns = snapshot.statCollectionPhysicalSchema
-      .filter(col => AggregateDeltaTable.isSupportedDataType(col.dataType))
+    val dataColumns = snapshot.statCollectionPhysicalSchema.filter(col =>
+      AggregateDeltaTable.isSupportedDataType(col.dataType) &&
+      lowerCaseColumnNames.contains(col.name.toLowerCase(Locale.ROOT)))
 
     // Validate all the files has stats
     lazy val filesStatsCount = deltaScanGenerator.filesWithStatsForScan(Nil).select(
@@ -232,12 +254,14 @@ trait OptimizeMetadataOnlyDeltaQuery {
     }
   }
 
-  private def extractMinMaxFromPartitionValue(snapshot: Snapshot):
-    Map[String, DeltaColumnStat] = {
+  private def extractMinMaxFromPartitionValue(
+    snapshot: Snapshot,
+    lowerCaseColumnNames: Set[String]): Map[String, DeltaColumnStat] = {
 
     val partitionedColumns = snapshot.metadata.partitionSchema
-      .filter(x => AggregateDeltaTable.isSupportedDataType(x.dataType))
-      .map(x => (x, DeltaColumnMapping.getPhysicalName(x)))
+      .filter(col => AggregateDeltaTable.isSupportedDataType(col.dataType) &&
+        lowerCaseColumnNames.contains(col.name.toLowerCase(Locale.ROOT)))
+      .map(col => (col, DeltaColumnMapping.getPhysicalName(col)))
 
     if (partitionedColumns.isEmpty) {
       Map.empty
@@ -271,14 +295,21 @@ trait OptimizeMetadataOnlyDeltaQuery {
     }
   }
 
-  private def extractMinMaxFromDeltaLog(tahoeLogFileIndex: TahoeLogFileIndex):
+  private def extractMinMaxFromDeltaLog(
+    tahoeLogFileIndex: TahoeLogFileIndex,
+    lowerCaseColumnNames: Set[String]):
   CaseInsensitiveMap[DeltaColumnStat] = {
     val deltaScanGenerator = getDeltaScanGenerator(tahoeLogFileIndex)
     val snapshot = deltaScanGenerator.snapshotToScan
+    val columnFromStats = extractMinMaxFromStats(deltaScanGenerator, lowerCaseColumnNames)
 
+    if(lowerCaseColumnNames.equals(columnFromStats.keySet)) {
+      CaseInsensitiveMap(columnFromStats)
+    } else {
     CaseInsensitiveMap(
-      extractMinMaxFromStats(deltaScanGenerator).++
-      (extractMinMaxFromPartitionValue(snapshot)))
+      columnFromStats.++
+      (extractMinMaxFromPartitionValue(snapshot, lowerCaseColumnNames)))
+    }
   }
 
   object AggregateDeltaTable {
@@ -291,20 +322,25 @@ trait OptimizeMetadataOnlyDeltaQuery {
       dataType.isInstanceOf[DateType]
     }
 
-    private def isAggExprOptimizable(aggExpr: AggregateExpression): Boolean = aggExpr match {
-      case AggregateExpression(
-        Count(Seq(Literal(1, _))), Complete, false, None, _) => true
-      case AggregateExpression(
-        Min(min), Complete, false, None, _) => isSupportedDataType(min.dataType)
-      case AggregateExpression(
-        Max(max), Complete, false, None, _) => isSupportedDataType(max.dataType)
-      case _ => false
+    def getAggFunctionOptimizable(aggExpr: AggregateExpression): Option[DeclarativeAggregate] = {
+      aggExpr match {
+        case AggregateExpression(
+          c@Count(Seq(Literal(1, _))), Complete, false, None, _) =>
+            Some(c)
+        case AggregateExpression(
+          min@Min(minExpr), Complete, false, None, _) if isSupportedDataType(minExpr.dataType) =>
+            Some(min)
+        case AggregateExpression(
+          max@Max(maxExpr), Complete, false, None, _) if isSupportedDataType(maxExpr.dataType) =>
+            Some(max)
+        case _ => None
+      }
     }
 
     private def isStatsOptimizable(aggExpr: Seq[Alias]): Boolean = aggExpr.forall {
-      case Alias(aggExpr: AggregateExpression, _) => isAggExprOptimizable(aggExpr)
+      case Alias(aggExpr: AggregateExpression, _) => getAggFunctionOptimizable(aggExpr).isDefined
       case Alias(ToPrettyString(aggExpr: AggregateExpression, _), _) =>
-        isAggExprOptimizable(aggExpr)
+        getAggFunctionOptimizable(aggExpr).isDefined
       case _ => false
     }
 
