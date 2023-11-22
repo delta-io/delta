@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.util.UUID
 
-import org.apache.spark.sql.delta.DeltaOperations.Truncate
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -178,7 +178,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
       log: DeltaLog, addFile: AddFile, rowIndexesToRemove: Seq[Long]): Unit = {
     val txn = log.startTransaction()
     val actions = removeRowsFromFileUsingDV(log, addFile, rowIndexesToRemove)
-    txn.commit(actions, Truncate())
+    txn.commit(actions, ManualUpdate)
   }
 
   protected def getFileActionsInLastVersion(log: DeltaLog): (Seq[AddFile], Seq[RemoveFile]) = {

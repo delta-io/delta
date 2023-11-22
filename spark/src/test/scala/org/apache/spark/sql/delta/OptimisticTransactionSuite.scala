@@ -128,7 +128,7 @@ class OptimisticTransactionSuite
     actions = Seq(AddFile("b", Map("x" -> "1"), 1, 1, dataChange = true)),
     // commit info should show operation as truncate, because that's the operation used by the
     // harness
-    errorMessageHint = Some("[x=1]" :: "TRUNCATE" :: Nil))
+    errorMessageHint = Some("[x=1]" :: "Manual Update" :: Nil))
 
   check(
     "add / read + no write",  // no write = no real conflicting change even though data was added
@@ -192,7 +192,7 @@ class OptimisticTransactionSuite
     concurrentWrites = Seq(
       RemoveFile("a", Some(4))),
     actions = Seq(),
-    errorMessageHint = Some("a in partition [x=1]" :: "TRUNCATE" :: Nil))
+    errorMessageHint = Some("a in partition [x=1]" :: "Manual Update" :: Nil))
 
   check(
     "schema change",

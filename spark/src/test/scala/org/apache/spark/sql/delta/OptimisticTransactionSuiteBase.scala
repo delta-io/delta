@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.ConcurrentModificationException
 
-import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -65,7 +65,7 @@ trait OptimisticTransactionSuiteBase
       exceptionClass: Option[String] = None): Unit = {
 
     val concurrentTxn: OptimisticTransaction => Unit =
-      (opt: OptimisticTransaction) => opt.commit(concurrentWrites, Truncate())
+      (opt: OptimisticTransaction) => opt.commit(concurrentWrites, ManualUpdate)
 
     def initialSetup(log: DeltaLog): Unit = {
       // Setup the log
@@ -80,7 +80,7 @@ trait OptimisticTransactionSuiteBase
       reads,
       Seq(concurrentTxn),
       actions,
-      operation = Truncate(), // a data-changing operation
+      operation = ManualUpdate, // a data-changing operation
       errorMessageHint = errorMessageHint,
       exceptionClass = exceptionClass,
       additionalSQLConfs = Seq.empty

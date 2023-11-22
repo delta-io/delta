@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction, Metadata, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
@@ -615,7 +616,7 @@ trait OptimisticTransactionLegacyTests
       // tx1 rearranges files
       tx1.commit(
         setDataChangeFalse(addA_P1.remove :: addB_P1.remove :: addC_P1 :: Nil),
-        ManualUpdate)
+        ManualUpdate(changesData = false))
 
       checkAnswer(
         log.update().allFiles.select("path"),

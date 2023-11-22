@@ -409,8 +409,14 @@ object DeltaOperations {
     )))
   }
 
+  case class ManualUpdate(
+      override val parameters: Map[String, Any] = Map.empty,
+      override val changesData: Boolean = true)
+    extends Operation("Manual Update")
+
   object ManualUpdate extends Operation("Manual Update") {
     override val parameters: Map[String, Any] = Map.empty
+    override val changesData = true
   }
 
   /** A commit without any actions. Could be used to force creation of new checkpoints. */

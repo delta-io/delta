@@ -21,7 +21,7 @@ import java.util.concurrent.ExecutionException
 
 import scala.util.{Failure, Success, Try}
 
-import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{DomainMetadata, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -40,6 +40,8 @@ class DomainMetadataSuite
     with SharedSparkSession
     with DeltaSQLCommandTest {
   import testImplicits._
+
+  final val testOp = ManualUpdate(changesData = false)
 
   private def sortByDomain(domainMetadata: Seq[DomainMetadata]): Seq[DomainMetadata] =
     domainMetadata.sortBy(_.domain)
@@ -72,7 +74,7 @@ class DomainMetadataSuite
 
         val domainMetadata = DomainMetadata("testDomain1", "", false) ::
           DomainMetadata("testDomain2", "{\"key1\":\"value1\"", false) :: Nil
-        deltaTable.startTransactionWithInitialSnapshot().commit(domainMetadata, Truncate())
+        deltaTable.startTransactionWithInitialSnapshot().commit(domainMetadata, ManualUpdate)
         assertEquals(sortByDomain(domainMetadata), sortByDomain(deltaLog.update().domainMetadata))
         assert(deltaLog.update().logSegment.checkpointProvider.version === -1)
 
@@ -116,13 +118,13 @@ class DomainMetadataSuite
         val domainMetadata = DomainMetadata("testDomain1", "", false) ::
           DomainMetadata("testDomain2", "{\"key1\":\"value1\"}", false) :: Nil
 
-        deltaTable.startTransactionWithInitialSnapshot().commit(domainMetadata, Truncate())
+        deltaTable.startTransactionWithInitialSnapshot().commit(domainMetadata, ManualUpdate)
         assertEquals(sortByDomain(domainMetadata), sortByDomain(deltaLog.update().domainMetadata))
         assert(deltaLog.update().logSegment.checkpointProvider.version === -1)
 
         // Delete testDomain1.
         deltaTable.startTransaction().commit(
-          DomainMetadata("testDomain1", "", true) :: Nil, Truncate())
+          DomainMetadata("testDomain1", "", true) :: Nil, ManualUpdate)
         val domainMetadatasAfterDeletion = DomainMetadata(
           "testDomain2",
           "{\"key1\":\"value1\"}", false) :: Nil
@@ -198,7 +200,7 @@ class DomainMetadataSuite
         DomainMetadata("testDomain1", "", false) ::
           DomainMetadata("testDomain1", "", false) :: Nil
       val e = intercept[DeltaIllegalArgumentException] {
-        deltaTable.startTransactionWithInitialSnapshot().commit(domainMetadata, Truncate())
+        deltaTable.startTransactionWithInitialSnapshot().commit(domainMetadata, ManualUpdate)
       }
       assertEquals(e.getMessage,
         "[DELTA_DUPLICATE_DOMAIN_METADATA_INTERNAL_ERROR] " +
@@ -213,7 +215,7 @@ class DomainMetadataSuite
       val deltaLog = DeltaLog.forTable(spark, dir)
       val domainMetadata = DomainMetadata("testDomain1", "", false) :: Nil
       val e = intercept[DeltaIllegalArgumentException] {
-        deltaLog.startTransaction().commit(domainMetadata, Truncate())
+        deltaLog.startTransaction().commit(domainMetadata, ManualUpdate)
       }
       assertEquals(e.getMessage,
         "[DELTA_DOMAIN_METADATA_NOT_SUPPORTED] " +

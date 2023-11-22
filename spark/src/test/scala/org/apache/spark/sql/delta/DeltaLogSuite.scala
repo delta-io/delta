@@ -22,7 +22,7 @@ import java.util.Locale
 
 import scala.language.postfixOps
 
-import org.apache.spark.sql.delta.DeltaOperations.Truncate
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -50,7 +50,7 @@ class DeltaLogSuite extends QueryTest
   with SQLTestUtils {
 
 
-  protected val testOp = Truncate()
+  protected val testOp = ManualUpdate
 
   testDifferentCheckpoints("checkpoint", quiet = true) { (_, _) =>
     val tempDir = Utils.createTempDir()

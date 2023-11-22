@@ -549,7 +549,7 @@ trait DescribeDeltaHistorySuiteBase
     Seq(3).toDF().write.format("delta").mode("append").save(tempDir)  // readVersion = Some(2)
 
 
-    txn.commit(Seq.empty, DeltaOperations.Truncate())  // readVersion = Some(1)
+    txn.commit(Seq.empty, DeltaOperations.ManualUpdate)  // readVersion = Some(1)
 
     Seq(5).toDF().write.format("delta").mode("append").save(tempDir)   // readVersion = Some(4)
     val ans = sql(s"DESCRIBE HISTORY delta.`$tempDir`").as[DeltaHistory].collect()

@@ -21,7 +21,7 @@ import java.util.{Calendar, TimeZone}
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.DeltaOperations.Truncate
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{CheckpointMetadata, Metadata, SidecarFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -40,7 +40,7 @@ import org.apache.spark.util.ManualClock
 
 trait DeltaRetentionSuiteBase extends QueryTest
   with SharedSparkSession {
-  protected val testOp = Truncate()
+  protected val testOp = ManualUpdate
 
   protected override def sparkConf: SparkConf = super.sparkConf
     // Disable the log cleanup because it runs asynchronously and causes test flakiness
