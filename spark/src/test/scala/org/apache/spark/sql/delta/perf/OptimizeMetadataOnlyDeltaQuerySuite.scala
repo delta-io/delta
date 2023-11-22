@@ -21,11 +21,13 @@ import io.delta.tables.DeltaTable
 import org.apache.spark.sql.{DataFrame, Dataset, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
-import org.apache.spark.sql.delta.{DeltaLog, DeltaTestUtils}
+import org.apache.spark.sql.delta.{DeltaColumnMappingEnableIdMode, 
+  DeltaColumnMappingEnableNameMode, DeltaLog, DeltaTestUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
 import org.apache.spark.sql.delta.stats.StatisticsCollection
+import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.functions._
@@ -43,6 +45,10 @@ class OptimizeMetadataOnlyDeltaQuerySuite
 
   var dfPart1: DataFrame = null
   var dfPart2: DataFrame = null
+
+  var totalRows: Long = -1
+  var minId: Long = -1
+  var maxId: Long = -1
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -80,38 +86,25 @@ class OptimizeMetadataOnlyDeltaQuerySuite
         .write.format("delta").mode("append").saveAsTable(testTableName)
       spark.sql(s"DELETE FROM $testTableName WHERE id = 11")
     }
+
+    val result = spark.sql(s"SELECT COUNT(*), MIN(id), MAX(id) FROM $testTableName").head
+    totalRows = result.getLong(0)
+    minId = result.getLong(1)
+    maxId = result.getLong(2)
   }
 
-  test("count - simple query") {
-    val expectedPlan = "LocalRelation [none#0L]"
+  /** Class to hold test parameters */
+  case class ScalaTestParams(name: String, queryScala: () => DataFrame, expectedPlan: String)
 
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*) FROM $testTableName",
-      expectedPlan)
-
-    checkResultsAndOptimizedPlan(
-      () => spark.read.format("delta").table(testTableName)
+  Seq(
+    new ScalaTestParams(
+      name = "count - simple query",
+      queryScala = () => spark.read.format("delta").table(testTableName)
         .agg(count(col("*"))),
-      expectedPlan)
-  }
-
-  test("min-max - simple query") {
-    val expectedPlan = "LocalRelation [none#0L, none#1L, none#2, none#3, none#4, none#5, none#6" +
-      ", none#7, none#8L, none#9L, none#10, none#11, none#12, none#13, none#14, none#15]"
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT MIN(id), MAX(id)" +
-        s", MIN(TinyIntColumn), MAX(TinyIntColumn)" +
-        s", MIN(SmallIntColumn), MAX(SmallIntColumn)" +
-        s", MIN(IntColumn), MAX(IntColumn)" +
-        s", MIN(BigIntColumn), MAX(BigIntColumn)" +
-        s", MIN(FloatColumn), MAX(FloatColumn)" +
-        s", MIN(DoubleColumn), MAX(DoubleColumn)" +
-        s", MIN(DateColumn), MAX(DateColumn)" +
-        s"FROM $testTableName",
-      expectedPlan)
-
-    checkResultsAndOptimizedPlan(() => spark.read.format("delta").table(testTableName)
+      expectedPlan = "LocalRelation [none#0L]"),
+    new ScalaTestParams(
+      name = "min-max - simple query",
+      queryScala = () => spark.read.format("delta").table(testTableName)
       .agg(min(col("id")), max(col("id")),
         min(col("TinyIntColumn")), max(col("TinyIntColumn")),
         min(col("SmallIntColumn")), max(col("SmallIntColumn")),
@@ -120,12 +113,43 @@ class OptimizeMetadataOnlyDeltaQuerySuite
         min(col("FloatColumn")), max(col("FloatColumn")),
         min(col("DoubleColumn")), max(col("DoubleColumn")),
         min(col("DateColumn")), max(col("DateColumn"))),
-      expectedPlan)
+      expectedPlan = "LocalRelation [none#0L, none#1L, none#2, none#3, none#4, none#5, none#6" +
+      ", none#7, none#8L, none#9L, none#10, none#11, none#12, none#13, none#14, none#15]"),
+    )
+    .foreach { testParams =>
+      test(s"optimization supported - Scala - ${testParams.name}") {
+        checkResultsAndOptimizedPlan(testParams.queryScala, testParams.expectedPlan)     
+    }
   }
 
-  test("min-max - column name non-matching case") {
-    checkResultsAndOptimizedPlan(
-      s"SELECT MIN(ID), MAX(iD)" +
+  /** Class to hold test parameters */
+  case class SqlTestParams(
+    name: String,
+    querySql: String,
+    expectedPlan: String,
+    querySetup: Option[Seq[String]] = None)
+
+  Seq(
+    new SqlTestParams(
+      name = "count - simple query",
+      querySql = s"SELECT COUNT(*) FROM $testTableName",
+      expectedPlan = "LocalRelation [none#0L]"),
+    new SqlTestParams(
+      name = "min-max - simple query",
+      querySql = s"SELECT MIN(id), MAX(id)" +
+        s", MIN(TinyIntColumn), MAX(TinyIntColumn)" +
+        s", MIN(SmallIntColumn), MAX(SmallIntColumn)" +
+        s", MIN(IntColumn), MAX(IntColumn)" +
+        s", MIN(BigIntColumn), MAX(BigIntColumn)" +
+        s", MIN(FloatColumn), MAX(FloatColumn)" +
+        s", MIN(DoubleColumn), MAX(DoubleColumn)" +
+        s", MIN(DateColumn), MAX(DateColumn)" +
+        s"FROM $testTableName",
+      expectedPlan = "LocalRelation [none#0L, none#1L, none#2, none#3, none#4, none#5, none#6" +
+        ", none#7, none#8L, none#9L, none#10, none#11, none#12, none#13, none#14, none#15]"),
+    new SqlTestParams(
+      name = "min-max - column name non-matching case",
+      querySql = s"SELECT MIN(ID), MAX(iD)" +
         s", MIN(tINYINTCOLUMN), MAX(tinyintcolumN)" +
         s", MIN(sMALLINTCOLUMN), MAX(smallintcolumN)" +
         s", MIN(iNTCOLUMN), MAX(intcolumN)" +
@@ -134,40 +158,339 @@ class OptimizeMetadataOnlyDeltaQuerySuite
         s", MIN(dOUBLECOLUMN), MAX(doublecolumN)" +
         s", MIN(dATECOLUMN), MAX(datecolumN)" +
         s"FROM $testTableName",
-      "LocalRelation [none#0L, none#1L, none#2, none#3, none#4, none#5, none#6" +
-        ", none#7, none#8L, none#9L, none#10, none#11, none#12, none#13, none#14, none#15]")
-  }
-
-  test ("count with column name alias") {
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*) as MyCount FROM $testTableName",
-      "LocalRelation [none#0L]")
-  }
-
-  test("count-min-max with column name alias") {
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*) as MyCount, MIN(id) as MyMinId, MAX(id) as MyMaxId FROM $testTableName",
-      "LocalRelation [none#0L, none#1L, none#2L]")
-  }
-
-  test("count-min-max - table name with alias") {
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), MIN(id), MAX(id) FROM $testTableName MyTable",
-      "LocalRelation [none#0L, none#1L, none#2L]")
-  }
-
-  test("count-min-max - query using time travel") {
-    checkResultsAndOptimizedPlan(s"SELECT COUNT(*), MIN(id), MAX(id) " +
+      expectedPlan = "LocalRelation [none#0L, none#1L, none#2, none#3, none#4, none#5, none#6" +
+        ", none#7, none#8L, none#9L, none#10, none#11, none#12, none#13, none#14, none#15]"),
+    new SqlTestParams(
+      name = "count with column name alias",
+      querySql = s"SELECT COUNT(*) as MyCount FROM $testTableName",
+      expectedPlan = "LocalRelation [none#0L]"),
+    new SqlTestParams(
+      name = "count-min-max with column name alias",
+      querySql = s"SELECT COUNT(*) as MyCount, MIN(id) as MyMinId, MAX(id) as MyMaxId" +
+        s" FROM $testTableName",
+      expectedPlan = "LocalRelation [none#0L, none#1L, none#2L]"),
+    new SqlTestParams(
+      name = "count-min-max - table name with alias",
+      querySql = s"SELECT COUNT(*), MIN(id), MAX(id) FROM $testTableName MyTable",
+      expectedPlan = "LocalRelation [none#0L, none#1L, none#2L]"),
+    new SqlTestParams(
+      name = "count-min-max - query using time travel - version 0",
+      querySql = s"SELECT COUNT(*), MIN(id), MAX(id) " +
       s"FROM $testTableName VERSION AS OF 0",
-      "LocalRelation [none#0L, none#1L, none#2L]")
-
-    checkResultsAndOptimizedPlan(s"SELECT COUNT(*), MIN(id), MAX(id) " +
+      expectedPlan = "LocalRelation [none#0L, none#1L, none#2L]"),
+    new SqlTestParams(
+      name = "count-min-max - query using time travel - version 1",
+      querySql = s"SELECT COUNT(*), MIN(id), MAX(id) " +
       s"FROM $testTableName VERSION AS OF 1",
-      "LocalRelation [none#0L, none#1L, none#2L]")
-
-    checkResultsAndOptimizedPlan(s"SELECT COUNT(*), MIN(id), MAX(id) " +
+      expectedPlan = "LocalRelation [none#0L, none#1L, none#2L]"),
+    new SqlTestParams(
+      name = "count-min-max - query using time travel - version 2",
+      querySql = s"SELECT COUNT(*), MIN(id), MAX(id) " +
       s"FROM $testTableName VERSION AS OF 2",
-      "LocalRelation [none#0L, none#1L, none#2L]")
+      expectedPlan = "LocalRelation [none#0L, none#1L, none#2L]"),
+    new SqlTestParams(
+      name = "count - sub-query",
+      querySql = s"SELECT (SELECT COUNT(*) FROM $testTableName)",
+      expectedPlan = "Project [scalar-subquery#0 [] AS #0L]\n" +
+        ":  +- LocalRelation [none#0L]\n+- OneRowRelation"),
+    new SqlTestParams(
+      name = "min - sub-query",
+      querySql = s"SELECT (SELECT MIN(id) FROM $testTableName)",
+      expectedPlan = "Project [scalar-subquery#0 [] AS #0L]\n" +
+        ":  +- LocalRelation [none#0L]\n+- OneRowRelation"),
+    new SqlTestParams(
+      name = "max - sub-query",
+      querySql = s"SELECT (SELECT MAX(id) FROM $testTableName)",
+      expectedPlan = "Project [scalar-subquery#0 [] AS #0L]\n" +
+        ":  +- LocalRelation [none#0L]\n+- OneRowRelation"),
+    new SqlTestParams(
+      name = "count - sub-query filter",
+      querySql = s"SELECT 'ABC' WHERE" +
+        s" (SELECT COUNT(*) FROM $testTableName) = $totalRows",
+      expectedPlan = "Project [ABC AS #0]\n+- Filter (scalar-subquery#0 [] = " +
+        totalRows + ")\n   :  +- LocalRelation [none#0L]\n   +- OneRowRelation"),
+    new SqlTestParams(
+      name = "min - sub-query filter",
+      querySql = s"SELECT 'ABC' WHERE" +
+        s" (SELECT MIN(id) FROM $testTableName) = $minId",
+      expectedPlan = "Project [ABC AS #0]\n+- Filter (scalar-subquery#0 [] = " +
+        minId + ")\n   :  +- LocalRelation [none#0L]\n   +- OneRowRelation"),
+    new SqlTestParams(
+      name = "max - sub-query filter",
+      querySql = s"SELECT 'ABC' WHERE" +
+        s" (SELECT MAX(id) FROM $testTableName) = $maxId",
+      expectedPlan = "Project [ABC AS #0]\n+- Filter (scalar-subquery#0 [] = " +
+        maxId + ")\n   :  +- LocalRelation [none#0L]\n   +- OneRowRelation"),
+    // Limit doesn't affect aggregation results
+    new SqlTestParams(
+      name = "count-min-max - query with limit",
+      querySql = s"SELECT COUNT(*), MIN(id), MAX(id) FROM $testTableName LIMIT 3",
+      expectedPlan = "LocalRelation [none#0L, none#1L, none#2L]"),
+    new SqlTestParams(
+      name = "count-min-max - duplicated functions",
+      querySql = s"SELECT COUNT(*), COUNT(*), MIN(id), MIN(id), MAX(id), MAX(id) FROM $testTableName",
+      expectedPlan = "LocalRelation [none#0L, none#1L, none#2L, none#3L, none#4L, none#5L]"),
+    new SqlTestParams(
+      name = "count - empty table",
+      querySetup = Some(Seq("CREATE TABLE TestEmpty (c1 int) USING DELTA")),
+      querySql = "SELECT COUNT(*) FROM TestEmpty",
+      expectedPlan = "LocalRelation [none#0L]"),
+    /** Dates are stored as Int in literals. This test make sure Date columns works
+     * and NULL are handled correctly
+     */
+    new SqlTestParams(
+      name = "min-max - date columns",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestDateValues (Column1 DATE, Column2 DATE, Column3 DATE) USING DELTA;",
+        "INSERT INTO TestDateValues (Column1, Column2, Column3) VALUES (NULL, current_date(), current_date());",
+        "INSERT INTO TestDateValues (Column1, Column2, Column3) VALUES (NULL, NULL, current_date());")),
+      querySql = "SELECT COUNT(*), MIN(Column1), MAX(Column1), MIN(Column2)" +
+      ", MAX(Column2), MIN(Column3), MAX(Column3) FROM TestDateValues",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6]"),
+    new SqlTestParams(
+      name = "min-max - floating point infinity",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestFloatInfinity (FloatColumn Float, DoubleColumn Double) USING DELTA",
+        "INSERT INTO TestFloatInfinity (FloatColumn, DoubleColumn) VALUES (1, 1);",
+        "INSERT INTO TestFloatInfinity (FloatColumn, DoubleColumn) VALUES (NULL, NULL);",
+        "INSERT INTO TestFloatInfinity (FloatColumn, DoubleColumn) VALUES " +
+          "(float('inf'), double('inf'))" +
+          ", (float('+inf'), double('+inf'))" +
+          ", (float('infinity'), double('infinity'))" +
+          ", (float('+infinity'), double('+infinity'))" +
+          ", (float('-inf'), double('-inf'))" +
+          ", (float('-infinity'), double('-infinity'))"
+      )),
+      querySql = "SELECT COUNT(*), MIN(FloatColumn), MAX(FloatColumn), MIN(DoubleColumn)" +
+        ", MAX(DoubleColumn) FROM TestFloatInfinity",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3, none#4]"),
+    // NaN is larger than any other value, including Infinity
+    new SqlTestParams(
+      name = "min-max - floating point NaN values",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestFloatNaN (FloatColumn Float, DoubleColumn Double) USING DELTA",
+        "INSERT INTO TestFloatNaN (FloatColumn, DoubleColumn) VALUES (1, 1);",
+        "INSERT INTO TestFloatNaN (FloatColumn, DoubleColumn) VALUES (NULL, NULL);",
+        "INSERT INTO TestFloatNaN (FloatColumn, DoubleColumn) VALUES " +
+          "(float('inf'), double('inf'))" +
+          ", (float('+inf'), double('+inf'))" +
+          ", (float('infinity'), double('infinity'))" +
+          ", (float('+infinity'), double('+infinity'))" +
+          ", (float('-inf'), double('-inf'))" +
+          ", (float('-infinity'), double('-infinity'))",
+        "INSERT INTO TestFloatNaN (FloatColumn, DoubleColumn) VALUES " +
+      "(float('NaN'), double('NaN'));"
+      )),
+      querySql = "SELECT COUNT(*), MIN(FloatColumn), MAX(FloatColumn), MIN(DoubleColumn)" +
+        ", MAX(DoubleColumn) FROM TestFloatNaN",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3, none#4]"),
+    new SqlTestParams(
+      name = "min-max - floating point min positive value",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestFloatPrecision (FloatColumn Float, DoubleColumn Double) USING DELTA",
+        "INSERT INTO TestFloatPrecision (FloatColumn, DoubleColumn) VALUES " +
+      "(CAST('1.4E-45' as FLOAT), CAST('4.9E-324' as DOUBLE))" +
+      ", (CAST('-1.4E-45' as FLOAT), CAST('-4.9E-324' as DOUBLE))" +
+      ", (0, 0);"
+      )),
+      querySql = "SELECT COUNT(*), MIN(FloatColumn), MAX(FloatColumn), MIN(DoubleColumn)" +
+        ", MAX(DoubleColumn) FROM TestFloatPrecision",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3, none#4]"),
+    new SqlTestParams(
+      name = "min-max - NULL and non-NULL values",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestNullValues (Column1 INT, Column2 INT, Column3 INT) USING DELTA",
+        "INSERT INTO TestNullValues (Column1, Column2, Column3) VALUES (NULL, 1, 1);",
+        "INSERT INTO TestNullValues (Column1, Column2, Column3) VALUES (NULL, NULL, 1);"
+      )),
+      querySql = "SELECT COUNT(*), MIN(Column1), MAX(Column1)," +
+        "MIN(Column2), MAX(Column2) FROM TestNullValues",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3, none#4]"),
+    new SqlTestParams(
+      name = "min-max - only NULL values",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestOnlyNullValues (Column1 INT, Column2 INT, Column3 INT) USING DELTA",
+        "INSERT INTO TestOnlyNullValues (Column1, Column2, Column3) VALUES (NULL, NULL, 1);",
+        "INSERT INTO TestOnlyNullValues (Column1, Column2, Column3) VALUES (NULL, NULL, 2);"
+      )),
+      querySql = "SELECT COUNT(*), MIN(Column1), MAX(Column1), MIN(Column2), MAX(Column2), " +
+        "MIN(Column3), MAX(Column3) FROM TestOnlyNullValues",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6]"),
+    new SqlTestParams(
+      name = "min-max - all supported data types",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestMinMaxValues (" +
+      "TINYINTColumn TINYINT, SMALLINTColumn SMALLINT, INTColumn INT, BIGINTColumn BIGINT, " +
+      "FLOATColumn FLOAT, DOUBLEColumn DOUBLE, DATEColumn DATE) USING DELTA",
+        "INSERT INTO TestMinMaxValues (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
+      " FLOATColumn, DOUBLEColumn, DATEColumn)" +
+      " VALUES (-128, -32768, -2147483648, -9223372036854775808," +
+      " -3.4028235E38, -1.7976931348623157E308, CAST('1582-10-15' AS DATE));",
+        "INSERT INTO TestMinMaxValues (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
+      " FLOATColumn, DOUBLEColumn, DATEColumn)" +
+      " VALUES (127, 32767, 2147483647, 9223372036854775807," +
+      " 3.4028235E38, 1.7976931348623157E308, CAST('9999-12-31' AS DATE));"
+      )),
+      querySql = "SELECT COUNT(*)," +
+        "MIN(TINYINTColumn), MAX(TINYINTColumn)" +
+        ", MIN(SMALLINTColumn), MAX(SMALLINTColumn)" +
+        ", MIN(INTColumn), MAX(INTColumn)" +
+        ", MIN(BIGINTColumn), MAX(BIGINTColumn)" +
+        ", MIN(FLOATColumn), MAX(FLOATColumn)" +
+        ", MIN(DOUBLEColumn), MAX(DOUBLEColumn)" +
+        ", MIN(DATEColumn), MAX(DATEColumn)" +
+        " FROM TestMinMaxValues",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6" +
+        ", none#7L, none#8L, none#9, none#10, none#11, none#12, none#13, none#14]"),
+    new SqlTestParams(
+      name = "count-min-max - partitioned table - simple query",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestPartitionedTable (Column1 INT, Column2 INT, Column3 INT, Column4 INT)" +
+        " USING DELTA PARTITIONED BY (Column2, Column3)",
+        "INSERT INTO TestPartitionedTable (Column1, Column2, Column3, Column4) VALUES (1, 2, 3, 4);",
+        "INSERT INTO TestPartitionedTable (Column1, Column2, Column3, Column4) VALUES (2, 2, 3, 5);",
+        "INSERT INTO TestPartitionedTable (Column1, Column2, Column3, Column4) VALUES (3, 3, 2, 6);",
+        "INSERT INTO TestPartitionedTable (Column1, Column2, Column3, Column4) VALUES (4, 3, 2, 7);"
+      )),
+      querySql = "SELECT COUNT(*)" +
+        ", MIN(Column1), MAX(Column1)" +
+        ", MIN(Column2), MAX(Column2)" +
+        ", MIN(Column3), MAX(Column3)" +
+        ", MIN(Column4), MAX(Column4)" +
+        " FROM TestPartitionedTable",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3," +
+        " none#4, none#5, none#6, none#7, none#8]"),
+    /** Partitioned columns should be able to return MIN and MAX data
+     * even when there are no column stats */
+    new SqlTestParams(
+      name = "count-min-max - partitioned table - no stats",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestPartitionedTableNoStats (Column1 INT, Column2 INT, Column3 INT, Column4 INT)" +
+        " USING DELTA PARTITIONED BY (Column2, Column3)" +
+        " TBLPROPERTIES('delta.dataSkippingNumIndexedCols' = 0)",
+        "INSERT INTO TestPartitionedTableNoStats (Column1, Column2, Column3, Column4) VALUES (1, 2, 3, 4);",
+        "INSERT INTO TestPartitionedTableNoStats (Column1, Column2, Column3, Column4) VALUES (2, 2, 3, 5);",
+        "INSERT INTO TestPartitionedTableNoStats (Column1, Column2, Column3, Column4) VALUES (3, 3, 2, 6);",
+        "INSERT INTO TestPartitionedTableNoStats (Column1, Column2, Column3, Column4) VALUES (4, 3, 2, 7);"
+      )),
+      querySql = "SELECT COUNT(*)" +
+        ", MIN(Column2), MAX(Column2)" +
+        ", MIN(Column3), MAX(Column3)" +
+        " FROM TestPartitionedTableNoStats",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3, none#4]"),
+    new SqlTestParams(
+      name = "min-max - partitioned table - all supported data types",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestAllTypesPartitionedTable (" +
+        "TINYINTColumn TINYINT, SMALLINTColumn SMALLINT, INTColumn INT, BIGINTColumn BIGINT, " +
+        "FLOATColumn FLOAT, DOUBLEColumn DOUBLE, DATEColumn DATE, Data INT) USING DELTA" +
+        "  PARTITIONED BY (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
+        " FLOATColumn, DOUBLEColumn, DATEColumn)",
+        "INSERT INTO TestAllTypesPartitionedTable (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
+        " FLOATColumn, DOUBLEColumn, DATEColumn, Data)" +
+        " VALUES (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);",
+        "INSERT INTO TestAllTypesPartitionedTable (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
+        " FLOATColumn, DOUBLEColumn, DATEColumn, Data)" +
+        " VALUES (-128, -32768, -2147483648, -9223372036854775808," +
+        " -3.4028235E38, -1.7976931348623157E308, CAST('1582-10-15' AS DATE), 1);"
+      )),
+      querySql = "SELECT COUNT(*)," +
+        "MIN(TINYINTColumn), MAX(TINYINTColumn)" +
+        ", MIN(SMALLINTColumn), MAX(SMALLINTColumn)" +
+        ", MIN(INTColumn), MAX(INTColumn)" +
+        ", MIN(BIGINTColumn), MAX(BIGINTColumn)" +
+        ", MIN(FLOATColumn), MAX(FLOATColumn)" +
+        ", MIN(DOUBLEColumn), MAX(DOUBLEColumn)" +
+        ", MIN(DATEColumn), MAX(DATEColumn)" +
+        ", MIN(Data), MAX(Data)" +
+        " FROM TestAllTypesPartitionedTable",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6, " +
+        "none#7L, none#8L, none#9, none#10, none#11, none#12, none#13, none#14, none#15, none#16]"),
+    new SqlTestParams(
+      name = "min-max - partitioned table - only NULL values",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestOnlyNullValuesPartitioned (" +
+        "TINYINTColumn TINYINT, SMALLINTColumn SMALLINT, INTColumn INT, BIGINTColumn BIGINT, " +
+        "FLOATColumn FLOAT, DOUBLEColumn DOUBLE, DATEColumn DATE, Data INT) USING DELTA" +
+        "  PARTITIONED BY (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
+        " FLOATColumn, DOUBLEColumn, DATEColumn)",
+        "INSERT INTO TestOnlyNullValuesPartitioned (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
+        " FLOATColumn, DOUBLEColumn, DATEColumn, Data)" +
+        " VALUES (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);"
+      )),
+      querySql = "SELECT COUNT(*)," +
+        "MIN(TINYINTColumn), MAX(TINYINTColumn)" +
+        ", MIN(SMALLINTColumn), MAX(SMALLINTColumn)" +
+        ", MIN(INTColumn), MAX(INTColumn)" +
+        ", MIN(BIGINTColumn), MAX(BIGINTColumn)" +
+        ", MIN(FLOATColumn), MAX(FLOATColumn)" +
+        ", MIN(DOUBLEColumn), MAX(DOUBLEColumn)" +
+        ", MIN(DATEColumn), MAX(DATEColumn)" +
+        ", MIN(Data), MAX(Data)" +
+        " FROM TestOnlyNullValuesPartitioned",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6, " +
+        "none#7L, none#8L, none#9, none#10, none#11, none#12, none#13, none#14, none#15, none#16]"),
+    new SqlTestParams(
+      name = "min-max - partitioned table - NULL and NON-NULL values",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestNullPartitioned (Column1 INT, Column2 INT, Column3 INT)" +
+        " USING DELTA PARTITIONED BY (Column2, Column3)",
+        "INSERT INTO TestNullPartitioned (Column1, Column2, Column3) VALUES (NULL, NULL, 1);",
+        "INSERT INTO TestNullPartitioned (Column1, Column2, Column3) VALUES (NULL, NULL, NULL);",
+        "INSERT INTO TestNullPartitioned (Column1, Column2, Column3) VALUES (NULL, NULL, 2);"
+      )),
+      querySql = "SELECT COUNT(*), MIN(Column1), MAX(Column1), MIN(Column2), MAX(Column2), " +
+        "MIN(Column3), MAX(Column3) FROM TestNullPartitioned",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6]"),
+    new SqlTestParams(
+      name = "min-max - column name containing punctuation",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestPunctuationColumnName (`My.!?Column` INT) USING DELTA",
+        "INSERT INTO TestPunctuationColumnName (`My.!?Column`) VALUES (1), (2), (3);"
+      )),
+      querySql = "SELECT COUNT(*), MIN(`My.!?Column`), MAX(`My.!?Column`) FROM TestPunctuationColumnName",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2]"),
+    new SqlTestParams(
+      name = "min-max - partitioned table - column name containing punctuation",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestPartitionedPunctuationColumnName (`My.!?Column` INT, Data INT)" +
+        " USING DELTA PARTITIONED BY (`My.!?Column`)",
+        "INSERT INTO TestPartitionedPunctuationColumnName (`My.!?Column`, Data) VALUES (1, 1), (2, 1), (3, 1);"
+      )),
+      querySql = "SELECT COUNT(*), MIN(`My.!?Column`), MAX(`My.!?Column`) FROM TestPartitionedPunctuationColumnName",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2]"),
+    new SqlTestParams(
+      name = "min-max - partitioned table - special characters in column name",
+      querySetup = Some(Seq(
+        "CREATE TABLE TestColumnMappingPartitioned" +
+        " (Column1 INT, Column2 INT, `Column3 .,;{}()\n\t=` INT, Column4 INT)" +
+        " USING DELTA PARTITIONED BY (Column2, `Column3 .,;{}()\n\t=`)" +
+        " TBLPROPERTIES('delta.columnMapping.mode' = 'name')",
+        "INSERT INTO TestColumnMappingPartitioned (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
+        " VALUES (1, 2, 3, 4);",
+        "INSERT INTO TestColumnMappingPartitioned (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
+        " VALUES (2, 2, 3, 5);",
+        "INSERT INTO TestColumnMappingPartitioned (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
+        " VALUES (3, 3, 2, 6);",
+        "INSERT INTO TestColumnMappingPartitioned (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
+        " VALUES (4, 3, 2, 7);",
+      )),
+      querySql = "SELECT COUNT(*)" +
+        ", MIN(Column1), MAX(Column1)" +
+        ", MIN(Column2), MAX(Column2)" +
+        ", MIN(`Column3 .,;{}()\n\t=`), MAX(`Column3 .,;{}()\n\t=`)" +
+        ", MIN(Column4), MAX(Column4)" +
+        " FROM TestColumnMappingPartitioned",
+      expectedPlan = "LocalRelation [none#0L, none#1, none#2, none#3," +
+        " none#4, none#5, none#6, none#7, none#8]"),
+    )
+    .foreach { testParams =>
+      test(s"optimization supported - SQL - ${testParams.name}") {
+        if(testParams.querySetup.isDefined) {
+          testParams.querySetup.get.foreach(spark.sql)
+        }
+        checkResultsAndOptimizedPlan(testParams.querySql, testParams.expectedPlan)
+    }
   }
 
   test("count-min-max - external table") {
@@ -181,366 +504,6 @@ class OptimizeMetadataOnlyDeltaQuerySuite
         s"SELECT COUNT(*), MIN(id), MAX(id) FROM delta.`$testTablePath`",
         "LocalRelation [none#0L, none#1L, none#2L]")
     }
-  }
-
-  test("count-min-max - sub-query") {
-    checkResultsAndOptimizedPlan(
-      s"SELECT (SELECT COUNT(*) FROM $testTableName)",
-      "Project [scalar-subquery#0 [] AS #0L]\n:  +- LocalRelation [none#0L]\n+- OneRowRelation")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT (SELECT MIN(id) FROM $testTableName)",
-      "Project [scalar-subquery#0 [] AS #0L]\n:  +- LocalRelation [none#0L]\n+- OneRowRelation")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT (SELECT MAX(id) FROM $testTableName)",
-      "Project [scalar-subquery#0 [] AS #0L]\n:  +- LocalRelation [none#0L]\n+- OneRowRelation")
-  }
-
-  test("count-min-max - sub-query filter") {
-    val result = spark.sql(s"SELECT COUNT(*), MIN(id), MAX(id) FROM $testTableName").head
-    val totalRows = result.getLong(0)
-    val minId = result.getLong(1)
-    val maxId = result.getLong(2)
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT 'ABC' WHERE" +
-        s" (SELECT COUNT(*) FROM $testTableName) = $totalRows",
-      "Project [ABC AS #0]\n+- Filter (scalar-subquery#0 [] = " +
-        totalRows + ")\n   :  +- LocalRelation [none#0L]\n   +- OneRowRelation")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT 'ABC' WHERE" +
-        s" (SELECT MIN(id) FROM $testTableName) = $minId",
-      "Project [ABC AS #0]\n+- Filter (scalar-subquery#0 [] = " +
-        minId + ")\n   :  +- LocalRelation [none#0L]\n   +- OneRowRelation")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT 'ABC' WHERE" +
-        s" (SELECT MAX(id) FROM $testTableName) = $maxId",
-      "Project [ABC AS #0]\n+- Filter (scalar-subquery#0 [] = " +
-        maxId + ")\n   :  +- LocalRelation [none#0L]\n   +- OneRowRelation")
-  }
-
-  test("count-min-max - query with limit") {
-    // Limit doesn't affect aggregation results
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), MIN(id), MAX(id) FROM $testTableName LIMIT 3",
-      "LocalRelation [none#0L, none#1L, none#2L]")
-  }
-
-  test("count - empty table") {
-    sql(s"CREATE TABLE TestEmpty (c1 int) USING DELTA")
-
-    val query = "SELECT COUNT(*) FROM TestEmpty"
-
-    checkResultsAndOptimizedPlan(query, "LocalRelation [none#0L]")
-  }
-
-  test("count-min-max - duplicated functions") {
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), COUNT(*), MIN(id), MIN(id), MAX(id), MAX(id) FROM $testTableName",
-      "LocalRelation [none#0L, none#1L, none#2L, none#3L, none#4L, none#5L]")
-  }
-
-  /** Dates are stored as Int in literals. This test make sure Date columns works
-   * and NULL are handled correctly
-   */
-  test("min-max - date columns") {
-    val tableName = "TestDateValues"
-
-    spark.sql(s"CREATE TABLE $tableName (Column1 DATE, Column2 DATE, Column3 DATE) USING DELTA")
-
-    spark.sql(s"INSERT INTO $tableName" +
-      s" (Column1, Column2, Column3) VALUES (NULL, current_date(), current_date());")
-    spark.sql(s"INSERT INTO $tableName" +
-      s" (Column1, Column2, Column3) VALUES (NULL, NULL, current_date());")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), MIN(Column1), MAX(Column1), MIN(Column2)" +
-        s", MAX(Column2), MIN(Column3), MAX(Column3) FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6]")
-  }
-
-  test("min-max - floating point infinity and NaN values") {
-    val tableName = "TestFloatValues"
-
-    spark.sql(s"CREATE TABLE $tableName (FloatColumn Float, DoubleColumn Double) USING DELTA")
-
-    spark.sql(s"INSERT INTO $tableName (FloatColumn, DoubleColumn) VALUES (1, 1);")
-    spark.sql(s"INSERT INTO $tableName (FloatColumn, DoubleColumn) VALUES (NULL, NULL);")
-    spark.sql(s"INSERT INTO $tableName (FloatColumn, DoubleColumn) VALUES " +
-      s"(float('inf'), double('inf'))" +
-      s", (float('+inf'), double('+inf'))" +
-      s", (float('infinity'), double('infinity'))" +
-      s", (float('+infinity'), double('+infinity'))" +
-      s", (float('-inf'), double('-inf'))" +
-      s", (float('-infinity'), double('-infinity'))")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), MIN(FloatColumn), MAX(FloatColumn), MIN(DoubleColumn)" +
-        s", MAX(DoubleColumn) FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2, none#3, none#4]")
-
-    // NaN is larger than any other value, including Infinity
-    spark.sql(s"INSERT INTO $tableName (FloatColumn, DoubleColumn) VALUES " +
-      s"(float('NaN'), double('NaN'));")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), MIN(FloatColumn), MAX(FloatColumn), MIN(DoubleColumn)" +
-        s", MAX(DoubleColumn) FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2, none#3, none#4]")
-  }
-
-  test("min-max - floating point min positive value") {
-    val tableName = "TestFloatPrecision"
-
-    spark.sql(s"CREATE TABLE $tableName (FloatColumn Float, DoubleColumn Double) USING DELTA")
-
-    spark.sql(s"INSERT INTO $tableName (FloatColumn, DoubleColumn) VALUES " +
-      s"(CAST('1.4E-45' as FLOAT), CAST('4.9E-324' as DOUBLE))" +
-      s", (CAST('-1.4E-45' as FLOAT), CAST('-4.9E-324' as DOUBLE))" +
-      s", (0, 0);")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), MIN(FloatColumn), MAX(FloatColumn), MIN(DoubleColumn)" +
-        s", MAX(DoubleColumn) FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2, none#3, none#4]")
-  }
-
-  test("min-max - NULL and non-NULL values") {
-    val tableName = "TestNullValues"
-
-    spark.sql(s"CREATE TABLE $tableName (Column1 INT, Column2 INT, Column3 INT) USING DELTA")
-
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3) VALUES (NULL, 1, 1);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3) VALUES (NULL, NULL, 1);")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), MIN(Column1), MAX(Column1) FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2]")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), MIN(Column2), MAX(Column2) FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2]")
-  }
-
-  test("min-max - only NULL values") {
-    val tableName = "TestOnlyNullValues"
-
-    spark.sql(s"CREATE TABLE $tableName (Column1 INT, Column2 INT, Column3 INT) USING DELTA")
-
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3) VALUES (NULL, NULL, 1);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3) VALUES (NULL, NULL, 2);")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), MIN(Column1), MAX(Column1), MIN(Column2), MAX(Column2), " +
-        s"MIN(Column3), MAX(Column3) FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6]")
-  }
-
-  test("min-max - all supported data types") {
-    val tableName = "TestMinMaxValues"
-
-    spark.sql(s"CREATE TABLE $tableName (" +
-      s"TINYINTColumn TINYINT, SMALLINTColumn SMALLINT, INTColumn INT, BIGINTColumn BIGINT, " +
-      s"FLOATColumn FLOAT, DOUBLEColumn DOUBLE, DATEColumn DATE) USING DELTA")
-
-    spark.sql(s"INSERT INTO $tableName (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
-      s" FLOATColumn, DOUBLEColumn, DATEColumn)" +
-      s" VALUES (-128, -32768, -2147483648, -9223372036854775808," +
-      s" -3.4028235E38, -1.7976931348623157E308, CAST('1582-10-15' AS DATE));")
-    spark.sql(s"INSERT INTO $tableName (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
-      s" FLOATColumn, DOUBLEColumn, DATEColumn)" +
-      s" VALUES (127, 32767, 2147483647, 9223372036854775807," +
-      s" 3.4028235E38, 1.7976931348623157E308, CAST('9999-12-31' AS DATE));")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*)," +
-        s"MIN(TINYINTColumn), MAX(TINYINTColumn)" +
-        s", MIN(SMALLINTColumn), MAX(SMALLINTColumn)" +
-        s", MIN(INTColumn), MAX(INTColumn)" +
-        s", MIN(BIGINTColumn), MAX(BIGINTColumn)" +
-        s", MIN(FLOATColumn), MAX(FLOATColumn)" +
-        s", MIN(DOUBLEColumn), MAX(DOUBLEColumn)" +
-        s", MIN(DATEColumn), MAX(DATEColumn)" +
-        s" FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6, none#7L" +
-        ", none#8L, none#9, none#10, none#11, none#12, none#13, none#14]")
-  }
-
-  test("count-min-max - partitioned table - simple query") {
-    val tableName = "TestPartitionedTable"
-
-    spark.sql(s"CREATE TABLE $tableName (Column1 INT, Column2 INT, Column3 INT, Column4 INT)" +
-      s" USING DELTA PARTITIONED BY (Column2, Column3)")
-
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3, Column4) VALUES (1, 2, 3, 4);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3, Column4) VALUES (2, 2, 3, 5);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3, Column4) VALUES (3, 3, 2, 6);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3, Column4) VALUES (4, 3, 2, 7);")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*)" +
-        s", MIN(Column1), MAX(Column1)" +
-        s", MIN(Column2), MAX(Column2)" +
-        s", MIN(Column3), MAX(Column3)" +
-        s", MIN(Column4), MAX(Column4)" +
-        s" FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6, none#7, none#8]")
-  }
-
-  /** Partitioned columns should be able to return MIN and MAX data
-   * even when there are no column stats */
-  test("count-min-max - partitioned table - no stats") {
-    val tableName = "TestPartitionedTableNoStats"
-
-    spark.sql(s"CREATE TABLE $tableName (Column1 INT, Column2 INT, Column3 INT, Column4 INT)" +
-      s" USING DELTA PARTITIONED BY (Column2, Column3)" +
-      s" TBLPROPERTIES('delta.dataSkippingNumIndexedCols' = 0)")
-
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3, Column4) VALUES (1, 2, 3, 4);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3, Column4) VALUES (2, 2, 3, 5);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3, Column4) VALUES (3, 3, 2, 6);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3, Column4) VALUES (4, 3, 2, 7);")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*)" +
-        s", MIN(Column2), MAX(Column2)" +
-        s", MIN(Column3), MAX(Column3)" +
-        s" FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2, none#3, none#4]")
-  }
-
-  test("min-max - partitioned table - all supported data types") {
-    val tableName = "TestAllTypesPartitionedTable"
-
-    spark.sql(s"CREATE TABLE $tableName (" +
-      s"TINYINTColumn TINYINT, SMALLINTColumn SMALLINT, INTColumn INT, BIGINTColumn BIGINT, " +
-      s"FLOATColumn FLOAT, DOUBLEColumn DOUBLE, DATEColumn DATE, Data INT) USING DELTA" +
-      s"  PARTITIONED BY (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
-      s" FLOATColumn, DOUBLEColumn, DATEColumn)")
-
-    spark.sql(s"INSERT INTO $tableName (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
-      s" FLOATColumn, DOUBLEColumn, DATEColumn, Data)" +
-      s" VALUES (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*)," +
-        s"MIN(TINYINTColumn), MAX(TINYINTColumn)" +
-        s", MIN(SMALLINTColumn), MAX(SMALLINTColumn)" +
-        s", MIN(INTColumn), MAX(INTColumn)" +
-        s", MIN(BIGINTColumn), MAX(BIGINTColumn)" +
-        s", MIN(FLOATColumn), MAX(FLOATColumn)" +
-        s", MIN(DOUBLEColumn), MAX(DOUBLEColumn)" +
-        s", MIN(DATEColumn), MAX(DATEColumn)" +
-        s", MIN(Data), MAX(Data)" +
-        s" FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6, none#7L" +
-        ", none#8L, none#9, none#10, none#11, none#12, none#13, none#14, none#15, none#16]")
-
-    spark.sql(s"INSERT INTO $tableName (TINYINTColumn, SMALLINTColumn, INTColumn, BIGINTColumn," +
-      s" FLOATColumn, DOUBLEColumn, DATEColumn, Data)" +
-      s" VALUES (-128, -32768, -2147483648, -9223372036854775808," +
-      s" -3.4028235E38, -1.7976931348623157E308, CAST('1582-10-15' AS DATE), 1);")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*)," +
-        s"MIN(TINYINTColumn), MAX(TINYINTColumn)" +
-        s", MIN(SMALLINTColumn), MAX(SMALLINTColumn)" +
-        s", MIN(INTColumn), MAX(INTColumn)" +
-        s", MIN(BIGINTColumn), MAX(BIGINTColumn)" +
-        s", MIN(FLOATColumn), MAX(FLOATColumn)" +
-        s", MIN(DOUBLEColumn), MAX(DOUBLEColumn)" +
-        s", MIN(DATEColumn), MAX(DATEColumn)" +
-        s", MIN(Data), MAX(Data)" +
-        s" FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6, none#7L" +
-        ", none#8L, none#9, none#10, none#11, none#12, none#13, none#14, none#15, none#16]")
-  }
-
-  test("min-max - partitioned table - only NULL values") {
-    val tableName = "TestOnlyNullValuesPartitioned"
-
-    spark.sql(s"CREATE TABLE $tableName (Column1 INT, Column2 INT, Column3 INT) " +
-      s"USING DELTA PARTITIONED BY (Column2, Column3)")
-
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3) VALUES (NULL, NULL, 1);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3) VALUES (NULL, NULL, NULL);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, Column3) VALUES (NULL, NULL, 2);")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), MIN(Column1), MAX(Column1), MIN(Column2), MAX(Column2), " +
-        s"MIN(Column3), MAX(Column3) FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6]")
-  }
-
-  test("min-max - column name containing punctuation") {
-    val tableName = "TestPunctuationColumnName"
-
-    spark.sql(s"CREATE TABLE $tableName (`My.!?Column` INT) USING DELTA")
-
-    spark.sql(s"INSERT INTO $tableName (`My.!?Column`) VALUES (1), (2), (3);")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), MIN(`My.!?Column`), MAX(`My.!?Column`) FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2]")
-  }
-
-  test("min-max - partitioned table - column name containing punctuation") {
-    val tableName = "TestPartitionedPunctuationColumnName"
-
-    spark.sql(s"CREATE TABLE $tableName (`My.!?Column` INT, Data INT)" +
-      s" USING DELTA PARTITIONED BY (`My.!?Column`)")
-
-    spark.sql(s"INSERT INTO $tableName (`My.!?Column`, Data) VALUES (1, 1), (2, 1), (3, 1);")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), MIN(`My.!?Column`), MAX(`My.!?Column`) FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2]")
-  }
-
-  test("min-max - column mapping enabled") {
-    val tableName = "TestColumnMapping"
-
-    spark.sql(
-      s"""CREATE TABLE $tableName (`My Column` INT) USING DELTA
-         | TBLPROPERTIES('delta.columnMapping.mode' = 'name')""".stripMargin)
-
-    spark.sql(s"INSERT INTO $tableName (`My Column`) VALUES (1);")
-    spark.sql(s"INSERT INTO $tableName (`My Column`) VALUES (2);")
-    spark.sql(s"INSERT INTO $tableName (`My Column`) VALUES (3);")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*), MIN(`My Column`), MAX(`My Column`) FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2]")
-  }
-
-  test("min-max - partitioned table - column mapping enabled") {
-    val tableName = "TestColumnMappingPartitioned"
-
-    spark.sql(s"CREATE TABLE $tableName" +
-      s" (Column1 INT, Column2 INT, `Column3 .,;{}()\n\t=` INT, Column4 INT)" +
-      s" USING DELTA PARTITIONED BY (Column2, `Column3 .,;{}()\n\t=`)" +
-      s" TBLPROPERTIES('delta.columnMapping.mode' = 'name')")
-
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
-      s" VALUES (1, 2, 3, 4);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
-      s" VALUES (2, 2, 3, 5);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
-      s" VALUES (3, 3, 2, 6);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2, `Column3 .,;{}()\n\t=`, Column4)" +
-      s" VALUES (4, 3, 2, 7);")
-
-    checkResultsAndOptimizedPlan(
-      s"SELECT COUNT(*)" +
-        s", MIN(Column1), MAX(Column1)" +
-        s", MIN(Column2), MAX(Column2)" +
-        s", MIN(`Column3 .,;{}()\n\t=`), MAX(`Column3 .,;{}()\n\t=`)" +
-        s", MIN(Column4), MAX(Column4)" +
-        s" FROM $tableName",
-      "LocalRelation [none#0L, none#1, none#2, none#3, none#4, none#5, none#6, none#7, none#8]")
   }
 
   test("min-max - recompute column missing stats") {
@@ -711,24 +674,35 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     assert(firstRow.getString(1) === "NULL")
   }
 
-  // Tests to validate the optimizer won't use missing or partial stats
-  test("count-min-max - not supported - missing stats") {
-    checkOptimizationIsNotTriggered(
-      s"SELECT COUNT(*) FROM $mixedStatsTableName")
-
-    checkOptimizationIsNotTriggered(
-      s"SELECT COUNT(*) FROM $noStatsTableName")
-
-    checkOptimizationIsNotTriggered(
-      s"SELECT MIN(id), MAX(id) FROM $mixedStatsTableName")
-
-    checkOptimizationIsNotTriggered(
-      s"SELECT MIN(id), MAX(id) FROM $noStatsTableName")
-  }
-
   // Tests to validate the optimizer won't incorrectly change queries it can't correctly handle
 
-  test("min-max - not supported - data types") {
+  Seq((s"SELECT COUNT(*) FROM $mixedStatsTableName", "missing stats"),
+    (s"SELECT COUNT(*) FROM $noStatsTableName", "missing stats"),
+    (s"SELECT MIN(id), MAX(id) FROM $mixedStatsTableName", "missing stats"),
+    (s"SELECT MIN(id), MAX(id) FROM $noStatsTableName", "missing stats"),
+    (s"SELECT group, COUNT(*) FROM $testTableName GROUP BY group", "group by"),
+    (s"SELECT group, MIN(id), MAX(id) FROM $testTableName GROUP BY group", "group by"),
+    (s"SELECT COUNT(*) + 1 FROM $testTableName", "plus literal"),
+    (s"SELECT MAX(id) + 1 FROM $testTableName", "plus literal"),
+    (s"SELECT COUNT(DISTINCT data) FROM $testTableName", "distinct count"),
+    (s"SELECT COUNT(*) FROM $testTableName WHERE id > 0", "filter"),
+    (s"SELECT MAX(id) FROM $testTableName WHERE id > 0", "filter"),
+    (s"SELECT (SELECT COUNT(*) FROM $testTableName WHERE id > 0)", "sub-query with filter"),
+    (s"SELECT (SELECT MAX(id) FROM $testTableName WHERE id > 0)", "sub-query with filter"),
+    (s"SELECT COUNT(ALL data) FROM $testTableName", "count non-null"),
+    (s"SELECT COUNT(data) FROM $testTableName", "count non-null"),
+    (s"SELECT COUNT(*) FROM $testTableName A, $testTableName B", "join"),
+    (s"SELECT MAX(A.id) FROM $testTableName A, $testTableName B", "join"),
+    (s"SELECT COUNT(*) OVER() FROM $testTableName LIMIT 1", "over"),
+    ( s"SELECT MAX(id) OVER() FROM $testTableName LIMIT 1", "over")
+    )
+    .foreach { case (query, desc) =>
+      test(s"optimization not supported - $desc - $query") {
+        checkOptimizationIsNotTriggered(query)
+    }
+  }
+
+  test("optimization not supported - min-max unsupported data types") {
     val tableName = "TestUnsupportedTypes"
 
     spark.sql(s"CREATE TABLE $tableName " +
@@ -751,7 +725,33 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     )
   }
 
-  test("min-max - not supported - sub-query with column alias") {
+  test("optimization not supported - filter on partitioned column") {
+    val tableName = "TestPartitionedFilter"
+
+    spark.sql(s"CREATE TABLE $tableName (Column1 INT, Column2 INT)" +
+      " USING DELTA PARTITIONED BY (Column2)")
+
+    spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (1, 2);")
+    spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (2, 2);")
+    spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (3, 3);")
+    spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (4, 3);")
+
+    //Filter by partition column
+    checkOptimizationIsNotTriggered(
+      "SELECT COUNT(*)" +
+        ", MIN(Column1), MAX(Column1)" +
+        ", MIN(Column2), MAX(Column2)" +
+        s" FROM $tableName WHERE Column2 = 2")
+
+    //Filter both partition and data columns
+    checkOptimizationIsNotTriggered(
+      "SELECT COUNT(*)" +
+        ", MIN(Column1), MAX(Column1)" +
+        ", MIN(Column2), MAX(Column2)" +
+        s" FROM $tableName WHERE Column1 = 2 AND Column2 = 2")
+  }
+
+  test("optimization not supported - sub-query with column alias") {
     val tableName = "TestColumnAliasSubQuery"
 
     spark.sql(s"CREATE TABLE $tableName (Column1 INT, Column2 INT, Column3 INT) USING DELTA")
@@ -766,7 +766,7 @@ class OptimizeMetadataOnlyDeltaQuerySuite
         s"(SELECT Column1 AS Column2, Column2 AS Column3, Column3 AS Column1 FROM $tableName)")
   }
 
-  test("min-max - not supported - nested columns") {
+  test("optimization not supported - nested columns") {
     val tableName = "TestNestedColumns"
 
     spark.sql(s"CREATE TABLE $tableName " +
@@ -793,66 +793,6 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     // The optimization for columns with dots should still work
     checkResultsAndOptimizedPlan(s"SELECT MAX(`Column1.Id`) FROM $tableName",
       "LocalRelation [none#0]")
-  }
-
-  test("count-min-max - not supported - group by") {
-    checkOptimizationIsNotTriggered(
-      s"SELECT group, COUNT(*) FROM $testTableName GROUP BY group")
-
-    checkOptimizationIsNotTriggered(
-      s"SELECT group, MIN(id), MAX(id) FROM $testTableName GROUP BY group")
-  }
-
-  test("count-min-max - not supported - plus literal") {
-    checkOptimizationIsNotTriggered(
-      s"SELECT COUNT(*) + 1 FROM $testTableName")
-
-    checkOptimizationIsNotTriggered(
-      s"SELECT MAX(id) + 1 FROM $testTableName")
-  }
-
-  test("count - not supported - distinct count") {
-    checkOptimizationIsNotTriggered(
-      s"SELECT COUNT(DISTINCT data) FROM $testTableName")
-  }
-
-  test("count-min-max - not supported - filter") {
-    checkOptimizationIsNotTriggered(
-      s"SELECT COUNT(*) FROM $testTableName WHERE id > 0")
-
-    checkOptimizationIsNotTriggered(
-      s"SELECT MAX(id) FROM $testTableName WHERE id > 0")
-  }
-
-  test("count-min-max - not supported - sub-query with filter") {
-    checkOptimizationIsNotTriggered(
-      s"SELECT (SELECT COUNT(*) FROM $testTableName WHERE id > 0)")
-
-    checkOptimizationIsNotTriggered(
-      s"SELECT (SELECT MAX(id) FROM $testTableName WHERE id > 0)")
-  }
-
-  test("count - not supported - non-null") {
-    checkOptimizationIsNotTriggered(
-      s"SELECT COUNT(ALL data) FROM $testTableName")
-    checkOptimizationIsNotTriggered(
-      s"SELECT COUNT(data) FROM $testTableName")
-  }
-
-  test("count-min-max - not supported - join") {
-    checkOptimizationIsNotTriggered(
-      s"SELECT COUNT(*) FROM $testTableName A, $testTableName B")
-
-    checkOptimizationIsNotTriggered(
-      s"SELECT MAX(A.id) FROM $testTableName A, $testTableName B")
-  }
-
-  test("count-min-max - not supported - over") {
-    checkOptimizationIsNotTriggered(
-      s"SELECT COUNT(*) OVER() FROM $testTableName LIMIT 1")
-
-    checkOptimizationIsNotTriggered(
-      s"SELECT MAX(id) OVER() FROM $testTableName LIMIT 1")
   }
 
   private def generateRowsDataFrame(source: Dataset[java.lang.Long]): DataFrame = {
@@ -934,3 +874,15 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     }
   }
 }
+
+trait OptimizeMetadataOnlyDeltaQueryColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
+  override protected def runAllTests = true
+}
+
+class OptimizeMetadataOnlyDeltaQueryIdColumnMappingSuite extends OptimizeMetadataOnlyDeltaQuerySuite
+  with DeltaColumnMappingEnableIdMode
+  with OptimizeMetadataOnlyDeltaQueryColumnMappingSuiteBase
+
+class OptimizeMetadataOnlyDeltaQueryNameColumnMappingSuite extends OptimizeMetadataOnlyDeltaQuerySuite
+  with DeltaColumnMappingEnableNameMode
+  with OptimizeMetadataOnlyDeltaQueryColumnMappingSuiteBase
