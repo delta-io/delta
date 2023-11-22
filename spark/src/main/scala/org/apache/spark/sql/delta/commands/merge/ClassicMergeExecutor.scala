@@ -110,7 +110,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     val incrSourceRowCountExpr = incrementMetricAndReturnBool("numSourceRows", valueToReturn = true)
     // We can't use filter() directly on the expression because that will prevent
     // column pruning. We don't need the SOURCE_ROW_PRESENT_COL so we immediately drop it.
-    val sourceDF = getSourceDF()
+    val sourceDF = getMergeSource.df
       .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
       .filter(SOURCE_ROW_PRESENT_COL)
       .drop(SOURCE_ROW_PRESENT_COL)
@@ -257,13 +257,11 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     // the outer join, will allow us to identify whether the joined row was a
     // matched inner result or an unmatched result with null on one side.
     val joinedDF = {
-      val sourceDF = if (deduplicateCDFDeletes.enabled && deduplicateCDFDeletes.includesInserts) {
+      var sourceDF = getMergeSource.df
+      if (deduplicateCDFDeletes.enabled && deduplicateCDFDeletes.includesInserts) {
         // Add row index for the source rows to identify inserted rows during the cdf deleted rows
         // deduplication. See [[deduplicateCDFDeletes()]]
-        getSourceDF()
-          .withColumn(SOURCE_ROW_INDEX_COL, monotonically_increasing_id())
-      } else {
-        getSourceDF()
+        sourceDF = sourceDF.withColumn(SOURCE_ROW_INDEX_COL, monotonically_increasing_id())
       }
       val left = sourceDF
         .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))

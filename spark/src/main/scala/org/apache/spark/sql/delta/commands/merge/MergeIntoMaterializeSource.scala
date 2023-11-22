@@ -66,9 +66,9 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
 
   /**
    * Prepared Dataframe with source data.
-   * If needed, it is materialized, @see prepareSourceDFAndReturnMaterializeReason
+   * If needed, it is materialized, @see prepareMergeSource
    */
-  private var sourceDF: Option[DataFrame] = None
+  private var mergeSource: Option[MergeSource] = None
 
   /**
    * If the source was materialized, reference to the checkpointed RDD.
@@ -122,7 +122,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
           rdd.unpersist()
         }
         materializedSourceRDD = None
-        sourceDF = None
+        mergeSource = None
       }
     } while (doRetry)
 
@@ -153,7 +153,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     // If a checkpointed RDD block is lost, it throws
     // SparkCoreErrors.checkpointRDDBlockIdNotFoundError from LocalCheckpointRDD.compute.
     case s: SparkException
-      if !materializedSourceRDD.isEmpty &&
+      if materializedSourceRDD.nonEmpty &&
         s.getMessage.matches(
           mergeMaterializedSourceRddBlockLostErrorRegex(materializedSourceRDD.get.id)) =>
       log.warn("Materialized Merge source RDD block lost. Merge needs to be restarted. " +
@@ -235,19 +235,25 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
    * Otherwise, prepare regular dataframe.
    * @return the source materialization reason
    */
-  protected def prepareSourceDFAndReturnMaterializeReason(
+  protected def prepareMergeSource(
       spark: SparkSession,
       source: LogicalPlan,
       condition: Expression,
       matchedClauses: Seq[DeltaMergeIntoMatchedClause],
       notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
-      isInsertOnly: Boolean): MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason = {
+      isInsertOnly: Boolean): Unit = {
     val (materialize, materializeReason) =
       shouldMaterializeSource(spark, source, isInsertOnly)
     if (!materialize) {
       // Does not materialize, simply return the dataframe from source plan
-      sourceDF = Some(Dataset.ofRows(spark, source))
-      return materializeReason
+      mergeSource = Some(
+        MergeSource(
+          df = Dataset.ofRows(spark, source),
+          isMaterialized = false,
+          materializeReason = materializeReason
+        )
+      )
+      return
     }
 
     val referencedSourceColumns =
@@ -273,7 +279,13 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     // We should still keep the hints from the input plan.
     checkpointedPlan = addHintsToPlan(source, checkpointedPlan)
 
-    sourceDF = Some(Dataset.ofRows(spark, checkpointedPlan))
+    mergeSource = Some(
+      MergeSource(
+        df = Dataset.ofRows(spark, checkpointedPlan),
+        isMaterialized = true,
+        materializeReason = materializeReason
+      )
+    )
 
 
     // Sets appropriate StorageLevel
@@ -302,16 +314,14 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     }
 
     logDebug(s"Materializing MERGE with pruned columns $referencedSourceColumns.")
-    logDebug(s"Materialized MERGE source plan:\n${getSourceDF().queryExecution}")
-    materializeReason
+    logDebug(s"Materialized MERGE source plan:\n${getMergeSource.df.queryExecution}")
   }
 
-  protected def getSourceDF(): DataFrame = {
-    if (sourceDF.isEmpty) {
-      throw new IllegalStateException(
-        "sourceDF was not initialized! Call prepareSourceDFAndReturnMaterializeReason before.")
-    }
-    sourceDF.get
+  /** Returns the prepared merge source. */
+  protected def getMergeSource: MergeSource = mergeSource match {
+    case Some(source) => source
+    case None => throw new IllegalStateException(
+      "mergeSource was not initialized! Call prepareMergeSource before.")
   }
 
   private def addHintsToPlan(sourcePlan: LogicalPlan, plan: LogicalPlan): LogicalPlan = {
@@ -332,6 +342,11 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
 }
 
 object MergeIntoMaterializeSource {
+  case class MergeSource(
+      df: DataFrame,
+      isMaterialized: Boolean,
+      materializeReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason)
+
   // This depends on SparkCoreErrors.checkpointRDDBlockIdNotFoundError msg
   def mergeMaterializedSourceRddBlockLostErrorRegex(rddId: Int): String =
     s"(?s).*Checkpoint block rdd_${rddId}_[0-9]+ not found!.*"
