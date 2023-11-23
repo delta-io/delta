@@ -45,10 +45,20 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 object UniversalFormat extends DeltaLogging {
 
   val ICEBERG_FORMAT = "iceberg"
+  val HUDI_FORMAT = "hudi"
   val SUPPORTED_FORMATS = Set(ICEBERG_FORMAT)
 
   def icebergEnabled(metadata: Metadata): Boolean = {
     DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetaData(metadata).contains(ICEBERG_FORMAT)
+  }
+
+  def hudiEnabled(metadata: Metadata): Boolean = {
+    DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetaData(metadata).contains(HUDI_FORMAT)
+  }
+
+  def hudiEnabled(properties: Map[String, String]): Boolean = {
+    properties.get(DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.key)
+      .exists(value => value.contains(HUDI_FORMAT))
   }
 
   def icebergEnabled(properties: Map[String, String]): Boolean = {

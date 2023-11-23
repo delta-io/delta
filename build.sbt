@@ -308,6 +308,11 @@ val icebergSparkRuntimeArtifactName = {
  s"iceberg-spark-runtime-$expMaj.$expMin"
 }
 
+val hudiSparkRuntimeArtifactName = {
+  val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
+  s"hudi-spark3.2-bundle"
+}
+
 lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
   // delta-iceberg depends on delta-spark! So, we need to include it during our test.
   .dependsOn(spark % "test")
@@ -350,6 +355,8 @@ lazy val iceberg = (project in file("iceberg"))
       // due to legacy scala.
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
       "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.4.0" % "provided",
+      "org.apache.hudi" %% hudiSparkRuntimeArtifactName % "0.14.0" % "provided",
+      "org.apache.hudi" % "hudi-java-client" % "0.14.0" % "provided",
       "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3"
     ),
     Compile / unmanagedJars += (icebergShaded / assembly).value,
@@ -434,6 +441,7 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assembly / test := {},
     assembly / assemblyShadeRules := Seq(
       ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll,
+      ShadeRule.rename("org.apache.hudi.**" -> "shadedForDelta.@0").inAll,
     ),
     assemblyPackageScala / assembleArtifact := false,
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
