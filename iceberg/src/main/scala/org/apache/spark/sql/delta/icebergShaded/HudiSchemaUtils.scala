@@ -17,96 +17,16 @@
 package org.apache.spark.sql.delta.icebergShaded
 
 import org.apache.avro.Schema
-import org.apache.spark.sql.delta.DeltaColumnMapping
+import org.apache.hudi.AvroConversionUtils._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.types._
-import shadedForDelta.org.apache.iceberg.types.{Type => IcebergType, Types => IcebergTypes}
-
-import scala.collection.JavaConverters._
 
 object HudiSchemaUtils extends DeltaLogging {
 
   /////////////////
   // Public APIs //
   /////////////////
-
-  // scalastyle:off line.size.limit
-
-  /**
-   * Delta types are defined here: https://github.com/delta-io/delta/blob/master/PROTOCOL.md#schema-serialization-format
-   *
-   * Iceberg types are defined here: https://iceberg.apache.org/spec/#schemas-and-data-types
-   */
-  // scalastyle:on line.size.limit
   def convertDeltaSchemaToHudiSchema(deltaSchema: StructType): Schema = {
-    null
-  }
-
-  ////////////////////
-  // Helper Methods //
-  ////////////////////
-
-  /** Visible for testing */
-  private[delta] def convertStruct(deltaSchema: StructType): IcebergTypes.StructType = {
-    /**
-     * Recursively (i.e. for all nested elements) transforms the delta DataType `elem` into its
-     * corresponding Iceberg type.
-     *
-     * - StructType -> IcebergTypes.StructType
-     * - ArrayType -> IcebergTypes.ListType
-     * - MapType -> IcebergTypes.MapType
-     * - primitive -> IcebergType.PrimitiveType
-     */
-    def transform[E <: DataType](elem: E): IcebergType = elem match {
-      case StructType(fields) =>
-        IcebergTypes.StructType.of(fields.map { f =>
-          if (!DeltaColumnMapping.hasColumnId(f)) {
-            throw new UnsupportedOperationException("UniForm requires Column Mapping")
-          }
-
-          IcebergTypes.NestedField.of(
-            DeltaColumnMapping.getColumnId(f),
-            f.nullable,
-            f.name,
-            transform(f.dataType),
-            f.getComment().orNull
-          )
-        }.toList.asJava)
-
-      case ArrayType(elementType, containsNull) =>
-        throw new UnsupportedOperationException("UniForm doesn't support Array columns")
-
-      case MapType(keyType, valueType, valueContainsNull) =>
-        throw new UnsupportedOperationException("UniForm doesn't support Map columns")
-
-      case atomicType: AtomicType => convertAtomic(atomicType)
-
-      case other =>
-        throw new UnsupportedOperationException(s"Cannot convert Delta type $other to Iceberg")
-    }
-
-    transform(deltaSchema).asStructType()
-  }
-
-  /**
-   * Converts delta atomic into an iceberg primitive.
-   *
-   * Visible for testing.
-   *
-   * https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types
-   */
-  private[delta] def convertAtomic[E <: DataType](elem: E): IcebergType.PrimitiveType = elem match {
-    case StringType => IcebergTypes.StringType.get()
-    case LongType => IcebergTypes.LongType.get()
-    case IntegerType | ShortType | ByteType => IcebergTypes.IntegerType.get()
-    case FloatType => IcebergTypes.FloatType.get()
-    case DoubleType => IcebergTypes.DoubleType.get()
-    case d: DecimalType => IcebergTypes.DecimalType.of(d.precision, d.scale)
-    case BooleanType => IcebergTypes.BooleanType.get()
-    case BinaryType => IcebergTypes.BinaryType.get()
-    case DateType => IcebergTypes.DateType.get()
-    case TimestampType => IcebergTypes.TimestampType.withZone()
-    case TimestampNTZType => IcebergTypes.TimestampType.withoutZone()
-    case _ => throw new UnsupportedOperationException(s"Could not convert atomic type $elem")
+    convertStructTypeToAvroSchema(deltaSchema, "record")
   }
 }

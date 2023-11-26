@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.DomainMetadata
-import org.apache.spark.sql.delta.hooks.IcebergConverterHook
+import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -194,6 +194,10 @@ case class CreateDeltaTableCommand(
 
     if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata)) {
       deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, tableWithLocation)
+    }
+
+    if (UniversalFormat.hudiEnabled(postCommitSnapshot.metadata)) {
+      deltaLog.hudiConverter.convertSnapshot(postCommitSnapshot, tableWithLocation)
     }
   }
 
@@ -621,6 +625,7 @@ case class CreateDeltaTableCommand(
     // During CREATE/REPLACE, we synchronously run conversion (if Uniform is enabled) so
     // we always remove the post commit hook here.
     txn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
+    txn.unregisterPostCommitHooksWhere(hook => hook.name == HudiConverterHook.name)
 
     txn
   }

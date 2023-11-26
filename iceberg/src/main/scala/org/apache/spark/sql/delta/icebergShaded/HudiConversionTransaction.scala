@@ -22,7 +22,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.icebergShaded.HudiSchemaUtils._
-import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils._
+import org.apache.spark.sql.delta.icebergShaded.HudiTransactionUtils._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
@@ -36,9 +36,8 @@ import org.apache.hudi.client.common.HoodieJavaEngineContext
 import org.apache.hudi.common.HoodieCleanStat
 import org.apache.hudi.common.config.HoodieMetadataConfig
 import org.apache.hudi.common.engine.HoodieEngineContext
-import org.apache.hudi.common.model.{CleanFileInfo, HoodieAvroPayload, HoodieBaseFile, HoodieCleaningPolicy}
+import org.apache.hudi.common.model.{HoodieAvroPayload, HoodieBaseFile, HoodieCleaningPolicy}
 import org.apache.hudi.common.table.HoodieTableMetaClient
-import org.apache.hudi.common.table.TableSchemaResolver
 import org.apache.hudi.common.table.timeline.{HoodieInstant, HoodieInstantTimeGenerator, HoodieTimeline, TimelineMetadataUtils}
 import org.apache.hudi.common.table.timeline.HoodieInstantTimeGenerator.{MILLIS_INSTANT_TIMESTAMP_FORMAT_LENGTH, SECS_INSTANT_ID_LENGTH, SECS_INSTANT_TIMESTAMP_FORMAT}
 import org.apache.hudi.common.util.CleanerUtils
@@ -59,7 +58,6 @@ import java.time.{Instant, LocalDateTime, ZoneId}
 import java.time.format.{DateTimeFormatterBuilder, DateTimeParseException}
 import java.time.temporal.{ChronoField, ChronoUnit}
 import java.util
-import java.util.function.Function
 import java.util.stream.Collectors
 import java.util.{Collections, Properties}
 import collection.mutable._
@@ -85,18 +83,16 @@ class HudiConversionTransaction(
   // Member variables //
   //////////////////////
 
-  protected val tablePath = postCommitSnapshot.deltaLog.dataPath
-  protected var hudiSchema: Schema =
+  private val tablePath = postCommitSnapshot.deltaLog.dataPath
+  private val hudiSchema: Schema =
     convertDeltaSchemaToHudiSchema(postCommitSnapshot.metadata.schema)
-//  protected val partitionSpec =
-//    createPartitionSpec(hudiSchema, postCommitSnapshot.metadata.partitionColumns)
-  private val logicalToPhysicalPartitionNames = {
-    getPartitionPhysicalNameMapping(postCommitSnapshot.metadata.partitionSchema)
-  }
-  private var metaClient = new HoodieTableMetaClient()
-  val instantTime = ""
-  val writeStatuses: util.List[WriteStatus] = null
-  val partitionToReplacedFileIds: util.Map[String, util.List[String]] = null
+  private var metaClient = loadTableMetaClient(tablePath.toString,
+    postCommitSnapshot.metadata.name, postCommitSnapshot.metadata.partitionColumns, conf)
+  private val instantTime = convertInstantToCommit(
+    Instant.ofEpochMilli(postCommitSnapshot.timestamp))
+  private var writeStatuses: util.List[WriteStatus] = Collections.emptyList[WriteStatus]
+  private var partitionToReplacedFileIds: util.Map[String, util.List[String]] =
+    Collections.emptyMap[String, util.List[String]]
 
   /** Tracks if this transaction has already committed. You can only commit once. */
   private var committed = false
@@ -105,25 +101,33 @@ class HudiConversionTransaction(
   // Public APIs //
   /////////////////
 
-  def setWriteStatuses(actions: scala.collection.Seq[Action]): Unit = {
-    // TODO
+  def setCommitFileUpdates(actions: scala.collection.Seq[Action]): Unit = {
+    // for all removed files, group by partition path and then map to
+    // the file group ID (name in this case)
+    partitionToReplacedFileIds = actions
+      .map(_.wrap)
+      .filter(action => action.remove != null)
+      .map(_.remove)
+      .map(remove => {
+        val path = remove.toPath
+        val partitionPath = getPartitionPath(tablePath, path)
+        (partitionPath, path.getName)})
+      .groupBy(_._1).map(v => (v._1, v._2.map(_._2).asJava))
+      .asJava
+    // Convert the AddFiles to write statuses for the commit
+    writeStatuses = actions
+      .map(_.wrap)
+      .filter(action => action.add != null)
+      .map(_.add)
+      .map(add => {
+        convertAddFile(add, tablePath, instantTime)
+      })
+      .asJava
   }
 
   def commit(): Unit = {
     assert(!committed, "Cannot commit. Transaction already committed.")
-
-    val commitSchema = if (hudiSchema == null) {
-      try
-        // reuse existing table schema if no schema is provided as part of this commit
-        new TableSchemaResolver(metaClient).getTableAvroSchema
-      catch {
-        case ex: Exception =>
-          throw new IOException("Unable to read Hudi table schema", ex)
-      }
-    } else {
-      hudiSchema
-    }
-    val writeConfig = getWriteConfig(commitSchema, getNumInstantsToRetain, 10, 7*24)
+    val writeConfig = getWriteConfig(hudiSchema, getNumInstantsToRetain, 10, 7*24)
     val engineContext: HoodieEngineContext = new HoodieJavaEngineContext(metaClient.getHadoopConf)
     val writeClient = new HoodieJavaWriteClient[AnyRef](engineContext, writeConfig)
     try {
@@ -157,9 +161,9 @@ class HudiConversionTransaction(
     committed = true
   }
 
-  ///////////////////////
-  // Protected Methods //
-  ///////////////////////
+  ////////////////////
+  // Helper Methods //
+  ////////////////////
 
   private def getNumInstantsToRetain = {
     val commitCutoff = convertInstantToCommit(
@@ -327,10 +331,6 @@ class HudiConversionTransaction(
     val instantTime = instant.atZone(ZoneId.of("UTC")).toLocalDateTime
     HoodieInstantTimeGenerator.getInstantFromTemporalAccessor(instantTime)
   }
-
-  ////////////////////
-  // Helper Methods //
-  ////////////////////
 
   private def recordHudiCommit(errorOpt: Option[Throwable] = None): Unit = {
 

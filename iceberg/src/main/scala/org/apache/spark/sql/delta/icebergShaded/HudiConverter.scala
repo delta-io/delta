@@ -20,8 +20,8 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
-import org.apache.spark.sql.delta.hooks.IcebergConverterHook
+import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.hooks.HudiConverterHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta._
@@ -29,7 +29,6 @@ import org.apache.spark.sql.delta._
 import java.util.concurrent.atomic.AtomicReference
 import javax.annotation.concurrent.GuardedBy
 import scala.collection.JavaConverters._
-import scala.util.control.Breaks._
 import scala.util.control.NonFatal
 
 object HudiConverter {
@@ -89,7 +88,7 @@ class HudiConverter(spark: SparkSession)
     val previouslyQueued = standbyConversion.getAndSet((snapshotToConvert, txn))
     asyncThreadLock.synchronized {
       if (!asyncConverterThreadActive) {
-        val threadName = IcebergConverterHook.ASYNC_ICEBERG_CONVERTER_THREAD_NAME +
+        val threadName = HudiConverterHook.ASYNC_HUDI_CONVERTER_THREAD_NAME +
           s" [id=${snapshotToConvert.metadata.id}]"
         val asyncConverterThread: Thread = new Thread(threadName) {
           setDaemon(true)
@@ -334,6 +333,6 @@ class HudiConverter(spark: SparkSession)
       actionsToCommit: Seq[Action],
       dataPath: Path,
       prevSnapshotOpt: Option[Snapshot]): Unit = {
-    hudiTxn.setWriteStatuses(actionsToCommit)
+    hudiTxn.setCommitFileUpdates(actionsToCommit)
   }
 }
