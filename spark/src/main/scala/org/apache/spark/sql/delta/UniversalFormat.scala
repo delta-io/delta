@@ -46,7 +46,7 @@ object UniversalFormat extends DeltaLogging {
 
   val ICEBERG_FORMAT = "iceberg"
   val HUDI_FORMAT = "hudi"
-  val SUPPORTED_FORMATS = Set(ICEBERG_FORMAT)
+  val SUPPORTED_FORMATS = Set(HUDI_FORMAT, ICEBERG_FORMAT)
 
   def icebergEnabled(metadata: Metadata): Boolean = {
     DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetaData(metadata).contains(ICEBERG_FORMAT)

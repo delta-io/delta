@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.icebergShaded
 
 import org.apache.commons.lang3.exception.ExceptionUtils
-import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.delta.actions.Action
@@ -286,9 +285,7 @@ class HudiConverter(spark: SparkSession)
             actionsIter.grouped(actionBatchSize).foreach { actionStrs =>
               runHudiConversionForActions(
                 hudiTxn,
-                actionStrs.map(Action.fromJson),
-                log.dataPath,
-                prevConvertedSnapshotOpt)
+                actionStrs.map(Action.fromJson))
             }
           } finally {
             actionsIter.close()
@@ -302,7 +299,7 @@ class HudiConverter(spark: SparkSession)
 
         recordDeltaEvent(
           snapshotToConvert.deltaLog,
-          "delta.iceberg.conversion.batch",
+          "delta.hudi.conversion.batch",
           data = Map(
             "version" -> snapshotToConvert.version,
             "numDeltaFiles" -> snapshotToConvert.numOfFiles
@@ -311,7 +308,7 @@ class HudiConverter(spark: SparkSession)
 
         actionsToConvert.grouped(actionBatchSize)
           .foreach { actions =>
-            runHudiConversionForActions(hudiTxn, actions, log.dataPath, None)
+            runHudiConversionForActions(hudiTxn, actions)
           }
     }
     hudiTxn.commit()
@@ -320,19 +317,13 @@ class HudiConverter(spark: SparkSession)
 
   override def loadLastDeltaVersionConverted(
       snapshot: Snapshot, catalogTable: CatalogTable): Option[Long] =
-    recordFrameProfile("Delta", "IcebergConverter.loadLastDeltaVersionConverted") {
-        catalogTable.properties.get(IcebergConverter.DELTA_VERSION_PROPERTY).map(_.toLong)
+    recordFrameProfile("Delta", "HudiConverter.loadLastDeltaVersionConverted") {
+        catalogTable.properties.get(HudiConverter.DELTA_VERSION_PROPERTY).map(_.toLong)
     }
 
-  /**
-   * Build an iceberg TransactionHelper from the provided txn, and commit the set of changes
-   * specified by the actionsToCommit.
-   */
   private[delta] def runHudiConversionForActions(
       hudiTxn: HudiConversionTransaction,
-      actionsToCommit: Seq[Action],
-      dataPath: Path,
-      prevSnapshotOpt: Option[Snapshot]): Unit = {
+      actionsToCommit: Seq[Action]): Unit = {
     hudiTxn.setCommitFileUpdates(actionsToCommit)
   }
 }

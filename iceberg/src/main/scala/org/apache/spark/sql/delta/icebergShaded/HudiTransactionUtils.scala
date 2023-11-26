@@ -32,15 +32,15 @@ object HudiTransactionUtils extends DeltaLogging {
   // Public APIs //
   /////////////////
   def convertAddFile(addFile: AddFile,
-                                    tablePath: Path,
-                                    commitTime: String): WriteStatus = {
+                     tablePath: Path,
+                     commitTime: String): WriteStatus = {
 
     val writeStatus = new WriteStatus
-    val path = new Path(addFile.path)
+    val path = addFile.toPath
     val partitionPath = getPartitionPath(tablePath, path)
     val fileName = path.getName
     val fileId = fileName
-    val filePath = path.toUri.getPath.substring(tablePath.toUri.getPath.length + 1)
+    val filePath = if (partitionPath.isEmpty) fileName else partitionPath + "/" + fileName
     writeStatus.setFileId(fileId)
     writeStatus.setPartitionPath(partitionPath)
     val writeStat = new HoodieDeltaWriteStat
@@ -100,9 +100,9 @@ object HudiTransactionUtils extends DeltaLogging {
      * @return {@link HoodieTableMetaClient} for the table that was created
      */
     private def initializeHudiTable(tableDataPath: String,
-                                          tableName: String,
-                                          partitionFields: Seq[String],
-                                          conf: Configuration): HoodieTableMetaClient = {
+                                    tableName: String,
+                                    partitionFields: Seq[String],
+                                    conf: Configuration): HoodieTableMetaClient = {
       val keyGeneratorClass = getKeyGeneratorClass(partitionFields)
       HoodieTableMetaClient
         .withPropertyBuilder

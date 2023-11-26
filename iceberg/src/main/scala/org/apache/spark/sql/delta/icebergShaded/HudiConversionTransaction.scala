@@ -84,10 +84,11 @@ class HudiConversionTransaction(
   //////////////////////
 
   private val tablePath = postCommitSnapshot.deltaLog.dataPath
+  private val tableName = catalogTable.identifier.table
   private val hudiSchema: Schema =
     convertDeltaSchemaToHudiSchema(postCommitSnapshot.metadata.schema)
   private var metaClient = loadTableMetaClient(tablePath.toString,
-    postCommitSnapshot.metadata.name, postCommitSnapshot.metadata.partitionColumns, conf)
+    tableName, postCommitSnapshot.metadata.partitionColumns, conf)
   private val instantTime = convertInstantToCommit(
     Instant.ofEpochMilli(postCommitSnapshot.timestamp))
   private var writeStatuses: util.List[WriteStatus] = Collections.emptyList[WriteStatus]

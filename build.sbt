@@ -310,7 +310,8 @@ val icebergSparkRuntimeArtifactName = {
 
 val hudiSparkRuntimeArtifactName = {
   val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
-  s"hudi-spark3.2-bundle"
+  val expMinFinal = if (expMin.toInt >= 5) "4" else expMin
+  s"hudi-spark$expMaj.$expMinFinal-bundle"
 }
 
 lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
