@@ -50,8 +50,8 @@ See the [Java API docs](https://delta-io.github.io/connectors/latest/delta-flink
 
 ### Known limitations
 
-- For Azure Blob Storage, the current version only supports reading. Writing to Azure Blob Storage is not supported by Flink due to [issue](https://issues.apache.org/jira/browse/FLINK-17444) with class shading
-  and will probably be added along with [Azure Data Lake Store Gen 2 support](https://issues.apache.org/jira/browse/FLINK-18568). 
+- For Azure Blob Storage, the current version only supports reading. Writing to Azure Blob Storage is not supported by Flink due to [issue](https://issues.apache.org/jira/browse/FLINK-17444) with class shading.
+  However, since Flink 1.17 Azure Data Lake Gen2 is supported – see [FLINK-30128](https://issues.apache.org/jira/browse/FLINK-30128).
 - For AWS S3 storage, in order to ensure concurrent transactional writes from different clusters, use [multi-cluster configuration guidelines](https://docs.delta.io/latest/delta-storage.html#multi-cluster-setup). Please see [example](#3-sink-creation-with-multi-cluster-support-for-delta-standalone) for how to use this configuration in Flink Delta Sink. 
 
 ## Delta Sink
