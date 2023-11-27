@@ -345,7 +345,11 @@ object MergeIntoMaterializeSource {
   case class MergeSource(
       df: DataFrame,
       isMaterialized: Boolean,
-      materializeReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason)
+      materializeReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason) {
+    assert(!isMaterialized ||
+      MergeIntoMaterializeSourceReason.MATERIALIZED_REASONS.contains(materializeReason))
+  }
+
 
   // This depends on SparkCoreErrors.checkpointRDDBlockIdNotFoundError msg
   def mergeMaterializedSourceRddBlockLostErrorRegex(rddId: Int): String =
@@ -401,6 +405,14 @@ object MergeIntoMaterializeSourceReason extends Enumeration {
   val INVALID_CONFIG = Value("invalidConfigurationFailsafe")
   // Catch-all case.
   val UNKNOWN = Value("unknown")
+
+  // Set of reasons that result in source materialization.
+  final val MATERIALIZED_REASONS: Set[MergeIntoMaterializeSourceReason] = Set(
+    MATERIALIZE_ALL,
+    NON_DETERMINISTIC_SOURCE_NON_DELTA,
+    NON_DETERMINISTIC_SOURCE_OPERATORS,
+    INVALID_CONFIG
+  )
 }
 
 /**
