@@ -57,8 +57,8 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
   test("basic test - managed table created with SQL") {
     _sparkSession.sql(
       s"""CREATE TABLE `${testTableName}` (col1 INT) USING DELTA
+         |LOCATION '$testTablePath'
          |TBLPROPERTIES (
-         |  'delta.columnMapping.mode' = 'name',
          |  'delta.universalFormat.enabledFormats' = 'hudi'
          |)""".stripMargin)
     _sparkSession.sql(s"INSERT INTO `$testTableName` VALUES (123)")
@@ -76,7 +76,6 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
       .option("path", testTablePath)
       .saveAsTable(testTableName)
     verifyReadWithHudi(testTableName, 0 to 19 map (Row(_)))
-
   }
 
   def verifyReadWithHudi(tableName: String, expectedAnswer: Seq[Row]): Unit = {
