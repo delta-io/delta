@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.types;
 
 import java.util.*;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -149,7 +150,7 @@ public class DataTypeParser {
         String name = getStringField(json, "name");
         DataType type = parseDataType(getNonNullField(json, "type"));
         boolean nullable = getBooleanField(json, "nullable");
-        Map<String, String> metadata = parseFieldMetadata(json.get("metadata"));
+        FieldMetadata metadata = parseFieldMetadata(json.get("metadata"));
         return new StructField(
             name,
             type,
@@ -158,30 +159,92 @@ public class DataTypeParser {
         );
     }
 
-    // TODO for now we maintain the current behavior that parses field metadata as a
-    //  Map<String, String> for either string or numerical value types. A follow-up PR will refactor
-    //  this to support all the supported value types for field metadata and add a FieldMetadata
-    //  class in place of Map<String, String>
-    private static Map<String, String> parseFieldMetadata(JsonNode json) {
+    /**
+     * Parses an {@link FieldMetadata}.
+     */
+    private static FieldMetadata parseFieldMetadata(JsonNode json) {
         if (json == null || json.isNull()) {
-            return Collections.emptyMap();
+            return FieldMetadata.empty();
         }
 
         checkArgument(json.isObject(), "Expected JSON object for struct field metadata");
         final Iterator<Map.Entry<String,JsonNode>> iterator = json.fields();
-        final Map<String, String> metadata = new HashMap<>();
+        final FieldMetadata.Builder builder = FieldMetadata.builder();
         while (iterator.hasNext()) {
             Map.Entry<String, JsonNode> entry = iterator.next();
             JsonNode value = entry.getValue();
             String key = entry.getKey();
 
-            if (!(value.isTextual() || value.isIntegralNumber())) {
-                throw new UnsupportedOperationException(
-                    "Only numerical or string type field metadata values are supported");
+            if (value.isNull()) {
+                builder.putNull(key);
+            } else if (value.isInt()) {
+                builder.putLong(key, value.intValue());
+            } else if (value.isDouble()) {
+                builder.putDouble(key, value.doubleValue());
+            } else if (value.isBoolean()) {
+                builder.putBoolean(key, value.booleanValue());
+            } else if (value.isTextual()) {
+                builder.putString(key, value.textValue());
+            } else if (value.isObject()) {
+                builder.putFieldMetadata(key, parseFieldMetadata(value));
+            } else if (value.isArray()) {
+                final Iterator<JsonNode> fields = value.elements();
+                if (!fields.hasNext()) {
+                    // If it is an empty array, we cannot infer its element type.
+                    // We put an empty Array[Long].
+                    builder.putLongArray(key, new Long[0]);
+                } else {
+                    final JsonNode head = fields.next();
+                    if (head.isInt()) {
+                        builder.putLongArray(
+                            key,
+                            buildList(value, node -> (long) node.intValue()).toArray(new Long[0])
+                        );
+                    } else if (head.isDouble()) {
+                        builder.putDoubleArray(
+                            key,
+                            buildList(value, JsonNode::doubleValue).toArray(new Double[0])
+                        );
+                    } else if (head.isBoolean()) {
+                        builder.putBooleanArray(
+                            key,
+                            buildList(value, JsonNode::booleanValue).toArray(new Boolean[0])
+                        );
+                    } else if (head.isTextual()) {
+                        builder.putStringArray(
+                            key,
+                            buildList(value, JsonNode::textValue).toArray(new String[0])
+                        );
+                    } else if (head.isObject()) {
+                        builder.putFieldMetadataArray(
+                            key,
+                            buildList(value, DataTypeParser::parseFieldMetadata)
+                                .toArray(new FieldMetadata[0])
+                        );
+                    } else {
+                        throw new IllegalArgumentException(String.format(
+                            "Unsupported type for Array as field metadata value: %s", value));
+                    }
+                }
+            } else {
+                throw new IllegalArgumentException(
+                    String.format("Unsupported type for field metadata value: %s", value));
             }
-            metadata.put(key, value.asText());
         }
-        return metadata;
+        return builder.build();
+    }
+
+    /**
+     * For an array JSON node builds a {@link List} using the provided {@code accessor} for each
+     * element.
+     */
+    private static <T> List<T> buildList(JsonNode json, Function<JsonNode, T> accessor) {
+        List<T> result = new ArrayList<>();
+        Iterator<JsonNode> elements = json.elements();
+        while (elements.hasNext()) {
+            result.add(accessor.apply(elements.next()));
+        }
+        return result;
     }
 
     private static String FIXED_DECIMAL_REGEX = "decimal\\(\\s*(\\d+)\\s*,\\s*(\\-?\\d+)\\s*\\)";

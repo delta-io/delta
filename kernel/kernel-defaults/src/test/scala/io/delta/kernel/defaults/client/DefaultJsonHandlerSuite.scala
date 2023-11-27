@@ -31,12 +31,13 @@ class DefaultJsonHandlerSuite extends AnyFunSuite {
   // END-TO-END TESTS FOR deserializeStructType (more tests in DataTypeParserSuite)
   //////////////////////////////////////////////////////////////////////////////////
 
-  // TODO once we add full support for field metadata update this to include other types
-  private def sampleMetadata: java.util.Map[String, String] =
-    Map(
-      "key1" -> "value1",
-      "key2" -> "value2"
-    ).asJava
+  private def sampleMetadata: FieldMetadata = FieldMetadata.builder()
+    .putNull("null")
+    .putLong("long", 1000L)
+    .putDouble("double", 2.222)
+    .putBoolean("boolean", true)
+    .putString("string", "value")
+    .build()
 
   test("deserializeStructType: primitive type round trip") {
     val fields = BasePrimitiveType.getAllPrimitiveTypes().asScala.flatMap { dataType =>
