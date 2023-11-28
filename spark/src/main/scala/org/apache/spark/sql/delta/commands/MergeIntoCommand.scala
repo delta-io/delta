@@ -97,9 +97,8 @@ case class MergeIntoCommand(
             isOverwriteMode = false, rearrangeOnly = false)
         }
 
-        // If materialized, prepare the DF reading the materialize source
-        // Otherwise, prepare a regular DF from source plan.
-        val materializeSourceReason = prepareSourceDFAndReturnMaterializeReason(
+        // Materialize the source if needed.
+        prepareMergeSource(
           spark,
           source,
           condition,
@@ -135,7 +134,7 @@ case class MergeIntoCommand(
           deltaTxn,
           mergeActions,
           startTime,
-          materializeSourceReason)
+          getMergeSource.materializeReason)
       }
       spark.sharedState.cacheManager.recacheByPlan(spark, target)
     }
