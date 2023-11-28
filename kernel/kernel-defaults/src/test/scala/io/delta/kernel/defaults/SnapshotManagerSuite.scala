@@ -34,7 +34,7 @@ class SnapshotManagerSuite extends QueryTest
         set("delta.kernel.default.json.reader.batch-size", "2");
       }
     })
-    withTempDir { dir => f(dir, tableClient)}
+    withTempDir { dir => f(dir, tableClient) }
   }
 
   private def loadSnapshotAssertMetrics(
