@@ -182,69 +182,75 @@ public class LogReplay {
                 ColumnarBatch columnarBatch = null;
 
                 if (protocol == null) {
-                    if (snapshotHint.isPresent() && version == snapshotHint.get().getVersion()) {
-                        // Our snapshot hint already tells us the latest Protocol at that hint's
-                        // table version. If we haven't yet found a newer protocol, then we can
-                        // short circuit and use the hint's protocol.
-                        protocol = snapshotHint.get().getProtocol();
+                    columnarBatch = nextElem.getFileDataReadResult().getData();
+                    assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
 
-                        if (metadata != null) {
-                            // Stop since we have found the latest Protocol and Metadata.
-                            return new Tuple2<>(protocol, metadata);
-                        }
-                    } else {
-                        columnarBatch = nextElem.getFileDataReadResult().getData();
-                        assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
+                    final ColumnVector protocolVector = columnarBatch.getColumnVector(0);
 
-                        final ColumnVector protocolVector = columnarBatch.getColumnVector(0);
+                    for (int i = 0; i < protocolVector.getSize(); i++) {
+                        if (!protocolVector.isNullAt(i)) {
+                            protocol = Protocol.fromColumnVector(protocolVector, i);
 
-                        for (int i = 0; i < protocolVector.getSize(); i++) {
-                            if (!protocolVector.isNullAt(i)) {
-                                protocol = Protocol.fromColumnVector(protocolVector, i);
-
-                                if (metadata != null) {
-                                    // Stop since we have found the latest Protocol and Metadata.
-                                    return new Tuple2<>(protocol, metadata);
-                                }
-
-                                break; // We just found the protocol, exit this for-loop
+                            if (metadata != null) {
+                                // Stop since we have found the latest Protocol and Metadata.
+                                return new Tuple2<>(protocol, metadata);
                             }
+
+                            break; // We just found the protocol, exit this for-loop
                         }
                     }
                 }
+                if (protocol == null && snapshotHint.isPresent() &&
+                    version == snapshotHint.get().getVersion() + 1) {
+                    // Our snapshot hint already tells us the latest Protocol at that hint's table
+                    // version, say N. If we haven't yet found a newer protocol as of version N + 1,
+                    // then we can short circuit and use the hint's protocol.
+                    //
+                    // Note: we check eagerly at version N + 1 so that we don't read any files at
+                    // version N.
+                    protocol = snapshotHint.get().getProtocol();
+
+                    if (metadata != null) {
+                        // Stop since we have found the latest Protocol and Metadata.
+                        return new Tuple2<>(protocol, metadata);
+                    }
+                }
                 if (metadata == null) {
-                    if (snapshotHint.isPresent() && version <= snapshotHint.get().getVersion()) {
-                        // Our snapshot hint already tells us the latest Metadata at that hint's
-                        // table version. If we haven't yet found a newer protocol, then we can
-                        // short circuit and use the hint's metadata.
-                        metadata = snapshotHint.get().getMetadata();
+                    if (columnarBatch == null) {
+                        columnarBatch = nextElem.getFileDataReadResult().getData();
+                        assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
+                    }
+                    final ColumnVector metadataVector = columnarBatch.getColumnVector(1);
 
-                        if (protocol != null) {
-                            // Stop since we have found the latest Protocol and Metadata.
-                            validateSupportedTable(protocol, metadata);
-                            return new Tuple2<>(protocol, metadata);
-                        }
-                    } else {
-                        if (columnarBatch == null) {
-                            columnarBatch = nextElem.getFileDataReadResult().getData();
-                            assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
-                        }
-                        final ColumnVector metadataVector = columnarBatch.getColumnVector(1);
-
-                        for (int i = 0; i < metadataVector.getSize(); i++) {
-                            if (!metadataVector.isNullAt(i)) {
-                                metadata =
+                    for (int i = 0; i < metadataVector.getSize(); i++) {
+                        if (!metadataVector.isNullAt(i)) {
+                            metadata =
                                     Metadata.fromColumnVector(metadataVector, i, tableClient);
 
-                                if (protocol != null) {
-                                    // Stop since we have found the latest Protocol and Metadata.
-                                    validateSupportedTable(protocol, metadata);
-                                    return new Tuple2<>(protocol, metadata);
-                                }
-
-                                break; // We just found the metadata, exit this for-loop
+                            if (protocol != null) {
+                                // Stop since we have found the latest Protocol and Metadata.
+                                validateSupportedTable(protocol, metadata);
+                                return new Tuple2<>(protocol, metadata);
                             }
+
+                            break; // We just found the metadata, exit this for-loop
                         }
+                    }
+                }
+                if (metadata == null && snapshotHint.isPresent() &&
+                    version == snapshotHint.get().getVersion() + 1) {
+                    // Our snapshot hint already tells us the latest Metadata at that hint's table
+                    // version, say N. If we haven't yet found a newer metadata as of version N + 1,
+                    // then we can short circuit and use the hint's metadata.
+                    //
+                    // Note: we check eagerly at version N + 1 so that we don't read any files at
+                    // version N.
+                    metadata = snapshotHint.get().getMetadata();
+
+                    if (protocol != null) {
+                        // Stop since we have found the latest Protocol and Metadata.
+                        validateSupportedTable(protocol, metadata);
+                        return new Tuple2<>(protocol, metadata);
                     }
                 }
             }
