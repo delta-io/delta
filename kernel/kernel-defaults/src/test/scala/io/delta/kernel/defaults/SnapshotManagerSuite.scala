@@ -1,5 +1,7 @@
 package io.delta.kernel.defaults
 
+import java.io.File
+
 import io.delta.kernel.Table
 import io.delta.kernel.client.{ExpressionHandler, FileHandler, FileReadContext, FileSystemClient, TableClient}
 import io.delta.kernel.data.FileDataReadResult
@@ -20,32 +22,31 @@ class SnapshotManagerSuite extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest {
 
-  ////////////////////////////////
-  // Test Helper Methods/Values //
-  ////////////////////////////////
+  /////////////////////////
+  // Test Helper Methods //
+  /////////////////////////
 
-  private val tableClient = new MetricsTableClient(new Configuration() {
-    {
-      // Set the batch sizes to small so that we get to test the multiple batch scenarios.
-      set("delta.kernel.default.parquet.reader.batch-size", "2");
-      set("delta.kernel.default.json.reader.batch-size", "2");
-    }
-  })
-
-  override def beforeEach(): Unit = {
-    super.beforeEach()
-    tableClient.resetMetrics()
+  private def withTempDirAndTableClient(f: (File, MetricsTableClient) => Unit): Unit = {
+    val tableClient = new MetricsTableClient(new Configuration() {
+      {
+        // Set the batch sizes to small so that we get to test the multiple batch scenarios.
+        set("delta.kernel.default.parquet.reader.batch-size", "2");
+        set("delta.kernel.default.json.reader.batch-size", "2");
+      }
+    })
+    withTempDir { dir => f(dir, tableClient)}
   }
 
   private def loadSnapshotAssertMetrics(
+      tableClient: MetricsTableClient,
       table: Table,
       expJsonVersionsRead: Seq[Long],
       expParquetVersionsRead: Seq[Long]): Unit = {
     tableClient.resetMetrics()
     table.getLatestSnapshot(tableClient).getSchema(tableClient)
 
-    val actualJsonVersionsRead = tableClient.getJsonHandler.getVersionsRead(table.getPath)
-    val actualParquetVersionsRead = tableClient.getParquetHandler.getVersionsRead(table.getPath)
+    val actualJsonVersionsRead = tableClient.getJsonHandler.getVersionsRead
+    val actualParquetVersionsRead = tableClient.getParquetHandler.getVersionsRead
 
     assert(
       actualJsonVersionsRead === expJsonVersionsRead, s"Expected to read json versions " +
@@ -62,33 +63,33 @@ class SnapshotManagerSuite extends QueryTest
   ///////////
 
   test("snapshot hint: no hint, no checkpoint, reads all files") {
-    withTempDir { dir =>
+    withTempDirAndTableClient { (dir, tc) =>
       val path = dir.getAbsolutePath
 
       for (_ <- 0 to 9) {
         spark.range(10).write.format("delta").mode("append").save(path)
       }
 
-      val table = Table.forPath(tableClient, path)
-      loadSnapshotAssertMetrics(table, 9L to 0L by -1L, Nil)
+      val table = Table.forPath(tc, path)
+      loadSnapshotAssertMetrics(tc, table, 9L to 0L by -1L, Nil)
     }
   }
 
   test("snapshot hint: no hint, existing checkpoint, reads all files up to that checkpoint") {
-    withTempDir { dir =>
+    withTempDirAndTableClient { (dir, tc) =>
       val path = dir.getAbsolutePath
 
       for (_ <- 0 to 14) { // create 00.json to 14.json; 10.checkpoint is auto created
         spark.range(10).write.format("delta").mode("append").save(path)
       }
 
-      val table = Table.forPath(tableClient, path)
-      loadSnapshotAssertMetrics(table, 14L to 11L by -1L, Seq(10))
+      val table = Table.forPath(tc, path)
+      loadSnapshotAssertMetrics(tc, table, 14L to 11L by -1L, Seq(10))
     }
   }
 
   test("snapshot hint: hint with no new commits, should read no files") {
-    withTempDir { dir =>
+    withTempDirAndTableClient { (dir, tc) =>
       val path = dir.getAbsolutePath
 
       def appendCommit(): Unit =
@@ -98,18 +99,18 @@ class SnapshotManagerSuite extends QueryTest
         appendCommit()
       }
 
-      val table = Table.forPath(tableClient, path)
+      val table = Table.forPath(tc, path)
 
-      table.getLatestSnapshot(tableClient).getSchema(tableClient)
+      table.getLatestSnapshot(tc).getSchema(tc)
 
       // A hint is now saved at v14
 
-      loadSnapshotAssertMetrics(table, Nil, Nil)
+      loadSnapshotAssertMetrics(tc, table, Nil, Nil)
     }
   }
 
   test("snapshot hint: hint with no P or M updates") {
-    withTempDir { dir =>
+    withTempDirAndTableClient { (dir, tc) =>
       val path = dir.getAbsolutePath
 
       def appendCommit(): Unit =
@@ -117,33 +118,33 @@ class SnapshotManagerSuite extends QueryTest
 
       for (_ <- 0 to 14) { appendCommit() }
 
-      val table = Table.forPath(tableClient, path)
+      val table = Table.forPath(tc, path)
 
-      table.getLatestSnapshot(tableClient).getSchema(tableClient)
+      table.getLatestSnapshot(tc).getSchema(tc)
 
       // A hint is now saved at v14
 
       // Case: only one version change
       appendCommit() // v15
-      loadSnapshotAssertMetrics(table, Seq(15), Nil)
+      loadSnapshotAssertMetrics(tc, table, Seq(15), Nil)
 
       // A hint is now saved at v15
 
       // Case: several version changes
       for (_ <- 16 to 19) { appendCommit() }
-      loadSnapshotAssertMetrics(table, 19L to 16L by -1L, Nil)
+      loadSnapshotAssertMetrics(tc, table, 19L to 16L by -1L, Nil)
 
       // A hint is now saved at v19
 
       // Case: [delta-io/delta#2262] [Fix me!] Read the entire checkpoint at v20, even if v20.json
       // and v19 hint are available
       appendCommit() // v20
-      loadSnapshotAssertMetrics(table, Nil, Seq(20))
+      loadSnapshotAssertMetrics(tc, table, Nil, Seq(20))
     }
   }
 
   test("snapshot hint: hint with a P or M update") {
-    withTempDir { dir =>
+    withTempDirAndTableClient { (dir, tc) =>
       val path = dir.getAbsolutePath
 
       def appendCommit(): Unit =
@@ -151,9 +152,9 @@ class SnapshotManagerSuite extends QueryTest
 
       for (_ <- 0 to 3) { appendCommit() }
 
-      val table = Table.forPath(tableClient, path)
+      val table = Table.forPath(tc, path)
 
-      table.getLatestSnapshot(tableClient).getSchema(tableClient)
+      table.getLatestSnapshot(tc).getSchema(tc)
 
       // A hint is now saved at v3
 
@@ -166,7 +167,7 @@ class SnapshotManagerSuite extends QueryTest
         .mode("append")
         .save(path)
 
-      loadSnapshotAssertMetrics(table, Seq(4), Nil)
+      loadSnapshotAssertMetrics(tc, table, Seq(4), Nil)
 
       // a hint is now saved at v4
 
@@ -179,7 +180,7 @@ class SnapshotManagerSuite extends QueryTest
           |)
           |""".stripMargin)
 
-      loadSnapshotAssertMetrics(table, Seq(5), Nil)
+      loadSnapshotAssertMetrics(tc, table, Seq(5), Nil)
     }
   }
 
@@ -205,21 +206,11 @@ class MetricsTableClient(config: Configuration) extends TableClient {
 }
 
 trait FileReadMetrics { self: FileHandler =>
-  private var tablePathOpt = Option.empty[Path]
   private val versionsRead = scala.collection.mutable.ArrayBuffer[Long]()
 
   private def updateVersionsRead(fileStatus: FileStatus): Unit = {
     val path = new Path(fileStatus.getPath)
     if (FileNames.isCommitFile(path.getName) || FileNames.isCheckpointFile(path.getName)) {
-      val fileLogPath = path.getParent
-      val fileTablePath = fileLogPath.getParent
-
-      tablePathOpt match {
-        case None =>
-          tablePathOpt = Some(fileTablePath)
-        case Some(tablePath) =>
-          assert(fileTablePath == tablePath, "Collecting metrics on different tables")
-      }
       val version = FileNames.getFileVersion(path)
 
       if (!versionsRead.contains(version)) {
@@ -228,15 +219,9 @@ trait FileReadMetrics { self: FileHandler =>
     }
   }
 
-  def getVersionsRead(tablePath: String): Seq[Long] = {
-    tablePathOpt.foreach(p => assert(new Path(tablePath).equals(p)))
-    versionsRead
-  }
+  def getVersionsRead: Seq[Long] = versionsRead
 
-  def resetMetrics(): Unit = {
-    tablePathOpt = None
-    versionsRead.clear()
-  }
+  def resetMetrics(): Unit = versionsRead.clear()
 
   def readAndCollectMetrics(
       iter: CloseableIterator[FileDataReadResult]): CloseableIterator[FileDataReadResult] = {
