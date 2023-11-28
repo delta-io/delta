@@ -38,8 +38,6 @@ import org.apache.spark.sql.execution.streaming.Offset
  * Note this class retains the naming of `Reservoir` to maintain compatibility
  * with serialized offsets from the beta period.
  *
- * @param sourceVersion     The version of serialization that this offset is encoded with.
- *                          It should not be set manually!
  * @param reservoirId       The id of the table we are reading from. Used to detect
  *                          misconfiguration when restarting a query.
  * @param reservoirVersion  The version of the table that we are current processing.
@@ -55,7 +53,6 @@ import org.apache.spark.sql.execution.streaming.Offset
 @JsonDeserialize(using = classOf[DeltaSourceOffset.Deserializer])
 @JsonSerialize(using = classOf[DeltaSourceOffset.Serializer])
 case class DeltaSourceOffset private(
-    sourceVersion: Long,
     reservoirId: String,
     reservoirVersion: Long,
     index: Long,
@@ -63,6 +60,8 @@ case class DeltaSourceOffset private(
   ) extends Offset with Comparable[DeltaSourceOffset] {
 
   import DeltaSourceOffset._
+
+  assert(index != -1, "Index should never be -1, it should be set to the BASE_INDEX instead.")
 
   override def json: String = {
     JsonUtils.toJson(this)
@@ -134,7 +133,6 @@ object DeltaSourceOffset extends Logging {
   ): DeltaSourceOffset = {
     // TODO should we detect `reservoirId` changes when a query is running?
     new DeltaSourceOffset(
-      CURRENT_VERSION,
       reservoirId,
       reservoirVersion,
       index,
@@ -165,9 +163,9 @@ object DeltaSourceOffset extends Logging {
    * re-process data and cause data duplication.
    */
   def validateOffsets(previousOffset: DeltaSourceOffset, currentOffset: DeltaSourceOffset): Unit = {
-    if (!previousOffset.isInitialSnapshot && currentOffset.isInitialSnapshot) {
+    if (previousOffset.isInitialSnapshot == false && currentOffset.isInitialSnapshot == true) {
       throw new IllegalStateException(
-        s"Found invalid offsets: 'isInitialSnapshot' fliped incorrectly. " +
+        s"Found invalid offsets: 'isInitialSnapshot' flipped incorrectly. " +
           s"Previous: $previousOffset, Current: $currentOffset")
     }
     if (previousOffset.reservoirVersion > currentOffset.reservoirVersion) {
