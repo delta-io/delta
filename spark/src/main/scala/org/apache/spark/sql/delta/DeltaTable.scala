@@ -205,6 +205,8 @@ object DeltaTableUtils extends PredicateHelper
     // Names of the form partitionCol=[value] are partition directories, and should be
     // GCed even if they'd normally be hidden. The _db_index directory contains (bloom filter)
     // indexes and these must be GCed when the data they are tied to is GCed.
+    // metadata name is reserved for converted iceberg metadata with delta universal format
+    pathName.equals("metadata") ||
     (pathName.startsWith(".") || pathName.startsWith("_")) &&
       !pathName.startsWith("_delta_index") && !pathName.startsWith("_change_data") &&
       !partitionColumnNames.exists(c => pathName.startsWith(c ++ "="))
@@ -476,6 +478,9 @@ object DeltaTableUtils extends PredicateHelper
   def parseColToTransform(col: String): IdentityTransform = {
     IdentityTransform(FieldReference(Seq(col)))
   }
+
+  // Workaround for withActive not being visible in io/delta.
+  def withActiveSession[T](spark: SparkSession)(body: => T): T = spark.withActive(body)
 
   /**
    * Uses org.apache.hadoop.fs.Path(Path, String) to concatenate a base path

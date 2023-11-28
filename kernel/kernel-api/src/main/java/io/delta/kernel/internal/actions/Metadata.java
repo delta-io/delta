@@ -27,7 +27,6 @@ import io.delta.kernel.data.MapValue;
 import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.lang.Lazy;
-import io.delta.kernel.internal.types.TableSchemaSerDe;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 
@@ -41,7 +40,7 @@ public class Metadata {
 
         final String schemaJson = requireNonNull(vector.getChild(4), rowId, "schemaString")
             .getString(rowId);
-        StructType schema = TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), schemaJson);
+        StructType schema = tableClient.getJsonHandler().deserializeStructType(schemaJson);
 
         return new Metadata(
             requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),

@@ -32,7 +32,6 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
-import io.delta.kernel.internal.types.TableSchemaSerDe;
 import io.delta.kernel.internal.util.InternalSchemaUtils;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
@@ -102,15 +101,13 @@ public class ScanImpl
         return ScanStateRow.of(
             protocolAndMetadata.get()._2,
             protocolAndMetadata.get()._1,
-            TableSchemaSerDe.toJson(readSchema),
-            TableSchemaSerDe.toJson(
-                InternalSchemaUtils.convertToPhysicalSchema(
-                    readSchema,
-                    snapshotSchema,
-                    protocolAndMetadata.get()._2.getConfiguration()
-                            .getOrDefault("delta.columnMapping.mode", "none")
-                )
-            ),
+            readSchema.toJson(),
+            InternalSchemaUtils.convertToPhysicalSchema(
+                readSchema,
+                snapshotSchema,
+                protocolAndMetadata.get()._2.getConfiguration()
+                    .getOrDefault("delta.columnMapping.mode", "none")
+            ).toJson(),
             dataPath.toUri().toString());
     }
 

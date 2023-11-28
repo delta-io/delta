@@ -325,6 +325,7 @@ object TableFeature {
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
       CheckConstraintsTableFeature,
+      ClusteringTableFeature,
       DomainMetadataTableFeature,
       GeneratedColumnsTableFeature,
       InvariantsTableFeature,
@@ -520,6 +521,13 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }
 
+/**
+ * Clustering table feature is enabled when a table is created with CLUSTER BY clause.
+ */
+object ClusteringTableFeature extends WriterFeature("clustering") {
+  override val requiredFeatures: Set[TableFeature] = Set(DomainMetadataTableFeature)
+}
+
 
 /**
  * V2 Checkpoint table feature is for checkpoints with sidecars and the new format and
@@ -527,6 +535,7 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
  */
 object V2CheckpointTableFeature
   extends ReaderWriterFeature(name = "v2Checkpoint")
+  with RemovableFeature
   with FeatureAutomaticallyEnabledByMetadata {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
@@ -537,6 +546,31 @@ object V2CheckpointTableFeature
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
       spark: SparkSession): Boolean = isV2CheckpointSupportNeededByMetadata(metadata)
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    // Fail validation if v2 checkpoints are still enabled in the current snapshot
+    if (isV2CheckpointSupportNeededByMetadata(snapshot.metadata)) return false
+
+    // Validation also fails if the current snapshot might depend on a v2 checkpoint.
+    // NOTE: Empty and preloaded checkpoint providers never reference v2 checkpoints.
+    snapshot.checkpointProvider match {
+      case p if p.isEmpty => true
+      case _: PreloadedCheckpointProvider => true
+      case lazyProvider: LazyCompleteCheckpointProvider =>
+        lazyProvider.underlyingCheckpointProvider.isInstanceOf[PreloadedCheckpointProvider]
+      case _ => false
+    }
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = action match {
+    case m: Metadata => isV2CheckpointSupportNeededByMetadata(m)
+    case _: CheckpointMetadata => true
+    case _: SidecarFile => true
+    case _ => false
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    V2CheckpointPreDowngradeCommand(table)
 }
 
 /**

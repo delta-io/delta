@@ -19,6 +19,7 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableSetPropertiesDeltaCommand
@@ -530,15 +531,16 @@ class DeltaTable private[tables](
    *
    * @since 0.8.0
    */
-  def upgradeTableProtocol(readerVersion: Int, writerVersion: Int): Unit = {
-    val alterTableCmd = AlterTableSetPropertiesDeltaCommand(
-      table,
-      DeltaConfigs.validateConfigurations(
-        Map(
-          "delta.minReaderVersion" -> readerVersion.toString,
-          "delta.minWriterVersion" -> writerVersion.toString)))
-    toDataset(sparkSession, alterTableCmd)
-  }
+  def upgradeTableProtocol(readerVersion: Int, writerVersion: Int): Unit =
+    withActiveSession(sparkSession) {
+      val alterTableCmd = AlterTableSetPropertiesDeltaCommand(
+        table,
+        DeltaConfigs.validateConfigurations(
+          Map(
+            "delta.minReaderVersion" -> readerVersion.toString,
+            "delta.minWriterVersion" -> writerVersion.toString)))
+      toDataset(sparkSession, alterTableCmd)
+    }
 
   /**
    * Modify the protocol to add a supported feature, and if the table does not support table
@@ -550,7 +552,7 @@ class DeltaTable private[tables](
    *
    * @since 2.3.0
    */
-  def addFeatureSupport(featureName: String): Unit = {
+  def addFeatureSupport(featureName: String): Unit = withActiveSession(sparkSession) {
     // Do not check for the correctness of the provided feature name. The ALTER TABLE command will
     // do that in a transaction.
     val alterTableCmd = AlterTableSetPropertiesDeltaCommand(

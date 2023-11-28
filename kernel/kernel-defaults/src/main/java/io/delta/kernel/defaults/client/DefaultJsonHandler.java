@@ -48,6 +48,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
+import io.delta.kernel.defaults.internal.types.DataTypeParser;
 
 /**
  * Default implementation of {@link JsonHandler} based on Hadoop APIs.
@@ -74,6 +75,16 @@ public class DefaultJsonHandler
             rows.add(parseJson(jsonStringVector.getString(i), outputSchema));
         }
         return new DefaultRowBasedColumnarBatch(outputSchema, rows);
+    }
+
+    @Override
+    public StructType deserializeStructType(String structTypeJson) {
+        try {
+            return DataTypeParser.parseSchema(objectMapper.readTree(structTypeJson));
+        } catch (JsonProcessingException ex) {
+            throw new RuntimeException(
+                String.format("Could not parse JSON: %s", structTypeJson), ex);
+        }
     }
 
     @Override

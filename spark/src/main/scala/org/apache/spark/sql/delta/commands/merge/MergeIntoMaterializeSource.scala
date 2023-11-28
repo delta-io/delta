@@ -27,12 +27,17 @@ import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
 import org.apache.spark.SparkException
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.catalyst.FileSourceOptions
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{AttributeSet, Expression}
 import org.apache.spark.sql.catalyst.optimizer.EliminateResolvedHint
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.LogicalRDD
+import org.apache.spark.sql.execution.datasources.HadoopFsRelation
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.internal.SQLConf._
+import org.apache.spark.sql.sources.BaseRelation
 import org.apache.spark.storage.StorageLevel
 
 /**
@@ -201,6 +206,28 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     case _ => RetryHandling.RethrowException
   }
 
+  private def planContainsIgnoreUnreadableFilesReadOptions(plan: LogicalPlan): Boolean = {
+    def relationContainsOptions(relation: BaseRelation): Boolean = {
+      relation match {
+        case hdpRelation: HadoopFsRelation =>
+          hdpRelation.options.get(FileSourceOptions.IGNORE_CORRUPT_FILES).contains("true") ||
+            hdpRelation.options.get(FileSourceOptions.IGNORE_MISSING_FILES).contains("true")
+        case _ => false
+      }
+    }
+
+    val res = plan.collectFirst {
+      case lr: LogicalRelation if relationContainsOptions(lr.relation) => lr
+    }
+    res.nonEmpty
+  }
+
+  private def ignoreUnreadableFilesConfigsAreSet(plan: LogicalPlan, spark: SparkSession)
+    : Boolean = {
+    spark.conf.get(IGNORE_MISSING_FILES) || spark.conf.get(IGNORE_CORRUPT_FILES) ||
+      planContainsIgnoreUnreadableFilesReadOptions(plan)
+  }
+
   /**
    * @return pair of boolean whether source should be materialized
    *         and the source materialization reason
@@ -209,6 +236,8 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     spark: SparkSession, source: LogicalPlan, isInsertOnly: Boolean
   ): (Boolean, MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason) = {
     val materializeType = spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE)
+    val forceMaterializationWithUnreadableFiles =
+      spark.conf.get(DeltaSQLConf.MERGE_FORCE_SOURCE_MATERIALIZATION_WITH_UNREADABLE_FILES)
     import DeltaSQLConf.MergeMaterializeSource._
     materializeType match {
       case ALL =>
@@ -222,6 +251,13 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
           (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA)
         } else if (!planIsDeterministic(source)) {
           (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_OPERATORS)
+          // Force source materialization if Spark configs IGNORE_CORRUPT_FILES,
+          // IGNORE_MISSING_FILES or file source read options FileSourceOptions.IGNORE_CORRUPT_FILES
+          // FileSourceOptions.IGNORE_MISSING_FILES are enabled on the source.
+          // This is done so to prevent irrecoverable data loss or unexpected results.
+        } else if (forceMaterializationWithUnreadableFiles &&
+            ignoreUnreadableFilesConfigsAreSet(source, spark)) {
+          (true, MergeIntoMaterializeSourceReason.IGNORE_UNREADABLE_FILES_CONFIGS_ARE_SET)
         } else {
           (false, MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO)
         }
@@ -382,6 +418,10 @@ object MergeIntoMaterializeSourceReason extends Enumeration {
   // The source query is considered non-deterministic, because it contains non-deterministic
   // operators.
   val NON_DETERMINISTIC_SOURCE_OPERATORS = Value("materializeNonDeterministicSourceOperators")
+  // Either spark configs to ignore unreadable files are set or the source plan contains relations
+  // with ignore unreadable files options.
+  val IGNORE_UNREADABLE_FILES_CONFIGS_ARE_SET =
+    Value("materializeIgnoreUnreadableFilesConfigsAreSet")
   // Materialize when the configuration is invalid
   val INVALID_CONFIG = Value("invalidConfigurationFailsafe")
   // Catch-all case.

@@ -891,6 +891,16 @@
       "The validation of IcebergCompatV1 has failed."
     ],
     "subClass" : {
+      "DELETION_VECTORS_NOT_PURGED" : {
+        "message" : [
+          "IcebergCompatV1 requires Deletion Vectors to be completely purged from the table. Please run the REORG TABLE APPLY (PURGE) command."
+        ]
+      },
+      "DELETION_VECTORS_SHOULD_BE_DISABLED" : {
+        "message" : [
+          "IcebergCompatV1 requires Deletion Vectors to be disabled on the table. Please use the ALTER TABLE DROP FEATURE command to disable Deletion Vectors and to remove the existing Deletion Vectors from the table."
+        ]
+      },
       "DISABLING_REQUIRED_TABLE_FEATURE" : {
         "message" : [
           "IcebergCompatV1 requires feature <feature> to be supported and enabled. You cannot drop it from the table. Instead, please disable IcebergCompatV1 first."

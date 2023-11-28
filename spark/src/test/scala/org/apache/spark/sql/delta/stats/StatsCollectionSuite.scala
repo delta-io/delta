@@ -499,6 +499,39 @@ class StatsCollectionSuite
     }
   }
 
+  test(s"Delta statistic column: mix case column name") {
+    val tableName = "delta_table_1"
+    withTable(tableName) {
+      sql(
+        s"create table $tableName (col1 LONG, col2 struct<col20 INT, coL21 LONG>, col3 LONG) " +
+        s"using delta TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'coL1, COL2.Col20, cOl3');"
+      )
+      (1 to 10).foreach { _ =>
+        sql(
+          s"""insert into $tableName values
+             |(1, struct(1, 1), 1), (2, struct(2, 2), 2), (3, struct(3, 3), 3),
+             |(4, struct(4, 4), 4), (5, struct(5, 5), 5), (6, struct(6, 6), 6),
+             |(7, struct(7, 7), 7), (8, struct(8, 8), 8), (9, struct(9, 9), 9),
+             |(10, struct(10, 10), 10), (null, struct(null, null), null), (-1, struct(-1, -1), -1),
+             |(null, struct(null, null), null);""".stripMargin
+        )
+      }
+      sql(s"optimize $tableName")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val df = deltaLog.update().withStatsDeduplicated
+      val analyzedDfPlan = df.queryExecution.analyzed.toString
+      val stats = if (analyzedDfPlan.indexOf("stats_parsed") > 0) "stats_parsed" else "stats"
+      df.select(s"$stats.numRecords", s"$stats.nullCount", s"$stats.minValues", s"$stats.maxValues")
+        .collect()
+        .foreach { row =>
+          assert(row(0) == 130)
+          assert(row(1).asInstanceOf[GenericRow] == Row(20, Row(20), 20))
+          assert(row(2) == Row(-1, Row(-1), -1))
+          assert(row(3) == Row(10, Row(10), 10))
+        }
+    }
+  }
+
   Seq(
     "BIGINT", "DATE", "DECIMAL(3, 2)", "DOUBLE", "FLOAT", "INT", "SMALLINT", "STRING",
     "TIMESTAMP", "TIMESTAMP_NTZ", "TINYINT"

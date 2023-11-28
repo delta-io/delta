@@ -36,7 +36,6 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.util.Logging;
 import io.delta.kernel.internal.util.Tuple2;
 
 /**
@@ -56,7 +55,7 @@ import io.delta.kernel.internal.util.Tuple2;
  * - {@link #getAddFilesAsColumnarBatches}: return all active (not tombstoned) AddFiles as
  *                                          {@link ColumnarBatch}s
  */
-public class LogReplay implements Logging {
+public class LogReplay {
 
     /** Read schema when searching for the latest Protocol and Metadata. */
     public static final StructType PROTOCOL_METADATA_READ_SCHEMA = new StructType()
