@@ -13,13 +13,18 @@ import org.apache.hadoop.conf.Configuration
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
 class SnapshotManagerSuite extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest {
 
-  val tableClient = new MetricsTableClient(new Configuration() {
+  ////////////////////////////////
+  // Test Helper Methods/Values //
+  ////////////////////////////////
+
+  private val tableClient = new MetricsTableClient(new Configuration() {
     {
       // Set the batch sizes to small so that we get to test the multiple batch scenarios.
       set("delta.kernel.default.parquet.reader.batch-size", "2");
@@ -27,32 +32,35 @@ class SnapshotManagerSuite extends QueryTest
     }
   })
 
-  protected override def beforeEach(): Unit = {
+  override def beforeEach(): Unit = {
     super.beforeEach()
-
     tableClient.resetMetrics()
   }
 
   private def loadSnapshotAssertMetrics(
       table: Table,
-      numJsonRead: Int,
-      numParquetRead: Int): Unit = {
+      expNumJson: Int,
+      expNumParquet: Int): Unit = {
     tableClient.resetMetrics()
     table.getLatestSnapshot(tableClient).getSchema(tableClient)
 
-    val actualNumJsonRead = tableClient.getJsonHandler.getNumDeltaFilesRead
-    val actualNumParquetRead = tableClient.getParquetHandler.getNumCheckpointFilesRead
+    val actualNumJson = tableClient.getJsonHandler.getNumDeltaFilesRead
+    val actualNumParquet = tableClient.getParquetHandler.getNumCheckpointFilesRead
     assert(
-      actualNumJsonRead === numJsonRead,
-      s"Expected to read $numJsonRead json files, but read $actualNumJsonRead. Files read: " +
+      actualNumJson === expNumJson,
+      s"Expected to read $expNumJson json files, but read $actualNumJson. Files read: " +
         s"${tableClient.getJsonHandler.getDeltaFilesRead.mkString("\n")}"
     )
     assert(
-      actualNumParquetRead === numParquetRead,
-      s"Expected to read $numParquetRead parquet files, but read $actualNumParquetRead. Files " +
+      actualNumParquet === expNumParquet,
+      s"Expected to read $expNumParquet parquet files, but read $actualNumParquet. Files " +
           s"read: ${tableClient.getJsonHandler.getDeltaFilesRead.mkString("\n")}"
     )
   }
+
+  ///////////
+  // Tests //
+  ///////////
 
   test("snapshot hint: no hint, no checkpoint, reads all files") {
     withTempDir { dir =>
@@ -63,7 +71,7 @@ class SnapshotManagerSuite extends QueryTest
       }
 
       val table = Table.forPath(tableClient, path)
-      loadSnapshotAssertMetrics(table, numJsonRead = 10, numParquetRead = 0)
+      loadSnapshotAssertMetrics(table, expNumJson = 10 /* v9 -> v0 */, expNumParquet = 0)
     }
   }
 
@@ -76,7 +84,28 @@ class SnapshotManagerSuite extends QueryTest
       }
 
       val table = Table.forPath(tableClient, path)
-      loadSnapshotAssertMetrics(table, numJsonRead = 4, numParquetRead = 1)
+      loadSnapshotAssertMetrics(table, expNumJson = 4 /* v14 -> v11 */, expNumParquet = 1)
+    }
+  }
+
+  test("snapshot hint: hint with no new commits, should read no files") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+
+      def appendCommit(): Unit =
+        spark.range(10).write.format("delta").mode("append").save(path)
+
+      for (_ <- 0 to 14) {
+        appendCommit()
+      }
+
+      val table = Table.forPath(tableClient, path)
+
+      loadSnapshotAssertMetrics(table, expNumJson = 4 /* v14 -> v11 */ , expNumParquet = 1)
+
+      // A hint is now saved at v14
+
+      loadSnapshotAssertMetrics(table, expNumJson = 0, expNumParquet = 0)
     }
   }
 
@@ -97,20 +126,61 @@ class SnapshotManagerSuite extends QueryTest
 
       // Case: only one version change
       appendCommit() // v15
-      loadSnapshotAssertMetrics(table, numJsonRead = 1, numParquetRead = 0)
+      loadSnapshotAssertMetrics(table, expNumJson = 1 /* v15 */, expNumParquet = 0)
 
       // A hint is now saved at v15
 
       // Case: several version changes
       for (_ <- 16 to 19) { appendCommit() }
-      loadSnapshotAssertMetrics(table, numJsonRead = 4, numParquetRead = 0)
+      loadSnapshotAssertMetrics(table, expNumJson = 4 /* v19 -> v16 */, expNumParquet = 0)
 
       // A hint is now saved at v19
 
       // Case: [delta-io/delta#2262] [Fix me!] Read the entire checkpoint at v20, even if v20.json
       // and v19 hint are available
       appendCommit() // v20
-      loadSnapshotAssertMetrics(table, numJsonRead = 0, numParquetRead = 1)
+      loadSnapshotAssertMetrics(table, expNumJson = 0, expNumParquet = 1)
+    }
+  }
+
+  test("snapshot hint: hint with a P or M update") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+
+      def appendCommit(): Unit =
+        spark.range(10).write.format("delta").mode("append").save(path)
+
+      for (_ <- 0 to 3) { appendCommit() }
+
+      val table = Table.forPath(tableClient, path)
+
+      table.getLatestSnapshot(tableClient).getSchema(tableClient)
+
+      // A hint is now saved at v3
+
+      // v4 changes the metadata (schema)
+      spark.range(10)
+        .withColumn("col1", col("id"))
+        .write
+        .format("delta")
+        .option("mergeSchema", "true")
+        .mode("append")
+        .save(path)
+
+      loadSnapshotAssertMetrics(table, expNumJson = 1, expNumParquet = 0)
+
+      // a hint is now saved at v4
+
+      // v5 changes the protocol (which also updates the metadata)
+      spark.sql(s"""
+          |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
+          |  'delta.minReaderVersion' = '2',
+          |  'delta.minWriterVersion' = '5',
+          |  'delta.columnMapping.mode' = 'name'
+          |)
+          |""".stripMargin)
+
+      loadSnapshotAssertMetrics(table, expNumJson = 1, expNumParquet = 0)
     }
   }
 }
