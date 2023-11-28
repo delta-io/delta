@@ -700,6 +700,16 @@ object SchemaUtils extends DeltaLogging {
           throw DeltaErrors.addColumnParentNotStructException(column, other)
       }
     }
+    // If the proposed new column includes a default value, return a specific "not supported" error.
+    // The rationale is that such operations require the data source scan operator to implement
+    // support for filling in the specified default value when the corresponding field is not
+    // present in storage. That is not implemented yet for Delta, so we return this error instead.
+    // The error message is descriptive and provides an easy workaround for the user.
+    if (column.metadata.contains("CURRENT_DEFAULT")) {
+      throw new DeltaAnalysisException(
+        errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED",
+        messageParameters = Array.empty)
+    }
 
     require(position.nonEmpty, s"Don't know where to add the column $column")
     val slicePosition = position.head

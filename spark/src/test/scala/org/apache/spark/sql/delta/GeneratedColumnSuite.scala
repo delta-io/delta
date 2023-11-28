@@ -405,7 +405,8 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       sql(s"INSERT OVERWRITE $table (c6, c8, c1, c3_p) VALUES" +
         s"(100, '2020-11-12', 1L, 'foo')")
     }
-    assert(e.getMessage.contains("Column c5 is not specified in INSERT"))
+    assert(e.getMessage.contains("with name `c5` cannot be resolved") ||
+        e.getMessage.contains("Column c5 is not specified in INSERT"))
     Nil
   }
 

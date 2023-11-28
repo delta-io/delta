@@ -418,7 +418,11 @@ case class AlterTableAddColumnsDeltaCommand(
 
       val field = StructField(col.name.last, col.dataType, col.nullable, builder.build())
 
+      col.default.map { value =>
+        Some((col.name.init, field.withCurrentDefaultValue(value), col.position.map(toV2Position)))
+      }.getOrElse {
         Some((col.name.init, field, col.position.map(toV2Position)))
+      }
     }
   }
 }
@@ -522,6 +526,11 @@ case class AlterTableChangeColumnDeltaCommand(
               // It's crucial to keep the old column's metadata, which may contain column mapping
               // metadata.
               var result = newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
+              // Apply the current default value as well, if any.
+              result = newColumn.getCurrentDefaultValue() match {
+                case Some(newDefaultValue) => result.withCurrentDefaultValue(newDefaultValue)
+                case None => result.clearCurrentDefaultValue()
+              }
               result
                 .copy(
                   name = newColumn.name,
