@@ -55,6 +55,7 @@ public class SnapshotImpl implements Snapshot {
             dataPath,
             tableClient,
             logSegment);
+        // TODO: what if snapshotHint.get().getVersion() == version?
         this.protocol = logReplay.getProtocol();
         this.metadata = logReplay.getMetadata();
     }
