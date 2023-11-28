@@ -183,9 +183,13 @@ class SnapshotManagerSuite extends QueryTest
       loadSnapshotAssertMetrics(tc, table, Seq(5), Nil)
     }
   }
-
 }
 
+////////////////////
+// Helper Classes //
+////////////////////
+
+/** A table client that records the Delta commit (.json) and checkpoint (.parquet) files read */
 class MetricsTableClient(config: Configuration) extends TableClient {
   private val impl = DefaultTableClient.create(config)
   private val jsonHandler = new MetricsJsonHandler(config)
@@ -205,6 +209,10 @@ class MetricsTableClient(config: Configuration) extends TableClient {
   override def getParquetHandler: MetricsParquetHandler = parquetHandler
 }
 
+/**
+ * Helper trait which wraps an underlying json/parquet read and collects the versions (e.g. 10.json,
+ * 10.checkpoint.parquet) read
+ */
 trait FileReadMetrics { self: FileHandler =>
   private val versionsRead = scala.collection.mutable.ArrayBuffer[Long]()
 
@@ -240,6 +248,7 @@ trait FileReadMetrics { self: FileHandler =>
   }
 }
 
+/** A JsonHandler that collects metrics on the Delta commit (.json) files read */
 class MetricsJsonHandler(config: Configuration)
     extends DefaultJsonHandler(config)
     with FileReadMetrics {
@@ -251,6 +260,7 @@ class MetricsJsonHandler(config: Configuration)
   }
 }
 
+/** A ParquetHandler that collects metrics on the Delta checkpoint (.parquet) files read */
 class MetricsParquetHandler(config: Configuration)
     extends DefaultParquetHandler(config)
     with FileReadMetrics {
