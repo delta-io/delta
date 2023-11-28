@@ -55,6 +55,11 @@ public class TableImpl implements Table {
     }
 
     @Override
+    public String getPath() {
+        return dataPath.toString();
+    }
+
+    @Override
     public Snapshot getLatestSnapshot(TableClient tableClient) throws TableNotFoundException {
         return snapshotManager.buildLatestSnapshot(tableClient, logPath, dataPath);
     }

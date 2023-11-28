@@ -42,6 +42,11 @@ public interface Table {
     }
 
     /**
+     * @return the fully resolved path of this table
+     */
+    String getPath();
+
+    /**
      * Get the latest snapshot of the table.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
