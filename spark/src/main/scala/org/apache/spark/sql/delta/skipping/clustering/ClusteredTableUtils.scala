@@ -36,8 +36,11 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
    *
    * Note this function is going to be removed when clustering table is fully developed.
    */
-  def exposeClusteringTableForTesting: Boolean =
-    SQLConf.get.getConf(DeltaSQLConf.EXPOSE_CLUSTERING_TABLE_FOR_TESTING)
+  def clusteringTableFeatureEnabled: Boolean =
+    SQLConf.get.getConf(DeltaSQLConf.DELTA_ENABLE_CLUSTERING_TABLE_FEATURE)
+
+  /** The clustering implementation name for [[AddFile.clusteringProvider]] */
+  def clusteringProvider: String = "liquid"
 }
 
 object ClusteredTableUtils extends ClusteredTableUtilsBase

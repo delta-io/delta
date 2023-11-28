@@ -994,7 +994,8 @@ object Checkpoints
         col("add.tags"),
         col("add.deletionVector"),
         col("add.baseRowId"),
-        col("add.defaultRowCommitVersion")) ++
+        col("add.defaultRowCommitVersion"),
+        col("add.clusteringProvider")) ++
         additionalCols: _*
       ))
     )
