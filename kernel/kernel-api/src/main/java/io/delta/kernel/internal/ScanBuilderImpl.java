@@ -31,8 +31,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.lang.Lazy;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.internal.util.VectorUtils;
 
 /**
@@ -41,27 +39,29 @@ import io.delta.kernel.internal.util.VectorUtils;
 public class ScanBuilderImpl
     implements ScanBuilder {
 
+    private final Path dataPath;
+    private final Protocol protocol;
+    private final Metadata metadata;
     private final StructType snapshotSchema;
     private final CloseableIterator<FilteredColumnarBatch> filesIter;
-    private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
     private final TableClient tableClient;
-    private final Path dataPath;
 
     private StructType readSchema;
     private Optional<Predicate> predicate;
 
     public ScanBuilderImpl(
-        Path dataPath,
-        Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
-        StructType snapshotSchema,
-        CloseableIterator<FilteredColumnarBatch> filesIter,
-        TableClient tableClient) {
+            Path dataPath,
+            Protocol protocol,
+            Metadata metadata,
+            StructType snapshotSchema,
+            CloseableIterator<FilteredColumnarBatch> filesIter,
+            TableClient tableClient) {
         this.dataPath = dataPath;
+        this.protocol = protocol;
+        this.metadata = metadata;
         this.snapshotSchema = snapshotSchema;
         this.filesIter = filesIter;
-        this.protocolAndMetadata = protocolAndMetadata;
         this.tableClient = tableClient;
-
         this.readSchema = snapshotSchema;
         this.predicate = Optional.empty();
     }
@@ -88,7 +88,7 @@ public class ScanBuilderImpl
         // Timestamp partition columns have complicated semantics related to timezones so block this
         // for now
         List<String> partitionCols = VectorUtils.toJavaList(
-                protocolAndMetadata.get()._2.getPartitionColumns());
+            metadata.getPartitionColumns());
         for (String colName : partitionCols) {
             if (readSchema.indexOf(colName) >= 0 &&
                 readSchema.get(colName).getDataType() instanceof TimestampType) {
@@ -104,7 +104,8 @@ public class ScanBuilderImpl
         return new ScanImpl(
             snapshotSchema,
             readSchema,
-            protocolAndMetadata,
+            protocol,
+            metadata,
             filesIter,
             predicate,
             dataPath);
