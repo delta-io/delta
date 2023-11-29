@@ -273,7 +273,8 @@ class Snapshot(
             col("add.tags"),
             col("add.deletionVector"),
             col("add.baseRowId"),
-            col("add.defaultRowCommitVersion")
+            col("add.defaultRowCommitVersion"),
+            col("add.clusteringProvider")
           )))
         .withColumn("remove", when(
           col("remove.path").isNotNull,
