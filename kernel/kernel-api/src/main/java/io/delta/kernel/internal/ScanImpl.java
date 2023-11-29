@@ -71,9 +71,9 @@ public class ScanImpl implements Scan {
         this.protocol = protocol;
         this.metadata = metadata;
         this.filesIter = filesIter;
+        this.partitionColumnNames = loadPartitionColNames(); // must be called before `splitFilters`
         this.partitionAndDataFilters = splitFilters(filter);
         this.dataPath = dataPath;
-        this.partitionColumnNames = loadPartitionColNames();
     }
 
     /**
