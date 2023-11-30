@@ -683,6 +683,14 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a boolean."
   )
 
+  val ICEBERG_COMPAT_V2_ENABLED = buildConfig[Option[Boolean]](
+    "enableIcebergCompatV2",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean."
+  )
+
   /**
    * Enable optimized writes into a Delta table. Optimized writes adds an adaptive shuffle before
    * the write to write compacted files into a Delta table during a write.
