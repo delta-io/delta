@@ -34,7 +34,6 @@ import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Tuple2;
 
@@ -49,9 +48,9 @@ import io.delta.kernel.internal.util.Tuple2;
  *  - For each `(path, dv id)` tuple, this class should always output only one {@code FileAction}
  *    (either {@code AddFile} or {@code RemoveFile})
  *
- * This class exposes only two public APIs
- * - {@link #loadProtocolAndMetadata()}: replay the log in reverse and return the first non-null
- *                                       Protocol and Metadata
+ * This class exposes the following public APIs
+ * - {@link #getProtocol()}: latest non-null Protocol
+ * - {@link #getMetadata()}: latest non-null Metadata
  * - {@link #getAddFilesAsColumnarBatches}: return all active (not tombstoned) AddFiles as
  *                                          {@link ColumnarBatch}s
  */
@@ -95,7 +94,7 @@ public class LogReplay {
     private final LogSegment logSegment;
     private final TableClient tableClient;
 
-    private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
+    private final Tuple2<Protocol, Metadata> protocolAndMetadata;
 
     public LogReplay(
             Path logPath,
@@ -107,15 +106,19 @@ public class LogReplay {
         this.dataPath = dataPath;
         this.logSegment = logSegment;
         this.tableClient = tableClient;
-        this.protocolAndMetadata = new Lazy<>(this::loadTableProtocolAndMetadata);
+        this.protocolAndMetadata = loadTableProtocolAndMetadata();
     }
 
     /////////////////
     // Public APIs //
     /////////////////
 
-    public Tuple2<Protocol, Metadata> loadProtocolAndMetadata() {
-        return this.protocolAndMetadata.get();
+    public Protocol getProtocol() {
+        return this.protocolAndMetadata._1;
+    }
+
+    public Metadata getMetadata() {
+        return this.protocolAndMetadata._2;
     }
 
     /**

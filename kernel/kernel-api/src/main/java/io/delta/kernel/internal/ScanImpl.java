@@ -31,7 +31,6 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.util.InternalSchemaUtils;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
@@ -41,44 +40,40 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 /**
  * Implementation of {@link Scan}
  */
-public class ScanImpl
-    implements Scan {
+public class ScanImpl implements Scan {
     /**
      * Schema of the snapshot from the Delta log being scanned in this scan. It is a logical schema
      * with metadata properties to derive the physical schema.
      */
     private final StructType snapshotSchema;
 
-    private final Path dataPath;
-
-    /**
-     * Schema that we actually want to read.
-     */
+    /** Schema that we actually want to read. */
     private final StructType readSchema;
+    private final Protocol protocol;
+    private final Metadata metadata;
     private final CloseableIterator<FilteredColumnarBatch> filesIter;
-    private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
-    private final Lazy<Optional<Tuple2<Predicate, Predicate>>> partitionAndDataFilters;
+    private final Path dataPath;
+    private final Optional<Tuple2<Predicate, Predicate>> partitionAndDataFilters;
     // Partition column names in lower case.
-    private final Lazy<Set<String>> partitionColumnNames;
-
+    private final Set<String> partitionColumnNames;
     private boolean accessedScanFiles;
 
     public ScanImpl(
-        StructType snapshotSchema,
-        StructType readSchema,
-        Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
-        CloseableIterator<FilteredColumnarBatch> filesIter,
-        Optional<Predicate> filter,
-        Path dataPath) {
+            StructType snapshotSchema,
+            StructType readSchema,
+            Protocol protocol,
+            Metadata metadata,
+            CloseableIterator<FilteredColumnarBatch> filesIter,
+            Optional<Predicate> filter,
+            Path dataPath) {
         this.snapshotSchema = snapshotSchema;
         this.readSchema = readSchema;
-        this.protocolAndMetadata = protocolAndMetadata;
+        this.protocol = protocol;
+        this.metadata = metadata;
         this.filesIter = filesIter;
+        this.partitionColumnNames = loadPartitionColNames(); // must be called before `splitFilters`
+        this.partitionAndDataFilters = splitFilters(filter);
         this.dataPath = dataPath;
-        // Computing remaining filter requires access to metadata. We try to delay the metadata
-        // loading as lazily as possible, that means remaining filter computation is also lazy.
-        this.partitionAndDataFilters = new Lazy<>(() -> splitFilters(filter));
-        this.partitionColumnNames = new Lazy<>(() -> loadPartitionColNames());
     }
 
     /**
@@ -99,13 +94,13 @@ public class ScanImpl
     @Override
     public Row getScanState(TableClient tableClient) {
         return ScanStateRow.of(
-            protocolAndMetadata.get()._2,
-            protocolAndMetadata.get()._1,
+            metadata,
+            protocol,
             readSchema.toJson(),
             InternalSchemaUtils.convertToPhysicalSchema(
                 readSchema,
                 snapshotSchema,
-                protocolAndMetadata.get()._2.getConfiguration()
+                metadata.getConfiguration()
                     .getOrDefault("delta.columnMapping.mode", "none")
             ).toJson(),
             dataPath.toUri().toString());
@@ -118,15 +113,15 @@ public class ScanImpl
 
     private Optional<Tuple2<Predicate, Predicate>> splitFilters(Optional<Predicate> filter) {
         return filter.map(predicate ->
-            PartitionUtils.splitMetadataAndDataPredicates(predicate, partitionColumnNames.get()));
+            PartitionUtils.splitMetadataAndDataPredicates(predicate, partitionColumnNames));
     }
 
     private Optional<Predicate> getDataFilters() {
-        return removeAlwaysTrue(partitionAndDataFilters.get().map(filters -> filters._2));
+        return removeAlwaysTrue(partitionAndDataFilters.map(filters -> filters._2));
     }
 
     private Optional<Predicate> getPartitionsFilters() {
-        return removeAlwaysTrue(partitionAndDataFilters.get().map(filters -> filters._1));
+        return removeAlwaysTrue(partitionAndDataFilters.map(filters -> filters._1));
     }
 
     /**
@@ -146,8 +141,7 @@ public class ScanImpl
             return scanFileIter;
         }
 
-        Metadata metadata = protocolAndMetadata.get()._2;
-        Set<String> partitionColNames = partitionColumnNames.get();
+        Set<String> partitionColNames = partitionColumnNames;
         Map<String, DataType> partitionColNameToTypeMap = metadata.getSchema().fields().stream()
             .filter(field -> partitionColNames.contains(field.getName()))
             .collect(toMap(
@@ -177,7 +171,6 @@ public class ScanImpl
      * Helper method to load the partition column names from the metadata.
      */
     private Set<String> loadPartitionColNames() {
-        Metadata metadata = protocolAndMetadata.get()._2;
         ArrayValue partitionColValue = metadata.getPartitionColumns();
         ColumnVector partitionColNameVector = partitionColValue.getElements();
         Set<String> partitionColumnNames = new HashSet<>();
