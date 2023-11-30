@@ -57,6 +57,10 @@ public class SnapshotManager {
 
     private static final Logger logger = LoggerFactory.getLogger(SnapshotManager.class);
 
+    /////////////////
+    // Public APIs //
+    /////////////////
+
     /**
      * - Verify the versions are contiguous.
      * - Verify the versions start with `expectedStartVersion` if it's specified.
@@ -103,13 +107,17 @@ public class SnapshotManager {
         return getSnapshotAtInit(tableClient, logPath, dataPath);
     }
 
+    ////////////////////
+    // Helper Methods //
+    ////////////////////
+
     /**
      * Updates the current `latestSnapshotHint` with the `newHint` if and only if the newHint is
      * newer (i.e. has a later table version).
      *
      * Must be thread-safe.
      */
-    public void registerHint(SnapshotHint newHint) {
+    private void registerHint(SnapshotHint newHint) {
         latestSnapshotHint.updateAndGet(currHint -> {
             if (currHint == null) return newHint; // the initial reference value is null
             if (newHint.getVersion() > currHint.getVersion()) return newHint;
@@ -246,26 +254,34 @@ public class SnapshotManager {
     }
 
     private SnapshotImpl createSnapshot(
-        LogSegment initSegment,
-        Path logPath,
-        Path dataPath,
-        TableClient tableClient) {
+            LogSegment initSegment,
+            Path logPath,
+            Path dataPath,
+            TableClient tableClient) {
         final String startingFromStr = initSegment
             .checkpointVersionOpt
             .map(v -> String.format("starting from checkpoint version %s.", v))
             .orElse(".");
         logger.info("Loading version {} {}", initSegment.version, startingFromStr);
 
-        return new SnapshotImpl(
+        final SnapshotImpl snapshot = new SnapshotImpl(
             logPath,
             dataPath,
             initSegment.version,
             initSegment,
             tableClient,
             initSegment.lastCommitTimestamp,
-            this,
             Optional.ofNullable(latestSnapshotHint.get())
         );
+
+        final SnapshotHint hint = new SnapshotHint(
+            snapshot.getVersion(tableClient),
+            snapshot.getProtocol(),
+            snapshot.getMetadata());
+
+        registerHint(hint);
+
+        return snapshot;
     }
 
     /**

@@ -38,7 +38,6 @@ public class SnapshotImpl implements Snapshot {
     private final LogReplay logReplay;
     private final Protocol protocol;
     private final Metadata metadata;
-    private final Optional<SnapshotHint> snapshotHint;
 
     public SnapshotImpl(
             Path logPath,
@@ -53,9 +52,10 @@ public class SnapshotImpl implements Snapshot {
         this.logReplay = new LogReplay(
             logPath,
             dataPath,
+            version,
             tableClient,
-            logSegment);
-        // TODO: what if snapshotHint.get().getVersion() == version?
+            logSegment,
+            snapshotHint);
         this.protocol = logReplay.getProtocol();
         this.metadata = logReplay.getMetadata();
     }
