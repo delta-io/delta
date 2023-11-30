@@ -19,6 +19,7 @@ package io.delta.sql.parser
 import io.delta.tables.execution.VacuumTableCommand
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterByTransform
 
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
@@ -398,27 +399,31 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     s"$createOrReplaceClause TABLE tbl $tableSchema USING DELTA $clusterByClause $select"
   }
 
-  private def validateClusterByTableProperty(
+  private def validateClusterByTransform(
       clause: String,
       asSelect: Boolean,
       plan: LogicalPlan,
-      clusteringColumn: String): Unit = {
-    val tableProperties = if (clause == "CREATE") {
+      expectedColumns: Seq[Seq[String]]): Unit = {
+    val partitioning = if (clause == "CREATE") {
       if (asSelect) {
-        plan.asInstanceOf[CreateTableAsSelect].tableSpec.properties
+        plan.asInstanceOf[CreateTableAsSelect].partitioning
       } else {
-        plan.asInstanceOf[CreateTable].tableSpec.properties
+        plan.asInstanceOf[CreateTable].partitioning
       }
     } else {
       if (asSelect) {
-        plan.asInstanceOf[ReplaceTableAsSelect].tableSpec.properties
+        plan.asInstanceOf[ReplaceTableAsSelect].partitioning
       } else {
-        plan.asInstanceOf[ReplaceTable].tableSpec.properties
+        plan.asInstanceOf[ReplaceTable].partitioning
       }
     }
-    assert(
-      tableProperties.get(ClusteredTableUtils.PROP_CLUSTERING_COLUMNS) ===
-      Some(clusteringColumn))
+    assert(partitioning.size === 1)
+    val transform = partitioning.head
+    val actualColumns = transform match {
+      case ClusterByTransform(columnNames) => columnNames.map(_.fieldNames.toSeq)
+      case _ => assert(false, "Should not reach here")
+    }
+    assert(actualColumns === expectedColumns)
   }
 
   for (asSelect <- BOOLEAN_DOMAIN) {
@@ -427,7 +432,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
         val parser = new DeltaSqlParser(new SparkSqlParser())
         val sql = clusterByStatement(clause, asSelect, "a int, b string", "CLUSTER BY (a)")
         val parsedPlan = parser.parsePlan(sql)
-        validateClusterByTableProperty(clause, asSelect, parsedPlan, """[["a"]]""")
+        validateClusterByTransform(clause, asSelect, parsedPlan, Seq(Seq("a")))
       }
 
       test(s"CLUSTER BY nested column - $clause TABLE asSelect = $asSelect") {
@@ -435,7 +440,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
         val sql =
           clusterByStatement(clause, asSelect, "a struct<b int, c string>", "CLUSTER BY (a.b, a.c)")
         val parsedPlan = parser.parsePlan(sql)
-        validateClusterByTableProperty(clause, asSelect, parsedPlan, """[["a","b"],["a","c"]]""")
+        validateClusterByTransform(clause, asSelect, parsedPlan, Seq(Seq("a", "b"), Seq("a", "c")))
       }
 
       test(s"CLUSTER BY backquoted column - $clause TABLE asSelect = $asSelect") {
@@ -443,7 +448,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
         val sql =
           clusterByStatement(clause, asSelect, "`a.b.c` int", "CLUSTER BY (`a.b.c`)")
         val parsedPlan = parser.parsePlan(sql)
-        validateClusterByTableProperty(clause, asSelect, parsedPlan, """[["a.b.c"]]""")
+        validateClusterByTransform(clause, asSelect, parsedPlan, Seq(Seq("a.b.c")))
       }
 
       test(s"CLUSTER BY comma column - $clause TABLE asSelect = $asSelect") {
@@ -451,7 +456,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
         val sql =
           clusterByStatement(clause, asSelect, "`a,b` int", "CLUSTER BY (`a,b`)")
         val parsedPlan = parser.parsePlan(sql)
-        validateClusterByTableProperty(clause, asSelect, parsedPlan, """[["a,b"]]""")
+        validateClusterByTransform(clause, asSelect, parsedPlan, Seq(Seq("a,b")))
       }
 
       test(s"CLUSTER BY duplicated clauses - $clause TABLE asSelect = $asSelect") {
@@ -474,7 +479,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
             "CLUSTER BY (a) " +
             s"TBLPROPERTIES ('${ClusteredTableUtils.PROP_CLUSTERING_COLUMNS}' = 'b')")
         val parsedPlan = parser.parsePlan(sql)
-        validateClusterByTableProperty(clause, asSelect, parsedPlan, """[["a"]]""")
+        validateClusterByTransform(clause, asSelect, parsedPlan, Seq(Seq("a")))
       }
 
       test(s"CLUSTER BY with PARTITIONED BY - $clause TABLE asSelect = $asSelect") {
