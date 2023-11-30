@@ -356,7 +356,8 @@ trait CloneIcebergSuiteBase extends QueryTest
       // Replace the partition field "date" with a transformed field "month(date)"
       icebergTable.refresh()
       icebergTable.updateSpec().removeField("date")
-        .addField(org.apache.iceberg.expressions.Expressions.month("date")).commit()
+        .addField(org.apache.iceberg.expressions.Expressions.month("date"))
+        .commit()
 
       // Invalidate cache and load the updated partition spec
       spark.sql(s"REFRESH TABLE $table")
