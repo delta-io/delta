@@ -16,6 +16,7 @@ jobs:
         with:
           PATTERNS: |
             **
+            .github/workflows/**
             !kernel/**
             !connectors/**
       - name: install java
