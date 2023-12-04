@@ -586,8 +586,8 @@ object DeltaMergeInto {
       // new columns in the target schema.
       val actions = (resolvedMatchedClauses ++ resolvedNotMatchedClauses).flatMap(_.resolvedActions)
 
-      // Merge each assignment expression into the target schema
-      actions.foldLeft(target.schema) {
+      // Merge each assignment expression into a new schema
+      val actionsSchema = actions.foldLeft(new StructType()) {
         case (schema, DeltaMergeAction(targetColNameParts, expr, _)) =>
           // Generate the schema for this target assignment
           var assignmentSchema =
@@ -596,15 +596,23 @@ object DeltaMergeInto {
             case (part, schema) =>
               StructType(StructField(part, schema) :: Nil)
           }
-          // The implicit conversions flag allows any type to be merged from source to target if
-          // Spark SQL considers the source type implicitly castable to the target. Normally,
-          // mergeSchemas enforces Parquet-level write compatibility, which would mean an INT
-          // source can't be merged into a LONG target.
+          // Combine schemas for each action, allowing type coersion to a wider type if the types
+          // differ.
           SchemaMergingUtils.mergeSchemas(
             schema,
             assignmentSchema,
-            allowImplicitConversions = true)
+            allowTypeCoersion = true
+          )
       }
+      // The implicit conversions flag allows any type to be merged from source to target if
+      // Spark SQL considers the source type implicitly castable to the target. Normally,
+      // mergeSchemas enforces Parquet-level write compatibility, which would mean an INT
+      // source can't be merged into a LONG target.
+      SchemaMergingUtils.mergeSchemas(
+        target.schema,
+        actionsSchema,
+        allowImplicitConversions = true
+      )
     } else {
       target.schema
     }

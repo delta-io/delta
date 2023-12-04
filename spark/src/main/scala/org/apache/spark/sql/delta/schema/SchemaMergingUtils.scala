@@ -157,6 +157,10 @@ object SchemaMergingUtils {
    *                                 the same way in Parquet files. With this flag enabled, the
    *                                 merge will succeed, because once we get to write time Spark SQL
    *                                 will support implicitly converting the int to a string.
+   * @param allowTypeCoersion Whether to allow type coersion using Spark's AnsiTypeCoersion when
+   *                          merging fields. This can be used to resolve different types for a new
+   *                          field being added, such as in a merge, before combining the new type
+   *                          with the existing table schema using implicit casting.
    * @param keepExistingType Whether to keep existing types instead of trying to merge types.
    * @param fixedTypeColumns The set of columns whose type should not be changed in any case.
    * @param caseSensitive Whether we should keep field mapping case-sensitively.
@@ -166,6 +170,7 @@ object SchemaMergingUtils {
       tableSchema: StructType,
       dataSchema: StructType,
       allowImplicitConversions: Boolean = false,
+      allowTypeCoersion: Boolean = false,
       keepExistingType: Boolean = false,
       fixedTypeColumns: Set[String] = Set.empty,
       caseSensitive: Boolean = false): StructType = {
@@ -227,6 +232,10 @@ object SchemaMergingUtils {
 
         // Simply keeps the existing type for primitive types
         case (current, update) if keepExistingType => current
+
+        case (current, update) if allowTypeCoersion &&
+            TypeCoercion.findWiderTypeForTwo(current, update).isDefined =>
+          TypeCoercion.findWiderTypeForTwo(current, update).get
 
         // If implicit conversions are allowed, that means we can use any valid implicit cast to
         // perform the merge.

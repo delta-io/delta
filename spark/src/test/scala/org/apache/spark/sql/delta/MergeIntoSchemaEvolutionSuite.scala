@@ -955,11 +955,11 @@ trait MergeIntoSchemaEvolutionBaseTests {
   )
 
   // scalastyle:off line.size.limit
-  testEvolution("new column type reconciliation - int and string resolves to int")(
+  testEvolution("new column type reconciliation - int and string resolves to string")(
     targetData = Seq((1)).toDF("key"),
     sourceData = Seq((1, 2, "val")).toDF("key", "value1", "value2"),
     clauses = update(condition = "s.key < 2", set = "value = s.value1"):: update(set = "value = s.value2") :: Nil,
-    expected = Seq((1, 2)).toDF("key", "value"),
+    expected = Seq((1, "2")).toDF("key", "value"),
     expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
   )
 
@@ -971,11 +971,19 @@ trait MergeIntoSchemaEvolutionBaseTests {
     expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
   )
 
-  testEvolution("new column type reconciliation - int and long resolves to int")(
+  testEvolution("new column type reconciliation - double and string resolves to string")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, 2.0, "val")).toDF("key", "value1", "value2"),
+    clauses = update(condition = "s.key < 2", set = "value = s.value1"):: update(set = "value = s.value2") :: Nil,
+    expected = Seq((1, "2.0")).toDF("key", "value"),
+    expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
+  )
+
+  testEvolution("new column type reconciliation - int and long resolves to long")(
     targetData = Seq((1)).toDF("key"),
     sourceData = Seq((1, 2, 3L)).toDF("key", "value1", "value2"),
     clauses = update(condition = "s.key < 2", set = "value = s.value1") :: update(set = "value = s.value2") :: Nil,
-    expected = Seq((1, 2)).toDF("key", "value"),
+    expected = Seq((1, 2L)).toDF("key", "value"),
     expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
   )
 
@@ -1005,16 +1013,15 @@ trait MergeIntoSchemaEvolutionBaseTests {
     expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
   )
 
-  testEvolution("new column type reconciliation - timestamp_ntz and timestamp resolves to timestamp_ntz")(
-    // Include a timestamp_ntz column in original data to force timestamp_ntz table feature
-    targetData = Seq((1, "1999-01-01 00:00:00")).toDF("key", "unused").withColumn("unused", 'unused.cast("timestamp_ntz")),
+  testEvolution("new column type reconciliation - timestamp_ntz and timestamp resolves to timestamp")(
+    targetData = Seq((1)).toDF("key"),
     sourceData = Seq((1, "2000-01-01 00:00:00", "2000-01-02 00:00:00"))
       .toDF("key", "value1", "value2")
       .withColumns(Seq("value1", "value2"), Seq('value1.cast("timestamp"), 'value2.cast("timestamp_ntz"))),
     clauses = update(condition = "s.key < 2", set = "value = s.value2") :: update(set = "value = s.value1") :: Nil,
-    expected = Seq((1, "1999-01-01 00:00:00", "2000-01-02 00:00:00"))
-      .toDF("key", "unused", "value")
-      .withColumns(Seq("unused", "value"), Seq('unused.cast("timestamp_ntz"), 'value.cast("timestamp_ntz"))),
+    expected = Seq((1, "2000-01-02 00:00:00"))
+      .toDF("key", "value")
+      .withColumn("value", 'value.cast("timestamp")),
     expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
   )
   // scalastyle:on line.size.limit
