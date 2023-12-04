@@ -601,7 +601,7 @@ object DeltaMergeInto {
           SchemaMergingUtils.mergeSchemas(
             schema,
             assignmentSchema,
-            allowTypeCoersion = true
+            allowTypeCoercion = true
           )
       }
       // The implicit conversions flag allows any type to be merged from source to target if
