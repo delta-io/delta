@@ -365,6 +365,23 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
       }
     }
   }
+
+  test("SET * with schema evolution") {
+    withTable("tgt", "src") {
+      withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
+        sql("create table tgt(id int, delicious string, dummy_col string) using delta")
+        sql("create table src(id int, delicious string) using parquet")
+        // Make sure this MERGE command can resolve
+        sql(
+          """
+            |merge into tgt as target
+            |using (select * from src) as source on target.id=source.id
+            |when matched then update set *
+            |when not matched then insert *;
+            |""".stripMargin)
+      }
+    }
+  }
 }
 
 trait MergeIntoSQLColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
