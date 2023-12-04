@@ -624,7 +624,8 @@ class DeletionVectorsSuite extends QueryTest
       }
     }
   }
-  test("huge table: read from tables of 2B rows with existing DV of many zeros") {
+  // it takes forever when code coverage is on
+  ignore("huge table: read from tables of 2B rows with existing DV of many zeros") {
     val canonicalTable5Path = new File(table5Path).getCanonicalPath
     checkCountAndSum("value", table5Count, table5Sum, canonicalTable5Path)
   }
@@ -709,7 +710,8 @@ class DeletionVectorsSuite extends QueryTest
 
   // deleteUsingDvMediumScale and deleteUsingDvLargeScale runs too slow thus disabled.
   for (deleteSpec <- Seq(deleteUsingDvSmallScale)) {
-    test(
+    // it takes forever when code coverage is on
+    ignore(
       s"huge table: delete a ${deleteSpec.scale} number of rows from tables of 2B rows with DVs") {
       withTempDir { dir =>
         FileUtils.copyDirectory(new File(table5Path), dir)
