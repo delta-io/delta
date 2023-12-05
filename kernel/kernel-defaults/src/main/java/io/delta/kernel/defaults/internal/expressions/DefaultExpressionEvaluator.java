@@ -294,11 +294,11 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                     // NULL || NULL --> NULL ; NULL || FALSE --> NULL ; NULL || TRUE --> TRUE
                     nullability[rowId] = argResults.rightResult.isNullAt(rowId) ||
                         !argResults.rightResult.getBoolean(rowId);
-                    result[rowId] = argResults.rightResult.getBoolean(rowId);
+                    result[rowId] = true;
                 } else if (argResults.rightResult.isNullAt(rowId)) {
                     // TRUE || NULL --> TRUE ; FALSE || NULL --> NULL
                     nullability[rowId] = !argResults.leftResult.getBoolean(rowId);
-                    result[rowId] = argResults.leftResult.getBoolean(rowId);
+                    result[rowId] = true;
                 } else {
                     nullability[rowId] = false;
                     result[rowId] = argResults.leftResult.getBoolean(rowId) ||
