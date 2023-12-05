@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
-import java.util.Arrays;
 import java.util.Optional;
 
 import io.delta.kernel.data.ColumnVector;
@@ -50,7 +49,8 @@ public class DefaultPredicateEvaluator implements PredicateEvaluator {
         Predicate rewrittenPredicate = new And(
             new Predicate(
                 "=",
-                Arrays.asList(new Column(EXISTING_SEL_VECTOR_COL_NAME), Literal.ofBoolean(true))),
+                new Column(EXISTING_SEL_VECTOR_COL_NAME),
+                Literal.ofBoolean(true)),
             predicate);
         StructType rewrittenInputSchema = inputSchema.add(EXISTING_SEL_VECTOR_FIELD);
         this.expressionEvaluator = new DefaultExpressionEvaluator(

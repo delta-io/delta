@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
-import java.util.Arrays;
 import java.util.Optional;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -213,6 +212,23 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 ((MapType) transformedMapInput.outputType).getValueType());
         }
 
+        @Override
+        ExpressionTransformResult visitNot(Predicate predicate) {
+            Predicate child = validateIsPredicate(predicate, visit(predicate.getChildren().get(0)));
+            return new ExpressionTransformResult(
+                new Predicate(predicate.getName(), child),
+                BooleanType.BOOLEAN);
+        }
+
+        @Override
+        ExpressionTransformResult visitIsNotNull(Predicate predicate) {
+            Expression child = visit(predicate.getChildren().get(0)).expression;
+            return new ExpressionTransformResult(
+                new Predicate(predicate.getName(), child),
+                BooleanType.BOOLEAN
+            );
+        }
+
         private Predicate validateIsPredicate(
             Expression baseExpression,
             ExpressionTransformResult result) {
@@ -243,7 +259,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                     throw new UnsupportedOperationException(msg);
                 }
             }
-            return new Predicate(predicate.getName(), Arrays.asList(left, right));
+            return new Predicate(predicate.getName(), left, right);
         }
     }
 
@@ -397,6 +413,29 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             ColumnVector map = visit(childAt(elementAt, 0));
             ColumnVector lookupKey = visit(childAt(elementAt, 1));
             return ElementAtEvaluator.eval(map, lookupKey);
+        }
+
+        @Override
+        ColumnVector visitNot(Predicate predicate) {
+            ColumnVector childResult = visit(childAt(predicate, 0));
+            int numRows = childResult.getSize();
+            boolean[] result = new boolean[numRows];
+            boolean[] nullability = evalNullability(childResult);
+            for (int rowId = 0; rowId < numRows; rowId++) {
+                result[rowId] = !childResult.getBoolean(rowId);
+            }
+            return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
+        }
+
+        @Override
+        ColumnVector visitIsNotNull(Predicate predicate) {
+            ColumnVector childResult = visit(childAt(predicate, 0));
+            int numRows = childResult.getSize();
+            boolean[] result = new boolean[numRows];
+            for (int rowId = 0; rowId < numRows; rowId++) {
+                result[rowId] = !childResult.isNullAt(rowId);
+            }
+            return new DefaultBooleanVector(numRows, Optional.empty(), result);
         }
 
         /**
