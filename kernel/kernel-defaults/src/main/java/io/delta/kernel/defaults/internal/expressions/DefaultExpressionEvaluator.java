@@ -263,10 +263,22 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             PredicateChildrenEvalResult argResults = evalBinaryExpressionChildren(and);
             int numRows = argResults.rowCount;
             boolean[] result = new boolean[numRows];
-            boolean[] nullability = evalNullability(argResults.leftResult, argResults.rightResult);
+            boolean[] nullability = new boolean[numRows];
             for (int rowId = 0; rowId < numRows; rowId++) {
-                result[rowId] = argResults.leftResult.getBoolean(rowId) &&
-                    argResults.rightResult.getBoolean(rowId);
+                if (argResults.leftResult.isNullAt(rowId)) {
+                    // NULL && NULL --> NULL ; NULL && TRUE --> NULL ; NULL && FALSE --> FALSE
+                    nullability[rowId] = argResults.rightResult.isNullAt(rowId) ||
+                        argResults.rightResult.getBoolean(rowId);
+                    result[rowId] = false;
+                } else if (argResults.rightResult.isNullAt(rowId)) {
+                    // TRUE && NULL --> NULL ; FALSE && NULL --> FALSE
+                    nullability[rowId] = argResults.leftResult.getBoolean(rowId);
+                    result[rowId] = false;
+                } else {
+                    nullability[rowId] = false;
+                    result[rowId] = argResults.leftResult.getBoolean(rowId) &&
+                        argResults.rightResult.getBoolean(rowId);
+                }
             }
             return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
         }
@@ -276,10 +288,22 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             PredicateChildrenEvalResult argResults = evalBinaryExpressionChildren(or);
             int numRows = argResults.rowCount;
             boolean[] result = new boolean[numRows];
-            boolean[] nullability = evalNullability(argResults.leftResult, argResults.rightResult);
+            boolean[] nullability = new boolean[numRows];
             for (int rowId = 0; rowId < numRows; rowId++) {
-                result[rowId] = argResults.leftResult.getBoolean(rowId) ||
-                    argResults.rightResult.getBoolean(rowId);
+                if (argResults.leftResult.isNullAt(rowId)) {
+                    // NULL || NULL --> NULL ; NULL || FALSE --> NULL ; NULL || TRUE --> TRUE
+                    nullability[rowId] = argResults.rightResult.isNullAt(rowId) ||
+                        !argResults.rightResult.getBoolean(rowId);
+                    result[rowId] = argResults.rightResult.getBoolean(rowId);
+                } else if (argResults.rightResult.isNullAt(rowId)) {
+                    // TRUE || NULL --> TRUE ; FALSE || NULL --> NULL
+                    nullability[rowId] = !argResults.leftResult.getBoolean(rowId);
+                    result[rowId] = argResults.leftResult.getBoolean(rowId);
+                } else {
+                    nullability[rowId] = false;
+                    result[rowId] = argResults.leftResult.getBoolean(rowId) ||
+                        argResults.rightResult.getBoolean(rowId);
+                }
             }
             return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
         }

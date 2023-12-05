@@ -191,9 +191,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val rightColumn = booleanVector(
       Seq[BooleanJ](true, false, false, true, true, null, false, null, null))
     val expAndOutputVector = booleanVector(
-      Seq[BooleanJ](true, false, false, false, null, null, null, null, null))
+      Seq[BooleanJ](true, false, false, false, null, null, false, false, null))
     val expOrOutputVector = booleanVector(
-      Seq[BooleanJ](true, true, false, true, null, null, null, null, null))
+      Seq[BooleanJ](true, true, false, true, true, true, null, null, null))
 
     val schema = new StructType()
       .add("left", BooleanType.BOOLEAN)
