@@ -591,7 +591,7 @@ object DeltaMergeInto {
         case (schema, DeltaMergeAction(targetColNameParts, expr, _)) =>
           // Generate the schema for this target assignment
           var assignmentSchema =
-            StructType(StructField(targetColNameParts.last, expr.dataType.asNullable) :: Nil)
+            StructType(StructField(targetColNameParts.last, expr.dataType) :: Nil)
           assignmentSchema = targetColNameParts.init.foldRight(assignmentSchema) {
             case (part, schema) =>
               StructType(StructField(part, schema) :: Nil)

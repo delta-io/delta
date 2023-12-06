@@ -142,7 +142,7 @@ object SchemaMergingUtils {
    * applied:
    *  - The name of the current field is used.
    *  - The data types are merged by calling this function.
-   *  - We respect the current field's nullability.
+   *  - We respect the current field's nullability (unless type coercion is enabled).
    *  - The metadata is current field's metadata.
    *
    * Schema merging occurs in a case insensitive manner. Hence, column names that only differ
@@ -199,7 +199,7 @@ object SchemaMergingUtils {
                   StructField(
                     currentField.name,
                     merge(currentField.dataType, updateField.dataType),
-                    currentField.nullable,
+                    currentField.nullable || allowTypeCoercion && updateField.nullable,
                     currentField.metadata)
                 } catch {
                   case NonFatal(e) =>
@@ -219,16 +219,16 @@ object SchemaMergingUtils {
           // Create the merged struct, the new fields are appended at the end of the struct.
           StructType(updatedCurrentFields ++ newFields)
         case (ArrayType(currentElementType, currentContainsNull),
-              ArrayType(updateElementType, _)) =>
+              ArrayType(updateElementType, updateContainsNull)) =>
           ArrayType(
             merge(currentElementType, updateElementType),
-            currentContainsNull)
+            currentContainsNull || allowTypeCoercion && updateContainsNull)
         case (MapType(currentKeyType, currentElementType, currentContainsNull),
-              MapType(updateKeyType, updateElementType, _)) =>
+              MapType(updateKeyType, updateElementType, updateContainsNull)) =>
           MapType(
             merge(currentKeyType, updateKeyType),
             merge(currentElementType, updateElementType),
-            currentContainsNull)
+            currentContainsNull || allowTypeCoercion && updateContainsNull)
 
         // Simply keeps the existing type for primitive types
         case (current, update) if keepExistingType => current
