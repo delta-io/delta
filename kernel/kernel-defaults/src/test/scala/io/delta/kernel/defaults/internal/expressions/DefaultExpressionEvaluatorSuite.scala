@@ -235,12 +235,12 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val schema = new StructType().add("child", BooleanType.BOOLEAN)
     val batch = new DefaultColumnarBatch(childColumn.getSize, schema, Array(childColumn))
 
-    val isNotNullExpression = new Predicate("IS_NOT_NULL", new Column("child"));
+    val isNotNullExpression = new Predicate("IS_NOT_NULL", new Column("child"))
     val expOutputVector = booleanVector(Seq[BooleanJ](true, true, false))
     val actOutputVector = evaluator(schema, isNotNullExpression, BooleanType.BOOLEAN).eval(batch)
     checkBooleanVectors(actOutputVector, expOutputVector)
   }
-  
+
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
     // Literals for each data type from the data type value range, used as inputs to comparator
     // (small, big, small, null)
