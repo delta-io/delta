@@ -19,12 +19,13 @@ package io.delta.kernel.internal.replay;
 
 import io.delta.kernel.data.FileDataReadResult;
 
-class ActionIterElem {
+/** Internal wrapper class holding information needed to perform log replay. */
+class ActionWrapper {
     private final FileDataReadResult fileDataReadResult;
     private final boolean isFromCheckpoint;
     private final long version;
 
-    ActionIterElem(FileDataReadResult data, boolean isFromCheckpoint, long version) {
+    ActionWrapper(FileDataReadResult data, boolean isFromCheckpoint, long version) {
         this.fileDataReadResult = data;
         this.isFromCheckpoint = isFromCheckpoint;
         this.version = version;

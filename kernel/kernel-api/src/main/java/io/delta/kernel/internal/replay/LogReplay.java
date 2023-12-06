@@ -152,7 +152,7 @@ public class LogReplay {
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
             boolean shouldReadStats) {
-        final CloseableIterator<ActionIterElem> addRemoveIter =
+        final CloseableIterator<ActionWrapper> addRemoveIter =
             new ActionsIterator(
                 tableClient,
                 logSegment.allLogFilesReversed(),
@@ -187,13 +187,13 @@ public class LogReplay {
         Protocol protocol = null;
         Metadata metadata = null;
 
-        try (CloseableIterator<ActionIterElem> reverseIter =
+        try (CloseableIterator<ActionWrapper> reverseIter =
                  new ActionsIterator(
                      tableClient,
                      logSegment.allLogFilesReversed(),
                      PROTOCOL_METADATA_READ_SCHEMA)) {
             while (reverseIter.hasNext()) {
-                final ActionIterElem nextElem = reverseIter.next();
+                final ActionWrapper nextElem = reverseIter.next();
                 final long version = nextElem.getVersion();
 
                 // Load this lazily (as needed). We may be able to just use the hint.

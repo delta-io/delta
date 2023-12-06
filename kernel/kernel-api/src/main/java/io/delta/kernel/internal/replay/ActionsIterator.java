@@ -46,7 +46,7 @@ import io.delta.kernel.internal.util.Utils;
  * <p>
  * Users must pass in a `readSchema` to select which actions and sub-fields they want to consume.
  */
-class ActionsIterator implements CloseableIterator<ActionIterElem> {
+class ActionsIterator implements CloseableIterator<ActionWrapper> {
     private final TableClient tableClient;
 
     /**
@@ -64,7 +64,7 @@ class ActionsIterator implements CloseableIterator<ActionIterElem> {
      * <p>
      * If it is ever empty, that means there are no more batches to produce.
      */
-    private Optional<CloseableIterator<ActionIterElem>> actionsIter;
+    private Optional<CloseableIterator<ActionWrapper>> actionsIter;
 
     private boolean closed;
 
@@ -97,7 +97,7 @@ class ActionsIterator implements CloseableIterator<ActionIterElem> {
      * to the instance {@link #readSchema}.
      */
     @Override
-    public ActionIterElem next() {
+    public ActionWrapper next() {
         if (closed) {
             throw new IllegalStateException("Can't call `next` on a closed iterator.");
         }
@@ -160,7 +160,7 @@ class ActionsIterator implements CloseableIterator<ActionIterElem> {
      * <p>
      * Requires that `filesIter.hasNext` is true.
      */
-    private CloseableIterator<ActionIterElem> getNextActionsIter() {
+    private CloseableIterator<ActionWrapper> getNextActionsIter() {
         final FileStatus nextFile = filesIter.next();
         final Closeable[] iteratorsToClose = new Closeable[2];
 
@@ -236,19 +236,19 @@ class ActionsIterator implements CloseableIterator<ActionIterElem> {
     /**
      * Take input (iterator<T>, boolean) and produce an iterator<T, boolean>.
      */
-    private CloseableIterator<ActionIterElem> combine(
+    private CloseableIterator<ActionWrapper> combine(
             CloseableIterator<FileDataReadResult> fileReadDataIter,
             boolean isFromCheckpoint,
             long version) {
-        return new CloseableIterator<ActionIterElem>() {
+        return new CloseableIterator<ActionWrapper>() {
             @Override
             public boolean hasNext() {
                 return fileReadDataIter.hasNext();
             }
 
             @Override
-            public ActionIterElem next() {
-                return new ActionIterElem(fileReadDataIter.next(), isFromCheckpoint, version);
+            public ActionWrapper next() {
+                return new ActionWrapper(fileReadDataIter.next(), isFromCheckpoint, version);
             }
 
             @Override

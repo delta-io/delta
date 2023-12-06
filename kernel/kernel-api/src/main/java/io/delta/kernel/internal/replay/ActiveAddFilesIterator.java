@@ -57,7 +57,7 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
 
     private final TableClient tableClient;
     private final Path tableRoot;
-    private final CloseableIterator<ActionIterElem> iter;
+    private final CloseableIterator<ActionWrapper> iter;
     private final Set<UniqueFileActionTuple> tombstonesFromJson;
     private final Set<UniqueFileActionTuple> addFilesFromJson;
 
@@ -72,7 +72,7 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
 
     ActiveAddFilesIterator(
             TableClient tableClient,
-            CloseableIterator<ActionIterElem> iter,
+            CloseableIterator<ActionWrapper> iter,
             Path tableRoot) {
         this.tableClient = tableClient;
         this.tableRoot = tableRoot;
@@ -144,7 +144,7 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
             return; // no next result, and no batches to read
         }
 
-        final ActionIterElem _next = iter.next();
+        final ActionWrapper _next = iter.next();
         final FileDataReadResult fileDataReadResult = _next.getFileDataReadResult();
         final boolean isFromCheckpoint = _next.isFromCheckpoint();
         final ColumnarBatch addRemoveColumnarBatch = fileDataReadResult.getData();
