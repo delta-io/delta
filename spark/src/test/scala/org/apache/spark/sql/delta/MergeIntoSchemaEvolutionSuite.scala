@@ -3048,6 +3048,7 @@ trait MergeIntoNestedStructEvolutionTests {
       SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
       DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false"))
 
+  // scalastyle:off line.size.limit
   testNestedStructsEvolution("new column type reconciliation in array struct value")(
     target = """{ "key": "A", "value": [ { "a": 1 } ] }""",
     source = """{ "key": "A", "value1": [ { "a": 2, "b": 2 } ], "value2": [ { "a": 2, "b": "2" } ] }""",
@@ -3075,4 +3076,5 @@ trait MergeIntoNestedStructEvolutionTests {
     clauses = update(condition = "s.key = 'A'", set = "value = s.value1") :: update("value = s.value2") :: Nil,
     result = """{ "key": "A", "value": [ { "a": 2, "b": "2" } ] }""",
     expectErrorWithoutEvolutionContains = "cannot cast")
+  // scalastyle:on line.size.limit
 }
