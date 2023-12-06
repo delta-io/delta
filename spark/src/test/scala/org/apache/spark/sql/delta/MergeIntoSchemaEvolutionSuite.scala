@@ -1745,6 +1745,34 @@ trait MergeIntoNestedStructEvolutionTests {
          { "key": "C", "map": { "key": [ { "a": 3, "b": 4, "c": null } ] } }""",
     expectErrorWithoutEvolutionContains = "Cannot cast")
 
+  testNestedStructsEvolution("new column type reconciliation in map struct value")(
+    target =
+      """{ "key": "A", "map": { "key": { "a": 1 } } }""",
+    source =
+      """{ "key": "A", "map1": { "key": { "a": 2, "b": 2 } }, "map2": { "key": { "a": 2, "b": "2" } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map1", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType)))
+      .add("map2", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", StringType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", StringType))),
+    clauses = update(condition = "s.key = 'A'", set = "map = s.map1") :: update("map = s.map2") :: Nil,
+    result =
+      """{ "key": "A", "map": { "key": { "a": 2, "b": "2" } } }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
   // Struct evolution inside of map keys.
   testEvolution("new source column in map struct key")(
     targetData = Seq((1, 2, 3, 4), (3, 5, 6, 7)).toDF("key", "a", "b", "value")
@@ -3019,4 +3047,32 @@ trait MergeIntoNestedStructEvolutionTests {
     confs = Seq(
       SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
       DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false"))
+
+  testNestedStructsEvolution("new column type reconciliation in array struct value")(
+    target = """{ "key": "A", "value": [ { "a": 1 } ] }""",
+    source = """{ "key": "A", "value1": [ { "a": 2, "b": 2 } ], "value2": [ { "a": 2, "b": "2" } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value1", ArrayType(
+        new StructType()
+          .add("a", IntegerType)
+          .add("b", IntegerType)))
+      .add("value2", ArrayType(
+        new StructType()
+          .add("a", IntegerType)
+          .add("b", StringType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", IntegerType)
+          .add("b", StringType))),
+    clauses = update(condition = "s.key = 'A'", set = "value = s.value1") :: update("value = s.value2") :: Nil,
+    result = """{ "key": "A", "value": [ { "a": 2, "b": "2" } ] }""",
+    expectErrorWithoutEvolutionContains = "cannot cast")
 }
