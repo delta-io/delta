@@ -28,7 +28,7 @@ import io.delta.kernel.annotation.Evolving;
  *     <li>Logical {@code expr1} AND {@code expr2} on two inputs.</li>
  *     <li>Requires both left and right input expressions of type {@link Predicate}.</li>
  *     <li>Result is null when both inputs are null, or when one input is null and the other
- *     is {@code false}.</li>
+ *     is {@code true}.</li>
  * </ul>
  *
  * @since 3.0.0
