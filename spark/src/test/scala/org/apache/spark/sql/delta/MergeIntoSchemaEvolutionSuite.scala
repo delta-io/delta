@@ -1024,6 +1024,31 @@ trait MergeIntoSchemaEvolutionBaseTests {
       .withColumn("value", 'value.cast("timestamp")),
     expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
   )
+
+  testEvolution("new column type reconciliation in array - int and string resolves to string")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, Seq(2), Seq("val"))).toDF("key", "value1", "value2"),
+    clauses = update(condition = "s.key < 2", set = "value = s.value1"):: update(set = "value = s.value2") :: Nil,
+    expected = Seq((1, Seq("2"))).toDF("key", "value"),
+    expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
+  )
+
+  testEvolution("new column type reconciliation in map - int and string resolves to string")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, Map(2 -> 2), Map("2" -> "2"))).toDF("key", "value1", "value2"),
+    clauses = update(condition = "s.key < 2", set = "value = s.value1"):: update(set = "value = s.value2") :: Nil,
+    expected = Seq((1, Map("2" -> "2"))).toDF("key", "value"),
+    expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
+  )
+
+  testEvolution("new column type reconciliation in struct - int and string resolves to string")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, 2, "val")).toDF("key", "value1", "value2")
+      .select('key, struct('value1.alias("value")).alias("nested1"), struct('value2.alias("value")).alias("nested2")),
+    clauses = update(condition = "s.key < 2", set = "nested = s.nested1"):: update(set = "nested = s.nested2") :: Nil,
+    expected = Seq((1, "2")).toDF("key", "value").select('key, struct("value").alias("nested")),
+    expectErrorWithoutEvolutionContains = "cannot resolve nested in UPDATE clause"
+  )
   // scalastyle:on line.size.limit
 }
 
