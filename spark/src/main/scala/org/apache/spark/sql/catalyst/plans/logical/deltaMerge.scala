@@ -596,14 +596,22 @@ object DeltaMergeInto {
             case (part, schema) =>
               StructType(StructField(part, schema) :: Nil)
           }
-          // Combine schemas for each action, allowing type coersion to a wider type if the types
-          // differ.
+
+          // First, merge this field into the target schema, maintaining all existing fields
+          assignmentSchema = SchemaMergingUtils.mergeSchemas(
+            target.schema,
+            assignmentSchema,
+            allowImplicitConversions = true)
+
+          // Now merge this into the overall derived source schema, coercing new fields into a
+          // common type. Existing fields will always maintain the same type.
           SchemaMergingUtils.mergeSchemas(
             schema,
             assignmentSchema,
             allowTypeCoercion = true
           )
       }
+      // Finally, merge the combined source schema into the target table schema.
       // The implicit conversions flag allows any type to be merged from source to target if
       // Spark SQL considers the source type implicitly castable to the target. Normally,
       // mergeSchemas enforces Parquet-level write compatibility, which would mean an INT
