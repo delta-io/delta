@@ -203,6 +203,12 @@ object IcebergCompatV1 extends DeltaLogging {
   }
 }
 
+object IcebergCompatV2 extends DeltaLogging {
+  def isEnabled(metadata: Metadata): Boolean = {
+    DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED.fromMetaData(metadata).getOrElse(false)
+  }
+}
+
 /**
  * Wrapper class for table property validation
  *
