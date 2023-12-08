@@ -293,6 +293,70 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     )
   }
 
+
+  test("table with `name` column mapping mode") {
+    val path = goldenTablePath("table-with-columnmapping-mode-name")
+
+    val expectedAnswer = (0 until 5).map { i =>
+      TestRow(
+        i.byteValue(),
+        i.shortValue(),
+        i,
+        i.longValue(),
+        i.floatValue(),
+        i.doubleValue(),
+        new java.math.BigDecimal(i),
+        i % 2 == 0,
+        i.toString,
+        i.toString.getBytes,
+        daysSinceEpoch(Date.valueOf("2021-11-18")), // date in days
+        (i * 1000).longValue(), // timestamp in micros
+        TestRow(i.toString, TestRow(i)), // nested_struct
+        Seq(i, i + 1), // array_of_prims
+        Seq(Seq(i, i + 1), Seq(i + 2, i + 3)), // array_of_arrays
+        Seq(TestRow(i.longValue()), null), // array_of_structs
+        Map(
+          i -> (i + 1).longValue(),
+          (i + 2) -> (i + 3).longValue()
+        ), // map_of_prims
+        Map(i + 1 -> TestRow((i * 20).longValue())), // map_of_rows
+        {
+          val val1 = Seq(i, null, i + 1)
+          val val2 = Seq[Integer]()
+          Map(
+            i.longValue() -> val1,
+            (i + 1).longValue() -> val2
+          ) // map_of_arrays
+        }
+      )
+    } ++ (TestRow(
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ) :: Nil)
+
+    checkTable(
+      path = path,
+      expectedAnswer = expectedAnswer
+    )
+  }
+
   test("table with complex map types") {
     val path = "file:" + goldenTablePath("data-reader-map")
 

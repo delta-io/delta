@@ -35,6 +35,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 
 /**
@@ -207,7 +208,7 @@ public class LogReplay {
             case 1:
                 break;
             case 2:
-                verifySupportedColumnMappingMode(metadata);
+                ColumnMapping.checkSupportedColumnMappingMode(metadata);
                 break;
             case 3:
                 List<String> readerFeatures = protocol.getReaderFeatures();
@@ -216,7 +217,7 @@ public class LogReplay {
                         case "deletionVectors":
                             break;
                         case "columnMapping":
-                            verifySupportedColumnMappingMode(metadata);
+                            ColumnMapping.checkSupportedColumnMappingMode(metadata);
                             break;
                         default:
                             throw new UnsupportedOperationException(
@@ -227,17 +228,6 @@ public class LogReplay {
             default:
                 throw new UnsupportedOperationException(
                     "Unsupported reader protocol version: " + protocol.getMinReaderVersion());
-        }
-    }
-
-    private void verifySupportedColumnMappingMode(Metadata metadata) {
-        // Check if the mode is name. Id mode is not yet supported
-        String cmMode = metadata.getConfiguration()
-                .getOrDefault("delta.columnMapping.mode", "none");
-        if (!"none".equalsIgnoreCase(cmMode) &&
-            !"name".equalsIgnoreCase(cmMode)) {
-            throw new UnsupportedOperationException(
-                "Unsupported column mapping mode: " + cmMode);
         }
     }
 

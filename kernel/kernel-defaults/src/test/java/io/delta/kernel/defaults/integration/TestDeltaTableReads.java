@@ -161,12 +161,4 @@ public class TestDeltaTableReads
         Snapshot snapshot = snapshot(tablePath);
         readSnapshot(snapshot.getSchema(tableClient), snapshot);
     }
-
-    private StructType structTypeOf(StructType structType, String colName) {
-        return (StructType) structType.get(colName).getDataType();
-    }
-
-    private StructType arrayElemStructTypeOf(StructType structType, String colName) {
-        return (StructType) ((ArrayType) structType.get(colName).getDataType()).getElementType();
-    }
 }
