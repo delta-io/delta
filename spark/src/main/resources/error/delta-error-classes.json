@@ -1256,6 +1256,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_METADATA_MISMATCH" : {
+    "message" : [
+      "<content>"
+    ],
+    "sqlState" : "42K09"
+  },
   "DELTA_MISSING_CHANGE_DATA" : {
     "message" : [
       "Error getting change data for range [<startVersion> , <endVersion>] as change data was not",
