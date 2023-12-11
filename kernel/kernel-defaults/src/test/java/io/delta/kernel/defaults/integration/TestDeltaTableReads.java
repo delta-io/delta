@@ -150,15 +150,4 @@ public class TestDeltaTableReads
         ColumnarBatch expData = builder.build();
         compareEqualUnorderd(expData, actualData);
     }
-
-    @Test
-    public void columnMappingIdModeThrowsError()
-        throws Exception {
-        expectedEx.expect(UnsupportedOperationException.class);
-        expectedEx.expectMessage("Unsupported column mapping mode: id");
-
-        String tablePath = getTestResourceFilePath("column-mapping-id");
-        Snapshot snapshot = snapshot(tablePath);
-        readSnapshot(snapshot.getSchema(tableClient), snapshot);
-    }
 }

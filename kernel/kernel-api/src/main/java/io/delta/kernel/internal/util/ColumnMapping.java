@@ -35,6 +35,8 @@ public class ColumnMapping {
         "delta.columnMapping.physicalName";
     public static final String COLUMN_MAPPING_ID_KEY = "delta.columnMapping.id";
 
+    public static final String PARQUET_FIELD_ID_KEY = "parquet.field.id";
+
     /**
      * Returns the column mapping mode from the given configuration.
      *
@@ -57,9 +59,9 @@ public class ColumnMapping {
         String columnMappingMode = getColumnMappingMode(metadata.getConfiguration());
         switch (columnMappingMode) {
             case COLUMN_MAPPING_MODE_NONE: // fall through
+            case COLUMN_MAPPING_MODE_ID: // fall through
             case COLUMN_MAPPING_MODE_NAME:
                 return;
-            case COLUMN_MAPPING_MODE_ID: // id mode is not yet supported
             default:
                 throw new UnsupportedOperationException(
                     "Unsupported column mapping mode: " + columnMappingMode);
@@ -81,9 +83,7 @@ public class ColumnMapping {
         switch (columnMappingMode) {
             case "none":
                 return logicalSchema;
-            case "id":
-                throw new UnsupportedOperationException(
-                    "Column mapping `id` mode is not yet supported");
+            case "id": // fall through
             case "name": {
                 StructType newSchema = new StructType();
                 for (StructField field : logicalSchema.fields()) {
@@ -98,7 +98,20 @@ public class ColumnMapping {
                         .getMetadata()
                         .get(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
 
-                    newSchema = newSchema.add(physicalName, physicalType, field.isNullable());
+                    if (columnMappingMode.equals(COLUMN_MAPPING_MODE_ID)) {
+                        Long fieldId = (Long) fieldFromMetadata
+                            .getMetadata()
+                            .get(COLUMN_MAPPING_ID_KEY);
+                        FieldMetadata fieldMetadata =
+                            FieldMetadata.builder()
+                                .putLong(PARQUET_FIELD_ID_KEY, fieldId)
+                                .build();
+
+                        newSchema = newSchema
+                            .add(physicalName, physicalType, field.isNullable(), fieldMetadata);
+                    } else {
+                        newSchema = newSchema.add(physicalName, physicalType, field.isNullable());
+                    }
                 }
                 return newSchema;
             }
