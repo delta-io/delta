@@ -30,7 +30,7 @@ import io.delta.kernel.types.StructType;
 /**
  * Utility methods for Delta schema to Parquet schema conversion.
  */
-public class ParquetSchemaUtils {
+class ParquetSchemaUtils {
     private ParquetSchemaUtils() {}
 
     /**
@@ -41,7 +41,7 @@ public class ParquetSchemaUtils {
      * @param deltaType
      * @return
      */
-    public static final MessageType pruneSchema(
+    static MessageType pruneSchema(
         GroupType fileSchema /* parquet */,
         StructType deltaType /* delta-kernel */) {
         return new MessageType("fileSchema", pruneFields(fileSchema, deltaType));
@@ -55,7 +55,7 @@ public class ParquetSchemaUtils {
      * @param field     Sub field given as Delta Kernel's {@link StructField}
      * @return {@link Type} of the Parquet field. Returns {@code null}, if not found.
      */
-    public static Type findSubFieldType(GroupType groupType, StructField field) {
+    static Type findSubFieldType(GroupType groupType, StructField field) {
         // TODO: Need a way to search by id once we start supporting column mapping `id` mode.
         final String columnName = field.getName();
         if (groupType.containsField(columnName)) {
