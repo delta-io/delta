@@ -39,8 +39,6 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-import io.delta.kernel.defaults.internal.DefaultKernelUtils;
-
 public class ParquetBatchReader {
     private final Configuration configuration;
     private final int maxBatchSize;
@@ -129,7 +127,7 @@ public class ParquetBatchReader {
         @Override
         public ReadContext init(InitContext context) {
             return new ReadContext(
-                DefaultKernelUtils.pruneSchema(context.getFileSchema(), readSchema));
+                ParquetSchemaUtils.pruneSchema(context.getFileSchema(), readSchema));
         }
 
         @Override
