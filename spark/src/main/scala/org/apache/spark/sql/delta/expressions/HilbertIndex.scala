@@ -29,7 +29,7 @@ import org.apache.spark.sql.types.{AbstractDataType, DataType, DataTypes}
 
 /**
  * Represents a hilbert index built from the provided columns.
- * The columns are expected to all be Ints and to have at most numBits.
+ * The columns are expected to all be Ints and to have at most numBits individually.
  * The points along the hilbert curve are represented by Longs.
  */
 private[sql] case class HilbertLongIndex(numBits: Int, children: Seq[Expression])
@@ -107,9 +107,10 @@ private[sql] case class HilbertByteArrayIndex(numBits: Int, children: Seq[Expres
     newChildren: IndexedSeq[Expression]): HilbertByteArrayIndex = copy(children = newChildren)
 }
 
+// scalastyle:off line.size.limit
 /**
  * The following code is based on this paper:
- *   http://www.dcs.bbk.ac.uk/~jkl/thesis.pdf
+ *   https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=bfd6d94c98627756989b0147a68b7ab1f881a0d6
  * with optimizations around matrix manipulation taken from this one:
  *   https://pdfs.semanticscholar.org/4043/1c5c43a2121e1bc071fc035e90b8f4bb7164.pdf
  *
@@ -120,6 +121,7 @@ private[sql] case class HilbertByteArrayIndex(numBits: Int, children: Seq[Expres
  * You can then turn those state lists into compact state lists that store all the information
  * in one large array of longs.
  */
+// scalastyle:on line.size.limit
 object HilbertIndex {
 
   private type CompactStateList = HilbertCompactStateList
@@ -161,13 +163,15 @@ object HilbertIndex {
     new GeneratorTable(n, rows)
   }
 
+  // scalastyle:off line.size.limit
   /**
    * This will construct an x2-gray-codes sequence of order n as described in
-   *  http://www.dcs.bbk.ac.uk/~jkl/thesis.pdf
+   *  https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=bfd6d94c98627756989b0147a68b7ab1f881a0d6
    *
    *   Each pair of values corresponds to the first and last coordinates of points on a first
    *   order curve to which a point taken from column X1 transforms to at the second order.
    */
+  // scalastyle:on line.size.limit
   private[this] def getX2GrayCodes(n: Int) : Array[Int] = {
     if (n == 1) {
       // hard code the base case

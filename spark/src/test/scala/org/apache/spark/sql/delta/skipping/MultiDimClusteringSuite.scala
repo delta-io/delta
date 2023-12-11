@@ -149,7 +149,7 @@ class MultiDimClusteringSuite extends QueryTest
   }
 
   test("noise is helpful in skew handling") {
-    Seq("zorder", "hilbert").foreach{ curve =>
+    Seq("zorder", "hilbert").foreach { curve =>
       Seq("true", "false").foreach { addNoise =>
         withTempDir { tempDir =>
           withSQLConf(

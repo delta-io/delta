@@ -85,8 +85,8 @@ public class HilbertStates {
             case 9:
                 return HilbertIndex9.STATE_LIST;
             default:
-                throw new SparkException(
-                  "Cannot perform hilbert clustering on more than 9 dimensions");
+                throw new SparkException(String.format("Cannot perform hilbert clustering on " +
+                    "fewer than 2 or more than 9 dimensions; got %d dimensions", n));
         }
     }
 }
