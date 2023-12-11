@@ -138,7 +138,7 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
         "f0",
         new StructType()
           .add("F00", IntegerType.INTEGER) // no field id and with case-insensitive column name
-          .add("f01", IntegerType.INTEGER, fieldMetadata(3)),
+          .add("f01", IntegerType.INTEGER, fieldMetadata(3))
         // no field id for struct f0
       )
 
