@@ -123,8 +123,8 @@ public class ColumnMapping {
                     .putLong(PARQUET_FIELD_ID_KEY, fieldId)
                     .build();
 
-                newSchema =
-                    newSchema.add(physicalName, physicalType, logicalField.isNullable(), fieldMetadata);
+                newSchema = newSchema
+                    .add(physicalName, physicalType, logicalField.isNullable(), fieldMetadata);
             } else {
                 newSchema = newSchema.add(physicalName, physicalType, logicalField.isNullable());
             }
