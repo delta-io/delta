@@ -66,7 +66,7 @@ object MultiDimClusteringFunctions {
    * @param numBits The number of bits to consider in each column.
    * @param cols The integer columns to map to the curve.
    */
-  // scalastyle:off line.size.limit
+  // scalastyle:on line.size.limit
   def hilbert_index(numBits: Int, cols: Column*): Column = withExpr {
     if (cols.size > 9) {
       throw new SparkException("Hilbert indexing can only be used on 9 or fewer columns.")
