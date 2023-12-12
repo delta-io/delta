@@ -1555,6 +1555,42 @@
     ],
     "sqlState" : "42613"
   },
+  "DELTA_PARSING_ANALYSIS_ERROR" : {
+    "message" : [
+      "<msg>"
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_ILLEGAL_TABLE_NAME" : {
+    "message" : [
+      "Illegal table name `<tableName>`."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_INCORRECT_CLONE_HEADER" : {
+    "message" : [
+      "Incorrect CLONE header. Expected REPLACE or CREATE table."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_MISSING_TABLE_NAME_OR_PATH" : {
+    "message" : [
+      "<command> command requires a file path or table name."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_MUTUALLY_EXCLUSIVE_CLAUSES" : {
+    "message" : [
+      "<clauseOne> cannot be used together with <clauseTwo>."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_UNSUPPORTED_DATA_TYPE" : {
+    "message" : [
+      "DataType <dataType> is not supported."
+    ],
+    "sqlState" : "KD009"
+  },
   "DELTA_PARTITION_COLUMN_CAST_FAILED" : {
     "message" : [
       "Failed to cast value `<value>` to `<dataType>` for partition column `<columnName>`"
@@ -2500,4 +2536,4 @@
     ],
     "sqlState" : "0AKDE"
   }
-}
+},
