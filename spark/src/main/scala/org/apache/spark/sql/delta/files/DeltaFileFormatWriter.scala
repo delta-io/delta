@@ -46,9 +46,10 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 /**
- * A helper object for writing FileFormat data out to a location.
+ *  A helper object for writing FileFormat data out to a location.
  *  Logic is copied from FileFormatWriter from Spark 3.5 with added functionality to write partition
- *  values to data files
+ *  values to data files. Specifically L123-126, L132, and L140 where it adds option
+ *  WRITE_PARTITION_COLUMNS
  */
 object DeltaFileFormatWriter extends Logging {
 
