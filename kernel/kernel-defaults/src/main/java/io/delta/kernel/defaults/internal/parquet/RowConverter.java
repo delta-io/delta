@@ -77,9 +77,9 @@ class RowConverter
         for (int i = 0; i < converters.length; i++) {
             final StructField field = fields.get(i);
             final DataType typeFromClient = field.getDataType();
-            final Map<Integer, Type> paruqetFieldIdToTypeMap = getParquetFieldToTypeMap(fileSchema);
+            final Map<Integer, Type> parquetFieldIdToTypeMap = getParquetFieldToTypeMap(fileSchema);
             final Type typeFromFile = field.isDataColumn() ?
-                findSubFieldType(fileSchema, field, paruqetFieldIdToTypeMap) : null;
+                findSubFieldType(fileSchema, field, parquetFieldIdToTypeMap) : null;
             if (typeFromFile == null) {
                 if (StructField.METADATA_ROW_INDEX_COLUMN_NAME.equalsIgnoreCase(field.getName()) &&
                     field.isMetadataColumn()) {
