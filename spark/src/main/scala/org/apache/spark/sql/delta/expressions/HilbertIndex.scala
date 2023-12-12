@@ -130,15 +130,12 @@ object HilbertIndex {
 
   /**
    * Construct the generator table for a space of dimension n.
-   * This table consists of 2^n rows, each row containing Y, X1, X2, dY and TY.
+   * This table consists of 2^n rows, each row containing Y, X1, and TY.
    *   Y    The index in the array representing the table. (0 to (2^n - 1))
    *   X1   A coordinate representing points on the curve expressed as an n-point.
    *        These are arranged such that if two rows differ by 1 in Y then the binary
    *        representation of their X1 values differ by exactly one bit.
    *        These are the "Gray-codes" of their Y value.
-   *   X2   A pair of n-points corresponding to the first and last points on the first
-   *        order curve to which X1 transforms in the construction of a second order curve.
-   *   dY   Represents the magnitude of difference between X2 values in this row.
    *   TY   A transformation matrix that transforms X2(1) to the X1 value where Y is zero and
    *        transforms X2(2) to the X1 value where Y is (2^n - 1)
    */
@@ -147,15 +144,16 @@ object HilbertIndex {
 
     val len = 1 << n
     val rows = (0 until len).map { i =>
+      // A pair of n-points corresponding to the first and last points on the first order curve to
+      // which X1 transforms in the construction of a second order curve.
       val x21 = x2s(i << 1)
       val x22 = x2s((i << 1) + 1)
+      // Represents the magnitude of difference between X2 values in this row.
       val dy = x21 ^ x22
 
       Row(
         y = i,
         x1 = i ^ (i >>> 1),
-        x2 = (x21, x22),
-        dy = dy,
         m = HilbertMatrix(n, x21, getSetColumn(n, dy))
       )
     }
@@ -188,7 +186,7 @@ object HilbertIndex {
     result
   }
 
-  private[this] case class Row(y: Int, x1: Int, x2: (Int, Int), dy: Int, m: HilbertMatrix)
+  private[this] case class Row(y: Int, x1: Int, m: HilbertMatrix)
 
   private[this] case class PointState(y: Int, var x1: Int = 0, var state: Int = 0)
 

@@ -24,7 +24,7 @@ public class HilbertStates {
      * Constructs a hilbert state for the given arity, [[n]].
      * This state list can be used to map n-points to their corresponding d-key value.
      *
-     * @param n The number of bits in this space (we assert this is <= 6 for simplicity)
+     * @param n The number of bits in this space (we assert 2 <= n <= 9 for simplicity)
      * @return The CompactStateList for mapping from n-point to hilbert distance key.
      */
     private static HilbertCompactStateList constructHilbertState(int n) {
