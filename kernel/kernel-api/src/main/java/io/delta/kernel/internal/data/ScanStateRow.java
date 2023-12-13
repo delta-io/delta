@@ -28,6 +28,7 @@ import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.VectorUtils;
 
 /**
@@ -116,7 +117,7 @@ public class ScanStateRow extends GenericRow {
     public static String getColumnMappingMode(Row scanState) {
         Map<String, String> configuration = VectorUtils.toJavaMap(
                 scanState.getMap(COL_NAME_TO_ORDINAL.get("configuration")));
-        return configuration.getOrDefault("delta.columnMapping.mode", "none");
+        return ColumnMapping.getColumnMappingMode(configuration);
     }
 
     /**
