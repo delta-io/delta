@@ -34,6 +34,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
 import io.delta.kernel.defaults.internal.data.vector.DefaultStructVector;
 import static io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.findSubFieldType;
+import static io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.getParquetFieldToTypeMap;
 
 class RowConverter
     extends GroupConverter
@@ -76,8 +77,9 @@ class RowConverter
         for (int i = 0; i < converters.length; i++) {
             final StructField field = fields.get(i);
             final DataType typeFromClient = field.getDataType();
+            final Map<Integer, Type> parquetFieldIdToTypeMap = getParquetFieldToTypeMap(fileSchema);
             final Type typeFromFile = field.isDataColumn() ?
-                findSubFieldType(fileSchema, field) : null;
+                findSubFieldType(fileSchema, field, parquetFieldIdToTypeMap) : null;
             if (typeFromFile == null) {
                 if (StructField.METADATA_ROW_INDEX_COLUMN_NAME.equalsIgnoreCase(field.getName()) &&
                     field.isMetadataColumn()) {

@@ -35,6 +35,8 @@ public class ColumnMapping {
         "delta.columnMapping.physicalName";
     public static final String COLUMN_MAPPING_ID_KEY = "delta.columnMapping.id";
 
+    public static final String PARQUET_FIELD_ID_KEY = "parquet.field.id";
+
     /**
      * Returns the column mapping mode from the given configuration.
      *
@@ -57,9 +59,9 @@ public class ColumnMapping {
         String columnMappingMode = getColumnMappingMode(metadata.getConfiguration());
         switch (columnMappingMode) {
             case COLUMN_MAPPING_MODE_NONE: // fall through
+            case COLUMN_MAPPING_MODE_ID: // fall through
             case COLUMN_MAPPING_MODE_NAME:
                 return;
-            case COLUMN_MAPPING_MODE_ID: // id mode is not yet supported
             default:
                 throw new UnsupportedOperationException(
                     "Unsupported column mapping mode: " + columnMappingMode);
@@ -68,40 +70,23 @@ public class ColumnMapping {
 
     /**
      * Helper method that converts the logical schema (requested by the connector) to physical
-     * schema of the data stored in data files.
+     * schema of the data stored in data files based on the table's column mapping mode.
      *
      * @param logicalSchema     Logical schema of the scan
      * @param physicalSchema    Physical schema of the scan
      * @param columnMappingMode Column mapping mode
      */
     public static StructType convertToPhysicalSchema(
-        StructType logicalSchema,
-        StructType physicalSchema,
-        String columnMappingMode) {
+            StructType logicalSchema,
+            StructType physicalSchema,
+            String columnMappingMode) {
         switch (columnMappingMode) {
-            case "none":
+            case COLUMN_MAPPING_MODE_NONE:
                 return logicalSchema;
-            case "id":
-                throw new UnsupportedOperationException(
-                    "Column mapping `id` mode is not yet supported");
-            case "name": {
-                StructType newSchema = new StructType();
-                for (StructField field : logicalSchema.fields()) {
-                    DataType logicalType = field.getDataType();
-                    StructField fieldFromMetadata = physicalSchema.get(field.getName());
-                    DataType physicalType =
-                        convertToPhysicalType(
-                            logicalType,
-                            fieldFromMetadata.getDataType(),
-                            columnMappingMode);
-                    String physicalName = (String) fieldFromMetadata
-                        .getMetadata()
-                        .get(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
-
-                    newSchema = newSchema.add(physicalName, physicalType, field.isNullable());
-                }
-                return newSchema;
-            }
+            case COLUMN_MAPPING_MODE_ID: // fall through
+            case COLUMN_MAPPING_MODE_NAME:
+                boolean includeFieldIds = columnMappingMode.equals(COLUMN_MAPPING_MODE_ID);
+                return convertToPhysicalSchema(logicalSchema, physicalSchema, includeFieldIds);
             default:
                 throw new UnsupportedOperationException(
                     "Unsupported column mapping mode: " + columnMappingMode);
@@ -109,50 +94,75 @@ public class ColumnMapping {
     }
 
     /**
-     * Utility method to convert the given logical type to physical type, recursively
-     * converting sub-types in case of complex types.
+     * Utility method to convert the given logical schema to physical schema, recursively
+     * converting sub-types in case of complex types. When {@code includeFieldId} is true,
+     * converted physical schema will have field ids in the metadata.
      */
-    private static DataType convertToPhysicalType(
-        DataType logicalType,
-        DataType physicalType,
-        String columnMappingMode) {
-        switch (columnMappingMode) {
-            case "none":
-                return logicalType;
-            case "id":
-            case "name":
-                if (logicalType instanceof StructType) {
-                    return convertToPhysicalSchema(
-                        (StructType) logicalType,
-                        (StructType) physicalType,
-                        columnMappingMode);
-                } else if (logicalType instanceof ArrayType) {
-                    ArrayType logicalArrayType = (ArrayType) logicalType;
-                    return new ArrayType(
-                        convertToPhysicalType(
-                            logicalArrayType.getElementType(),
-                            ((ArrayType) physicalType).getElementType(),
-                            columnMappingMode),
-                        ((ArrayType) logicalType).containsNull());
-                } else if (logicalType instanceof MapType) {
-                    MapType logicalMapType = (MapType) logicalType;
-                    MapType physicalMapType = (MapType) physicalType;
-                    return new MapType(
-                        convertToPhysicalType(
-                            logicalMapType.getKeyType(),
-                            physicalMapType.getKeyType(),
-                            columnMappingMode),
-                        convertToPhysicalType(
-                            logicalMapType.getValueType(),
-                            physicalMapType.getValueType(),
-                            columnMappingMode),
-                        logicalMapType.isValueContainsNull());
-                } else {
-                    return logicalType;
-                }
-            default:
-                throw new UnsupportedOperationException(
-                    "Unsupported column mapping mode: " + columnMappingMode);
+    private static StructType convertToPhysicalSchema(
+            StructType logicalSchema,
+            StructType physicalSchema,
+            boolean includeFieldId) {
+        StructType newSchema = new StructType();
+        for (StructField logicalField : logicalSchema.fields()) {
+            DataType logicalType = logicalField.getDataType();
+            StructField physicalField = physicalSchema.get(logicalField.getName());
+            DataType physicalType =
+                convertToPhysicalType(
+                    logicalType,
+                    physicalField.getDataType(),
+                    includeFieldId);
+            String physicalName = (String) physicalField
+                .getMetadata()
+                .get(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+
+            if (includeFieldId) {
+                Long fieldId = (Long) physicalField
+                    .getMetadata()
+                    .get(COLUMN_MAPPING_ID_KEY);
+                FieldMetadata fieldMetadata = FieldMetadata.builder()
+                    .putLong(PARQUET_FIELD_ID_KEY, fieldId)
+                    .build();
+
+                newSchema = newSchema
+                    .add(physicalName, physicalType, logicalField.isNullable(), fieldMetadata);
+            } else {
+                newSchema = newSchema.add(physicalName, physicalType, logicalField.isNullable());
+            }
         }
+        return newSchema;
+    }
+
+    private static DataType convertToPhysicalType(
+            DataType logicalType,
+            DataType physicalType,
+            boolean includeFieldId) {
+        if (logicalType instanceof StructType) {
+            return convertToPhysicalSchema(
+                (StructType) logicalType,
+                (StructType) physicalType,
+                includeFieldId);
+        } else if (logicalType instanceof ArrayType) {
+            ArrayType logicalArrayType = (ArrayType) logicalType;
+            return new ArrayType(
+                convertToPhysicalType(
+                    logicalArrayType.getElementType(),
+                    ((ArrayType) physicalType).getElementType(),
+                    includeFieldId),
+                logicalArrayType.containsNull());
+        } else if (logicalType instanceof MapType) {
+            MapType logicalMapType = (MapType) logicalType;
+            MapType physicalMapType = (MapType) physicalType;
+            return new MapType(
+                convertToPhysicalType(
+                    logicalMapType.getKeyType(),
+                    physicalMapType.getKeyType(),
+                    includeFieldId),
+                convertToPhysicalType(
+                    logicalMapType.getValueType(),
+                    physicalMapType.getValueType(),
+                    includeFieldId),
+                logicalMapType.isValueContainsNull());
+        }
+        return logicalType;
     }
 }
