@@ -208,7 +208,7 @@ public class LogReplay {
             case 1:
                 break;
             case 2:
-                ColumnMapping.checkSupportedColumnMappingMode(metadata);
+                ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
                 break;
             case 3:
                 List<String> readerFeatures = protocol.getReaderFeatures();
@@ -217,7 +217,7 @@ public class LogReplay {
                         case "deletionVectors":
                             break;
                         case "columnMapping":
-                            ColumnMapping.checkSupportedColumnMappingMode(metadata);
+                            ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
                             break;
                         default:
                             throw new UnsupportedOperationException(

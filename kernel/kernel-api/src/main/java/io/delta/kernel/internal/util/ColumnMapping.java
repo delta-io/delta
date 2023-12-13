@@ -48,11 +48,12 @@ public class ColumnMapping {
     }
 
     /**
-     * Checks if the given column mapping mode in the given table metadata is supported.
+     * Checks if the given column mapping mode in the given table metadata is supported. Throws on
+     * unsupported modes.
      *
      * @param metadata Metadata of the table
      */
-    public static void checkSupportedColumnMappingMode(Metadata metadata) {
+    public static void throwOnUnsupportedColumnMappingMode(Metadata metadata) {
         String columnMappingMode = getColumnMappingMode(metadata.getConfiguration());
         switch (columnMappingMode) {
             case COLUMN_MAPPING_MODE_NONE: // fall through
