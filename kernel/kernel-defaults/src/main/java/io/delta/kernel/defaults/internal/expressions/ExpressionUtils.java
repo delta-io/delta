@@ -19,12 +19,10 @@ import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
-
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
-import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.*;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
