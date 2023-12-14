@@ -29,6 +29,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
+import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.booleanWrapperVector;
 import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.childAt;
 import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.compare;
 import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.evalNullability;
@@ -418,24 +419,21 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         @Override
         ColumnVector visitNot(Predicate predicate) {
             ColumnVector childResult = visit(childAt(predicate, 0));
-            int numRows = childResult.getSize();
-            boolean[] result = new boolean[numRows];
-            boolean[] nullability = evalNullability(childResult);
-            for (int rowId = 0; rowId < numRows; rowId++) {
-                result[rowId] = !childResult.getBoolean(rowId);
-            }
-            return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
+            return booleanWrapperVector(
+                childResult,
+                rowId -> !childResult.getBoolean(rowId),
+                rowId -> childResult.isNullAt(rowId)
+            );
         }
 
         @Override
         ColumnVector visitIsNotNull(Predicate predicate) {
             ColumnVector childResult = visit(childAt(predicate, 0));
-            int numRows = childResult.getSize();
-            boolean[] result = new boolean[numRows];
-            for (int rowId = 0; rowId < numRows; rowId++) {
-                result[rowId] = !childResult.isNullAt(rowId);
-            }
-            return new DefaultBooleanVector(numRows, Optional.empty(), result);
+            return booleanWrapperVector(
+                childResult,
+                rowId -> !childResult.isNullAt(rowId),
+                rowId -> false
+            );
         }
 
         /**

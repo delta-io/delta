@@ -18,10 +18,13 @@ package io.delta.kernel.defaults.internal.expressions;
 import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.Function;
+
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.*;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -46,17 +49,41 @@ class ExpressionUtils {
     }
 
     /**
-     * Utility method that calculates the nullability result from one given vector. Result is
-     * null if the child is null.
+     * Wraps a child vector as a boolean {@link ColumnVector} with the given value and nullability
+     * accessors.
      */
-    // TODO should we just expose the nullability array for DefaultColumnVector?
-    static boolean[] evalNullability(ColumnVector child) {
-        int numRows = child.getSize();
-        boolean[] nullability = new boolean[numRows];
-        for (int rowId = 0; rowId < numRows; rowId++) {
-            nullability[rowId] = child.isNullAt(rowId);
-        }
-        return nullability;
+    static ColumnVector booleanWrapperVector(
+        ColumnVector childVector,
+        Function<Integer, Boolean> valueAccessor,
+        Function<Integer, Boolean> nullabilityAccessor) {
+
+        return new ColumnVector() {
+
+            @Override
+            public DataType getDataType() {
+                return BooleanType.BOOLEAN;
+            }
+
+            @Override
+            public int getSize() {
+                return childVector.getSize();
+            }
+
+            @Override
+            public void close() {
+                childVector.close();
+            }
+
+            @Override
+            public boolean isNullAt(int rowId) {
+                return nullabilityAccessor.apply(rowId);
+            }
+
+            @Override
+            public boolean getBoolean(int rowId) {
+                return valueAccessor.apply(rowId);
+            }
+        };
     }
 
     /**
