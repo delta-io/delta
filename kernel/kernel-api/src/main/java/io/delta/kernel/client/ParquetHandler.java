@@ -55,8 +55,8 @@ public interface ParquetHandler {
      * @param predicate      Optional predicate which the Parquet reader can use to prune the rows
      *                       that don't satisfy the predicate. Result could still contain rows that
      *                       don't satisfy the predicate. Caller should still need to apply the
-     *                       predicate on the data returned by this method to prune rows that
-     *                       don't satisfy the predicate completely.
+     *                       predicate on the data returned by this method to completely prune rows
+     *                       that don't satisfy the predicate.
      * @return an iterator of {@link ColumnarBatch}s containing the data in columnar format.
      * It is the responsibility of the caller to close the iterator. The data returned is in the
      * same as the order of files given in {@code scanFileIter}.

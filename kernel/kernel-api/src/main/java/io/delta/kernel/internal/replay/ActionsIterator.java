@@ -33,9 +33,10 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
-import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.internal.util.Utils;
+import static io.delta.kernel.internal.InternalScanFileUtils.generateScanFileRow;
+import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 /**
  * This class takes as input a list of delta files (.json, .checkpoint.parquet) and produces an
@@ -171,8 +172,8 @@ class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean
                 final JsonHandler jsonHandler = tableClient.getJsonHandler();
 
                 // Convert the `nextFile` FileStatus into an internal ScanFile Row
-                CloseableIterator<Row> scanFileIter = Utils.singletonCloseableIterator(
-                    InternalScanFileUtils.generateScanFileRow(nextFile));
+                CloseableIterator<Row> scanFileIter =
+                    singletonCloseableIterator(generateScanFileRow(nextFile));
                 iteratorsToClose[0] = scanFileIter;
 
                 // Read that file
@@ -194,8 +195,7 @@ class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean
                 // Convert the `nextFile` FileStatus into an internal ScanFile Row and then
                 // allow the connector to contextualize it (i.e. perform any splitting)
                 final CloseableIterator<Row> scanFileIter =
-                    Utils.singletonCloseableIterator(
-                        InternalScanFileUtils.generateScanFileRow(nextFile));
+                    singletonCloseableIterator(generateScanFileRow(nextFile));
 
                 iteratorsToClose[0] = scanFileIter;
 
@@ -228,8 +228,8 @@ class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean
      * Take input (iterator<T>, boolean) and produce an iterator<T, boolean>.
      */
     private CloseableIterator<Tuple2<ColumnarBatch, Boolean>> combine(
-        CloseableIterator<ColumnarBatch> fileReadDataIter,
-        boolean isFromCheckpoint) {
+            CloseableIterator<ColumnarBatch> fileReadDataIter,
+            boolean isFromCheckpoint) {
         return new CloseableIterator<Tuple2<ColumnarBatch, Boolean>>() {
             @Override
             public boolean hasNext() {

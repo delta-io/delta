@@ -103,7 +103,7 @@ public class ScanStateRow extends GenericRow {
     /**
      * Utility method to get the physical data read schema from the scan state {@link Row}
      * returned by {@link Scan#getScanState(TableClient)}. This schema is used to request data
-     * from the scan file rows for the query.
+     * from the scan files for the query.
      *
      * @param tableClient instance of {@link TableClient} to use.
      * @param scanState   Scan state {@link Row}

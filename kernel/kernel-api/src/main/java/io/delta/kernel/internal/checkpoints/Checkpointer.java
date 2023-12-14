@@ -21,17 +21,16 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
-import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.InternalUtils;
-import io.delta.kernel.internal.util.Utils;
+import static io.delta.kernel.internal.InternalScanFileUtils.generateScanFileRow;
+import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 /**
  * Class to load the {@link CheckpointMetaData} from `_last_checkpoint` file.
@@ -99,16 +98,15 @@ public class Checkpointer {
             // For now we use file size = 0 and modification time = 0, in the future we should use
             // listFrom to retrieve the real values see delta-io/delta#2140
             FileStatus lastCheckpointFile = FileStatus.of(lastCheckpointFilePath.toString(), 0, 0);
-            JsonHandler jsonHandler = tableClient.getJsonHandler();
-            CloseableIterator<ColumnarBatch> jsonIter =
-                tableClient.getJsonHandler().readJsonFiles(
-                    Utils.singletonCloseableIterator(
-                        InternalScanFileUtils.generateScanFileRow(lastCheckpointFile)),
-                    CheckpointMetaData.READ_SCHEMA,
-                    Optional.empty());
 
-            Optional<Row> checkpointRow = InternalUtils.getSingularRow(jsonIter);
-            return checkpointRow.map(CheckpointMetaData::fromRow);
+            try(CloseableIterator<ColumnarBatch> jsonIter =
+                tableClient.getJsonHandler().readJsonFiles(
+                    singletonCloseableIterator(generateScanFileRow(lastCheckpointFile)),
+                    CheckpointMetaData.READ_SCHEMA,
+                    Optional.empty())) {
+                Optional<Row> checkpointRow = InternalUtils.getSingularRow(jsonIter);
+                return checkpointRow.map(CheckpointMetaData::fromRow);
+            }
         } catch (Exception ex) {
             return Optional.empty();
         }
