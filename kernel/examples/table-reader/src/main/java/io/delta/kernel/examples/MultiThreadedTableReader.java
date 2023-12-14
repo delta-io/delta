@@ -27,6 +27,7 @@ import org.apache.commons.cli.Options;
 
 import io.delta.kernel.*;
 import io.delta.kernel.client.TableClient;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.examples.utils.RowSerDe;
@@ -34,7 +35,9 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 
+import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.util.Utils;
+import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 /**
  * Multi-threaded Delta Lake table reader using the Delta Kernel APIs. It illustrates
@@ -226,11 +229,25 @@ public class MultiThreadedTableReader
                     if (work == ScanFile.POISON_PILL) {
                         return; // exit as there are no more work units
                     }
-                    try (CloseableIterator<FilteredColumnarBatch> dataIter = Scan.readData(
-                        tableClient,
-                        work.getScanRow(tableClient),
-                        Utils.singletonCloseableIterator(work.getScanFileRow(tableClient)),
-                        Optional.empty())) {
+                    Row scanState = work.getScanRow(tableClient);
+                    Row scanFile = work.getScanFileRow(tableClient);
+                    StructType physicalReadSchema =
+                        ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState);
+
+                    try (
+                        CloseableIterator<ColumnarBatch> physicalDataIter =
+                            tableClient.getParquetHandler().readParquetFiles(
+                                singletonCloseableIterator(scanFile),
+                                physicalReadSchema,
+                                Optional.empty()
+                            );
+                        CloseableIterator<FilteredColumnarBatch> dataIter =
+                            Scan.transformPhysicalData(
+                                tableClient,
+                                scanState,
+                                scanFile,
+                                physicalDataIter)
+                    ) {
                         while (dataIter.hasNext()) {
                             if (printDataBatch(dataIter.next())) {
                                 // Have enough records, exit now.

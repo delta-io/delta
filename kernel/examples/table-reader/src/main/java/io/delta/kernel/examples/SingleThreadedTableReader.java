@@ -22,11 +22,15 @@ import java.util.Optional;
 import org.apache.commons.cli.CommandLine;
 
 import io.delta.kernel.*;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+
+import io.delta.kernel.internal.data.ScanStateRow;
+import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 /**
  * Single threaded Delta Lake table reader using the Delta Kernel APIs.
@@ -94,18 +98,35 @@ public class SingleThreadedTableReader
 
         int readRecordCount = 0;
         try {
+            StructType physicalReadSchema =
+                ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState);
             while (scanFileIter.hasNext()) {
-                try (CloseableIterator<FilteredColumnarBatch> data =
-                    Scan.readData(
-                        tableClient,
-                        scanState,
-                        scanFileIter.next().getRows(),
-                        Optional.empty())) {
-                    while (data.hasNext()) {
-                        FilteredColumnarBatch dataReadResult = data.next();
-                        readRecordCount += printData(dataReadResult, maxRowCount - readRecordCount);
-                        if (readRecordCount >= maxRowCount) {
-                            return readRecordCount;
+                FilteredColumnarBatch scanFilesBatch = scanFileIter.next();
+                try (CloseableIterator<Row> scanFileRows = scanFilesBatch.getRows()) {
+                    while (scanFileRows.hasNext()) {
+                        Row scanFileRow = scanFileRows.next();
+                        try (
+                            CloseableIterator<ColumnarBatch> physicalDataIter =
+                                tableClient.getParquetHandler().readParquetFiles(
+                                    singletonCloseableIterator(scanFileRow),
+                                    physicalReadSchema,
+                                    Optional.empty()
+                                );
+                            CloseableIterator<FilteredColumnarBatch> transformedData =
+                                Scan.transformPhysicalData(
+                                    tableClient,
+                                    scanState,
+                                    scanFileRow,
+                                    physicalDataIter)
+                        ) {
+                            while (transformedData.hasNext()) {
+                                FilteredColumnarBatch filteredData = transformedData.next();
+                                readRecordCount +=
+                                    printData(filteredData, maxRowCount - readRecordCount);
+                                if (readRecordCount >= maxRowCount) {
+                                    return readRecordCount;
+                                }
+                            }
                         }
                     }
                 }
