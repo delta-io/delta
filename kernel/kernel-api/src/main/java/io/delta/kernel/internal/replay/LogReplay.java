@@ -22,7 +22,6 @@ import java.util.List;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
@@ -127,7 +126,7 @@ public class LogReplay {
      * {@link #ADD_ONLY_DATA_SCHEMA} representing all the active AddFiles in the table
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches() {
-        final CloseableIterator<Tuple2<FileDataReadResult, Boolean>> addRemoveIter =
+        final CloseableIterator<Tuple2<ColumnarBatch, Boolean>> addRemoveIter =
             new ActionsIterator(
                 tableClient,
                 logSegment.allLogFilesReversed(),
@@ -143,13 +142,13 @@ public class LogReplay {
         Protocol protocol = null;
         Metadata metadata = null;
 
-        try (CloseableIterator<Tuple2<FileDataReadResult, Boolean>> reverseIter =
+        try (CloseableIterator<Tuple2<ColumnarBatch, Boolean>> reverseIter =
                  new ActionsIterator(
                      tableClient,
                      logSegment.allLogFilesReversed(),
                      PROTOCOL_METADATA_READ_SCHEMA)) {
             while (reverseIter.hasNext()) {
-                final ColumnarBatch columnarBatch = reverseIter.next()._1.getData();
+                final ColumnarBatch columnarBatch = reverseIter.next()._1;
 
                 assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
 

@@ -21,12 +21,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.data.FileDataReadResult;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.AlwaysTrue;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
@@ -102,20 +100,15 @@ public class Checkpointer {
             // listFrom to retrieve the real values see delta-io/delta#2140
             FileStatus lastCheckpointFile = FileStatus.of(lastCheckpointFilePath.toString(), 0, 0);
             JsonHandler jsonHandler = tableClient.getJsonHandler();
-            try (CloseableIterator<FileReadContext> fileReadContextIter =
-                     jsonHandler.contextualizeFileReads(
-                         Utils.singletonCloseableIterator(
-                             InternalScanFileUtils.generateScanFileRow(lastCheckpointFile)),
-                         AlwaysTrue.ALWAYS_TRUE
-                     );
-                 CloseableIterator<FileDataReadResult> jsonIter =
-                     tableClient.getJsonHandler().readJsonFiles(
-                         fileReadContextIter,
-                         CheckpointMetaData.READ_SCHEMA)) {
+            CloseableIterator<ColumnarBatch> jsonIter =
+                tableClient.getJsonHandler().readJsonFiles(
+                    Utils.singletonCloseableIterator(
+                        InternalScanFileUtils.generateScanFileRow(lastCheckpointFile)),
+                    CheckpointMetaData.READ_SCHEMA,
+                    Optional.empty());
 
-                Optional<Row> checkpointRow = InternalUtils.getSingularRow(jsonIter);
-                return checkpointRow.map(row -> CheckpointMetaData.fromRow(row));
-            }
+            Optional<Row> checkpointRow = InternalUtils.getSingularRow(jsonIter);
+            return checkpointRow.map(CheckpointMetaData::fromRow);
         } catch (Exception ex) {
             return Optional.empty();
         }

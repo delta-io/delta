@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -32,12 +33,11 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
-import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -53,9 +53,7 @@ import io.delta.kernel.defaults.internal.types.DataTypeParser;
 /**
  * Default implementation of {@link JsonHandler} based on Hadoop APIs.
  */
-public class DefaultJsonHandler
-    extends DefaultFileHandler
-    implements JsonHandler {
+public class DefaultJsonHandler implements JsonHandler {
     private final ObjectMapper objectMapper;
     private final Configuration hadoopConf;
     private final int maxBatchSize;
@@ -88,18 +86,19 @@ public class DefaultJsonHandler
     }
 
     @Override
-    public CloseableIterator<FileDataReadResult> readJsonFiles(
-        CloseableIterator<FileReadContext> fileIter,
-        StructType physicalSchema) throws IOException {
-        return new CloseableIterator<FileDataReadResult>() {
-            private FileReadContext currentFile;
+    public CloseableIterator<ColumnarBatch> readJsonFiles(
+        CloseableIterator<Row> scanFileIter,
+        StructType physicalSchema,
+        Optional<Predicate> predicate) throws IOException {
+        return new CloseableIterator<ColumnarBatch>() {
+            private Row currentFile;
             private BufferedReader currentFileReader;
             private String nextLine;
 
             @Override
             public void close()
                 throws IOException {
-                Utils.closeCloseables(currentFileReader, fileIter);
+                Utils.closeCloseables(currentFileReader, scanFileIter);
             }
 
             @Override
@@ -128,7 +127,7 @@ public class DefaultJsonHandler
             }
 
             @Override
-            public FileDataReadResult next() {
+            public ColumnarBatch next() {
                 if (nextLine == null) {
                     throw new NoSuchElementException();
                 }
@@ -143,19 +142,7 @@ public class DefaultJsonHandler
                 }
                 while (currentBatchSize < maxBatchSize && hasNext());
 
-                ColumnarBatch batch = new DefaultRowBasedColumnarBatch(physicalSchema, rows);
-                Row scanFileRow = currentFile.getScanFileRow();
-                return new FileDataReadResult() {
-                    @Override
-                    public ColumnarBatch getData() {
-                        return batch;
-                    }
-
-                    @Override
-                    public Row getScanFileRow() {
-                        return scanFileRow;
-                    }
-                };
+                return new DefaultRowBasedColumnarBatch(physicalSchema, rows);
             }
 
             private void tryOpenNextFile()
@@ -163,10 +150,9 @@ public class DefaultJsonHandler
                 Utils.closeCloseables(currentFileReader); // close the current opened file
                 currentFileReader = null;
 
-                if (fileIter.hasNext()) {
-                    currentFile = fileIter.next();
-                    FileStatus fileStatus =
-                        InternalScanFileUtils.getAddFileStatus(currentFile.getScanFileRow());
+                if (scanFileIter.hasNext()) {
+                    currentFile = scanFileIter.next();
+                    FileStatus fileStatus = InternalScanFileUtils.getAddFileStatus(currentFile);
                     Path filePath = new Path(fileStatus.getPath());
                     FileSystem fs = filePath.getFileSystem(hadoopConf);
                     FSDataInputStream stream = null;

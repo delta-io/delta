@@ -17,12 +17,13 @@
 package io.delta.kernel.client;
 
 import java.io.IOException;
+import java.util.Optional;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 
@@ -35,8 +36,7 @@ import io.delta.kernel.utils.CloseableIterator;
  * @since 3.0.0
  */
 @Evolving
-public interface JsonHandler
-    extends FileHandler {
+public interface JsonHandler {
     /**
      * Parse the given <i>json</i> strings and return the fields requested by {@code outputSchema}
      * as columns in a {@link ColumnarBatch}.
@@ -66,15 +66,20 @@ public interface JsonHandler
      * Read and parse the JSON format file at given locations and return the data as a
      * {@link ColumnarBatch} with the columns requested by {@code physicalSchema}.
      *
-     * @param fileIter       Iterator of {@link FileReadContext} objects to read data from.
+     * @param scanFileIter   Iterator of scan file {@link Row} objects to read data from.
      * @param physicalSchema Select list of columns to read from the JSON file.
-     * @return an iterator of {@link FileDataReadResult}s containing the data in columnar format
-     * and the corresponding scan file information. It is the responsibility of the caller
-     * to close the iterator. The data returned is in the same as the order of files given
-     * in <i>fileIter</i>.
-     * @throws IOException if an error occurs during the read.
+     * @param predicate      Optional predicate which the Parquet reader can use to prune the rows
+     *                       that don't satisfy the predicate. Result could still contain rows that
+     *                       don't satisfy the predicate. Caller should still need to apply the
+     *                       predicate on the data returned by this method to prune rows that
+     *                       don't satisfy the predicate completely.
+     * @return an iterator of {@link ColumnarBatch}s containing the data in columnar format.
+     * It is the responsibility of the caller to close the iterator. The data returned is in
+     * the same as the order of files given in {@code scanFileIter}
+     * @throws IOException if an I/O error occurs during the read.
      */
-    CloseableIterator<FileDataReadResult> readJsonFiles(
-        CloseableIterator<FileReadContext> fileIter,
-        StructType physicalSchema) throws IOException;
+    CloseableIterator<ColumnarBatch> readJsonFiles(
+        CloseableIterator<Row> scanFileIter,
+        StructType physicalSchema,
+        Optional<Predicate> predicate) throws IOException;
 }

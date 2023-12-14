@@ -24,6 +24,7 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.expressions.PredicateEvaluator;
 import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 
@@ -34,6 +35,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
@@ -93,15 +95,32 @@ public class ScanImpl implements Scan {
 
     @Override
     public Row getScanState(TableClient tableClient) {
+        // Physical equivalent of the logical read schema.
+        StructType physicalReadSchema = ColumnMapping.convertToPhysicalSchema(
+            readSchema,
+            snapshotSchema,
+            ColumnMapping.getColumnMappingMode(metadata.getConfiguration()));
+
+        // Compute the physical data read schema, basically the list of columns to read
+        // from a Parquet data file. It should exclude partition columns and include
+        // row_index metadata columns (in case DVs are present)
+        List<String> partitionColumns = VectorUtils.toJavaList(metadata.getPartitionColumns());
+        StructType physicalDataReadSchema =
+            PartitionUtils.physicalSchemaWithoutPartitionColumns(
+                readSchema, /* logical read schema */
+                physicalReadSchema,
+                new HashSet<>(partitionColumns)
+            )
+            // TODO: do we only want to request row_index_col when there are DVs?
+            // Is there a way to identify this with table property?
+            .add(StructField.METADATA_ROW_INDEX_COLUMN);
+
         return ScanStateRow.of(
             metadata,
             protocol,
             readSchema.toJson(),
-            ColumnMapping.convertToPhysicalSchema(
-                readSchema,
-                snapshotSchema,
-                ColumnMapping.getColumnMappingMode(metadata.getConfiguration())
-            ).toJson(),
+            physicalReadSchema.toJson(),
+            physicalDataReadSchema.toJson(),
             dataPath.toUri().toString());
     }
 

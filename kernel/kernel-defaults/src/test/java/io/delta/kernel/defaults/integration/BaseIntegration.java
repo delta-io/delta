@@ -34,6 +34,9 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 
+import io.delta.kernel.internal.data.ScanStateRow;
+import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
+
 import io.delta.kernel.defaults.client.DefaultTableClient;
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
 
@@ -76,18 +79,32 @@ public abstract class BaseIntegration {
         CloseableIterator<FilteredColumnarBatch> scanFilesBatchIter) throws Exception {
         List<ColumnarBatch> dataBatches = new ArrayList<>();
         try {
+            StructType physicalReadSchema =
+                ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState);
             while (scanFilesBatchIter.hasNext()) {
-                // Read data
-                try (CloseableIterator<FilteredColumnarBatch> data =
-                    Scan.readData(
-                        tableClient,
-                        scanState,
-                        scanFilesBatchIter.next().getRows(),
-                        Optional.empty())) {
-                    while (data.hasNext()) {
-                        FilteredColumnarBatch filteredColumnarBatch = data.next();
-                        assertFalse(filteredColumnarBatch.getSelectionVector().isPresent());
-                        dataBatches.add(filteredColumnarBatch.getData());
+                FilteredColumnarBatch scanFilesBatch = scanFilesBatchIter.next();
+                try (CloseableIterator<Row> scanFileRows = scanFilesBatch.getRows()) {
+                    while (scanFileRows.hasNext()) {
+                        Row scanFileRow = scanFileRows.next();
+                        try (
+                            CloseableIterator<ColumnarBatch> physicalDataIter =
+                                tableClient.getParquetHandler()
+                                    .readParquetFiles(
+                                        singletonCloseableIterator(scanFileRow),
+                                        physicalReadSchema,
+                                        Optional.empty());
+                            CloseableIterator<FilteredColumnarBatch> transformedData =
+                                Scan.transformPhysicalData(
+                                    tableClient,
+                                    scanState,
+                                    scanFileRow,
+                                    physicalDataIter)) {
+                            while (transformedData.hasNext()) {
+                                FilteredColumnarBatch filteredData = transformedData.next();
+                                assertFalse(filteredData.getSelectionVector().isPresent());
+                                dataBatches.add(filteredData.getData());
+                            }
+                        }
                     }
                 }
             }
