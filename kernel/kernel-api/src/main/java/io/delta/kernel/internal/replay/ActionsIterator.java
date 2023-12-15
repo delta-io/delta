@@ -162,9 +162,8 @@ class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean
      */
     private CloseableIterator<Tuple2<ColumnarBatch, Boolean>> getNextActionsIter() {
         final FileStatus nextFile = filesIter.next();
-        final Closeable[] iteratorsToClose = new Closeable[2];
 
-        // TODO: [#1965] It should be possible to contextualize our JSON and parquet files
+        // TODO: [#1965] It should be possible to read our JSON and parquet files
         //       many-at-once instead of one at a time.
 
         try {
@@ -174,42 +173,26 @@ class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean
                 // Convert the `nextFile` FileStatus into an internal ScanFile Row
                 CloseableIterator<Row> scanFileIter =
                     singletonCloseableIterator(generateScanFileRow(nextFile));
-                iteratorsToClose[0] = scanFileIter;
 
                 // Read that file
                 final CloseableIterator<ColumnarBatch> dataIter =
                     tableClient.getJsonHandler().readJsonFiles(
-                        // We are passing ownership of this CloseableIterator to `readJsonFiles`.
-                        // Under normal circumstances, `readJsonFiles` will close it. However, we
-                        // still need to keep a reference to it to close it in case of exceptions.
                         scanFileIter,
                         readSchema,
                         Optional.empty());
 
-                iteratorsToClose[1] = dataIter;
-
                 return combine(dataIter, false /* isFromCheckpoint */);
             } else if (nextFile.getPath().endsWith(".parquet")) {
-                final ParquetHandler parquetHandler = tableClient.getParquetHandler();
-
-                // Convert the `nextFile` FileStatus into an internal ScanFile Row and then
-                // allow the connector to contextualize it (i.e. perform any splitting)
+                // Convert the `nextFile` FileStatus into an internal ScanFile Row
                 final CloseableIterator<Row> scanFileIter =
                     singletonCloseableIterator(generateScanFileRow(nextFile));
-
-                iteratorsToClose[0] = scanFileIter;
 
                 // Read that file
                 final CloseableIterator<ColumnarBatch> dataIter =
                     tableClient.getParquetHandler().readParquetFiles(
-                        // We are passing ownership of this CloseableIterator to `readParquetFiles`.
-                        // Under normal circumstances, `readParquetFiles` will close it. However, we
-                        // still need to keep a reference to it to close it in case of exceptions.
                         scanFileIter,
                         readSchema,
                         Optional.empty());
-
-                iteratorsToClose[1] = dataIter;
 
                 return combine(dataIter, true /* isFromCheckpoint */);
             } else {
@@ -218,8 +201,6 @@ class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean
                 );
             }
         } catch (IOException ex) {
-            // Close the opened iterators to avoid resource leak
-            Utils.closeCloseablesSilently(iteratorsToClose);
             throw new UncheckedIOException(ex);
         }
     }

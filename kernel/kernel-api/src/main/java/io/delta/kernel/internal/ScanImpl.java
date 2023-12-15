@@ -110,10 +110,12 @@ public class ScanImpl implements Scan {
                 readSchema, /* logical read schema */
                 physicalReadSchema,
                 new HashSet<>(partitionColumns)
-            )
-            // TODO: do we only want to request row_index_col when there are DVs?
-            // Is there a way to identify this with table property?
-            .add(StructField.METADATA_ROW_INDEX_COLUMN);
+            );
+
+        if (protocol.getReaderFeatures().contains("deletionVector")) {
+            physicalDataReadSchema = physicalDataReadSchema
+                .add(StructField.METADATA_ROW_INDEX_COLUMN);
+        }
 
         return ScanStateRow.of(
             metadata,
