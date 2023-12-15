@@ -22,14 +22,14 @@ import java.util.Optional;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 
 /**
  * Provides JSON handling functionality to Delta Kernel. Delta Kernel can use this client to
- * parse JSON strings into {@link io.delta.kernel.data.Row} or read content from JSON files.
+ * parse JSON strings into {@link ColumnarBatch} or read content from JSON files.
  * Connectors can leverage this interface to provide their best implementation of the JSON parsing
  * capability to Delta Kernel.
  *
@@ -44,9 +44,8 @@ public interface JsonHandler {
      * @param jsonStringVector String {@link ColumnVector} of valid JSON strings.
      * @param outputSchema     Schema of the data to return from the parsed JSON. If any requested
      *                         fields are missing in the JSON string, a <i>null</i> is returned
-     *                         for that
-     *                         particular field in the returned {@link Row}. The type for each given
-     *                         field is expected to match the type in the JSON.
+     *                         for that particular field in the returned row. The type for each
+     *                         given field is expected to match the type in the JSON.
      * @return a {@link ColumnarBatch} of schema {@code outputSchema} with one row for each entry
      * in {@code jsonStringVector}
      */
@@ -66,7 +65,7 @@ public interface JsonHandler {
      * Read and parse the JSON format file at given locations and return the data as a
      * {@link ColumnarBatch} with the columns requested by {@code physicalSchema}.
      *
-     * @param scanFileIter   Iterator of scan file {@link Row} objects to read data from.
+     * @param fileIter       Iterator of files to read data from.
      * @param physicalSchema Select list of columns to read from the JSON file.
      * @param predicate      Optional predicate which the JSON reader can optionally use to prune
      *                       rows that don't satisfy the predicate. Because pruning is optional and
@@ -78,7 +77,7 @@ public interface JsonHandler {
      * @throws IOException if an I/O error occurs during the read.
      */
     CloseableIterator<ColumnarBatch> readJsonFiles(
-        CloseableIterator<Row> scanFileIter,
+        CloseableIterator<FileStatus> fileIter,
         StructType physicalSchema,
         Optional<Predicate> predicate) throws IOException;
 }

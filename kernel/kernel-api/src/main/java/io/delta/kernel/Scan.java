@@ -161,6 +161,10 @@ public interface Scan {
                 if (dv == null) {
                     selectionVector = Optional.empty();
                 } else {
+                    if (rowIndexOrdinal == -1) {
+                        throw new IllegalStateException("Row index column is not " +
+                            "present in the data read from the Parquet file.");
+                    }
                     if (!dv.equals(currDV)) {
                         Tuple2<DeletionVectorDescriptor, RoaringBitmapArray> dvInfo =
                             DeletionVectorUtils.loadNewDvAndBitmap(tableClient, tablePath, dv);
@@ -171,16 +175,15 @@ public interface Scan {
                     selectionVector =
                         Optional.of(new SelectionColumnVector(currBitmap, rowIndexVector));
                 }
-
-                // Remove the row_index columns
-                ColumnarBatch updatedBatch = nextDataBatch
-                    .withDeletedColumnAt(rowIndexOrdinal);
+                if (rowIndexOrdinal != -1) {
+                    nextDataBatch = nextDataBatch.withDeletedColumnAt(rowIndexOrdinal);
+                }
 
                 // Add partition columns
-                updatedBatch =
+                nextDataBatch =
                     PartitionUtils.withPartitionColumns(
                         tableClient.getExpressionHandler(),
-                        updatedBatch,
+                        nextDataBatch,
                         InternalScanFileUtils.getPartitionValues(scanFile),
                         physicalSchema
                     );
@@ -190,7 +193,7 @@ public interface Scan {
                 switch (columnMappingMode) {
                     case ColumnMapping.COLUMN_MAPPING_MODE_NAME:
                     case ColumnMapping.COLUMN_MAPPING_MODE_ID:
-                        updatedBatch = updatedBatch.withNewSchema(logicalSchema);
+                        nextDataBatch = nextDataBatch.withNewSchema(logicalSchema);
                         break;
                     case ColumnMapping.COLUMN_MAPPING_MODE_NONE:
                         break;
@@ -199,7 +202,7 @@ public interface Scan {
                             "Column mapping mode is not yet supported: " + columnMappingMode);
                 }
 
-                return new FilteredColumnarBatch(updatedBatch, selectionVector);
+                return new FilteredColumnarBatch(nextDataBatch, selectionVector);
             }
         };
     }

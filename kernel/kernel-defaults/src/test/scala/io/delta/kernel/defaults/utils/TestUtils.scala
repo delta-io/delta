@@ -27,10 +27,11 @@ import io.delta.kernel.data.{ColumnVector, MapValue, Row}
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.expressions.Predicate
+import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.scalatest.Assertions
@@ -122,8 +123,9 @@ trait TestUtils extends Assertions {
     val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState)
     fileIter.forEach { fileColumnarBatch =>
       fileColumnarBatch.getRows().forEach { scanFileRow =>
+        val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
         val physicalDataIter = tableClient.getParquetHandler().readParquetFiles(
-          singletonCloseableIterator(scanFileRow),
+          singletonCloseableIterator(fileStatus),
           physicalDataReadSchema,
           Optional.empty())
         val dataBatches = Scan.transformPhysicalData(

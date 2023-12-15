@@ -33,7 +33,9 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 
+import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.data.ScanStateRow;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
@@ -86,11 +88,12 @@ public abstract class BaseIntegration {
                 try (CloseableIterator<Row> scanFileRows = scanFilesBatch.getRows()) {
                     while (scanFileRows.hasNext()) {
                         Row scanFileRow = scanFileRows.next();
+                        FileStatus fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow);
                         try (
                             CloseableIterator<ColumnarBatch> physicalDataIter =
                                 tableClient.getParquetHandler()
                                     .readParquetFiles(
-                                        singletonCloseableIterator(scanFileRow),
+                                        singletonCloseableIterator(fileStatus),
                                         physicalReadSchema,
                                         Optional.empty());
                             CloseableIterator<FilteredColumnarBatch> transformedData =

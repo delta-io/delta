@@ -112,7 +112,7 @@ public class ScanImpl implements Scan {
                 new HashSet<>(partitionColumns)
             );
 
-        if (protocol.getReaderFeatures().contains("deletionVector")) {
+        if (protocol.getReaderFeatures().contains("deletionVectors")) {
             physicalDataReadSchema = physicalDataReadSchema
                 .add(StructField.METADATA_ROW_INDEX_COLUMN);
         }

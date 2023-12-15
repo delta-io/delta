@@ -29,7 +29,6 @@ import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.InternalUtils;
-import static io.delta.kernel.internal.InternalScanFileUtils.generateScanFileRow;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 /**
@@ -101,7 +100,7 @@ public class Checkpointer {
 
             try(CloseableIterator<ColumnarBatch> jsonIter =
                 tableClient.getJsonHandler().readJsonFiles(
-                    singletonCloseableIterator(generateScanFileRow(lastCheckpointFile)),
+                    singletonCloseableIterator(lastCheckpointFile),
                     CheckpointMetaData.READ_SCHEMA,
                     Optional.empty())) {
                 Optional<Row> checkpointRow = InternalUtils.getSingularRow(jsonIter);

@@ -21,11 +21,11 @@ import java.util.Optional;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 
 /**
  * Provides Parquet file related functionalities to Delta Kernel. Connectors can leverage this
@@ -50,7 +50,7 @@ public interface ParquetHandler {
      * matched by name. When trying to find the column in Parquet by name,
      * first case-sensitive match is used. If not found then a case-insensitive match is attempted.
      *
-     * @param scanFileIter   Iterator of scan file {@link Row} objects to read data from.
+     * @param fileIter       Iterator of files to read data from.
      * @param physicalSchema Select list of columns to read from the Parquet file.
      * @param predicate      Optional predicate which the Parquet reader can optionally use to prune
      *                       rows that don't satisfy the predicate. Because pruning is optional and
@@ -62,7 +62,7 @@ public interface ParquetHandler {
      * @throws IOException if an I/O error occurs during the read.
      */
     CloseableIterator<ColumnarBatch> readParquetFiles(
-        CloseableIterator<Row> scanFileIter,
+        CloseableIterator<FileStatus> fileIter,
         StructType physicalSchema,
         Optional<Predicate> predicate) throws IOException;
 }

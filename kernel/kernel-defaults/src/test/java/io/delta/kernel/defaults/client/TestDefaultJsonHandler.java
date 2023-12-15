@@ -32,7 +32,6 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
-import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector;
 
@@ -207,15 +206,9 @@ public class TestDefaultJsonHandler {
         }
     }
 
-    private static CloseableIterator<Row> testFiles()
-        throws Exception {
+    private static CloseableIterator<FileStatus> testFiles()
+            throws Exception {
         String listFrom = DefaultKernelTestUtils.getTestResourceFilePath("json-files/1.json");
-        CloseableIterator<FileStatus> list = FS_CLIENT.listFrom(listFrom);
-        return list.map(fileStatus -> InternalScanFileUtils.generateScanFileRow(fileStatus));
-    }
-
-    private static void compareScanFileRows(Row expected, Row actual) {
-        // basically compare the paths
-        assertEquals(expected.getStruct(0).getString(0), actual.getStruct(0).getString(0));
+        return FS_CLIENT.listFrom(listFrom);
     }
 }

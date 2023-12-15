@@ -22,13 +22,11 @@ import org.apache.hadoop.conf.Configuration;
 
 import io.delta.kernel.client.ParquetHandler;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
-import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.util.Utils;
 
 import io.delta.kernel.defaults.internal.parquet.ParquetBatchReader;
@@ -50,12 +48,12 @@ public class DefaultParquetHandler implements ParquetHandler {
 
     @Override
     public CloseableIterator<ColumnarBatch> readParquetFiles(
-            CloseableIterator<Row> fileIter,
+            CloseableIterator<FileStatus> fileIter,
             StructType physicalSchema,
             Optional<Predicate> predicate) throws IOException {
         return new CloseableIterator<ColumnarBatch>() {
             private final ParquetBatchReader batchReader = new ParquetBatchReader(hadoopConf);
-            private Row currentFile;
+            private FileStatus currentFile;
             private CloseableIterator<ColumnarBatch> currentFileReader;
 
             @Override
@@ -75,8 +73,7 @@ public class DefaultParquetHandler implements ParquetHandler {
                     currentFileReader = null;
                     if (fileIter.hasNext()) {
                         currentFile = fileIter.next();
-                        FileStatus fileStatus = InternalScanFileUtils.getAddFileStatus(currentFile);
-                        currentFileReader = batchReader.read(fileStatus.getPath(), physicalSchema);
+                        currentFileReader = batchReader.read(currentFile.getPath(), physicalSchema);
                         return hasNext(); // recurse since it's possible the loaded file is empty
                     } else {
                         return false;

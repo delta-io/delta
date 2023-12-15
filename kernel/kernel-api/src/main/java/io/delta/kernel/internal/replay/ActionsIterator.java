@@ -16,7 +16,6 @@
 
 package io.delta.kernel.internal.replay;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Iterator;
@@ -24,18 +23,14 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
-import io.delta.kernel.client.JsonHandler;
-import io.delta.kernel.client.ParquetHandler;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.internal.util.Utils;
-import static io.delta.kernel.internal.InternalScanFileUtils.generateScanFileRow;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 /**
@@ -168,29 +163,18 @@ class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean
 
         try {
             if (nextFile.getPath().endsWith(".json")) {
-                final JsonHandler jsonHandler = tableClient.getJsonHandler();
-
-                // Convert the `nextFile` FileStatus into an internal ScanFile Row
-                CloseableIterator<Row> scanFileIter =
-                    singletonCloseableIterator(generateScanFileRow(nextFile));
-
                 // Read that file
                 final CloseableIterator<ColumnarBatch> dataIter =
                     tableClient.getJsonHandler().readJsonFiles(
-                        scanFileIter,
+                        singletonCloseableIterator(nextFile),
                         readSchema,
                         Optional.empty());
 
                 return combine(dataIter, false /* isFromCheckpoint */);
             } else if (nextFile.getPath().endsWith(".parquet")) {
-                // Convert the `nextFile` FileStatus into an internal ScanFile Row
-                final CloseableIterator<Row> scanFileIter =
-                    singletonCloseableIterator(generateScanFileRow(nextFile));
-
-                // Read that file
                 final CloseableIterator<ColumnarBatch> dataIter =
                     tableClient.getParquetHandler().readParquetFiles(
-                        scanFileIter,
+                        singletonCloseableIterator(nextFile),
                         readSchema,
                         Optional.empty());
 

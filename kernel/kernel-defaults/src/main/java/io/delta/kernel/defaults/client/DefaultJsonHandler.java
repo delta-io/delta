@@ -15,34 +15,24 @@
  */
 package io.delta.kernel.defaults.client;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.NoSuchElementException;
-import java.util.Optional;
+import java.util.*;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.*;
 
 import io.delta.kernel.client.JsonHandler;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
-import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
@@ -87,11 +77,11 @@ public class DefaultJsonHandler implements JsonHandler {
 
     @Override
     public CloseableIterator<ColumnarBatch> readJsonFiles(
-        CloseableIterator<Row> scanFileIter,
+        CloseableIterator<FileStatus> scanFileIter,
         StructType physicalSchema,
         Optional<Predicate> predicate) throws IOException {
         return new CloseableIterator<ColumnarBatch>() {
-            private Row currentFile;
+            private FileStatus currentFile;
             private BufferedReader currentFileReader;
             private String nextLine;
 
@@ -152,8 +142,7 @@ public class DefaultJsonHandler implements JsonHandler {
 
                 if (scanFileIter.hasNext()) {
                     currentFile = scanFileIter.next();
-                    FileStatus fileStatus = InternalScanFileUtils.getAddFileStatus(currentFile);
-                    Path filePath = new Path(fileStatus.getPath());
+                    Path filePath = new Path(currentFile.getPath());
                     FileSystem fs = filePath.getFileSystem(hadoopConf);
                     FSDataInputStream stream = null;
                     try {
