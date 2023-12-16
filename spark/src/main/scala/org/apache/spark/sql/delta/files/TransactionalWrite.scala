@@ -415,19 +415,21 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         statsTrackers.append(basicWriteJobStatsTracker)
       }
 
+      // Iceberg spec requires partition columns in data files
+      val writePartitionColumns = IcebergCompatV1.isEnabled(metadata)
       // Retain only a minimal selection of Spark writer options to avoid any potential
       // compatibility issues
-      val options = writeOptions match {
+      val options = (writeOptions match {
         case None => Map.empty[String, String]
         case Some(writeOptions) =>
           writeOptions.options.filterKeys { key =>
             key.equalsIgnoreCase(DeltaOptions.MAX_RECORDS_PER_FILE) ||
               key.equalsIgnoreCase(DeltaOptions.COMPRESSION)
           }.toMap
-      }
+      }) + (DeltaOptions.WRITE_PARTITION_COLUMNS -> writePartitionColumns.toString)
 
       try {
-        FileFormatWriter.write(
+        DeltaFileFormatWriter.write(
           sparkSession = spark,
           plan = physicalPlan,
           fileFormat = deltaLog.fileFormat(protocol, metadata), // TODO support changing formats.
