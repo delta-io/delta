@@ -300,14 +300,32 @@ class IcebergConversionTransaction(
     assert(fileUpdates.forall(_.hasCommitted), "Cannot commit. You have uncommitted changes.")
 
     val nameMapping = NameMappingParser.toJson(MappingUtil.create(icebergSchema))
+
+    // hard code delta version as -1 for CREATE_TABLE and REPLACE_TABLE, which will be later set to
+    // correct version during setSchema
+    val deltaVersion = if (tableOp == CREATE_TABLE || tableOp == REPLACE_TABLE) -1
+      else postCommitSnapshot.version.toString
+
     txn.updateProperties()
-      .set(IcebergConverter.DELTA_VERSION_PROPERTY, postCommitSnapshot.version.toString)
+      .set(IcebergConverter.DELTA_VERSION_PROPERTY, deltaVersion.toString)
       .set(IcebergConverter.DELTA_TIMESTAMP_PROPERTY, postCommitSnapshot.timestamp.toString)
       .set(IcebergConverter.ICEBERG_NAME_MAPPING_PROPERTY, nameMapping)
       .commit()
 
     try {
       txn.commitTransaction()
+      if (tableOp == CREATE_TABLE || tableOp == REPLACE_TABLE) {
+        // Iceberg CREATE_TABLE and REPLACE_TABLE reassigns the field id in schema, which
+        // is overwritten by setting Delta schema with Delta generated field id to ensure
+        // consistency between field id in Iceberg schema after conversion and field id in
+        // parquet files written by Delta.
+        val setSchemaTxn = createIcebergTxn(Some(WRITE_TABLE))
+        setSchemaTxn.setSchema(icebergSchema).commit()
+        setSchemaTxn.updateProperties()
+          .set(IcebergConverter.DELTA_VERSION_PROPERTY, postCommitSnapshot.version.toString)
+          .commit()
+        setSchemaTxn.commitTransaction()
+      }
       recordIcebergCommit()
     } catch {
       case NonFatal(e) =>
@@ -322,7 +340,8 @@ class IcebergConversionTransaction(
   // Protected Methods //
   ///////////////////////
 
-  protected def createIcebergTxn(): IcebergTransaction = {
+  protected def createIcebergTxn(tableOpOpt: Option[IcebergTableOp] = None):
+      IcebergTransaction = {
     val hiveCatalog = IcebergTransactionUtils.createHiveCatalog(conf)
     val icebergTableId = IcebergTransactionUtils
       .convertSparkTableIdentifierToIcebergHive(catalogTable.identifier)
@@ -340,7 +359,7 @@ class IcebergConversionTransaction(
         .withProperties(properties.asJava)
     }
 
-    tableOp match {
+    tableOpOpt.getOrElse(tableOp) match {
       case WRITE_TABLE =>
         if (tableExists) {
           recordFrameProfile("IcebergConversionTransaction", "loadTable") {
