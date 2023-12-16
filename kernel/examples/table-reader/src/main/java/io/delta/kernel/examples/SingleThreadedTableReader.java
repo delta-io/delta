@@ -28,7 +28,9 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 
+import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.data.ScanStateRow;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
@@ -105,10 +107,12 @@ public class SingleThreadedTableReader
                 try (CloseableIterator<Row> scanFileRows = scanFilesBatch.getRows()) {
                     while (scanFileRows.hasNext()) {
                         Row scanFileRow = scanFileRows.next();
+                        FileStatus fileStatus =
+                            InternalScanFileUtils.getAddFileStatus(scanFileRow);
                         try (
                             CloseableIterator<ColumnarBatch> physicalDataIter =
                                 tableClient.getParquetHandler().readParquetFiles(
-                                    singletonCloseableIterator(scanFileRow),
+                                    singletonCloseableIterator(fileStatus),
                                     physicalReadSchema,
                                     Optional.empty()
                                 );

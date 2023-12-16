@@ -34,7 +34,9 @@ import io.delta.kernel.examples.utils.RowSerDe;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 
+import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
@@ -231,13 +233,15 @@ public class MultiThreadedTableReader
                     }
                     Row scanState = work.getScanRow(tableClient);
                     Row scanFile = work.getScanFileRow(tableClient);
+                    FileStatus fileStatus =
+                        InternalScanFileUtils.getAddFileStatus(scanFile);
                     StructType physicalReadSchema =
                         ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState);
 
                     try (
                         CloseableIterator<ColumnarBatch> physicalDataIter =
                             tableClient.getParquetHandler().readParquetFiles(
-                                singletonCloseableIterator(scanFile),
+                                singletonCloseableIterator(fileStatus),
                                 physicalReadSchema,
                                 Optional.empty()
                             );
