@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.uniform
 
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types._
 
 abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
@@ -84,13 +83,13 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
         StructField("col1", IntegerType) ::
           StructField("col2", innerStruct) :: Nil)
 
-      val rdd = spark.sparkContext.parallelize(data)
+      val tableFullName = tableNameForRead(testTableName)
 
-      spark.createDataFrame(rdd, schema).write.format("delta").mode("append")
-        .saveAsTable(TableIdentifier(testTableName))
+      spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+        .write.format("delta").mode("append")
+        .saveAsTable(tableFullName)
 
-      val table = tableNameForRead(testTableName)
-      val result = read(s"SELECT * FROM $table")
+      val result = read(s"SELECT * FROM $tableFullName")
 
       assert(result.head === data.head)
     }
