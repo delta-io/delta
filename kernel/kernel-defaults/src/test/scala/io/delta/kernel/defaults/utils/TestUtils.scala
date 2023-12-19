@@ -23,7 +23,7 @@ import scala.collection.mutable.ArrayBuffer
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.client.TableClient
-import io.delta.kernel.data.{ColumnVector, MapValue, Row}
+import io.delta.kernel.data.{ColumnVector, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.expressions.Predicate
@@ -31,7 +31,7 @@ import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
-import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.scalatest.Assertions
@@ -128,29 +128,35 @@ trait TestUtils extends Assertions {
           singletonCloseableIterator(fileStatus),
           physicalDataReadSchema,
           Optional.empty())
-        val dataBatches = Scan.transformPhysicalData(
-          tableClient,
-          scanState,
-          scanFileRow,
-          physicalDataIter
-        )
-        dataBatches.forEach { batch =>
-          val selectionVector = batch.getSelectionVector()
-          val data = batch.getData()
+        var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
+        try {
+          dataBatches = Scan.transformPhysicalData(
+            tableClient,
+            scanState,
+            scanFileRow,
+            physicalDataIter)
 
-          var i = 0
-          val rowIter = data.getRows()
-          try {
-            while (rowIter.hasNext) {
-              val row = rowIter.next()
-              if (!selectionVector.isPresent || selectionVector.get.getBoolean(i)) { // row is valid
-                result.append(row)
+          dataBatches.forEach { batch =>
+            val selectionVector = batch.getSelectionVector()
+            val data = batch.getData()
+
+            var i = 0
+            val rowIter = data.getRows()
+            try {
+              while (rowIter.hasNext) {
+                val row = rowIter.next()
+                if (!selectionVector.isPresent || selectionVector.get.getBoolean(i)) {
+                  // row is valid
+                  result.append(row)
+                }
+                i += 1
               }
-              i += 1
+            } finally {
+              rowIter.close()
             }
-          } finally {
-            rowIter.close()
           }
+        } finally {
+          dataBatches.close()
         }
       }
     }

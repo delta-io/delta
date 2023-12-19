@@ -89,15 +89,14 @@ public abstract class BaseIntegration {
                     while (scanFileRows.hasNext()) {
                         Row scanFileRow = scanFileRows.next();
                         FileStatus fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow);
-                        try (
-                            CloseableIterator<ColumnarBatch> physicalDataIter =
-                                tableClient.getParquetHandler()
-                                    .readParquetFiles(
-                                        singletonCloseableIterator(fileStatus),
-                                        physicalReadSchema,
-                                        Optional.empty());
-                            CloseableIterator<FilteredColumnarBatch> transformedData =
-                                Scan.transformPhysicalData(
+                        CloseableIterator<ColumnarBatch> physicalDataIter =
+                            tableClient.getParquetHandler()
+                                .readParquetFiles(
+                                    singletonCloseableIterator(fileStatus),
+                                    physicalReadSchema,
+                                    Optional.empty());
+                        try (CloseableIterator<FilteredColumnarBatch> transformedData =
+                                 Scan.transformPhysicalData(
                                     tableClient,
                                     scanState,
                                     scanFileRow,
