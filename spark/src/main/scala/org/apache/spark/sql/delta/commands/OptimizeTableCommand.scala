@@ -391,7 +391,8 @@ class OptimizeExecutor(
       MultiDimClustering.cluster(
         input,
         approxNumFiles,
-        zOrderByColumns)
+        zOrderByColumns,
+        "zorder")
     } else {
       val useRepartition = sparkSession.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_OPTIMIZE_REPARTITION_ENABLED)
