@@ -109,20 +109,18 @@ public class SingleThreadedTableReader
                         Row scanFileRow = scanFileRows.next();
                         FileStatus fileStatus =
                             InternalScanFileUtils.getAddFileStatus(scanFileRow);
+                        CloseableIterator<ColumnarBatch> physicalDataIter =
+                            tableClient.getParquetHandler().readParquetFiles(
+                                singletonCloseableIterator(fileStatus),
+                                physicalReadSchema,
+                                Optional.empty());
                         try (
-                            CloseableIterator<ColumnarBatch> physicalDataIter =
-                                tableClient.getParquetHandler().readParquetFiles(
-                                    singletonCloseableIterator(fileStatus),
-                                    physicalReadSchema,
-                                    Optional.empty()
-                                );
                             CloseableIterator<FilteredColumnarBatch> transformedData =
                                 Scan.transformPhysicalData(
                                     tableClient,
                                     scanState,
                                     scanFileRow,
-                                    physicalDataIter)
-                        ) {
+                                    physicalDataIter)) {
                             while (transformedData.hasNext()) {
                                 FilteredColumnarBatch filteredData = transformedData.next();
                                 readRecordCount +=

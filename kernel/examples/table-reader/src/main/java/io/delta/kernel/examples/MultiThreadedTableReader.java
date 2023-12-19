@@ -238,20 +238,19 @@ public class MultiThreadedTableReader
                     StructType physicalReadSchema =
                         ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState);
 
+                    CloseableIterator<ColumnarBatch> physicalDataIter =
+                        tableClient.getParquetHandler().readParquetFiles(
+                            singletonCloseableIterator(fileStatus),
+                            physicalReadSchema,
+                            Optional.empty());
+
                     try (
-                        CloseableIterator<ColumnarBatch> physicalDataIter =
-                            tableClient.getParquetHandler().readParquetFiles(
-                                singletonCloseableIterator(fileStatus),
-                                physicalReadSchema,
-                                Optional.empty()
-                            );
                         CloseableIterator<FilteredColumnarBatch> dataIter =
                             Scan.transformPhysicalData(
                                 tableClient,
                                 scanState,
                                 scanFile,
-                                physicalDataIter)
-                    ) {
+                                physicalDataIter)) {
                         while (dataIter.hasNext()) {
                             if (printDataBatch(dataIter.next())) {
                                 // Have enough records, exit now.

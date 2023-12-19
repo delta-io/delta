@@ -127,14 +127,27 @@ public interface Scan {
             Row scanState,
             Row scanFile,
             CloseableIterator<ColumnarBatch> physicalDataIter) throws IOException {
-        StructType physicalSchema = ScanStateRow.getPhysicalSchema(tableClient, scanState);
-        StructType logicalSchema = ScanStateRow.getLogicalSchema(tableClient, scanState);
-
-        String tablePath = ScanStateRow.getTableRoot(scanState);
-
         return new CloseableIterator<FilteredColumnarBatch>() {
+            boolean inited = false;
+
+            // initialized as part of init()
+            StructType physicalReadSchema = null;
+            StructType logicalReadSchema = null;
+            String tablePath = null;
+
             RoaringBitmapArray currBitmap = null;
             DeletionVectorDescriptor currDV = null;
+
+            private void initIfRequired() {
+                if (inited) {
+                    return;
+                }
+                physicalReadSchema = ScanStateRow.getPhysicalSchema(tableClient, scanState);
+                logicalReadSchema = ScanStateRow.getLogicalSchema(tableClient, scanState);
+
+                tablePath = ScanStateRow.getTableRoot(scanState);
+                inited = true;
+            }
 
             @Override
             public void close() throws IOException {
@@ -143,11 +156,13 @@ public interface Scan {
 
             @Override
             public boolean hasNext() {
+                initIfRequired();
                 return physicalDataIter.hasNext();
             }
 
             @Override
             public FilteredColumnarBatch next() {
+                initIfRequired();
                 ColumnarBatch nextDataBatch = physicalDataIter.next();
 
                 DeletionVectorDescriptor dv =
@@ -162,7 +177,7 @@ public interface Scan {
                     selectionVector = Optional.empty();
                 } else {
                     if (rowIndexOrdinal == -1) {
-                        throw new IllegalStateException("Row index column is not " +
+                        throw new IllegalArgumentException("Row index column is not " +
                             "present in the data read from the Parquet file.");
                     }
                     if (!dv.equals(currDV)) {
@@ -185,7 +200,7 @@ public interface Scan {
                         tableClient.getExpressionHandler(),
                         nextDataBatch,
                         InternalScanFileUtils.getPartitionValues(scanFile),
-                        physicalSchema
+                        physicalReadSchema
                     );
 
                 // Change back to logical schema
@@ -193,7 +208,7 @@ public interface Scan {
                 switch (columnMappingMode) {
                     case ColumnMapping.COLUMN_MAPPING_MODE_NAME:
                     case ColumnMapping.COLUMN_MAPPING_MODE_ID:
-                        nextDataBatch = nextDataBatch.withNewSchema(logicalSchema);
+                        nextDataBatch = nextDataBatch.withNewSchema(logicalReadSchema);
                         break;
                     case ColumnMapping.COLUMN_MAPPING_MODE_NONE:
                         break;
