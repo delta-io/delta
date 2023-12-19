@@ -143,7 +143,6 @@ trait DeletionVectorStoreSuiteBase
       assert(dvRange1.length === dvBytes1.length)
 
       // DV2 should be written immediately after the DV1
-      // DV Format:<SerializedDV Size> <SerializedDV Bytes> <DV Checksum>
       val totalDV1Size = getTotalSizeOfDVFieldsInFile(dvBytes1.length)
       assert(dvRange2.offset === 1 + totalDV1Size) // 1byte for file format version
       assert(dvRange2.length === dvBytes2.length)
