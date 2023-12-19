@@ -17,10 +17,8 @@
 package org.apache.spark.sql.delta
 
 import java.net.URI
-
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
-
 import org.apache.spark.sql.delta.RowIndexFilterType
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
@@ -28,7 +26,6 @@ import org.apache.spark.sql.delta.deletionvectors.{DropMarkedRowsFilter, KeepAll
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
@@ -38,7 +35,7 @@ import org.apache.spark.sql.execution.vectorized.{OffHeapColumnVector, OnHeapCol
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.{ByteType, LongType, MetadataBuilder, StructField, StructType}
-import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector}
+import org.apache.spark.sql.vectorized.{ColumnVector, ColumnarBatch, ColumnarBatchRow}
 import org.apache.spark.util.SerializableConfiguration
 
 /**
@@ -289,16 +286,30 @@ case class DeltaParquetFileFormat(
             newBatch
           }
 
+        case columnarRow: ColumnarBatchRow =>
+          // When vectorized reader is enabled by returns rows instead of columnar batches
+          // [[ColumnarBatchRow]] doesn't allow editing the contents. So we have to create a new
+          // [[InternalRow]] and set the row index and is deleted columns.
+          // This is not efficient. It should affect only the wide tables.
+          // https://github.com/delta-io/delta/issues/2246
+          val newRow = columnarRow.copy();
+          isRowDeletedColumn.foreach { columnMetadata =>
+            rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
+            newRow.setByte(columnMetadata.index, tempVector.getByte(0))
+          }
+
+          rowIndexColumn.foreach(columnMetadata => newRow.setLong(columnMetadata.index, rowIndex))
+          rowIndex += 1
+          newRow
+
         case rest: InternalRow => // When vectorized Parquet reader is disabled
           // Temporary vector variable used to get DV values from RowIndexFilter
           // Currently the RowIndexFilter only supports writing into a columnar vector
           // and doesn't have methods to get DV value for a specific row index.
           // TODO: This is not efficient, but it is ok given the default reader is vectorized
-          // reader and this will be temporary until Delta upgrades to Spark with Parquet
-          // reader that automatically generates the row index column.
           isRowDeletedColumn.foreach { columnMetadata =>
             rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
-            rest.setLong(columnMetadata.index, tempVector.getByte(0))
+            rest.setByte(columnMetadata.index, tempVector.getByte(0))
           }
 
           rowIndexColumn.foreach(columnMetadata => rest.setLong(columnMetadata.index, rowIndex))
