@@ -42,6 +42,12 @@ public interface ParquetHandler
      * If {@code physicalSchema} has a {@link StructField} with column name
      * {@link StructField#METADATA_ROW_INDEX_COLUMN_NAME} and the field is a metadata column
      * {@link StructField#isMetadataColumn()} the column must be populated with the file row index.
+     * <p>
+     * How does a column in {@code physicalSchema} match to the column in the Parquet file?
+     * If the {@link StructField} has a field id in the {@code metadata} with key `parquet.field.id`
+     * the column is attempted to match by id. If the column is not found by id, the column is
+     * matched by name. When trying to find the column in Parquet by name,
+     * first case-sensitive match is used. If not found then a case-insensitive match is attempted.
      *
      * @param fileIter       Iterator of {@link FileReadContext} objects to read data from.
      * @param physicalSchema Select list of columns to read from the Parquet file.

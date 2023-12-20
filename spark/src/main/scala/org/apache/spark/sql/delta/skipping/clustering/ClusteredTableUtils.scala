@@ -16,8 +16,8 @@
 
 package org.apache.spark.sql.delta.skipping.clustering
 
-import org.apache.spark.sql.delta.{ClusteringTableFeature, DeltaConfigs}
-import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.ClusteringTableFeature
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -27,6 +27,11 @@ import org.apache.spark.sql.internal.SQLConf
  * Clustered table utility functions.
  */
 trait ClusteredTableUtilsBase extends DeltaLogging {
+  // Clustering columns property key. The column names are logical and separated by comma.
+  // This will be removed when we integrate with OSS Spark and use
+  // [[CatalogTable.PROP_CLUSTERING_COLUMNS]] directly.
+  val PROP_CLUSTERING_COLUMNS: String = "clusteringColumns"
+
  /**
   * Returns whether the protocol version supports the Liquid table feature.
   */
@@ -36,8 +41,11 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
    *
    * Note this function is going to be removed when clustering table is fully developed.
    */
-  def exposeClusteringTableForTesting: Boolean =
-    SQLConf.get.getConf(DeltaSQLConf.EXPOSE_CLUSTERING_TABLE_FOR_TESTING)
+  def clusteringTableFeatureEnabled: Boolean =
+    SQLConf.get.getConf(DeltaSQLConf.DELTA_ENABLE_CLUSTERING_TABLE_FEATURE)
+
+  /** The clustering implementation name for [[AddFile.clusteringProvider]] */
+  def clusteringProvider: String = "liquid"
 }
 
 object ClusteredTableUtils extends ClusteredTableUtilsBase

@@ -97,6 +97,7 @@ statement
     | cloneTableHeader SHALLOW CLONE source=qualifiedName clause=temporalClause?
        (TBLPROPERTIES tableProps=propertyList)?
        (LOCATION location=stringLit)?                                   #clone
+    | .*? clusterBySpec+ .*?                                            #clusterBy
     | .*?                                                               #passThrough
     ;
 
@@ -116,6 +117,10 @@ cloneTableHeader
 zorderSpec
     : ZORDER BY LEFT_PAREN interleave+=qualifiedName (COMMA interleave+=qualifiedName)* RIGHT_PAREN
     | ZORDER BY interleave+=qualifiedName (COMMA interleave+=qualifiedName)*
+    ;
+
+clusterBySpec
+    : CLUSTER BY LEFT_PAREN interleave+=qualifiedName (COMMA interleave+=qualifiedName)* RIGHT_PAREN
     ;
 
 temporalClause
@@ -224,6 +229,7 @@ nonReserved
     | NO | STATISTICS
     | CLONE | SHALLOW
     | FEATURE | TRUNCATE
+    | CLUSTER
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -234,6 +240,7 @@ AS: 'AS';
 BY: 'BY';
 CHECK: 'CHECK';
 CLONE: 'CLONE';
+CLUSTER: 'CLUSTER';
 COMMA: ',';
 COMMENT: 'COMMENT';
 CONSTRAINT: 'CONSTRAINT';

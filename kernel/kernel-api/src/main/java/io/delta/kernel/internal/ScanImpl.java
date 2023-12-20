@@ -31,7 +31,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.InternalSchemaUtils;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
@@ -97,11 +97,10 @@ public class ScanImpl implements Scan {
             metadata,
             protocol,
             readSchema.toJson(),
-            InternalSchemaUtils.convertToPhysicalSchema(
+            ColumnMapping.convertToPhysicalSchema(
                 readSchema,
                 snapshotSchema,
-                metadata.getConfiguration()
-                    .getOrDefault("delta.columnMapping.mode", "none")
+                ColumnMapping.getColumnMappingMode(metadata.getConfiguration())
             ).toJson(),
             dataPath.toUri().toString());
     }

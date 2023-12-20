@@ -1417,21 +1417,12 @@ trait DeltaSQLConfBase {
   // Clustered Table
   //////////////////
 
-  // This is temporary conf to make sure clustering table is not used by anyone other than devs as
-  // the feature is not fully ready.
-  val EXPOSE_CLUSTERING_TABLE_FOR_TESTING =
-    buildConf("clusteringTable.exposeClusteringTableForTesting")
+  val DELTA_ENABLE_CLUSTERING_TABLE_FEATURE =
+    buildConf("clusteringTable.enableClusteringTableFeature")
       .internal()
-      .doc(
-        """
-          |This conf controls whether clustering table is exposed or not. Note that
-          | clustering table is in development and this config should be used only for
-          | testing/benchmarking.
-          |""".stripMargin)
-      .booleanConf
-      .checkValue(v => !v || Utils.isTesting,
-        "Exposing clustering table is only allowed in testing.")
-      .createWithDefault(false)
+      .doc("If true, enable ClusteringTableFeature when the table is a clustered table.")
+    .booleanConf
+    .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

@@ -50,6 +50,7 @@ import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
 import org.apache.spark.sql.catalyst.plans.logical.RestoreTableStatement
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.WriteToStream
+import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttribute
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -436,7 +437,8 @@ class DeltaAnalysis(session: SparkSession)
     case d: DescribeDeltaHistory if d.childrenResolved => d.toCommand
 
     // This rule falls back to V1 nodes, since we don't have a V2 reader for Delta right now
-    case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
+    case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options)
+        if dsv2.getTagValue(DeltaRelation.KEEP_AS_V2_RELATION_TAG).isEmpty =>
       DeltaRelation.fromV2Relation(d, dsv2, options)
 
     case ResolvedTable(_, _, d: DeltaTableV2, _) if d.catalogTable.isEmpty && !d.tableExists =>
@@ -538,6 +540,22 @@ class DeltaAnalysis(session: SparkSession)
       } else {
         merge
       }
+
+    case merge: MergeIntoTable if merge.targetTable.exists(_.isInstanceOf[DataSourceV2Relation]) =>
+      // When we hit here, it means the MERGE source is not resolved and we can't convert the MERGE
+      // command to the Delta variant. We need to add a special marker to the target table, so that
+      // this rule does not convert it to v1 relation too early, as we need to keep it as a v2
+      // relation to bypass the OSS MERGE resolution code in the rule `ResolveReferences`.
+      merge.targetTable.foreach {
+        // TreeNodeTag is not very reliable, but it's OK to use it here, as we will use it very
+        // soon: when this rule transforms down the plan tree and hits the MERGE target table.
+        // There is no chance in this rule that we will drop this tag. At the end, This rule will
+        // turn MergeIntoTable into DeltaMergeInto, and convert all Delta relations inside it to
+        // v1 relations (no need to clean up this tag).
+        case r: DataSourceV2Relation => r.setTagValue(DeltaRelation.KEEP_AS_V2_RELATION_TAG, ())
+        case _ =>
+      }
+      merge
 
     case reorg @ DeltaReorgTable(resolved @ ResolvedTable(_, _, _: DeltaTableV2, _)) =>
       DeltaReorgTableCommand(resolved)(reorg.predicates)
@@ -1125,6 +1143,8 @@ class DeltaAnalysis(session: SparkSession)
 
 /** Matchers for dealing with a Delta table. */
 object DeltaRelation extends DeltaLogging {
+  val KEEP_AS_V2_RELATION_TAG = new TreeNodeTag[Unit]("__keep_as_v2_relation")
+
   def unapply(plan: LogicalPlan): Option[LogicalRelation] = plan match {
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
       Some(fromV2Relation(d, dsv2, options))
