@@ -304,7 +304,7 @@ class IcebergConversionTransaction(
     // hard code delta version as -1 for CREATE_TABLE and REPLACE_TABLE, which will be later set to
     // correct version during setSchema
     val deltaVersion = if (tableOp == CREATE_TABLE || tableOp == REPLACE_TABLE) -1
-      else postCommitSnapshot.version.toString
+      else postCommitSnapshot.version
 
     txn.updateProperties()
       .set(IcebergConverter.DELTA_VERSION_PROPERTY, deltaVersion.toString)
