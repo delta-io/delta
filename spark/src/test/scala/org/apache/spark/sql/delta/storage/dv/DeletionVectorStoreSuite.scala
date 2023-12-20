@@ -21,7 +21,7 @@ import java.io.{DataInputStream, DataOutputStream, File}
 import org.apache.spark.sql.delta.{DeltaChecksumException, DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.{CHECKSUM_LEN, getTotalSizeOfDVFieldsInFile}
+import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.{getTotalSizeOfDVFieldsInFile, CHECKSUM_LEN}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.PathWithFileSystem
 import com.google.common.primitives.Ints
