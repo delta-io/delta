@@ -129,8 +129,8 @@ public class TestDefaultJsonHandler {
             .add("size", LongType.LONG)
             .add("dataChange", BooleanType.BOOLEAN);
 
-        ColumnarBatch batch =
-            JSON_HANDLER.parseJson(singletonStringColumnVector(input), readSchema);
+        ColumnarBatch batch = JSON_HANDLER.parseJson(
+            singletonStringColumnVector(input), readSchema, Optional.empty());
         assertEquals(1, batch.getSize());
 
         try (CloseableIterator<Row> rows = batch.getRows()) {
@@ -185,7 +185,8 @@ public class TestDefaultJsonHandler {
                                 true
                         )
                 );
-        ColumnarBatch batch = JSON_HANDLER.parseJson(singletonStringColumnVector(json), schema);
+        ColumnarBatch batch = JSON_HANDLER.parseJson(
+            singletonStringColumnVector(json), schema, Optional.empty());
 
         try (CloseableIterator<Row> rows = batch.getRows()) {
             Row result = rows.next();

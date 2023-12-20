@@ -15,17 +15,203 @@
  */
 package io.delta.kernel.defaults.client
 
+import java.math.{BigDecimal => JBigDecimal}
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 
-import org.scalatest.funsuite.AnyFunSuite
-import io.delta.kernel.types._
 import org.apache.hadoop.conf.Configuration
+import org.scalatest.funsuite.AnyFunSuite
+
+import io.delta.kernel.types._
+import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
+
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 
 // NOTE: currently tests are split across scala and java; additional tests are in
 // TestDefaultJsonHandler.java
-class DefaultJsonHandlerSuite extends AnyFunSuite {
+class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
 
   val jsonHandler = new DefaultJsonHandler(new Configuration());
+
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+  // Tests for parseJson for statistics eligible types (additional in TestDefaultJsonHandler.java)
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+
+  def testJsonParserWithSchema(
+    jsonString: String,
+    schema: StructType,
+    expectedRow: TestRow): Unit = {
+    val batchRows = jsonHandler.parseJson(
+      singletonStringColumnVector(jsonString),
+      schema,
+      Optional.empty()
+    ).getRows.toSeq
+    checkAnswer(batchRows, Seq(expectedRow))
+  }
+
+  def testJsonParserForSingleType(
+    jsonString: String,
+    dataType: DataType,
+    numColumns: Int,
+    expectedRow: TestRow): Unit = {
+    val schema = new StructType(
+      (1 to numColumns).map(i => new StructField(s"col$i", dataType, true)).asJava)
+    testJsonParserWithSchema(jsonString, schema, expectedRow)
+  }
+
+  test("parse byte type") {
+    testJsonParserForSingleType(
+      jsonString = """{"col1":0,"col2":-127,"col3":127}""",
+      dataType = ByteType.BYTE,
+      3,
+      TestRow(0.toByte, -127.toByte, 127.toByte)
+    )
+  }
+
+  test("parse short type") {
+    testJsonParserForSingleType(
+      jsonString = """{"col1":-32767,"col2":8,"col3":32767}""",
+      dataType = ShortType.SHORT,
+      3,
+      TestRow(-32767.toShort, 8.toShort, 32767.toShort)
+    )
+  }
+
+  test("parse integer type") {
+    testJsonParserForSingleType(
+      jsonString = """{"col1":-2147483648,"col2":8,"col3":2147483647}""",
+      dataType = IntegerType.INTEGER,
+      3,
+      TestRow(-2147483648, 8, 2147483647)
+    )
+  }
+
+  test("parse long type") {
+    testJsonParserForSingleType(
+      jsonString = """{"col1":-9223372036854775808,"col2":8,"col3":9223372036854775807}""",
+      dataType = LongType.LONG,
+      3,
+      TestRow(-9223372036854775808L, 8L, 9223372036854775807L)
+    )
+  }
+
+  test("parse float type") {
+    testJsonParserForSingleType(
+      jsonString =
+      """{"col1":-9223.33,"col2":0.4,"col3":1.2E8,"col4":1.23E-7,"col5":0.004444444}""",
+      dataType = FloatType.FLOAT,
+      5,
+      TestRow(-9223.33F, 0.4F, 120000000.0F, 0.000000123F, 0.004444444F)
+    )
+  }
+
+  test("parse double type") {
+    testJsonParserForSingleType(
+      jsonString =
+        """
+          |{"col1":-9.2233333333E8,"col2":0.4,"col3":1.2E8,
+          |"col4":1.234444444E-7,"col5":0.0444444444}""".stripMargin,
+      dataType = DoubleType.DOUBLE,
+      5,
+      TestRow(-922333333.33D, 0.4D, 120000000.0D, 0.0000001234444444D, 0.0444444444D)
+    )
+  }
+
+  test("parse string type") {
+    testJsonParserForSingleType(
+      jsonString = """{"col1": "foo", "col2": "", "col3": null}""",
+      dataType = StringType.STRING,
+      3,
+      TestRow("foo", "", null)
+    )
+  }
+
+  test("parse decimal type") {
+    testJsonParserWithSchema(
+      jsonString = """
+      |{
+      |  "col1":0,
+      |  "col2":0.01234567891234567891234567891234567890,
+      |  "col3":123456789123456789123456789123456789,
+      |  "col4":1234567891234567891234567891.2345678900,
+      |  "col5":1.23
+      |}
+      |""".stripMargin,
+      schema = new StructType()
+        .add("col1", DecimalType.USER_DEFAULT)
+        .add("col2", new DecimalType(38, 38))
+        .add("col3", new DecimalType(38, 0))
+        .add("col4", new DecimalType(38, 10))
+        .add("col5", new DecimalType(5, 2)),
+      TestRow(
+        new JBigDecimal(0),
+        new JBigDecimal("0.01234567891234567891234567891234567890"),
+        new JBigDecimal("123456789123456789123456789123456789"),
+        new JBigDecimal("1234567891234567891234567891.2345678900"),
+        new JBigDecimal("1.23")
+      )
+    )
+  }
+
+  test("parse date type") {
+    testJsonParserForSingleType(
+      jsonString = """{"col1":"2020-12-31"}""",
+      dataType = DateType.DATE,
+      1,
+      TestRow(18627)
+    )
+  }
+
+  test("parse timestamp type") {
+    testJsonParserForSingleType(
+      jsonString =
+        """
+          |{
+          | "col1":"2050-01-01T00:00:00.000-08:00",
+          | "col2":"1970-01-01T06:30:23.523Z"
+          | }
+          | """.stripMargin,
+      dataType = TimestampType.TIMESTAMP,
+      numColumns = 2,
+      TestRow(2524636800000000L, 23423523000L)
+    )
+  }
+
+  test("parse null input") {
+    val schema = new StructType()
+      .add("nested_struct", new StructType().add("foo", IntegerType.INTEGER))
+
+    val batch = jsonHandler.parseJson(
+      singletonStringColumnVector(null),
+      schema,
+      Optional.empty()
+    )
+    assert(batch.getColumnVector(0).getChild(0).isNullAt(0))
+  }
+
+  test("parse NaN and INF for float and double") {
+    def testSpecifiedString(json: String, output: TestRow): Unit = {
+      testJsonParserWithSchema(
+        jsonString = json,
+        schema = new StructType()
+          .add("col1", FloatType.FLOAT)
+          .add("col2", DoubleType.DOUBLE),
+        output
+      )
+    }
+    testSpecifiedString("""{"col1":"NaN","col2":"NaN"}""", TestRow(Float.NaN, Double.NaN))
+    testSpecifiedString("""{"col1":"+INF","col2":"+INF"}""",
+      TestRow(Float.PositiveInfinity, Double.PositiveInfinity))
+    testSpecifiedString("""{"col1":"+Infinity","col2":"+Infinity"}""",
+      TestRow(Float.PositiveInfinity, Double.PositiveInfinity))
+    testSpecifiedString("""{"col1":"Infinity","col2":"Infinity"}""",
+      TestRow(Float.PositiveInfinity, Double.PositiveInfinity))
+    testSpecifiedString("""{"col1":"-INF","col2":"-INF"}""",
+      TestRow(Float.NegativeInfinity, Double.NegativeInfinity))
+    testSpecifiedString("""{"col1":"-Infinity","col2":"-Infinity"}""",
+      TestRow(Float.NegativeInfinity, Double.NegativeInfinity))
+  }
 
   //////////////////////////////////////////////////////////////////////////////////
   // END-TO-END TESTS FOR deserializeStructType (more tests in DataTypeParserSuite)
