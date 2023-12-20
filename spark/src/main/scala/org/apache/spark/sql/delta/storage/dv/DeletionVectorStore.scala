@@ -91,6 +91,11 @@ trait DeletionVectorStoreUtils {
   /** The size of the stored length of a DV. */
   final val DATA_SIZE_LEN = 4
 
+  // DV Format:<SerializedDV Size> <SerializedDV Bytes> <DV Checksum>
+  def getTotalSizeOfDVFieldsInFile(bitmapDataSize: Int): Int = {
+    DATA_SIZE_LEN + bitmapDataSize + CHECKSUM_LEN
+  }
+
   // scalastyle:off pathfromuri
   /** Convert the given String path to a Hadoop Path, handing special characters properly. */
   def stringToPath(path: String): Path = new Path(new URI(path))
