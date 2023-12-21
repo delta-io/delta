@@ -276,7 +276,6 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       planWithRemovedProjections
     }
 
-
     protected def containsPartitionFiltersOnly(
         filters: Seq[Expression],
         fileIndex: FileIndexType): Boolean = {
