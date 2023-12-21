@@ -17,8 +17,10 @@
 package org.apache.spark.sql.delta
 
 import java.net.URI
+
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.RowIndexFilterType
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
@@ -26,6 +28,7 @@ import org.apache.spark.sql.delta.deletionvectors.{DropMarkedRowsFilter, KeepAll
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
