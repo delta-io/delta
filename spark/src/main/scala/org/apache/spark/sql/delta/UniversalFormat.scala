@@ -141,7 +141,7 @@ object UniversalFormat extends DeltaLogging {
 
           (None, Some(newestMetadata.copy(configuration = newConfiguration)))
         } else {
-          throw DeltaErrors.uniFormIcebergRequiresIcebergCompatV1()
+          throw DeltaErrors.uniFormIcebergRequiresIcebergCompat()
         }
     }
   }
