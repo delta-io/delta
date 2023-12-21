@@ -39,7 +39,7 @@ trait ExpressionSuiteBase extends TestUtils {
   }
 
   protected def comparator(symbol: String, left: Expression, right: Expression): Predicate = {
-    new Predicate(symbol, util.Arrays.asList(left, right))
+    new Predicate(symbol, left, right)
   }
 
   protected def checkBooleanVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
