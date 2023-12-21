@@ -287,11 +287,11 @@ case class DeltaParquetFileFormat(
           }
 
         case columnarRow: ColumnarBatchRow =>
-          // When vectorized reader is enabled by returns rows instead of columnar batches
-          // [[ColumnarBatchRow]] doesn't allow editing the contents. So we have to create a new
-          // [[InternalRow]] and set the row index and is deleted columns.
-          // This is not efficient. It should affect only the wide tables.
-          // https://github.com/delta-io/delta/issues/2246
+          // When vectorized reader is enabled but returns immutable rows instead of
+          // columnar batches [[ColumnarBatchRow]]. So we have to copy the row as a
+          // mutable [[InternalRow]] and set the `row_index` and `is_row_deleted`
+          // column values. This is not efficient. It should affect only the wide
+          // tables. https://github.com/delta-io/delta/issues/2246
           val newRow = columnarRow.copy();
           isRowDeletedColumn.foreach { columnMetadata =>
             rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
