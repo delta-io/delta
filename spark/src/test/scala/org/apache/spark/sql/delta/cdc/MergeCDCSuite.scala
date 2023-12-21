@@ -20,23 +20,30 @@ package org.apache.spark.sql.delta.cdc
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import io.delta.tables.{DeltaTable => IODeltaTable}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
+import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
-class MergeCDCSuite extends MergeCDCTests
+/**
+ * The MergeCDCCoreSuite suite only includes CDC tests defined in this file while MergeCDCSuite
+ * runs exhaustive tests from MergeIntoSQLSuite to verify that CDC writing mode doesn't break
+ * existing functionality.
+ */
+class MergeCDCCoreSuite extends MergeCDCTests
+class MergeCDCSuite extends MergeIntoSQLSuite with MergeCDCTests
 
 /**
- * Tests for MERGE INTO in CDC output mode. In addition to the ones explicitly defined here, we run
- * all the normal merge tests to verify that CDC writing mode doesn't break existing functionality.
+ * Tests for MERGE INTO in CDC output mode.
  *
  */
-trait MergeCDCTests extends MergeIntoSQLSuite with DeltaColumnMappingTestUtils {
+trait MergeCDCTests extends QueryTest
+  with MergeIntoSQLTestUtils
+  with DeltaColumnMappingTestUtils
+  with DeltaSQLCommandTest {
   import testImplicits._
 
   override protected def sparkConf: SparkConf = super.sparkConf
