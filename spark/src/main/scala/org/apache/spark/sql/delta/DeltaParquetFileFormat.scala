@@ -38,7 +38,7 @@ import org.apache.spark.sql.execution.vectorized.{OffHeapColumnVector, OnHeapCol
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.{ByteType, LongType, MetadataBuilder, StructField, StructType}
-import org.apache.spark.sql.vectorized.{ColumnVector, ColumnarBatch, ColumnarBatchRow}
+import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnarBatchRow, ColumnVector}
 import org.apache.spark.util.SerializableConfiguration
 
 /**
