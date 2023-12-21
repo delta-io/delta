@@ -54,8 +54,13 @@ public class InternalScanFileUtils {
         TABLE_ROOT_DATA_TYPE,
         false /* nullable */);
 
+    // TODO what to do about these indices? can we do this differently?
+    //  - get index from actual schema each time?
+    //  - store numerical constants and check that they're kept up to date in tests?
+    //  - can these be somewhat combined with the indices in LogReplay?
+
     public static final StructType SCAN_FILE_SCHEMA = new StructType()
-        .add("add", AddFile.SCHEMA)
+        .add("add", AddFile.SCHEMA_WITHOUT_STATS)
         // NOTE: table root is temporary, until the path in `add.path` is converted to
         // an absolute path. https://github.com/delta-io/delta/issues/2089
         .add(TABLE_ROOT_COL_NAME, TABLE_ROOT_DATA_TYPE);

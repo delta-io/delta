@@ -26,7 +26,7 @@ public class DefaultTableClient
     implements TableClient {
     private final Configuration hadoopConf;
 
-    private DefaultTableClient(Configuration hadoopConf) {
+    public DefaultTableClient(Configuration hadoopConf) {
         this.hadoopConf = hadoopConf;
     }
 

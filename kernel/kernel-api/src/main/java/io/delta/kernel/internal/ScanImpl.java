@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal;
 
+import java.io.IOException;
 import java.util.*;
 import static java.util.stream.Collectors.toMap;
 
@@ -31,6 +32,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
@@ -51,26 +53,25 @@ public class ScanImpl implements Scan {
     private final StructType readSchema;
     private final Protocol protocol;
     private final Metadata metadata;
-    private final CloseableIterator<FilteredColumnarBatch> filesIter;
+    private final LogReplay logReplay;
     private final Path dataPath;
     private final Optional<Tuple2<Predicate, Predicate>> partitionAndDataFilters;
     // Partition column names in lower case.
     private final Set<String> partitionColumnNames;
-    private boolean accessedScanFiles;
 
     public ScanImpl(
             StructType snapshotSchema,
             StructType readSchema,
             Protocol protocol,
             Metadata metadata,
-            CloseableIterator<FilteredColumnarBatch> filesIter,
+            LogReplay logReplay,
             Optional<Predicate> filter,
             Path dataPath) {
         this.snapshotSchema = snapshotSchema;
         this.readSchema = readSchema;
         this.protocol = protocol;
         this.metadata = metadata;
-        this.filesIter = filesIter;
+        this.logReplay = logReplay;
         this.partitionColumnNames = loadPartitionColNames(); // must be called before `splitFilters`
         this.partitionAndDataFilters = splitFilters(filter);
         this.dataPath = dataPath;
@@ -83,12 +84,13 @@ public class ScanImpl implements Scan {
      */
     @Override
     public CloseableIterator<FilteredColumnarBatch> getScanFiles(TableClient tableClient) {
-        if (accessedScanFiles) {
-            throw new IllegalStateException("Scan files are already fetched from this instance");
-        }
-        accessedScanFiles = true;
+        // Get active AddFiles via log replay
+        final boolean shouldReadStats = getDataFilters().isPresent();
+        CloseableIterator<FilteredColumnarBatch> scanFileIter = logReplay
+            .getAddFilesAsColumnarBatches(shouldReadStats);
 
-        return applyPartitionPruning(tableClient, filesIter);
+        // Apply partition pruning
+        return applyPartitionPruning(tableClient, scanFileIter);
     }
 
     @Override
@@ -151,19 +153,36 @@ public class ScanImpl implements Scan {
             partitionPredicate.get(),
             partitionColNameToTypeMap);
 
-        PredicateEvaluator predicateEvaluator =
-            tableClient.getExpressionHandler().getPredicateEvaluator(
-                InternalScanFileUtils.SCAN_FILE_SCHEMA,
-                predicateOnScanFileBatch);
+        return new CloseableIterator<FilteredColumnarBatch>() {
+            PredicateEvaluator predicateEvaluator = null;
 
-        return filesIter.map(filteredScanFileBatch -> {
-            ColumnVector newSelectionVector = predicateEvaluator.eval(
-                filteredScanFileBatch.getData(),
-                filteredScanFileBatch.getSelectionVector());
-            return new FilteredColumnarBatch(
-                filteredScanFileBatch.getData(),
-                Optional.of(newSelectionVector));
-        });
+            @Override
+            public boolean hasNext() {
+                return scanFileIter.hasNext();
+            }
+
+            @Override
+            public FilteredColumnarBatch next() {
+                FilteredColumnarBatch next = scanFileIter.next();
+                if (predicateEvaluator == null) {
+                    predicateEvaluator =
+                        tableClient.getExpressionHandler().getPredicateEvaluator(
+                            next.getData().getSchema(),
+                            predicateOnScanFileBatch);
+                }
+                ColumnVector newSelectionVector = predicateEvaluator.eval(
+                    next.getData(),
+                    next.getSelectionVector());
+                return new FilteredColumnarBatch(
+                    next.getData(),
+                    Optional.of(newSelectionVector));
+            }
+
+            @Override
+            public void close() throws IOException {
+                scanFileIter.close();
+            }
+        };
     }
 
     /**

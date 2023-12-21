@@ -22,15 +22,14 @@ import java.util.Optional;
 import io.delta.kernel.Scan;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampType;
-import io.delta.kernel.utils.CloseableIterator;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.util.VectorUtils;
 
 /**
@@ -43,7 +42,7 @@ public class ScanBuilderImpl
     private final Protocol protocol;
     private final Metadata metadata;
     private final StructType snapshotSchema;
-    private final CloseableIterator<FilteredColumnarBatch> filesIter;
+    private final LogReplay logReplay;
     private final TableClient tableClient;
 
     private StructType readSchema;
@@ -54,13 +53,13 @@ public class ScanBuilderImpl
             Protocol protocol,
             Metadata metadata,
             StructType snapshotSchema,
-            CloseableIterator<FilteredColumnarBatch> filesIter,
+            LogReplay logReplay,
             TableClient tableClient) {
         this.dataPath = dataPath;
         this.protocol = protocol;
         this.metadata = metadata;
         this.snapshotSchema = snapshotSchema;
-        this.filesIter = filesIter;
+        this.logReplay = logReplay;
         this.tableClient = tableClient;
         this.readSchema = snapshotSchema;
         this.predicate = Optional.empty();
@@ -106,7 +105,7 @@ public class ScanBuilderImpl
             readSchema,
             protocol,
             metadata,
-            filesIter,
+            logReplay,
             predicate,
             dataPath);
     }

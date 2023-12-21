@@ -43,10 +43,10 @@ import static io.delta.kernel.internal.replay.LogReplay.REMOVE_FILE_PATH_ORDINAL
 
 /**
  * This class takes an iterator of ({@link FileDataReadResult}, isFromCheckpoint), where the
- * columnar data inside the FileDataReadResult represents {@link LogReplay#ADD_REMOVE_READ_SCHEMA},
- * and produces an iterator of {@link FilteredColumnarBatch} with schema
- * {@link LogReplay#ADD_ONLY_DATA_SCHEMA}, and with a selection vector indicating which AddFiles are
- * still active in the table (have not been tombstoned).
+ * columnar data inside the FileDataReadResult represents has top level columns "add" and "remove",
+ * and produces an iterator of {@link FilteredColumnarBatch} with only the "add" column and
+ * with a selection vector indicating which AddFiles are still active in the table
+ * (have not been tombstoned).
  */
 class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch> {
     private static class UniqueFileActionTuple extends Tuple2<URI, Optional<String>> {
@@ -148,8 +148,6 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
         final FileDataReadResult fileDataReadResult = _next._1;
         final boolean isFromCheckpoint = _next._2;
         final ColumnarBatch addRemoveColumnarBatch = fileDataReadResult.getData();
-
-        assert (addRemoveColumnarBatch.getSchema().equals(LogReplay.ADD_REMOVE_READ_SCHEMA));
 
         // Step 1: Update `tombstonesFromJson` with all the RemoveFiles in this columnar batch, if
         //         and only if this batch is not from a checkpoint.
