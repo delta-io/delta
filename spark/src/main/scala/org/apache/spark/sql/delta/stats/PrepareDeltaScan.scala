@@ -218,22 +218,30 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     preprocessTablesWithDVs(updatedPlan)
   }
 
+  object DeltaTableScan extends DeltaTableScan[TahoeLogFileIndex] {
+    override def getPartitionColumns(fileIndex: TahoeLogFileIndex): Seq[String] =
+      fileIndex.snapshotAtAnalysis.metadata.partitionColumns
+
+    override def getPartitionFilters(fileIndex: TahoeLogFileIndex): Seq[Expression] =
+      fileIndex.partitionFilters
+  }
+
   /**
    * This is an extractor object. See https://docs.scala-lang.org/tour/extractor-objects.html.
    */
-  object DeltaTableScan {
+  abstract class DeltaTableScan[FileIndexType: scala.reflect.ClassTag] {
 
     /**
      * The components of DeltaTableScanType are:
      * - the plan with removed projections. We remove projections as a plan differentiator
      * because it does not affect file listing results.
      * - filter expressions collected by `PhysicalOperation`
-     * - the `TahoeLogFileIndex` of the matched DeltaTable`
+     * - the `FileIndexType` of the matched DeltaTable`
      * - integer value of limit expression, if any
      * - matched `DeltaTable`
      */
-    private type DeltaTableScanType =
-      (LogicalPlan, Seq[Expression], TahoeLogFileIndex, Option[Int], LogicalRelation)
+    protected type DeltaTableScanType =
+      (LogicalPlan, Seq[Expression], FileIndexType, Option[Int], LogicalRelation)
 
     /**
      * This is an extractor method (basically, the opposite of a constructor) which takes in an
@@ -242,40 +250,45 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     def unapply(plan: LogicalPlan): Option[DeltaTableScanType] = {
       val limitPushdownEnabled = spark.conf.get(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED)
 
-      // Remove projections as a plan differentiator because it does not affect file listing
-      // results. Plans with the same filters but different projections therefore will not have
-      // duplicate delta indexes.
-      def canonicalizePlanForDeltaFileListing(plan: LogicalPlan): LogicalPlan = {
-        val planWithRemovedProjections = plan.transformWithPruning(_.containsPattern(PROJECT)) {
-          case p: Project if p.projectList.forall(_.isInstanceOf[AttributeReference]) => p.child
-        }
-        planWithRemovedProjections
-      }
-
       plan match {
         case LocalLimit(IntegerLiteral(limit),
-          PhysicalOperation(_, filters, delta @ DeltaTable(fileIndex: TahoeLogFileIndex)))
+          PhysicalOperation(_, filters, delta @ DeltaTable(fileIndex: FileIndexType)))
             if limitPushdownEnabled && containsPartitionFiltersOnly(filters, fileIndex) =>
           Some((canonicalizePlanForDeltaFileListing(plan), filters, fileIndex, Some(limit), delta))
         case PhysicalOperation(
             _,
             filters,
-            delta @ DeltaTable(fileIndex: TahoeLogFileIndex)) =>
-          val allFilters = fileIndex.partitionFilters ++ filters
+            delta @ DeltaTable(fileIndex: FileIndexType)) =>
+          val allFilters = getPartitionFilters(fileIndex) ++ filters
           Some((canonicalizePlanForDeltaFileListing(plan), allFilters, fileIndex, None, delta))
 
         case _ => None
       }
     }
 
-    private def containsPartitionFiltersOnly(
+    // Remove projections as a plan differentiator because it does not affect file listing
+    // results. Plans with the same filters but different projections therefore will not have
+    // duplicate delta indexes.
+    protected def canonicalizePlanForDeltaFileListing(plan: LogicalPlan): LogicalPlan = {
+      val planWithRemovedProjections = plan.transformWithPruning(_.containsPattern(PROJECT)) {
+        case p: Project if p.projectList.forall(_.isInstanceOf[AttributeReference]) => p.child
+      }
+      planWithRemovedProjections
+    }
+
+
+    protected def containsPartitionFiltersOnly(
         filters: Seq[Expression],
-        fileIndex: TahoeLogFileIndex): Boolean = {
-      val partitionColumns = fileIndex.snapshotAtAnalysis.metadata.partitionColumns
+        fileIndex: FileIndexType): Boolean = {
+      val partitionColumns = getPartitionColumns(fileIndex)
       import DeltaTableUtils._
       filters.forall(expr => !containsSubquery(expr) &&
         isPredicatePartitionColumnsOnly(expr, partitionColumns, spark))
     }
+
+    protected def getPartitionColumns(fileIndex: FileIndexType): Seq[String]
+
+    protected def getPartitionFilters(fileIndex: FileIndexType): Seq[Expression]
   }
 }
 
