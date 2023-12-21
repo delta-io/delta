@@ -162,7 +162,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
     } {
       test(s"$name, with vectorized Parquet reader=$enableVectorizedParquetReader, " +
         s"with readColumnarBatchAsRows=$readColumnarBatchAsRows") {
-        // Set the max code gen fields to 0 to force the vectorized Parquet reader generates rows
+        // Set the max code gen fields to 0 to force the vectorized Parquet reader generate rows
         // from columnar batches.
         val codeGenMaxFields = if (readColumnarBatchAsRows) "0" else "100"
         withSQLConf(
