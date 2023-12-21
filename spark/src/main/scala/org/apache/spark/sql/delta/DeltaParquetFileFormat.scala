@@ -209,7 +209,7 @@ case class DeltaParquetFileFormat(
     val factory = super.prepareWrite(sparkSession, job, options, dataSchema)
     val conf = ContextUtil.getConfiguration(job)
     // Always write timestamp as TIMESTAMP_MICROS for Iceberg compat based on Iceberg spec
-    if (IcebergCompatV1.isEnabled(metadata)) {
+    if (IcebergCompatV1.isEnabled(metadata) || IcebergCompatV2.isEnabled(metadata)) {
       conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
         SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
     }
