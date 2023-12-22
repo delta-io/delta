@@ -711,7 +711,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
         val dropFeatureTableChange = dropFeature.head.asInstanceOf[DropFeature]
         val featureName = dropFeatureTableChange.featureName
         val truncateHistory = dropFeatureTableChange.truncateHistory
-        AlterTableDropFeatureDeltaCommand(table, featureName, truncateHistory).run(spark)
+        AlterTableDropFeatureDeltaCommand(
+          table, featureName, truncateHistory = truncateHistory).run(spark)
 
     }
 
