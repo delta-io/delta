@@ -87,7 +87,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
 
       spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
         .write.format("delta").mode("append")
-        .saveAsTable(tableFullName)
+        .saveAsTable(testTableName)
 
       val result = read(s"SELECT * FROM $tableFullName")
 
