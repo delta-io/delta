@@ -2586,7 +2586,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val dropCommand = AlterTableDropFeatureDeltaCommand(
         DeltaTableV2(spark, deltaLog.dataPath),
         feature.name,
-        truncateHistory = truncateHistory)
+        truncateHistory)
 
       if (advanceClockPastRetentionPeriod) {
         // History is now clean. We should be able to remove the feature.
