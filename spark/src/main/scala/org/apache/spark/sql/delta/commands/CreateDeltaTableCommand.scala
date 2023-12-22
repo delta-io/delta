@@ -143,7 +143,7 @@ case class CreateDeltaTableCommand(
       case Some(cmd: CloneTableCommand) =>
         checkPathEmpty(txn)
         cmd.handleClone(sparkSession, txn, targetDeltaLog = deltaLog)
-      case Some(deltaWriter: WriteIntoDelta) =>
+      case Some(deltaWriter: WriteIntoDeltaLike) =>
         checkPathEmpty(txn)
         handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
         Nil
@@ -207,7 +207,7 @@ case class CreateDeltaTableCommand(
       sparkSession: SparkSession,
       txn: OptimisticTransaction,
       deltaLog: DeltaLog,
-      deltaWriter: WriteIntoDelta,
+      deltaWriter: WriteIntoDeltaLike,
       tableWithLocation: CatalogTable): Unit = {
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
@@ -219,7 +219,7 @@ case class CreateDeltaTableCommand(
     //     new created actions,
     //   - returning the Delta Operation type of this DataFrameWriter
     def doDeltaWrite(
-        deltaWriter: WriteIntoDelta,
+        deltaWriter: WriteIntoDeltaLike,
         schema: StructType): (Seq[Action], DeltaOperations.Operation) = {
       // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
       // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
@@ -248,10 +248,9 @@ case class CreateDeltaTableCommand(
       )
       (actions, op)
     }
-
-    val updatedWriter =
-      UniversalFormat.enforceInvariantsAndDependenciesForCTAS(deltaWriter, txn.snapshot)
-
+    val updatedConfiguration = UniversalFormat
+      .enforceInvariantsAndDependenciesForCTAS(deltaWriter.configuration, txn.snapshot)
+    val updatedWriter = deltaWriter.withNewWriterConfiguration(updatedConfiguration)
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
       val (actions, op) = doDeltaWrite(updatedWriter, updatedWriter.data.schema.asNullable)
