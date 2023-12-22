@@ -32,6 +32,12 @@ def main():
 
     with WorkingDirectory(docs_root_dir):
         html_output = os.path.join(docs_root_dir, '_site', 'html')
+        if os.path.exists(html_output):
+           print("Deleting previous output directory %s" % (html_output))
+           shutil.rmtree(html_output)
+
+        os.mkdir(html_output)
+
         html_source = os.path.join(docs_root_dir, 'source')
         print("Building content")
         env = { "TARGET_CLOUD": "delta-oss-only" }
@@ -42,17 +48,21 @@ def main():
         build_docs_args = "%s -b html -d /tmp/build/doctrees %s %s" % (
             sphinx_cmd, html_source, html_output)
         if args.api_docs:
-            copy_api_docs(args.api_docs_location, html_output)
+            generate_and_copy_api_docs(api_docs_root_dir, html_output)
         run_cmd(build_docs_args, env=env, shell=True, stream_output=True)
 
 
-def copy_api_docs(apl_docs_dir, target_loc):
+def generate_and_copy_api_docs(api_docs_root_dir, target_loc):
     print("Building API docs")
-    with WorkingDirectory(apl_docs_dir):
-        run_cmd(["python generate_api_docs.py"], shell=True, stream_output=True)
-        assert os.path.exists(os.path.join(apl_docs_dir, "_site", "api")), \
+
+    with WorkingDirectory(target_loc):
+        script_path = os.path.join(api_docs_root_dir, "generate_api_docs.py")
+        api_docs_dir = os.path.join(api_docs_root_dir,  "_site", "api")
+        run_cmd(["python3", script_path], stream_output=True)
+        assert os.path.exists(api_docs_dir), \
             "Doc generation didn't create the expected api directory"
-        shutil.copytree(os.path.join(apl_docs_dir, "_site", "api"), os.path.join(target_loc, "api"))
+        api_docs_dest_dir = os.path.join(target_loc, "api")
+        shutil.copytree(api_docs_dir, api_docs_dest_dir)
 
 
 class WorkingDirectory(object):
