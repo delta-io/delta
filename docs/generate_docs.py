@@ -36,7 +36,7 @@ def main():
            print("Deleting previous output directory %s" % (html_output))
            shutil.rmtree(html_output)
 
-        os.mkdir(html_output)
+        os.makedirs(html_output, exist_ok=False)
 
         html_source = os.path.join(docs_root_dir, 'source')
         print("Building content")
