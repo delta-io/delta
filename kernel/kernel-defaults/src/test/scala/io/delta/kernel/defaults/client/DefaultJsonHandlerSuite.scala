@@ -62,47 +62,50 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
 
   test("parse byte type") {
     testJsonParserForSingleType(
-      jsonString = """{"col1":0,"col2":-127,"col3":127}""",
+      jsonString = """{"col1":0,"col2":-127,"col3":127, "col4":null}""",
       dataType = ByteType.BYTE,
-      3,
-      TestRow(0.toByte, -127.toByte, 127.toByte)
+      4,
+      TestRow(0.toByte, -127.toByte, 127.toByte, null)
     )
   }
 
   test("parse short type") {
     testJsonParserForSingleType(
-      jsonString = """{"col1":-32767,"col2":8,"col3":32767}""",
+      jsonString = """{"col1":-32767,"col2":8,"col3":32767, "col4":null}""",
       dataType = ShortType.SHORT,
-      3,
-      TestRow(-32767.toShort, 8.toShort, 32767.toShort)
+      4,
+      TestRow(-32767.toShort, 8.toShort, 32767.toShort, null)
     )
   }
 
   test("parse integer type") {
     testJsonParserForSingleType(
-      jsonString = """{"col1":-2147483648,"col2":8,"col3":2147483647}""",
+      jsonString = """{"col1":-2147483648,"col2":8,"col3":2147483647, "col4":null}""",
       dataType = IntegerType.INTEGER,
-      3,
-      TestRow(-2147483648, 8, 2147483647)
+      4,
+      TestRow(-2147483648, 8, 2147483647, null)
     )
   }
 
   test("parse long type") {
     testJsonParserForSingleType(
-      jsonString = """{"col1":-9223372036854775808,"col2":8,"col3":9223372036854775807}""",
+      jsonString =
+      """{"col1":-9223372036854775808,"col2":8,"col3":9223372036854775807, "col4":null}""",
       dataType = LongType.LONG,
-      3,
-      TestRow(-9223372036854775808L, 8L, 9223372036854775807L)
+      4,
+      TestRow(-9223372036854775808L, 8L, 9223372036854775807L, null)
     )
   }
 
   test("parse float type") {
     testJsonParserForSingleType(
       jsonString =
-      """{"col1":-9223.33,"col2":0.4,"col3":1.2E8,"col4":1.23E-7,"col5":0.004444444}""",
+        """
+          |{"col1":-9223.33,"col2":0.4,"col3":1.2E8,
+          |"col4":1.23E-7,"col5":0.004444444, "col6":null}""".stripMargin,
       dataType = FloatType.FLOAT,
-      5,
-      TestRow(-9223.33F, 0.4F, 120000000.0F, 0.000000123F, 0.004444444F)
+      6,
+      TestRow(-9223.33F, 0.4F, 120000000.0F, 0.000000123F, 0.004444444F, null)
     )
   }
 
@@ -111,10 +114,10 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
       jsonString =
         """
           |{"col1":-9.2233333333E8,"col2":0.4,"col3":1.2E8,
-          |"col4":1.234444444E-7,"col5":0.0444444444}""".stripMargin,
+          |"col4":1.234444444E-7,"col5":0.0444444444, "col6":null}""".stripMargin,
       dataType = DoubleType.DOUBLE,
-      5,
-      TestRow(-922333333.33D, 0.4D, 120000000.0D, 0.0000001234444444D, 0.0444444444D)
+      6,
+      TestRow(-922333333.33D, 0.4D, 120000000.0D, 0.0000001234444444D, 0.0444444444D, null)
     )
   }
 
@@ -135,7 +138,8 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
       |  "col2":0.01234567891234567891234567891234567890,
       |  "col3":123456789123456789123456789123456789,
       |  "col4":1234567891234567891234567891.2345678900,
-      |  "col5":1.23
+      |  "col5":1.23,
+      |  "col6":null
       |}
       |""".stripMargin,
       schema = new StructType()
@@ -143,23 +147,25 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
         .add("col2", new DecimalType(38, 38))
         .add("col3", new DecimalType(38, 0))
         .add("col4", new DecimalType(38, 10))
-        .add("col5", new DecimalType(5, 2)),
+        .add("col5", new DecimalType(5, 2))
+        .add("col6", new DecimalType(5, 2)),
       TestRow(
         new JBigDecimal(0),
         new JBigDecimal("0.01234567891234567891234567891234567890"),
         new JBigDecimal("123456789123456789123456789123456789"),
         new JBigDecimal("1234567891234567891234567891.2345678900"),
-        new JBigDecimal("1.23")
+        new JBigDecimal("1.23"),
+        null
       )
     )
   }
 
   test("parse date type") {
     testJsonParserForSingleType(
-      jsonString = """{"col1":"2020-12-31"}""",
+      jsonString = """{"col1":"2020-12-31", "col2":"1965-01-31", "col3": null}""",
       dataType = DateType.DATE,
-      1,
-      TestRow(18627)
+      3,
+      TestRow(18627, -1796, null)
     )
   }
 
@@ -169,12 +175,14 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
         """
           |{
           | "col1":"2050-01-01T00:00:00.000-08:00",
-          | "col2":"1970-01-01T06:30:23.523Z"
+          | "col2":"1970-01-01T06:30:23.523Z",
+          | "col3":"1960-01-01T10:00:00.000Z",
+          | "col4":null
           | }
           | """.stripMargin,
       dataType = TimestampType.TIMESTAMP,
-      numColumns = 2,
-      TestRow(2524636800000000L, 23423523000L)
+      numColumns = 4,
+      TestRow(2524636800000000L, 23423523000L, -315583200000000L, null)
     )
   }
 

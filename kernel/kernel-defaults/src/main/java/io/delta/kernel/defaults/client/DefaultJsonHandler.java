@@ -59,17 +59,16 @@ import io.delta.kernel.defaults.internal.types.DataTypeParser;
 public class DefaultJsonHandler
     extends DefaultFileHandler
     implements JsonHandler {
-    private final ObjectReader defaultObjectReader;
+    private static final ObjectMapper mapper = new ObjectMapper();
+    private static final ObjectReader defaultObjectReader = mapper.reader();
     // by default BigDecimals are truncated and read as floats
-    private final ObjectReader objectReaderReadBigDecimals;
+    private static final ObjectReader objectReaderReadBigDecimals = mapper
+        .reader(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+
     private final Configuration hadoopConf;
     private final int maxBatchSize;
 
     public DefaultJsonHandler(Configuration hadoopConf) {
-        ObjectMapper mapper = new ObjectMapper();
-        this.defaultObjectReader = mapper.reader();
-        this.objectReaderReadBigDecimals = mapper
-            .reader(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
         this.hadoopConf = hadoopConf;
         this.maxBatchSize =
             hadoopConf.getInt("delta.kernel.default.json.reader.batch-size", 1024);
