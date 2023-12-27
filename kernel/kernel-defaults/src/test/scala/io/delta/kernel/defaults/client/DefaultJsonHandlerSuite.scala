@@ -60,6 +60,18 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
     testJsonParserWithSchema(jsonString, schema, expectedRow)
   }
 
+  def testOutOfRangeValue(stringValue: String, dataType: DataType): Unit = {
+    val e = intercept[RuntimeException]{
+      testJsonParserForSingleType(
+        jsonString = s"""{"col1":$stringValue}""",
+        dataType = dataType,
+        numColumns = 1,
+        expectedRow = TestRow()
+      )
+    }
+    assert(e.getMessage.contains(s"Couldn't decode $stringValue"))
+  }
+
   test("parse byte type") {
     testJsonParserForSingleType(
       jsonString = """{"col1":0,"col2":-127,"col3":127, "col4":null}""",
@@ -67,6 +79,8 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
       4,
       TestRow(0.toByte, -127.toByte, 127.toByte, null)
     )
+    testOutOfRangeValue("128", ByteType.BYTE)
+    testOutOfRangeValue("2147483648", ByteType.BYTE)
   }
 
   test("parse short type") {
@@ -76,6 +90,8 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
       4,
       TestRow(-32767.toShort, 8.toShort, 32767.toShort, null)
     )
+    testOutOfRangeValue("32768", ShortType.SHORT)
+    testOutOfRangeValue("2147483648", ShortType.SHORT)
   }
 
   test("parse integer type") {
@@ -85,6 +101,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
       4,
       TestRow(-2147483648, 8, 2147483647, null)
     )
+    testOutOfRangeValue("2147483648", IntegerType.INTEGER)
   }
 
   test("parse long type") {
@@ -95,6 +112,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
       4,
       TestRow(-9223372036854775808L, 8L, 9223372036854775807L, null)
     )
+    testOutOfRangeValue("9223372036854775808", LongType.LONG)
   }
 
   test("parse float type") {

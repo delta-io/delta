@@ -148,7 +148,8 @@ public class DefaultJsonRow implements Row {
         if (dataType instanceof ByteType) {
             throwIfTypeMismatch(
                 "byte",
-                jsonValue.canConvertToExactIntegral() && jsonValue.intValue() <= Byte.MAX_VALUE,
+                jsonValue.canConvertToExactIntegral() &&
+                    jsonValue.canConvertToInt() && jsonValue.intValue() <= Byte.MAX_VALUE,
                 jsonValue
             );
             return jsonValue.numberValue().byteValue();
@@ -157,7 +158,8 @@ public class DefaultJsonRow implements Row {
         if (dataType instanceof ShortType) {
             throwIfTypeMismatch(
                 "short",
-                jsonValue.canConvertToExactIntegral() && jsonValue.intValue() <= Short.MAX_VALUE,
+                jsonValue.canConvertToExactIntegral() &&
+                    jsonValue.canConvertToInt() && jsonValue.intValue() <= Short.MAX_VALUE,
                 jsonValue
             );
             return jsonValue.numberValue().shortValue();
@@ -182,7 +184,11 @@ public class DefaultJsonRow implements Row {
                 case NUMBER:
                     throwIfTypeMismatch(
                         "float",
-                        jsonValue.doubleValue() <= Float.MAX_VALUE,
+                        // For BigDecimal values, floatValue() will be converted to +/-INF if it
+                        // cannot be represented by a float
+                        // TODO we can do this but it's still possible we lose precision;
+                        //   the jackson core parser (that spark uses) doesn't even bother with this
+                        !Double.isInfinite(jsonValue.decimalValue().floatValue()),
                         jsonValue
                     );
                     return jsonValue.floatValue();
@@ -205,7 +211,11 @@ public class DefaultJsonRow implements Row {
                 case NUMBER:
                     throwIfTypeMismatch(
                         "double",
-                        jsonValue.doubleValue() <= Double.MAX_VALUE,
+                        // For BigDecimal values, doubleValue() will be converted to +/-INF if it
+                        // cannot be represented by a double
+                        // TODO we can do this but it's still possible we lose precision;
+                        //   the jackson core parser (that spark uses) doesn't even bother with this
+                        !Double.isInfinite(jsonValue.decimalValue().doubleValue()),
                         jsonValue
                     );
                     return jsonValue.doubleValue();
