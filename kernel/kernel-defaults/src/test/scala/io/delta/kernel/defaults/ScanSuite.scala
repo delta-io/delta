@@ -81,9 +81,7 @@ object ScanSuite {
   private def throwErrorIfAddStatsInSchema(readSchema: StructType): Unit = {
     if (readSchema.indexOf("add") >= 0) {
       val addSchema = readSchema.get("add").getDataType.asInstanceOf[StructType]
-      if (addSchema.indexOf("stats") >= 0) {
-        throw new RuntimeException("reading column add.stats is not allowed")
-      }
+      assert(addSchema.indexOf("stats") < 0, "reading column add.stats is not allowed");
     }
   }
 

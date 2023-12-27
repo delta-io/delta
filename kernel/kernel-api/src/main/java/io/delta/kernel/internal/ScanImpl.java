@@ -58,6 +58,7 @@ public class ScanImpl implements Scan {
     private final Optional<Tuple2<Predicate, Predicate>> partitionAndDataFilters;
     // Partition column names in lower case.
     private final Set<String> partitionColumnNames;
+    private boolean accessedScanFiles;
 
     public ScanImpl(
             StructType snapshotSchema,
@@ -84,6 +85,10 @@ public class ScanImpl implements Scan {
      */
     @Override
     public CloseableIterator<FilteredColumnarBatch> getScanFiles(TableClient tableClient) {
+        if (accessedScanFiles) {
+            throw new IllegalStateException("Scan files are already fetched from this instance");
+        }
+        accessedScanFiles = true;
         // Get active AddFiles via log replay
         final boolean shouldReadStats = getDataFilters().isPresent();
         CloseableIterator<FilteredColumnarBatch> scanFileIter = logReplay
