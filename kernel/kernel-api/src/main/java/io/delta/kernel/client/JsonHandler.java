@@ -63,7 +63,9 @@ public interface JsonHandler
      *                         for that
      *                         particular field in the returned {@link Row}. The type for each given
      *                         field is expected to match the type in the JSON.
-     * @param selectionVector  Optional selection vector indicating which rows to parse the JSON
+     * @param selectionVector  Optional selection vector indicating which rows to parse the JSON.
+     *                         If present, only the selected rows should be parsed. Unselected rows
+     *                         should be all null in the returned batch.
      * @return a {@link ColumnarBatch} of schema {@code outputSchema} with one row for each entry
      * in {@code jsonStringVector}
      */

@@ -149,7 +149,8 @@ public class DefaultJsonRow implements Row {
             throwIfTypeMismatch(
                 "byte",
                 jsonValue.canConvertToExactIntegral() &&
-                    jsonValue.canConvertToInt() && jsonValue.intValue() <= Byte.MAX_VALUE,
+                    jsonValue.canConvertToInt() && jsonValue.intValue() <= Byte.MAX_VALUE &&
+                    jsonValue.canConvertToInt() && jsonValue.intValue() >= Byte.MIN_VALUE,
                 jsonValue
             );
             return jsonValue.numberValue().byteValue();
@@ -159,7 +160,8 @@ public class DefaultJsonRow implements Row {
             throwIfTypeMismatch(
                 "short",
                 jsonValue.canConvertToExactIntegral() &&
-                    jsonValue.canConvertToInt() && jsonValue.intValue() <= Short.MAX_VALUE,
+                    jsonValue.canConvertToInt() && jsonValue.intValue() <= Short.MAX_VALUE &&
+                    jsonValue.canConvertToInt() && jsonValue.intValue() >= Short.MIN_VALUE,
                 jsonValue
             );
             return jsonValue.numberValue().shortValue();

@@ -26,11 +26,11 @@ import org.scalatest.funsuite.AnyFunSuite
 import io.delta.kernel.types._
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils, VectorTestUtils}
 
 // NOTE: currently tests are split across scala and java; additional tests are in
 // TestDefaultJsonHandler.java
-class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
+class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with VectorTestUtils {
 
   val jsonHandler = new DefaultJsonHandler(new Configuration());
 
@@ -80,6 +80,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
       TestRow(0.toByte, -127.toByte, 127.toByte, null)
     )
     testOutOfRangeValue("128", ByteType.BYTE)
+    testOutOfRangeValue("-129", ByteType.BYTE)
     testOutOfRangeValue("2147483648", ByteType.BYTE)
   }
 
@@ -91,6 +92,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
       TestRow(-32767.toShort, 8.toShort, 32767.toShort, null)
     )
     testOutOfRangeValue("32768", ShortType.SHORT)
+    testOutOfRangeValue("-32769", ShortType.SHORT)
     testOutOfRangeValue("2147483648", ShortType.SHORT)
   }
 
@@ -102,6 +104,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
       TestRow(-2147483648, 8, 2147483647, null)
     )
     testOutOfRangeValue("2147483648", IntegerType.INTEGER)
+    testOutOfRangeValue("-2147483649", IntegerType.INTEGER)
   }
 
   test("parse long type") {
@@ -113,6 +116,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
       TestRow(-9223372036854775808L, 8L, 9223372036854775807L, null)
     )
     testOutOfRangeValue("9223372036854775808", LongType.LONG)
+    testOutOfRangeValue("-9223372036854775809", LongType.LONG)
   }
 
   test("parse float type") {
@@ -249,6 +253,20 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
       TestRow(Float.NegativeInfinity, Double.NegativeInfinity))
     testSpecifiedString("""{"col1":"-Infinity","col2":"-Infinity"}""",
       TestRow(Float.NegativeInfinity, Double.NegativeInfinity))
+  }
+
+  test("don't parse unselected rows") {
+    val selectionVector = booleanVector(Seq(true, false, false))
+    val jsonVector = stringVector(
+      Seq("""{"col1":1}""", """{"col1":"foo"}""", """{"col1":"foo"}"""))
+    val batchRows = jsonHandler.parseJson(
+      jsonVector,
+      new StructType()
+        .add("col1", IntegerType.INTEGER),
+      Optional.of(selectionVector)
+    ).getRows.toSeq
+    assert(!batchRows(0).isNullAt(0) && batchRows(0).getInt(0) == 1)
+    assert(batchRows(1).isNullAt(0) && batchRows(2).isNullAt(0))
   }
 
   //////////////////////////////////////////////////////////////////////////////////
