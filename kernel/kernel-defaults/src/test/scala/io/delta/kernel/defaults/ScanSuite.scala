@@ -113,7 +113,6 @@ object ScanSuite {
             super.readJsonFiles(fileIter, physicalSchema)
           }
         }
-
       }
     }
   }

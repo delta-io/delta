@@ -54,11 +54,11 @@ public class InternalScanFileUtils {
         TABLE_ROOT_DATA_TYPE,
         false /* nullable */);
 
-    // TODO what to do about these indices? can we do this differently?
-    //  - get index from actual schema each time?
-    //  - store numerical constants and check that they're kept up to date in tests?
-    //  - can these be somewhat combined with the indices in LogReplay?
-
+    // TODO update this when stats columns are dropped from the returned scan files
+    /**
+     * Scan file rows may have an additional column "add.stats" at the end of the "add" columns
+     * that is not represented in the schema here.
+     */
     public static final StructType SCAN_FILE_SCHEMA = new StructType()
         .add("add", AddFile.SCHEMA_WITHOUT_STATS)
         // NOTE: table root is temporary, until the path in `add.path` is converted to
