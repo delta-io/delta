@@ -184,11 +184,11 @@ public class DefaultJsonRow implements Row {
                 case NUMBER:
                     throwIfTypeMismatch(
                         "float",
-                        // For BigDecimal values, floatValue() will be converted to +/-INF if it
-                        // cannot be represented by a float
-                        // TODO we can do this but it's still possible we lose precision;
-                        //   the jackson core parser (that spark uses) doesn't even bother with this
-                        !Double.isInfinite(jsonValue.decimalValue().floatValue()),
+                        // floatValue() will be converted to +/-INF if it cannot be represented
+                        // by a float
+                        // Note it is still possible to lose precision in this conversion but
+                        // checking for that requires converting to a float and back to BigDecimal
+                        !Float.isInfinite(jsonValue.floatValue()),
                         jsonValue
                     );
                     return jsonValue.floatValue();
@@ -211,11 +211,11 @@ public class DefaultJsonRow implements Row {
                 case NUMBER:
                     throwIfTypeMismatch(
                         "double",
-                        // For BigDecimal values, doubleValue() will be converted to +/-INF if it
-                        // cannot be represented by a double
-                        // TODO we can do this but it's still possible we lose precision;
-                        //   the jackson core parser (that spark uses) doesn't even bother with this
-                        !Double.isInfinite(jsonValue.decimalValue().doubleValue()),
+                        // doubleValue() will be converted to +/-INF if it cannot be represented by
+                        // a double
+                        // Note it is still possible to lose precision in this conversion but
+                        // checking for that requires converting to a double and back to BigDecimal
+                        !Double.isInfinite(jsonValue.doubleValue()),
                         jsonValue
                     );
                     return jsonValue.doubleValue();

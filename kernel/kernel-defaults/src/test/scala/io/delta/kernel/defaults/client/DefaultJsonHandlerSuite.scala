@@ -125,6 +125,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
       6,
       TestRow(-9223.33F, 0.4F, 120000000.0F, 0.000000123F, 0.004444444F, null)
     )
+    testOutOfRangeValue("3.4028235E+39", FloatType.FLOAT)
   }
 
   test("parse double type") {
@@ -137,6 +138,17 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils {
       6,
       TestRow(-922333333.33D, 0.4D, 120000000.0D, 0.0000001234444444D, 0.0444444444D, null)
     )
+    // For some reason out-of-range doubles are parsed initially as Double.INFINITY instead of
+    // a BigDecimal
+    val e = intercept[RuntimeException]{
+      testJsonParserForSingleType(
+        jsonString = s"""{"col1":1.7976931348623157E+309}""",
+        dataType = DoubleType.DOUBLE,
+        numColumns = 1,
+        expectedRow = TestRow()
+      )
+    }
+    assert(e.getMessage.contains(s"Couldn't decode"))
   }
 
   test("parse string type") {
