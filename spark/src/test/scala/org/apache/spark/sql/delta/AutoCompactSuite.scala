@@ -115,7 +115,7 @@ class AutoCompactSuite extends
       }
     }
 
-    test(s"auto-compact-enabled-property: $testName") { runTest(autoCompactConfValue = "true") } 
+    test(s"auto-compact-enabled-property: $testName") { runTest(autoCompactConfValue = "true") }
   }
 
   private def testBothModesViaConf(testName: String)(f: String => Unit): Unit = {
