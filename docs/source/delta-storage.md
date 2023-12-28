@@ -224,6 +224,8 @@ By this point, this multi-cluster setup is fully operational. However, there is 
 
    Once a DynamoDB metadata entry is marked as complete, and after sufficient time such that we can now rely on S3 alone to prevent accidental overwrites on its corresponding Delta file, it is safe to delete that entry from DynamoDB. The cheapest way to do this is using [DynamoDB's TTL](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html) feature which is a free, automated means to delete items from your DynamoDB table.
 
+   If you create the DynamoDB table automatically, the TTL is already enabled on the  table. If you create it manually, you'll need to enable TTL.
+
    Run the following command on your given DynamoDB table to enable TTL:
 
    ```bash
