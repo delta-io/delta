@@ -304,7 +304,7 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     // Test / publishArtifact := true,
 
     libraryDependencies ++= Seq(
-      "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided",
+      "com.amazonaws" % "aws-java-sdk" % "1.11.901" % "provided",
 
       // Test Deps
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException
