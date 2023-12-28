@@ -15,7 +15,11 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
@@ -227,6 +231,38 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             return new ExpressionTransformResult(
                 new Predicate(predicate.getName(), child),
                 BooleanType.BOOLEAN
+            );
+        }
+
+        @Override
+        ExpressionTransformResult visitCoalesce(ScalarExpression coalesce) {
+            List<ExpressionTransformResult> children = coalesce.getChildren().stream()
+                .map(this::visit)
+                .collect(Collectors.toList());
+            if (children.size() == 0) {
+                throw new UnsupportedOperationException(
+                    "Coalesce requires at least one expression");
+            }
+            // TODO support least-common-type resolution
+            long numDistinctTypes = children.stream().map(e -> e.outputType)
+                .distinct()
+                .count();
+            if (numDistinctTypes > 1) {
+                throw new UnsupportedOperationException(
+                    "Coalesce is only supported for arguments of the same type");
+            }
+            // TODO support other data types besides boolean (just needs tests)
+            if (!(children.get(0).outputType instanceof BooleanType)) {
+                throw new UnsupportedOperationException(
+                    "Coalesce is only supported for boolean type expressions");
+            }
+            return new ExpressionTransformResult(
+                new ScalarExpression(
+                    "COALESCE",
+                    children.stream()
+                        .map(e -> e.expression)
+                        .collect(Collectors.toList())),
+                children.get(0).outputType
             );
         }
 
@@ -476,6 +512,21 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 childResult,
                 rowId -> !childResult.isNullAt(rowId),
                 rowId -> false
+            );
+        }
+
+        @Override
+        ColumnVector visitCoalesce(ScalarExpression coalesce) {
+            List<ColumnVector> childResults = coalesce.getChildren()
+                .stream()
+                .map(this::visit)
+                .collect(Collectors.toList());
+            return ExpressionUtils.combinationVector(
+                childResults,
+                rowId -> IntStream.range(0, childResults.size())
+                    .filter(idx -> !childResults.get(idx).isNullAt(rowId))
+                    .findFirst()
+                    .orElse(0) // If all are null then any idx suffices
             );
         }
 
