@@ -471,6 +471,8 @@ object DeltaOperations {
 
   sealed abstract class OptimizeOrReorg(override val name: String, predicates: Seq[Expression])
     extends OperationWithPredicates(name, predicates)
+  /** parameter key to indicate whether it's an Auto Compaction */
+  val AUTO_COMPACTION_PARAMETER_KEY = "auto"
 
   /** operation name for REORG command */
   val REORG_OPERATION_NAME = "REORG"
@@ -482,10 +484,12 @@ object DeltaOperations {
   /** Recorded when optimizing the table. */
   case class Optimize(
       predicate: Seq[Expression],
-      zOrderBy: Seq[String] = Seq.empty
+      zOrderBy: Seq[String] = Seq.empty,
+      auto: Boolean = false
   ) extends OptimizeOrReorg(OPTIMIZE_OPERATION_NAME, predicate) {
     override val parameters: Map[String, Any] = super.parameters ++ Map(
-      ZORDER_PARAMETER_KEY -> JsonUtils.toJson(zOrderBy)
+      ZORDER_PARAMETER_KEY -> JsonUtils.toJson(zOrderBy),
+      AUTO_COMPACTION_PARAMETER_KEY -> auto
     )
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE

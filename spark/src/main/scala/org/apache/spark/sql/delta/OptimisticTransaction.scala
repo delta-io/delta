@@ -350,6 +350,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     checkDeletionVectorFilesHaveWideBounds = false
   }
 
+  /** The set of distinct partitions that contain added files by current transaction. */
+  protected[delta] var partitionsAddedToOpt: Option[mutable.HashSet[Map[String, String]]] = None
+
+  /** True if this transaction is a blind append. This is only valid after commit. */
+  protected[delta] var isBlindAppend: Boolean = false
 
   /**
    * The logSegment of the snapshot prior to the commit.
@@ -860,6 +865,46 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
+  def reportAutoCompactStatsError(e: Throwable): Unit = {
+    recordDeltaEvent(deltaLog, "delta.collectStats", data = Map("message" -> e.getMessage))
+    logError(e.getMessage)
+  }
+
+  def collectAutoOptimizeStats(numAdd: Long, numRemove: Long, actions: Iterator[Action]): Unit = {
+    // Early exit if no files were added or removed.
+    if (numAdd == 0 && numRemove == 0) return
+    val collector = createAutoCompactStatsCollector()
+    if (collector.isInstanceOf[DisabledAutoCompactPartitionStatsCollector]) return
+    AutoCompactPartitionStats.instance(spark)
+      .collectPartitionStats(collector, deltaLog.tableId, actions)
+  }
+
+  /**
+   * A subclass of AutoCompactPartitionStatsCollector that's to be used if the config to collect
+   * auto compaction stats is turned off. This subclass intentionally does nothing.
+   */
+  class DisabledAutoCompactPartitionStatsCollector extends AutoCompactPartitionStatsCollector{
+    override def collectPartitionStatsForAdd(file: AddFile): Unit = {}
+    override def collectPartitionStatsForRemove(file: RemoveFile): Unit = {}
+    override def finalizeStats(tableId: String): Unit = {}
+  }
+
+  def createAutoCompactStatsCollector(): AutoCompactPartitionStatsCollector = {
+    try {
+      if (spark.conf.get(DeltaSQLConf.DELTA_AUTO_COMPACT_RECORD_PARTITION_STATS_ENABLED)) {
+        val minFileSize = spark.conf.get(DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_FILE_SIZE)
+              .getOrElse(Long.MaxValue)
+        return AutoCompactPartitionStats.instance(spark)
+          .createStatsCollector(minFileSize, reportAutoCompactStatsError)
+      }
+    } catch {
+      case NonFatal(e) => reportAutoCompactStatsError(e)
+    }
+
+    // If config-disabled, or error caught, fall though and use a no-op stats collector.
+    new DisabledAutoCompactPartitionStatsCollector
+  }
+
   /**
    * Checks if the new schema contains any CDC columns (which is invalid) and throws the appropriate
    * error
@@ -1022,7 +1067,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val domainMetadata =
         DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(finalActions, protocol)
 
-      val isBlindAppend = {
+      isBlindAppend = {
         val dependsOnFiles = readPredicates.nonEmpty || readFiles.nonEmpty
         val onlyAddFiles =
           preparedActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
@@ -1152,6 +1197,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       var addFilesHistogram: Option[FileSizeHistogram] = None
       var removeFilesHistogram: Option[FileSizeHistogram] = None
       val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
+      // Initialize everything needed to maintain auto-compaction stats.
+      partitionsAddedToOpt = Some(new mutable.HashSet[Map[String, String]])
+      val acStatsCollector = createAutoCompactStatsCollector()
       var allActions = (extraActions.toIterator ++ actions).map { action =>
         commitSize += 1
         action match {
@@ -1159,10 +1207,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             numAddFiles += 1
             if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
             assertDeletionVectorWellFormed(a)
+            partitionsAddedToOpt.get += a.partitionValues
+            acStatsCollector.collectPartitionStatsForAdd(a)
             if (a.dataChange) bytesNew += a.size
             addFilesHistogram.foreach(_.insert(a.size))
           case r: RemoveFile =>
             numRemoveFiles += 1
+            acStatsCollector.collectPartitionStatsForRemove(r)
             removeFilesHistogram.foreach(_.insert(r.getFileSize))
           case _: SetTransaction =>
             numSetTransaction += 1
@@ -1204,6 +1255,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         overwrite = false,
         deltaLog.newDeltaHadoopConf())
 
+      acStatsCollector.finalizeStats(deltaLog.tableId)
       spark.sessionState.conf.setConf(
         DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
         Some(attemptVersion))
@@ -1695,6 +1747,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         numOfDomainMetadatas += 1
       case _ =>
     }
+    collectAutoOptimizeStats(numAdd, numRemove, actions.iterator)
     val info = currentTransactionInfo.commitInfo
       .map(_.copy(readVersion = None, isolationLevel = None)).orNull
     setNeedsCheckpoint(attemptVersion, postCommitSnapshot)
@@ -1730,6 +1783,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       txnId = Some(txnId))
     recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
 
+    partitionsAddedToOpt = Some(distinctPartitions)
     postCommitSnapshot
   }
 

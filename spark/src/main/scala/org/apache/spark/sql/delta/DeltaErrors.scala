@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, Table
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
 import org.apache.spark.sql.delta.constraints.Constraints
+import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
@@ -3083,6 +3084,13 @@ trait DeltaErrorsBase
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.WRONG_REQUIRED_TABLE_PROPERTY",
       messageParameters = Array(version.toString, version.toString, key, requiredValue, actualValue)
+    )
+  }
+
+  def invalidAutoCompactType(value: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_AUTO_COMPACT_TYPE",
+      messageParameters = Array(AutoCompactType.ALLOWED_VALUES.mkString("(", ",", ")"), value)
     )
   }
 }

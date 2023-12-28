@@ -163,8 +163,14 @@ case class OptimizeTableCommand(
     validateZorderByColumns(sparkSession, txn, zOrderBy)
     val zOrderByColumns = zOrderBy.map(_.name).toSeq
 
-    new OptimizeExecutor(sparkSession, txn, partitionPredicates, zOrderByColumns, optimizeContext)
-      .optimize()
+    new OptimizeExecutor(
+      sparkSession,
+      txn,
+      partitionPredicates,
+      zOrderByColumns,
+      isAutoCompact = false,
+      optimizeContext
+    ).optimize()
   }
 }
 
@@ -186,6 +192,7 @@ case class OptimizeTableCommand(
 case class DeltaOptimizeContext(
     isPurge: Boolean = false,
     minFileSize: Option[Long] = None,
+    maxFileSize: Option[Long] = None,
     maxDeletedRowsRatio: Option[Double] = None) {
   if (isPurge) {
     require(
@@ -207,6 +214,7 @@ class OptimizeExecutor(
     txn: OptimisticTransaction,
     partitionPredicate: Seq[Expression],
     zOrderByColumns: Seq[String],
+    isAutoCompact: Boolean,
     optimizeContext: DeltaOptimizeContext)
   extends DeltaCommand with SQLMetricsReporting with Serializable {
 
@@ -219,8 +227,8 @@ class OptimizeExecutor(
     recordDeltaOperation(txn.deltaLog, "delta.optimize") {
       val minFileSize = optimizeContext.minFileSize.getOrElse(
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE))
-      val maxFileSize =
-        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE)
+      val maxFileSize = optimizeContext.maxFileSize.getOrElse(
+        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE))
       val maxDeletedRowsRatio = optimizeContext.maxDeletedRowsRatio.getOrElse(
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO))
 
@@ -458,7 +466,7 @@ class OptimizeExecutor(
     if (optimizeContext.isPurge) {
       DeltaOperations.Reorg(partitionPredicate)
     } else {
-      DeltaOperations.Optimize(partitionPredicate, zOrderByColumns)
+      DeltaOperations.Optimize(partitionPredicate, zOrderByColumns, auto = isAutoCompact)
     }
   }
 
