@@ -84,6 +84,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     public static final String READ_RETRIES = "read.retries";
     public static final String DDB_CLIENT_TABLE = "ddb.tableName";
     public static final String DDB_CLIENT_REGION = "ddb.region";
+    public static final String DDB_CLIENT_ENDPOINT = "ddb.endpoint";
     public static final String DDB_CLIENT_CREDENTIALS_PROVIDER = "credentials.provider";
     public static final String DDB_CREATE_TABLE_RCU = "provisionedThroughput.rcu";
     public static final String DDB_CREATE_TABLE_WCU = "provisionedThroughput.wcu";
@@ -107,6 +108,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     private final String tableName;
     private final String credentialsProviderName;
     private final String regionName;
+    private final String endpoint;
     private final long expirationDelaySeconds;
 
     public S3DynamoDBLogStore(Configuration hadoopConf) throws IOException {
@@ -119,6 +121,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
             "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
         );
         regionName = getParam(hadoopConf, DDB_CLIENT_REGION, "us-east-1");
+        endpoint = getParam(hadoopConf, DDB_CLIENT_ENDPOINT, null);
 
         final String ttl = getParam(hadoopConf, TTL_SECONDS, null);
         expirationDelaySeconds = ttl == null ?
@@ -325,6 +328,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
                     ReflectionUtils.createAwsCredentialsProvider(credentialsProviderName, initHadoopConf());
             final AmazonDynamoDBClient client = new AmazonDynamoDBClient(awsCredentialsProvider);
             client.setRegion(Region.getRegion(Regions.fromName(regionName)));
+            if(endpoint != null){client.setEndpoint(endpoint);}
             return client;
         } catch (ReflectiveOperationException e) {
             throw new java.io.IOException(e);
