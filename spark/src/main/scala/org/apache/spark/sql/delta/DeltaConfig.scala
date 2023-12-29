@@ -395,7 +395,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    * hook to compact the files.
    *  It can be enabled by setting the property to `true`
    * Note that the behavior from table property can be overridden by the config:
-   * [[org.apache.spark.sql.delta.sources.DeltaSQLConfEdge.DELTA_AUTO_COMPACT_ENABLED]]
+   * [[org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED]]
    */
   val AUTO_COMPACT = buildConfig[Option[String]](
     "autoOptimize.autoCompact",

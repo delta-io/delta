@@ -262,7 +262,7 @@ trait DeltaSQLConfBase {
         " is 128 MB.")
       .longConf
       .checkValue(_ >= 0, "maxFileSize has to be positive")
-      .createOptional
+      .createWithDefault(128 * 1024 * 1024)
 
   val DELTA_AUTO_COMPACT_MIN_NUM_FILES =
     buildConf("autoCompact.minNumFiles")

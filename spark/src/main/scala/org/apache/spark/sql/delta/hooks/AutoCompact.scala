@@ -50,7 +50,7 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
    * Prioritization:
    *   1. The highest priority is given to [[DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED]] config.
    *   2. Then we check if the deprecated property `DeltaConfigs.AUTO_OPTIMIZE` is set. If yes, then
-   *      we return [[AutoCompactType.Legacy]] type.
+   *      we return [[AutoCompactType.Enabled]] type.
    *   3. Then we check the table property [[DeltaConfigs.AUTO_COMPACT]].
    *   4. If none of 1/2/3 are set explicitly, then we return None
    */
@@ -185,12 +185,16 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
       opType: String = OP_TYPE,
       maxDeletedRowsRatio: Option[Double] = None)
   : Seq[OptimizeMetrics] = recordDeltaOperation(deltaLog, opType) {
+    val maxFileSize = spark.conf.get(DeltaSQLConf.DELTA_AUTO_COMPACT_MAX_FILE_SIZE)
+    val minFileSizeOpt = Some(spark.conf.get(DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_FILE_SIZE)
+      .getOrElse(maxFileSize / 2))
+    val maxFileSizeOpt = Some(maxFileSize)
     recordDeltaOperation(deltaLog, s"$opType.execute") {
       val txn = deltaLog.startTransaction(catalogTable)
       val optimizeContext = DeltaOptimizeContext(
         isPurge = false,
-        minFileSize = spark.conf.get(DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_FILE_SIZE),
-        maxFileSize = spark.conf.get(DeltaSQLConf.DELTA_AUTO_COMPACT_MAX_FILE_SIZE),
+        minFileSizeOpt,
+        maxFileSizeOpt,
         maxDeletedRowsRatio = maxDeletedRowsRatio
       )
       val rows = new OptimizeExecutor(spark, txn, partitionPredicates, Seq(), true, optimizeContext)
@@ -212,13 +216,6 @@ case object AutoCompact extends AutoCompactBase
  */
 sealed trait AutoCompactType {
   val configValueStrings: Seq[String]
-  /**
-   * This is the default maximum file size for Auto Compaction.
-   * 1. MAX_FILE_SIZE is configurable and defaults to 16 MB unless overridden.
-   * 2. MIN_FILE_SIZE is configurable and defaults to MAX_FILE_SIZE / 2 unless overridden.
-   * Note: User can use DELTA_AUTO_COMPACT_MAX_FILE_SIZE to override this value.
-   */
-  val defaultMaxFileSize: Long = 16 * 1024 * 1024
 }
 
 object AutoCompactType {
@@ -226,7 +223,7 @@ object AutoCompactType {
   private[hooks] val DISABLED = "false"
 
   /**
-   * This represents the legacy auto-compact behaviour:
+   * Enable auto compact
    * 1. MAX_FILE_SIZE is configurable and defaults to 128 MB unless overridden.
    * 2. MIN_FILE_SIZE is configurable and defaults to MAX_FILE_SIZE / 2 unless overridden.
    * Note: User can use DELTA_AUTO_COMPACT_MAX_FILE_SIZE to override this value.
@@ -235,7 +232,6 @@ object AutoCompactType {
     override val configValueStrings = Seq(
       "true"
     )
-    override final val defaultMaxFileSize = 128 * 1024 * 1024
   }
 
 
