@@ -40,7 +40,8 @@ import io.delta.kernel.annotation.Evolving;
  *   </li>
  *  <li>Name: <code>COALESCE</code>
  *   <ul>
- *    <li>Semantic: <code>COALESCE(expr1, ..., exprN)</code> Return the first non-null argument. If all arguments are null returns null</li>
+ *    <li>Semantic: <code>COALESCE(expr1, ..., exprN)</code> Return the first non-null argument.
+ *    If all arguments are null returns null</li>
  *    <li>Since version: 3.1.0</li>
  *   </ul>
  *  </li>

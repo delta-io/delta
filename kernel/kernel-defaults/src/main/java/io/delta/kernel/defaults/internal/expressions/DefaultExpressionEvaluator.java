@@ -522,10 +522,14 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 .collect(Collectors.toList());
             return ExpressionUtils.combinationVector(
                 childResults,
-                rowId -> IntStream.range(0, childResults.size())
-                    .filter(idx -> !childResults.get(idx).isNullAt(rowId))
-                    .findFirst()
-                    .orElse(0) // If all are null then any idx suffices
+                rowId -> {
+                    for (int idx = 0; idx < childResults.size(); idx++) {
+                        if (!childResults.get(idx).isNullAt(rowId)) {
+                            return idx;
+                        }
+                    }
+                    return 0; // If all are null then any idx suffices
+                }
             );
         }
 

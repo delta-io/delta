@@ -26,6 +26,7 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -257,6 +258,11 @@ class ExpressionUtils {
         List<ColumnVector> vectors,
         Function<Integer, Integer> idxToReturn) {
         return new ColumnVector() {
+            // Store the last lookup value to avoid multiple looks up for same rowId.
+            // The general pattern is call `isNullAt(rowId)` followed by `getBoolean(rowId)` or
+            // some other value accessor. So the cache of one value is enough.
+            private int lastLookupRowId = -1;
+            private ColumnVector lastLookupVector = null;
 
             @Override
             public DataType getDataType() {
@@ -270,7 +276,7 @@ class ExpressionUtils {
 
             @Override
             public void close() {
-                vectors.forEach(ColumnVector::close);
+                Utils.closeCloseables(vectors.toArray(new ColumnVector[0]));
             }
 
             @Override
@@ -347,7 +353,12 @@ class ExpressionUtils {
             }
 
             private ColumnVector getVector(int rowId) {
-                return vectors.get(idxToReturn.apply(rowId));
+                if (rowId == lastLookupRowId) {
+                    return lastLookupVector;
+                }
+                lastLookupRowId = rowId;
+                lastLookupVector = vectors.get(idxToReturn.apply(rowId));
+                return lastLookupVector;
             }
         };
     }
