@@ -66,11 +66,11 @@ In this default mode, <Delta> supports concurrent reads from multiple clusters, 
 
 This section explains how to quickly start reading and writing Delta tables on S3 using single-cluster mode. For a detailed explanation of the configuration, see [_](#setup-configuration-s3-multi-cluster).
 
-#. Use the following command to launch a Spark shell with <Delta> and S3 support (assuming you use Spark 3.2.1 which is pre-built for Hadoop 3.3.1):
+#. Use the following command to launch a Spark shell with <Delta> and S3 support (assuming you use Spark 3.2.1 which is pre-built for Hadoop 3.3.4):
 
    ```bash
    bin/spark-shell \
-    --packages io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.1 \
+    --packages io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.4 \
     --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
     --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key>
    ```
@@ -91,7 +91,7 @@ For efficient listing of <Delta> metadata files on S3, set the configuration `de
 
   ```scala
   bin/spark-shell \
-    --packages io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.1 \
+    --packages io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.4 \
     --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
     --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key> \
     --conf "spark.hadoop.delta.enableFastS3AListFrom=true
@@ -121,10 +121,10 @@ Here are the steps to configure <Delta> for S3.
 .. note::
   This support is new and experimental.
 
-This mode supports concurrent writes to S3 from multiple clusters and has to be explicitly enabled by configuring <Delta> to use the right `LogStore` implementation. This implementation uses [DynamoDB](https://aws.amazon.com/dynamodb/) to provide the mutual exclusion that S3 is lacking.
+This mode supports concurrent writes to S3 from multiple clusters and has to be explicitly enabled by configuring <Delta> to use the right `LogStore` implementation. This implementation uses [DynamoDB](https://aws.amazon.com/dynamodb/) or [ScyllaDB Alternator](https://opensource.docs.scylladb.com/stable/using-scylla/alternator/) to provide the mutual exclusion that S3 is lacking.
 
 .. warning::
-  This multi-cluster writing solution is only safe when all writers use this `LogStore` implementation as well as the same DynamoDB table and region. If some drivers use out-of-the-box <Delta> while others use this experimental `LogStore`, then data loss can occur.
+  This multi-cluster writing solution is only safe when all writers use this `LogStore` implementation as well as the same DynamoDB\ScyllaDB table and region\endpoint. If some drivers use out-of-the-box <Delta> while others use this experimental `LogStore`, then data loss can occur.
 
 .. contents:: In this section:
   :local:
@@ -132,25 +132,35 @@ This mode supports concurrent writes to S3 from multiple clusters and has to be 
 
 #### Requirements (S3 multi-cluster)
 - All of the requirements listed in [_](#requirements-s3-single-cluster) section
-- In additon to S3 credentials, you also need DynamoDB operating permissions
+- In additon to S3 credentials, you also need DynamoDB\ScyllaDB operating permissions
 
 #### Quickstart (S3 multi-cluster)
 
 This section explains how to quickly start reading and writing Delta tables on S3 using multi-cluster mode.
 
-#. Use the following command to launch a Spark shell with <Delta> and S3 support (assuming you use Spark 3.2.1 which is pre-built for Hadoop 3.3.1):
+#. Use the following command to launch a Spark shell with <Delta> and S3 support (assuming you use Spark 3.5.0 which is pre-built for Hadoop 3.3.4):
 
+   **For DynamoDB:**
    ```bash
    bin/spark-shell \
-    --packages io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.1,io.delta:delta-storage-s3-dynamodb:3.0.0 \
+    --packages io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.4,io.delta:delta-storage-s3-dynamodb:3.0.0 \
     --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
     --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key> \
     --conf spark.delta.logStore.s3a.impl=io.delta.storage.S3DynamoDBLogStore \
     --conf spark.io.delta.storage.S3DynamoDBLogStore.ddb.region=us-west-2
    ```
 
+   **For ScyllaDB:**
+   ```bash
+     bin/spark-shell \
+      --packages io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.4,io.delta:delta-storage-s3-dynamodb:3.0.0 \
+      --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
+      --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key> \
+      --conf spark.delta.logStore.s3a.impl=io.delta.storage.S3DynamoDBLogStore \
+      --conf spark.io.delta.storage.S3DynamoDBLogStore.ddb.endpoint=<your-scylladb-endpoint>
+  ```
+     
 #. Try out some basic Delta table operations on S3 (in Scala):
-
    ```scala
    // Create a Delta table on S3:
    spark.range(5).write.format("delta").save("s3a://<your-s3-bucket>/<path-to-delta-table>")
@@ -161,14 +171,15 @@ This section explains how to quickly start reading and writing Delta tables on S
 
 #### Setup Configuration (S3 multi-cluster)
 
-#. Create the DynamoDB table.
+#. Create the DynamoDB\ScyllaDB table.
 
-   You have the choice of creating the DynamoDB table yourself (recommended) or having it created for you automatically.
+   You have the choice of creating the DynamoDB\ScyllaDB table yourself (recommended) or having it created for you automatically.
 
-   - Creating the DynamoDB table yourself
+   - Creating the DynamoDB\ScyllaDB table yourself
 
-      This DynamoDB table will maintain commit metadata for multiple Delta tables, and it is important that it is configured with the [Read/Write Capacity Mode](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadWriteCapacityMode.html) (for example, on-demand or provisioned) that is right for your use cases. As such, we strongly recommend that you create your DynamoDB table yourself. The following example uses the AWS CLI. To learn more, see the [create-table](https://docs.aws.amazon.com/cli/latest/reference/dynamodb/create-table.html) command reference.
+      This DynamoDB table will maintain commit metadata for multiple Delta tables, and it is important that it is configured with the [Read/Write Capacity Mode](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadWriteCapacityMode.html) (for example, on-demand or provisioned) that is right for your use cases. As such, we strongly recommend that you create your DynamoDB\ScyllaDB table yourself. The following example uses the AWS CLI. To learn more, see the [create-table](https://docs.aws.amazon.com/cli/latest/reference/dynamodb/create-table.html) command reference.
 
+      **For DynamoDB:**
       ```bash
       aws dynamodb create-table \
         --region us-east-1 \
@@ -179,12 +190,23 @@ This section explains how to quickly start reading and writing Delta tables on S
                      AttributeName=fileName,KeyType=RANGE \
         --billing-mode PAY_PER_REQUEST
       ```
+     Note: once you select a `table-name` and `region`, you will have to specify them in each Spark session in order for this multi-cluster mode to work correctly. See table below. 
 
-      Note: once you select a `table-name` and `region`, you will have to specify them in each Spark session in order for this multi-cluster mode to work correctly. See table below.
+     **For ScyllaDB:**
+     ```bash
+      aws dynamodb create-table \
+        --endpoint-url <your-scylla-db-endpoint> \
+        --table-name delta_log \
+        --attribute-definitions AttributeName=tablePath,AttributeType=S \
+                                AttributeName=fileName,AttributeType=S \
+        --key-schema AttributeName=tablePath,KeyType=HASH \
+                     AttributeName=fileName,KeyType=RANGE 
+      ```
+     Note: once you select a `table-name` and `endpoint`, you will have to specify them in each Spark session in order for this multi-cluster mode to work correctly. See table below.
 
-   - Automatic DynamoDB table creation
+   - Automatic DynamoDB\ScyllaDB table creation
 
-      Nonetheless, after specifying this `LogStore `implementation, if the default DynamoDB table does not already exist, then it will be created for you automatically. This default table supports 5 strongly consistent reads and 5 writes per second. You may change these default values using the table-creation-only configurations keys detailed in the table below.
+      Nonetheless, after specifying this `LogStore `implementation, if the default DynamoDB\ScyllaDB table does not already exist, then it will be created for you automatically. This default table supports 5 strongly consistent reads and 5 writes per second. You may change these default values using the table-creation-only configurations keys detailed in the table below.
 
 #. Follow the configuration steps listed in [_](#configuration-s3-single-cluster) section.
 
@@ -198,19 +220,22 @@ This section explains how to quickly start reading and writing Delta tables on S
    spark.delta.logStore.s3.impl=io.delta.storage.S3DynamoDBLogStore
    ```
 
-   Next, specify additional information necessary to instantiate the DynamoDB client. You must instantiate the DynamoDB client with the same `tableName` and `region` each Spark session for this multi-cluster mode to work correctly. A list of per-session configurations and their defaults is given below:
+   Next, specify additional information necessary to instantiate the DynamoDB/ScyllaDB client. You must instantiate the DynamoDB\ScyllaDB client with the same `tableName` and `region` \ `endpoint` each Spark session for this multi-cluster mode to work correctly. A list of per-session configurations and their defaults is given below:
 
    .. csv-table::
      :header: "Configuration Key", "Description", "Default"
 
      spark.io.delta.storage.S3DynamoDBLogStore.ddb.tableName, The name of the DynamoDB table to use, delta_log
-     spark.io.delta.storage.S3DynamoDBLogStore.ddb.region, The region to be used by the client, us-east-1
+     spark.io.delta.storage.S3DynamoDBLogStore.ddb.region, The region to be used by the client***, us-east-1
+     spark.io.delta.storage.S3DynamoDBLogStore.ddb.endpoint, The endpoint of scyllaDB****, 
      spark.io.delta.storage.S3DynamoDBLogStore.credentials.provider, The AWSCredentialsProvider* used by the client, [DefaultAWSCredentialsProviderChain](https://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/auth/DefaultAWSCredentialsProviderChain.html)
      spark.io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.rcu, (Table-creation-only**) Read Capacity Units, 5
      spark.io.delta.storage.S3DynamoDBLogStore.provisionedThroughput.wcu, (Table-creation-only**) Write Capacity Units, 5
 
    - *For more details on AWS credential providers, see the [AWS documentation](https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/credentials.html).
    - **These configurations are only used when the given DynamoDB table doesn't already exist and needs to be automatically created.
+   - ***This configuration is only relevant for DynamoDB.
+   - ****This configuration is only relevant for ScyllaDB.
 
 #### Production Configuration (S3 multi-cluster)
 
@@ -218,22 +243,30 @@ By this point, this multi-cluster setup is fully operational. However, there is 
 
 #. Adjust your Read and Write Capacity Mode.
 
-   If you are using the default DynamoDB table created for you by this `LogStore` implementation, its default RCU and WCU might not be enough for your workloads. You can [adjust the provisioned throughput](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ProvisionedThroughput.html#ProvisionedThroughput.CapacityUnits.Modifying) or [update to On-Demand Mode](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/WorkingWithTables.Basics.html#WorkingWithTables.Basics.UpdateTable).
+   If you are using the default DynamoDB\ScyllaDB table created for you by this `LogStore` implementation, its default RCU and WCU might not be enough for your workloads. You can [adjust the provisioned throughput](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ProvisionedThroughput.html#ProvisionedThroughput.CapacityUnits.Modifying) or [update to On-Demand Mode](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/WorkingWithTables.Basics.html#WorkingWithTables.Basics.UpdateTable).
 
-#. Cleanup old DynamoDB entries using Time to Live (TTL).
+#. Cleanup old DynamoDB\ScyllaDB entries using Time to Live (TTL).
 
-   Once a DynamoDB metadata entry is marked as complete, and after sufficient time such that we can now rely on S3 alone to prevent accidental overwrites on its corresponding Delta file, it is safe to delete that entry from DynamoDB. The cheapest way to do this is using [DynamoDB's TTL](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html) feature which is a free, automated means to delete items from your DynamoDB table.
+   Once a DynamoDB\ScyllaDB metadata entry is marked as complete, and after sufficient time such that we can now rely on S3 alone to prevent accidental overwrites on its corresponding Delta file, it is safe to delete that entry from DynamoDB\ScyllaDB. The cheapest way to do this is using [DynamoDB's TTL](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html) feature which is a free, automated means to delete items from your DynamoDB\ScyllaDB table.
 
-   Run the following command on your given DynamoDB table to enable TTL:
+   Run the following command on your given DynamoDB\ScyllaDB table to enable TTL:
 
+   **For DynamoDB:**
    ```bash
    aws dynamodb update-time-to-live \
      --region us-east-1 \
      --table-name delta_log \
      --time-to-live-specification "Enabled=true, AttributeName=expireTime"
    ```
+   **For ScyllaDB:**
+   ```bash
+   aws dynamodb update-time-to-live \
+     --endpoint-url <your-scylla-db-endpoint> \
+     --table-name delta_log \
+     --time-to-live-specification "Enabled=true, AttributeName=expireTime"
+   ```
 
-   The default `expireTime` will be one day after the DynamoDB entry was marked as completed.
+   The default `expireTime` will be one day after the DynamoDB\ScyllaDB entry was marked as completed.
 
 #. Cleanup old AWS S3 temp files using S3 Lifecycle Expiration.
 
