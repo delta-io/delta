@@ -2131,17 +2131,21 @@ trait DeltaErrorsBase
   }
 
   def unsupportedReaderTableFeaturesInTableException(
-    unsupported: Iterable[String]): DeltaTableFeatureException = {
-    new DeltaTableFeatureException(
+    tableNameOrPath: String,
+    unsupported: Iterable[String]): DeltaUnsupportedTableFeatureException = {
+    new DeltaUnsupportedTableFeatureException(
       errorClass = "DELTA_UNSUPPORTED_FEATURES_FOR_READ",
-      messageParameters = Array(unsupported.mkString(", ")))
+      tableNameOrPath = tableNameOrPath,
+      unsupported = unsupported)
   }
 
   def unsupportedWriterTableFeaturesInTableException(
-    unsupported: Iterable[String]): DeltaTableFeatureException = {
-    new DeltaTableFeatureException(
+    tableNameOrPath: String,
+    unsupported: Iterable[String]): DeltaUnsupportedTableFeatureException = {
+    new DeltaUnsupportedTableFeatureException(
       errorClass = "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE",
-      messageParameters = Array(unsupported.mkString(", ")))
+      tableNameOrPath = tableNameOrPath,
+      unsupported = unsupported)
   }
 
   def unsupportedTableFeatureConfigsException(
@@ -3320,6 +3324,14 @@ class DeltaTableFeatureException(
     errorClass: String,
     messageParameters: Array[String] = Array.empty)
   extends DeltaRuntimeException(errorClass, messageParameters)
+
+case class DeltaUnsupportedTableFeatureException(
+    errorClass: String,
+    tableNameOrPath: String,
+    unsupported: Iterable[String])
+  extends DeltaTableFeatureException(
+    errorClass,
+    Array(tableNameOrPath, io.delta.VERSION, unsupported.mkString(", ")))
 
 class DeltaRuntimeException(
     errorClass: String,

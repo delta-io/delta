@@ -34,8 +34,8 @@ import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 
 /**
@@ -49,9 +49,9 @@ import io.delta.kernel.internal.util.Tuple2;
  *  - For each `(path, dv id)` tuple, this class should always output only one {@code FileAction}
  *    (either {@code AddFile} or {@code RemoveFile})
  *
- * This class exposes only two public APIs
- * - {@link #loadProtocolAndMetadata()}: replay the log in reverse and return the first non-null
- *                                       Protocol and Metadata
+ * This class exposes the following public APIs
+ * - {@link #getProtocol()}: latest non-null Protocol
+ * - {@link #getMetadata()}: latest non-null Metadata
  * - {@link #getAddFilesAsColumnarBatches}: return all active (not tombstoned) AddFiles as
  *                                          {@link ColumnarBatch}s
  */
@@ -62,40 +62,38 @@ public class LogReplay {
         .add("protocol", Protocol.READ_SCHEMA)
         .add("metaData", Metadata.READ_SCHEMA);
 
+    /** We don't need to read the entire RemoveFile, only the path and dv info */
+    private static StructType REMOVE_FILE_SCHEMA = new StructType()
+        .add("path", StringType.STRING, false /* nullable */)
+        .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */);
+
+    private static StructType getAddSchema(boolean shouldReadStats) {
+        return shouldReadStats ? AddFile.SCHEMA_WITH_STATS :
+            AddFile.SCHEMA_WITHOUT_STATS;
+    }
+
     /**
-     * Read schema when searching for all the active AddFiles (need some RemoveFile info, too).
-     * Note that we don't need to read the entire RemoveFile, only the path and dv info.
+     * Read schema when searching for all the active AddFiles
      */
-    public static final StructType ADD_REMOVE_READ_SCHEMA = new StructType()
-        // TODO: further restrict the fields to read from AddFile depending upon
-        // the whether stats are needed or not: https://github.com/delta-io/delta/issues/1961
-        .add("add", AddFile.SCHEMA)
-        .add("remove", new StructType()
-            .add("path", StringType.STRING, false /* nullable */)
-            .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */)
-        );
+    public static StructType getAddRemoveReadSchema(boolean shouldReadStats) {
+        return new StructType()
+            .add("add", getAddSchema(shouldReadStats))
+            .add("remove", REMOVE_FILE_SCHEMA);
+    }
 
-    public static int ADD_FILE_ORDINAL = ADD_REMOVE_READ_SCHEMA.indexOf("add");
-    public static int ADD_FILE_PATH_ORDINAL =
-        ((StructType) ADD_REMOVE_READ_SCHEMA.get("add").getDataType()).indexOf("path");
-    public static int ADD_FILE_DV_ORDINAL =
-        ((StructType) ADD_REMOVE_READ_SCHEMA.get("add").getDataType()).indexOf("deletionVector");
+    public static int ADD_FILE_ORDINAL = 0;
+    public static int ADD_FILE_PATH_ORDINAL = AddFile.SCHEMA_WITHOUT_STATS.indexOf("path");
+    public static int ADD_FILE_DV_ORDINAL = AddFile.SCHEMA_WITHOUT_STATS.indexOf("deletionVector");
 
-    public static int REMOVE_FILE_ORDINAL = ADD_REMOVE_READ_SCHEMA.indexOf("remove");
-    public static int REMOVE_FILE_PATH_ORDINAL =
-        ((StructType) ADD_REMOVE_READ_SCHEMA.get("remove").getDataType()).indexOf("path");
-    public static int REMOVE_FILE_DV_ORDINAL =
-        ((StructType) ADD_REMOVE_READ_SCHEMA.get("remove").getDataType()).indexOf("deletionVector");
-
-    /** Data (result) schema of the remaining active AddFiles. */
-    public static final StructType ADD_ONLY_DATA_SCHEMA = new StructType()
-        .add("add", AddFile.SCHEMA);
+    public static int REMOVE_FILE_ORDINAL = 1;
+    public static int REMOVE_FILE_PATH_ORDINAL = REMOVE_FILE_SCHEMA.indexOf("path");
+    public static int REMOVE_FILE_DV_ORDINAL = REMOVE_FILE_SCHEMA.indexOf("deletionVector");
 
     private final Path dataPath;
     private final LogSegment logSegment;
     private final TableClient tableClient;
 
-    private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
+    private final Tuple2<Protocol, Metadata> protocolAndMetadata;
 
     public LogReplay(
             Path logPath,
@@ -107,27 +105,43 @@ public class LogReplay {
         this.dataPath = dataPath;
         this.logSegment = logSegment;
         this.tableClient = tableClient;
-        this.protocolAndMetadata = new Lazy<>(this::loadTableProtocolAndMetadata);
+        this.protocolAndMetadata = loadTableProtocolAndMetadata();
     }
 
     /////////////////
     // Public APIs //
     /////////////////
 
-    public Tuple2<Protocol, Metadata> loadProtocolAndMetadata() {
-        return this.protocolAndMetadata.get();
+    public Protocol getProtocol() {
+        return this.protocolAndMetadata._1;
+    }
+
+    public Metadata getMetadata() {
+        return this.protocolAndMetadata._2;
     }
 
     /**
-     * Returns an iterator of {@link FilteredColumnarBatch} with schema
-     * {@link #ADD_ONLY_DATA_SCHEMA} representing all the active AddFiles in the table
+     * Returns an iterator of {@link FilteredColumnarBatch} representing all the active AddFiles
+     * in the table.
+     * <p>
+     * Statistics are conditionally read for the AddFiles based on {@code shouldReadStats}. The
+     * returned batches have schema:
+     * <ol>
+     *     <li>
+     *         name: {@code add}
+     *         <p>
+     *         type: {@link AddFile#SCHEMA_WITH_STATS} if {@code shouldReadStats=true}, otherwise
+     *         {@link AddFile#SCHEMA_WITHOUT_STATS}
+     *     </li>
+     * </ol>
      */
-    public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches() {
+    public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
+           boolean shouldReadStats) {
         final CloseableIterator<Tuple2<FileDataReadResult, Boolean>> addRemoveIter =
             new ActionsIterator(
                 tableClient,
                 logSegment.allLogFilesReversed(),
-                ADD_REMOVE_READ_SCHEMA);
+                getAddRemoveReadSchema(shouldReadStats));
         return new ActiveAddFilesIterator(tableClient, addRemoveIter, dataPath);
     }
 
@@ -204,7 +218,7 @@ public class LogReplay {
             case 1:
                 break;
             case 2:
-                verifySupportedColumnMappingMode(metadata);
+                ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
                 break;
             case 3:
                 List<String> readerFeatures = protocol.getReaderFeatures();
@@ -213,7 +227,7 @@ public class LogReplay {
                         case "deletionVectors":
                             break;
                         case "columnMapping":
-                            verifySupportedColumnMappingMode(metadata);
+                            ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
                             break;
                         default:
                             throw new UnsupportedOperationException(
@@ -224,17 +238,6 @@ public class LogReplay {
             default:
                 throw new UnsupportedOperationException(
                     "Unsupported reader protocol version: " + protocol.getMinReaderVersion());
-        }
-    }
-
-    private void verifySupportedColumnMappingMode(Metadata metadata) {
-        // Check if the mode is name. Id mode is not yet supported
-        String cmMode = metadata.getConfiguration()
-                .getOrDefault("delta.columnMapping.mode", "none");
-        if (!"none".equalsIgnoreCase(cmMode) &&
-            !"name".equalsIgnoreCase(cmMode)) {
-            throw new UnsupportedOperationException(
-                "Unsupported column mapping mode: " + cmMode);
         }
     }
 

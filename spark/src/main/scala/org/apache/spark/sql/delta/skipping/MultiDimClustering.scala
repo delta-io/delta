@@ -21,6 +21,7 @@ import java.util.UUID
 import org.apache.spark.sql.delta.skipping.MultiDimClusteringFunctions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.SparkException
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
@@ -38,13 +39,24 @@ trait MultiDimClustering extends Logging {
 }
 
 object MultiDimClustering {
-  /** Repartition the given dataframe `df` into `approxNumPartitions` on the given `colNames`. */
+  /**
+   * Repartition the given dataframe `df` based on the given `curve` type into
+   * `approxNumPartitions` on the given `colNames`.
+   */
   def cluster(
       df: DataFrame,
       approxNumPartitions: Int,
-      colNames: Seq[String]): DataFrame = {
+      colNames: Seq[String],
+      curve: String): DataFrame = {
     assert(colNames.nonEmpty, "Cannot cluster by zero columns!")
-    ZOrderClustering.cluster(df, colNames, approxNumPartitions, randomizationExpressionOpt = None)
+    val clusteringImpl = curve match {
+      case "hilbert" => HilbertClustering
+      case "zorder" => ZOrderClustering
+      case unknownCurve =>
+        throw new SparkException(s"Unknown curve ($unknownCurve), unable to perform multi " +
+          "dimensional clustering.")
+    }
+    clusteringImpl.cluster(df, colNames, approxNumPartitions, randomizationExpressionOpt = None)
   }
 }
 
@@ -88,5 +100,14 @@ object ZOrderClustering extends SpaceFillingCurveClustering {
     assert(cols.size >= 1, "Cannot do Z-Order clustering by zero columns!")
     val rangeIdCols = cols.map(range_partition_id(_, numRanges))
     interleave_bits(rangeIdCols: _*).cast(StringType)
+  }
+}
+
+object HilbertClustering extends SpaceFillingCurveClustering with Logging {
+  override protected def getClusteringExpression(cols: Seq[Column], numRanges: Int): Column = {
+    assert(cols.size > 1, "Cannot do Hilbert clustering by zero or one column!")
+    val rangeIdCols = cols.map(range_partition_id(_, numRanges))
+    val numBits = Integer.numberOfTrailingZeros(Integer.highestOneBit(numRanges)) + 1
+    hilbert_index(numBits, rangeIdCols: _*)
   }
 }

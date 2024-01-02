@@ -72,13 +72,15 @@ class DeltaUnsupportedOperationException(
 }
 
 class DeltaParseException(
-    message: String,
-    ctx: ParserRuleContext)
+    ctx: ParserRuleContext,
+    errorClass: String,
+    messageParameters: Map[String, String] = Map.empty)
   extends ParseException(
       Option(ParserUtils.command(ctx)),
-      message,
       ParserUtils.position(ctx.getStart),
-      ParserUtils.position(ctx.getStop)
+      ParserUtils.position(ctx.getStop),
+      errorClass,
+      messageParameters
     ) with DeltaThrowable
 
 class DeltaArithmeticException(

@@ -23,10 +23,8 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.util.Tuple2;
 
 /**
  * Implementation of {@link Snapshot}.
@@ -35,24 +33,26 @@ public class SnapshotImpl implements Snapshot {
     private final Path dataPath;
     private final long version;
     private final LogReplay logReplay;
-    private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
+    private final Protocol protocol;
+    private final Metadata metadata;
 
     public SnapshotImpl(
-        Path logPath,
-        Path dataPath,
-        long version,
-        LogSegment logSegment,
-        TableClient tableClient,
-        long timestamp) {
+            Path logPath,
+            Path dataPath,
+            long version,
+            LogSegment logSegment,
+            TableClient tableClient,
+            long timestamp) {
         this.dataPath = dataPath;
         this.version = version;
-
         this.logReplay = new LogReplay(
             logPath,
             dataPath,
             tableClient,
             logSegment);
-        this.protocolAndMetadata = new Lazy<>(logReplay::loadProtocolAndMetadata);
+
+        this.protocol = logReplay.getProtocol();
+        this.metadata = logReplay.getMetadata();
     }
 
     @Override
@@ -69,18 +69,19 @@ public class SnapshotImpl implements Snapshot {
     public ScanBuilder getScanBuilder(TableClient tableClient) {
         return new ScanBuilderImpl(
             dataPath,
-            protocolAndMetadata,
+            protocol,
+            metadata,
             getSchema(tableClient),
-            logReplay.getAddFilesAsColumnarBatches(),
+            logReplay,
             tableClient
         );
     }
 
     public Metadata getMetadata() {
-        return protocolAndMetadata.get()._2;
+        return metadata;
     }
 
     public Protocol getProtocol() {
-        return protocolAndMetadata.get()._1;
+        return protocol;
     }
 }

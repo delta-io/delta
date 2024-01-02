@@ -191,9 +191,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val rightColumn = booleanVector(
       Seq[BooleanJ](true, false, false, true, true, null, false, null, null))
     val expAndOutputVector = booleanVector(
-      Seq[BooleanJ](true, false, false, false, null, null, null, null, null))
+      Seq[BooleanJ](true, false, false, false, null, null, false, false, null))
     val expOrOutputVector = booleanVector(
-      Seq[BooleanJ](true, true, false, true, null, null, null, null, null))
+      Seq[BooleanJ](true, true, false, true, true, true, null, null, null))
 
     val schema = new StructType()
       .add("left", BooleanType.BOOLEAN)
@@ -212,6 +212,33 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val orExpression = or(left, right)
     val actOrOutputVector = evaluator(schema, orExpression, BooleanType.BOOLEAN).eval(batch)
     checkBooleanVectors(actOrOutputVector, expOrOutputVector)
+  }
+
+  test("evaluate expression: not") {
+    val childColumn = booleanVector(Seq[BooleanJ](true, false, null))
+
+    val schema = new StructType().add("child", BooleanType.BOOLEAN)
+    val batch = new DefaultColumnarBatch(childColumn.getSize, schema, Array(childColumn))
+
+    val notExpression = new Predicate(
+      "NOT",
+      comparator("=", new Column("child"), Literal.ofBoolean(true))
+    )
+    val expOutputVector = booleanVector(Seq[BooleanJ](false, true, null))
+    val actOutputVector = evaluator(schema, notExpression, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector, expOutputVector)
+  }
+
+  test("evaluate expression: is not null") {
+    val childColumn = booleanVector(Seq[BooleanJ](true, false, null))
+
+    val schema = new StructType().add("child", BooleanType.BOOLEAN)
+    val batch = new DefaultColumnarBatch(childColumn.getSize, schema, Array(childColumn))
+
+    val isNotNullExpression = new Predicate("IS_NOT_NULL", new Column("child"))
+    val expOutputVector = booleanVector(Seq[BooleanJ](true, true, false))
+    val actOutputVector = evaluator(schema, isNotNullExpression, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector, expOutputVector)
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
@@ -619,7 +646,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
   private def testComparator(
     comparator: String, left: Expression, right: Expression, expResult: BooleanJ): Unit = {
-    val expression = new Predicate(comparator, util.Arrays.asList(left, right))
+    val expression = new Predicate(comparator, left, right)
     val batch = zeroColumnBatch(rowCount = 1)
     val outputVector = evaluator(batch.getSchema, expression, BooleanType.BOOLEAN).eval(batch)
 

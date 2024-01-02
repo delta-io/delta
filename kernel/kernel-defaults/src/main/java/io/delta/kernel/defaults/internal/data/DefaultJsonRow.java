@@ -16,6 +16,10 @@
 package io.delta.kernel.defaults.internal.data;
 
 import java.math.BigDecimal;
+import java.sql.Date;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -30,6 +34,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
+import io.delta.kernel.internal.util.InternalUtils;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 
@@ -65,12 +70,12 @@ public class DefaultJsonRow implements Row {
 
     @Override
     public byte getByte(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (byte) parsedValues[ordinal];
     }
 
     @Override
     public short getShort(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (short) parsedValues[ordinal];
     }
 
     @Override
@@ -85,12 +90,12 @@ public class DefaultJsonRow implements Row {
 
     @Override
     public float getFloat(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (float) parsedValues[ordinal];
     }
 
     @Override
     public double getDouble(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (double) parsedValues[ordinal];
     }
 
     @Override
@@ -100,7 +105,7 @@ public class DefaultJsonRow implements Row {
 
     @Override
     public BigDecimal getDecimal(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (BigDecimal) parsedValues[ordinal];
     }
 
     @Override
@@ -140,15 +145,94 @@ public class DefaultJsonRow implements Row {
             return jsonValue.booleanValue();
         }
 
+        if (dataType instanceof ByteType) {
+            throwIfTypeMismatch(
+                "byte",
+                jsonValue.canConvertToExactIntegral() &&
+                    jsonValue.canConvertToInt() && jsonValue.intValue() <= Byte.MAX_VALUE &&
+                    jsonValue.canConvertToInt() && jsonValue.intValue() >= Byte.MIN_VALUE,
+                jsonValue
+            );
+            return jsonValue.numberValue().byteValue();
+        }
+
+        if (dataType instanceof ShortType) {
+            throwIfTypeMismatch(
+                "short",
+                jsonValue.canConvertToExactIntegral() &&
+                    jsonValue.canConvertToInt() && jsonValue.intValue() <= Short.MAX_VALUE &&
+                    jsonValue.canConvertToInt() && jsonValue.intValue() >= Short.MIN_VALUE,
+                jsonValue
+            );
+            return jsonValue.numberValue().shortValue();
+        }
+
         if (dataType instanceof IntegerType) {
             throwIfTypeMismatch(
-                "integer", jsonValue.isIntegralNumber() && !jsonValue.isLong(), jsonValue);
+                "integer",
+                jsonValue.isIntegralNumber() && jsonValue.canConvertToInt(),
+                jsonValue);
             return jsonValue.intValue();
         }
 
         if (dataType instanceof LongType) {
-            throwIfTypeMismatch("long", jsonValue.isIntegralNumber(), jsonValue);
+            throwIfTypeMismatch("long",
+                jsonValue.isIntegralNumber() && jsonValue.canConvertToLong(), jsonValue);
             return jsonValue.numberValue().longValue();
+        }
+
+        if (dataType instanceof FloatType) {
+            switch (jsonValue.getNodeType()) {
+                case NUMBER:
+                    throwIfTypeMismatch(
+                        "float",
+                        // floatValue() will be converted to +/-INF if it cannot be represented
+                        // by a float
+                        // Note it is still possible to lose precision in this conversion but
+                        // checking for that requires converting to a float and back to BigDecimal
+                        !Float.isInfinite(jsonValue.floatValue()),
+                        jsonValue
+                    );
+                    return jsonValue.floatValue();
+                case STRING:
+                    switch (jsonValue.asText()) {
+                        case "NaN":
+                            return Float.NaN;
+                        case "+INF": case "+Infinity": case "Infinity":
+                            return Float.POSITIVE_INFINITY;
+                        case "-INF": case "-Infinity":
+                            return Float.NEGATIVE_INFINITY;
+                    }
+                default:
+                    throwIfTypeMismatch("float", false, jsonValue);
+            }
+        }
+
+        if (dataType instanceof DoubleType) {
+            switch (jsonValue.getNodeType()) {
+                case NUMBER:
+                    throwIfTypeMismatch(
+                        "double",
+                        // doubleValue() will be converted to +/-INF if it cannot be represented by
+                        // a double
+                        // Note it is still possible to lose precision in this conversion but
+                        // checking for that requires converting to a double and back to BigDecimal
+                        !Double.isInfinite(jsonValue.doubleValue()),
+                        jsonValue
+                    );
+                    return jsonValue.doubleValue();
+                case STRING:
+                    switch (jsonValue.asText()) {
+                        case "NaN":
+                            return Double.NaN;
+                        case "+INF": case "+Infinity": case "Infinity":
+                            return Double.POSITIVE_INFINITY;
+                        case "-INF": case "-Infinity":
+                            return Double.NEGATIVE_INFINITY;
+                    }
+                default:
+                    throwIfTypeMismatch("double", false, jsonValue);
+            }
         }
 
         if (dataType instanceof StringType) {
@@ -157,6 +241,28 @@ public class DefaultJsonRow implements Row {
                 jsonValue.isTextual(),
                 jsonValue);
             return jsonValue.asText();
+        }
+
+        if (dataType instanceof DecimalType) {
+            throwIfTypeMismatch("decimal", jsonValue.isNumber(), jsonValue);
+            return jsonValue.decimalValue();
+        }
+
+        if (dataType instanceof DateType) {
+            throwIfTypeMismatch(
+                "date",
+                jsonValue.isTextual(),
+                jsonValue);
+            return InternalUtils.daysSinceEpoch(Date.valueOf(jsonValue.textValue()));
+        }
+
+        if (dataType instanceof TimestampType) {
+            throwIfTypeMismatch(
+                "timestamp",
+                jsonValue.isTextual(),
+                jsonValue);
+            Instant time = OffsetDateTime.parse(jsonValue.textValue()).toInstant();
+            return ChronoUnit.MICROS.between(Instant.EPOCH, time);
         }
 
         if (dataType instanceof StructType) {

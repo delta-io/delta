@@ -223,6 +223,23 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
   )
 
   testActionSerDe(
+    "AddFile (with clusteringProvider) - json serialization/deserialization",
+    AddFile(
+      "clusteredFile.part",
+      partitionValues = Map.empty[String, String],
+      size = 10,
+      modificationTime = 1,
+      dataChange = true,
+      stats = "{\"numRecords\": 2}",
+      tags = Map("TAG1" -> "23"),
+      clusteringProvider = Some("liquid")),
+    expectedJson =
+      """{"add":{"path":"clusteredFile.part","partitionValues":{},"size":10""" +
+        ""","modificationTime":1,"dataChange":true,"stats":"{\"numRecords\": 2}",""" +
+        """"tags":{"TAG1":"23"}""" +
+        ""","clusteringProvider":"liquid"}}""")
+
+  testActionSerDe(
     "RemoveFile (without tags) - json serialization/deserialization",
     AddFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10, modificationTime = 1,
       dataChange = true, stats = "{\"numRecords\": 2}").removeWithTimestamp(timestamp = 11),

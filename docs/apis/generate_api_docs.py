@@ -27,13 +27,13 @@ def main():
     verbose = args.verbose
 
     # Set up the directories
-    docs_root_dir = os.path.dirname(os.path.realpath(__file__))
+    docs_root_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
     repo_root_dir = os.path.dirname(docs_root_dir)
 
     # --- dirs where docs are generated
     spark_scaladoc_gen_dir = repo_root_dir + "/spark/target/scala-2.12/unidoc"
     spark_javadoc_gen_dir = repo_root_dir + "/spark/target/javaunidoc"
-    spark_pythondoc_dir = repo_root_dir + "/docs/python"
+    spark_pythondoc_dir = repo_root_dir + "/docs/apis/python"
     spark_pythondoc_gen_dir = spark_pythondoc_dir + "/_build/html"
 
     standalone_javadoc_gen_dir = repo_root_dir + "/connectors/standalone/target/javaunidoc"
@@ -41,7 +41,7 @@ def main():
     kernel_javadoc_gen_dir = repo_root_dir + "/kernelGroup/target/javaunidoc"
 
     # --- final dirs where the docs will be copied to
-    all_docs_final_dir = docs_root_dir + "/_site/api"
+    all_docs_final_dir = docs_root_dir + "/apis/_site/api"
     all_javadocs_final_dir = all_docs_final_dir + "/java"
     all_scaladocs_final_dir = all_docs_final_dir + "/scala"
     all_pythondocs_final_dir = all_docs_final_dir + "/python"
@@ -104,8 +104,8 @@ def main():
 def patch_scala_docs(scaladoc_dir, docs_root_dir):
     with WorkingDirectory(scaladoc_dir):
         # Patch the js and css files
-        append(docs_root_dir + "/api-docs.js", "./lib/template.js")  # append new js functions
-        append(docs_root_dir + "/api-docs.css", "./lib/template.css")  # append new styles
+        append(docs_root_dir + "/apis/api-docs.js", "./lib/template.js")  # append new js functions
+        append(docs_root_dir + "/apis/api-docs.css", "./lib/template.css")  # append new styles
 
 
 def patch_java_docs(javadoc_dir, docs_root_dir, jquery_path):
@@ -142,8 +142,8 @@ def patch_java_docs(javadoc_dir, docs_root_dir, jquery_path):
         # Patch the js and css files
         run_cmd(["mkdir", "-p", "./lib"])
         run_cmd(["cp", jquery_path, "./lib/"])  # copy from ScalaDocs
-        run_cmd(["cp", docs_root_dir + "/api-javadocs.js", "./lib/"])   # copy new js file
-        append(docs_root_dir + "/api-javadocs.css", "./stylesheet.css")  # append new styles
+        run_cmd(["cp", docs_root_dir + "/apis/api-javadocs.js", "./lib/"])   # copy new js file
+        append(docs_root_dir + "/apis/api-javadocs.css", "./stylesheet.css")  # append new styles
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):

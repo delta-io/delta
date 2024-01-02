@@ -1555,6 +1555,42 @@
     ],
     "sqlState" : "42613"
   },
+  "DELTA_PARSING_ANALYSIS_ERROR" : {
+    "message" : [
+      "<msg>"
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_ILLEGAL_TABLE_NAME" : {
+    "message" : [
+      "Illegal table name `<tableName>`."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_INCORRECT_CLONE_HEADER" : {
+    "message" : [
+      "Incorrect CLONE header. Expected REPLACE or CREATE table."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_MISSING_TABLE_NAME_OR_PATH" : {
+    "message" : [
+      "<command> command requires a file path or table name."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_MUTUALLY_EXCLUSIVE_CLAUSES" : {
+    "message" : [
+      "<clauseOne> cannot be used together with <clauseTwo>."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_UNSUPPORTED_DATA_TYPE" : {
+    "message" : [
+      "DataType <dataType> is not supported."
+    ],
+    "sqlState" : "KD009"
+  },
   "DELTA_PARTITION_COLUMN_CAST_FAILED" : {
     "message" : [
       "Failed to cast value `<value>` to `<dataType>` for partition column `<columnName>`"
@@ -2236,13 +2272,13 @@
   },
   "DELTA_UNSUPPORTED_FEATURES_FOR_READ" : {
     "message" : [
-      "Unable to read this table because it requires reader table feature(s) that are unsupported by this version of Delta Lake: <unsupported>."
+      "Unsupported Delta read feature: table \"<tableNameOrPath>\" requires reader table feature(s) that are unsupported by Delta Lake \"<deltaVersion>\": <unsupported>."
     ],
     "sqlState" : "56038"
   },
   "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE" : {
     "message" : [
-      "Unable to write this table because it requires writer table feature(s) that are unsupported by this version of Delta Lake: <unsupported>."
+      "Unsupported Delta write feature: table \"<tableNameOrPath>\" requires writer table feature(s) that are unsupported by Delta Lake \"<deltaVersion>\": <unsupported>."
     ],
     "sqlState" : "56038"
   },
@@ -2481,5 +2517,23 @@
       "<config> to false."
     ],
     "sqlState" : "42939"
+  },
+  "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED" : {
+    "message" : [
+      "Failed to execute the command because DEFAULT values are not supported when adding new",
+      "columns to previously existing Delta tables; please add the column without a default",
+      "value first, then run a second ALTER TABLE ALTER COLUMN SET DEFAULT command to apply",
+      "for future inserted rows instead."
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED" : {
+    "message" : [
+      "Failed to execute <commandType> command because it assigned a column DEFAULT value,",
+      "but the corresponding table feature was not enabled. Please retry the command again",
+      "after executing ALTER TABLE tableName SET",
+      "TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')."
+    ],
+    "sqlState" : "0AKDE"
   }
 }

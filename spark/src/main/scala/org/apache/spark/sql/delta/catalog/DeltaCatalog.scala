@@ -669,6 +669,15 @@ class DeltaCatalog extends DelegatingCatalogExtension
             columnUpdates(field) = oldField.copy(name = rename.newName()) -> pos
 
 
+          case updateDefault: UpdateColumnDefaultValue =>
+            val field = updateDefault.fieldNames()
+            val (oldField, pos) = getColumn(field)
+            val updatedField = updateDefault.newDefaultValue() match {
+              case "" => oldField.clearCurrentDefaultValue()
+              case newDefault => oldField.withCurrentDefaultValue(newDefault)
+            }
+            columnUpdates(field) = updatedField -> pos
+
           case other =>
             throw DeltaErrors.unrecognizedColumnChange(s"${other.getClass}")
         }

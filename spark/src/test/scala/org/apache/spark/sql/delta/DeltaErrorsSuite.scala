@@ -1897,7 +1897,7 @@ trait DeltaErrorsSuiteBase
     }
   }
 
-  // Complier complains the lambda function is too large if we put all tests in one lambda
+  // The compiler complains the lambda function is too large if we put all tests in one lambda.
   test("test DeltaErrors OSS methods more") {
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2734,6 +2734,36 @@ trait DeltaErrorsSuiteBase
       }
       checkErrorMessage(e, Some("DELTA_INVALID_TABLE_VALUE_FUNCTION"), Some("22000"),
         Some("Function invalid1 is an unsupported table valued function for CDC reads."))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw new DeltaAnalysisException(
+          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          messageParameters = Array("ALTER TABLE"))
+      }
+      checkErrorMessage(
+        e, Some("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED"),
+        Some("0AKDE"),
+        Some(
+          s"""Failed to execute ALTER TABLE command because it assigned a column DEFAULT value,
+             |but the corresponding table feature was not enabled. Please retry the command again
+             |after executing ALTER TABLE tableName SET
+             |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported').""".stripMargin))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw new DeltaAnalysisException(
+          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED",
+          messageParameters = Array.empty)
+      }
+      checkErrorMessage(
+        e, Some("WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED"),
+        Some("0AKDC"),
+        Some(
+          s"""Failed to execute the command because DEFAULT values are not supported when adding new
+             |columns to previously existing Delta tables; please add the column without a default
+             |value first, then run a second ALTER TABLE ALTER COLUMN SET DEFAULT command to apply
+             |for future inserted rows instead.""".stripMargin))
     }
   }
 }
