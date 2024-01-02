@@ -200,7 +200,7 @@ This section explains how to quickly start reading and writing Delta tables on S
         --attribute-definitions AttributeName=tablePath,AttributeType=S \
                                 AttributeName=fileName,AttributeType=S \
         --key-schema AttributeName=tablePath,KeyType=HASH \
-                     AttributeName=fileName,KeyType=RANGE 
+                     AttributeName=fileName,KeyType=RANGE
       ```
      Note: once you select a `table-name` and `endpoint`, you will have to specify them in each Spark session in order for this multi-cluster mode to work correctly. See table below.
 
