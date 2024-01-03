@@ -259,13 +259,14 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       deltaTxn: OptimisticTransaction,
       filesToRewrite: Seq[AddFile],
       deduplicateCDFDeletes: DeduplicateCDFDeletes,
-      writeUnmodifiedRows: Boolean)
-    : Seq[FileAction] = recordMergeOperation(
-        extraOpType = if (!writeUnmodifiedRows) "writeModifiedRowsOnly"
+      writeUnmodifiedRows: Boolean): Seq[FileAction] =
+    recordMergeOperation(
+      extraOpType =
+        if (!writeUnmodifiedRows) "writeModifiedRowsOnly"
         else if (shouldOptimizeMatchedOnlyMerge(spark)) "writeAllUpdatesAndDeletes"
         else "writeAllChanges",
-        status = s"MERGE operation - Rewriting ${filesToRewrite.size} files",
-        sqlMetricName = "rewriteTimeMs") {
+      status = s"MERGE operation - Rewriting ${filesToRewrite.size} files",
+      sqlMetricName = "rewriteTimeMs") {
 
       val cdcEnabled = isCdcEnabled(deltaTxn)
 
