@@ -22,9 +22,11 @@ dependencies:
       - certifi==2023.7.22
       - charset-normalizer==3.3.0
       - colorama==0.4.6
+      - delta-spark==3.0.0
       - docutils==0.15.2
       - idna==3.4
       - imagesize==1.4.1
+      - importlib-metadata==7.0.0
       - jinja2==2.11.3
       - livereload==2.6.3
       - markupsafe==2.0.0
@@ -46,4 +48,5 @@ dependencies:
       - sphinxcontrib-serializinghtml==1.1.5
       - tornado==6.3.3
       - urllib3==2.0.6
+      - zipp==3.17.0
 prefix: <home>/anaconda3/envs/delta_docs

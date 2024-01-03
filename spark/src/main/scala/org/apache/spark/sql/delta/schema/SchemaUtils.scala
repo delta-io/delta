@@ -87,6 +87,19 @@ object SchemaUtils extends DeltaLogging {
       f(other)
   }
 
+  def findAnyTypeRecursively(dt: DataType)(f: DataType => Boolean): Option[DataType] = dt match {
+    case s: StructType =>
+      Some(s).filter(f).orElse(s.fields
+          .find(field => findAnyTypeRecursively(field.dataType)(f).nonEmpty).map(_.dataType))
+    case a: ArrayType =>
+      Some(a).filter(f).orElse(findAnyTypeRecursively(a.elementType)(f))
+    case m: MapType =>
+      Some(m).filter(f).orElse(findAnyTypeRecursively(m.keyType)(f))
+        .orElse(findAnyTypeRecursively(m.valueType)(f))
+    case other =>
+      Some(other).filter(f)
+  }
+
   /** Turns the data types to nullable in a recursive manner for nested columns. */
   def typeAsNullable(dt: DataType): DataType = dt match {
     case s: StructType => s.asNullable

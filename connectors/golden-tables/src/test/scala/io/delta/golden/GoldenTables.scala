@@ -1389,6 +1389,24 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     spark.range(500, 1000).write.format("delta").mode("overwrite").save(tablePath)
     sql(s"RESTORE TABLE delta.`$tablePath` TO VERSION AS OF 1")
   }
+
+  generateGoldenTable("conditionally-read-add-stats") { tablePath =>
+    val log = DeltaLog.forTable(spark, new Path(tablePath))
+    new File(log.logPath.toUri).mkdirs()
+    val schema = new StructType()
+      .add("part", IntegerType)
+      .add("id", IntegerType)
+    val add = AddFile("foo", Map("part" -> "1"), 1L, 100L, dataChange = true,
+      stats = "fake_statistics_string")
+    log.startTransaction().commit(
+      Metadata(schemaString = schema.json, partitionColumns = Seq("part")) :: add :: Nil,
+      ManualUpdate
+    )
+    log.startTransaction().commitManually(
+      AddFile("foo2", Map("part" -> "2"), 1L, 100L, dataChange = true,
+        stats = "fake_statistics_string"))
+    log.checkpoint(log.unsafeVolatileSnapshot)
+  }
 }
 
 case class TestStruct(f1: String, f2: Long)

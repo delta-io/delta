@@ -886,52 +886,63 @@
     ],
     "sqlState" : "42K09"
   },
-  "DELTA_ICEBERG_COMPAT_V1_VIOLATION" : {
+  "DELTA_ICEBERG_COMPAT_VIOLATION" : {
     "message" : [
-      "The validation of IcebergCompatV1 has failed."
+      "The validation of IcebergCompatV<version> has failed."
     ],
     "subClass" : {
+      "CHANGE_VERSION_NEED_REWRITE" : {
+        "message" : [
+          "Changing to IcebergCompatV<newVersion> requires rewriting the table. Please run REORG TABLE APPLY (UPGRADE UNIFORM ('IcebergCompatVersion = <newVersion>'));",
+          "Note that REORG enables table feature IcebergCompatV<newVersion> and other Delta lake clients without that table feature support may not be able to write to the table."
+        ]
+      },
       "DELETION_VECTORS_NOT_PURGED" : {
         "message" : [
-          "IcebergCompatV1 requires Deletion Vectors to be completely purged from the table. Please run the REORG TABLE APPLY (PURGE) command."
+          "IcebergCompatV<version> requires Deletion Vectors to be completely purged from the table. Please run the REORG TABLE APPLY (PURGE) command."
         ]
       },
       "DELETION_VECTORS_SHOULD_BE_DISABLED" : {
         "message" : [
-          "IcebergCompatV1 requires Deletion Vectors to be disabled on the table. Please use the ALTER TABLE DROP FEATURE command to disable Deletion Vectors and to remove the existing Deletion Vectors from the table."
+          "IcebergCompatV<version> requires Deletion Vectors to be disabled on the table. Please use the ALTER TABLE DROP FEATURE command to disable Deletion Vectors and to remove the existing Deletion Vectors from the table."
         ]
       },
       "DISABLING_REQUIRED_TABLE_FEATURE" : {
         "message" : [
-          "IcebergCompatV1 requires feature <feature> to be supported and enabled. You cannot drop it from the table. Instead, please disable IcebergCompatV1 first."
+          "IcebergCompatV<version> requires feature <feature> to be supported and enabled. You cannot drop it from the table. Instead, please disable IcebergCompatV<version> first."
         ]
       },
       "INCOMPATIBLE_TABLE_FEATURE" : {
         "message" : [
-          "IcebergCompatV1 is incompatible with feature <feature>."
+          "IcebergCompatV<version> is incompatible with feature <feature>."
         ]
       },
       "MISSING_REQUIRED_TABLE_FEATURE" : {
         "message" : [
-          "IcebergCompatV1 requires feature <feature> to be supported and enabled."
+          "IcebergCompatV<version> requires feature <feature> to be supported and enabled."
         ]
       },
       "REPLACE_TABLE_CHANGE_PARTITION_NAMES" : {
         "message" : [
-          "IcebergCompatV1 doesn't support replacing partitioned tables with a differently-named partition spec, because Iceberg-Spark 1.1.0 doesn't.",
+          "IcebergCompatV<version> doesn't support replacing partitioned tables with a differently-named partition spec, because Iceberg-Spark 1.1.0 doesn't.",
           "Prev Partition Spec: <prevPartitionSpec>",
           "New Partition Spec: <newPartitionSpec>"
         ]
       },
       "UNSUPPORTED_DATA_TYPE" : {
         "message" : [
-          "IcebergCompatV1 doesn't support schema with MapType or ArrayType or NullType. Your schema:",
+          "IcebergCompatV<version> does not support the data type <dataType> in your schema. Your schema:",
           "<schema>"
+        ]
+      },
+      "VERSION_MUTUAL_EXCLUSIVE" : {
+        "message" : [
+          "Only one IcebergCompat version can be enabled."
         ]
       },
       "WRONG_REQUIRED_TABLE_PROPERTY" : {
         "message" : [
-          "IcebergCompatV1 requires table property '<key>' to be set to '<requiredValue>'. Current value: '<actualValue>'."
+          "IcebergCompatV<version> requires table property '<key>' to be set to '<requiredValue>'. Current value: '<actualValue>'."
         ]
       }
     },
@@ -1554,6 +1565,42 @@
       "'overwriteSchema' cannot be used in dynamic partition overwrite mode."
     ],
     "sqlState" : "42613"
+  },
+  "DELTA_PARSING_ANALYSIS_ERROR" : {
+    "message" : [
+      "<msg>"
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_ILLEGAL_TABLE_NAME" : {
+    "message" : [
+      "Illegal table name `<tableName>`."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_INCORRECT_CLONE_HEADER" : {
+    "message" : [
+      "Incorrect CLONE header. Expected REPLACE or CREATE table."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_MISSING_TABLE_NAME_OR_PATH" : {
+    "message" : [
+      "<command> command requires a file path or table name."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_MUTUALLY_EXCLUSIVE_CLAUSES" : {
+    "message" : [
+      "<clauseOne> cannot be used together with <clauseTwo>."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_UNSUPPORTED_DATA_TYPE" : {
+    "message" : [
+      "DataType <dataType> is not supported."
+    ],
+    "sqlState" : "KD009"
   },
   "DELTA_PARTITION_COLUMN_CAST_FAILED" : {
     "message" : [

@@ -27,10 +27,13 @@
 #
 import os
 import sys
+import pathlib
+
 python_docs_root_dir = os.path.dirname(os.path.realpath(__file__))
 docs_dir = os.path.dirname(python_docs_root_dir)
 root_dir = os.path.dirname(docs_dir)
-version_file_path = os.path.join(root_dir, 'version.sbt')
+delta_root_dir = pathlib.Path(root_dir).parent
+version_file_path = os.path.join(delta_root_dir, 'version.sbt')
 
 sys.path.insert(0, os.path.abspath(os.path.join(root_dir, 'python')))
 

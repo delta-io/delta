@@ -18,6 +18,7 @@ package io.delta.kernel.defaults.internal.expressions;
 import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.Function;
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
@@ -43,6 +44,44 @@ class ExpressionUtils {
             nullability[rowId] = left.isNullAt(rowId) || right.isNullAt(rowId);
         }
         return nullability;
+    }
+
+    /**
+     * Wraps a child vector as a boolean {@link ColumnVector} with the given value and nullability
+     * accessors.
+     */
+    static ColumnVector booleanWrapperVector(
+        ColumnVector childVector,
+        Function<Integer, Boolean> valueAccessor,
+        Function<Integer, Boolean> nullabilityAccessor) {
+
+        return new ColumnVector() {
+
+            @Override
+            public DataType getDataType() {
+                return BooleanType.BOOLEAN;
+            }
+
+            @Override
+            public int getSize() {
+                return childVector.getSize();
+            }
+
+            @Override
+            public void close() {
+                childVector.close();
+            }
+
+            @Override
+            public boolean isNullAt(int rowId) {
+                return nullabilityAccessor.apply(rowId);
+            }
+
+            @Override
+            public boolean getBoolean(int rowId) {
+                return valueAccessor.apply(rowId);
+            }
+        };
     }
 
     /**

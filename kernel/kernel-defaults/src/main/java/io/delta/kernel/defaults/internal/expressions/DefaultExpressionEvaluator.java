@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
-import java.util.Arrays;
 import java.util.Optional;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -30,6 +29,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
+import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.booleanWrapperVector;
 import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.childAt;
 import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.compare;
 import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.evalNullability;
@@ -213,6 +213,23 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 ((MapType) transformedMapInput.outputType).getValueType());
         }
 
+        @Override
+        ExpressionTransformResult visitNot(Predicate predicate) {
+            Predicate child = validateIsPredicate(predicate, visit(predicate.getChildren().get(0)));
+            return new ExpressionTransformResult(
+                new Predicate(predicate.getName(), child),
+                BooleanType.BOOLEAN);
+        }
+
+        @Override
+        ExpressionTransformResult visitIsNotNull(Predicate predicate) {
+            Expression child = visit(predicate.getChildren().get(0)).expression;
+            return new ExpressionTransformResult(
+                new Predicate(predicate.getName(), child),
+                BooleanType.BOOLEAN
+            );
+        }
+
         private Predicate validateIsPredicate(
             Expression baseExpression,
             ExpressionTransformResult result) {
@@ -243,7 +260,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                     throw new UnsupportedOperationException(msg);
                 }
             }
-            return new Predicate(predicate.getName(), Arrays.asList(left, right));
+            return new Predicate(predicate.getName(), left, right);
         }
     }
 
@@ -258,15 +275,43 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             this.input = input;
         }
 
+        /*
+        | Operand 1 | Operand 2 | `AND`      | `OR`       |
+        |-----------|-----------|------------|------------|
+        | True      | True      | True       | True       |
+        | True      | False     | False      | True       |
+        | True      | NULL      | NULL       | True       |
+        | False     | True      | False      | True       |
+        | False     | False     | False      | False      |
+        | False     | NULL      | False      | NULL       |
+        | NULL      | True      | NULL       | True       |
+        | NULL      | False     | False      | NULL       |
+        | NULL      | NULL      | NULL       | NULL       |
+         */
         @Override
         ColumnVector visitAnd(And and) {
             PredicateChildrenEvalResult argResults = evalBinaryExpressionChildren(and);
+            ColumnVector left = argResults.leftResult;
+            ColumnVector right = argResults.rightResult;
             int numRows = argResults.rowCount;
             boolean[] result = new boolean[numRows];
-            boolean[] nullability = evalNullability(argResults.leftResult, argResults.rightResult);
+            boolean[] nullability = new boolean[numRows];
             for (int rowId = 0; rowId < numRows; rowId++) {
-                result[rowId] = argResults.leftResult.getBoolean(rowId) &&
-                    argResults.rightResult.getBoolean(rowId);
+                boolean leftIsTrue = !left.isNullAt(rowId) && left.getBoolean(rowId);
+                boolean rightIsTrue = !right.isNullAt(rowId) && right.getBoolean(rowId);
+                boolean leftIsFalse = !left.isNullAt(rowId) && !left.getBoolean(rowId);
+                boolean rightIsFalse = !right.isNullAt(rowId) && !right.getBoolean(rowId);
+
+                if (leftIsFalse || rightIsFalse) {
+                    nullability[rowId] = false;
+                    result[rowId] = false;
+                } else if (leftIsTrue && rightIsTrue) {
+                    nullability[rowId] = false;
+                    result[rowId] = true;
+                } else {
+                    nullability[rowId] = true;
+                    // result[rowId] is undefined when nullability[rowId] = true
+                }
             }
             return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
         }
@@ -274,12 +319,27 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         @Override
         ColumnVector visitOr(Or or) {
             PredicateChildrenEvalResult argResults = evalBinaryExpressionChildren(or);
+            ColumnVector left = argResults.leftResult;
+            ColumnVector right = argResults.rightResult;
             int numRows = argResults.rowCount;
             boolean[] result = new boolean[numRows];
-            boolean[] nullability = evalNullability(argResults.leftResult, argResults.rightResult);
+            boolean[] nullability = new boolean[numRows];
             for (int rowId = 0; rowId < numRows; rowId++) {
-                result[rowId] = argResults.leftResult.getBoolean(rowId) ||
-                    argResults.rightResult.getBoolean(rowId);
+                boolean leftIsTrue = !left.isNullAt(rowId) && left.getBoolean(rowId);
+                boolean rightIsTrue = !right.isNullAt(rowId) && right.getBoolean(rowId);
+                boolean leftIsFalse = !left.isNullAt(rowId) && !left.getBoolean(rowId);
+                boolean rightIsFalse = !right.isNullAt(rowId) && !right.getBoolean(rowId);
+
+                if (leftIsTrue || rightIsTrue) {
+                    nullability[rowId] = false;
+                    result[rowId] = true;
+                } else if (leftIsFalse && rightIsFalse) {
+                    nullability[rowId] = false;
+                    result[rowId] = false;
+                } else {
+                    nullability[rowId] = true;
+                    // result[rowId] is undefined when nullability[rowId] = true
+                }
             }
             return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
         }
@@ -397,6 +457,26 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             ColumnVector map = visit(childAt(elementAt, 0));
             ColumnVector lookupKey = visit(childAt(elementAt, 1));
             return ElementAtEvaluator.eval(map, lookupKey);
+        }
+
+        @Override
+        ColumnVector visitNot(Predicate predicate) {
+            ColumnVector childResult = visit(childAt(predicate, 0));
+            return booleanWrapperVector(
+                childResult,
+                rowId -> !childResult.getBoolean(rowId),
+                rowId -> childResult.isNullAt(rowId)
+            );
+        }
+
+        @Override
+        ColumnVector visitIsNotNull(Predicate predicate) {
+            ColumnVector childResult = visit(childAt(predicate, 0));
+            return booleanWrapperVector(
+                childResult,
+                rowId -> !childResult.isNullAt(rowId),
+                rowId -> false
+            );
         }
 
         /**

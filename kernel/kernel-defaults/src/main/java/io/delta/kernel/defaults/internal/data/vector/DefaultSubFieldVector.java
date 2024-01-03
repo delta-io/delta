@@ -160,10 +160,16 @@ public class DefaultSubFieldVector implements ColumnVector {
         StructType structType = (StructType) dataType;
         StructField childField = structType.at(childOrdinal);
         return new DefaultSubFieldVector(
-                size,
-                childField.getDataType(),
-                childOrdinal,
-                (rowId) -> (rowIdToRowAccessor.apply(rowId).getStruct(columnOrdinal)));
+            size,
+            childField.getDataType(),
+            childOrdinal,
+            (rowId) -> {
+                if (isNullAt(rowId)) {
+                    return null;
+                } else {
+                    return rowIdToRowAccessor.apply(rowId).getStruct(columnOrdinal);
+                }
+            });
     }
 
     private void assertValidRowId(int rowId) {

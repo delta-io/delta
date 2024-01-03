@@ -1174,11 +1174,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite
               fromProtocol = snapshot.protocol,
               toProtocol = p,
               isCreatingNewTable)
+            DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+              deltaLog.protocolWrite(p)
+            }
           case d: DomainMetadata =>
             numOfDomainMetadatas += 1
           case _ =>
         }
         action
+      }
+
+      // Validate protocol support, specifically writer features.
+      DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+        deltaLog.protocolWrite(snapshot.protocol)
       }
 
       allActions = RowId.assignFreshRowIds(protocol, snapshot, allActions)
@@ -1340,6 +1348,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     protocolChanges.foreach { p =>
       newProtocol = Some(p)
       recordProtocolChanges("delta.protocol.change", snapshot.protocol, p, isCreatingNewTable)
+      DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+        deltaLog.protocolWrite(p)
+      }
     }
 
     // Now, we know that there is at most 1 Metadata change (stored in newMetadata) and at most 1
@@ -1430,6 +1441,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
 
     DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+      newProtocol.foreach(deltaLog.protocolWrite)
       deltaLog.protocolWrite(snapshot.protocol)
     }
 

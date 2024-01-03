@@ -54,8 +54,13 @@ public class InternalScanFileUtils {
         TABLE_ROOT_DATA_TYPE,
         false /* nullable */);
 
+    // TODO update this when stats columns are dropped from the returned scan files
+    /**
+     * Scan file rows may have an additional column "add.stats" at the end of the "add" columns
+     * that is not represented in the schema here.
+     */
     public static final StructType SCAN_FILE_SCHEMA = new StructType()
-        .add("add", AddFile.SCHEMA)
+        .add("add", AddFile.SCHEMA_WITHOUT_STATS)
         // NOTE: table root is temporary, until the path in `add.path` is converted to
         // an absolute path. https://github.com/delta-io/delta/issues/2089
         .add(TABLE_ROOT_COL_NAME, TABLE_ROOT_DATA_TYPE);

@@ -131,7 +131,12 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
         throw e.withCommand(command)
       case e: AnalysisException =>
         val position = Origin(e.line, e.startPosition)
-        throw new ParseException(Option(command), e.message, position, position)
+        throw new ParseException(
+          command = Option(command),
+          start = position,
+          stop = position,
+          errorClass = "DELTA_PARSING_ANALYSIS_ERROR",
+          messageParameters = Map("msg" -> e.message))
     }
   }
 
@@ -260,7 +265,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case replaceHeader: ReplaceTableHeaderContext =>
         (visitTableIdentifier(replaceHeader.table), replaceHeader.CREATE() != null, true, false)
       case _ =>
-        throw new DeltaParseException("Incorrect CLONE header expected REPLACE or CREATE table", ctx)
+        throw new DeltaParseException(ctx, "DELTA_PARSING_INCORRECT_CLONE_HEADER")
     }
   }
 
@@ -277,7 +282,10 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
     if (!isCreate && ifNotExists) {
       throw new DeltaParseException(
-        "IF NOT EXISTS cannot be used together with REPLACE", ctx.cloneTableHeader())
+        ctx.cloneTableHeader(),
+        "DELTA_PARSING_MUTUALLY_EXCLUSIVE_CLAUSES",
+        Map("clauseOne" -> "IF NOT EXISTS", "clauseTwo" -> "REPLACE")
+      )
     }
 
     // Get source for clone (and time travel source if necessary)
@@ -343,7 +351,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    */
   override def visitOptimizeTable(ctx: OptimizeTableContext): AnyRef = withOrigin(ctx) {
     if (ctx.path == null && ctx.table == null) {
-      throw new DeltaParseException("OPTIMIZE command requires a file path or table name.", ctx)
+      throw new DeltaParseException(
+        ctx,
+        "DELTA_PARSING_MISSING_TABLE_NAME_OR_PATH",
+        Map("command" -> "OPTIMIZE")
+      )
     }
     val interleaveBy = Option(ctx.zorderSpec).map(visitZorderSpec).getOrElse(Seq.empty)
     OptimizeTableCommand(
@@ -363,7 +375,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    */
   override def visitReorgTable(ctx: ReorgTableContext): AnyRef = withOrigin(ctx) {
     if (ctx.table == null) {
-      throw new ParseException("REORG command requires a file path or table name.", ctx)
+      throw new DeltaParseException(
+        ctx,
+        "DELTA_PARSING_MISSING_TABLE_NAME_OR_PATH",
+        Map("command" -> "REORG")
+      )
     }
 
     val targetIdentifier = visitTableIdentifier(ctx.table)
@@ -458,7 +474,10 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case Seq(db, tbl) => TableIdentifier(tbl.getText, Some(db.getText))
       case Seq(catalog, db, tbl) =>
         TableIdentifier(tbl.getText, Some(db.getText), Some(catalog.getText))
-      case _ => throw new DeltaParseException(s"Illegal table name ${ctx.getText}", ctx)
+      case _ => throw new DeltaParseException(
+        ctx,
+        "DELTA_PARSING_ILLEGAL_TABLE_NAME",
+        Map("table" -> ctx.getText))
     }
   }
 
@@ -577,7 +596,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case ("interval", Nil) => CalendarIntervalType
       case (dt, params) =>
         val dtStr = if (params.nonEmpty) s"$dt(${params.mkString(",")})" else dt
-        throw new DeltaParseException(s"DataType $dtStr is not supported.", ctx)
+        throw new DeltaParseException(
+          ctx,
+          "DELTA_PARSING_UNSUPPORTED_DATA_TYPE",
+          Map("dataType" -> dtStr)
+        )
     }
   }
 }

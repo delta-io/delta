@@ -333,6 +333,7 @@ object TableFeature {
       ColumnMappingTableFeature,
       TimestampNTZTableFeature,
       IcebergCompatV1TableFeature,
+      IcebergCompatV2TableFeature,
       DeletionVectorsTableFeature,
       V2CheckpointTableFeature)
     if (DeltaUtils.isTesting) {
@@ -518,6 +519,18 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
       spark: SparkSession): Boolean = IcebergCompatV1.isEnabled(metadata)
+
+  override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
+}
+
+object IcebergCompatV2TableFeature extends WriterFeature(name = "icebergCompatV2")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = IcebergCompatV2.isEnabled(metadata)
 
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }

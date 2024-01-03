@@ -237,7 +237,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
 
 lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(kernelApi)
-  .dependsOn(spark % "test")
+  .dependsOn(spark % "test->test")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-kernel-defaults",
@@ -254,7 +254,12 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "junit" % "junit" % "4.13" % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.slf4j" % "slf4j-log4j12" % "2.0.9" % "test"
+      "org.slf4j" % "slf4j-log4j12" % "2.0.9" % "test",
+
+      "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
     ),
     javaCheckstyleSettings("kernel/dev/checkstyle.xml"),
       // Unidoc settings

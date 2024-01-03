@@ -72,7 +72,7 @@ public class SnapshotImpl implements Snapshot {
             protocol,
             metadata,
             getSchema(tableClient),
-            logReplay.getAddFilesAsColumnarBatches(),
+            logReplay,
             tableClient
         );
     }
