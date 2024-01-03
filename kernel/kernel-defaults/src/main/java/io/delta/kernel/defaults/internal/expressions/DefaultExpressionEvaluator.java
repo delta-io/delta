@@ -18,7 +18,6 @@ package io.delta.kernel.defaults.internal.expressions;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
