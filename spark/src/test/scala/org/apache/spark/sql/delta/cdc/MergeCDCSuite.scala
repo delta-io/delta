@@ -77,7 +77,7 @@ trait MergeCDCTests extends QueryTest
   }
   // scalastyle:on argcount
 
-  private def testMergeCdcUnlimitedClauses(name: String)(
+  protected def testMergeCdcUnlimitedClauses(name: String)(
       target: => DataFrame,
       source: => DataFrame,
       mergeCondition: String = "s.key = t.key",
