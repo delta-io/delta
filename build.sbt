@@ -213,13 +213,12 @@ lazy val contribs = (project in file("contribs"))
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
   ).configureUnidoc()
 
-lazy val deltaSharing = (project in file("deltasharing"))
+lazy val sharing = (project in file("sharing"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .settings(
     name := "delta-sharing-spark",
     commonSettings,
     scalaStyleSettings,
-    javaOnlyReleaseSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
