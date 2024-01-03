@@ -89,7 +89,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
 
     val deltaLogicalPlan = EliminateSubqueryAliases(target)
     val tahoeFileIndex = deltaLogicalPlan match {
-      case DeltaFullTable(index) => index
+      case DeltaFullTable(_, index) => index
       case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
     }
     val generatedColumns = GeneratedColumn.getGeneratedColumns(
@@ -152,7 +152,10 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           conf.resolver(insertAct.targetColNameParts.head, col.name)
         }
       }.map { col =>
-        val defaultValue: Expression = Literal(null, col.dataType)
+        import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns.getDefaultValueExprOrNullLit
+        val defaultValue: Expression =
+          getDefaultValueExprOrNullLit(col, conf.useNullsForMissingDefaultColumnValues)
+            .getOrElse(Literal(null, col.dataType))
         DeltaMergeAction(Seq(col.name), defaultValue, targetColNameResolved = true)
       }
 
@@ -175,7 +178,8 @@ case class PreprocessTableMerge(override val conf: SQLConf)
             castIfNeeded(
               a.expr,
               targetAttrib.dataType,
-              allowStructEvolution = migrateSchema),
+              allowStructEvolution = migrateSchema,
+              targetAttrib.name),
             targetColNameResolved = true)
         }.getOrElse {
           // If a target table column was not found in the INSERT columns and expressions,
@@ -189,8 +193,8 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     }
 
     if (transformToCommand) {
-      val tahoeFileIndex = EliminateSubqueryAliases(target) match {
-        case DeltaFullTable(index) => index
+      val (relation, tahoeFileIndex) = EliminateSubqueryAliases(target) match {
+        case DeltaFullTable(rel, index) => rel -> index
         case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
       }
 
@@ -205,6 +209,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         MergeIntoCommand(
           transformTimestamps(source, now),
           transformTimestamps(target, now),
+          relation.catalogTable,
           tahoeFileIndex,
           condition,
           processedMatched,
@@ -408,7 +413,9 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     if (implicitColumns.isEmpty) {
       return (allActions, Set[String]())
     }
-    assert(finalSchema.size == allActions.size)
+    assert(finalSchema.size == allActions.size,
+      "Invalid number of columns in INSERT clause with generated columns. Expected schema: " +
+      s"$finalSchema, INSERT actions: $allActions")
 
     val track = mutable.Set[String]()
 

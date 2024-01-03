@@ -21,14 +21,15 @@ import java.util.Arrays;
 import java.util.UUID;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * This implements Base85 using the 4 byte block aligned encoding and character set from Z85.
  *
  * @see <a href="https://rfc.zeromq.org/spec/32/">Z85 encoding</a>
- *
- * Taken from https://github.com/delta-io/delta/blob/master/spark/src/main/scala/org/apache/spark/sql/delta/util/Codec.scala
+ * <p>
+ * Taken from https://github.com/delta-io/delta/blob/master/spark/src/main/scala/org/apache/spark
+ * /sql/delta/util/Codec.scala
  */
 public final class Base85Codec {
 
@@ -46,19 +47,19 @@ public final class Base85Codec {
         int i = 0;
         for (char c = '0'; c <= '9'; c++) {
             map[i] = (byte) c;
-            i ++;
+            i++;
         }
-        for (char c = 'a'; c <= 'z'; c ++) {
+        for (char c = 'a'; c <= 'z'; c++) {
             map[i] = (byte) c;
-            i ++;
+            i++;
         }
-        for (char c = 'A'; c <= 'Z'; c ++) {
+        for (char c = 'A'; c <= 'Z'; c++) {
             map[i] = (byte) c;
-            i ++;
+            i++;
         }
-        for (char c: ".-:+=^!/*?&<>()[]{}@%$#".toCharArray()) {
+        for (char c : ".-:+=^!/*?&<>()[]{}@%$#".toCharArray()) {
             map[i] = (byte) c;
-            i ++;
+            i++;
         }
         return map;
     }
@@ -69,7 +70,7 @@ public final class Base85Codec {
         // be one greater.
         byte[] map = new byte[ASCII_BITMASK + 1];
         Arrays.fill(map, (byte) -1);
-        for (int i = 0; i < ENCODE_MAP.length; i ++) {
+        for (int i = 0; i < ENCODE_MAP.length; i++) {
             byte b = ENCODE_MAP[i];
             map[b] = (byte) i;
         }
@@ -90,7 +91,7 @@ public final class Base85Codec {
 
     /**
      * Decode an arbitrary byte array.
-     *
+     * <p>
      * Only `outputLength` bytes will be returned.
      * Any extra bytes, such as padding added because the input was unaligned, will be dropped.
      */
@@ -108,7 +109,7 @@ public final class Base85Codec {
 
     /**
      * Decode an arbitrary byte array.
-     *
+     * <p>
      * Output may contain padding bytes, if the input was not 4 byte aligned.
      * Use [[decodeBytes]] in that case and specify the expected number of output bytes
      * without padding.
@@ -119,7 +120,7 @@ public final class Base85Codec {
 
     /**
      * Decode an arbitrary byte array.
-     *
+     * <p>
      * Output may contain padding bytes, if the input was not 4 byte aligned.
      */
     private static ByteBuffer decodeBlocks(String encoded) {
@@ -153,8 +154,8 @@ public final class Base85Codec {
             buffer.putInt((int) sum);
             inputIndex += 5;
         }
-        checkArgument((inputCharDecoder.canary & ~ASCII_BITMASK)  == 0,
-                "Input is not valid Z85: " + encoded);
+        checkArgument((inputCharDecoder.canary & ~ASCII_BITMASK) == 0,
+            "Input is not valid Z85: " + encoded);
         buffer.rewind();
         return buffer;
     }
@@ -170,7 +171,9 @@ public final class Base85Codec {
     // Methods implemented for testing only
     ////////////////////////////////////////////////////////////////////////////////
 
-    /** Encode a 16 byte UUID. */
+    /**
+     * Encode a 16 byte UUID.
+     */
     public static String encodeUUID(UUID id) {
         ByteBuffer buffer = uuidToByteBuffer(id);
         return encodeBlocks(buffer);
@@ -186,7 +189,7 @@ public final class Base85Codec {
 
     /**
      * Encode an arbitrary byte array using 4 byte blocks.
-     *
+     * <p>
      * Expects the input to be 4 byte aligned.
      */
     private static String encodeBlocks(ByteBuffer buffer) {
@@ -215,7 +218,7 @@ public final class Base85Codec {
 
     /**
      * Encode an arbitrary byte array.
-     *
+     * <p>
      * Unaligned input will be padded to a multiple of 4 bytes.
      */
     public static String encodeBytes(byte[] input) {

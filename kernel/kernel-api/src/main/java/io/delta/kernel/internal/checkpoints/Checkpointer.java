@@ -26,19 +26,19 @@ import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.fs.FileStatus;
+import io.delta.kernel.expressions.AlwaysTrue;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Utils;
+import io.delta.kernel.utils.FileStatus;
 
+import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.Utils;
 
 /**
  * Class to load the {@link CheckpointMetaData} from `_last_checkpoint` file.
  */
-public class Checkpointer
-{
+public class Checkpointer {
     /**
      * The name of the last checkpoint file
      */
@@ -50,8 +50,7 @@ public class Checkpointer
      */
     public static Optional<CheckpointInstance> getLatestCompleteCheckpointFromList(
         List<CheckpointInstance> instances,
-        CheckpointInstance notLaterThan)
-    {
+        CheckpointInstance notLaterThan) {
         final List<CheckpointInstance> completeCheckpoints = instances
             .stream()
             .filter(c -> c.isNotLaterThan(notLaterThan))
@@ -64,8 +63,7 @@ public class Checkpointer
 
                 if (key.numParts.isPresent()) {
                     return inst.size() == entry.getKey().numParts.get();
-                }
-                else {
+                } else {
                     return inst.size() == 1;
                 }
             })
@@ -74,8 +72,7 @@ public class Checkpointer
 
         if (completeCheckpoints.isEmpty()) {
             return Optional.empty();
-        }
-        else {
+        } else {
             return Optional.of(Collections.max(completeCheckpoints));
         }
     }
@@ -85,46 +82,41 @@ public class Checkpointer
      */
     private final Path lastCheckpointFilePath;
 
-    public Checkpointer(Path tableLogPath)
-    {
+    public Checkpointer(Path tableLogPath) {
         this.lastCheckpointFilePath = new Path(tableLogPath, LAST_CHECKPOINT_FILE_NAME);
     }
 
     /**
      * Returns information about the most recent checkpoint.
      */
-    public Optional<CheckpointMetaData> readLastCheckpointFile(TableClient tableClient)
-    {
+    public Optional<CheckpointMetaData> readLastCheckpointFile(TableClient tableClient) {
         return loadMetadataFromFile(tableClient);
     }
 
     /**
      * Loads the checkpoint metadata from the _last_checkpoint file.
      */
-    private Optional<CheckpointMetaData> loadMetadataFromFile(TableClient tableClient)
-    {
+    private Optional<CheckpointMetaData> loadMetadataFromFile(TableClient tableClient) {
         try {
-            // TODO: we have no way to get the file size and modification time within the api
-            // module. Should we have a client API for that or make use of the
-            // `FileSystemClient#listFrom`?
+            // For now we use file size = 0 and modification time = 0, in the future we should use
+            // listFrom to retrieve the real values see delta-io/delta#2140
             FileStatus lastCheckpointFile = FileStatus.of(lastCheckpointFilePath.toString(), 0, 0);
             JsonHandler jsonHandler = tableClient.getJsonHandler();
             try (CloseableIterator<FileReadContext> fileReadContextIter =
-                jsonHandler.contextualizeFileReads(
-                    Utils.singletonCloseableIterator(
-                        InternalUtils.getScanFileRow(lastCheckpointFile)),
-                    Literal.TRUE
-                );
-                CloseableIterator<FileDataReadResult> jsonIter =
-                    tableClient.getJsonHandler().readJsonFiles(
-                        fileReadContextIter,
-                        CheckpointMetaData.READ_SCHEMA)) {
+                     jsonHandler.contextualizeFileReads(
+                         Utils.singletonCloseableIterator(
+                             InternalScanFileUtils.generateScanFileRow(lastCheckpointFile)),
+                         AlwaysTrue.ALWAYS_TRUE
+                     );
+                 CloseableIterator<FileDataReadResult> jsonIter =
+                     tableClient.getJsonHandler().readJsonFiles(
+                         fileReadContextIter,
+                         CheckpointMetaData.READ_SCHEMA)) {
 
                 Optional<Row> checkpointRow = InternalUtils.getSingularRow(jsonIter);
                 return checkpointRow.map(row -> CheckpointMetaData.fromRow(row));
             }
-        }
-        catch (Exception ex) {
+        } catch (Exception ex) {
             return Optional.empty();
         }
     }

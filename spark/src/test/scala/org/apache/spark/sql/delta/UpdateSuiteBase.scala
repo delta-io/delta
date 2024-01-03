@@ -17,74 +17,34 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.File
 import java.util.Locale
 
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.hadoop.fs.Path
-import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
-import org.apache.spark.util.Utils
 
 abstract class UpdateSuiteBase
   extends QueryTest
   with SharedSparkSession
-  with BeforeAndAfterEach  with SQLTestUtils
+  with DeltaDMLTestUtils
+  with SQLTestUtils
   with DeltaTestUtilsForTempViews {
   import testImplicits._
-
-  var tempDir: File = _
-
-  var deltaLog: DeltaLog = _
-
-  protected def tempPath = tempDir.getCanonicalPath
-
-  protected def readDeltaTable(table: String): DataFrame = {
-    spark.read.format("delta").table(table)
-  }
-
-  protected def readDeltaTableByPath(path: String): DataFrame = {
-    spark.read.format("delta").load(path)
-  }
-
-  override def beforeEach() {
-    super.beforeEach()
-    // Using a space in path to provide coverage for special characters.
-    tempDir = Utils.createTempDir(namePrefix = "spark test")
-    deltaLog = DeltaLog.forTable(spark, new Path(tempPath))
-  }
-
-  override def afterEach() {
-    try {
-      Utils.deleteRecursively(tempDir)
-      DeltaLog.clearCache()
-    } finally {
-      super.afterEach()
-    }
-  }
 
   protected def executeUpdate(target: String, set: Seq[String], where: String): Unit = {
     executeUpdate(target, set.mkString(", "), where)
   }
 
   protected def executeUpdate(target: String, set: String, where: String = null): Unit
-
-  protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
-    val writer = df.write.format("delta").mode("append")
-    if (partitionBy.nonEmpty) {
-      writer.partitionBy(partitionBy: _*)
-    }
-    writer.save(deltaLog.dataPath.toString)
-  }
 
   implicit def jsonStringToSeq(json: String): Seq[String] = json.split("\n")
 
@@ -99,8 +59,8 @@ abstract class UpdateSuiteBase
     executeUpdate(tableName.getOrElse(s"delta.`$tempPath`"), setClauses, where = condition.orNull)
     checkAnswer(
       tableName
-        .map(readDeltaTable(_))
-        .getOrElse(readDeltaTableByPath(tempPath))
+        .map(spark.read.format("delta").table(_))
+        .getOrElse(readDeltaTable(tempPath))
         .select(s"${prefix}key", s"${prefix}value"),
       expectedResults)
   }
@@ -307,6 +267,54 @@ abstract class UpdateSuiteBase
     }
   }
 
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values)
+  test("upcast int source type into long target, storeAssignmentPolicy = " +
+    s"$storeAssignmentPolicy") {
+    append(Seq((99, 2L), (100, 4L), (101, 3L)).toDF("key", "value"))
+    withSQLConf(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
+      checkUpdate(
+        condition = None,
+        setClauses = "value = 4",
+        expectedResults = Row(100, 4) :: Row(101, 4) :: Row(99, 4) :: Nil)
+    }
+  }
+
+  // Casts that are not valid implicit casts (e.g. string -> boolean) are allowed only when
+  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLSuite]] only due to
+  // limitations when using the Scala API.
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
+  test("invalid implicit cast string source type into boolean target, " +
+    s"storeAssignmentPolicy = $storeAssignmentPolicy") {
+    append(Seq((99, true), (100, false), (101, true)).toDF("key", "value"))
+    withSQLConf(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
+      checkUpdate(
+        condition = None,
+        setClauses = "value = 'false'",
+        expectedResults = Row(100, false) :: Row(101, false) :: Row(99, false) :: Nil)
+    }
+  }
+
+  // Valid implicit casts that are not upcasts (e.g. string -> int) are allowed only when
+  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLSuite]] only due to
+  // limitations when using the Scala API.
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
+  test("valid implicit cast string source type into int target, " +
+     s"storeAssignmentPolicy = ${storeAssignmentPolicy}") {
+    append(Seq((99, 2), (100, 4), (101, 3)).toDF("key", "value"))
+    withSQLConf(
+        SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+        DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
+      checkUpdate(
+        condition = None,
+        setClauses = "value = '5'",
+        expectedResults = Row(100, 5) :: Row(101, 5) :: Row(99, 5) :: Nil)
+    }
+  }
+
   test("update cached table") {
     Seq((2, 2), (1, 4)).toDF("key", "value")
       .write.mode("overwrite").format("delta").save(tempPath)
@@ -323,14 +331,31 @@ abstract class UpdateSuiteBase
 
     spark.read.format("delta").load(tempPath).createOrReplaceTempView("tblName")
 
-    checkUpdate(condition = Some("key = 99"), setClauses = "value = -1",
-      Row(99, -1) :: Row(100, 4) :: Row(101, 3) :: Row(102, 5) :: Nil)
-    checkUpdate(condition = Some("`key` = 100"), setClauses = "`value` = -1",
-      Row(99, -1) :: Row(100, -1) :: Row(101, 3) :: Row(102, 5) :: Nil)
-    checkUpdate(condition = Some("tblName.key = 101"), setClauses = "tblName.value = -1",
-      Row(99, -1) :: Row(100, -1) :: Row(101, -1) :: Row(102, 5) :: Nil, Some("tblName"))
-    checkUpdate(condition = Some("`tblName`.`key` = 102"), setClauses = "`tblName`.`value` = -1",
-      Row(99, -1) :: Row(100, -1) :: Row(101, -1) :: Row(102, -1) :: Nil, Some("tblName"))
+    checkUpdate(
+      condition = Some("key = 99"),
+      setClauses = "value = -1",
+      expectedResults = Row(99, -1) :: Row(100, 4) :: Row(101, 3) :: Row(102, 5) :: Nil)
+    checkUpdate(
+      condition = Some("`key` = 100"),
+      setClauses = "`value` = -1",
+      expectedResults = Row(99, -1) :: Row(100, -1) :: Row(101, 3) :: Row(102, 5) :: Nil)
+  }
+
+  test("different variations of column references - TempView") {
+    append(Seq((99, 2), (100, 4), (101, 3), (102, 5)).toDF("key", "value"))
+
+    spark.read.format("delta").load(tempPath).createOrReplaceTempView("tblName")
+
+    checkUpdate(
+      condition = Some("tblName.key = 101"),
+      setClauses = "tblName.value = -1",
+      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, 5) :: Nil,
+      tableName = Some("tblName"))
+    checkUpdate(
+      condition = Some("`tblName`.`key` = 102"),
+      setClauses = "`tblName`.`value` = -1",
+      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, -1) :: Nil,
+      tableName = Some("tblName"))
   }
 
   test("target columns can have db and table qualifiers") {
@@ -649,8 +674,8 @@ abstract class UpdateSuiteBase
 
     testAnalysisException(
       targetDF,
-      set =
-        Seq("a = named_struct('c', named_struct('d', 'rand', 'e', 'str'))", "a.c.d = 'RANDOM2'"),
+      set = Seq("a = named_struct('c', named_struct('d', 'rand', 'e', 'str'), 'g', 3)",
+        "a.c.d = 'RANDOM2'"),
       errMsgs = "There is a conflict from these SET columns" :: Nil)
 
     val schema = new StructType().add("a", MapType(StringType, IntegerType))
@@ -826,7 +851,7 @@ abstract class UpdateSuiteBase
           toDF(source).createOrReplaceTempView("source")
         }
         executeUpdate(s"delta.`$dir`", set, updateWhere)
-        checkAnswer(readDeltaTableByPath(dir.toString), toDF(expected))
+        checkAnswer(readDeltaTable(dir.toString), toDF(expected))
       }
     }
   }

@@ -16,36 +16,22 @@
 package io.delta.kernel.internal.util;
 
 import java.io.IOException;
-import java.util.Collections;
+import java.sql.Date;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.fs.FileStatus;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.utils.CloseableIterator;
 
-import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.data.AddFileColumnarBatch;
+public class InternalUtils {
+    private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
 
-public class InternalUtils
-{
     private InternalUtils() {}
-
-    public static Row getScanFileRow(FileStatus fileStatus)
-    {
-        AddFile addFile = new AddFile(
-            fileStatus.getPath(),
-            Collections.emptyMap(),
-            fileStatus.getSize(),
-            fileStatus.getModificationTime(),
-            false /* dataChange */,
-            null // deletionVector
-        );
-
-        return new AddFileColumnarBatch(Collections.singletonList(addFile))
-            .getRows()
-            .next();
-    }
 
     /**
      * Utility method to read at most one row from the given data {@link FileDataReadResult}
@@ -55,8 +41,7 @@ public class InternalUtils
      * @return
      */
     public static Optional<Row> getSingularRow(CloseableIterator<FileDataReadResult> dataIter)
-        throws IOException
-    {
+        throws IOException {
         Row row = null;
         while (dataIter.hasNext()) {
             try (CloseableIterator<Row> rows = dataIter.next().getData().getRows()) {
@@ -77,14 +62,13 @@ public class InternalUtils
      * If there is more than element row, an exception will be thrown.
      */
     public static <T> Optional<T> getSingularElement(CloseableIterator<T> iter)
-        throws IOException
-    {
+        throws IOException {
         try {
             T result = null;
             while (iter.hasNext()) {
                 if (result != null) {
                     throw new IllegalArgumentException(
-                            "Iterator contains more than one element");
+                        "Iterator contains more than one element");
                 }
                 result = iter.next();
             }
@@ -95,31 +79,63 @@ public class InternalUtils
     }
 
     /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @throws IllegalArgumentException if {@code isValid} is false
+     * Utility method to get the number of days since epoch this given date is.
      */
-    public static void checkArgument(boolean isValid)
-            throws IllegalArgumentException
-    {
-        if (!isValid) {
-            throw new IllegalArgumentException();
-        }
+    public static int daysSinceEpoch(Date date) {
+        LocalDate localDate = date.toLocalDate();
+        return (int) ChronoUnit.DAYS.between(EPOCH, localDate);
     }
 
     /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
+     * Utility method to create a singleton string {@link ColumnVector}
      *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @param message A String message for the exception.
-     * @throws IllegalArgumentException if {@code isValid} is false
+     * @param value the string element to create the vector with
+     * @return A {@link ColumnVector} with a single element {@code value}
      */
-    public static void checkArgument(boolean isValid, String message)
-            throws IllegalArgumentException
-    {
-        if (!isValid) {
-            throw new IllegalArgumentException(message);
+    public static ColumnVector singletonStringColumnVector(String value) {
+        return new ColumnVector() {
+            @Override
+            public DataType getDataType() {
+                return StringType.STRING;
+            }
+
+            @Override
+            public int getSize() {
+                return 1;
+            }
+
+            @Override
+            public void close() {
+            }
+
+            @Override
+            public boolean isNullAt(int rowId) {
+                return value == null;
+            }
+
+            @Override
+            public String getString(int rowId) {
+                if (rowId != 0) {
+                    throw new IllegalArgumentException("Invalid row id: " + rowId);
+                }
+                return value;
+            }
+        };
+    }
+
+    public static Row requireNonNull(Row row, int ordinal, String columnName) {
+        if (row.isNullAt(ordinal)) {
+            throw new IllegalArgumentException(
+                "Expected a non-null value for column: " + columnName);
         }
+        return row;
+    }
+
+    public static ColumnVector requireNonNull(ColumnVector vector, int rowId, String columnName) {
+        if (vector.isNullAt(rowId)) {
+            throw new IllegalArgumentException(
+                "Expected a non-null value for column: " + columnName);
+        }
+        return vector;
     }
 }

@@ -38,7 +38,9 @@ import org.apache.spark.util.Utils
 
 trait DescribeDeltaHistorySuiteBase
   extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest  with DeltaTestUtilsForTempViews
+  with SharedSparkSession
+  with DeltaSQLCommandTest
+  with DeltaTestUtilsForTempViews
   with MergeIntoMetricsBase {
 
   import testImplicits._
@@ -222,7 +224,8 @@ trait DescribeDeltaHistorySuiteBase
       val e = intercept[AnalysisException] {
         sql(s"DESCRIBE HISTORY $viewName").collect()
       }
-      assert(e.getMessage.contains("history of a view"))
+      assert(e.getMessage.contains("spark_catalog.default.delta_view is a view. " +
+        "'DESCRIBE HISTORY' expects a table"))
     }
   }
 
@@ -235,8 +238,7 @@ trait DescribeDeltaHistorySuiteBase
         val e = intercept[AnalysisException] {
           sql(s"DESCRIBE HISTORY $viewName").collect()
         }
-        assert(e.getMessage.contains("not found") ||
-          e.getMessage.contains("TABLE_OR_VIEW_NOT_FOUND"))
+        assert(e.getMessage.contains("v is a temp view. 'DESCRIBE HISTORY' expects a table"))
       }
   }
 
@@ -577,7 +579,7 @@ trait DescribeDeltaHistorySuiteBase
         val e = intercept[AnalysisException] {
           sql(s"describe history $table").show()
         }
-        Seq("DESCRIBE HISTORY", "only supported for Delta tables").foreach { msg =>
+        Seq("is not a Delta table").foreach { msg =>
           assert(e.getMessage.contains(msg))
         }
       }

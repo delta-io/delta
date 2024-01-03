@@ -1,0 +1,57 @@
+Uniform support timestamp as partition value
+---
+Index: api/src/main/java/org/apache/iceberg/types/Conversions.java
+===================================================================
+diff --git a/api/src/main/java/org/apache/iceberg/types/Conversions.java b/api/src/main/java/org/apache/iceberg/types/Conversions.java
+--- a/api/src/main/java/org/apache/iceberg/types/Conversions.java
++++ b/api/src/main/java/org/apache/iceberg/types/Conversions.java
+@@ -27,6 +27,7 @@
+ import java.nio.charset.CharsetDecoder;
+ import java.nio.charset.CharsetEncoder;
+ import java.nio.charset.StandardCharsets;
++import java.sql.Timestamp;
+ import java.util.Arrays;
+ import java.util.UUID;
+ import org.apache.iceberg.exceptions.RuntimeIOException;
+@@ -68,6 +69,8 @@
+         return new BigDecimal(asString);
+       case DATE:
+         return Literal.of(asString).to(Types.DateType.get()).value();
++      case TIMESTAMP:
++        return Timestamp.valueOf(asString);
+       default:
+         throw new UnsupportedOperationException(
+             "Unsupported type for fromPartitionString: " + type);
+diff --git a/api/src/test/java/org/apache/iceberg/types/TestConversions.java b/api/src/test/java/org/apache/iceberg/types/TestConversions.java
+--- a/api/src/test/java/org/apache/iceberg/types/TestConversions.java
++++ b/api/src/test/java/org/apache/iceberg/types/TestConversions.java
+@@ -22,7 +22,9 @@
+ import java.nio.ByteBuffer;
+ import java.nio.CharBuffer;
+ import java.nio.charset.StandardCharsets;
++import java.sql.Timestamp;
+ import java.util.UUID;
++
+ import org.apache.iceberg.expressions.Literal;
+ import org.apache.iceberg.types.Types.BinaryType;
+ import org.apache.iceberg.types.Types.BooleanType;
+@@ -182,4 +184,19 @@
+     Assert.assertArrayEquals(expectedBinary, byteBuffer.array());
+     Assert.assertEquals(value, Conversions.fromByteBuffer(type, byteBuffer));
+   }
++
++  @Test
++  public void testPartitionString() {
++    // timestamps are stored as {year}-{month}-{day} {hour}:{minute}:{second} or
++    // {year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}
++    assertPartitionConversion("1970-01-01 00:00:00.001", TimestampType.withoutZone(), new Timestamp(1L));
++    assertPartitionConversion("1970-01-01 00:00:00.001", TimestampType.withZone(), new Timestamp(1L));
++    assertPartitionConversion("1970-01-01 00:00:01", TimestampType.withoutZone(), new Timestamp(1000L));
++    assertPartitionConversion("1970-01-01 00:00:01", TimestampType.withZone(), new Timestamp(1000L));
++  }
++
++  private void assertPartitionConversion(String asString, Type type, Object expectedObject) {
++    Object resultObject = Conversions.fromPartitionString(type, asString);
++    Assert.assertEquals(expectedObject, resultObject);
++  }
+ }

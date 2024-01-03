@@ -43,6 +43,7 @@ import java.util.Locale
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.catalyst.TimeTravel
+import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByParserUtils, ClusterByPlan, ClusterBySpec}
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands._
@@ -58,8 +59,8 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
-import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, CloneTableStatement, LogicalPlan, RestoreTableStatement}
+import org.apache.spark.sql.catalyst.parser.ParserUtils.{checkDuplicateClauses, string, withOrigin}
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, AlterTableDropFeature, CloneTableStatement, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
 import org.apache.spark.sql.errors.QueryParsingErrors
@@ -76,6 +77,8 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
 
   override def parsePlan(sqlText: String): LogicalPlan = parse(sqlText) { parser =>
     builder.visit(parser.singleStatement()) match {
+      case clusterByPlan: ClusterByPlan =>
+        ClusterByParserUtils(clusterByPlan, delegate).parsePlan(sqlText)
       case plan: LogicalPlan => plan
       case _ => delegate.parsePlan(sqlText)
     }
@@ -128,7 +131,12 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
         throw e.withCommand(command)
       case e: AnalysisException =>
         val position = Origin(e.line, e.startPosition)
-        throw new ParseException(Option(command), e.message, position, position)
+        throw new ParseException(
+          command = Option(command),
+          start = position,
+          stop = position,
+          errorClass = "DELTA_PARSING_ANALYSIS_ERROR",
+          messageParameters = Map("msg" -> e.message))
     }
   }
 
@@ -257,7 +265,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case replaceHeader: ReplaceTableHeaderContext =>
         (visitTableIdentifier(replaceHeader.table), replaceHeader.CREATE() != null, true, false)
       case _ =>
-        throw new DeltaParseException("Incorrect CLONE header expected REPLACE or CREATE table", ctx)
+        throw new DeltaParseException(ctx, "DELTA_PARSING_INCORRECT_CLONE_HEADER")
     }
   }
 
@@ -274,7 +282,10 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
     if (!isCreate && ifNotExists) {
       throw new DeltaParseException(
-        "IF NOT EXISTS cannot be used together with REPLACE", ctx.cloneTableHeader())
+        ctx.cloneTableHeader(),
+        "DELTA_PARSING_MUTUALLY_EXCLUSIVE_CLAUSES",
+        Map("clauseOne" -> "IF NOT EXISTS", "clauseTwo" -> "REPLACE")
+      )
     }
 
     // Get source for clone (and time travel source if necessary)
@@ -284,7 +295,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     // could revert back to that.
     val sourceRelation = new UnresolvedRelation(visitMultipartIdentifier(ctx.source))
     val maybeTimeTravelSource = maybeTimeTravelChild(ctx.clause, sourceRelation)
-    val targetRelation = UnresolvedRelation(target)
+    val targetRelation = UnresolvedRelation(target.nameParts)
 
     val tablePropertyOverrides = Option(ctx.tableProps)
       .map(visitPropertyKeyValues)
@@ -340,7 +351,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    */
   override def visitOptimizeTable(ctx: OptimizeTableContext): AnyRef = withOrigin(ctx) {
     if (ctx.path == null && ctx.table == null) {
-      throw new DeltaParseException("OPTIMIZE command requires a file path or table name.", ctx)
+      throw new DeltaParseException(
+        ctx,
+        "DELTA_PARSING_MISSING_TABLE_NAME_OR_PATH",
+        Map("command" -> "OPTIMIZE")
+      )
     }
     val interleaveBy = Option(ctx.zorderSpec).map(visitZorderSpec).getOrElse(Seq.empty)
     OptimizeTableCommand(
@@ -360,7 +375,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    */
   override def visitReorgTable(ctx: ReorgTableContext): AnyRef = withOrigin(ctx) {
     if (ctx.table == null) {
-      throw new ParseException("REORG command requires a file path or table name.", ctx)
+      throw new DeltaParseException(
+        ctx,
+        "DELTA_PARSING_MISSING_TABLE_NAME_OR_PATH",
+        Map("command" -> "REORG")
+      )
     }
 
     val targetIdentifier = visitTableIdentifier(ctx.table)
@@ -380,11 +399,10 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   override def visitDescribeDeltaHistory(
       ctx: DescribeDeltaHistoryContext): LogicalPlan = withOrigin(ctx) {
-    DescribeDeltaHistoryCommand(
+    DescribeDeltaHistory(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.limit).map(_.getText.toInt),
-      Map.empty)
+      Option(ctx.limit).map(_.getText.toInt))
   }
 
   override def visitGenerate(ctx: GenerateContext): LogicalPlan = withOrigin(ctx) {
@@ -402,9 +420,36 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   }
 
   override def visitRestore(ctx: RestoreContext): LogicalPlan = withOrigin(ctx) {
-    val tableRelation = UnresolvedRelation(visitTableIdentifier(ctx.table))
+    val tableRelation = UnresolvedRelation(visitTableIdentifier(ctx.table).nameParts)
     val timeTravelTableRelation = maybeTimeTravelChild(ctx.clause, tableRelation)
     RestoreTableStatement(timeTravelTableRelation.asInstanceOf[TimeTravel])
+  }
+
+  /**
+   * Captures any CLUSTER BY clause and creates a [[ClusterByPlan]] logical plan.
+   * The plan will be used as a sentinel for DeltaSqlParser to process it further.
+   */
+  override def visitClusterBy(ctx: ClusterByContext): LogicalPlan = withOrigin(ctx) {
+    val clusterBySpecCtx = ctx.clusterBySpec.asScala.head
+    checkDuplicateClauses(ctx.clusterBySpec, "CLUSTER BY", clusterBySpecCtx)
+    val columnNames =
+      clusterBySpecCtx.interleave.asScala
+        .map(_.identifier.asScala.map(_.getText).toSeq)
+        .map(_.asInstanceOf[Seq[String]]).toSeq
+    // get CLUSTER BY clause positions.
+    val startIndex = clusterBySpecCtx.getStart.getStartIndex
+    val stopIndex = clusterBySpecCtx.getStop.getStopIndex
+
+    // get CLUSTER BY parenthesis positions.
+    val parenStartIndex = clusterBySpecCtx.LEFT_PAREN().getSymbol.getStartIndex
+    val parenStopIndex = clusterBySpecCtx.RIGHT_PAREN().getSymbol.getStopIndex
+    ClusterByPlan(
+      ClusterBySpec(columnNames),
+      startIndex,
+      stopIndex,
+      parenStartIndex,
+      parenStopIndex,
+      clusterBySpecCtx)
   }
 
   /**
@@ -427,7 +472,12 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     ctx.identifier.asScala.toSeq match {
       case Seq(tbl) => TableIdentifier(tbl.getText)
       case Seq(db, tbl) => TableIdentifier(tbl.getText, Some(db.getText))
-      case _ => throw new DeltaParseException(s"Illegal table name ${ctx.getText}", ctx)
+      case Seq(catalog, db, tbl) =>
+        TableIdentifier(tbl.getText, Some(db.getText), Some(catalog.getText))
+      case _ => throw new DeltaParseException(
+        ctx,
+        "DELTA_PARSING_ILLEGAL_TABLE_NAME",
+        Map("table" -> ctx.getText))
     }
   }
 
@@ -495,40 +545,28 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       ifExists = ctx.EXISTS != null)
   }
 
-/**
- * Create a [[ShowTableColumnsCommand]] logical plan.
- *
- * Syntax:
- * {{{
- *   SHOW COLUMNS (FROM | IN) tableName [(FROM | IN) schemaName];
- * }}}
- * Examples:
- * {{{
- *   SHOW COLUMNS IN delta.`test_table`
- *   SHOW COLUMNS IN `test_table` IN `test_database`
- * }}}
- */
-  override def visitShowColumns(
-      ctx: ShowColumnsContext): LogicalPlan = withOrigin(ctx) {
-    val spark = SparkSession.active
-    val tableName = visitTableIdentifier(ctx.tableName)
-    val schemaName = Option(ctx.schemaName).map(db => db.getText)
+  /**
+   * A featureNameValue can either be String or an identifier. This function extracts
+   * the featureNameValue based on whether its a string literal or an identifier.
+   */
+  override def visitFeatureNameValue(featureNameValue: FeatureNameValueContext): String = {
+    if (featureNameValue.stringLit() != null) {
+      string(visitStringLit(featureNameValue.stringLit()))
+    } else {
+      featureNameValue.getText
+    }
+  }
 
-    val tableIdentifier = if (tableName.database.isEmpty) {
-      schemaName match {
-        case Some(db) =>
-          TableIdentifier(tableName.identifier, Some(db))
-        case None => tableName
-      }
-    } else tableName
-
-    DeltaTableIdentifier(spark, tableIdentifier).map { id =>
-      val resolver = spark.sessionState.analyzer.resolver
-      if (schemaName.nonEmpty && tableName.database.exists(!resolver(_, schemaName.get))) {
-        throw DeltaErrors.showColumnsWithConflictDatabasesError(schemaName.get, tableName)
-      }
-      ShowTableColumnsCommand(id)
-    }.orNull
+  /**
+   * Parse an ALTER TABLE DROP FEATURE command.
+   */
+  override def visitAlterTableDropFeature(ctx: AlterTableDropFeatureContext): LogicalPlan = {
+    val truncateHistory = ctx.TRUNCATE != null && ctx.HISTORY != null
+    AlterTableDropFeature(
+      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
+        "ALTER TABLE ... DROP FEATURE"),
+      visitFeatureNameValue(ctx.featureName),
+      truncateHistory)
   }
 
   protected def typedVisit[T](ctx: ParseTree): T = {
@@ -558,7 +596,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case ("interval", Nil) => CalendarIntervalType
       case (dt, params) =>
         val dtStr = if (params.nonEmpty) s"$dt(${params.mkString(",")})" else dt
-        throw new DeltaParseException(s"DataType $dtStr is not supported.", ctx)
+        throw new DeltaParseException(
+          ctx,
+          "DELTA_PARSING_UNSUPPORTED_DATA_TYPE",
+          Map("dataType" -> dtStr)
+        )
     }
   }
 }

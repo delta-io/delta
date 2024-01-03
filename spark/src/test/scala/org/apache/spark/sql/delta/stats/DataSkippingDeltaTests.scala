@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.QueryPlanningTracker
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -42,7 +43,8 @@ import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 trait DataSkippingDeltaTestsBase extends QueryTest
-    with SharedSparkSession    with DeltaSQLCommandTest
+    with SharedSparkSession
+    with DeltaSQLCommandTest
     with PredicateHelper
     with GivenWhenThen
     with ScanReportHelper {
@@ -1517,47 +1519,49 @@ trait DataSkippingDeltaTestsBase extends QueryTest
 
   // Note that we cannot use testSkipping here, because the JSON parsing bug we're working around
   // prevents specifying a microsecond timestamp as input data.
-  test("data skipping on timestamps") {
-    val data = "2019-09-09 01:02:03.456789"
-    val df = Seq(data).toDF("strTs")
-      .selectExpr(
-        "CAST(strTs AS TIMESTAMP) AS ts",
-        "STRUCT(CAST(strTs AS TIMESTAMP) AS ts) AS nested")
+  for (timestampType <- Seq("TIMESTAMP", "TIMESTAMP_NTZ")) {
+    test(s"data skipping on $timestampType") {
+      val data = "2019-09-09 01:02:03.456789"
+      val df = Seq(data).toDF("strTs")
+        .selectExpr(
+          s"CAST(strTs AS $timestampType) AS ts",
+          s"STRUCT(CAST(strTs AS $timestampType) AS ts) AS nested")
 
-    val tempDir = Utils.createTempDir()
-    val r = DeltaLog.forTable(spark, tempDir)
-    df.coalesce(1).write.format("delta").save(r.dataPath.toString)
+      val tempDir = Utils.createTempDir()
+      val r = DeltaLog.forTable(spark, tempDir)
+      df.coalesce(1).write.format("delta").save(r.dataPath.toString)
 
-    // Check to ensure that the value actually in the file is always in range queries.
-    val hits = Seq(
-      """ts >= cast("2019-09-09 01:02:03.456789" AS TIMESTAMP)""",
-      """ts <= cast("2019-09-09 01:02:03.456789" AS TIMESTAMP)""",
-      """nested.ts >= cast("2019-09-09 01:02:03.456789" AS TIMESTAMP)""",
-      """nested.ts <= cast("2019-09-09 01:02:03.456789" AS TIMESTAMP)""",
-      """TS >= cast("2019-09-09 01:02:03.456789" AS TIMESTAMP)""",
-      """nEstED.tS >= cast("2019-09-09 01:02:03.456789" AS TIMESTAMP)""")
+      // Check to ensure that the value actually in the file is always in range queries.
+      val hits = Seq(
+        s"""ts >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+        s"""ts <= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+        s"""nested.ts >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+        s"""nested.ts <= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+        s"""TS >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+        s"""nEstED.tS >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""")
 
-    // Check the range of values that are far enough away to be data skipped. Note that the values
-    // are aligned with millisecond boundaries because of the JSON serialization truncation.
-    val misses = Seq(
-      """ts >= cast("2019-09-09 01:02:03.457001" AS TIMESTAMP)""",
-      """ts <= cast("2019-09-04 01:02:03.455999" AS TIMESTAMP)""",
-      """nested.ts >= cast("2019-09-09 01:02:03.457001" AS TIMESTAMP)""",
-      """nested.ts <= cast("2019-09-09 01:02:03.455999" AS TIMESTAMP)""",
-      """TS >= cast("2019-09-09 01:02:03.457001" AS TIMESTAMP)""",
-      """nEstED.tS >= cast("2019-09-09 01:02:03.457001" AS TIMESTAMP)""")
+      // Check the range of values that are far enough away to be data skipped. Note that the values
+      // are aligned with millisecond boundaries because of the JSON serialization truncation.
+      val misses = Seq(
+        s"""ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+        s"""ts <= cast("2019-09-04 01:02:03.455999" AS $timestampType)""",
+        s"""nested.ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+        s"""nested.ts <= cast("2019-09-09 01:02:03.455999" AS $timestampType)""",
+        s"""TS >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+        s"""nEstED.tS >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""")
 
-    hits.foreach { predicate =>
-      Given(predicate)
-      if (filesRead(r, predicate) != 1) {
-        failPretty(s"Expected hit but got miss for $predicate", predicate, data)
+      hits.foreach { predicate =>
+        Given(predicate)
+        if (filesRead(r, predicate) != 1) {
+          failPretty(s"Expected hit but got miss for $predicate", predicate, data)
+        }
       }
-    }
 
-    misses.foreach { predicate =>
-      Given(predicate)
-      if (filesRead(r, predicate) != 0) {
-        failPretty(s"Expected miss but got hit for $predicate", predicate, data)
+      misses.foreach { predicate =>
+        Given(predicate)
+        if (filesRead(r, predicate) != 0) {
+          failPretty(s"Expected miss but got hit for $predicate", predicate, data)
+        }
       }
     }
   }
@@ -2122,4 +2126,26 @@ class DataSkippingDeltaV1NameColumnMappingSuite
     with DeltaColumnMappingEnableNameMode
     with DataSkippingDeltaTestV1ColumnMappingMode {
   override protected def runAllTests: Boolean = true
+}
+
+class DataSkippingDeltaV1JsonCheckpointV2Suite extends DataSkippingDeltaV1Suite {
+  override def sparkConf: SparkConf = {
+    super.sparkConf.setAll(
+      Seq(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.JSON.name
+      )
+    )
+  }
+}
+
+class DataSkippingDeltaV1ParquetCheckpointV2Suite extends DataSkippingDeltaV1Suite {
+  override def sparkConf: SparkConf = {
+    super.sparkConf.setAll(
+      Seq(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.PARQUET.name
+      )
+    )
+  }
 }

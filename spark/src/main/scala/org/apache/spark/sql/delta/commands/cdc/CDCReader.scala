@@ -22,9 +22,8 @@ import scala.collection.mutable.{ListBuffer, Map => MutableMap}
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
-import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
+import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQLConf}
@@ -34,8 +33,9 @@ import org.apache.spark.sql.util.ScalaExtensions.OptionExt
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
@@ -68,6 +68,14 @@ object CDCReader extends CDCReaderImpl
   val CDC_TYPE_INSERT = "insert"
   val CDC_TYPE_UPDATE_PREIMAGE = "update_preimage"
   val CDC_TYPE_UPDATE_POSTIMAGE = "update_postimage"
+
+  /**
+   * Append CDC metadata columns to the provided schema.
+   */
+  def cdcAttributes: Seq[Attribute] = Seq(
+    AttributeReference(CDC_TYPE_COLUMN_NAME, StringType)(),
+    AttributeReference(CDC_COMMIT_VERSION, LongType)(),
+    AttributeReference(CDC_COMMIT_TIMESTAMP, TimestampType)())
 
   // A special sentinel value indicating rows which are part of the main table rather than change
   // data. Delta writers will partition rows with this value away from the CDC data and
@@ -403,6 +411,7 @@ trait CDCReaderImpl extends DeltaLogging {
    * @param useCoarseGrainedCDC - ignores checks related to CDC being disabled in any of the
    *         versions and computes CDC entirely from AddFiles/RemoveFiles (ignoring
    *         AddCDCFile actions)
+   * @param startVersionSnapshot - The snapshot of the starting version.
    * @return CDCInfo which contains the DataFrame of the changes as well as the statistics
    *         related to the changes
    */
@@ -413,7 +422,8 @@ trait CDCReaderImpl extends DeltaLogging {
       changes: Iterator[(Long, Seq[Action])],
       spark: SparkSession,
       isStreaming: Boolean = false,
-      useCoarseGrainedCDC: Boolean = false): CDCVersionDiffInfo = {
+      useCoarseGrainedCDC: Boolean = false,
+      startVersionSnapshot: Option[SnapshotDescriptor] = None): CDCVersionDiffInfo = {
     val deltaLog = readSchemaSnapshot.deltaLog
 
     if (end < start) {
@@ -428,8 +438,10 @@ trait CDCReaderImpl extends DeltaLogging {
     val addFiles = ListBuffer[CDCDataSpec[AddFile]]()
     val removeFiles = ListBuffer[CDCDataSpec[RemoveFile]]()
 
-    val startVersionSnapshot = deltaLog.getSnapshotAt(start)
-    if (!useCoarseGrainedCDC && !isCDCEnabledOnTable(startVersionSnapshot.metadata, spark)) {
+    val startVersionMetadata = startVersionSnapshot.map(_.metadata).getOrElse {
+      deltaLog.getSnapshotAt(start).metadata
+    }
+    if (!useCoarseGrainedCDC && !isCDCEnabledOnTable(startVersionMetadata, spark)) {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
     }
 
@@ -603,8 +615,7 @@ trait CDCReaderImpl extends DeltaLogging {
     //    the range, BUT time-travel is used so the read schema could also be arbitrary.
     // It is sufficient to just verify with the start version schema because we have already
     // verified that all data being queries is read-compatible with start schema.
-    checkBatchCdfReadSchemaIncompatibility(
-      startVersionSnapshot.metadata, startVersionSnapshot.version, isSchemaChange = false)
+    checkBatchCdfReadSchemaIncompatibility(startVersionMetadata, start, isSchemaChange = false)
 
     val dfs = ListBuffer[DataFrame]()
     if (changeFiles.nonEmpty) {
@@ -625,7 +636,7 @@ trait CDCReaderImpl extends DeltaLogging {
     // NOTE: We need to manually set the stats to 0 otherwise we will use default stats of INT_MAX,
     // which causes lots of optimizations to be applied wrong.
     val emptyRdd = LogicalRDD(
-      readSchema.toAttributes,
+      toAttributes(readSchema),
       spark.sparkContext.emptyRDD[InternalRow],
       isStreaming = isStreaming
     )(spark.sqlContext.sparkSession, Some(Statistics(0, Some(0))))
@@ -699,30 +710,28 @@ trait CDCReaderImpl extends DeltaLogging {
         .append(removeFilesMap(removeKey))
     }
 
+    // Convert maps back into Seq[CDCDataSpec] and feed it into a single scan. This will greatly
+    // reduce the number of tasks.
+    val finalAddFilesSpecs = buildCDCDataSpecSeq(finalAddFiles, versionToCommitInfo)
+    val finalRemoveFilesSpecs = buildCDCDataSpecSeq(finalRemoveFiles, versionToCommitInfo)
+
     val dfAddsAndRemoves = ListBuffer[DataFrame]()
 
-    finalAddFiles.foreach { case (tableVersion, addFiles) =>
-      val commitInfo = versionToCommitInfo.get(tableVersion.version)
+    if (finalAddFilesSpecs.nonEmpty) {
       dfAddsAndRemoves.append(
         scanIndex(
           spark,
-          new CdcAddFileIndex(
-            spark,
-            Seq(new CDCDataSpec(tableVersion, addFiles.toSeq, commitInfo)),
-            deltaLog,
-            deltaLog.dataPath,
-            snapshot),
+          new CdcAddFileIndex(spark, finalAddFilesSpecs, deltaLog, deltaLog.dataPath, snapshot),
           isStreaming))
     }
 
-    finalRemoveFiles.foreach { case (tableVersion, removeFiles) =>
-      val commitInfo = versionToCommitInfo.get(tableVersion.version)
+    if (finalRemoveFilesSpecs.nonEmpty) {
       dfAddsAndRemoves.append(
         scanIndex(
           spark,
           new TahoeRemoveFileIndex(
             spark,
-            Seq(new CDCDataSpec(tableVersion, removeFiles.toSeq, commitInfo)),
+            finalRemoveFilesSpecs,
             deltaLog,
             deltaLog.dataPath,
             snapshot),
@@ -771,6 +780,9 @@ trait CDCReaderImpl extends DeltaLogging {
       }
     }
 
+    // We have to build one scan for each version because DVs attached to actions will be
+    // broadcasted in [[ScanWithDeletionVectors.createBroadcastDVMap]] which is not version-aware.
+    // Here, one file can have different row index filters in different versions.
     val dfs = ListBuffer[DataFrame]()
     // Scan for masked rows as change_type = "insert",
     // see explanation in [[generateFileActionsWithInlineDv]].
@@ -787,7 +799,6 @@ trait CDCReaderImpl extends DeltaLogging {
             snapshot,
             rowIndexFilters =
               Some(fileActionsToIfNotContainedRowIndexFilters(addFiles.toSeq))),
-
           isStreaming))
     }
 
@@ -806,7 +817,6 @@ trait CDCReaderImpl extends DeltaLogging {
             snapshot,
             rowIndexFilters =
               Some(fileActionsToIfNotContainedRowIndexFilters(removeFiles.toSeq))),
-
           isStreaming))
     }
 
@@ -859,7 +869,8 @@ trait CDCReaderImpl extends DeltaLogging {
       end: Long,
       spark: SparkSession,
       readSchemaSnapshot: Option[Snapshot] = None,
-      useCoarseGrainedCDC: Boolean = false): DataFrame = {
+      useCoarseGrainedCDC: Boolean = false,
+      startVersionSnapshot: Option[SnapshotDescriptor] = None): DataFrame = {
 
     val changesWithinRange = deltaLog.getChanges(start).takeWhile { case (version, _) =>
       version <= end
@@ -871,7 +882,8 @@ trait CDCReaderImpl extends DeltaLogging {
       changesWithinRange,
       spark,
       isStreaming = false,
-      useCoarseGrainedCDC)
+      useCoarseGrainedCDC = useCoarseGrainedCDC,
+      startVersionSnapshot = startVersionSnapshot)
       .fileChangeDf
   }
 
@@ -1003,6 +1015,14 @@ trait CDCReaderImpl extends DeltaLogging {
     leftCopy.diff(right)
     leftCopy
   }
+
+  private def buildCDCDataSpecSeq[T <: FileAction](
+      actionsByVersion: MutableMap[TableVersion, ListBuffer[T]],
+      versionToCommitInfo: MutableMap[Long, CommitInfo]
+  ): Seq[CDCDataSpec[T]] = actionsByVersion.map { case (fileVersion, addFiles) =>
+    val commitInfo = versionToCommitInfo.get(fileVersion.version)
+    new CDCDataSpec(fileVersion, addFiles.toSeq, commitInfo)
+  }.toSeq
 
   /**
    * Represents the changes between some start and end version of a Delta table

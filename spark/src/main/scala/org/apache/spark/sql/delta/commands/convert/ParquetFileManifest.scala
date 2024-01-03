@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.util.{DeltaFileOperations, PartitionUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTypes}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
 import org.apache.spark.sql.execution.streaming.MetadataLogFileIndex
 import org.apache.spark.sql.types.StructType
@@ -41,8 +41,7 @@ class ManualListingFileManifest(
   protected def doList(): Dataset[SerializableFileStatus] = {
     val conf = spark.sparkContext.broadcast(serializableConf)
     DeltaFileOperations
-      .recursiveListDirs(
-        spark, Seq(basePath), conf, hiddenDirNameFilter = ConvertUtils.hiddenDirNameFilter)
+      .recursiveListDirs(spark, Seq(basePath), conf, ConvertUtils.dirNameFilter)
       .where("!isDir")
   }
 
@@ -113,26 +112,12 @@ class CatalogFileManifest(
     }
   }
 
-  protected def doList(): Dataset[(SerializableFileStatus, CatalogTypes.TablePartitionSpec)] = {
-    import org.apache.spark.sql.delta.implicits._
+  protected def doList(): Dataset[SerializableFileStatus] = {
     if (partitionList.isEmpty) {
       throw DeltaErrors.convertToDeltaNoPartitionFound(catalogTable.identifier.unquotedString)
     }
 
-    // Avoid the serialization of this CatalogFileManifest during distributed execution.
-    val conf = spark.sparkContext.broadcast(serializableConf)
-    val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
-
-    val rdd = spark.sparkContext.parallelize(partitionList)
-      .repartition(math.min(parallelism, partitionList.length))
-      .mapPartitions { partitions =>
-        partitions.flatMap { partition =>
-          DeltaFileOperations
-            .localListDirs(conf.value.value, Seq(partition._1), recursive = false).filter(!_.isDir)
-            .map((_, partition._2))
-        }
-      }
-    spark.createDataset(rdd)
+    ConvertUtils.listDirsInParallel(spark, basePath, partitionList.map(_._1), serializableConf)
   }
 
   override lazy val allFiles: Dataset[ConvertTargetFile] = {
@@ -141,35 +126,37 @@ class CatalogFileManifest(
     // Avoid the serialization of this CatalogFileManifest during distributed execution.
     val conf = spark.sparkContext.broadcast(serializableConf)
     val useParquetSchema = !useCatalogSchema
+    val dirToPartitionSpec = partitionList.toMap
     val fetchConfig = parquetSchemaFetchConfig
 
     val files = doList().mapPartitions { iter =>
-      val fileStatusWithSpecSeq = iter.toSeq
+      val fileStatuses = iter.toSeq
       if (useParquetSchema) {
-        val pathToStatusSpecMapping = fileStatusWithSpecSeq.map {
-          case (fileStatus, partitionSpec) => fileStatus.path -> (fileStatus, partitionSpec)
-        }.toMap
+        val pathToFile = fileStatuses.map { fileStatus => fileStatus.path -> fileStatus }.toMap
         val footerSeq = DeltaFileOperations.readParquetFootersInParallel(
           conf.value.value,
-          fileStatusWithSpecSeq.map(_._1.toFileStatus),
+          fileStatuses.map(_.toFileStatus),
           fetchConfig.ignoreCorruptFiles)
         val schemaConverter = new ParquetToSparkSchemaConverter(
           assumeBinaryIsString = fetchConfig.assumeBinaryIsString,
           assumeInt96IsTimestamp = fetchConfig.assumeInt96IsTimestamp
         )
         footerSeq.map { footer =>
-          pathToStatusSpecMapping(footer.getFile.toString) match {
-            case (fileStatus, partitionSpec) =>
-              val schema = ParquetFileFormat.readSchemaFromFooter(footer, schemaConverter)
-              ConvertTargetFile(fileStatus, Some(partitionSpec), Some(schema.toDDL))
-          }
+          val schema = ParquetFileFormat.readSchemaFromFooter(footer, schemaConverter)
+          val fileStatus = pathToFile(footer.getFile.toString)
+          ConvertTargetFile(
+            fileStatus,
+            dirToPartitionSpec.get(footer.getFile.getParent.toString),
+            Some(schema.toDDL))
         }.toIterator
       } else {
         // TODO: Currently "spark.sql.files.ignoreCorruptFiles" is not respected for
         //  CatalogFileManifest when catalog schema is used to avoid performance regression.
-        fileStatusWithSpecSeq.map {
-          case (fileStatus, partitionSpec) =>
-            ConvertTargetFile(fileStatus, Some(partitionSpec), None)
+        fileStatuses.map { fileStatus =>
+            ConvertTargetFile(
+              fileStatus,
+              dirToPartitionSpec.get(fileStatus.getHadoopPath.getParent.toString),
+              None)
         }.toIterator
       }
     }
@@ -204,7 +191,7 @@ class MetadataLogFileManifest(
   protected def doList(): Dataset[SerializableFileStatus] = {
     import org.apache.spark.sql.delta.implicits._
 
-    val rdd = spark.sparkContext.parallelize(index.allFiles).mapPartitions { _
+    val rdd = spark.sparkContext.parallelize(index.allFiles()).mapPartitions { _
         .map(SerializableFileStatus.fromStatus)
     }
     spark.createDataset(rdd)

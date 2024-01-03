@@ -36,7 +36,8 @@ import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 
 class DeltaTimeTravelSuite extends QueryTest
-  with SharedSparkSession  with SQLTestUtils
+  with SharedSparkSession
+  with SQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._
@@ -409,6 +410,12 @@ class DeltaTimeTravelSuite extends QueryTest
       inputTimestamps = Seq(5, 10, 8, 9, 12, 15, 14, 14), // 5, 10, 11, 12, 13, 15, 16, 17
       deleted = Seq(5, 10, 11, 12, 13, 15, 16, 17)
     )
+  }
+
+  test("[SPARK-45383] Time travel on a non-existing table should throw AnalysisException") {
+    intercept[AnalysisException] {
+      spark.sql("SELECT * FROM not_existing VERSION AS OF 0")
+    }
   }
 
   test("as of timestamp in between commits should use commit before timestamp") {

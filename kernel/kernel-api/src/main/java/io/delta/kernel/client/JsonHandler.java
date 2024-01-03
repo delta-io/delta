@@ -17,7 +17,9 @@
 package io.delta.kernel.client;
 
 import java.io.IOException;
+import java.util.Optional;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FileDataReadResult;
@@ -29,39 +31,70 @@ import io.delta.kernel.utils.CloseableIterator;
  * Provides JSON handling functionality to Delta Kernel. Delta Kernel can use this client to
  * parse JSON strings into {@link io.delta.kernel.data.Row} or read content from JSON files.
  * Connectors can leverage this interface to provide their best implementation of the JSON parsing
- * capability to
- * Delta Kernel.
+ * capability to Delta Kernel.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface JsonHandler
-        extends FileHandler
-{
+    extends FileHandler {
     /**
      * Parse the given <i>json</i> strings and return the fields requested by {@code outputSchema}
      * as columns in a {@link ColumnarBatch}.
+     * <p>
+     * There are a couple special cases that should be handled for specific data types:
+     * <ul>
+     *    <li><b>FloatType and DoubleType:</b> handle non-numeric numbers encoded as strings
+     *    <ul>
+     *        <li>NaN: <code>"NaN"</code></li>
+     *        <li>Positive infinity: <code>"+INF", "Infinity", "+Infinity"</code></li>
+     *        <li>Negative infinity: <code>"-INF", "-Infinity""</code></li>
+     *    </ul>
+     *    </li>
+     *    <li><b>DateType:</b> handle dates encoded as strings in the format
+     *    <code>"yyyy-MM-dd"</code></li>
+     *    <li><b>TimestampType:</b> handle timestamps encoded as strings in the format
+     *    <code>"yyyy-MM-dd'T'HH:mm:ss.SSSXXX"</code></li>
+     * </ul>
      *
      * @param jsonStringVector String {@link ColumnVector} of valid JSON strings.
-     * @param outputSchema Schema of the data to return from the parsed JSON. If any requested
-     *                     fields are missing in the JSON string, a <i>null</i> is returned for that
-     *                     particular field in the returned {@link Row}. The type for each given
-     *                     field is expected to match the type in the JSON.
+     * @param outputSchema     Schema of the data to return from the parsed JSON. If any requested
+     *                         fields are missing in the JSON string, a <i>null</i> is returned
+     *                         for that
+     *                         particular field in the returned {@link Row}. The type for each given
+     *                         field is expected to match the type in the JSON.
+     * @param selectionVector  Optional selection vector indicating which rows to parse the JSON.
+     *                         If present, only the selected rows should be parsed. Unselected rows
+     *                         should be all null in the returned batch.
      * @return a {@link ColumnarBatch} of schema {@code outputSchema} with one row for each entry
-     *         in {@code jsonStringVector}
+     * in {@code jsonStringVector}
      */
-    ColumnarBatch parseJson(ColumnVector jsonStringVector, StructType outputSchema);
+    ColumnarBatch parseJson(ColumnVector jsonStringVector, StructType outputSchema,
+            Optional<ColumnVector> selectionVector);
+
+    /**
+     * Deserialize the Delta schema from {@code structTypeJson} according to the Delta Protocol
+     * <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types">
+     *    schema serialization rules </a>.
+     *
+     * @param structTypeJson the JSON formatted schema string to parse
+     * @return the parsed {@link StructType}
+     */
+    StructType deserializeStructType(String structTypeJson);
 
     /**
      * Read and parse the JSON format file at given locations and return the data as a
      * {@link ColumnarBatch} with the columns requested by {@code physicalSchema}.
      *
-     * @param fileIter Iterator of {@link FileReadContext} objects to read data from.
+     * @param fileIter       Iterator of {@link FileReadContext} objects to read data from.
      * @param physicalSchema Select list of columns to read from the JSON file.
      * @return an iterator of {@link FileDataReadResult}s containing the data in columnar format
-     *         and the corresponding scan file information. It is the responsibility of the caller
-     *         to close the iterator. The data returned is in the same as the order of files given
-     *         in <i>fileIter</i>.
+     * and the corresponding scan file information. It is the responsibility of the caller
+     * to close the iterator. The data returned is in the same as the order of files given
+     * in <i>fileIter</i>.
      * @throws IOException if an error occurs during the read.
      */
     CloseableIterator<FileDataReadResult> readJsonFiles(
-            CloseableIterator<FileReadContext> fileIter,
-            StructType physicalSchema) throws IOException;
+        CloseableIterator<FileReadContext> fileIter,
+        StructType physicalSchema) throws IOException;
 }

@@ -31,8 +31,8 @@ import org.apache.iceberg.hadoop.HadoopTables
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{stringToDate, toJavaDate}
-import org.apache.spark.sql.functions.{col, from_json, lit, struct, substring}
-import org.apache.spark.sql.types.{LongType, StringType, StructType}
+import org.apache.spark.sql.functions.{col, expr, from_json, lit, struct, substring}
+import org.apache.spark.sql.types.{Decimal, DecimalType, LongType, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.UTF8String
 // scalastyle:on import.ordering.noEmptyLine
 
@@ -50,7 +50,7 @@ trait CloneIcebergSuiteBase extends QueryTest
   protected def sourceIdentifier: String
   protected def supportedModes: Seq[String] = Seq("SHALLOW")
 
-  private def toDate(date: String): Date = {
+  protected def toDate(date: String): Date = {
     toJavaDate(stringToDate(UTF8String.fromString(date)).get)
   }
 
@@ -83,7 +83,8 @@ trait CloneIcebergSuiteBase extends QueryTest
     withTable(table, cloneTable) {
       spark.sql(
         s"""CREATE TABLE $table (id bigint, data string)
-           |USING iceberg PARTITIONED BY (data)""".stripMargin)
+           |USING iceberg PARTITIONED BY (data)
+           |TBLPROPERTIES ('write.format.default' = 'PARQUET')""".stripMargin)
       spark.sql(s"INSERT INTO $table VALUES (1, 'a'), (2, 'b'), (3, 'c')")
       spark.sql(s"DELETE FROM $table WHERE data > 'a'")
       checkAnswer(spark.sql(s"SELECT * from $table"), Row(1, "a") :: Nil)
@@ -355,7 +356,8 @@ trait CloneIcebergSuiteBase extends QueryTest
       // Replace the partition field "date" with a transformed field "month(date)"
       icebergTable.refresh()
       icebergTable.updateSpec().removeField("date")
-        .addField(org.apache.iceberg.expressions.Expressions.month("date")).commit()
+        .addField(org.apache.iceberg.expressions.Expressions.month("date"))
+        .commit()
 
       // Invalidate cache and load the updated partition spec
       spark.sql(s"REFRESH TABLE $table")
@@ -403,7 +405,7 @@ class CloneIcebergByPathSuite extends CloneIcebergSuiteBase
       val ae = intercept[AnalysisException] {
         sql(s"SELECT * FROM $sourceIdentifier")
       }
-      assert(ae.getMessage.contains("table does not support batch scan"))
+      assert(ae.getMessage.contains("does not support batch scan"))
     }
   }
 }

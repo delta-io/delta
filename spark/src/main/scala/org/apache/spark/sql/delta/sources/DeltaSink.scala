@@ -27,6 +27,8 @@ import org.apache.hadoop.fs.Path
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -38,12 +40,13 @@ import org.apache.spark.util.Utils
 /**
  * A streaming sink that writes data into a Delta Table.
  */
-class DeltaSink(
+case class DeltaSink(
     sqlContext: SQLContext,
     path: Path,
     partitionColumns: Seq[String],
     outputMode: OutputMode,
-    options: DeltaOptions)
+    options: DeltaOptions,
+    catalogTable: Option[CatalogTable] = None)
   extends Sink
     with ImplicitMetadataOperation
     with DeltaLogging {
@@ -91,7 +94,12 @@ class DeltaSink(
   }
 
   override def addBatch(batchId: Long, data: DataFrame): Unit = {
-    val txn = deltaLog.startTransaction()
+    addBatchWithStatusImpl(batchId, data)
+  }
+
+
+  private def addBatchWithStatusImpl(batchId: Long, data: DataFrame): Boolean = {
+    val txn = deltaLog.startTransaction(catalogTable)
     assert(queryId != null)
 
     if (SchemaUtils.typeExistsRecursively(data.schema)(_.isInstanceOf[NullType])) {
@@ -118,7 +126,7 @@ class DeltaSink(
     val currentVersion = txn.txnVersion(queryId)
     if (currentVersion >= batchId) {
       logInfo(s"Skipping already complete epoch $batchId, in query $queryId")
-      return
+      return false
     }
 
     val deletedFiles = outputMode match {
@@ -140,6 +148,7 @@ class DeltaSink(
                                                )
     val pendingTxn = PendingTxn(batchId, txn, info, newFiles, deletedFiles)
     pendingTxn.commit()
+    return true
   }
 
 

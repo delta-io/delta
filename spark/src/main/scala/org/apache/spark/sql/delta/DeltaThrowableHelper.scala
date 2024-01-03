@@ -54,8 +54,9 @@ object DeltaThrowableHelper
 
   def getMessage(errorClass: String, messageParameters: Array[String]): String = {
     val template = errorClassReader.getMessageTemplate(errorClass)
-    String.format(template.replaceAll("<[a-zA-Z0-9_-]+>", "%s"),
+    val message = String.format(template.replaceAll("<[a-zA-Z0-9_-]+>", "%s"),
       messageParameters: _*)
+    s"[$errorClass] $message"
   }
 
   def getSqlState(errorClass: String): String = errorClassReader.getSqlState(errorClass)

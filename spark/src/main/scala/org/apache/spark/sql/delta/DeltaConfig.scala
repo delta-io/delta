@@ -411,6 +411,19 @@ trait DeltaConfigsBase extends DeltaLogging {
   )
 
   /**
+   * The logRetention period to be used in DROP FEATURE ... TRUNCATE HISTORY command.
+   * The value should represent the expected duration of the longest running transaction. Setting
+   * this to a lower value than the longest running transaction may corrupt the table.
+   */
+  val TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION = buildConfig[CalendarInterval](
+    "dropFeatureTruncateHistory.retentionDuration",
+    "interval 24 hours",
+    parseCalendarInterval,
+    isValidIntervalConfigValue,
+    "needs to be provided as a calendar interval such as '2 weeks'. Months " +
+    "and years are not accepted. You may specify '365 days' for a year instead.")
+
+  /**
    * The shortest duration we have to keep logically deleted data files around before deleting them
    * physically. This is to prevent failures in stale readers after compactions or partition
    * overwrites.
@@ -624,6 +637,15 @@ trait DeltaConfigsBase extends DeltaLogging {
     "must be Serializable or WriteSerializable"
   )
 
+  /** Policy to decide what kind of checkpoint to write to a table. */
+  val CHECKPOINT_POLICY = buildConfig[CheckpointPolicy.Policy](
+    key = "checkpointPolicy",
+    defaultValue = CheckpointPolicy.Classic.name,
+    fromString = str => CheckpointPolicy.fromName(str),
+    validationFunction = (v => CheckpointPolicy.ALL.exists(_.name == v.name)),
+    helpMessage = s"can be one of the " +
+      s"following: ${CheckpointPolicy.Classic.name}, ${CheckpointPolicy.V2.name}")
+
   /**
    * Indicates whether Row Tracking is enabled on the table. When this flag is turned on, all rows
    * are guaranteed to have Row IDs and Row Commit Versions assigned to them, and writers are
@@ -655,6 +677,26 @@ trait DeltaConfigsBase extends DeltaLogging {
 
   val ICEBERG_COMPAT_V1_ENABLED = buildConfig[Option[Boolean]](
     "enableIcebergCompatV1",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean."
+  )
+
+  val ICEBERG_COMPAT_V2_ENABLED = buildConfig[Option[Boolean]](
+    key = "enableIcebergCompatV2",
+    defaultValue = null,
+    fromString = v => Option(v).map(_.toBoolean),
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean."
+  )
+
+  /**
+   * Enable optimized writes into a Delta table. Optimized writes adds an adaptive shuffle before
+   * the write to write compacted files into a Delta table during a write.
+   */
+  val OPTIMIZE_WRITE = buildConfig[Option[Boolean]](
+    "autoOptimize.optimizeWrite",
     null,
     v => Option(v).map(_.toBoolean),
     _ => true,

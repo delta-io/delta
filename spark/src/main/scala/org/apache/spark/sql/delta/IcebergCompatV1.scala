@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
@@ -36,8 +37,6 @@ import org.apache.spark.sql.types.{ArrayType, MapType, NullType}
 object IcebergCompatV1 extends DeltaLogging {
 
   val REQUIRED_TABLE_FEATURES = Seq(ColumnMappingTableFeature)
-
-  val INCOMPATIBLE_TABLE_FEATURES = Seq(DeletionVectorsTableFeature)
 
   val REQUIRED_DELTA_TABLE_PROPERTIES = Seq(
     RequiredDeltaTableProperty(
@@ -70,12 +69,13 @@ object IcebergCompatV1 extends DeltaLogging {
    *         updates need to be applied, will return None.
    */
   def enforceInvariantsAndDependencies(
-      prevProtocol: Protocol,
-      prevMetadata: Metadata,
+      prevSnapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
       isCreatingNewTable: Boolean,
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
+    val prevProtocol = prevSnapshot.protocol
+    val prevMetadata = prevSnapshot.metadata
     val wasEnabled = IcebergCompatV1.isEnabled(prevMetadata)
     val isEnabled = IcebergCompatV1.isEnabled(newestMetadata)
     val tableId = newestMetadata.id
@@ -104,14 +104,17 @@ object IcebergCompatV1 extends DeltaLogging {
         // - CREATE TABLE partitioned by colA dataType1; REPLACE TABLE partitioned by colA dataType2
         if (prevMetadata.partitionColumns.nonEmpty &&
           prevMetadata.partitionColumns != newestMetadata.partitionColumns) {
-          throw DeltaErrors.icebergCompatV1ReplacePartitionedTableException(
-            prevMetadata.partitionColumns, newestMetadata.partitionColumns)
+          throw DeltaErrors.icebergCompatReplacePartitionedTableException(
+            version = 1, prevMetadata.partitionColumns, newestMetadata.partitionColumns)
         }
 
-        if (SchemaUtils.typeExistsRecursively(newestMetadata.schema) { f =>
+        SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
           f.isInstanceOf[MapType] || f.isInstanceOf[ArrayType] || f.isInstanceOf[NullType]
-        }) {
-          throw DeltaErrors.icebergCompatV1UnsupportedDataTypeException(newestMetadata.schema)
+        } match {
+          case Some(unsupportedType) =>
+            throw DeltaErrors.icebergCompatUnsupportedDataTypeException(
+              version = 1, dataType = unsupportedType, newestMetadata.schema)
+          case _ =>
         }
 
         // If this field is empty, then the AddFile is missing the `numRecords` statistic.
@@ -133,19 +136,19 @@ object IcebergCompatV1 extends DeltaLogging {
               if (isCreatingNewTable) {
                 tblFeatureUpdates += f
               } else {
-                throw DeltaErrors.icebergCompatV1MissingRequiredTableFeatureException(f)
+                throw DeltaErrors.icebergCompatMissingRequiredTableFeatureException(version = 1, f)
               }
             case (true, false) => // txn is removing/un-supporting it!
-              // Note: currently it is impossible to remove/un-support a table feature
-              throw DeltaErrors.icebergCompatV1DisablingRequiredTableFeatureException(f)
+              throw DeltaErrors.icebergCompatDisablingRequiredTableFeatureException(version = 1, f)
           }
         }
 
-        // Check we haven't added any incompatible table features
-        INCOMPATIBLE_TABLE_FEATURES.foreach { f =>
-          if (newestProtocol.isFeatureSupported(f)) {
-            throw DeltaErrors.icebergCompatV1IncompatibleTableFeatureException(f)
-          }
+        // Check for incompatible table features;
+        // Deletion Vectors cannot be writeable; Note that concurrent txns are also covered
+        // to NOT write deletion vectors as that txn would need to make DVs writable, which
+        // would conflict with current txn because of metadata change.
+        if (DeletionVectorUtils.deletionVectorsWritable(newestProtocol, newestMetadata)) {
+          throw DeltaErrors.icebergCompatDeletionVectorsShouldBeDisabledException(version = 1)
         }
 
         // Check we have all required delta table properties
@@ -155,8 +158,8 @@ object IcebergCompatV1 extends DeltaLogging {
             val newestValueOkay = validator(newestValue)
             val newestValueExplicitlySet = newestMetadata.configuration.contains(deltaConfig.key)
 
-            val err = DeltaErrors.icebergCompatV1WrongRequiredTablePropertyException(
-              deltaConfig.key, newestValue.toString, autoSetValue)
+            val err = DeltaErrors.icebergCompatWrongRequiredTablePropertyException(
+              version = 1, deltaConfig.key, newestValue.toString, autoSetValue)
 
             if (!newestValueOkay) {
               if (!newestValueExplicitlySet && isCreatingNewTable) {
@@ -200,6 +203,12 @@ object IcebergCompatV1 extends DeltaLogging {
 
         (protocolResult, metadataResult)
     }
+  }
+}
+
+object IcebergCompatV2 extends DeltaLogging {
+  def isEnabled(metadata: Metadata): Boolean = {
+    DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED.fromMetaData(metadata).getOrElse(false)
   }
 }
 

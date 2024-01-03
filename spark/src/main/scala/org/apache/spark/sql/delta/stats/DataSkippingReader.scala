@@ -39,7 +39,7 @@ import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
 /**
@@ -145,7 +145,7 @@ object SkippingEligibleLiteral {
 object SkippingEligibleDataType {
   // Call this directly, e.g. `SkippingEligibleDataType(dataType)`
   def apply(dataType: DataType): Boolean = dataType match {
-    case _: NumericType | DateType | TimestampType | StringType => true
+    case _: NumericType | DateType | TimestampType | TimestampNTZType | StringType => true
     case _ => false
   }
 
@@ -652,6 +652,10 @@ trait DataSkippingReaderBase
           // There is a longer term task SC-22825 to fix the serialization problem that caused this.
           // But we need the adjustment in any case to correctly read stats written by old versions.
           new Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampType))
+        case (statCol, TimestampNTZType, _) if statType == MAX =>
+          // We also apply the same adjustment of max stats that was applied to Timestamp
+          // for TimestampNTZ because these 2 types have the same precision in terms of time.
+          new Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampNTZType))
         case (statCol, _, _) =>
           statCol
       }
@@ -767,7 +771,7 @@ trait DataSkippingReaderBase
     val ds = if (keepNumRecords) {
       withStats // use withStats instead of allFiles so the `stats` column is already parsed
         // keep only the numRecords field as a Json string in the stats field
-        .withColumn("stats", to_json(struct(col("stats.numRecords") as 'numRecords)))
+        .withColumn("stats", to_json(struct(col("stats.numRecords") as "numRecords")))
     } else {
       allFiles.withColumn("stats", nullStringLiteral)
     }
@@ -803,7 +807,7 @@ trait DataSkippingReaderBase
         DeltaLog.filterFileList(metadata.partitionSchema, withStats, partitionFilters)
       filteredFiles
         // keep only the numRecords field as a Json string in the stats field
-        .withColumn("stats", to_json(struct(col("stats.numRecords") as 'numRecords)))
+        .withColumn("stats", to_json(struct(col("stats.numRecords") as "numRecords")))
     } else {
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, allFiles.toDF(), partitionFilters)
@@ -841,7 +845,7 @@ trait DataSkippingReaderBase
 
     val statsColumn = if (keepNumRecords) {
       // keep only the numRecords field as a Json string in the stats field
-      to_json(struct(col("stats.numRecords") as 'numRecords))
+      to_json(struct(col("stats.numRecords") as "numRecords"))
     } else nullStringLiteral
 
     val files =
@@ -963,43 +967,6 @@ trait DataSkippingReaderBase
   }
 
   /**
-   * Gathers files that should be included in a scan based on the limit clause, when there is
-   * no filter or projection present. Statistics about the amount of data that will be read
-   * are gathered and returned.
-   */
-  override def filesForScan(limit: Long): DeltaScan =
-    recordDeltaOperation(deltaLog, "delta.skipping.limit") {
-      val startTime = System.currentTimeMillis()
-      val scan = pruneFilesByLimit(withStats, limit)
-
-      val totalDataSize = new DataSize(
-        sizeInBytesIfKnown,
-        None,
-        numOfFilesIfKnown
-      )
-
-      val scannedDataSize = new DataSize(
-        scan.byteSize,
-        scan.numPhysicalRecords,
-        Some(scan.files.size)
-      )
-
-      DeltaScan(
-        version = version,
-        files = scan.files,
-        total = totalDataSize,
-        partition = null,
-        scanned = scannedDataSize)(
-        scannedSnapshot = snapshotToScan,
-        partitionFilters = ExpressionSet(Nil),
-        dataFilters = ExpressionSet(Nil),
-        unusedFilters = ExpressionSet(Nil),
-        scanDurationMs = System.currentTimeMillis() - startTime,
-        dataSkippingType = DeltaDataSkippingType.limit
-      )
-    }
-
-  /**
    * Gathers files that should be included in a scan based on the given predicates and limit.
    * This will be called only when all predicates are on partitioning columns.
    * Statistics about the amount of data that will be read are gathered and returned.
@@ -1107,7 +1074,7 @@ trait DataSkippingReaderBase
       val filesToScan = ArrayBuffer[AddFile]()
       val filesToIgnore = ArrayBuffer[AddFile]()
       while (iter.hasNext && logicalRowsToScan < limit) {
-        val file = iter.next
+        val file = iter.next()
         if (file._2.numPhysicalRecords == null || file._2.numLogicalRecords == null) {
           // this file has no stats, ignore for now
           bytesToIgnore += file._1.size

@@ -30,6 +30,10 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
 import shadedForDelta.org.apache.iceberg.{AppendFiles, DeleteFiles, OverwriteFiles, PendingUpdate, RewriteFiles, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
+import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
+import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
+
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 sealed trait IcebergTableOp
 case object CREATE_TABLE extends IcebergTableOp
@@ -46,6 +50,7 @@ case object REPLACE_TABLE extends IcebergTableOp
  * @param tableOp How to instantiate the underlying Iceberg table. Defaults to WRITE_TABLE.
  */
 class IcebergConversionTransaction(
+    protected val catalogTable: CatalogTable,
     protected val conf: Configuration,
     protected val postCommitSnapshot: Snapshot,
     protected val tableOp: IcebergTableOp = WRITE_TABLE,
@@ -294,13 +299,34 @@ class IcebergConversionTransaction(
     }
     assert(fileUpdates.forall(_.hasCommitted), "Cannot commit. You have uncommitted changes.")
 
+    val nameMapping = NameMappingParser.toJson(MappingUtil.create(icebergSchema))
+
+    // hard code dummy delta version as -1 for CREATE_TABLE and REPLACE_TABLE, which will be later
+    // set to correct version in setSchemaTxn. -1 is chosen because it is less than the smallest
+    // possible legitimate Delta version which is 0.
+    val deltaVersion = if (tableOp == CREATE_TABLE || tableOp == REPLACE_TABLE) -1
+      else postCommitSnapshot.version
+
     txn.updateProperties()
-      .set(IcebergConverter.DELTA_VERSION_PROPERTY, postCommitSnapshot.version.toString)
+      .set(IcebergConverter.DELTA_VERSION_PROPERTY, deltaVersion.toString)
       .set(IcebergConverter.DELTA_TIMESTAMP_PROPERTY, postCommitSnapshot.timestamp.toString)
+      .set(IcebergConverter.ICEBERG_NAME_MAPPING_PROPERTY, nameMapping)
       .commit()
 
     try {
       txn.commitTransaction()
+      if (tableOp == CREATE_TABLE || tableOp == REPLACE_TABLE) {
+        // Iceberg CREATE_TABLE and REPLACE_TABLE reassigns the field id in schema, which
+        // is overwritten by setting Delta schema with Delta generated field id to ensure
+        // consistency between field id in Iceberg schema after conversion and field id in
+        // parquet files written by Delta.
+        val setSchemaTxn = createIcebergTxn(Some(WRITE_TABLE))
+        setSchemaTxn.setSchema(icebergSchema).commit()
+        setSchemaTxn.updateProperties()
+          .set(IcebergConverter.DELTA_VERSION_PROPERTY, postCommitSnapshot.version.toString)
+          .commit()
+        setSchemaTxn.commitTransaction()
+      }
       recordIcebergCommit()
     } catch {
       case NonFatal(e) =>
@@ -315,26 +341,30 @@ class IcebergConversionTransaction(
   // Protected Methods //
   ///////////////////////
 
-  protected def createIcebergTxn(): IcebergTransaction = {
-    val hadoopTables = new HadoopTables(conf)
-    val tableExists = hadoopTables.exists(tablePath.toString)
+  protected def createIcebergTxn(tableOpOpt: Option[IcebergTableOp] = None):
+      IcebergTransaction = {
+    val hiveCatalog = IcebergTransactionUtils.createHiveCatalog(conf)
+    val icebergTableId = IcebergTransactionUtils
+      .convertSparkTableIdentifierToIcebergHive(catalogTable.identifier)
+
+    val tableExists = hiveCatalog.tableExists(icebergTableId)
 
     def tableBuilder = {
       val properties = getIcebergPropertiesFromDeltaProperties(
         postCommitSnapshot.metadata.configuration
       )
 
-      hadoopTables
-        .buildTable(tablePath.toString, icebergSchema)
+      hiveCatalog
+        .buildTable(icebergTableId, icebergSchema)
         .withPartitionSpec(partitionSpec)
         .withProperties(properties.asJava)
     }
 
-    tableOp match {
+    tableOpOpt.getOrElse(tableOp) match {
       case WRITE_TABLE =>
         if (tableExists) {
           recordFrameProfile("IcebergConversionTransaction", "loadTable") {
-            hadoopTables.load(tablePath.toString).newTransaction()
+            hiveCatalog.loadTable(icebergTableId).newTransaction()
           }
         } else {
           throw new IllegalStateException(s"Cannot write to table $tablePath. Table doesn't exist.")

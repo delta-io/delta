@@ -29,7 +29,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
 class DeltaTimestampNTZSuite extends QueryTest
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   private def getProtocolForTable(table: String): Protocol = {
     val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
@@ -118,12 +119,17 @@ class DeltaTimestampNTZSuite extends QueryTest
     }
   }
 
-  test("min/max stats collection should not apply on TIMESTAMP_NTZ") {
+  test("min/max stats collection should apply on TIMESTAMP_NTZ") {
     withTable("delta_test") {
-      sql("CREATE TABLE delta_test(c1 STRING, c2 TIMESTAMP, c3 TIMESTAMP_NTZ) USING delta")
-      val statsSchema = DeltaLog.forTable(spark, TableIdentifier("delta_test")).snapshot.statsSchema
-      assert(statsSchema("minValues").dataType == StructType.fromDDL("c1 STRING, c2 TIMESTAMP"))
-      assert(statsSchema("maxValues").dataType == StructType.fromDDL("c1 STRING, c2 TIMESTAMP"))
+      val schemaString = "c1 STRING, c2 TIMESTAMP, c3 TIMESTAMP_NTZ"
+      sql(s"CREATE TABLE delta_test($schemaString) USING delta")
+      val statsSchema = DeltaLog.forTable(spark, TableIdentifier("delta_test"))
+        .unsafeVolatileSnapshot.statsSchema
+      assert(statsSchema("minValues").dataType == StructType
+        .fromDDL(schemaString))
+      assert(statsSchema("maxValues").dataType == StructType
+        .fromDDL(schemaString))
     }
   }
+
 }

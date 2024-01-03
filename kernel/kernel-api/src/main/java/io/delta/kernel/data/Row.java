@@ -16,16 +16,18 @@
 
 package io.delta.kernel.data;
 
-import java.util.List;
-import java.util.Map;
+import java.math.BigDecimal;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.StructType;
 
 /**
  * Represent a single record
+ *
+ * @since 3.0.0
  */
-public interface Row
-{
+@Evolving
+public interface Row {
 
     /**
      * @return Schema of the record.
@@ -87,6 +89,12 @@ public interface Row
     String getString(int ordinal);
 
     /**
+     * Return decimal value of the column located at the given ordinal.
+     * Throws error if the column at given ordinal is not of decimal type,
+     */
+    BigDecimal getDecimal(int ordinal);
+
+    /**
      * Return binary value of the column located at the given ordinal.
      * Throws error if the column at given ordinal is not of varchar type,
      */
@@ -102,11 +110,11 @@ public interface Row
      * Return array value of the column located at the given ordinal.
      * Throws error if the column at given ordinal is not of array type,
      */
-    <T> List<T> getArray(int ordinal);
+    ArrayValue getArray(int ordinal);
 
     /**
      * Return map value of the column located at the given ordinal.
      * Throws error if the column at given ordinal is not of map type,
      */
-    <K, V> Map<K, V> getMap(int ordinal);
+    MapValue getMap(int ordinal);
 }

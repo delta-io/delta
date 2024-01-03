@@ -15,11 +15,16 @@
  */
 package io.delta.kernel.types;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * The data type representing {@code string} type values.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public class StringType extends BasePrimitiveType {
-    public static final StringType INSTANCE = new StringType();
+    public static final StringType STRING = new StringType();
 
     private StringType() {
         super("string");

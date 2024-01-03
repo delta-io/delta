@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.FileNotFoundException
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaTimeTravelSpec, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTimeTravelSpec, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.Clone
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.Protocol.extractAutomaticallyEnabledFeatures
@@ -73,7 +73,16 @@ case class CloneTableCommand(
     ))
   }
 
-  override def run(sparkSession: SparkSession): Seq[Row] = {
+  /**
+   * Handles the transaction logic for the CLONE command.
+   * @param txn [[OptimisticTransaction]] to use for the commit to the target table.
+   * @param targetDeltaLog [[DeltaLog]] of the target table.
+   * @return
+   */
+  def handleClone(
+      sparkSession: SparkSession,
+      txn: OptimisticTransaction,
+      targetDeltaLog: DeltaLog): Seq[Row] = {
     if (!targetPath.isAbsolute) {
       throw DeltaErrors.cloneOnRelativePath(targetIdent.toString)
     }
@@ -97,14 +106,14 @@ case class CloneTableCommand(
       }
     }
 
-    runInternal(
+    handleClone(
       sparkSession,
-      opName = CloneTableCommand.OP_NAME,
+      txn,
+      targetDeltaLog,
       hdpConf = hdpConf,
       deltaOperation = Clone(
         sourceTable.name, sourceTable.snapshot.map(_.version).getOrElse(-1)
-      ),
-      Map.empty)
+      ))
   }
 }
 
@@ -116,9 +125,6 @@ object CloneTableCommand {
   val NUM_COPIED_FILES = "numCopiedFiles"
   val REMOVED_FILES_SIZE = "removedFilesSize"
   val COPIED_FILES_SIZE = "copiedFilesSize"
-
-  // Op name used by Clone command
-  val OP_NAME = "CLONE"
 
   // SQL way column names for metrics in command execution output
   private val COLUMN_SOURCE_TABLE_SIZE = "source_table_size"
@@ -143,7 +149,7 @@ class CloneDeltaSource(
   sourceTable: DeltaTableV2) extends CloneSource {
 
   private val deltaLog = sourceTable.deltaLog
-  private val sourceSnapshot = sourceTable.snapshot
+  private val sourceSnapshot = sourceTable.initialSnapshot
 
   def format: String = CloneSourceFormat.DELTA
 

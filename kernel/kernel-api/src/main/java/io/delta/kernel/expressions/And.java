@@ -13,50 +13,43 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.expressions;
 
-import java.util.Collection;
+import java.util.Arrays;
 
-import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.annotation.Evolving;
 
 /**
- * Evaluates logical {@code expr1} AND {@code expr2} for {@code new And(expr1, expr2)}.
+ * {@code AND} expression
  * <p>
- * Requires both left and right input expressions evaluate to booleans.
+ * Definition:
+ * <p>
+ * <ul>
+ *     <li>Logical {@code expr1} AND {@code expr2} on two inputs.</li>
+ *     <li>Requires both left and right input expressions of type {@link Predicate}.</li>
+ *     <li>Result is null when both inputs are null, or when one input is null and the other
+ *     is {@code true}.</li>
+ * </ul>
+ *
+ * @since 3.0.0
  */
-public final class And extends BinaryOperator implements Predicate {
-
-    public static And apply(Collection<Expression> conjunctions) {
-        if (conjunctions.size() == 0) {
-            throw new IllegalArgumentException("And.apply must be called with at least 1 element");
-        }
-
-        return (And) conjunctions
-            .stream()
-            // we start off with And(true, true)
-            // then we get the 1st expression: And(And(true, true), expr1)
-            // then we get the 2nd expression: And(And(true, true), expr1), expr2) etc.
-            .reduce(new And(Literal.TRUE, Literal.TRUE), And::new);
+@Evolving
+public final class And extends Predicate {
+    public And(Predicate left, Predicate right) {
+        super("AND", Arrays.asList(left, right));
     }
 
-    public And(Expression left, Expression right) {
-        super(left, right, "&&");
-        if (!(left.dataType() instanceof BooleanType) ||
-            !(right.dataType() instanceof BooleanType)) {
-
-            throw new IllegalArgumentException(
-                String.format(
-                    "'And' requires expressions of type boolean. Got %s and %s.",
-                    left.dataType(),
-                    right.dataType()
-                )
-            );
-        }
+    /**
+     * @return Left side operand.
+     */
+    public Predicate getLeft() {
+        return (Predicate) getChildren().get(0);
     }
 
-    @Override
-    public Object nullSafeEval(Object leftResult, Object rightResult) {
-        return (boolean) leftResult && (boolean) rightResult;
+    /**
+     * @return Right side operand.
+     */
+    public Predicate getRight() {
+        return (Predicate) getChildren().get(1);
     }
 }

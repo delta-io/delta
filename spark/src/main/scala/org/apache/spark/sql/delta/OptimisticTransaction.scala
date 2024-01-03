@@ -26,9 +26,10 @@ import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
-import org.apache.spark.sql.delta.DeltaOperations.Operation
+import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
@@ -42,9 +43,11 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.util.CharVarcharUtils
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
+import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
+import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{Clock, Utils}
 
 /** Record metrics about a successful commit. */
@@ -136,21 +139,17 @@ private[delta] case class DeltaTableReadPredicate(
  * @param deltaLog The Delta Log for the table this transaction is modifying.
  * @param snapshot The snapshot that this transaction is reading at.
  */
-class OptimisticTransaction
-    (override val deltaLog: DeltaLog, override val snapshot: Snapshot)
-    (implicit override val clock: Clock)
+class OptimisticTransaction(
+    override val deltaLog: DeltaLog,
+    override val catalogTable: Option[CatalogTable],
+    override val snapshot: Snapshot)
   extends OptimisticTransactionImpl
   with DeltaLogging {
-
-  /** Creates a new OptimisticTransaction.
-   *
-   * @param deltaLog The Delta Log for the table this transaction is modifying.
-   * @param snapshotOpt The most recent snapshot of the table, if available.
-   */
-  // TODO: The deltaLog object already has a clock; an implicit clock shouldn't be needed
-  def this(deltaLog: DeltaLog, snapshotOpt: Option[Snapshot] = None)(implicit clock: Clock) {
-    this(deltaLog, snapshotOpt.getOrElse(deltaLog.update()))
-  }
+  def this(
+      deltaLog: DeltaLog,
+      catalogTable: Option[CatalogTable],
+      snapshotOpt: Option[Snapshot] = None) =
+    this(deltaLog, catalogTable, snapshotOpt.getOrElse(deltaLog.update()))
 }
 
 object OptimisticTransaction {
@@ -161,18 +160,23 @@ object OptimisticTransaction {
   def getActive(): Option[OptimisticTransaction] = Option(active.get())
 
   /**
-   * Runs the passed block of code with the given active transaction
+   * Runs the passed block of code with the given active transaction. This fails if a transaction is
+   * already active unless `overrideExistingTransaction` is set.
    */
-  def withActive[T](activeTransaction: OptimisticTransaction)(block: => T): T = {
+  def withActive[T](
+      activeTransaction: OptimisticTransaction,
+      overrideExistingTransaction: Boolean = false)(block: => T): T = {
     val original = getActive()
+    if (overrideExistingTransaction) {
+      clearActive()
+    }
     setActive(activeTransaction)
     try {
       block
     } finally {
+      clearActive()
       if (original.isDefined) {
         setActive(original.get)
-      } else {
-        clearActive()
       }
     }
   }
@@ -216,8 +220,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   import org.apache.spark.sql.delta.util.FileNames._
 
   val deltaLog: DeltaLog
+  val catalogTable: Option[CatalogTable]
   val snapshot: Snapshot
-  implicit val clock: Clock
+  def clock: Clock = deltaLog.clock
 
   protected def spark = SparkSession.active
 
@@ -388,6 +393,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * Can this transaction still update the metadata?
+   * This is allowed only once per transaction.
+   */
+  def canUpdateMetadata: Boolean = {
+    !hasWritten && newMetadata.isEmpty
+  }
+
+  /**
    * This updates the protocol for the table with a given protocol.
    * Note that the protocol set by this method can be overwritten by other methods,
    * such as [[updateMetadata]].
@@ -455,45 +468,35 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       //
       // Collect new reader and writer versions from table properties, which could be provided by
       // the user in `ALTER TABLE TBLPROPERTIES` or copied over from session defaults.
-      val readerVersionInNewMetadataTmp =
+      val readerVersionAsTableProp =
         Protocol.getReaderVersionFromTableConf(newMetadataTmp.configuration)
           .getOrElse(protocolBeforeUpdate.minReaderVersion)
-      val writerVersionInNewMetadataTmp =
+      val writerVersionAsTableProp =
         Protocol.getWriterVersionFromTableConf(newMetadataTmp.configuration)
           .getOrElse(protocolBeforeUpdate.minWriterVersion)
 
-      // If the collected reader and writer versions are provided by the user, we must use them,
-      // and throw ProtocolDowngradeException when they are lower than what the table have before
-      // this transaction.
-      // If they are copied over from session defaults (this code path is for existing table, the
-      // only case this can happen is therefore during `REPLACE`), we will update the target table
-      // protocol when the session defaults are higher, and not throw ProtocolDowngradeException
-      // when the defaults are lower.
-      val (isReaderVersionUserProvided, isWriterVersionUserProvided) = (
-        proposedNewMetadata.configuration.contains(Protocol.MIN_READER_VERSION_PROP),
-        proposedNewMetadata.configuration.contains(Protocol.MIN_WRITER_VERSION_PROP))
-      val newReaderVersion = if (isReaderVersionUserProvided) {
-        readerVersionInNewMetadataTmp
-      } else {
-        readerVersionInNewMetadataTmp.max(protocolBeforeUpdate.minReaderVersion)
-      }
-      val newWriterVersion = if (isWriterVersionUserProvided) {
-        writerVersionInNewMetadataTmp
-      } else {
-        writerVersionInNewMetadataTmp.max(protocolBeforeUpdate.minWriterVersion)
-      }
-      val newProtocolForLatestMetadata = Protocol(newReaderVersion, newWriterVersion)
+      val newProtocolForLatestMetadata =
+        Protocol(readerVersionAsTableProp, writerVersionAsTableProp)
+      val proposedNewProtocol = protocolBeforeUpdate.merge(newProtocolForLatestMetadata)
 
-      if (newReaderVersion < protocolBeforeUpdate.minReaderVersion ||
-        newWriterVersion < protocolBeforeUpdate.minWriterVersion) {
-        // Prevent protocol downgrade.
-        throw new ProtocolDowngradeException(protocolBeforeUpdate, newProtocolForLatestMetadata)
-      } else if (newReaderVersion > protocolBeforeUpdate.minReaderVersion ||
-        newWriterVersion > protocolBeforeUpdate.minWriterVersion) {
-        // Upgrade the table's protocol and enable all implicitly-enabled features.
-        newProtocol = Some(protocolBeforeUpdate.merge(newProtocolForLatestMetadata))
+      if (proposedNewProtocol != protocolBeforeUpdate) {
+        // The merged protocol has higher versions and/or supports more features.
+        // It's a valid upgrade.
+        newProtocol = Some(proposedNewProtocol)
       } else {
-        // Protocol version unchanged. Do nothing.
+        // The merged protocol is identical to the original one. Two possibilities:
+        // (1) the provided versions are lower than the original one, and all features supported by
+        //     the provided versions are already supported. This is a no-op.
+        if (readerVersionAsTableProp < protocolBeforeUpdate.minReaderVersion ||
+          writerVersionAsTableProp < protocolBeforeUpdate.minWriterVersion) {
+          recordProtocolChanges(
+            "delta.protocol.downgradeIgnored",
+            fromProtocol = protocolBeforeUpdate,
+            toProtocol = newProtocolForLatestMetadata,
+            isCreatingNewTable = false)
+        } else {
+          // (2) the new protocol versions is identical to the existing versions. Also a no-op.
+        }
       }
     }
 
@@ -726,8 +729,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def getDeltaScanGenerator(index: TahoeLogFileIndex): DeltaScanGenerator = {
     if (index.deltaLog.isSameLogAs(deltaLog)) return this
 
+    val compositeId = index.deltaLog.compositeId
     // Will be called only when the log is accessed the first time
-    readSnapshots.computeIfAbsent(index.deltaLog.compositeId, _ => index.getSnapshot)
+    readSnapshots.computeIfAbsent(compositeId, _ => index.getSnapshot)
   }
 
   /** Returns a[[DeltaScan]] based on the given filters. */
@@ -737,13 +741,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   ): DeltaScan = {
     val scan = snapshot.filesForScan(filters, keepNumRecords)
     trackReadPredicates(filters)
-    trackFilesRead(scan.files)
-    scan
-  }
-
-  /** Returns a[[DeltaScan]] based on the limit clause when there are no filters or projections. */
-  override def filesForScan(limit: Long): DeltaScan = {
-    val scan = snapshot.filesForScan(limit)
     trackFilesRead(scan.files)
     scan
   }
@@ -1125,6 +1122,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     op: DeltaOperations.Operation,
     context: Map[String, String],
     metrics: Map[String, String]): (Long, Snapshot) = {
+    assert(!committed, "Transaction already committed.")
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
     try {
@@ -1171,12 +1169,24 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           case m: Metadata =>
             assertMetadata(m)
           case p: Protocol =>
-            recordProtocolChanges(snapshot.protocol, p, isCreatingNewTable)
+            recordProtocolChanges(
+              "delta.protocol.change",
+              fromProtocol = snapshot.protocol,
+              toProtocol = p,
+              isCreatingNewTable)
+            DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+              deltaLog.protocolWrite(p)
+            }
           case d: DomainMetadata =>
             numOfDomainMetadatas += 1
           case _ =>
         }
         action
+      }
+
+      // Validate protocol support, specifically writer features.
+      DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+        deltaLog.protocolWrite(snapshot.protocol)
       }
 
       allActions = RowId.assignFreshRowIds(protocol, snapshot, allActions)
@@ -1337,7 +1347,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // NOTE: There is at most one protocol change at this point.
     protocolChanges.foreach { p =>
       newProtocol = Some(p)
-      recordProtocolChanges(snapshot.protocol, p, isCreatingNewTable)
+      recordProtocolChanges("delta.protocol.change", snapshot.protocol, p, isCreatingNewTable)
+      DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+        deltaLog.protocolWrite(p)
+      }
     }
 
     // Now, we know that there is at most 1 Metadata change (stored in newMetadata) and at most 1
@@ -1356,8 +1369,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     newMetadata = metadataUpdate1.orElse(newMetadata)
 
     val (protocolUpdate2, metadataUpdate2) = IcebergCompatV1.enforceInvariantsAndDependencies(
-      prevProtocol = snapshot.protocol,
-      prevMetadata = snapshot.metadata,
+      snapshot,
       newestProtocol = protocol, // Note: this will try to use `newProtocol`
       newestMetadata = metadata, // Note: this will try to use `newMetadata`
       isCreatingNewTable,
@@ -1428,7 +1440,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case other => other
     }
 
-    deltaLog.protocolWrite(snapshot.protocol)
+    DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+      newProtocol.foreach(deltaLog.protocolWrite)
+      deltaLog.protocolWrite(snapshot.protocol)
+    }
 
     finalActions = RowId.assignFreshRowIds(protocol, snapshot, finalActions.toIterator).toList
     finalActions = DefaultRowCommitVersion
@@ -1441,6 +1456,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
     actions.foreach(assertDeletionVectorWellFormed)
+
+    // Make sure this operation does not include default column values if the corresponding table
+    // feature is not enabled.
+    if (!protocol.isFeatureSupported(AllowColumnDefaultsTableFeature)) {
+      checkNoColumnDefaults(op)
+    }
 
     finalActions
   }
@@ -1509,6 +1530,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Log protocol change events. */
   private def recordProtocolChanges(
+      opType: String,
       fromProtocol: Protocol,
       toProtocol: Protocol,
       isCreatingNewTable: Boolean): Unit = {
@@ -1524,7 +1546,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     } else {
       Map("fromProtocol" -> extract(fromProtocol), "toProtocol" -> extract(toProtocol))
     }
-    recordDeltaEvent(deltaLog, "delta.protocol.change", data = payload)
+    recordDeltaEvent(deltaLog, opType, data = payload)
   }
 
   /**
@@ -1748,38 +1770,41 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         "delta.commit.retry.conflictCheck",
         tags = Map(TAG_LOG_STORE_CLASS -> deltaLog.store.getClass.getName)) {
 
-    val nextAttemptVersion = getNextAttemptVersion(checkVersion)
+    DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
 
-    val logPrefixStr = s"[attempt $attemptNumber]"
-    val txnDetailsLogStr = {
-      var adds = 0L
-      var removes = 0L
-      currentTransactionInfo.actions.foreach {
-        case _: AddFile => adds += 1
-        case _: RemoveFile => removes += 1
-        case _ =>
+      val nextAttemptVersion = getNextAttemptVersion(checkVersion)
+
+      val logPrefixStr = s"[attempt $attemptNumber]"
+      val txnDetailsLogStr = {
+        var adds = 0L
+        var removes = 0L
+        currentTransactionInfo.actions.foreach {
+          case _: AddFile => adds += 1
+          case _: RemoveFile => removes += 1
+          case _ =>
+        }
+        s"$adds adds, $removes removes, ${readPredicates.size} read predicates, " +
+          s"${readFiles.size} read files"
       }
-      s"$adds adds, $removes removes, ${readPredicates.size} read predicates, " +
-        s"${readFiles.size} read files"
-    }
 
-    logInfo(s"$logPrefixStr Checking for conflicts with versions " +
-      s"[$checkVersion, $nextAttemptVersion) with current txn having $txnDetailsLogStr")
+      logInfo(s"$logPrefixStr Checking for conflicts with versions " +
+        s"[$checkVersion, $nextAttemptVersion) with current txn having $txnDetailsLogStr")
 
-    var updatedCurrentTransactionInfo = currentTransactionInfo
-    (checkVersion until nextAttemptVersion).foreach { otherCommitVersion =>
-      updatedCurrentTransactionInfo = checkForConflictsAgainstVersion(
-        updatedCurrentTransactionInfo,
-        otherCommitVersion,
-        commitIsolationLevel)
-      logInfo(s"$logPrefixStr No conflicts in version $otherCommitVersion, " +
+      var updatedCurrentTransactionInfo = currentTransactionInfo
+      (checkVersion until nextAttemptVersion).foreach { otherCommitVersion =>
+        updatedCurrentTransactionInfo = checkForConflictsAgainstVersion(
+          updatedCurrentTransactionInfo,
+          otherCommitVersion,
+          commitIsolationLevel)
+        logInfo(s"$logPrefixStr No conflicts in version $otherCommitVersion, " +
+          s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start")
+      }
+
+      logInfo(s"$logPrefixStr No conflicts with versions [$checkVersion, $nextAttemptVersion) " +
+        s"with current txn having $txnDetailsLogStr, " +
         s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start")
+      (nextAttemptVersion, updatedCurrentTransactionInfo)
     }
-
-    logInfo(s"$logPrefixStr No conflicts with versions [$checkVersion, $nextAttemptVersion) " +
-      s"with current txn having $txnDetailsLogStr, " +
-      s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start")
-    (nextAttemptVersion, updatedCurrentTransactionInfo)
   }
 
   protected def checkForConflictsAgainstVersion(
@@ -1879,4 +1904,41 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   override def logError(msg: => String, throwable: Throwable): Unit = {
     super.logError(logPrefix + msg, throwable)
   }
+
+  /**
+   * If the operation assigns or modifies column default values, this method checks that the
+   * corresponding table feature is enabled and throws an error if not.
+   */
+  protected def checkNoColumnDefaults(op: DeltaOperations.Operation): Unit = {
+    def usesDefaults(column: StructField): Boolean = {
+      column.metadata.contains(ResolveDefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY) ||
+        column.metadata.contains(ResolveDefaultColumns.EXISTS_DEFAULT_COLUMN_METADATA_KEY)
+    }
+
+    def throwError(errorClass: String, parameters: Array[String]): Unit = {
+      throw new DeltaAnalysisException(
+        errorClass = errorClass,
+        messageParameters = parameters)
+    }
+
+    op match {
+      case change: ChangeColumn if usesDefaults(change.newColumn) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Array("ALTER TABLE"))
+      case create: CreateTable if create.metadata.schema.fields.exists(usesDefaults) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Array("CREATE TABLE"))
+      case replace: ReplaceColumns if replace.columns.exists(usesDefaults) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Array("CREATE TABLE"))
+      case replace: ReplaceTable if replace.metadata.schema.fields.exists(usesDefaults) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Array("CREATE TABLE"))
+      case update: UpdateSchema if update.newSchema.fields.exists(usesDefaults) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Array("ALTER TABLE"))
+      case _ =>
+    }
+  }
+
 }

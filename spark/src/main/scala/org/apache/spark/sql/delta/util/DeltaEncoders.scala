@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.util
 import scala.reflect.runtime.universe.TypeTag
 
 import org.apache.spark.sql.delta.{DeltaHistory, DeltaHistoryManager, SerializableFileStatus, SnapshotState}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.convert.ConvertTargetFile
 import org.apache.spark.sql.delta.sources.IndexedFile
 
@@ -41,6 +41,9 @@ private[delta] class DeltaEncoder[T: TypeTag] {
  * `import org.apache.spark.sql.delta.implicits._` to use these `Encoder`s.
  */
 private[delta] trait DeltaEncoders {
+  private lazy val _BooleanEncoder = new DeltaEncoder[Boolean]
+  implicit def booleanEncoder: Encoder[Boolean] = _BooleanEncoder.get
+
   private lazy val _IntEncoder = new DeltaEncoder[Int]
   implicit def intEncoder: Encoder[Int] = _IntEncoder.get
 
@@ -73,6 +76,10 @@ private[delta] trait DeltaEncoders {
 
   private lazy val _pmvEncoder = new DeltaEncoder[(Protocol, Metadata, Long)]
   implicit def pmvEncoder: Encoder[(Protocol, Metadata, Long)] = _pmvEncoder.get
+
+  private lazy val _v2CheckpointActionsEncoder = new DeltaEncoder[(CheckpointMetadata, SidecarFile)]
+  implicit def v2CheckpointActionsEncoder: Encoder[(CheckpointMetadata, SidecarFile)] =
+    _v2CheckpointActionsEncoder.get
 
   private lazy val _serializableFileStatusEncoder = new DeltaEncoder[SerializableFileStatus]
   implicit def serializableFileStatusEncoder: Encoder[SerializableFileStatus] =

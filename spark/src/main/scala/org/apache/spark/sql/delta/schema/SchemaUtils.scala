@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -84,6 +85,19 @@ object SchemaUtils extends DeltaLogging {
       f(m) || typeExistsRecursively(m.keyType)(f) || typeExistsRecursively(m.valueType)(f)
     case other =>
       f(other)
+  }
+
+  def findAnyTypeRecursively(dt: DataType)(f: DataType => Boolean): Option[DataType] = dt match {
+    case s: StructType =>
+      Some(s).filter(f).orElse(s.fields
+          .find(field => findAnyTypeRecursively(field.dataType)(f).nonEmpty).map(_.dataType))
+    case a: ArrayType =>
+      Some(a).filter(f).orElse(findAnyTypeRecursively(a.elementType)(f))
+    case m: MapType =>
+      Some(m).filter(f).orElse(findAnyTypeRecursively(m.keyType)(f))
+        .orElse(findAnyTypeRecursively(m.valueType)(f))
+    case other =>
+      Some(other).filter(f)
   }
 
   /** Turns the data types to nullable in a recursive manner for nested columns. */
@@ -228,11 +242,25 @@ object SchemaUtils extends DeltaLogging {
   }
 
   /**
+   * A helper function to check if partition columns are the same.
+   * This function only checks for partition column names.
+   * Please use with other schema check functions for detecting type change etc.
+   */
+  def isPartitionCompatible(
+      newPartitionColumns: Seq[String] = Seq.empty,
+      oldPartitionColumns: Seq[String] = Seq.empty): Boolean = {
+    (newPartitionColumns.isEmpty && oldPartitionColumns.isEmpty) ||
+      (newPartitionColumns == oldPartitionColumns)
+  }
+
+  /**
    * As the Delta snapshots update, the schema may change as well. This method defines whether the
    * new schema of a Delta table can be used with a previously analyzed LogicalPlan. Our
    * rules are to return false if:
    *   - Dropping any column that was present in the existing schema, if not allowMissingColumns
    *   - Any change of datatype
+   *   - Change of partition columns. Although analyzed LogicalPlan is not changed,
+   *     physical structure of data is changed and thus is considered not read compatible.
    *   - If `forbidTightenNullability` = true:
    *      - Forbids tightening the nullability (existing nullable=true -> read nullable=false)
    *      - Typically Used when the existing schema refers to the schema of written data, such as
@@ -250,7 +278,9 @@ object SchemaUtils extends DeltaLogging {
       existingSchema: StructType,
       readSchema: StructType,
       forbidTightenNullability: Boolean = false,
-      allowMissingColumns: Boolean = false): Boolean = {
+      allowMissingColumns: Boolean = false,
+      newPartitionColumns: Seq[String] = Seq.empty,
+      oldPartitionColumns: Seq[String] = Seq.empty): Boolean = {
 
     def isNullabilityCompatible(existingNullable: Boolean, readNullable: Boolean): Boolean = {
       if (forbidTightenNullability) {
@@ -288,7 +318,9 @@ object SchemaUtils extends DeltaLogging {
         "Delta tables don't allow field names that only differ by case")
       // scalastyle:on caselocale
 
-      if (!allowMissingColumns && !existingFieldNames.subsetOf(newFields)) {
+      if (!allowMissingColumns &&
+        !(existingFieldNames.subsetOf(newFields) &&
+          isPartitionCompatible(newPartitionColumns, oldPartitionColumns))) {
         // Dropped a column that was present in the DataFrame schema
         return false
       }
@@ -452,7 +484,11 @@ object SchemaUtils extends DeltaLogging {
       keyDiffs ++ valueDiffs ++ nullabilityDiffs
     }
 
-    structDifference(existingSchema, specifiedSchema, "")
+    structDifference(
+      existingSchema,
+      CharVarcharUtils.replaceCharVarcharWithStringInSchema(specifiedSchema),
+      ""
+    )
   }
 
   /**
@@ -677,6 +713,16 @@ object SchemaUtils extends DeltaLogging {
           throw DeltaErrors.addColumnParentNotStructException(column, other)
       }
     }
+    // If the proposed new column includes a default value, return a specific "not supported" error.
+    // The rationale is that such operations require the data source scan operator to implement
+    // support for filling in the specified default value when the corresponding field is not
+    // present in storage. That is not implemented yet for Delta, so we return this error instead.
+    // The error message is descriptive and provides an easy workaround for the user.
+    if (column.metadata.contains("CURRENT_DEFAULT")) {
+      throw new DeltaAnalysisException(
+        errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED",
+        messageParameters = Array.empty)
+    }
 
     require(position.nonEmpty, s"Don't know where to add the column $column")
     val slicePosition = position.head
@@ -767,6 +813,9 @@ object SchemaUtils extends DeltaLogging {
   /**
    * Check if the two data types can be changed.
    *
+   * @param failOnAmbiguousChanges Throw an error if a StructField both has columns dropped and new
+   *                               columns added. These are ambiguous changes, because we don't
+   *                               know if a column needs to be renamed, dropped, or added.
    * @return None if the data types can be changed, otherwise Some(err) containing the reason.
    */
   def canChangeDataType(
@@ -774,7 +823,8 @@ object SchemaUtils extends DeltaLogging {
       to: DataType,
       resolver: Resolver,
       columnMappingMode: DeltaColumnMappingMode,
-      columnPath: Seq[String] = Seq.empty): Option[String] = {
+      columnPath: Seq[String] = Nil,
+      failOnAmbiguousChanges: Boolean = false): Option[String] = {
     def verify(cond: Boolean, err: => String): Unit = {
       if (!cond) {
         throw DeltaErrors.cannotChangeDataType(err)
@@ -796,9 +846,10 @@ object SchemaUtils extends DeltaLogging {
           check(fromKey, toKey, columnPath :+ "key")
           check(fromValue, toValue, columnPath :+ "value")
 
-        case (StructType(fromFields), StructType(toFields)) =>
+        case (f @ StructType(fromFields), t @ StructType(toFields)) =>
           val remainingFields = mutable.Set[StructField]()
           remainingFields ++= fromFields
+          var addingColumns = false
           toFields.foreach { toField =>
             fromFields.find(field => resolver(field.name, toField.name)) match {
               case Some(fromField) =>
@@ -808,15 +859,20 @@ object SchemaUtils extends DeltaLogging {
                 verifyNullability(fromField.nullable, toField.nullable, newPath)
                 check(fromField.dataType, toField.dataType, newPath)
               case None =>
+                addingColumns = true
                 verify(toField.nullable,
                   "adding non-nullable column " +
                   UnresolvedAttribute(columnPath :+ toField.name).name)
             }
           }
+          val columnName = UnresolvedAttribute(columnPath).name
+          if (failOnAmbiguousChanges && remainingFields.nonEmpty && addingColumns) {
+            throw DeltaErrors.ambiguousDataTypeChange(columnName, f, t)
+          }
           if (columnMappingMode == NoMapping) {
             verify(remainingFields.isEmpty,
               s"dropping column(s) [${remainingFields.map(_.name).mkString(", ")}]" +
-                (if (columnPath.nonEmpty) s" from ${UnresolvedAttribute(columnPath).name}" else ""))
+                (if (columnPath.nonEmpty) s" from $columnName" else ""))
           }
 
         case (fromDataType, toDataType) =>

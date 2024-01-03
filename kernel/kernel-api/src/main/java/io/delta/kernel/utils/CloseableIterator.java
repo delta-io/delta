@@ -22,41 +22,42 @@ import java.util.Iterator;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
-public interface CloseableIterator<T> extends Iterator<T>, Closeable
-{
-    default <U> CloseableIterator<U> map(Function<T, U> mapper)
-    {
+import io.delta.kernel.annotation.Evolving;
+
+/**
+ * Closeable extension of {@link Iterator}
+ *
+ * @param <T> the type of elements returned by this iterator
+ * @since 3.0.0
+ */
+@Evolving
+public interface CloseableIterator<T> extends Iterator<T>, Closeable {
+    default <U> CloseableIterator<U> map(Function<T, U> mapper) {
         CloseableIterator<T> delegate = this;
-        return new CloseableIterator<U>()
-        {
+        return new CloseableIterator<U>() {
             @Override
-            public void remove()
-            {
+            public void remove() {
                 delegate.remove();
             }
 
             @Override
-            public void forEachRemaining(Consumer<? super U> action)
-            {
+            public void forEachRemaining(Consumer<? super U> action) {
                 this.forEachRemaining(action);
             }
 
             @Override
-            public boolean hasNext()
-            {
+            public boolean hasNext() {
                 return delegate.hasNext();
             }
 
             @Override
-            public U next()
-            {
+            public U next() {
                 return mapper.apply(delegate.next());
             }
 
             @Override
             public void close()
-                throws IOException
-            {
+                throws IOException {
                 delegate.close();
             }
         };

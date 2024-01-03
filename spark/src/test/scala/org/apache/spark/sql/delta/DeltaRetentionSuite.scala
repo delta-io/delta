@@ -20,7 +20,9 @@ import java.io.File
 
 import scala.language.postfixOps
 
+import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
@@ -44,14 +46,17 @@ class DeltaRetentionSuite extends QueryTest
 
   test("delete expired logs") {
     withTempDir { tempDir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val startTime = getStartTimeForRetentionTest
+      val clock = new ManualClock(startTime)
+      val actualTestStartTime = System.currentTimeMillis()
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       val logPath = new File(log.logPath.toUri)
       (1 to 5).foreach { i =>
         val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
-          RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+          val timestamp = startTime + (System.currentTimeMillis()-actualTestStartTime)
+          RemoveFile(i - 1 toString, Some(timestamp), true) :: Nil
         } else {
           Nil
         }
@@ -85,7 +90,9 @@ class DeltaRetentionSuite extends QueryTest
 
   test("log files being already deleted shouldn't fail log deletion job") {
     withTempDir { tempDir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val startTime = getStartTimeForRetentionTest
+      val clock = new ManualClock(startTime)
+      val actualTestStartTime = System.currentTimeMillis()
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       val logPath = new File(log.logPath.toUri)
       val iterationCount = (log.checkpointInterval() * 2) + 1
@@ -94,7 +101,8 @@ class DeltaRetentionSuite extends QueryTest
         val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
-          RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
+          val timestamp = startTime + (System.currentTimeMillis()-actualTestStartTime)
+          RemoveFile(i - 1 toString, Some(timestamp), true) :: Nil
         } else {
           Nil
         }
@@ -132,7 +140,7 @@ class DeltaRetentionSuite extends QueryTest
   testQuietly(
     "RemoveFiles persist across checkpoints as tombstones if retention time hasn't expired") {
     withTempDir { tempDir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val clock = new ManualClock(getStartTimeForRetentionTest)
       val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
 
       val txn = startTxnWithManualLogCleanup(log1)
@@ -160,7 +168,7 @@ class DeltaRetentionSuite extends QueryTest
 
   testQuietly("retention timestamp is picked properly by the cold snapshot initialization") {
     withTempDir { dir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val clock = new ManualClock(getStartTimeForRetentionTest)
       def deltaLog: DeltaLog = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath), clock)
 
       // Create table with 30 day tombstone retention.
@@ -197,7 +205,7 @@ class DeltaRetentionSuite extends QueryTest
 
   testQuietly("retention timestamp is lesser than the default value") {
     withTempDir { dir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val clock = new ManualClock(getStartTimeForRetentionTest)
       def deltaLog: DeltaLog = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath), clock)
 
       // Create table with 2 day tombstone retention.
@@ -230,7 +238,7 @@ class DeltaRetentionSuite extends QueryTest
 
   testQuietly("RemoveFiles get deleted during checkpoint if retention time has passed") {
     withTempDir { tempDir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val clock = new ManualClock(getStartTimeForRetentionTest)
       val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
 
       val txn = startTxnWithManualLogCleanup(log1)
@@ -254,7 +262,7 @@ class DeltaRetentionSuite extends QueryTest
 
   test("the checkpoint file for version 0 should be cleaned") {
     withTempDir { tempDir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val clock = new ManualClock(getStartTimeForRetentionTest)
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       val logPath = new File(log.logPath.toUri)
       startTxnWithManualLogCleanup(log).commit(AddFile("0", Map.empty, 1, 1, true) :: Nil, testOp)
@@ -284,7 +292,7 @@ class DeltaRetentionSuite extends QueryTest
 
   test("allow users to expire transaction identifiers from checkpoints") {
     withTempDir { dir =>
-      val clock = new ManualClock(System.currentTimeMillis())
+      val clock = new ManualClock(getStartTimeForRetentionTest)
       val log = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath), clock)
       sql(
         s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
@@ -320,6 +328,180 @@ class DeltaRetentionSuite extends QueryTest
       log.startTransaction().commitManually(addFile)
       assert(log.update().transactions.isEmpty)
       assert(log.snapshot.numOfSetTransactions == 0)
+    }
+  }
+
+  protected def cleanUpExpiredLogs(log: DeltaLog): Unit = {
+    val snapshot = log.update()
+
+    val checkpointVersion = snapshot.logSegment.checkpointProvider.version
+    logInfo(s"snapshot version: ${snapshot.version} checkpoint: $checkpointVersion")
+
+    log.cleanUpExpiredLogs(snapshot)
+  }
+
+  for (v2CheckpointFormat <- V2Checkpoint.Format.ALL_AS_STRINGS)
+  test(s"sidecar file cleanup [v2CheckpointFormat: $v2CheckpointFormat]") {
+    val checkpointPolicy = CheckpointPolicy.V2.name
+    withSQLConf((DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> v2CheckpointFormat)) {
+      withTempDir { tempDir =>
+        val startTime = getStartTimeForRetentionTest
+        val clock = new ManualClock(startTime)
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+        val logPath = new File(log.logPath.toUri)
+        val visitedFiles = scala.collection.mutable.Set.empty[String]
+
+        spark.sql(s"""CREATE TABLE delta.`${tempDir.toString()}` (id Int) USING delta
+                   | TBLPROPERTIES(
+                   |-- Disable the async log cleanup as this test needs to manually trigger log
+                   |-- clean up.
+                   |'delta.enableExpiredLogCleanup' = 'false',
+                   |'${DeltaConfigs.CHECKPOINT_POLICY.key}' = '$checkpointPolicy',
+                   |'${DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.key}' = 'false',
+                   |'delta.checkpointInterval' = '100000',
+                   |'delta.logRetentionDuration' = 'interval 6 days')
+                    """.stripMargin)
+
+        // day-1. Create a commit with 4 AddFiles.
+        clock.setTime(day(startTime, day = 1))
+        val file = (1 to 4).map(i => createTestAddFile(i.toString))
+        log.startTransaction().commit(file, testOp)
+        setModificationTimeOfNewFiles(log, clock, visitedFiles)
+
+        // Trigger 1 commit and 1 checkpoint daily for next 8 days
+        val sidecarFiles = scala.collection.mutable.Map.empty[Long, String]
+        val oddCommitSidecarFile_1 = createSidecarFile(log, Seq(1))
+        val evenCommitSidecarFile_1 = createSidecarFile(log, Seq(1))
+        def commitAndCheckpoint(dayNumber: Int): Unit = {
+          clock.setTime(day(startTime, dayNumber))
+
+          // Write a new commit on each day
+          log.startTransaction().commit(Seq(log.unsafeVolatileSnapshot.metadata), testOp)
+          setModificationTimeOfNewFiles(log, clock, visitedFiles)
+
+          // Write a new checkpoint on each day. Each checkpoint has 2 sodecars:
+          // 1. Common sidecar - one of oddCommitSidecarFile_1/evenCommitSidecarFile_1
+          // 2. A new sidecar just created for this checkpoint.
+          val sidecarFile1 =
+            if (dayNumber % 2 == 0) evenCommitSidecarFile_1 else oddCommitSidecarFile_1
+          val sidecarFile2 = createSidecarFile(log, Seq(2, 3, 4))
+          val checkpointVersion = log.update().version
+          createV2CheckpointWithSidecarFile(
+            log,
+            checkpointVersion,
+            sidecarFileNames = Seq(sidecarFile1, sidecarFile2))
+          setModificationTimeOfNewFiles(log, clock, visitedFiles)
+          sidecarFiles.put(checkpointVersion, sidecarFile2)
+        }
+
+        (2 to 9).foreach { dayNumber => commitAndCheckpoint(dayNumber) }
+        clock.setTime(day(startTime, day = 10))
+        log.update()
+
+        // Assert all log files are present.
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 2 to 9)
+        compareVersions(getDeltaVersions(logPath), "delta", 0 to 9)
+        assert(
+          getSidecarFiles(log) ===
+            Set(
+              evenCommitSidecarFile_1,
+              oddCommitSidecarFile_1) ++ sidecarFiles.values.toIndexedSeq)
+
+        // Trigger metadata cleanup and validate that only last 6 days of deltas and checkpoints
+        // have been retained.
+        cleanUpExpiredLogs(log)
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 4 to 9)
+        compareVersions(getDeltaVersions(logPath), "delta", 4 to 9)
+        // Check that all active sidecars are retained and expired ones are deleted.
+        assert(
+          getSidecarFiles(log) ===
+            Set(evenCommitSidecarFile_1, oddCommitSidecarFile_1) ++
+            (4 to 9).map(sidecarFiles(_)))
+
+        // Advance 1 day and again run metadata cleanup.
+        clock.setTime(day(startTime, day = 11))
+        cleanUpExpiredLogs(log)
+        setModificationTimeOfNewFiles(log, clock, visitedFiles)
+        // Commit 4 and checkpoint 4 have expired and were deleted.
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 5 to 9)
+        compareVersions(getDeltaVersions(logPath), "delta", 5 to 9)
+        assert(
+          getSidecarFiles(log) ===
+            Set(evenCommitSidecarFile_1, oddCommitSidecarFile_1) ++
+            (5 to 9).map(sidecarFiles(_)))
+
+        // do 1 more commit and checkpoint on day 13 and run metadata cleanup.
+        commitAndCheckpoint(dayNumber = 13) // commit and checkpoint 10
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 5 to 10)
+        compareVersions(getDeltaVersions(logPath), "delta", 5 to 10)
+        cleanUpExpiredLogs(log)
+        setModificationTimeOfNewFiles(log, clock, visitedFiles)
+        // Version 5 and 6 checkpoints and deltas have expired and were deleted.
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 7 to 10)
+        compareVersions(getDeltaVersions(logPath), "delta", 7 to 10)
+
+        assert(
+          getSidecarFiles(log) ===
+            Set(evenCommitSidecarFile_1, oddCommitSidecarFile_1) ++
+            (7 to 10).map(sidecarFiles(_)))
+      }
+    }
+  }
+
+  for (v2CheckpointFormat <- V2Checkpoint.Format.ALL_AS_STRINGS)
+  test(
+    s"compat file created with metadata cleanup when checkpoints are deleted" +
+      s" [v2CheckpointFormat: $v2CheckpointFormat]") {
+    val checkpointPolicy = CheckpointPolicy.V2.name
+    withSQLConf((DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> v2CheckpointFormat)) {
+      withTempDir { tempDir =>
+        val startTime = getStartTimeForRetentionTest
+        val clock = new ManualClock(startTime)
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+        val logPath = new File(log.logPath.toUri)
+        val visitedFiles = scala.collection.mutable.Set.empty[String]
+
+        spark.sql(s"""CREATE TABLE delta.`${tempDir.toString()}` (id Int) USING delta
+                     | TBLPROPERTIES(
+                     |-- Disable the async log cleanup as this test needs to manually trigger log
+                     |-- clean up.
+                     |'delta.enableExpiredLogCleanup' = 'false',
+                     |'${DeltaConfigs.CHECKPOINT_POLICY.key}' = '$checkpointPolicy',
+                     |'${DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.key}' = 'false',
+                     |'delta.checkpointInterval' = '100000',
+                     |'delta.logRetentionDuration' = 'interval 6 days')
+        """.stripMargin)
+
+        (1 to 10).foreach { dayNum =>
+          clock.setTime(day(startTime, dayNum))
+          log.startTransaction().commit(Seq(), testOp)
+          setModificationTimeOfNewFiles(log, clock, visitedFiles)
+          clock.setTime(day(startTime, dayNum) + 10)
+          log.checkpoint(log.update())
+          setModificationTimeOfNewFiles(log, clock, visitedFiles)
+        }
+        clock.setTime(day(startTime, 11))
+        log.update()
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 1 to 10)
+        compareVersions(getDeltaVersions(logPath), "delta", 0 to 10)
+
+        // 11th day Run metadata cleanup.
+        clock.setTime(day(startTime, 11))
+        cleanUpExpiredLogs(log)
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 5 to 10)
+        compareVersions(getDeltaVersions(logPath), "delta", 5 to 10)
+        val checkpointInstancesForV10 =
+          getCheckpointFiles(logPath)
+            .filter(f => getFileVersions(Seq(f)).head == 10)
+            .map(f => new Path(f.getAbsolutePath))
+            .sortBy(_.getName)
+            .map(CheckpointInstance.apply)
+
+        assert(checkpointInstancesForV10.size == 2)
+        assert(
+          checkpointInstancesForV10.map(_.format) ===
+            Seq(CheckpointInstance.Format.V2, CheckpointInstance.Format.SINGLE))
+      }
     }
   }
 }

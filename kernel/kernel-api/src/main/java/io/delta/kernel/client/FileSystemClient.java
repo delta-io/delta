@@ -20,40 +20,51 @@ import java.io.ByteArrayInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 
-import io.delta.kernel.fs.FileStatus;
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
+import io.delta.kernel.utils.FileStatus;
 
 /**
  * Provides file system related functionalities to Delta Kernel. Delta Kernel uses this client
  * whenever it needs to access the underlying file system where the Delta table is present.
  * Connector implementation of this interface can hide filesystem specific details from Delta
  * Kernel.
+ *
+ * @since 3.0.0
  */
-public interface FileSystemClient
-{
+@Evolving
+public interface FileSystemClient {
     /**
      * List the paths in the same directory that are lexicographically greater or equal to
      * (UTF-8 sorting) the given `path`. The result should also be sorted by the file name.
      *
      * @param filePath Fully qualified path to a file
      * @return Closeable iterator of files. It is the responsibility of the caller to close the
-     *         iterator.
+     * iterator.
      * @throws FileNotFoundException if the file at the given path is not found
+     * @throws IOException for any other IO error.
      */
-    CloseableIterator<FileStatus> listFrom(String filePath)
-            throws FileNotFoundException;
+    CloseableIterator<FileStatus> listFrom(String filePath) throws IOException;
 
-    // TODO: solidify input type; need some combination of path, offset, size
     /**
-     * Read data specified by the start and end offset from the file. It is the responsibility
-     * of the caller close each returned stream.
+     * Resolve the given path to a fully qualified path.
+     * @param path Input path
+     * @return Fully qualified path.
+     * @throws FileNotFoundException If the given path doesn't exist.
+     * @throws IOException for any other IO error.
+     */
+    String resolvePath(String path) throws IOException;
+
+    /**
+     * Return an iterator of byte streams one for each read request in {@code readRequests}. The
+     * returned streams are in the same order as the given {@link FileReadRequest}s.
+     * It is the responsibility of the caller to close each returned stream.
      *
-     * @param iter Iterator for tuples (file path, range (start offset, end offset)
-     * @return Data for each range requested as one {@link ByteArrayInputStream}.
+     * @param readRequests Iterator of read requests
+     * @return Data for each request as one {@link ByteArrayInputStream}.
      * @throws IOException
      */
     CloseableIterator<ByteArrayInputStream> readFiles(
-            CloseableIterator<Tuple2<String, Tuple2<Integer, Integer>>> iter)
-            throws IOException;
+        CloseableIterator<FileReadRequest> readRequests)
+        throws IOException;
 }

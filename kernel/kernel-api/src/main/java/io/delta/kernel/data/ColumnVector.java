@@ -16,14 +16,17 @@
 
 package io.delta.kernel.data;
 
-import java.util.List;
-import java.util.Map;
+import java.math.BigDecimal;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.DataType;
 
 /**
  * Represents zero or more values of a single column.
+ *
+ * @since 3.0.0
  */
+@Evolving
 public interface ColumnVector extends AutoCloseable {
     /**
      * @return the data type of this column vector.
@@ -50,15 +53,18 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the boolean type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Boolean value at the given row id
      */
     default boolean getBoolean(int rowId) {
         throw new UnsupportedOperationException("Invalid value request for data type");
     }
+
     /**
      * Returns the byte type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Byte value at the given row id
      */
@@ -69,6 +75,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the short type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Short value at the given row id
      */
@@ -79,6 +86,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the int type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Integer value at the given row id
      */
@@ -89,6 +97,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the long type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Long value at the given row id
      */
@@ -99,6 +108,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the float type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Float value at the given row id
      */
@@ -109,6 +119,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the double type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Double value at the given row id
      */
@@ -119,6 +130,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the binary type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return Binary value at the given row id
      */
@@ -129,6 +141,7 @@ public interface ColumnVector extends AutoCloseable {
     /**
      * Returns the string type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
+     *
      * @param rowId
      * @return String value at the given row id
      */
@@ -137,36 +150,39 @@ public interface ColumnVector extends AutoCloseable {
     }
 
     /**
-     * Return the map type value located at {@code rowId}. The return value is undefined and can be
+     * Returns the decimal type value for {@code rowId}. The return value is undefined and can be
      * anything, if the slot for {@code rowId} is null.
      * @param rowId
-     * @param <K> Return map key type
-     * @param <V> Return map value type
-     * @return
+     * @return Decimal value at the given row id
      */
-    default <K, V> Map<K, V> getMap(int rowId) {
+    default BigDecimal getDecimal(int rowId) {
         throw new UnsupportedOperationException("Invalid value request for data type");
     }
 
     /**
-     * Return the row value located at {@code rowId}. The return value is undefined and can be
-     * anything, if the slot for {@code rowId} is null.
-     * @param rowId
-     * @return
+     * Return the map value located at {@code rowId}. Returns null if the slot for {@code rowId}
+     * is null
      */
-    default Row getStruct(int rowId) {
+    default MapValue getMap(int rowId) {
         throw new UnsupportedOperationException("Invalid value request for data type");
     }
 
     /**
-     * Return the array value located at {@code rowId}. The return value is undefined and can be
-     * anything, if the slot for {@code rowId} is null.
+     * Return the array value located at {@code rowId}. Returns null if the slot for {@code rowId}
+     * is null
+     */
+    default ArrayValue getArray(int rowId) {
+        throw new UnsupportedOperationException("Invalid value request for data type");
+    }
+
+    /**
+     * Get the child vector associated with the given ordinal. This method is applicable only to the
+     * {@code struct} type columns.
      *
-     * @param rowId
-     * @param <T> Array element type
-     * @return
+     * @param ordinal Ordinal of the child vector to return.
      */
-    default <T> List<T> getArray(int rowId) {
-        throw new UnsupportedOperationException("Invalid value request for data type");
+    default ColumnVector getChild(int ordinal) {
+        throw new UnsupportedOperationException(
+            "Child vectors are not available for vector of type " + getDataType());
     }
 }

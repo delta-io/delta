@@ -41,7 +41,8 @@ import org.apache.spark.sql.types.{LongType, StringType, StructType}
 
 abstract class DeltaCDCSuiteBase
   extends QueryTest
-  with SharedSparkSession  with CheckCDCAnswer
+  with SharedSparkSession
+  with CheckCDCAnswer
   with DeltaSQLCommandTest {
 
   import testImplicits._
@@ -995,6 +996,6 @@ class DeltaCDCScalaWithDeletionVectorsSuite extends DeltaCDCScalaSuite
   with DeletionVectorsTestUtils {
   override def beforeAll(): Unit = {
     super.beforeAll()
-    enableDeletionVectorsForDeletes(spark)
+    enableDeletionVectorsForAllSupportedOperations(spark)
   }
 }

@@ -10,9 +10,9 @@
     - [Change Data Files](#change-data-files)
     - [Delta Log Entries](#delta-log-entries)
     - [Checkpoints](#checkpoints)
+      - [Sidecar Files](#sidecar-files)
+    - [Log Compaction Files](#log-compaction-files)
     - [Last Checkpoint File](#last-checkpoint-file)
-      - [JSON checksum](#json-checksum)
-        - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
   - [Actions](#actions)
     - [Change Metadata](#change-metadata)
       - [Format Specification](#format-specification)
@@ -26,11 +26,13 @@
     - [Domain Metadata](#domain-metadata)
       - [Reader Requirements for Domain Metadata](#reader-requirements-for-domain-metadata)
       - [Writer Requirements for Domain Metadata](#writer-requirements-for-domain-metadata)
+    - [Sidecar File Information](#sidecar-file-information)
+      - [Checkpoint Metadata](#checkpoint-metadata)
 - [Action Reconciliation](#action-reconciliation)
 - [Table Features](#table-features)
   - [Table Features for New and Existing Tables](#table-features-for-new-and-existing-tables)
-  - [Enabled Features](#enabled-features)
-  - [Disabled Features](#disabled-features)
+  - [Supported Features](#supported-features)
+  - [Active Features](#active-features)
 - [Column Mapping](#column-mapping)
   - [Writer Requirements for Column Mapping](#writer-requirements-for-column-mapping)
   - [Reader Requirements for Column Mapping](#reader-requirements-for-column-mapping)
@@ -44,23 +46,37 @@
   - [Writer Requirement for Deletion Vectors](#writer-requirement-for-deletion-vectors)
 - [Iceberg Compatibility V1](#iceberg-compatibility-v1)
   - [Writer Requirements for IcebergCompatV1](#writer-requirements-for-icebergcompatv1)
-- [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz)
+- [Timestamp without timezone (TimestampNtz)](#timestamp-without-timezone-timestampntz)
+- [V2 Checkpoint Table Feature](#v2-checkpoint-table-feature)
 - [Row Tracking](#row-tracking)
   - [Row IDs](#row-ids)
   - [Row Commit Versions](#row-commit-versions)
   - [Reader Requirements for Row Tracking](#reader-requirements-for-row-tracking)
   - [Writer Requirements for Row Tracking](#writer-requirements-for-row-tracking)
+- [Clustered Table](#clustered-table)
+  - [Writer Requirements for Clustered Table](#writer-requirements-for-clustered-table)
 - [Requirements for Writers](#requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
   - [Delta Log Entries](#delta-log-entries-1)
   - [Checkpoints](#checkpoints-1)
-    - [Checkpoint Format](#checkpoint-format)
+    - [Checkpoint Specs](#checkpoint-specs)
+      - [V2 Spec](#v2-spec)
+      - [V1 Spec](#v1-spec)
+    - [Checkpoint Naming Scheme](#checkpoint-naming-scheme)
+      - [UUID-named checkpoint](#uuid-named-checkpoint)
+      - [Classic checkpoint](#classic-checkpoint)
+      - [Multi-part checkpoint](#multi-part-checkpoint)
+        - [Problems with multi-part checkpoints](#problems-with-multi-part-checkpoints)
+    - [Handling Backward compatibility while moving to UUID-named v2 Checkpoints](#handling-backward-compatibility-while-moving-to-uuid-named-v2-checkpoints)
+    - [Allowed combinations for `checkpoint spec` <-> `checkpoint file naming`](#allowed-combinations-for-checkpoint-spec---checkpoint-file-naming)
+    - [Metadata Cleanup](#metadata-cleanup)
   - [Data Files](#data-files-1)
   - [Append-only Tables](#append-only-tables)
   - [Column Invariants](#column-invariants)
   - [CHECK Constraints](#check-constraints)
   - [Generated Columns](#generated-columns)
+  - [Default Columns](#default-columns)
   - [Identity Columns](#identity-columns)
   - [Writer Version Requirements](#writer-version-requirements)
 - [Requirements for Readers](#requirements-for-readers)
@@ -80,6 +96,9 @@
     - [Column Metadata](#column-metadata)
     - [Example](#example)
   - [Checkpoint Schema](#checkpoint-schema)
+  - [Last Checkpoint File Schema](#last-checkpoint-file-schema)
+    - [JSON checksum](#json-checksum)
+      - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -169,25 +188,49 @@ A delta file, `n.json`, contains an atomic set of [_actions_](#Actions) that sho
 An action changes one aspect of the table's state, for example, adding or removing a file.
 
 ### Checkpoints
-Checkpoints are also stored in the `_delta_log` directory, and can be created for any version of the table.
+Checkpoints are also stored in the `_delta_log` directory, and can be created at any time, for any committed version of the table.
+For performance reasons, readers should prefer to use the newest complete checkpoint possible.
+For time travel, the checkpoint used must not be newer than the time travel version.
 
-A checkpoint contains the complete replay of all actions up until this version, with invalid actions removed.
-Invalid actions are those that have been canceled out by a subsequent ones (for example removing a file that has been added), using the [rules for reconciliation](#Action-Reconciliation)
-Checkpoints allow readers to short-cut the cost of reading the log up-to a given point in order to reconstruct a snapshot, and allow older JSON Delta log entries to be deleted after a period of time.
+A checkpoint contains the complete replay of all actions, up to and including the checkpointed table version, with invalid actions removed.
+Invalid actions are those that have been canceled out by subsequent ones (for example removing a file that has been added), using the [rules for reconciliation](#Action-Reconciliation).
+In addition to above, checkpoint also contains the [_remove tombstones_](#add-file-and-remove-file) until they are expired.
+Checkpoints allow readers to short-cut the cost of reading the log up-to a given point in order to reconstruct a snapshot, and they also allow [Metadata cleanup](#metadata-cleanup) to delete expired JSON Delta log entries.
 
-
-By default, the reference implementation creates a checkpoint every 10 commits.
+Readers SHOULD NOT make any assumptions about the existence or frequency of checkpoints, with one exception:
+[Metadata cleanup](#metadata-cleanup) MUST provide a checkpoint for the oldest kept table version, to cover all deleted [Delta log entries](#delta-log-entries).
+That said, writers are encouraged to checkpoint reasonably frequently, so that readers do not pay excessive log replay costs due to reading large numbers of delta files.
 
 The checkpoint file name is based on the version of the table that the checkpoint contains.
-The format of the checkpoint file name can take one of two forms:
 
-1. A single checkpoint file for version `n` of the table will be named `n.checkpoint.parquet`. For example:
+Delta supports three kinds of checkpoints:
+
+1. UUID-named Checkpoints: These follow [V2 spec](#v2-spec) which uses the following file name: `n.checkpoint.u.{json/parquet}`, where `u` is a UUID and `n` is the
+snapshot version that this checkpoint represents. The UUID-named V2 Checkpoint may be in json or parquet format, and references zero or more checkpoint sidecars
+in the `_delta_log/_sidecars` directory. A checkpoint sidecar is a uniquely-named parquet file: `{unique}.parquet` where `unique` is some unique
+string such as a UUID.
+
+For example:
+
+```
+00000000000000000010.checkpoint.80a083e8-7026-4e79-81be-64bd76c43a11.json
+_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet
+_sidecars/016ae953-37a9-438e-8683-9a9a4a79a395.parquet
+_sidecars/7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.parquet
+```
+
+2. A [classic checkpoint](#classic-checkpoint) for version `n` of the table consists of a file named `n.checkpoint.parquet`.
+These could follow either [V1 spec](#v1-spec) or [V2 spec](#v2-spec).
+For example:
 
 ```
 00000000000000000010.checkpoint.parquet
 ```
 
-2. A multi-part checkpoint for version `n` can be fragmented into `p` files. Fragment `o` of `p` is named `n.checkpoint.o.p.parquet`. For example:
+
+3. A [multi-part checkpoint](#multi-part-checkpoint) for version `n` consists of `p` "part" files (`p > 1`), where
+part `o` of `p` is named `n.checkpoint.o.p.parquet`. These are always [V1 checkpoints](#v1-spec).
+For example:
 
 ```
 00000000000000000010.checkpoint.0000000001.0000000003.parquet
@@ -195,9 +238,76 @@ The format of the checkpoint file name can take one of two forms:
 00000000000000000010.checkpoint.0000000003.0000000003.parquet
 ```
 
-Since it is possible that a writer will fail while writing out one or more parts of a multi-part checkpoint, readers must only use a complete checkpoint, wherein all fragments are present. For performance reasons, readers should search for the most recent earlier checkpoint that is complete.
+A writer can choose to write checkpoints with following constraints:
+- Writers are always allowed create a [classic checkpoint](#classic-checkpoint) following [v1 spec](#v1-spec).
+- Writers are forbidden to create [multi-part checkpoints](#multi-part-checkpoint) if [v2 checkpoints](#v2-checkpoint-table-feature) are enabled.
+- Writers are allowed to create v2 spec checkpoints (either [classic](#classic-checkpoint) or [uuid-named](#uuid-named-checkpoint)) if [v2 checkpoint table feature](#v2-checkpoint-table-feature) is enabled.
+
+Multi-part checkpoints are [deprecated](#problems-with-multi-part-checkpoints), and writers should avoid creating them. Use uuid-named [V2 spec](#v2-spec) checkpoints instead of these.
+
+Multiple checkpoints could exist for the same table version, e.g. if two clients race to create checkpoints at the same time, but with different formats.
+In such cases, a client can choose which checkpoint to use.
+
+Because a multi-part checkpoint cannot be created atomically (e.g. vulnerable to slow and/or failed writes), readers must ignore multi-part checkpoints with missing parts.
 
 Checkpoints for a given version must only be created after the associated delta file has been successfully written.
+
+#### Sidecar Files
+
+A sidecar file contains file actions. These files are in parquet format and they must have unique names.
+These are then [linked](#sidecar-file-information) to checkpoints. Refer to [V2 checkpoint spec](#v2-spec)
+for more detail. The sidecar files can have only [add file and remove file](#Add-File-and-Remove-File) entries
+as of now. The add and remove file actions are stored as their individual columns in parquet as struct fields.
+
+These files reside in the `_delta_log/_sidecars` directory.
+
+### Log Compaction Files
+
+Log compaction files reside in the `_delta_log` directory. A log compaction file from a start version `x` to an end version `y` will have the following name:
+`<x>.<y>.compact.json`. This contains the aggregated
+actions for commit range `[x, y]`. Similar to commits, each row in the log
+compaction file represents an [action](#actions).
+The commit files for a given range are created by doing [Action Reconciliation](#action-reconciliation)
+of the corresponding commits.
+Instead of reading the individual commit files in range `[x, y]`, an implementation could choose to read
+the log compaction file `<x>.<y>.compact.json` to speed up the snapshot construction.
+
+Example:
+Suppose we have `4.json` as:
+```
+{"commitInfo":{...}}
+{"add":{"path":"f2",...}}
+{"remove":{"path":"f1",...}}
+```
+`5.json` as:
+```
+{"commitInfo":{...}}
+{"add":{"path":"f3",...}}
+{"add":{"path":"f4",...}}
+{"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4389}}
+```
+`6.json` as:
+```
+{"commitInfo":{...}}
+{"remove":{"path":"f3",...}}
+{"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4390}}
+```
+
+Then `4.6.compact.json` will have the following content:
+```
+{"add":{"path":"f2",...}}
+{"add":{"path":"f4",...}}
+{"remove":{"path":"f1",...}}
+{"remove":{"path":"f3",...}}
+{"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4390}}
+```
+
+Writers:
+- Can optionally produce log compactions for any given commit range
+
+Readers:
+- Can optionally consume log compactions, if available
+- The compaction replaces the corresponding commits during action reconciliation
 
 ### Last Checkpoint File
 The Delta transaction log will often contain many (e.g. 10,000+) files.
@@ -206,64 +316,6 @@ The last checkpoint file can help reduce the cost of constructing the latest sna
 
 Rather than list the entire directory, readers can locate a recent checkpoint by looking at the `_delta_log/_last_checkpoint` file.
 Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexicographically-sorted, paginated directory listing to enumerate any delta files or newer checkpoints that comprise more recent versions of the table.
-
-This last checkpoint file is encoded as JSON and contains the following information:
-
-Field | Description
--|-
-version | The version of the table when the last checkpoint was made.
-size | The number of actions that are stored in the checkpoint.
-parts | The number of fragments if the last checkpoint was written in multiple parts. This field is optional.
-sizeInBytes | The number of bytes of the checkpoint. This field is optional.
-numOfAddFiles | The number of AddFile actions in the checkpoint. This field is optional.
-checkpointSchema | The schema of the checkpoint file. This field is optional.
-checksum | The checksum of the last checkpoint JSON. This field is optional.
-
-The checksum field is an optional field which contains the MD5 checksum for fields of the last checkpoint json file.
-Last checkpoint file readers are encouraged to validate the checksum, if present, and writers are encouraged to write the checksum
-while overwriting the file. Refer to [this section](#json-checksum) for rules around calculating the checksum field
-for the last checkpoint JSON.
-
-#### JSON checksum
-To generate the checksum for the last checkpoint JSON, firstly, the checksum JSON is canonicalized and converted to a string. Then
-the 32 character MD5 digest is calculated on the resultant string to get the checksum. Rules for [JSON](https://datatracker.ietf.org/doc/html/rfc8259) canonicalization are:
-
-1. Literal values (`true`, `false`, and `null`) are their own canonical form
-2. Numeric values (e.g. `42` or `3.14`) are their own canonical form
-3. String values (e.g. `"hello world"`) are canonicalized by preserving the surrounding quotes and [URL-encoding](#how-to-url-encode-keys-and-string-values)
-their content, e.g. `"hello%20world"`
-4. Object values (e.g. `{"a": 10, "b": {"y": null, "x": "https://delta.io"} }` are canonicalized by:
-   * Canonicalize each scalar (leaf) value following the rule for its type (literal, numeric, string)
-   * Canonicalize each (string) name along the path to that value
-   * Connect path segments by `+`, e.g. `"b"+"y"`
-   * Connect path and value pairs by `=`, e.g. `"b"+"y"=null`
-   * Sort canonicalized path/value pairs using a byte-order sort on paths. The byte-order sort can be done by converting paths to byte array using UTF-8 charset\
-    and then comparing them, e.g. `"a" < "b"+"x" < "b"+"y"`
-   * Separate ordered pairs by `,`, e.g. `"a"=10,"b"+"x"="https%3A%2F%2Fdelta.io","b"+"y"=null`
-
-5. Array values (e.g. `[null, "hi ho", 2.71]`) are canonicalized as if they were objects, except the "name" has numeric type instead of string type, and gives the (0-based) 
-position of the corresponding array element, e.g. `0=null,1="hi%20ho",2=2.71`
-
-6. Top level `checksum` key is ignored in the canonicalization process. e.g. 
-`{"k1": "v1", "checksum": "<anything>", "k3": 23}` is canonicalized to `"k1"="v1","k3"=23`
-
-7. Duplicate keys are not allowed in the last checkpoint JSON and such JSON is considered invalid.
-
-Given the following test sample JSON, a correct implementation of JSON canonicalization should produce the corresponding canonicalized form and checksum value:
-e.g.
-Json: `{"k0":"'v 0'", "checksum": "adsaskfljadfkjadfkj", "k1":{"k2": 2, "k3": ["v3", [1, 2], {"k4": "v4", "k5": ["v5", "v6", "v7"]}]}}`\
-Canonicalized form: `"k0"="%27v%200%27","k1"+"k2"=2,"k1"+"k3"+0="v3","k1"+"k3"+1+0=1,"k1"+"k3"+1+1=2,"k1"+"k3"+2+"k4"="v4","k1"+"k3"+2+"k5"+0="v5","k1"+"k3"+2+"k5"+1="v6","k1"+"k3"+2+"k5"+2="v7"`\
-Checksum is `6a92d155a59bf2eecbd4b4ec7fd1f875`
-
-##### How to URL encode keys and string values
-The [URL Encoding](https://datatracker.ietf.org/doc/html/rfc3986) spec is a bit flexible to give a reliable encoding. e.g. the spec allows both
-uppercase and lowercase as part of percent-encoding. Thus, we require a stricter set of rules for encoding:
-
-1. The string to be encoded must be represented as octets according to the UTF-8 character encoding
-2. All octets except a-z / A-Z / 0-9 / "-" / "." / "_" / "~" are reserved
-3. Always [percent-encode](https://datatracker.ietf.org/doc/html/rfc3986#section-2) reserved octets
-4. Never percent-encode non-reserved octets
-5. A percent-encoded octet consists of three characters: `%` followed by its 2-digit hexadecimal value in uppercase letters, e.g. `>` encodes to `%3E`
 
 ## Actions
 Actions modify the state of the table and they are stored both in delta files and in checkpoints.
@@ -356,8 +408,9 @@ tags | Map[String, String] | Map containing metadata about this logical file | o
 deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
 baseRowId | Long  | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids) | optional
 defaultRowCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table. | optional
+clusteringProvider | String | The name of the clustering implementation. See also [Clustered Table](#clustered-table)| optional
 
-The following is an example `add` action:
+The following is an example `add` action for a partitioned table:
 ```json
 {
   "add": {
@@ -373,6 +426,23 @@ The following is an example `add` action:
 }
 ```
 
+The following is an example `add` action for a clustered table:
+```json
+{
+  "add": {
+    "path": "date=2017-12-10/part-000...c000.gz.parquet",
+    "partitionValues": {},
+    "size": 841454,
+    "modificationTime": 1512909768000,
+    "dataChange": true,
+    "baseRowId": 4071,
+    "defaultRowCommitVersion": 41,
+    "clusteringProvider": "liquid",
+    "stats": "{\"numRecords\":1,\"minValues\":{\"val..."
+  }
+}
+```
+
 The schema of the `remove` action is as follows:
 
 Field Name | Data Type | Description | optional/required
@@ -383,6 +453,7 @@ dataChange | Boolean | When `false` the records in the removed file must be cont
 extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present | optional
 partitionValues| Map[String, String] | A map from partition column to value for this file. See also [Partition Value Serialization](#Partition-Value-Serialization) | optional
 size| Long | The size of this data file in bytes | optional
+stats | [Statistics Struct](#Per-file-Statistics) | Contains statistics (e.g., count, min/max values for columns) about the data in this logical file | optional
 tags | Map[String, String] | Map containing metadata about this file | optional
 deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
 baseRowId | Long | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids) | optional
@@ -439,12 +510,16 @@ When available, change data readers should use the `cdc` actions in a given tabl
 Specifically, to read the row-level changes made in a version, the following strategy should be used:
 1. If there are `cdc` actions in this version, then read only those to get the row-level changes, and skip the remaining `add` and `remove` actions in this version.
 2. Otherwise, if there are no `cdc` actions in this version, read and treat all the rows in the `add` and `remove` actions as inserted and deleted rows, respectively.
-3. The following extra columns should also be generated:
+3. Change data readers should return the following extra columns:
 
-Field Name | Data Type | Description
--|-|-
-_commit_version|`Long`| The table version containing the change. This can be got from the name of the Delta log file that contains actions.
-_commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. This can be got from the file modification time of the Delta log file that contains actions.
+    Field Name | Data Type | Description
+    -|-|-
+    _commit_version|`Long`| The table version containing the change. This can be derived from the name of the Delta log file that contains actions.
+    _commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. This can be derived from the file modification time of the Delta log file that contains actions.
+
+##### Note for non-change data readers
+
+In a table with Change Data Feed enabled, the data Parquet files referenced by `add` and `remove` actions are allowed to contain an extra column `_change_type`. This column is not present in the table's schema and will consistently have a `null` value. When accessing these files, readers should disregard this column and only process columns defined within the table's schema.
 
 ### Transaction Identifiers
 Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
@@ -465,11 +540,11 @@ The Delta transaction protocol does not, for example, assume monotonicity of the
 
 The schema of the `txn` action is as follows:
 
-Field Name | Data Type | Description
--|-|-
-appId | String | A unique identifier for the application performing the transaction
-version | Long | An application-specific numeric identifier for this transaction
-lastUpdated | Option[Long] | The time when this transaction action is created, in milliseconds since the Unix epoch
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+appId | String | A unique identifier for the application performing the transaction | required
+version | Long | An application-specific numeric identifier for this transaction | required
+lastUpdated | Option[Long] | The time when this transaction action is created, in milliseconds since the Unix epoch | optional
 
 The following is an example `txn` action:
 ```json
@@ -493,12 +568,12 @@ Reader Version 3 and Writer Version 7 add two lists of table features to the pro
 
 The schema of the `protocol` action is as follows:
 
-Field Name | Data Type | Description
--|-|-
-minReaderVersion | Int | The minimum version of the Delta read protocol that a client must implement in order to correctly *read* this table
-minWriterVersion | Int | The minimum version of the Delta write protocol that a client must implement in order to correctly *write* this table
-readerFeatures | Array[String] | A collection of features that a client must implement in order to correctly read this table (exist only when `minReaderVersion` is set to `3`)
-writerFeatures | Array[String] | A collection of features that a client must implement in order to correctly write this table (exist only when `minWriterVersion` is set to `7`)
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+minReaderVersion | Int | The minimum version of the Delta read protocol that a client must implement in order to correctly *read* this table | required
+minWriterVersion | Int | The minimum version of the Delta write protocol that a client must implement in order to correctly *write* this table | required
+readerFeatures | Array[String] | A collection of features that a client must implement in order to correctly read this table (exist only when `minReaderVersion` is set to `3`) | optional
+writerFeatures | Array[String] | A collection of features that a client must implement in order to correctly write this table (exist only when `minWriterVersion` is set to `7`) | optional
 
 Some example Delta protocols:
 ```json
@@ -571,18 +646,21 @@ domain | String | Identifier for this domain (system- or user-provided)
 configuration | String | String containing configuration for the metadata domain
 removed | Boolean | When `true`, the action serves as a tombstone to logically delete a metadata domain. Writers should preserve an accurate pre-image of the configuration.
 
-Enablement:
+To support this feature:
 - The table must be on Writer Version 7.
 - A feature name `domainMetadata` must exist in the table's `writerFeatures`.
 
 #### Reader Requirements for Domain Metadata
-- Readers must preserve all domains even if they don't understand them, i.e. the snapshot read must include them.
-- Any system-controlled domain that requires special attention from a reader is a [breaking change](#protocol-evolution), and must be part of a reader-writer table feature that specifies the desired behavior.
+- Readers are not required to support domain metadata.
+- Readers who choose not to support domain metadata should ignore metadata domain actions as unrecognized (see [Protocol Evolution](#protocol-evolution)) and snapshots should not include any metadata domains.
+- Readers who choose to support domain metadata must apply [Action Reconciliation](#action-reconciliation) to all metadata domains and snapshots must include them -- even if the reader does not understand them.
+- Any system-controlled domain that imposes any requirements on readers is a [breaking change](#protocol-evolution), and must be part of a reader-writer table feature that specifies the desired behavior.
 
 #### Writer Requirements for Domain Metadata
+- Writers must preserve all domains even if they don't understand them.
 - Writers must not allow users to modify or delete system-controlled domains.
 - Writers must only modify or delete system-controlled domains they understand.
-- Any system-controlled domain that needs special attention from a writer is a [breaking change](#protocol-evolution), and must be part of a writer table feature that specifies the desired behavior.
+- Any system-controlled domain that imposes additional requirements on the writer is a [breaking change](#protocol-evolution), and must be part of a writer table feature that specifies the desired behavior.
 
 The following is an example `domainMetadata` action:
 ```json
@@ -591,6 +669,49 @@ The following is an example `domainMetadata` action:
     "domain": "delta.deltaTableFeatureX",
     "configuration": "{\"key1\":\"value1\"}",
     "removed": false
+  }
+}
+```
+
+### Sidecar File Information
+The `sidecar` action references a [sidecar file](#sidecar-files) which provides some of the checkpoint's file actions.
+This action is only allowed in checkpoints following [V2 spec](#v2-spec).
+The schema of `sidecar` action is as follows:
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+path | String | URI-encoded path to the sidecar file. Because sidecar files must always reside in the table's own _delta_log/_sidecars directory, implementations are encouraged to store only the file's name (without scheme or parent directories). | required
+sizeInBytes | Long | Size of the sidecar file. | required
+modificationTime | Long | The time this logical file was created, as milliseconds since the epoch. | required
+tags|`Map[String, String]`|Map containing any additional metadata about the checkpoint sidecar file. | optional
+
+The following is an example `sidecar` action:
+```json
+{
+  "sidecar":{
+    "path": "016ae953-37a9-438e-8683-9a9a4a79a395.parquet",
+    "sizeInBytes": 2304522,
+    "modificationTime": 1512909768000,
+    "tags": {}
+  }
+}
+```
+
+#### Checkpoint Metadata
+This action is only allowed in checkpoints following [V2 spec](#v2-spec).
+It describes the details about the checkpoint. It has the following schema:
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+version|`Long`|The checkpoint version.| required
+tags|`Map[String, String]`|Map containing any additional metadata about the v2 spec checkpoint.| optional
+
+E.g.
+```json
+{
+  "checkpointMetadata":{
+    "version":1,
+    "tags":{}
   }
 }
 ```
@@ -614,6 +735,7 @@ To achieve the requirements above, related actions from different delta files ne
  - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file.
  - To replay the log, scan all file actions and keep only the newest reference for each logical file.
  - `add` actions in the result identify logical files currently present in the table (for queries). `remove` actions in the result identify tombstones of logical files no longer present in the table (for VACUUM).
+ - [v2 checkpoint spec](#v2-spec) actions are not allowed in normal commit files, and do not participate in log replay.
 
 # Table Features
 Table features must only exist on tables that have a supported protocol version. When the table's Reader Version is 3, `readerFeatures` must exist in the `protocol` action, and when the Writer Version is 7, `writerFeatures` must exist in the `protocol` action. `readerFeatures` and `writerFeatures` define the features that readers and writers must implement in order to read and write this table.
@@ -623,7 +745,7 @@ Readers and writers must not ignore table features when they are present:
  - to write a table, writers must implement and respect all features listed in `writerFeatures`. Because writers have to read the table (or only the Delta log) before write, they must implement and respect all reader features as well.
 
 ## Table Features for New and Existing Tables
-It is possible to create a new table or upgrade an existing table to the protocol versions that enables the use of table features. The enablement can be only for readers or both readers and writers.
+It is possible to create a new table or upgrade an existing table to the protocol versions that supports the use of table features. A table must support either the use of writer features or both reader and writer features. It is illegal to support reader but not writer features.
 
 For new tables, when a new table is created with a Reader Version up to 2 and Writer Version 7, its `protocol` action must only contain `writerFeatures`. When a new table is created with Reader Version 3 and Writer Version 7, its `protocol` action must contain both `readerFeatures` and `writerFeatures`. Creating a table with a Reader Version 3 and Writer Version less than 7 is not allowed.
 
@@ -637,18 +759,20 @@ For example, given a table on Reader Version 1 and Writer Version 4, along with 
 
 To produce Version 4, a writer could look at only Version 3 and discover that Change Data Feed has not been used. But in fact, this feature has been used and the table does contain some Change Data Files for Version 2. This means that, to determine all features that have ever been used by the table, a writer must either scan the whole history (which is very time-consuming) or assume the worst case: all features supported by protocol `(1, 4)` has been used.
 
-## Enabled Features
-A feature is enabled when its name is in the `protocol` action’s `readerFeatures` and/or `writerFeatures`. Subsequent read and/or write operations on this table must respect the feature. Clients must not remove the feature from the `protocol` action.
+## Supported Features
+A feature is supported by a table when its name is in the `protocol` action’s `readerFeatures` and/or `writerFeatures`. Subsequent read and/or write operations on this table must respect the feature. Clients must not remove the feature from the `protocol` action.
 
-A feature being enabled does not imply that it is active. For example, a table may have the [Append-only Tables](#append-only-tables) feature (feature name `appendOnly`) enabled in `writerFeatures`, but does not satisfy a table property `delta.appendOnly` equals to `true`. In such a case the table is not append-only, and writers are allowed to change, remove, and rearrange data. However, writers must implement the feature to know that the table property `delta.appendOnly` should be checked.
+Writers are allowed to add support of a feature to the table by adding its name to `readerFeatures` or `writerFeatures`. Reader features should be listed in both `readerFeatures` and `writerFeatures` simultaneously, while writer features should be listed only in `writerFeatures`. It is not allowed to list a feature only in `readerFeatures` but not in `writerFeatures`.
 
-## Disabled Features
-A feature is `disabled` if it is in neither `readerFeatures` nor `writerFeatures`. Writers are allowed to `enable` a feature for the table by adding its name to the `readerFeatures` or `writerFeatures`. Reader features should be added to both `readerFeatures` and `writerFeatures` simultaneously, while writer features should be added only to `writerFeatures`. It is not allowed to add features only to `readerFeatures` but not to `writerFeatures`.
+A feature being supported does not imply that it is active. For example, a table may have the [Append-only Tables](#append-only-tables) feature (feature name `appendOnly`) listed in `writerFeatures`, but it does not have a table property `delta.appendOnly` that is set to `true`. In such a case the table is not append-only, and writers are allowed to change, remove, and rearrange data. However, writers must know that the table property `delta.appendOnly` should be checked before writing the table.
+
+## Active Features
+A feature is active on a table when it is supported *and* its metadata requirements are satisfied. Each feature defines its own metadata requirements, as stated in the corresponding sections of this document. For example, the Append-only feature is active when the `appendOnly` feature name is present in a `protocol`'s `writerFeatures` *and* a table property `delta.appendOnly` set to `true`.
 
 # Column Mapping
 Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
 
-The column mapping is governed by the table property `delta.columnMapping.mode` being one of `none`, `id`, and `name`. The table property should only be honored if the table's protocol has reader and writer versions and/or table features that support the `columnMapping` table feature. For readers this is Reader Version 2, or Reader Version 3 with the `columnMapping` table feature enabled. For writers this is Writer Version 5 or 6, or Writer Version 7 with  the `columnMapping` table feature enabled.
+The column mapping is governed by the table property `delta.columnMapping.mode` being one of `none`, `id`, and `name`. The table property should only be honored if the table's protocol has reader and writer versions and/or table features that support the `columnMapping` table feature. For readers this is Reader Version 2, or Reader Version 3 with the `columnMapping` table feature listed as supported. For writers this is Writer Version 5 or 6, or Writer Version 7 with the `columnMapping` table feature supported.
 
 The following is an example for the column definition of a table that leverages column mapping. See the [appendix](#schema-serialization-format) for a more complete schema definition.
 ```json
@@ -700,11 +824,12 @@ In `id ` mode, readers must resolve columns by using the `field_id` in the parqu
 In `name` mode, readers must resolve columns in the data files by their physical names as given by the column metadata property `delta.columnMapping.physicalName` in the Delta schema. Partition values and column level statistics will also be resolved by their physical names. For columns that are not found in the files, `null`s need to be returned. Column ids are not used in this mode for resolution purposes.
 
 # Deletion Vectors
-Enablement:
- - To enable Deletion Vectors on a table, the table must have Reader Version 3 and Writer Version 7. A feature name `deletionVectors` must exist in the table's `readerFeatures` and `writerFeatures`.
+To support this feature:
+ - To support Deletion Vectors, a table must have Reader Version 3 and Writer Version 7. A feature name `deletionVectors` must exist in the table's `readerFeatures` and `writerFeatures`.
 
-When enabled:
- - A table's `add` and `remove` actions can optionally include a Deletion Vector (DV) that provides information about logically deleted rows, that are however still physically present in the underlying data file and must thus be skipped during processing. Readers must read the table considering the existence of DVs.
+When supported:
+ - A table may have a metadata property `delta.enableDeletionVectors` in the Delta schema set to `true`. Writers must only write new Deletion Vectors (DVs) when this property is set to `true`.
+ - A table's `add` and `remove` actions can optionally include a DV that provides information about logically deleted rows, that are however still physically present in the underlying data file and must thus be skipped during processing. Readers must read the table considering the existence of DVs, even when the `delta.enableDeletionVectors` table property is not set.
 
 DVs can be stored and accessed in different ways, indicated by the `storageType` field. The Delta protocol currently supports inline or on-disk storage, where the latter can be accessed either by a relative path derived from a UUID or an absolute path.
 
@@ -775,7 +900,7 @@ When adding a logical file with a deletion vector, then that logical file must h
 
 This table feature (`icebergCompatV1`) ensures that Delta tables can be converted to Apache Iceberg™ format, though this table feature does not implement or specify that conversion.
 
-Enablement:
+To support this feature:
 - Since this table feature depends on Column Mapping, the table must be on Reader Version = 2, or it must be on Reader Version >= 3 and the feature `columnMapping` must exist in the `protocol`'s `readerFeatures`.
 - The table must be on Writer Version 7.
 - The feature `icebergCompatV1` must exist in the table `protocol`'s `writerFeatures`.
@@ -786,9 +911,9 @@ Deactivation: Unset table property `delta.enableIcebergCompatV1`, or set it to `
 
 ## Writer Requirements for IcebergCompatV1
 
-When enabled and active, writers must:
+When supported and active, writers must:
 - Require that Column Mapping be enabled and set to either `name` or `id` mode
-- Require that Deletion Vectors are not enabled (and, consequently, not active, either). i.e., the `deletionVectors` table feature is not present in the table `protocol`.
+- Require that Deletion Vectors are not supported (and, consequently, not active, either). i.e., the `deletionVectors` table feature is not present in the table `protocol`.
 - Require that partition column values are materialized into any Parquet data file that is present in the table, placed *after* the data columns in the parquet schema
 - Require that all `AddFile`s committed to the table have the `numRecords` statistic populated in their `stats` field
 - Block adding `Map`/`Array`/`Void` types to the table schema (and, thus, block writing them, too)
@@ -796,12 +921,22 @@ When enabled and active, writers must:
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
 
-# Timestamp without timezone (TimestampNTZ)
+# Timestamp without timezone (TimestampNtz)
 This feature introduces a new data type to support timestamps without timezone information. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`.
 The serialization method is described in Sections [Partition Value Serialization](#partition-value-serialization) and [Schema Serialization Format](#schema-serialization-format).
 
-Enablement:
- - To have a column of TimestampNtz type in a table, the table must have Reader Version 3 and Writer Version 7. A feature name `timestampNtz` must exist in the table's `readerFeatures` and `writerFeatures`.
+To support this feature:
+- To have a column of TimestampNtz type in a table, the table must have Reader Version 3 and Writer Version 7. A feature name `timestampNtz` must exist in the table's `readerFeatures` and `writerFeatures`.
+
+
+# V2 Checkpoint Table Feature
+To support this feature:
+- To add [V2 Checkpoints](#v2-spec) support to a table, the table must have Reader Version 3 and Writer Version 7. A feature name `v2Checkpoint` must exist in the table's `readerFeatures` and `writerFeatures`.
+
+When supported:
+- A table could use [uuid-named](#uuid-named-checkpoint) [V2 spec Checkpoints](#v2-spec) which must have [checkpoint metadata](#checkpoint-metadata) and may have [sidecar files](#sidecar-files) OR
+- A table could use [classic](#classic-checkpoint) checkpoints which can be follow [V1](#v1-spec) or [V2](#v2-spec) spec.
+- A table must not use [multi-part checkpoints](#multi-part-checkpoint)
 
 # Row Tracking
 
@@ -892,7 +1027,7 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
   2. Otherwise, readers must use the default generated Row ID of the `add` or `remove` action containing the row in all other cases.
      I.e. readers must add the index of the row in the file to the `baseRowId` of the `add` or `remove` action for the file containing the row.
 - When Row Commit Versions are requested, readers must reconstruct them as follows:
-  1. Readers must use the materialized Row Commit Versions if the column determined by `delta.rowTracking.materializedRowCommitVersionColumnName is present in the data file and the column contains a non `null` value for a row.
+  1. Readers must use the materialized Row Commit Versions if the column determined by `delta.rowTracking.materializedRowCommitVersionColumnName` is present in the data file and the column contains a non `null` value for a row.
   2. Otherwise, Readers must use the default generated Row Commit Versions of the `add` or `remove` action containing the row in all other cases.
      I.e. readers must use the `defaultRowCommitVersion` of the `add` or `remove` action for the file containing the row.
 - Readers cannot read Row IDs and Row Commit Versions while reading change data files from `cdc` actions.
@@ -943,6 +1078,53 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
   In particular, writers should set `delta.rowTracking.preserved` in the `tags` of the `commitInfo` action to `true` if no rows are updated or copied.
   Writers should set that flag to false otherwise.
 
+# Clustered Table
+
+The Clustered Table feature facilitates the physical clustering of rows that share similar values on a predefined set of clustering columns.
+This enhances query performance when selective filters are applied to these clustering columns through data skipping.
+Clustering columns can be specified during the initial creation of a table, or they can be added later, provided that the table doesn't have partition columns.
+
+A table is defined as a clustered table through the following criteria:
+- When the feature `clustering` exists in the table `protocol`'s `writerFeatures`, then we say that the table is a clustered table.
+  The feature `domainMetadata` is required in the table `protocol`'s `writerFeatures`.
+
+Enablement:
+- The table must be on Writer Version 7.
+- The feature `clustering` must exist in the table `protocol`'s `writerFeatures`, either during its creation or at a later stage, provided the table does not have partition columns.
+
+## Writer Requirements for Clustered Table
+
+When the Clustered Table is supported (when the `writerFeatures` field of a table's `protocol` action contains `clustering`), then:
+- Writers must track clustering column names in a `domainMetadata` action with `delta.clustering` as the `domain` and a `configuration` containing all clustering column names.
+  If [Column Mapping](#column-mapping) is enabled, the physical column names should be used.
+- Writers must write out [per-file statistics](#per-file-statistics) and per-column statistics for clustering columns in `add` action. 
+  If a new column is included in the clustering columns list, it is required for all table files to have statistics for these added columns.
+- When a clustering implementation clusters files, writers must set the name of the clustering implementation in the `clusteringProvider` field when adding `add` actions for clustered files.
+  - By default, a clustering implementation must only recluster files that have the field `clusteringProvider` set to the name of the same clustering implementation, or to the names of other clustering implementations that are superseded by the current clustering implementation. In addition, a clustering implementation may cluster any files with an unset `clusteringProvider` field (i.e., unclustered files).
+  - Writer is not required to cluster a specific file at any specific moment.
+  - A clustering implementation is free to add additional information such as adding a new user-controlled metadata domain to keep track of its metadata.
+- Writers must not define clustered and partitioned table at the same time.
+
+The following is an example for the `domainMetadata` action defintion of a table that leverages column mapping.
+```json
+{
+  "domainMetadata": {
+    "domain": "delta.clustering",
+    "configuration": "{\"clusteringColumns\":[\"col-daadafd7-7c20-4697-98f8-bff70199b1f9\", \"col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e\"]}",
+    "removed": false
+  }
+}
+```
+The example above converts `configuration` field into JSON format, including escaping characters. Here's how it looks in plain JSON for better understanding.
+```json
+{
+  "clusteringColumns": [
+    "col-daadafd7-7c20-4697-98f8-bff70199b1f9",
+    "col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e"
+  ]
+}
+```
+
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
 
@@ -962,19 +1144,19 @@ This section documents additional requirements that writers must follow in order
   - More than one SetTransaction with the same `appId`
 
 ## Checkpoints
- - A checkpoint MUST only be written after the corresponding log entry has been completely written.
- - When writing multi-part checkpoints, the data must be clustered (either through hash or range partitioning) by the 'path' of an added or removed file, or null otherwise. This ensures deterministic content in each part file in case of multiple attempts to write the files.
-
-### Checkpoint Format
-
-Checkpoint files must be written in [Apache Parquet](https://parquet.apache.org/) format. Each row in the checkpoint corresponds to a single action. The checkpoint **must** contain all information regarding the following actions:
+Each row in the checkpoint corresponds to a single action. The checkpoint **must** contain all information regarding the following actions:
  * The [protocol version](#Protocol-Evolution)
  * The [metadata](#Change-Metadata) of the table
- * Files that have been [added and removed](#Add-File-and-Remove-File)
+ * Files that have been [added](#Add-File-and-Remove-File) and not yet removed
+ * Files that were recently [removed](#Add-File-and-Remove-File) and have not yet expired
  * [Transaction identifiers](#Transaction-Identifiers)
  * [Domain Metadata](#Domain-Metadata)
+ * [Checkpoint Metadata](#checkpoint-metadata) - Requires [V2 checkpoints](#v2-spec)
+ * [Sidecar File](#sidecar-files) - Requires [V2 checkpoints](#v2-spec)
 
-Commit provenance information does not need to be included in the checkpoint. All of these actions are stored as their individual columns in parquet as struct fields.
+All of these actions are stored as their individual columns in parquet as struct fields. Any missing column should be treated as null.
+
+Checkpoints must not preserve [commit provenance information](#commit-provenance-information) nor [change data](#add-cdc-file) actions.
 
 Within the checkpoint, the `add` struct may or may not contain the following columns based on the configuration of the table:
  - partitionValues_parsed: In this struct, the column names correspond to the partition columns and the values are stored in their corresponding data type. This is a required field when the table is partitioned and the table property `delta.checkpoint.writeStatsAsStruct` is set to `true`. If the table is not partitioned, this column can be omitted. For example, for partition columns `year`, `month` and `event` with data types `int`, `int` and `string` respectively, the schema for this field will look like:
@@ -990,29 +1172,204 @@ Within the checkpoint, the `add` struct may or may not contain the following col
  - stats: Column level statistics can be stored as a JSON string in the checkpoint. This field needs to be written when statistics are available and the table property: `delta.checkpoint.writeStatsAsJson` is set to `true` (which is the default). When this property is set to `false`, this field should be omitted from the checkpoint.
  - stats_parsed: The stats can be stored in their [original format](#Per-file-Statistics). This field needs to be written when statistics are available and the table property: `delta.checkpoint.writeStatsAsStruct` is set to `true`. When this property is set to `false` (which is the default), this field should be omitted from the checkpoint.
 
+Within the checkpoint, the `remove` struct does not contain the `stats` and `tags` fields because the `remove` actions stored in checkpoints act only as tombstones for VACUUM operations, and VACUUM tombstones do not require `stats` or `tags`. These fields are only stored in Delta JSON commit files.
+
 Refer to the [appendix](#checkpoint-schema) for an example on the schema of the checkpoint.
+
+Delta supports two checkpoint specs and three kind of checkpoint naming schemes.
+
+### Checkpoint Specs
+Delta supports following two checkpoint specs:
+
+#### V2 Spec
+This checkpoint spec allows putting [add and remove file](#Add-File-and-Remove-File) in the
+[sidecar files](#sidecar-files). This spec can be used only when [v2 checkpoint table feature](#v2-checkpoint-table-feature) is enabled.
+Checkpoints following V2 spec have the following structure:
+- Each v2 spec checkpoint includes exactly one [Checkpoint Metadata](#checkpoint-metadata) action.
+- Remaining rows in the V2 spec checkpoint refer to the other actions mentioned [here](#checkpoints-1)
+- All the non-file actions i.e. all actions except [add and remove file](#Add-File-and-Remove-File)
+must be part of the v2 spec checkpoint itself.
+- A writer could choose to include the [add and remove file](#Add-File-and-Remove-File) action in the
+V2 spec Checkpoint or they could write the [add and remove file](#Add-File-and-Remove-File) actions in
+separate [sidecar files](#sidecar-files). These sidecar files will then be referenced in the V2 spec checkpoint.
+All sidecar files reside in the `_delta_log/_sidecars` directory.
+- A V2 spec Checkpoint could reference zero or more [sidecar file actions](#sidecar-file-information).
+
+Note: A V2 spec Checkpoint can either have all the [add and remove file](#Add-File-and-Remove-File) actions
+embedded inside itself or all of them should be in [sidecar files](#sidecar-files). Having partial
+add and remove file actions in V2 Checkpoint and partial entries in sidecar files is not allowed.
+
+After producing a V2 spec checkpoint, a writer can choose to embed some or all of the V2 spec checkpoint in
+the `_last_checkpoint` file, so that readers don't have to read the V2 Checkpoint.
+
+E.g. showing the content of V2 spec checkpoint:
+```
+{"checkpointMetadata":{"version":364475,"tags":{}}}
+{"metaData":{...}}
+{"protocol":{...}}
+{"txn":{"appId":"3ba13872-2d47-4e17-86a0-21afd2a22395","version":364475}}
+{"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4389}}
+{"sidecar":{"path":"3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet","sizeInBytes":2341330,"modificationTime":1512909768000,"tags":{}}
+{"sidecar":{"path":"016ae953-37a9-438e-8683-9a9a4a79a395.parquet","sizeInBytes":8468120,"modificationTime":1512909848000,"tags":{}}
+```
+
+Another example of a v2 spec checkpoint without sidecars:
+```
+{"checkpointMetadata":{"version":364475,"tags":{}}}
+{"metaData":{...}}
+{"protocol":{...}}
+{"txn":{"appId":"3ba13872-2d47-4e17-86a0-21afd2a22395","version":364475}}
+{"add":{"path":"date=2017-12-10/part-000...c000.gz.parquet",...}
+{"add":{"path":"date=2017-12-09/part-000...c000.gz.parquet",...}
+{"remove":{"path":"date=2017-12-08/part-000...c000.gz.parquet",...}
+```
+
+#### V1 Spec
+
+The V1 Spec does not support [sidecar files](#sidecar-files) and [checkpoint metadata](#checkpoint-metadata).
+These are flat checkpoints which contains all actions mentioned [here](#checkpoints-1).
+
+### Checkpoint Naming Scheme
+Delta supports three checkpoint naming schemes: UUID-named, classic, and multi-part.
+
+#### UUID-named checkpoint
+This naming scheme represents a [V2 spec checkpoint](#v2-spec) with following file name: `n.checkpoint.u.{json/parquet}`,
+where `u` is a UUID and `n` is the snapshot version that this checkpoint represents.
+The UUID-named checkpoints may be in JSON or parquet format. Since these are following [V2 spec](#v2-spec), they must
+have a [checkpoint metadata](#checkpoint-metadata) action and may reference zero or more checkpoint [sidecar files](#sidecar-files).
+
+Example-1: Json UUID-named checkpoint with sidecars
+
+```
+00000000000000000010.checkpoint.80a083e8-7026-4e79-81be-64bd76c43a11.json
+_sidecars/016ae953-37a9-438e-8683-9a9a4a79a395.parquet
+_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet
+_sidecars/7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.parquet
+```
+
+Example-2: Parquet UUID-named checkpoint with sidecars
+
+```
+00000000000000000020.checkpoint.80a083e8-7026-4e79-81be-64bd76c43a11.parquet
+_sidecars/016ae953-37a9-438e-8683-9a9a4a79a395.parquet
+_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet
+```
+
+Example-3: Json UUID-named checkpoint without sidecars
+
+```
+00000000000000000112.checkpoint.80a083e8-7026-4e79-81be-64bd76c43a11.json
+```
+
+#### Classic checkpoint
+
+A classic checkpoint for version `n` uses the file name `n.checkpoint.parquet`. For example:
+
+```
+00000000000000000010.checkpoint.parquet
+```
+
+If two checkpoint writers race to create the same classic checkpoint, the latest writer wins.
+However, this should not matter because both checkpoints should contain the same information and a
+reader could safely use either one.
+
+A classic checkpoint could:
+1. Either follow [V1 spec](#v1-spec) or
+2. Could follow [V2 spec](#v2-spec). This is possible only when
+[V2 Checkpoint table feature](#v2-checkpoint-table-feature) is enabled. In this case it must include
+[checkpoint metadata](#checkpoint-metadata) and may or may not have [sidecar files](#sidecar-file-information).
+
+#### Multi-part checkpoint
+Multi-part checkpoint uses parquet format.
+This checkpoint type is [deprecated](#problems-with-multi-part-checkpoints) and writers should avoid using it.
+
+A multi-part checkpoint for version `n` consists of `p` "part" files (`p > 1`), where part `o` of `p` is named `n.checkpoint.o.p.parquet`. For example:
+
+```
+00000000000000000010.checkpoint.0000000001.0000000003.parquet
+00000000000000000010.checkpoint.0000000002.0000000003.parquet
+00000000000000000010.checkpoint.0000000003.0000000003.parquet
+```
+
+For [safety reasons](#problems-with-multi-part-checkpoints), multi-part checkpoints MUST be clustered by
+spark-style hash partitioning. If the table supports [Deletion Vectors](#deletion-vectors), the partitioning
+key is the logical file identifier `(path, dvId)`; otherwise the key is just `path` (not `(path, NULL)`). This
+ensures deterministic content in each part file in case of multiple attempts to write the files -- even when
+older and newer Delta clients race.
+
+##### Problems with multi-part checkpoints
+
+Because they cannot be written atomically, multi-part checkpoints have several weaknesses:
+
+1. A writer cannot validate the content of the just-written checkpoint before readers could start using it.
+
+2. Two writers who race to produce the same checkpoint (same version, same number of parts) can overwrite each other, producing an arbitrary mix of checkpoint part files. If an overwrite changes the content of a file in any way, the resulting checkpoint may not produce an accurate snapshot.
+
+3. Not amenable to performance and scalability optimizations. For example, there is no way to store skipping stats for checkpoint parts, nor to reuse checkpoint part files across multiple checkpoints.
+
+4. Multi-part checkpoints also bloat the _delta_log dir and slow down LIST operations.
+
+The [UUID-named](#uuid-named-checkpoint) checkpoint (which follows [V2 spec](#v2-spec)) solves all
+of these problems and should be preferred over multi-part checkpoints. For this reason, Multi-part
+checkpoints are forbidden when [V2 Checkpoints table feature](#v2-checkpoint-table-feature) is enabled.
+
+### Handling Backward compatibility while moving to UUID-named v2 Checkpoints
+
+A UUID-named v2 Checkpoint should only be created by clients if the [v2 checkpoint table feature](#v2-checkpoint-table-feature) is enabled.
+When UUID-named v2 checkpoints are enabled, Writers should occasionally create a v2 [Classic Checkpoint](#classic-checkpoint)
+to maintain compatibility with older clients which do not support [v2 checkpoint table feature](#v2-checkpoint-table-feature) and
+so do not recognize UUID-named checkpoints. These classic checkpoints have the same content as the UUID-named v2 checkpoint, but older
+clients will recognize the classic file name, allowing them to extract [Protocol](#protocol-evolution) and fail gracefully with an
+invalid protocol version error on v2-checkpoint-enabled tables. Writers should create classic checkpoints often enough to allow older
+clients to discover them and fail gracefully.
+
+### Allowed combinations for `checkpoint spec` <-> `checkpoint file naming`
+
+Checkpoint Spec | [UUID-named](#uuid-named-checkpoint) | [classic](#classic-checkpoint) | [multi-part](#multi-part-checkpoint)
+-|-|-|-
+[V1](#v1-spec) | Invalid | Valid | Valid
+[V2](#v2-spec) | Valid | Valid | Invalid
+
+### Metadata Cleanup
+
+The _delta_log directory grows over time as more and more commits and checkpoints are accumulated.
+Implementations are recommended to delete expired commits and checkpoints in order to reduce the directory size.
+The following steps could be used to do cleanup of the DeltaLog directory:
+1. Identify a threshold (in days) uptil which we want to preserve the deltaLog. Let's refer to
+midnight UTC of that day as `cutOffTimestamp`. The newest commit not newer than the `cutOffTimestamp` is
+the `cutoffCommit`, because a commit exactly at midnight is an acceptable cutoff. We want to retain everything including and after the `cutoffCommit`.
+2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`.
+We need to preserve the `cutOffCheckpoint` and all commits after it, because we need them to enable
+time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
+3. Delete all [delta log entries](#delta-log-entries and [checkpoint files](#checkpoints) before the
+`cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files) having
+startVersion <= `cutOffCheckpoint`'s version.
+4. Now read all the available [checkpoints](#checkpoints-1) in the _delta_log directory and identify
+the corresponding [sidecar files](#sidecar-files). These sidecar files need to be protected.
+5. List all the files in `_delta_log/_sidecars` directory, preserve files that are less than a day
+old (as of midnight UTC), to not break in-progress checkpoints. Also preserve the referenced sidecar files
+identified in Step-4 above. Delete everything else.
 
 ## Data Files
  - Data files MUST be uniquely named and MUST NOT be overwritten. The reference implementation uses a GUID in the name to ensure this property.
 
 ## Append-only Tables
-Enablement:
+To support this feature:
  - The table must be on a Writer Version starting from 2 up to 7.
  - If the table is on Writer Version 7, the feature `appendOnly` must exist in the table `protocol`'s `writerFeatures`.
- - The table property `delta.appendOnly` must be set to `true`.
 
-When enabled:
+When supported, and if the table has a property `delta.appendOnly` set to `true`:
  - New log entries MUST NOT change or remove data from the table.
  - New log entries may rearrange data (i.e. `add` and `remove` actions where `dataChange=false`).
 
 To remove the append-only restriction, the table property `delta.appendOnly` must be set to `false`, or it must be removed.
 
 ## Column Invariants
-Enablement:
+To support this feature
  - If the table is on a Writer Version starting from 2 up to 6, Column Invariants are always enabled.
- - If the table is on Writer Version 7, the feature `columnInvariants` must exist in the table `protocol`'s `writerFeatures`.
+ - If the table is on Writer Version 7, the feature `invariants` must exist in the table `protocol`'s `writerFeatures`.
 
-When enabled:
+When supported:
  - The `metadata` for a column in the table schema MAY contain the key `delta.invariants`.
  - The value of `delta.invariants` SHOULD be parsed as a JSON string containing a boolean SQL expression at the key `expression.expression` (that is, `{"expression": {"expression": "<SQL STRING>"}}`).
  - Writers MUST abort any transaction that adds a row to the table, where an invariant evaluates to `false` or `null`.
@@ -1039,8 +1396,8 @@ Writers should reject any transaction that contains data where the expression `x
 
 ## CHECK Constraints
 
-Enablement:
-- If the table is on a Writer Version starting from 3 up to 6, CHECK Constraints are always enabled.
+To support this feature:
+- If the table is on a Writer Version starting from 3 up to 6, CHECK Constraints are always supported.
 - If the table is on Writer Version 7, a feature name `checkConstraints` must exist in the table `protocol`'s `writerFeatures`.
 
 CHECK constraints are stored in the map of the `configuration` field in [Metadata](#change-metadata). Each CHECK constraint has a name and is stored as a key value pair. The key format is `delta.constraints.{name}`, and the value is a SQL expression string whose return type must be `Boolean`. Columns referred by the SQL expression must exist in the table schema.
@@ -1050,28 +1407,46 @@ Rows in a table must satisfy CHECK constraints. In other words, evaluating the S
 For example, a key value pair (`delta.constraints.birthDateCheck`, `birthDate > '1900-01-01'`) means there is a CHECK constraint called `birthDateCheck` in the table and the value of the `birthDate` column in each row must be greater than `1900-01-01`.
 
 Hence, a writer must follow the rules below:
-- CHECK Constraints may not be added to a table unless the above enablement rules are satisfied. When adding a CHECK Constraint to a table for the first time, writers are allowed to submit a `protocol` change in the same commit to enable the feature in the protocol.
-- When adding a CHECK constraint to a table, a writer must validate the existing data in the table and ensure every row satisfies the new CHECK constraint before committing the change. Otherwise, the write must fail and the table must stay unchanged.
-- When writing to a table that contains CHECK constraints, every new row being written to the table must satisfy CHECK constraints in the table. Otherwise, the write must fail and the table must stay unchanged.
+- CHECK Constraints may not be added to a table unless the above "to support this feature" rules are satisfied. When adding a CHECK Constraint to a table for the first time, writers are allowed to submit a `protocol` change in the same commit to add support of this feature.
+- When adding a CHECK constraint to a table, a writer must validate the existing data in the table and ensure every row satisfies the new CHECK constraint before committing the change. Otherwise, the write operation must fail and the table must stay unchanged.
+- When writing to a table that contains CHECK constraints, every new row being written to the table must satisfy CHECK constraints in the table. Otherwise, the write operation must fail and the table must stay unchanged.
 
 ## Generated Columns
 
-Enablement:
- - If the table is on a Writer Version starting from 4 up to 6, Generated Columns are always enabled.
+To support this feature:
+ - If the table is on a Writer Version starting from 4 up to 6, Generated Columns are always supported.
  - If the table is on Writer Version 7, a feature name `generatedColumns` must exist in the table `protocol`'s `writerFeatures`.
 
-When enabled:
+When supported:
  - The `metadata` for a column in the table schema MAY contain the key `delta.generationExpression`.
  - The value of `delta.generationExpression` SHOULD be parsed as a SQL expression.
  - Writers MUST enforce that any data writing to the table satisfy the condition `(<value> <=> <generation expression>) IS TRUE`. `<=>` is the NULL-safe equal operator which performs an equality comparison like the `=` operator but returns `TRUE` rather than NULL if both operands are `NULL`
 
+## Default Columns
+
+Delta supports defining default expressions for columns on Delta tables. Delta will generate default values for columns when users do not explicitly provide values for them when writing to such tables, or when the user explicitly specifies the `DEFAULT` SQL keyword for any such column.
+
+Semantics for write and read operations:
+- Note that this metadata only applies for write operations, not read operations.
+- Table write operations (such as SQL INSERT, UPDATE, and MERGE commands) will use the default values. For example, this SQL command will use default values: `INSERT INTO t VALUES (42, DEFAULT);`
+- Table operations that add new columns (such as SQL ALTER TABLE ... ADD COLUMN commands) MUST not specify a default value for any column in the same command that the column is created. For example, this SQL command is not supported in Delta Lake: `ALTER TABLE t ADD COLUMN c INT DEFAULT 42;`
+- Note that it is acceptable to assign or update default values for columns that were already created in previous commands, however. For example, this SQL command is valid: `ALTER TABLE t ALTER COLUMN c SET DEFAULT 42;`
+
+Enablement:
+- The table must be on Writer Version 7, and a feature name `allowColumnDefaults` must exist in the table `protocol`'s `writerFeatures`.
+
+When enabled:
+- The `metadata` for the column in the table schema MAY contain the key `CURRENT_DEFAULT`.
+- The value of `CURRENT_DEFAULT` SHOULD be parsed as a SQL expression.
+- Writers MUST enforce that before writing any rows to the table, for each such requested row that lacks any explicit value (including NULL) for columns with default values, the writing system will assign the result of evaluating the default value expression for each such column as the value for that column in the row. By the same token, if the engine specified the explicit `DEFAULT` SQL keyword for any column, the expression result must be substituted in the same way.
+
 ## Identity Columns
 
-Delta supports defining Identity columns on Delta tables. Delta will generate unique values for Identity columns when users do not explicitly provide values for them when writing to such tables. To enable Identity Columns:
+Delta supports defining Identity columns on Delta tables. Delta will generate unique values for Identity columns when users do not explicitly provide values for them when writing to such tables. To support Identity Columns:
  - The table must be on Writer Version 6, or
  - The table must be on Writer Version 7, and a feature name `identityColumns` must exist in the table `protocol`'s `writerFeatures`.
 
-When enabled, the `metadata` for a column in the table schema MAY contain the following keys for Identity Column properties:
+When supported, the `metadata` for a column in the table schema MAY contain the following keys for Identity Column properties:
 - `delta.identity.start`: Starting value for the Identity column. This is a long type value. It should not be changed after table creation.
 - `delta.identity.step`: Increment to the next Identity value. This is a long type value. It cannot be set to 0. It should not be changed after table creation.
 - `delta.identity.highWaterMark`: The highest value generated for the Identity column. This is a long type value. When `delta.identity.step` is positive (negative), this should be the largest (smallest) value in the column.
@@ -1125,14 +1500,17 @@ Feature | Name | Readers or Writers?
 [Column Invariants](#column-invariants) | `invariants` | Writers only
 [`CHECK` constraints](#check-constraints) | `checkConstraints` | Writers only
 [Generated Columns](#generated-columns) | `generatedColumns` | Writers only
+[Default Columns](#default-columns) | `allowColumnDefaults` | Writers only
 [Change Data Feed](#add-cdc-file) | `changeDataFeed` | Writers only
 [Column Mapping](#column-mapping) | `columnMapping` | Readers and writers
 [Identity Columns](#identity-columns) | `identityColumns` | Writers only
 [Deletion Vectors](#deletion-vectors) | `deletionVectors` | Readers and writers
 [Row Tracking](#row-tracking) | `rowTracking` | Writers only
-[Timestamp without Timezone](#timestamp-without-timezone-timestampntz) | `timestampNtz` | Readers and writers
+[Timestamp without Timezone](#timestamp-without-timezone-timestampNtz) | `timestampNtz` | Readers and writers
 [Domain Metadata](#domain-metadata) | `domainMetadata` | Writers only
+[V2 Checkpoint](#v2-checkpoint-table-feature) | `v2Checkpoint` | Readers and writers
 [Iceberg Compatibility V1](#iceberg-compatibility-v1) | `icebergCompatV1` | Writers only
+[Clustered Table](#clustered-table) | `clustering` | Writers only
 
 ## Deletion Vector Format
 
@@ -1176,7 +1554,8 @@ Bytes | Name | Description
 ### Deletion Vector File Storage Format
 
 Deletion Vectors can be stored in files in cloud storage or inline in the Delta log.
-The format for storing DVs in file storage is one (or more) of DV, using the 64-bit RoaringBitmaps described in the previous section, per file, together with a checksum for each DV:
+The format for storing DVs in file storage is one (or more) DV, using the 64-bit RoaringBitmaps described in the previous section, per file, together with a checksum for each DV.
+The concrete format is as follows, with all numerical values written in big endian byte order:
 
 Bytes | Name | Description
 -|-|-
@@ -1187,7 +1566,7 @@ Bytes | Name | Description
 `<start of i> + 4 + dataSize` — `<start of i> + 4 + dataSize + 3` | checksum | CRC-32 checksum of `bitmapData`
 
 ## Per-file Statistics
-`add` actions can optionally contain statistics about the data in the file being added to the table.
+`add` and `remove` actions can optionally contain statistics about the data in the file being added or removed from the table.
 These statistics can be used for eliminating files based on query predicates or as inputs to query optimization.
 
 Global statistics record information about the entire file.
@@ -1244,7 +1623,7 @@ string | No translation required
 numeric types | The string representation of the number
 date | Encoded as `{year}-{month}-{day}`. For example, `1970-01-01`
 timestamp | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`
-timestamp without timezone | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456` To use this type, a table must support a feature `timestampNtz`. See section [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz) for more information.
+timestamp without timezone | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456` To use this type, a table must support a feature `timestampNtz`. See section [Timestamp without timezone (TimestampNtz)](#timestamp-without-timezone-timestampNtz) for more information.
 boolean | Encoded as the string "true" or "false"
 binary | Encoded as a string of escaped binary values. For example, `"\u0001\u0002\u0003"`
 
@@ -1272,7 +1651,7 @@ boolean| `true` or `false`
 binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
 timestamp| Microsecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `true`.
-timestamp without time zone | Microsecond precision timestamp in a local timezone elapsed since the Unix epoch, 1970-01-01 00:00:00. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. To use this type, a table must support a feature `timestampNtz`. See section [Timestamp without timezone (TimestampNTZ)](#timestamp-without-timezone-timestampntz) for more information.
+timestamp without time zone | Microsecond precision timestamp in a local timezone elapsed since the Unix epoch, 1970-01-01 00:00:00. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. To use this type, a table must support a feature `timestampNtz`. See section [Timestamp without timezone (TimestampNtz)](#timestamp-without-timezone-timestampNtz) for more information.
 
 See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp) for more details about timestamp and `isAdjustedToUTC`.
 
@@ -1320,7 +1699,7 @@ valueType| The type of element used for the key of this map, represented as a st
 
 ### Column Metadata
 A column metadata stores various information about the column.
-For example, this MAY contain some keys like [`delta.columnMapping`](#column-mapping) or [`delta.generationExpression`](#generated-columns).  
+For example, this MAY contain some keys like [`delta.columnMapping`](#column-mapping) or [`delta.generationExpression`](#generated-columns) or [`CURRENT_DEFAULT`](#default-columns).  
 Field Name | Description
 -|-
 delta.columnMapping.*| These keys are used to store information about the mapping between the logical column name to  the physical name. See [Column Mapping](#column-mapping) for details.
@@ -1459,12 +1838,22 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |-- path: string
 |    |-- deletionTimestamp: long
 |    |-- dataChange: boolean
+|-- checkpointMetadata: struct
+|    |-- version: long
+|    |-- tags: map<string,string>
+|-- sidecar: struct
+|    |-- path: string
+|    |-- sizeInBytes: long
+|    |-- modificationTime: long
+|    |-- tags: map<string,string>
 ```
 
 Observe that `readerFeatures` and `writerFeatures` fields should comply with:
 - If a table has Reader Version 3, then a writer must write checkpoints with a not-null `readerFeatures` in the schema.
 - If a table has Writer Version 7, then a writer must write checkpoints with a not-null `writerFeatures` in the schema.
 - If a table has neither of the above, then a writer chooses whether to write `readerFeatures` and/or `writerFeatures` into the checkpoint schema. But if it does, their values must be null.
+
+Note that `remove` actions in the checkpoint are tombstones used only by VACUUM, and do not contain the `stats` and `tags` fields.
 
 For a table that uses column mapping, whether in `id` or `name` mode, the schema of the `add` column will look as follows.
 
@@ -1535,3 +1924,64 @@ Checkpoint schema (just the `add` column):
 |    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: long
 |    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: long
 ```
+
+## Last Checkpoint File Schema
+
+This last checkpoint file is encoded as JSON and contains the following information:
+
+Field | Description
+-|-
+version | The version of the table when the last checkpoint was made.
+size | The number of actions that are stored in the checkpoint.
+parts | The number of fragments if the last checkpoint was written in multiple parts. This field is optional.
+sizeInBytes | The number of bytes of the checkpoint. This field is optional.
+numOfAddFiles | The number of AddFile actions in the checkpoint. This field is optional.
+checkpointSchema | The schema of the checkpoint file. This field is optional.
+tags | String-string map containing any additional metadata about the last checkpoint. This field is optional.
+checksum | The checksum of the last checkpoint JSON. This field is optional.
+
+The checksum field is an optional field which contains the MD5 checksum for fields of the last checkpoint json file.
+Last checkpoint file readers are encouraged to validate the checksum, if present, and writers are encouraged to write the checksum
+while overwriting the file. Refer to [this section](#json-checksum) for rules around calculating the checksum field
+for the last checkpoint JSON.
+
+### JSON checksum
+To generate the checksum for the last checkpoint JSON, firstly, the checksum JSON is canonicalized and converted to a string. Then
+the 32 character MD5 digest is calculated on the resultant string to get the checksum. Rules for [JSON](https://datatracker.ietf.org/doc/html/rfc8259) canonicalization are:
+
+1. Literal values (`true`, `false`, and `null`) are their own canonical form
+2. Numeric values (e.g. `42` or `3.14`) are their own canonical form
+3. String values (e.g. `"hello world"`) are canonicalized by preserving the surrounding quotes and [URL-encoding](#how-to-url-encode-keys-and-string-values)
+their content, e.g. `"hello%20world"`
+4. Object values (e.g. `{"a": 10, "b": {"y": null, "x": "https://delta.io"} }` are canonicalized by:
+   * Canonicalize each scalar (leaf) value following the rule for its type (literal, numeric, string)
+   * Canonicalize each (string) name along the path to that value
+   * Connect path segments by `+`, e.g. `"b"+"y"`
+   * Connect path and value pairs by `=`, e.g. `"b"+"y"=null`
+   * Sort canonicalized path/value pairs using a byte-order sort on paths. The byte-order sort can be done by converting paths to byte array using UTF-8 charset\
+    and then comparing them, e.g. `"a" < "b"+"x" < "b"+"y"`
+   * Separate ordered pairs by `,`, e.g. `"a"=10,"b"+"x"="https%3A%2F%2Fdelta.io","b"+"y"=null`
+
+5. Array values (e.g. `[null, "hi ho", 2.71]`) are canonicalized as if they were objects, except the "name" has numeric type instead of string type, and gives the (0-based)
+position of the corresponding array element, e.g. `0=null,1="hi%20ho",2=2.71`
+
+6. Top level `checksum` key is ignored in the canonicalization process. e.g.
+`{"k1": "v1", "checksum": "<anything>", "k3": 23}` is canonicalized to `"k1"="v1","k3"=23`
+
+7. Duplicate keys are not allowed in the last checkpoint JSON and such JSON is considered invalid.
+
+Given the following test sample JSON, a correct implementation of JSON canonicalization should produce the corresponding canonicalized form and checksum value:
+e.g.
+Json: `{"k0":"'v 0'", "checksum": "adsaskfljadfkjadfkj", "k1":{"k2": 2, "k3": ["v3", [1, 2], {"k4": "v4", "k5": ["v5", "v6", "v7"]}]}}`\
+Canonicalized form: `"k0"="%27v%200%27","k1"+"k2"=2,"k1"+"k3"+0="v3","k1"+"k3"+1+0=1,"k1"+"k3"+1+1=2,"k1"+"k3"+2+"k4"="v4","k1"+"k3"+2+"k5"+0="v5","k1"+"k3"+2+"k5"+1="v6","k1"+"k3"+2+"k5"+2="v7"`\
+Checksum is `6a92d155a59bf2eecbd4b4ec7fd1f875`
+
+#### How to URL encode keys and string values
+The [URL Encoding](https://datatracker.ietf.org/doc/html/rfc3986) spec is a bit flexible to give a reliable encoding. e.g. the spec allows both
+uppercase and lowercase as part of percent-encoding. Thus, we require a stricter set of rules for encoding:
+
+1. The string to be encoded must be represented as octets according to the UTF-8 character encoding
+2. All octets except a-z / A-Z / 0-9 / "-" / "." / "_" / "~" are reserved
+3. Always [percent-encode](https://datatracker.ietf.org/doc/html/rfc3986#section-2) reserved octets
+4. Never percent-encode non-reserved octets
+5. A percent-encoded octet consists of three characters: `%` followed by its 2-digit hexadecimal value in uppercase letters, e.g. `>` encodes to `%3E`

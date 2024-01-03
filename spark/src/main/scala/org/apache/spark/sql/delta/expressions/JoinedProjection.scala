@@ -16,7 +16,9 @@
 
 package org.apache.spark.sql.delta.expressions
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeMap, BoundReference, Expression, GetStructField}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -82,7 +84,10 @@ object JoinedProjection {
       index: Int,
       nullable: Boolean,
       attributes: Seq[Attribute]): Seq[(Attribute, Expression)] = {
-    val ref = BoundReference(index, StructType.fromAttributes(attributes), nullable)
+    val ref = BoundReference(
+      index,
+      DataTypeUtils.fromAttributes(attributes),
+      nullable)
     attributes.zipWithIndex.map {
       case (a, ordinal) => a -> GetStructField(ref, ordinal, Option(a.name))
     }

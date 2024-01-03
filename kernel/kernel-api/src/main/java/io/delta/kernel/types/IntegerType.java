@@ -15,15 +15,18 @@
  */
 package io.delta.kernel.types;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * The data type representing {@code integer} type values.
+ *
+ * @since 3.0.0
  */
-public class IntegerType extends BasePrimitiveType
-{
-    public static final IntegerType INSTANCE = new IntegerType();
+@Evolving
+public class IntegerType extends BasePrimitiveType {
+    public static final IntegerType INTEGER = new IntegerType();
 
-    private IntegerType()
-    {
+    private IntegerType() {
         super("integer");
     }
 }

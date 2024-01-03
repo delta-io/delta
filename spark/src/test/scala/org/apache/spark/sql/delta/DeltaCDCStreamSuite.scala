@@ -39,7 +39,8 @@ import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, 
 import org.apache.spark.sql.types.StructType
 
 trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
-  with DeltaSourceSuiteBase with DeltaColumnMappingTestUtils {
+  with DeltaSourceSuiteBase
+  with DeltaColumnMappingTestUtils {
 
   import testImplicits._
   import io.delta.implicits._
@@ -107,6 +108,37 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         ProcessAllAvailable(),
         CheckAnswer((1, "insert", 3), (2, "insert", 3), (1, "delete", 4))
       )
+    }
+  }
+
+  testQuietly("CDC initial snapshot should end at base index of next version") {
+    withTempDir { inputDir =>
+      withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+        // version 0
+        Seq(5, 6).toDF("value").write.format("delta").save(inputDir.getAbsolutePath)
+
+        val deltaTable = io.delta.tables.DeltaTable.forPath(inputDir.getAbsolutePath)
+
+        val df = spark.readStream
+          .option(DeltaOptions.CDC_READ_OPTION, "true")
+          .format("delta")
+          .load(inputDir.getCanonicalPath)
+          .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+
+        testStream(df)(
+          ProcessAllAvailable(),
+          CheckAnswer((5, "insert", 0), (6, "insert", 0)),
+          AssertOnQuery { q =>
+            val offset = q.committedOffsets.iterator.next()._2.asInstanceOf[DeltaSourceOffset]
+            // The initial snapshot (version 0) was completely processed, so we should now be at
+            // the start of version 1.
+            assert(offset.reservoirVersion === 1)
+            assert(offset.index === DeltaSourceOffset.BASE_INDEX)
+            true
+          },
+          StopStream
+        )
+      }
     }
   }
 
@@ -418,8 +450,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
   }
 
   Seq(true, false).foreach { readChangeFeed =>
-    test(s"streams updating latest offset with " +
-        s"readChangeFeed=$readChangeFeed") {
+    test(s"streams updating latest offset with readChangeFeed=$readChangeFeed") {
       withTempDirs { (inputDir, checkpointDir, outputDir) =>
         withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
 
@@ -429,64 +460,47 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
             .write.format("delta").mode("overwrite")
             .option("enableChangeDataFeed", "true").save(inputDir.getAbsolutePath)
 
-          // process the input table in a CDC manner
-          val df = spark.readStream
-            .option(DeltaOptions.CDC_READ_OPTION, readChangeFeed)
-            .format("delta")
-            .load(inputDir.getAbsolutePath)
+          def runStreamingQuery(): StreamingQuery = {
+            // process the input table in a CDC manner
+            val df = spark.readStream
+              .option(DeltaOptions.CDC_READ_OPTION, readChangeFeed)
+              .format("delta")
+              .load(inputDir.getAbsolutePath)
+            val query = df
+              .select("id")
+              .writeStream
+              .format("delta")
+              .outputMode("append")
+              .option("checkpointLocation", checkpointDir.toString)
+              .start(outputDir.getAbsolutePath)
 
-          val query = df
-            .select("id")
-            .writeStream
-            .format("delta")
-            .outputMode("append")
-            .option("checkpointLocation", checkpointDir.toString)
-            .start(outputDir.getAbsolutePath)
+            query.processAllAvailable()
+            query.stop()
+            query.awaitTermination()
+            query
+          }
 
-          query.processAllAvailable()
-          query.stop()
-          query.awaitTermination()
+          var query = runStreamingQuery()
 
-          // Create a temp view and write to input table as a no-op merge
-          spark.range(20, 30).withColumn("value", lit("b"))
-            .createOrReplaceTempView("source_table")
-
-          for (i <- 0 to 10) {
-            sql(s"MERGE INTO delta.`${inputDir.getAbsolutePath}` AS tgt " +
-              s"USING source_table src ON tgt.id = src.id " +
-              s"WHEN MATCHED THEN UPDATE SET * " +
-              s"WHEN NOT MATCHED AND src.id < 10 THEN INSERT *")
+          val deltaLog = DeltaLog.forTable(spark, inputDir.toString)
+          // Do three no-op updates to the table. These are tricky because the commits have no
+          // changes, but the stream should still pick up the new versions and progress past them.
+          for (i <- 0 to 2) {
+            deltaLog.startTransaction().commit(Seq(), DeltaOperations.ManualUpdate)
           }
 
           // Read again from input table and no new data should be generated
-          val df1 = spark.readStream
-            .option("readChangeFeed", readChangeFeed)
-            .format("delta")
-            .load(inputDir.getAbsolutePath)
-
-          val query1 = df1
-            .select("id")
-            .writeStream
-            .format("delta")
-            .outputMode("append")
-            .option("checkpointLocation", checkpointDir.toString)
-            .start(outputDir.getAbsolutePath)
-
-          query1.processAllAvailable()
-          query1.stop()
-          query1.awaitTermination()
+          query = runStreamingQuery()
 
           // check that the last batch was committed and that the
           // reservoirVersion for the table was updated to latest
           // in both cdf and non-cdf cases.
-          assert(query1.lastProgress.batchId === 1)
-          val endOffset = JsonUtils.mapper.readValue[DeltaSourceOffset](
-            query1.lastProgress.sources.head.endOffset
-          )
-          var expectedReservoirVersion = 1
-          var expectedIndex = 1
-          assert(endOffset.reservoirVersion === expectedReservoirVersion)
-          assert(endOffset.index === expectedIndex)
+          assert(query.lastProgress.batchId === 1)
+          val endOffset =
+            JsonUtils.fromJson[DeltaSourceOffset](query.lastProgress.sources.head.endOffset)
+          assert(endOffset.reservoirVersion === 5,
+            s"endOffset = $endOffset")
+          assert(endOffset.index === DeltaSourceOffset.BASE_INDEX, s"endOffset = $endOffset")
         }
       }
     }
@@ -977,27 +991,27 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       try {
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
-        // source2: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
+        // source1: DeltaSourceOffset(reservoirVersion=1,index=0,isInitialSnapshot=true)
+        // source2: DeltaSourceOffset(reservoirVersion=1,index=0,isInitialSnapshot=true)
 
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir1.getCanonicalPath)
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
-        // source2: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
+        // source2: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
         // Note: version 2 doesn't exist in source1
 
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
-        // source2: DeltaSourceOffset(reservoirVersion=3,index=-1,isStartingVersion=false)
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
+        // source2: DeltaSourceOffset(reservoirVersion=3,index=-1,isInitialSnapshot=false)
         // Note: version 2 doesn't exist in source1
 
         q.stop()
         // Restart the query. It will call `getBatch` on the previous two offsets of `source1` which
-        // are both DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // are both DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
         // As version 2 doesn't exist, we should not try to load version 2 in this case.
         q = startQuery()
         q.processAllAvailable()
@@ -1046,7 +1060,7 @@ class DeltaCDCStreamDeletionVectorSuite extends DeltaCDCStreamSuite
   with DeletionVectorsTestUtils {
   override def beforeAll(): Unit = {
     super.beforeAll()
-    enableDeletionVectorsForDeletes(spark)
+    enableDeletionVectorsForAllSupportedOperations(spark)
   }
 }
 

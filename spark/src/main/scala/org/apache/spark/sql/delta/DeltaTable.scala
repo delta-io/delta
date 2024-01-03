@@ -24,19 +24,22 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
 
+import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedAttribute, UnresolvedLeafNode, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
 import org.apache.spark.sql.catalyst.planning.NodeWithOnlyDeterministicProjectAndFilter
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LeafNode, LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.util.CharVarcharCodegenUtils
+import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * Extractor Object for pulling out the table scan of a Delta table. It could be a full scan
@@ -55,15 +58,15 @@ object DeltaTable {
  * Extractor Object for pulling out the full table scan of a Delta table.
  */
 object DeltaFullTable {
-  def unapply(a: LogicalPlan): Option[TahoeLogFileIndex] = a match {
+  def unapply(a: LogicalPlan): Option[(LogicalRelation, TahoeLogFileIndex)] = a match {
     // `DeltaFullTable` is not only used to match a certain query pattern, but also does
     // some validations to throw errors. We need to match both Project and Filter here,
     // so that we can check if Filter is present or not during validations.
-    case NodeWithOnlyDeterministicProjectAndFilter(DeltaTable(index: TahoeLogFileIndex)) =>
+    case NodeWithOnlyDeterministicProjectAndFilter(lr @ DeltaTable(index: TahoeLogFileIndex)) =>
       if (!index.deltaLog.tableExists) return None
       val hasFilter = a.find(_.isInstanceOf[Filter]).isDefined
       if (index.partitionFilters.isEmpty && index.versionToUse.isEmpty && !hasFilter) {
-        Some(index)
+        Some(lr -> index)
       } else if (index.versionToUse.nonEmpty) {
         throw DeltaErrors.failedScanWithHistoricalVersion(index.versionToUse.get)
       } else {
@@ -202,6 +205,8 @@ object DeltaTableUtils extends PredicateHelper
     // Names of the form partitionCol=[value] are partition directories, and should be
     // GCed even if they'd normally be hidden. The _db_index directory contains (bloom filter)
     // indexes and these must be GCed when the data they are tied to is GCed.
+    // metadata name is reserved for converted iceberg metadata with delta universal format
+    pathName.equals("metadata") ||
     (pathName.startsWith(".") || pathName.startsWith("_")) &&
       !pathName.startsWith("_delta_index") && !pathName.startsWith("_change_data") &&
       !partitionColumnNames.exists(c => pathName.startsWith(c ++ "="))
@@ -474,6 +479,9 @@ object DeltaTableUtils extends PredicateHelper
     IdentityTransform(FieldReference(Seq(col)))
   }
 
+  // Workaround for withActive not being visible in io/delta.
+  def withActiveSession[T](spark: SparkSession)(body: => T): T = spark.withActive(body)
+
   /**
    * Uses org.apache.hadoop.fs.Path(Path, String) to concatenate a base path
    * and a relative child path and safely handles the case where the base path represents
@@ -544,15 +552,46 @@ object DeltaTableUtils extends PredicateHelper
   }
 }
 
-/**
- * Holds the path of a Delta table that has yet to be verified as a valid path to a valid
- * Delta table. It will be resolved to [[ResolvedTable]] during analysis.
- */
+sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends UnresolvedLeafNode {
+  def identifier: Identifier = Identifier.of(Array(DeltaSourceUtils.ALT_NAME), path)
+  def deltaTableIdentifier: DeltaTableIdentifier = DeltaTableIdentifier(Some(path), None)
+
+}
+
+/** Resolves to a [[ResolvedTable]] if the DeltaTable exists */
 case class UnresolvedPathBasedDeltaTable(
     path: String,
-    commandName: String) extends LeafNode {
+    options: Map[String, String],
+    commandName: String) extends UnresolvedPathBasedDeltaTableBase(path)
 
+/** Resolves to a [[DataSourceV2Relation]] if the DeltaTable exists */
+case class UnresolvedPathBasedDeltaTableRelation(
+    path: String,
+    options: CaseInsensitiveStringMap) extends UnresolvedPathBasedDeltaTableBase(path)
+
+/**
+ * This operator represents path-based tables in general including both Delta or non-Delta tables.
+ * It resolves to a [[ResolvedTable]] if the path is for delta table,
+ * [[ResolvedPathBasedNonDeltaTable]] if the path is for a non-Delta table.
+ */
+case class UnresolvedPathBasedTable(
+    path: String,
+    options: Map[String, String],
+    commandName: String) extends LeafNode {
   override lazy val resolved: Boolean = false
+  override val output: Seq[Attribute] = Nil
+}
+
+/**
+ * This operator is a placeholder that identifies a non-Delta path-based table. Given the fact
+ * that some Delta commands (e.g. DescribeDeltaDetail) support non-Delta table, we introduced
+ * ResolvedPathBasedNonDeltaTable as the resolved placeholder after analysis on a non delta path
+ * from UnresolvedPathBasedTable.
+ */
+case class ResolvedPathBasedNonDeltaTable(
+    path: String,
+    options: Map[String, String],
+    commandName: String) extends LeafNode {
   override val output: Seq[Attribute] = Nil
 }
 
@@ -568,11 +607,34 @@ object UnresolvedDeltaPathOrIdentifier {
       tableIdentifier: Option[TableIdentifier],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
-      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, cmd)
+      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, Map.empty, cmd)
       case (None, Some(t)) =>
         UnresolvedTable(t.nameParts, cmd, None)
       case _ => throw new IllegalArgumentException(
         s"Exactly one of path or tableIdentifier must be provided to $cmd")
+    }
+  }
+}
+
+/**
+ * A helper object with an apply method to transform a path or table identifier to a LogicalPlan.
+ * This is required by Delta commands that can also run against non-Delta tables, e.g. DESC DETAIL,
+ * VACUUM command. If the tableIdentifier is set, the LogicalPlan will be an [[UnresolvedTable]].
+ * If the tableIdentifier is not set but the path is set, it will be resolved to an
+ * [[UnresolvedPathBasedTable]] since we can not tell if the path is for delta table or non delta
+ * table at this stage. If neither of the two are set, throws an exception.
+ */
+object UnresolvedPathOrIdentifier {
+  def apply(
+      path: Option[String],
+      tableIdentifier: Option[TableIdentifier],
+      cmd: String): LogicalPlan = {
+    (path, tableIdentifier) match {
+      case (_, Some(t)) =>
+        UnresolvedTable(t.nameParts, cmd, None)
+      case (Some(p), None) => UnresolvedPathBasedTable(p, Map.empty, cmd)
+      case _ => throw new IllegalArgumentException(
+        s"At least one of path or tableIdentifier must be provided to $cmd")
     }
   }
 }

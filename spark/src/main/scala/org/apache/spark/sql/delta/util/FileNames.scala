@@ -16,16 +16,20 @@
 
 package org.apache.spark.sql.delta.util
 
+import java.util.UUID
+
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 /** Helper for creating file names for specific commits / checkpoints. */
 object FileNames {
 
   val deltaFileRegex = raw"(\d+)\.json".r
+  val compactedDeltaFileRegex = raw"(\d+).(\d+).compacted.json".r
   val checksumFileRegex = raw"(\d+)\.crc".r
-  val checkpointFileRegex = raw"(\d+)\.checkpoint(\.(\d+)\.(\d+))?\.parquet".r
+  val checkpointFileRegex = raw"(\d+)\.checkpoint((\.\d+\.\d+)?\.parquet|\.[^.]+\.(json|parquet))".r
 
   val deltaFilePattern = deltaFileRegex.pattern
+  val compactedDeltaFilePattern = compactedDeltaFileRegex.pattern
   val checksumFilePattern = checksumFileRegex.pattern
   val checkpointFilePattern = checkpointFileRegex.pattern
 
@@ -38,6 +42,14 @@ object FileNames {
   /** Returns the path to the checksum file for the given version. */
   def checksumFile(path: Path, version: Long): Path = new Path(path, f"$version%020d.crc")
 
+  /** Returns the path to the compacted delta file for the given version range. */
+  def compactedDeltaFile(
+      path: Path,
+      fromVersion: Long,
+      toVersion: Long): Path = {
+    new Path(path, f"$fromVersion%020d.$toVersion%020d.compacted.json")
+  }
+
   /** Returns the version for the given delta path. */
   def deltaVersion(path: Path): Long = path.getName.split("\\.")(0).toLong
   def deltaVersion(file: FileStatus): Long = deltaVersion(file.getPath)
@@ -45,6 +57,12 @@ object FileNames {
   /** Returns the version for the given checksum file. */
   def checksumVersion(path: Path): Long = path.getName.stripSuffix(".crc").toLong
   def checksumVersion(file: FileStatus): Long = checksumVersion(file.getPath)
+
+  def compactedDeltaVersions(path: Path): (Long, Long) = {
+    val parts = path.getName.split("\\.")
+    (parts(0).toLong, parts(1).toLong)
+  }
+  def compactedDeltaVersions(file: FileStatus): (Long, Long) = compactedDeltaVersions(file.getPath)
 
   /**
    * Returns the prefix of all delta log files for the given version.
@@ -91,8 +109,22 @@ object FileNames {
   def isChecksumFile(path: Path): Boolean = checksumFilePattern.matcher(path.getName).matches()
   def isChecksumFile(file: FileStatus): Boolean = isChecksumFile(file.getPath)
 
+  def isCompactedDeltaFile(path: Path): Boolean =
+    compactedDeltaFilePattern.matcher(path.getName).matches()
+  def isCompactedDeltaFile(file: FileStatus): Boolean = isCompactedDeltaFile(file.getPath)
+
   def checkpointVersion(path: Path): Long = path.getName.split("\\.")(0).toLong
   def checkpointVersion(file: FileStatus): Long = checkpointVersion(file.getPath)
+
+  object CompactedDeltaFile {
+    def unapply(f: FileStatus): Option[(FileStatus, Long, Long)] =
+      unapply(f.getPath).map { case (_, startVersion, endVersion) => (f, startVersion, endVersion) }
+    def unapply(path: Path): Option[(Path, Long, Long)] = path.getName match {
+      case compactedDeltaFileRegex(lo, hi) => Some(path, lo.toLong, hi.toLong)
+      case _ => None
+    }
+  }
+
 
   /**
    * Get the version of the checkpoint, checksum or delta file. Returns None if an unexpected
@@ -102,6 +134,7 @@ object FileNames {
     case DeltaFile(_, version) => Some(version)
     case ChecksumFile(_, version) => Some(version)
     case CheckpointFile(_, version) => Some(version)
+    case CompactedDeltaFile(_, _, endVersion) => Some(endVersion)
     case _ => None
   }
 
@@ -143,7 +176,29 @@ object FileNames {
   }
 
   object FileType extends Enumeration {
-    val DELTA, CHECKPOINT, CHECKSUM, OTHER = Value
+    val DELTA, CHECKPOINT, CHECKSUM, COMPACTED_DELTA, OTHER = Value
   }
 
+  /** File path for a new V2 Checkpoint Json file */
+  def newV2CheckpointJsonFile(path: Path, version: Long): Path =
+    new Path(path, f"$version%020d.checkpoint.${UUID.randomUUID.toString}.json")
+
+  /** File path for a new V2 Checkpoint Parquet file */
+  def newV2CheckpointParquetFile(path: Path, version: Long): Path =
+    new Path(path, f"$version%020d.checkpoint.${UUID.randomUUID.toString}.parquet")
+
+  /** File path for a V2 Checkpoint's Sidecar file */
+  def newV2CheckpointSidecarFile(
+      logPath: Path,
+      version: Long,
+      numParts: Int,
+      currentPart: Int): Path = {
+    val basePath = sidecarDirPath(logPath)
+    val uuid = UUID.randomUUID.toString
+    new Path(basePath, f"$version%020d.checkpoint.$currentPart%010d.$numParts%010d.$uuid.parquet")
+  }
+
+  val SIDECAR_SUBDIR = "_sidecars"
+  /** Returns path to the sidecar directory */
+  def sidecarDirPath(logPath: Path): Path = new Path(logPath, SIDECAR_SUBDIR)
 }

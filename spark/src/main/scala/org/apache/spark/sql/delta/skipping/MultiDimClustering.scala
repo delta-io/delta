@@ -21,6 +21,7 @@ import java.util.UUID
 import org.apache.spark.sql.delta.skipping.MultiDimClusteringFunctions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.SparkException
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
@@ -32,17 +33,30 @@ trait MultiDimClustering extends Logging {
   def cluster(
       df: DataFrame,
       colNames: Seq[String],
-      approxNumPartitions: Int): DataFrame
+      approxNumPartitions: Int,
+      randomizationExpressionOpt: Option[Column]
+  ): DataFrame
 }
 
 object MultiDimClustering {
-  /** Repartition the given dataframe `df` into `approxNumPartitions` on the given `colNames`. */
+  /**
+   * Repartition the given dataframe `df` based on the given `curve` type into
+   * `approxNumPartitions` on the given `colNames`.
+   */
   def cluster(
       df: DataFrame,
       approxNumPartitions: Int,
-      colNames: Seq[String]): DataFrame = {
+      colNames: Seq[String],
+      curve: String): DataFrame = {
     assert(colNames.nonEmpty, "Cannot cluster by zero columns!")
-    ZOrderClustering.cluster(df, colNames, approxNumPartitions)
+    val clusteringImpl = curve match {
+      case "hilbert" => HilbertClustering
+      case "zorder" => ZOrderClustering
+      case unknownCurve =>
+        throw new SparkException(s"Unknown curve ($unknownCurve), unable to perform multi " +
+          "dimensional clustering.")
+    }
+    clusteringImpl.cluster(df, colNames, approxNumPartitions, randomizationExpressionOpt = None)
   }
 }
 
@@ -54,7 +68,8 @@ trait SpaceFillingCurveClustering extends MultiDimClustering {
   override def cluster(
       df: DataFrame,
       colNames: Seq[String],
-      approxNumPartitions: Int): DataFrame = {
+      approxNumPartitions: Int,
+      randomizationExpressionOpt: Option[Column]): DataFrame = {
     val conf = df.sparkSession.sessionState.conf
     val numRanges = conf.getConf(DeltaSQLConf.MDC_NUM_RANGE_IDS)
     val addNoise = conf.getConf(DeltaSQLConf.MDC_ADD_NOISE)
@@ -65,7 +80,7 @@ trait SpaceFillingCurveClustering extends MultiDimClustering {
 
     var repartitionedDf = if (addNoise) {
       val randByteColName = s"${UUID.randomUUID().toString}-rpKey2"
-      val randByteCol = (rand() * 255 - 128).cast(ByteType)
+      val randByteCol = randomizationExpressionOpt.getOrElse((rand() * 255 - 128).cast(ByteType))
       df.withColumn(repartitionKeyColName, mdcCol).withColumn(randByteColName, randByteCol)
         .repartitionByRange(approxNumPartitions, col(repartitionKeyColName), col(randByteColName))
         .drop(randByteColName)
@@ -85,5 +100,14 @@ object ZOrderClustering extends SpaceFillingCurveClustering {
     assert(cols.size >= 1, "Cannot do Z-Order clustering by zero columns!")
     val rangeIdCols = cols.map(range_partition_id(_, numRanges))
     interleave_bits(rangeIdCols: _*).cast(StringType)
+  }
+}
+
+object HilbertClustering extends SpaceFillingCurveClustering with Logging {
+  override protected def getClusteringExpression(cols: Seq[Column], numRanges: Int): Column = {
+    assert(cols.size > 1, "Cannot do Hilbert clustering by zero or one column!")
+    val rangeIdCols = cols.map(range_partition_id(_, numRanges))
+    val numBits = Integer.numberOfTrailingZeros(Integer.highestOneBit(numRanges)) + 1
+    hilbert_index(numBits, rangeIdCols: _*)
   }
 }

@@ -130,10 +130,10 @@ class DelegatingLogStore(hadoopConf: Configuration)
   override def invalidateCache(): Unit = {
     this.synchronized {
       schemeToLogStoreMap.foreach { entry =>
-        entry._2.invalidateCache
+        entry._2.invalidateCache()
       }
     }
-    defaultLogStore.invalidateCache
+    defaultLogStore.invalidateCache()
   }
 
   override def resolvePathOnPhysicalStorage(path: Path): Path = {

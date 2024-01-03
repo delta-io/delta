@@ -30,7 +30,8 @@ import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.ManualClock
 
 class DeltaConfigSuite extends SparkFunSuite
-  with SharedSparkSession  with DeltaSQLCommandTest {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   test("parseCalendarInterval") {
     for (input <- Seq("5 MINUTES", "5 minutes", "5 Minutes", "inTERval 5 minutes")) {
@@ -83,7 +84,7 @@ class DeltaConfigSuite extends SparkFunSuite
     withTempDir { dir =>
       sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
 
-      val retentionTimestampOpt = DeltaLog.forTable(spark, dir.getCanonicalPath, clock)
+      val retentionTimestampOpt = DeltaLog.forTable(spark, dir, clock)
         .snapshot.minSetTransactionRetentionTimestamp
 
       assert(retentionTimestampOpt.isEmpty)
@@ -98,7 +99,7 @@ class DeltaConfigSuite extends SparkFunSuite
 
       DeltaLog.clearCache() // we want to ensure we can use the ManualClock we pass in
 
-      val log = DeltaLog.forTable(spark, dir.getCanonicalPath, clock)
+      val log = DeltaLog.forTable(spark, dir, clock)
       val retentionTimestampOpt = log.snapshot.minSetTransactionRetentionTimestamp
       assert(log.clock.getTimeMillis() == clock.getTimeMillis())
       val expectedRetentionTimestamp =
@@ -154,7 +155,8 @@ class DeltaConfigSuite extends SparkFunSuite
                |""".stripMargin)
         }
       }
-      var msg = "Unknown configuration was specified: delta.foo\nTo disable this check, set " +
+      var msg = "[DELTA_UNKNOWN_CONFIGURATION] " +
+        "Unknown configuration was specified: delta.foo\nTo disable this check, set " +
         "spark.databricks.delta.allowArbitraryProperties.enabled=true in the Spark session " +
         "configuration."
       assert(e.getMessage == msg)
@@ -208,7 +210,7 @@ class DeltaConfigSuite extends SparkFunSuite
              |TBLPROPERTIES ('delta.isolationLevel' = 'InvalidSerializable')
              |""".stripMargin)
       }
-      val msg = "invalid isolation level 'InvalidSerializable'"
+      val msg = "[DELTA_INVALID_ISOLATION_LEVEL] invalid isolation level 'InvalidSerializable'"
       assert(e.getMessage == msg)
     }
   }

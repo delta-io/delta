@@ -18,37 +18,39 @@ package io.delta.kernel.types;
 
 import java.util.Objects;
 
-public class ArrayType extends DataType
-{
+import io.delta.kernel.annotation.Evolving;
+
+/**
+ * Represent {@code array} data type
+ *
+ * @since 3.0.0
+ */
+@Evolving
+public class ArrayType extends DataType {
     private final DataType elementType;
     private final boolean containsNull;
 
-    public ArrayType(DataType elementType, boolean containsNull)
-    {
+    public ArrayType(DataType elementType, boolean containsNull) {
         this.elementType = elementType;
         this.containsNull = containsNull;
     }
 
-    public DataType getElementType()
-    {
+    public DataType getElementType() {
         return elementType;
     }
 
-    public boolean containsNull()
-    {
+    public boolean containsNull() {
         return containsNull;
     }
 
     @Override
-    public boolean equivalent(DataType dataType)
-    {
+    public boolean equivalent(DataType dataType) {
         return dataType instanceof ArrayType &&
             ((ArrayType) dataType).getElementType().equivalent(elementType);
     }
 
     @Override
-    public boolean equals(Object o)
-    {
+    public boolean equals(Object o) {
         if (this == o) {
             return true;
         }
@@ -61,14 +63,12 @@ public class ArrayType extends DataType
     }
 
     @Override
-    public int hashCode()
-    {
+    public int hashCode() {
         return Objects.hash(elementType, containsNull);
     }
 
     @Override
-    public String toJson()
-    {
+    public String toJson() {
         return String.format("{" +
             "\"type\": \"array\"," +
             "\"elementType\": %s," +
@@ -77,8 +77,7 @@ public class ArrayType extends DataType
     }
 
     @Override
-    public String toString()
-    {
+    public String toString() {
         return "array[" + elementType + "]";
     }
 }

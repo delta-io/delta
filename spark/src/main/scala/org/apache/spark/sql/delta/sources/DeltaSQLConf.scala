@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.network.util.ByteUnit
+import org.apache.spark.sql.catalyst.FileSourceOptions
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.Utils
@@ -275,6 +276,14 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "maxSnapshotLineageLength must be positive.")
       .createWithDefault(50)
 
+  val DELTA_REPLACE_COLUMNS_SAFE =
+    buildConf("alter.replaceColumns.safe.enabled")
+      .internal()
+      .doc("Prevents an ALTER TABLE REPLACE COLUMNS method from dropping all columns, which " +
+        "leads to losing all data. It will only allow safe, unambiguous column changes.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_HISTORY_PAR_SEARCH_THRESHOLD =
     buildConf("history.maxKeysPerList")
       .internal()
@@ -460,7 +469,7 @@ trait DeltaSQLConfBase {
   val MERGE_MATERIALIZE_SOURCE =
     buildConf("merge.materializeSource")
       .internal()
-      .doc("When to materializes source plan during MERGE execution. " +
+      .doc("When to materialize the source plan during MERGE execution. " +
         "The value 'none' means source will never be materialized. " +
         "The value 'all' means source will always be materialized. " +
         "The value 'auto' means sources will not be materialized when they are certain to be " +
@@ -470,6 +479,20 @@ trait DeltaSQLConfBase {
       .transform(_.toLowerCase(Locale.ROOT))
       .checkValues(MergeMaterializeSource.list)
       .createWithDefault(MergeMaterializeSource.AUTO)
+
+  val MERGE_FORCE_SOURCE_MATERIALIZATION_WITH_UNREADABLE_FILES =
+    buildConf("merge.forceSourceMaterializationWithUnreadableFilesConfig")
+      .internal()
+      .doc(
+        s"""
+           |When set to true, merge command will force source materialization if Spark configs
+           |${SQLConf.IGNORE_CORRUPT_FILES.key}, ${SQLConf.IGNORE_MISSING_FILES.key} or
+           |file source read options ${FileSourceOptions.IGNORE_CORRUPT_FILES}
+           |${FileSourceOptions.IGNORE_MISSING_FILES} are enabled on the source.
+           |This is done so to prevent irrecoverable data loss or unexpected results.
+           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL =
     buildConf("merge.materializeSource.rddStorageLevel")
@@ -506,7 +529,7 @@ trait DeltaSQLConfBase {
 
   val MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS =
     buildStaticConf("merge.materializeSource.maxAttempts")
-      .doc("How many times to try MERGE with in case of lost RDD materialized source data")
+      .doc("How many times to try MERGE in case of lost RDD materialized source data")
       .intConf
       .createWithDefault(4)
 
@@ -564,6 +587,65 @@ trait DeltaSQLConfBase {
         .longConf
         .checkValue(_ > 0, "partSize has to be positive")
         .createOptional
+
+  ////////////////////////////////////
+  // Checkpoint V2 Specific Configs
+  ////////////////////////////////////
+
+  val CHECKPOINT_V2_DRIVER_THREADPOOL_PARALLELISM =
+    buildStaticConf("checkpointV2.threadpool.size")
+      .doc("The size of the threadpool for fetching CheckpointMetadata and SidecarFiles from a" +
+        " checkpoint.")
+      .internal()
+      .intConf
+      .createWithDefault(32)
+
+  val CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT =
+    buildConf("checkpointV2.topLevelFileFormat")
+      .internal()
+      .doc(
+        """
+          |The file format to use for the top level checkpoint file in V2 Checkpoints.
+          | This can be set to either json or parquet. The appropriate format will be
+          | picked automatically if this config is not specified.
+          |""".stripMargin)
+      .stringConf
+      .checkValues(Set("json", "parquet"))
+      .createOptional
+
+  // This is temporary conf to make sure v2 checkpoints are not used by anyone other than devs as
+  // the feature is not fully ready.
+  val EXPOSE_CHECKPOINT_V2_TABLE_FEATURE_FOR_TESTING =
+    buildConf("checkpointV2.exposeTableFeatureForTesting")
+      .internal()
+      .doc(
+        """
+          |This conf controls whether v2 checkpoints table feature is exposed or not. Note that
+          | v2 checkpoints are in development and this should config should be used only for
+          | testing/benchmarking.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val LAST_CHECKPOINT_NON_FILE_ACTIONS_THRESHOLD =
+    buildConf("lastCheckpoint.nonFileActions.threshold")
+      .internal()
+      .doc("""
+          |Threshold for total number of non file-actions to store in the last_checkpoint
+          | corresponding to the checkpoint v2.
+          |""".stripMargin)
+      .intConf
+      .createWithDefault(30)
+
+  val LAST_CHECKPOINT_SIDECARS_THRESHOLD =
+    buildConf("lastCheckpoint.sidecars.threshold")
+      .internal()
+      .doc("""
+          |Threshold for total number of sidecar files to store in the last_checkpoint
+          | corresponding to the checkpoint v2.
+          |""".stripMargin)
+      .intConf
+      .createWithDefault(30)
 
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
@@ -819,6 +901,15 @@ trait DeltaSQLConfBase {
     buildConf("convert.iceberg.unsafeConvertMorTable.enabled")
       .doc("If enabled, iceberg merge-on-read tables can be unsafely converted by ignoring " +
         "deletion files. This could cause data duplication and is strongly not recommended.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED =
+    buildConf("uniform.iceberg.sync.convert.enabled")
+      .doc("If enabled, iceberg conversion will be done synchronously. " +
+        "This can cause slow down in Delta commits and should only be used " +
+        "for debugging or in test suites.")
       .internal()
       .booleanConf
       .createWithDefault(false)
@@ -1178,6 +1269,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val UPDATE_USE_PERSISTENT_DELETION_VECTORS =
+    buildConf("update.deletionVectors.persistent")
+      .internal()
+      .doc("Enable persistent Deletion Vectors in the Update command.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELETION_VECTOR_PACKING_TARGET_SIZE =
     buildConf("deletionVectors.packing.targetSize")
       .internal()
@@ -1212,15 +1310,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val TABLE_FEATURE_DROP_ENABLED =
-    buildConf("tableFeatures.dropEnabled")
-      .internal()
-      .doc("""Controls whether table feature removal is allowed.
-             |Table feature removal is currently a feature in development.
-             |This is a dev only config.""".stripMargin)
-      .booleanConf
-      .createWithDefault(false)
-
   val REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE =
     buildConf("columnMapping.reuseColumnMetadataDuringOverwrite")
       .internal()
@@ -1233,6 +1322,13 @@ trait DeltaSQLConfBase {
           |the column mapping table is being continuously scanned in a streaming query, the analyzed
           |table schema will still be readable after the table is overwritten.
           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTALOG_MINOR_COMPACTION_USE_FOR_READS =
+    buildConf("deltaLog.minorCompaction.useForReads")
+      .doc("If true, minor compacted delta log files will be used for creating Snapshots")
+      .internal()
       .booleanConf
       .createWithDefault(true)
 
@@ -1254,6 +1350,79 @@ trait DeltaSQLConfBase {
     .intConf
     .createWithDefault(100 * 1000)
 
+  val UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG =
+    buildConf("updateAndMergeCastingFollowsAnsiEnabledFlag")
+      .internal()
+      .doc("""If false, casting behaviour in implicit casts in UPDATE and MERGE follows
+             |'spark.sql.storeAssignmentPolicy'. If true, these casts follow 'ansi.enabled'.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_USE_MULTI_THREADED_STATS_COLLECTION =
+    buildConf("collectStats.useMultiThreadedStatsCollection")
+      .internal()
+      .doc("Whether to use multi-threaded statistics collection. If false, statistics will be " +
+        "collected sequentially within each partition.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_STATS_COLLECTION_NUM_FILES_PARTITION =
+    buildConf("collectStats.numFilesPerPartition")
+      .internal()
+      .doc("Controls the number of files that should be within a RDD partition " +
+        "during multi-threaded optimized statistics collection. A larger number will lead to " +
+        "less parallelism, but can reduce scheduling overhead.")
+      .intConf
+      .checkValue(v => v >= 1, "Must be at least 1.")
+      .createWithDefault(100)
+
+  /////////////////////
+  // Optimized Write
+  /////////////////////
+
+  val DELTA_OPTIMIZE_WRITE_ENABLED =
+    buildConf("optimizeWrite.enabled")
+      .doc("Whether to optimize writes made into Delta tables from this session.")
+      .booleanConf
+      .createOptional
+
+  val DELTA_OPTIMIZE_WRITE_SHUFFLE_BLOCKS =
+    buildConf("optimizeWrite.numShuffleBlocks")
+      .internal()
+      .doc("Maximum number of shuffle blocks to target for the adaptive shuffle " +
+        "in optimized writes.")
+      .intConf
+      .createWithDefault(50000000)
+
+  val DELTA_OPTIMIZE_WRITE_MAX_SHUFFLE_PARTITIONS =
+    buildConf("optimizeWrite.maxShufflePartitions")
+      .internal()
+      .doc("Max number of output buckets (reducers) that can be used by optimized writes. This " +
+        "can be thought of as: 'how many target partitions are we going to write to in our " +
+        "table in one write'. This should not be larger than " +
+        "spark.shuffle.minNumPartitionsToHighlyCompress. Otherwise, partition coalescing and " +
+        "skew split may not work due to incomplete stats from HighlyCompressedMapStatus")
+      .intConf
+      .createWithDefault(2000)
+
+  val DELTA_OPTIMIZE_WRITE_BIN_SIZE =
+    buildConf("optimizeWrite.binSize")
+      .internal()
+      .doc("Bin size for the adaptive shuffle in optimized writes in megabytes.")
+      .bytesConf(ByteUnit.MiB)
+      .createWithDefault(512)
+
+  //////////////////
+  // Clustered Table
+  //////////////////
+
+  val DELTA_ENABLE_CLUSTERING_TABLE_FEATURE =
+    buildConf("clusteringTable.enableClusteringTableFeature")
+      .internal()
+      .doc("If true, enable ClusteringTableFeature when the table is a clustered table.")
+    .booleanConf
+    .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

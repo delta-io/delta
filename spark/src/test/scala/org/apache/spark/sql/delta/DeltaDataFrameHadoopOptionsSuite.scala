@@ -98,7 +98,7 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest with SQLTestUtils with 
           .mode("append")
           .save(path)
         // Ensure we did write the checkpoint and read it back
-        val deltaLog = DeltaLog.forTable(spark, path, fakeFileSystemOptions)
+        val deltaLog = DeltaLog.forTable(spark, new Path(path), fakeFileSystemOptions)
         assert(deltaLog.readLastCheckpointFile().get.version == 1)
       }
     }
@@ -106,25 +106,26 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest with SQLTestUtils with 
 
   test("SC-86916: invalidateCache should invalidate all DeltaLogs of the given path") {
     withTempPath { dir =>
-      val path = fakeFileSystemPath(dir)
+      val pathStr = fakeFileSystemPath(dir)
+      val path = new Path(pathStr)
       spark.range(1, 10).write.format("delta")
         .options(fakeFileSystemOptions)
         .mode("append")
-        .save(path)
+        .save(pathStr)
       val deltaLog = DeltaLog.forTable(spark, path, fakeFileSystemOptions)
       spark.range(1, 10).write.format("delta")
         .options(fakeFileSystemOptions)
         .mode("append")
-        .save(path)
+        .save(pathStr)
       val cachedDeltaLog = DeltaLog.forTable(spark, path, fakeFileSystemOptions)
       assert(deltaLog eq cachedDeltaLog)
       withSQLConf(fakeFileSystemOptions.toSeq: _*) {
-        DeltaLog.invalidateCache(spark, new Path(path))
+        DeltaLog.invalidateCache(spark, path)
       }
       spark.range(1, 10).write.format("delta")
         .options(fakeFileSystemOptions)
         .mode("append")
-        .save(path)
+        .save(pathStr)
       val newDeltaLog = DeltaLog.forTable(spark, path, fakeFileSystemOptions)
       assert(deltaLog ne newDeltaLog)
     }

@@ -19,76 +19,69 @@ import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.Tuple2;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 
 /**
  * Implementation of {@link Snapshot}.
  */
-public class SnapshotImpl implements Snapshot
-{
+public class SnapshotImpl implements Snapshot {
     private final Path dataPath;
     private final long version;
-
     private final LogReplay logReplay;
-    private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
+    private final Protocol protocol;
+    private final Metadata metadata;
 
     public SnapshotImpl(
-        Path logPath,
-        Path dataPath,
-        long version,
-        LogSegment logSegment,
-        TableClient tableClient,
-        long timestamp)
-    {
+            Path logPath,
+            Path dataPath,
+            long version,
+            LogSegment logSegment,
+            TableClient tableClient,
+            long timestamp) {
         this.dataPath = dataPath;
         this.version = version;
-
         this.logReplay = new LogReplay(
             logPath,
             dataPath,
             tableClient,
             logSegment);
-        this.protocolAndMetadata = logReplay.lazyLoadProtocolAndMetadata();
+
+        this.protocol = logReplay.getProtocol();
+        this.metadata = logReplay.getMetadata();
     }
 
     @Override
-    public long getVersion(TableClient tableClient)
-    {
+    public long getVersion(TableClient tableClient) {
         return version;
     }
 
     @Override
-    public StructType getSchema(TableClient tableClient)
-    {
+    public StructType getSchema(TableClient tableClient) {
         return getMetadata().getSchema();
     }
 
     @Override
-    public ScanBuilder getScanBuilder(TableClient tableClient)
-    {
+    public ScanBuilder getScanBuilder(TableClient tableClient) {
         return new ScanBuilderImpl(
             dataPath,
-            protocolAndMetadata,
+            protocol,
+            metadata,
             getSchema(tableClient),
-            logReplay.getAddFiles(),
+            logReplay,
             tableClient
         );
     }
 
-    public Metadata getMetadata()
-    {
-        return protocolAndMetadata.get()._2;
+    public Metadata getMetadata() {
+        return metadata;
     }
 
-    public Protocol getProtocol()
-    {
-        return protocolAndMetadata.get()._1;
+    public Protocol getProtocol() {
+        return protocol;
     }
 }

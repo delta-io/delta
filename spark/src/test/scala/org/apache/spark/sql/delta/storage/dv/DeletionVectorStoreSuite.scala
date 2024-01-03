@@ -21,7 +21,7 @@ import java.io.{DataInputStream, DataOutputStream, File}
 import org.apache.spark.sql.delta.{DeltaChecksumException, DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.{CHECKSUM_LEN, DATA_SIZE_LEN}
+import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.{getTotalSizeOfDVFieldsInFile, CHECKSUM_LEN}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.PathWithFileSystem
 import com.google.common.primitives.Ints
@@ -100,7 +100,7 @@ trait DeletionVectorStoreSuiteBase
       // make sure this is our exception not ChecksumFileSystem's
       assert(e.getErrorClass == "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH")
       assert(e.getSqlState == "XXKDS")
-      assert(e.getMessage ==
+      assert(e.getMessage == "[DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH] " +
         "Could not verify deletion vector integrity, CRC checksum verification failed.")
     }
   }
@@ -124,7 +124,8 @@ trait DeletionVectorStoreSuiteBase
       }
       assert(e.getErrorClass == "DELTA_DELETION_VECTOR_SIZE_MISMATCH")
       assert(e.getSqlState == "XXKDS")
-      assert(e.getMessage == "Deletion vector integrity check failed. Encountered a size mismatch.")
+      assert(e.getMessage == "[DELTA_DELETION_VECTOR_SIZE_MISMATCH] " +
+        "Deletion vector integrity check failed. Encountered a size mismatch.")
     }
   }
 
@@ -142,8 +143,7 @@ trait DeletionVectorStoreSuiteBase
       assert(dvRange1.length === dvBytes1.length)
 
       // DV2 should be written immediately after the DV1
-      // DV Format:<SerializedDV Size> <SerializedDV Bytes> <DV Checksum>
-      val totalDV1Size = DATA_SIZE_LEN + dvBytes1.length + CHECKSUM_LEN
+      val totalDV1Size = getTotalSizeOfDVFieldsInFile(dvBytes1.length)
       assert(dvRange2.offset === 1 + totalDV1Size) // 1byte for file format version
       assert(dvRange2.length === dvBytes2.length)
 
@@ -175,8 +175,8 @@ trait DeletionVectorStoreSuiteBase
         }
         assert(e.getErrorClass == "DELTA_DELETION_VECTOR_INVALID_ROW_INDEX")
         assert(e.getSqlState == "XXKDS")
-        assert(e.getMessage ==
-          "Deletion vector integrity check failed. Encountered an invalid row index.")
+        assert(e.getMessage == "[DELTA_DELETION_VECTOR_INVALID_ROW_INDEX] " +
+            "Deletion vector integrity check failed. Encountered an invalid row index.")
       }
     }
   }

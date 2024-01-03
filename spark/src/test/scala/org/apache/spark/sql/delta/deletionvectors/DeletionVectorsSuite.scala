@@ -16,21 +16,23 @@
 
 package org.apache.spark.sql.delta.deletionvectors
 
-import java.io.File
+import java.io.{File, FileNotFoundException}
 
-import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
-import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
-import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, BOOLEAN_DOMAIN}
+import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
+import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.{inlineInLog, EMPTY}
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.tables.DeltaTable
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
 import org.apache.spark.sql.functions.col
@@ -261,17 +263,18 @@ class DeletionVectorsSuite extends QueryTest
 
   Seq("name", "id").foreach(mode =>
     test(s"DELETE with DVs with column mapping mode=$mode") {
-      withTempDir { dirName =>
-        val path = dirName.getAbsolutePath
-        val data = (0 until 50).map(x => (x % 10, x, s"foo${x % 5}"))
-        spark.conf.set("spark.databricks.delta.properties.defaults.columnMapping.mode", mode)
-        data.toDF("part", "col1", "col2").write.format("delta").partitionBy(
-          "part").save(path)
-        val tableLog = DeltaLog.forTable(spark, path)
-        enableDeletionVectorsInTable(tableLog, true)
-        spark.sql(s"DELETE FROM delta.`$path` WHERE col1 = 2")
-        checkAnswer(spark.sql(s"select * from delta.`$path` WHERE col1 = 2"), Seq())
-        verifyDVsExist(tableLog, 1)
+      withSQLConf("spark.databricks.delta.properties.defaults.columnMapping.mode" -> mode) {
+        withTempDir { dirName =>
+          val path = dirName.getAbsolutePath
+          val data = (0 until 50).map(x => (x % 10, x, s"foo${x % 5}"))
+          data.toDF("part", "col1", "col2").write.format("delta").partitionBy(
+            "part").save(path)
+          val tableLog = DeltaLog.forTable(spark, path)
+          enableDeletionVectorsInTable(tableLog, true)
+          spark.sql(s"DELETE FROM delta.`$path` WHERE col1 = 2")
+          checkAnswer(spark.sql(s"select * from delta.`$path` WHERE col1 = 2"), Seq())
+          verifyDVsExist(tableLog, 1)
+        }
       }
     }
   )
@@ -323,6 +326,9 @@ class DeletionVectorsSuite extends QueryTest
           val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
           assert(opMetrics.getOrElse("numDeletedRows", -1) === 6)
           assert(opMetrics.getOrElse("numRemovedFiles", -1) === 1)
+          assert(opMetrics.getOrElse("numDeletionVectorsAdded", -1) === 1)
+          assert(opMetrics.getOrElse("numDeletionVectorsRemoved", -1) === 0)
+          assert(opMetrics.getOrElse("numDeletionVectorsUpdated", -1) === 0)
         }
 
         {
@@ -331,6 +337,19 @@ class DeletionVectorsSuite extends QueryTest
           val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
           assert(opMetrics.getOrElse("numDeletedRows", -1) === 1)
           assert(opMetrics.getOrElse("numRemovedFiles", -1) === 0)
+          val initialNumDVs = 0
+          val numDVUpdated = 1
+          // An "updated" DV is "deleted" then "added" again.
+          // We increment the count for "updated", "added", and "deleted".
+          assert(
+            opMetrics.getOrElse("numDeletionVectorsAdded", -1) ===
+              initialNumDVs + numDVUpdated)
+          assert(
+            opMetrics.getOrElse("numDeletionVectorsRemoved", -1) ===
+              initialNumDVs + numDVUpdated)
+          assert(
+            opMetrics.getOrElse("numDeletionVectorsUpdated", -1) ===
+              numDVUpdated)
         }
 
         {
@@ -339,6 +358,9 @@ class DeletionVectorsSuite extends QueryTest
           val opMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
           assert(opMetrics.getOrElse("numDeletedRows", -1) === 3)
           assert(opMetrics.getOrElse("numRemovedFiles", -1) === 1)
+          assert(opMetrics.getOrElse("numDeletionVectorsAdded", -1) === 0)
+          assert(opMetrics.getOrElse("numDeletionVectorsRemoved", -1) === 1)
+          assert(opMetrics.getOrElse("numDeletionVectorsUpdated", -1) === 0)
         }
       }
     }
@@ -605,6 +627,63 @@ class DeletionVectorsSuite extends QueryTest
   test("huge table: read from tables of 2B rows with existing DV of many zeros") {
     val canonicalTable5Path = new File(table5Path).getCanonicalPath
     checkCountAndSum("value", table5Count, table5Sum, canonicalTable5Path)
+  }
+
+  test("sanity check for non-incremental DV update") {
+    val addFile = createTestAddFile()
+    def bitmapToDvDescriptor(bitmap: RoaringBitmapArray): DeletionVectorDescriptor = {
+      DeletionVectorDescriptor.inlineInLog(
+        bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable),
+        bitmap.cardinality)
+    }
+    val dv0 = bitmapToDvDescriptor(RoaringBitmapArray())
+    val dv1 = bitmapToDvDescriptor(RoaringBitmapArray(0L, 1L))
+    val dv2 = bitmapToDvDescriptor(RoaringBitmapArray(0L, 2L))
+    val dv3 = bitmapToDvDescriptor(RoaringBitmapArray(3L))
+
+    def removeRows(a: AddFile, dv: DeletionVectorDescriptor): (AddFile, RemoveFile) = {
+      a.removeRows(
+        deletionVector = dv,
+        updateStats = true
+      )
+    }
+
+    // Adding an empty DV to a file is allowed.
+    removeRows(addFile, dv0)
+    // Updating with the same DV is allowed.
+    val (addFileWithDV1, _) = removeRows(addFile, dv1)
+    removeRows(addFileWithDV1, dv1)
+    // Updating with a different DV with the same cardinality and different rows should not be
+    // allowed, but is expensive to detect it.
+    removeRows(addFileWithDV1, dv2)
+
+    // Updating with a DV with lower cardinality should throw.
+    for (dv <- Seq(dv0, dv3)) {
+      assertThrows[DeltaChecksumException] {
+        removeRows(addFileWithDV1, dv)
+      }
+    }
+  }
+
+  test("Check no resource leak when DV files are missing (table corrupted)") {
+    withTempDir { tempDir =>
+      val source = new File(table2Path)
+      val target = new File(tempDir, "resourceLeakTest")
+      val targetPath = target.getAbsolutePath
+
+      // Copy the source DV table to a temporary directory
+      FileUtils.copyDirectory(source, target)
+
+      val filesWithDvs = getFilesWithDeletionVectors(DeltaLog.forTable(spark, target))
+      assert(filesWithDvs.size > 0)
+      deleteDVFile(targetPath, filesWithDvs(0))
+
+      val se = intercept[SparkException] {
+        spark.sql(s"SELECT * FROM delta.`$targetPath`").collect()
+      }
+      assert(findIfResponsible[FileNotFoundException](se).nonEmpty,
+        s"Expected a file not found exception as the cause, but got: [${se}]")
+    }
   }
 
   private sealed case class DeleteUsingDVWithResults(

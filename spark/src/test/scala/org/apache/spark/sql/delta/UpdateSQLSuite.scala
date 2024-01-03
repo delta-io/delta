@@ -17,11 +17,19 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 
-import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.errors.QueryExecutionErrors.toSQLType
+import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 
-class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
+class UpdateSQLSuite extends UpdateSuiteBase
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -32,7 +40,7 @@ class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
     assert(outputs.contains("Delta"))
     assert(!outputs.contains("index") && !outputs.contains("ActionLog"))
     // no change should be made by explain
-    checkAnswer(readDeltaTableByPath(tempPath), Row(2, 2))
+    checkAnswer(readDeltaTable(tempPath), Row(2, 2))
   }
 
   test("SC-11376: Update command should check target columns during analysis, same key") {
@@ -96,11 +104,233 @@ class UpdateSQLSuite extends UpdateSuiteBase  with DeltaSQLCommandTest {
     }
   }
 
+  // The following two tests are run only against the SQL API because using the Scala API
+  // incorrectly triggers the analyzer rule [[ResolveRowLevelCommandAssignments]] which allows
+  // the casts without respecting the value of `storeAssignmentPolicy`.
+
+  // Casts that are not valid upcasts (e.g. string -> boolean) are not allowed with
+  // storeAssignmentPolicy = STRICT.
+  test("invalid implicit cast string source type into boolean target, " +
+   s"storeAssignmentPolicy = ${StoreAssignmentPolicy.STRICT}") {
+    append(Seq((99, true), (100, false), (101, true)).toDF("key", "value"))
+    withSQLConf(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
+    checkError(
+      exception = intercept[AnalysisException] {
+        executeUpdate(target = s"delta.`$tempPath`", set = "value = 'false'")
+      },
+      errorClass = "CANNOT_UP_CAST_DATATYPE",
+      parameters = Map(
+        "expression" -> "'false'",
+        "sourceType" -> toSQLType("STRING"),
+        "targetType" -> toSQLType("BOOLEAN"),
+        "details" -> ("The type path of the target object is:\n\nYou can either add an explicit " +
+          "cast to the input data or choose a higher precision type of the field in the target " +
+          "object")))
+    }
+  }
+
+  // Implicit casts that are not upcasts are not allowed with storeAssignmentPolicy = STRICT.
+  test("valid implicit cast string source type into int target, " +
+     s"storeAssignmentPolicy = ${StoreAssignmentPolicy.STRICT}") {
+    append(Seq((99, 2), (100, 4), (101, 3)).toDF("key", "value"))
+    withSQLConf(
+        SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+        DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
+    checkError(
+      exception = intercept[AnalysisException] {
+        executeUpdate(target = s"delta.`$tempPath`", set = "value = '5'")
+      },
+      errorClass = "CANNOT_UP_CAST_DATATYPE",
+        parameters = Map(
+        "expression" -> "'5'",
+        "sourceType" -> toSQLType("STRING"),
+        "targetType" -> toSQLType("INT"),
+        "details" -> ("The type path of the target object is:\n\nYou can either add an explicit " +
+          "cast to the input data or choose a higher precision type of the field in the target " +
+          "object")))
+    }
+  }
+
   override protected def executeUpdate(
       target: String,
       set: String,
       where: String = null): Unit = {
     val whereClause = Option(where).map(c => s"WHERE $c").getOrElse("")
     sql(s"UPDATE $target SET $set $whereClause")
+  }
+}
+
+class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
+  with DeltaExcludedTestMixin
+  with DeletionVectorsTestUtils {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    enableDeletionVectors(spark, update = true)
+  }
+
+  override def excluded: Seq[String] = super.excluded ++
+    Seq(
+      // The following two tests must fail when DV is used. Covered by another test case:
+      // "throw error when non-pinned TahoeFileIndex snapshot is used".
+      "data and partition predicates - Partition=true Skipping=false",
+      "data and partition predicates - Partition=false Skipping=false",
+      // The scan schema contains additional row index filter columns.
+      "schema pruning on finding files to update",
+      "nested schema pruning on finding files to update"
+    )
+
+  test("repeated UPDATE produces deletion vectors") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      val log = DeltaLog.forTable(spark, path)
+      spark.range(0, 10, 1, numPartitions = 2).write.format("delta").save(path)
+
+      // scalastyle:off argcount
+      def updateAndCheckLog(
+          where: String,
+          expectedAnswer: Seq[Row],
+
+          numAddFilesWithDVs: Int,
+          sumNumRowsInAddFileWithDV: Int,
+          sumNumRowsInAddFileWithoutDV: Int,
+          sumDvCardinalityInAddFile: Long,
+
+          numRemoveFilesWithDVs: Int,
+          sumNumRowsInRemoveFileWithDV: Int,
+          sumNumRowsInRemoveFileWithoutDV: Int,
+          sumDvCardinalityInRemoveFile: Long): Unit = {
+        executeUpdate(s"delta.`$path`", "id = -1", where)
+        checkAnswer(sql(s"SELECT * FROM delta.`$path`"), expectedAnswer)
+
+        val fileActions = log.getChanges(log.update().version).flatMap(_._2)
+          .collect { case f: FileAction => f }
+          .toSeq
+        val addFiles = fileActions.collect { case f: AddFile => f }
+        val removeFiles = fileActions.collect { case f: RemoveFile => f }
+
+        val (addFilesWithDV, addFilesWithoutDV) = addFiles.partition(_.deletionVector != null)
+        assert(addFilesWithDV.size === numAddFilesWithDVs)
+        assert(
+          addFilesWithDV.map(_.numPhysicalRecords.getOrElse(0L)).sum ===
+            sumNumRowsInAddFileWithDV)
+        assert(
+          addFilesWithDV.map(_.deletionVector.cardinality).sum ===
+            sumDvCardinalityInAddFile)
+        assert(
+          addFilesWithoutDV.map(_.numPhysicalRecords.getOrElse(0L)).sum ===
+            sumNumRowsInAddFileWithoutDV)
+
+        val (removeFilesWithDV, removeFilesWithoutDV) =
+          removeFiles.partition(_.deletionVector != null)
+        assert(removeFilesWithDV.size === numRemoveFilesWithDVs)
+        assert(
+          removeFilesWithDV.map(_.numPhysicalRecords.getOrElse(0L)).sum ===
+            sumNumRowsInRemoveFileWithDV)
+        assert(
+          removeFilesWithDV.map(_.deletionVector.cardinality).sum ===
+            sumDvCardinalityInRemoveFile)
+        assert(
+          removeFilesWithoutDV.map(_.numPhysicalRecords.getOrElse(0L)).sum ===
+            sumNumRowsInRemoveFileWithoutDV)
+      }
+      // scalastyle:on argcount
+
+      def assertDVMetrics(
+          numUpdatedRows: Long = 0,
+          numCopiedRows: Long = 0,
+          numDeletionVectorsAdded: Long = 0,
+          numDeletionVectorsRemoved: Long = 0,
+          numDeletionVectorsUpdated: Long = 0): Unit = {
+        val table = io.delta.tables.DeltaTable.forPath(path)
+        val updateMetrics = DeltaMetricsUtils.getLastOperationMetrics(table)
+        assert(updateMetrics.getOrElse("numUpdatedRows", -1) === numUpdatedRows)
+        assert(updateMetrics.getOrElse("numCopiedRows", -1) === numCopiedRows)
+        assert(updateMetrics.getOrElse("numDeletionVectorsAdded", -1) === numDeletionVectorsAdded)
+        assert(
+          updateMetrics.getOrElse("numDeletionVectorsRemoved", -1) === numDeletionVectorsRemoved)
+        assert(
+          updateMetrics.getOrElse("numDeletionVectorsUpdated", -1) === numDeletionVectorsUpdated)
+      }
+
+      // DV created. 4 rows updated.
+      updateAndCheckLog(
+        "id % 3 = 0",
+        Seq(-1, 1, 2, -1, 4, 5, -1, 7, 8, -1).map(Row(_)),
+        numAddFilesWithDVs = 2,
+        sumNumRowsInAddFileWithDV = 10,
+        sumNumRowsInAddFileWithoutDV = 4,
+        sumDvCardinalityInAddFile = 4,
+
+        numRemoveFilesWithDVs = 0,
+        sumNumRowsInRemoveFileWithDV = 0,
+        sumNumRowsInRemoveFileWithoutDV = 10,
+        sumDvCardinalityInRemoveFile = 0)
+
+      assertDVMetrics(numUpdatedRows = 4, numDeletionVectorsAdded = 2)
+
+      // DV updated. 2 rows from the original file updated.
+      updateAndCheckLog(
+        "id % 4 = 0",
+        Seq(-1, 1, 2, -1, -1, 5, -1, 7, -1, -1).map(Row(_)),
+        numAddFilesWithDVs = 2,
+        sumNumRowsInAddFileWithDV = 10,
+        sumNumRowsInAddFileWithoutDV = 2,
+        sumDvCardinalityInAddFile = 6,
+        numRemoveFilesWithDVs = 2,
+        sumNumRowsInRemoveFileWithDV = 10,
+        sumNumRowsInRemoveFileWithoutDV = 0,
+        sumDvCardinalityInRemoveFile = 4)
+
+      assertDVMetrics(
+        numUpdatedRows = 2,
+        numDeletionVectorsAdded = 2,
+        numDeletionVectorsRemoved = 2,
+        numDeletionVectorsUpdated = 2)
+
+      // Original files DV removed, because all rows in the SECOND FILE are deleted.
+      updateAndCheckLog(
+        "id IN (5, 7)",
+        Seq(-1, 1, 2, -1, -1, -1, -1, -1, -1, -1).map(Row(_)),
+        numAddFilesWithDVs = 0,
+        sumNumRowsInAddFileWithDV = 0,
+        sumNumRowsInAddFileWithoutDV = 2,
+        sumDvCardinalityInAddFile = 0,
+        numRemoveFilesWithDVs = 1,
+        sumNumRowsInRemoveFileWithDV = 5,
+        sumNumRowsInRemoveFileWithoutDV = 0,
+        sumDvCardinalityInRemoveFile = 3)
+
+      assertDVMetrics(numUpdatedRows = 2, numDeletionVectorsRemoved = 1)
+    }
+  }
+
+  test("UPDATE a whole partition do not produce DVs") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      val log = DeltaLog.forTable(spark, path)
+      spark.range(10).withColumn("part", col("id") % 2)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .save(path)
+
+      executeUpdate(s"delta.`$path`", "id = -1", where = "part = 0")
+      checkAnswer(
+        sql(s"SELECT * FROM delta.`$path`"),
+        Row(-1, 0) :: Row(1, 1) :: Row(-1, 0) ::
+          Row(3, 1) :: Row(-1, 0) :: Row(5, 1) :: Row(-1, 0) ::
+          Row(7, 1) :: Row(-1, 0) :: Row(9, 1) :: Nil)
+
+      val fileActions = log.getChanges(log.update().version).flatMap(_._2)
+        .collect { case f: FileAction => f }
+        .toSeq
+      val addFiles = fileActions.collect { case f: AddFile => f }
+      val removeFiles = fileActions.collect { case f: RemoveFile => f }
+      assert(addFiles.map(_.numPhysicalRecords.getOrElse(0L)).sum === 5)
+      assert(removeFiles.map(_.numPhysicalRecords.getOrElse(0L)).sum === 5)
+      for (a <- addFiles) assert(a.deletionVector === null)
+    }
   }
 }

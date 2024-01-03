@@ -37,13 +37,13 @@ class MaterializedColumnSuite extends RowIdTestUtils
   }
 
   private def getMaterializedRowIdColumnName(tableName: String): Option[String] = {
-    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
-    deltaLog.update().metadata.configuration.get(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
+    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+    snapshot.metadata.configuration.get(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
   }
 
   private def getMaterializedRowCommitVersionColumnName(tableName: String): Option[String] = {
-    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
-    deltaLog.update().metadata.configuration.get(
+    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+    snapshot.metadata.configuration.get(
       MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
   }
 

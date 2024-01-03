@@ -41,6 +41,9 @@ class DeltaCreateTableLikeSuite extends QueryTest
    * or not to check (assert) the specific property. Note that for checkLocation
    * a boolean value is not passed in. If checkLocation argument is None, location
    * of target table will not be checked.
+   *
+   * @param checkTargetTableByPath when true, targetTbl must be a path not table name
+   * @param checkSourceTableByPath when true, srcTbl must be a path not table name
    */
   def checkTableCopyDelta(
       srcTbl: String,
@@ -54,14 +57,14 @@ class DeltaCreateTableLikeSuite extends QueryTest
       checkLocation: Option[String] = None): Unit = {
     val src =
       if (checkSourceTableByPath) {
-        DeltaTableIdentifier(path = Some(srcTbl)).getDeltaLog(spark)
+        DeltaLog.forTable(spark, srcTbl)
       } else {
         DeltaLog.forTable(spark, TableIdentifier(srcTbl))
       }
 
     val target =
       if (checkTargetTableByPath) {
-        DeltaTableIdentifier(path = Some(targetTbl)).getDeltaLog(spark)
+        DeltaLog.forTable(spark, targetTbl)
       } else {
         DeltaLog.forTable(spark, TableIdentifier(targetTbl))
       }

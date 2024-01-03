@@ -27,14 +27,16 @@ import scala.language.implicitConversions
 import io.delta.tables.DeltaTable
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.SparkConf
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, JobInfo, Metadata, NotebookInfo, Protocol, RemoveFile, SetTransaction, SingleAction}
+import org.apache.spark.sql.delta.actions.{Metadata, _}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
@@ -47,7 +49,7 @@ import org.apache.spark.sql.types._
  *
  * To generate a single table (that is specified below) run:
  * ```
- * GENERATE_GOLDEN_TABLES=1 build/sbt 'goldenTables/test-only *GoldenTables -- -z tbl_name'
+ * GENERATE_GOLDEN_TABLES=1 build/sbt 'goldenTables/testOnly *GoldenTables -- -z "tbl_name"'
  * ```
  *
  * After generating golden tables, be sure to package or test project standalone, otherwise the
@@ -59,6 +61,8 @@ class GoldenTables extends QueryTest with SharedSparkSession {
   override def sparkConf: SparkConf = super.sparkConf
     .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
     .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    // disable _SUCCESS files
+    .set("spark.hadoop.mapreduce.fileoutputcommitter.marksuccessfuljobs", "false")
 
   // Timezone is fixed to America/Los_Angeles for timezone-sensitive tests
   TimeZone.setDefault(TimeZone.getTimeZone("America/Los_Angeles"))
@@ -100,7 +104,10 @@ class GoldenTables extends QueryTest with SharedSparkSession {
   private implicit class OptimisticTxnTestHelper(txn: OptimisticTransaction) {
     def commitManually(actions: Action*): Long = {
       if (txn.readVersion == -1 && !actions.exists(_.isInstanceOf[Metadata])) {
-        txn.commit(Metadata() +: actions, ManualUpdate)
+        val schema = new StructType()
+          .add("intCol", IntegerType)
+          .json
+        txn.commit(Metadata(schemaString = schema) +: actions, ManualUpdate)
       } else {
         txn.commit(actions, ManualUpdate)
       }
@@ -199,6 +206,19 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
+  generateGoldenTable("corrupted-last-checkpoint-kernel") { tablePath =>
+    val log = DeltaLog.forTable(spark, new Path(tablePath))
+    val checkpointInterval = log.checkpointInterval(log.unsafeVolatileSnapshot.metadata)
+    for (f <- 0 to checkpointInterval) {
+      spark.range(10).write.format("delta").mode("append").save(tablePath)
+    }
+    spark.range(100).write.format("delta").mode("overwrite").save(tablePath)
+
+    // Create an empty "_last_checkpoint" (corrupted)
+    val fs = log.LAST_CHECKPOINT.getFileSystem(log.newDeltaHadoopConf())
+    fs.create(log.LAST_CHECKPOINT, true /* overwrite */).close()
+  }
+
   /** TEST: DeltaLogSuite > paths should be canonicalized */
   {
     def helper(scheme: String, path: String, tableSuffix: String): Unit = {
@@ -207,14 +227,10 @@ class GoldenTables extends QueryTest with SharedSparkSession {
         new File(log.logPath.toUri).mkdirs()
 
         val add = AddFile(path, Map.empty, 100L, 10L, dataChange = true)
-        val rm = RemoveFile(s"$scheme$path", Some(200L), dataChange = false)
+        val rm = RemoveFile(s"$scheme$path", Some(200L))
 
-        log.store.write(
-          FileNames.deltaFile(log.logPath, 0L),
-          Iterator(Protocol(), Metadata(), add).map(a => JsonUtils.toJson(a.wrap)))
-        log.store.write(
-          FileNames.deltaFile(log.logPath, 1L),
-          Iterator(JsonUtils.toJson(rm.wrap)))
+        log.startTransaction().commitManually(add)
+        log.startTransaction().commitManually(rm)
       }
     }
 
@@ -273,7 +289,10 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       val selectedAction = if (action == "metadata") {
         Protocol()
       } else {
-        Metadata()
+        val schema = new StructType()
+          .add("intCol", IntegerType)
+          .json
+        Metadata(schemaString = schema)
       }
 
       val file = AddFile("abc", Map.empty, 1, 1, true)
@@ -341,12 +360,15 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     assert(new File(log.logPath.toUri).mkdirs())
 
     val file = AddFile("abc", Map.empty, 1, 1, true)
+    val metadata = Metadata(
+      schemaString = new StructType().add("id", IntegerType).json
+    )
     log.store.write(
       FileNames.deltaFile(log.logPath, 0L),
 
       // Protocol reader version explicitly set too high
       // Also include a Metadata
-      Iterator(Protocol(99), Metadata(), file).map(a => JsonUtils.toJson(a.wrap)))
+      Iterator(Protocol(99), metadata, file).map(a => JsonUtils.toJson(a.wrap)))
   }
 
   /** TEST: DeltaLogSuite > get commit info */
@@ -589,6 +611,118 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       .partitionBy("as_int", "as_long", "as_byte", "as_short", "as_boolean", "as_float",
         "as_double", "as_string", "as_string_lit_null", "as_date", "as_timestamp", "as_big_decimal")
       .save(tablePath)
+  }
+
+  Seq("name", "id").foreach { columnMappingMode =>
+    generateGoldenTable(s"table-with-columnmapping-mode-$columnMappingMode") { tablePath =>
+      withSQLConf(
+          ("spark.databricks.delta.properties.defaults.columnMapping.mode", columnMappingMode)) {
+        val timeZone = java.util.TimeZone.getTimeZone("UTC")
+        java.util.TimeZone.setDefault(timeZone)
+        import java.sql._
+
+        val decimalType = DecimalType(10, 2)
+
+        val allDataTypes = Seq(
+          ByteType,
+          ShortType,
+          IntegerType,
+          LongType,
+          FloatType,
+          DoubleType,
+          decimalType,
+          BooleanType,
+          StringType,
+          BinaryType,
+          DateType,
+          TimestampType
+        )
+
+        var fields = allDataTypes.map(dt => {
+          val name = if (dt.isInstanceOf[DecimalType]) {
+            "decimal"
+          } else {
+            dt.toString
+          }
+          StructField(name, dt)
+        })
+
+        fields = fields :+ StructField("nested_struct", new StructType()
+          .add("aa", StringType)
+          .add("ac", new StructType()
+            .add("aca", IntegerType)
+          )
+        )
+
+        fields = fields :+ StructField("array_of_prims", ArrayType(IntegerType))
+        fields = fields :+ StructField("array_of_arrays", ArrayType(ArrayType(IntegerType)))
+        fields = fields :+ StructField(
+          "array_of_structs",
+          ArrayType(new StructType().add("ab", LongType)))
+
+        fields = fields :+ StructField(
+          "map_of_prims",
+          MapType(IntegerType, LongType)
+        )
+        fields = fields :+ StructField(
+          "map_of_rows",
+          MapType(IntegerType, new StructType().add("ab", LongType))
+        )
+        fields = fields :+ StructField(
+          "map_of_arrays",
+          MapType(LongType, ArrayType(IntegerType))
+        )
+
+        val schema = StructType(fields)
+
+        def createRow(i: Int): Row = {
+          Row(
+            i.byteValue(),
+            i.shortValue(),
+            i,
+            i.longValue(),
+            i.floatValue(),
+            i.doubleValue(),
+            new java.math.BigDecimal(i),
+            i % 2 == 0, // boolean type
+            i.toString,
+            i.toString.getBytes,
+            Date.valueOf("2021-11-18"),
+            new Timestamp(i),
+            Row(i.toString, Row(i)), // nested_struct
+            scala.Array(i, i + 1), // array_of_prims
+            scala.Array(scala.Array(i, i + 1), scala.Array(i + 2, i + 3)), // array_of_arrays
+            scala.Array(Row(i.longValue()), null), // array_of_structs
+            Map(
+              i -> (i + 1).longValue(),
+              (i + 2) -> (i + 3).longValue()
+            ), // map_of_prims
+            Map(i + 1 -> Row((i * 20).longValue())), // map_of_rows
+            {
+              val val1 = scala.Array(i, null, i + 1)
+              val val2 = scala.Array[Integer]()
+              Map(
+                i.longValue() -> val1,
+                (i + 1).longValue() -> val2
+              ) // map_of_arrays
+            }
+          )
+        }
+
+        def createNullRow(): Row = {
+          Row(null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+            null, null, null, null, null)
+        }
+
+        val rows = Seq.range(0, 5).map(i => createRow(i)) ++ Seq(createNullRow())
+
+        val df = spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
+        df.repartition(2)
+          .write
+          .format("delta")
+          .save(tablePath)
+      }
+    }
   }
 
   /** TEST: DeltaDataReaderSuite > read - date types */
@@ -847,8 +981,6 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
-  // TODO: requires bug fix in delta-io/delta#1886
-  /*
   generateGoldenTable("dv-with-columnmapping") { tablePath =>
     withSQLConf(
       ("spark.databricks.delta.properties.defaults.columnMapping.mode", "name"),
@@ -863,7 +995,418 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       }
     }
   }
-  */
+
+  def writeBasicTimestampTable(path: String, timeZone: TimeZone): Unit = {
+    TimeZone.setDefault(timeZone)
+    // Create a partition value of both {year}-{month}-{day} {hour}:{minute}:{second} format and
+    // {year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}
+    val data = Row(0, Timestamp.valueOf("2020-01-01 08:09:10.001"), Timestamp.valueOf("2020-02-01 08:09:10")) ::
+      Row(1, Timestamp.valueOf("2021-10-01 08:09:20"), Timestamp.valueOf("1999-01-01 09:00:00")) ::
+      Row(2, Timestamp.valueOf("2021-10-01 08:09:20"), Timestamp.valueOf("2000-01-01 09:00:00")) ::
+      Row(3, Timestamp.valueOf("1969-01-01 00:00:00"), Timestamp.valueOf("1969-01-01 00:00:00")) ::
+      Row(4, null, null) :: Nil
+
+    val schema = new StructType()
+      .add("id", IntegerType)
+      .add("part", TimestampType)
+      .add("time", TimestampType)
+
+    spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+      .write
+      .format("delta")
+      .partitionBy("part")
+      .save(path)
+  }
+
+  for (parquetTimestampType <- SQLConf.ParquetOutputTimestampType.values) {
+    generateGoldenTable(s"kernel-timestamp-${parquetTimestampType.toString}") { tablePath =>
+      withSQLConf(("spark.sql.parquet.outputTimestampType", parquetTimestampType.toString)) {
+        writeBasicTimestampTable(tablePath, TimeZone.getTimeZone("UTC"))
+      }
+    }
+  }
+
+  generateGoldenTable("kernel-timestamp-PST") { tablePath =>
+    writeBasicTimestampTable(tablePath, TimeZone.getTimeZone("PST"))
+  }
+
+  generateGoldenTable("parquet-all-types") { tablePath =>
+    val timeZone = java.util.TimeZone.getTimeZone("UTC")
+    java.util.TimeZone.setDefault(timeZone)
+    import java.sql._
+
+    val decimalType = DecimalType(10, 2)
+
+    val allDataTypes = Seq(
+      ByteType,
+      ShortType,
+      IntegerType,
+      LongType,
+      FloatType,
+      DoubleType,
+      decimalType,
+      BooleanType,
+      StringType,
+      BinaryType,
+      DateType,
+      TimestampType
+    )
+
+    var fields = allDataTypes.map(dt => {
+      val name = if (dt.isInstanceOf[DecimalType]) {
+        "decimal"
+      } else {
+        dt.toString
+      }
+      StructField(name, dt)
+    })
+
+    fields = fields :+ StructField("nested_struct", new StructType()
+      .add("aa", StringType)
+      .add("ac", new StructType()
+        .add("aca", IntegerType)
+      )
+    )
+
+    fields = fields :+ StructField("array_of_prims", ArrayType(IntegerType))
+    fields = fields :+ StructField("array_of_arrays", ArrayType(ArrayType(IntegerType)))
+    fields = fields :+ StructField(
+      "array_of_structs",
+      ArrayType(new StructType().add("ab", LongType)))
+
+    fields = fields :+ StructField(
+      "map_of_prims",
+      MapType(IntegerType, LongType)
+    )
+    fields = fields :+ StructField(
+      "map_of_rows",
+      MapType(IntegerType, new StructType().add("ab", LongType))
+    )
+    fields = fields :+ StructField(
+      "map_of_arrays",
+      MapType(LongType, ArrayType(IntegerType))
+    )
+
+    val schema = StructType(fields)
+
+    def createRow(i: Int): Row = {
+      Row(
+        if (i % 72 != 0) i.byteValue() else null,
+        if (i % 56 != 0) i.shortValue() else null,
+        if (i % 23 != 0) i else null,
+        if (i % 25 != 0) (i + 1).longValue() else null,
+        if (i % 28 != 0) (i * 0.234).floatValue() else null,
+        if (i % 54 != 0) (i * 234234.23).doubleValue() else null,
+        if (i % 67 != 0) new java.math.BigDecimal(i * 123.52) else null,
+        if (i % 87 != 0) i % 2 == 0 else null,
+        if (i % 57 != 0) (i).toString else null,
+        if (i % 59 != 0) (i).toString.getBytes else null,
+        if (i % 61 != 0) new java.sql.Date(i * 20000000L) else null,
+        if (i % 62 != 0) new Timestamp(i * 23423523L) else null,
+        if (i % 63 != 0) {
+          if (i % 19 == 0) {
+            // write a struct with all fields null
+            Row(null, null)
+          } else {
+            Row(i.toString, if (i % 23 != 0) Row(i) else null)
+          }
+        } else null,
+        if (i % 25 != 0) {
+          if (i % 29 == 0) {
+            scala.Array()
+          } else {
+            scala.Array(i, null, i + 1)
+          }
+        } else null,
+        if (i % 8 != 0) {
+          val singleElemArray = scala.Array(i)
+          val doubleElemArray = scala.Array(i + 10, i + 20)
+          val arrayWithNulls = scala.Array(null, i + 200)
+          val singleElemNullArray = scala.Array(null)
+          val emptyArray = scala.Array()
+          (i % 7) match {
+            case 0 => scala.Array(singleElemArray, singleElemArray, arrayWithNulls)
+            case 1 => scala.Array(singleElemArray, doubleElemArray, emptyArray)
+            case 2 => scala.Array(arrayWithNulls)
+            case 3 => scala.Array(singleElemNullArray)
+            case 4 => scala.Array(null)
+            case 5 => scala.Array(emptyArray)
+            case 6 => scala.Array()
+          }
+        } else null,
+        scala.Array(Row(i.longValue()), null),
+        if (i % 28 != 0) {
+          if (i % 30 == 0) {
+            Map()
+          } else {
+            Map(
+              i -> (if (i % 29 != 0) (i + 2).longValue() else null),
+              (if (i % 27 != 0) i + 2 else i + 3) -> (i + 9).longValue()
+            )
+          }
+        } else null,
+        Map(i + 1 -> (if (i % 10 == 0) Row((i * 20).longValue()) else null)),
+        if (i % 30 != 0) {
+          if (i % 24 == 0) {
+            Map()
+          } else {
+            val val1 = if (i % 4 == 0) scala.Array(i, null, i + 1) else scala.Array()
+            val val2 = if (i % 7 == 0) scala.Array[Integer]() else scala.Array[Integer](null)
+            Map(
+              i.longValue() -> val1,
+              (i + 1).longValue() -> val2
+            )
+          }
+        } else null
+      )
+    }
+
+    val rows = Seq.range(0, 200).map(i => createRow(i))
+
+    val df = spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
+    df.repartition(1)
+      .write
+      .format("parquet")
+      .mode("append")
+      .save(tablePath)
+  }
+
+
+  def writeBasicDecimalTable(tablePath: String): Unit = {
+    val data = Seq(
+      Seq("234", "1", "2", "3"),
+      Seq("2342222.23454", "111.11", "22222.22222", "3333333333.3333333333"),
+      Seq("0.00004", "0.001", "0.000002", "0.00000000003"),
+      Seq("-2342342.23423", "-999.99", "-99999.99999", "-9999999999.9999999999")
+    ).map(_.map(new JBigDecimal(_))).map(Row(_: _*))
+
+    val schema = new StructType()
+      .add("part", new DecimalType(12, 5)) // serialized to a string
+      .add("col1", new DecimalType(5, 2)) // INT32: 1 <= precision <= 9
+      .add("col2", new DecimalType(10, 5)) // INT64: 10 <= precision <= 18
+      .add("col3", new DecimalType(20, 10)) // FIXED_LEN_BYTE_ARRAY
+
+    spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+      .repartition(1)
+      .write
+      .format("delta")
+      .partitionBy("part")
+      .save(tablePath)
+  }
+
+  generateGoldenTable("basic-decimal-table") { tablePath =>
+    writeBasicDecimalTable(tablePath)
+  }
+
+  generateGoldenTable("basic-decimal-table-legacy") { tablePath =>
+    withSQLConf(("spark.sql.parquet.writeLegacyFormat", "true")) {
+      writeBasicDecimalTable(tablePath)
+    }
+  }
+
+  for (parquetFormat <- Seq("v1", "v2")) {
+    // PARQUET_1_0 doesn't support dictionary encoding for FIXED_LEN_BYTE_ARRAY (only PARQUET_2_0)
+    generateGoldenTable(s"parquet-decimal-dictionaries-$parquetFormat") { tablePath =>
+
+      def withHadoopConf(key: String, value: String)(f: => Unit): Unit = {
+        try {
+          spark.sparkContext.hadoopConfiguration.set(key, value)
+          f
+        } finally {
+          spark.sparkContext.hadoopConfiguration.unset(key)
+        }
+      }
+
+      withHadoopConf("parquet.writer.version", parquetFormat) {
+        val data = (0 until 1000000).map { i =>
+          Row(i, JBigDecimal.valueOf(i % 5), JBigDecimal.valueOf(i % 6), JBigDecimal.valueOf(i % 2))
+        }
+
+        val schema = new StructType()
+          .add("id", IntegerType)
+          .add("col1", new DecimalType(9, 0)) // INT32: 1 <= precision <= 9
+          .add("col2", new DecimalType(12, 0)) // INT64: 10 <= precision <= 18
+          .add("col3", new DecimalType(25, 0)) // FIXED_LEN_BYTE_ARRAY
+
+        spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+          .repartition(1)
+          .write
+          .format("delta")
+          .save(tablePath)
+      }
+    }
+  }
+
+  generateGoldenTable("parquet-decimal-type") { tablePath =>
+
+    def expand(n: JBigDecimal): JBigDecimal = {
+      n.scaleByPowerOfTen(5).add(n)
+    }
+
+    val data = (0 until 99998).map { i =>
+      if (i % 85 == 0) {
+        val n = JBigDecimal.valueOf(i)
+        Row(i, n.movePointLeft(1), n, n)
+      } else {
+        val negation = if (i % 33 == 0) {
+          -1
+        } else {
+          1
+        }
+        val n = JBigDecimal.valueOf(i*negation)
+
+        Row(
+          i,
+          n.movePointLeft(1),
+          expand(n).movePointLeft(5),
+          expand(expand(expand(n))).movePointLeft(5)
+        )
+      }
+    }
+
+    val schema = new StructType()
+      .add("id", IntegerType)
+      .add("col1", new DecimalType(5, 1)) // INT32: 1 <= precision <= 9
+      .add("col2", new DecimalType(10, 5)) // INT64: 10 <= precision <= 18
+      .add("col3", new DecimalType(20, 5)) // FIXED_LEN_BYTE_ARRAY
+
+    spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+      .repartition(1)
+      .write
+      .format("delta")
+      .save(tablePath)
+  }
+
+  generateGoldenTable("basic-with-inserts-deletes-checkpoint") { tablePath =>
+    // scalastyle:off line.size.limit
+    spark.range(0, 10).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(10, 20).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(20, 30).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(30, 40).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(40, 50).repartition(1).write.format("delta").mode("append").save(tablePath)
+    sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 5 AND id <= 9")
+    sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 15 AND id <= 19")
+    sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 25 AND id <= 29")
+    sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 35 AND id <= 39")
+    sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 45 AND id <= 49")
+    spark.range(50, 60).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(60, 70).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(70, 80).repartition(1).write.format("delta").mode("append").save(tablePath)
+    sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 66")
+    // scalastyle:on line.size.limit
+  }
+
+  generateGoldenTable("multi-part-checkpoint") { tablePath =>
+    withSQLConf(
+      ("spark.databricks.delta.checkpoint.partSize", "5"),
+      ("spark.databricks.delta.properties.defaults.checkpointInterval", "1")
+    ) {
+      spark.range(1).repartition(1).write.format("delta").save(tablePath)
+      spark.range(30).repartition(9).write.format("delta").mode("append").save(tablePath)
+    }
+  }
+
+  generateGoldenTable("no-delta-log-folder") { tablePath =>
+    spark.range(20).write.format("parquet").save(tablePath)
+  }
+
+  generateGoldenTable("log-replay-latest-metadata-protocol") { tablePath =>
+    spark.range(20).toDF("col1")
+      .write.format("delta").save(tablePath)
+    // update the table schema
+    spark.range(20).toDF("col1").withColumn("col2", 'col1 % 2)
+      .write.format("delta").mode("append").option("mergeSchema", "true").save(tablePath)
+    // update the protocol version
+    DeltaTable.forPath(spark, tablePath).upgradeTableProtocol(3, 7)
+  }
+
+  generateGoldenTable("only-checkpoint-files") { tablePath =>
+    withSQLConf(("spark.databricks.delta.properties.defaults.checkpointInterval", "1")) {
+      spark.range(10).repartition(10).write.format("delta").save(tablePath)
+      spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id < 5")
+      spark.range(20).write.format("delta").mode("append").save(tablePath)
+    }
+  }
+
+  generateGoldenTable("log-replay-special-characters-a") { tablePath =>
+    val log = DeltaLog.forTable(spark, new Path(tablePath))
+    new File(log.logPath.toUri).mkdirs()
+
+    val add = AddFile(new Path("special p@#h").toUri.toString, Map.empty, 100L,
+      10L, dataChange = true)
+    val remove = add.remove
+
+    log.startTransaction().commitManually(add)
+    log.startTransaction().commitManually(remove)
+  }
+
+  generateGoldenTable("log-replay-special-characters-b") { tablePath =>
+    val log = DeltaLog.forTable(spark, new Path(tablePath))
+    new File(log.logPath.toUri).mkdirs()
+
+    val add = AddFile(new Path("special p@#h").toUri.toString, Map.empty, 100L,
+      10L, dataChange = true)
+
+    log.startTransaction().commitManually(add)
+  }
+
+  generateGoldenTable("log-replay-dv-key-cases") { tablePath =>
+    withSQLConf(("spark.databricks.delta.properties.defaults.enableDeletionVectors", "true")) {
+      spark.range(50).repartition(1).write.format("delta").save(tablePath)
+      (0 until 3).foreach { n =>
+        spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id = ${n*7}")
+      }
+    }
+  }
+
+  generateGoldenTable("basic-with-inserts-updates") { tablePath =>
+    val data = (0 until 100).map(x => (x, s"val=$x"))
+    data.toDF("id", "str").write.format("delta").save(tablePath)
+    sql(s"UPDATE delta.`$tablePath` SET str = 'N/A' WHERE id < 50")
+  }
+
+  generateGoldenTable("basic-with-inserts-merge") { tablePath =>
+    val data = (0 until 100).map(x => (x, s"val=$x"))
+    data.toDF("id", "str").write.format("delta").save(tablePath)
+    spark.range(50, 150).createTempView("source")
+    sql(
+      s"""
+         |MERGE INTO delta.`$tablePath` t
+         |USING source
+         |ON source.id = t.id
+         |WHEN MATCHED
+         |  THEN UPDATE SET str = 'N/A'
+         |WHEN NOT MATCHED
+         |  THEN INSERT (id, str) VALUES (source.id, 'EXT')
+         |WHEN NOT MATCHED BY SOURCE AND t.id < 10
+         |  THEN DELETE
+         |""".stripMargin)
+  }
+
+  generateGoldenTable("basic-with-inserts-overwrite-restore") { tablePath =>
+    spark.range(100).write.format("delta").save(tablePath)
+    spark.range(100, 200).write.format("delta").mode("append").save(tablePath)
+    spark.range(500, 1000).write.format("delta").mode("overwrite").save(tablePath)
+    sql(s"RESTORE TABLE delta.`$tablePath` TO VERSION AS OF 1")
+  }
+
+  generateGoldenTable("conditionally-read-add-stats") { tablePath =>
+    val log = DeltaLog.forTable(spark, new Path(tablePath))
+    new File(log.logPath.toUri).mkdirs()
+    val schema = new StructType()
+      .add("part", IntegerType)
+      .add("id", IntegerType)
+    val add = AddFile("foo", Map("part" -> "1"), 1L, 100L, dataChange = true,
+      stats = "fake_statistics_string")
+    log.startTransaction().commit(
+      Metadata(schemaString = schema.json, partitionColumns = Seq("part")) :: add :: Nil,
+      ManualUpdate
+    )
+    log.startTransaction().commitManually(
+      AddFile("foo2", Map("part" -> "2"), 1L, 100L, dataChange = true,
+        stats = "fake_statistics_string"))
+    log.checkpoint(log.unsafeVolatileSnapshot)
+  }
 }
 
 case class TestStruct(f1: String, f2: Long)

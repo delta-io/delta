@@ -16,13 +16,15 @@
 
 package io.delta.tables.execution
 
-import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, DeltaTableUtils}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, DeltaTableUtils, UnresolvedDeltaPathOrIdentifier}
+import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.commands.VacuumCommand
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.delta.commands.VacuumCommand.getDeltaTable
+import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.types.StringType
 
 /**
@@ -32,40 +34,36 @@ import org.apache.spark.sql.types.StringType
  * }}}
  */
 case class VacuumTableCommand(
-    path: Option[String],
-    table: Option[TableIdentifier],
+    override val child: LogicalPlan,
     horizonHours: Option[Double],
-    dryRun: Boolean) extends LeafRunnableCommand {
+    dryRun: Boolean) extends RunnableCommand with UnaryNode with DeltaCommand {
 
   override val output: Seq[Attribute] =
     Seq(AttributeReference("path", StringType, nullable = true)())
 
+  override protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan =
+    copy(child = newChild)
+
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val pathToVacuum =
-      if (path.nonEmpty) {
-        new Path(path.get)
-      } else if (table.nonEmpty) {
-        DeltaTableIdentifier(sparkSession, table.get) match {
-          case Some(id) if id.path.nonEmpty =>
-            new Path(id.path.get)
-          case _ =>
-            new Path(sparkSession.sessionState.catalog.getTableMetadata(table.get).location)
-        }
-      } else {
-        throw DeltaErrors.missingTableIdentifierException("VACUUM")
-      }
-    val baseDeltaPath = DeltaTableUtils.findDeltaTableRoot(sparkSession, pathToVacuum)
-    if (baseDeltaPath.isDefined) {
-      if (baseDeltaPath.get != pathToVacuum) {
-        throw DeltaErrors.vacuumBasePathMissingException(baseDeltaPath.get)
-      }
-    }
-    val deltaLog = DeltaLog.forTable(sparkSession, pathToVacuum)
-    if (!deltaLog.tableExists) {
+    val deltaTable = getDeltaTable(child, "VACUUM")
+    // The VACUUM command is only supported on existing delta tables. If the target table doesn't
+    // exist or it is based on a partition directory, an exception will be thrown.
+    if (!deltaTable.tableExists || deltaTable.hasPartitionFilters) {
       throw DeltaErrors.notADeltaTableException(
         "VACUUM",
-        DeltaTableIdentifier(path = Some(pathToVacuum.toString)))
+        DeltaTableIdentifier(path = Some(deltaTable.path.toString)))
     }
-    VacuumCommand.gc(sparkSession, deltaLog, dryRun, horizonHours).collect()
+    VacuumCommand.gc(sparkSession, deltaTable.deltaLog, dryRun, horizonHours).collect()
+  }
+}
+
+object VacuumTableCommand {
+  def apply(
+      path: Option[String],
+      table: Option[TableIdentifier],
+      horizonHours: Option[Double],
+      dryRun: Boolean): VacuumTableCommand = {
+    val child = UnresolvedDeltaPathOrIdentifier(path, table, "VACUUM")
+    VacuumTableCommand(child, horizonHours, dryRun)
   }
 }

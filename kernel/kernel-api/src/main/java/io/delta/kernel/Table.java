@@ -15,26 +15,30 @@
  */
 package io.delta.kernel;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
 
 import io.delta.kernel.internal.TableImpl;
 
 /**
  * Represents the Delta Lake table for a given path.
+ *
+ * @since 3.0.0
  */
-public interface Table
-{
+@Evolving
+public interface Table {
     /**
      * Instantiate a table object for the Delta Lake table at the given path.
      *
-     * @param path location where the Delta table is present. Path needs to be fully qualified.
+     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
+     * @param path        location where the Delta table is present. Path is resolved to fully
+     *                    qualified path using the given {@code tableClient}.
      * @return an instance of {@link Table} representing the Delta table at given path
      * @throws TableNotFoundException when there is no Delta table at the given path.
      */
-    static Table forPath(String path)
-        throws TableNotFoundException
-    {
-        return TableImpl.forPath(path);
+    static Table forPath(TableClient tableClient, String path)
+        throws TableNotFoundException {
+        return TableImpl.forPath(tableClient, path);
     }
 
     /**

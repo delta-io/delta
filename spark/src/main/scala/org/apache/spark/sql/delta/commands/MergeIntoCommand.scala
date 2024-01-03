@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.types.{LongType, StructType}
@@ -59,12 +60,14 @@ import org.apache.spark.sql.types.{LongType, StructType}
 case class MergeIntoCommand(
     @transient source: LogicalPlan,
     @transient target: LogicalPlan,
+    @transient catalogTable: Option[CatalogTable],
     @transient targetFileIndex: TahoeFileIndex,
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
-    migratedSchema: Option[StructType]) extends MergeIntoCommandBase
+    migratedSchema: Option[StructType])
+  extends MergeIntoCommandBase
   with InsertOnlyMergeExecutor
   with ClassicMergeExecutor {
 
@@ -77,7 +80,7 @@ case class MergeIntoCommand(
   protected def runMerge(spark: SparkSession): Seq[Row] = {
     recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
       val startTime = System.nanoTime()
-      targetDeltaLog.withNewTransaction { deltaTxn =>
+      targetDeltaLog.withNewTransaction(catalogTable) { deltaTxn =>
         if (hasBeenExecuted(deltaTxn, spark)) {
           sendDriverMetrics(spark, metrics)
           return Seq.empty
@@ -94,9 +97,8 @@ case class MergeIntoCommand(
             isOverwriteMode = false, rearrangeOnly = false)
         }
 
-        // If materialized, prepare the DF reading the materialize source
-        // Otherwise, prepare a regular DF from source plan.
-        val materializeSourceReason = prepareSourceDFAndReturnMaterializeReason(
+        // Materialize the source if needed.
+        prepareMergeSource(
           spark,
           source,
           condition,
@@ -107,7 +109,7 @@ case class MergeIntoCommand(
         val mergeActions = {
           if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
             // This is a single-job execution so there is no WriteChanges.
-            metrics("numSourceRowsInSecondScan").set(-1)
+            performedSecondSourceScan = false
             writeOnlyInserts(
               spark, deltaTxn, filterMatchedRows = true, numSourceRowsMetric = "numSourceRows")
           } else {
@@ -132,14 +134,20 @@ case class MergeIntoCommand(
           deltaTxn,
           mergeActions,
           startTime,
-          materializeSourceReason)
+          getMergeSource.materializeReason)
       }
       spark.sharedState.cacheManager.recacheByPlan(spark, target)
     }
     sendDriverMetrics(spark, metrics)
-    Seq(Row(metrics("numTargetRowsUpdated").value + metrics("numTargetRowsDeleted").value +
-            metrics("numTargetRowsInserted").value, metrics("numTargetRowsUpdated").value,
-            metrics("numTargetRowsDeleted").value, metrics("numTargetRowsInserted").value))
+    val num_affected_rows =
+      metrics("numTargetRowsUpdated").value +
+        metrics("numTargetRowsDeleted").value +
+        metrics("numTargetRowsInserted").value
+    Seq(Row(
+      num_affected_rows,
+      metrics("numTargetRowsUpdated").value,
+      metrics("numTargetRowsDeleted").value,
+      metrics("numTargetRowsInserted").value))
   }
 
   /**

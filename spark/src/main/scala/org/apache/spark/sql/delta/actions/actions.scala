@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{JsonUtils, Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.FileNames
 import com.fasterxml.jackson.annotation._
 import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.core.JsonGenerator
@@ -37,7 +38,7 @@ import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import com.fasterxml.jackson.databind.node.ObjectNode
 
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Column, Encoder, SparkSession}
@@ -100,7 +101,7 @@ object Action {
     JsonUtils.mapper.readValue[SingleAction](json).unwrap
   }
 
-  lazy val logSchema = ExpressionEncoder[SingleAction].schema
+  lazy val logSchema = ExpressionEncoder[SingleAction]().schema
   lazy val addFileSchema = logSchema("add").dataType.asInstanceOf[StructType]
 }
 
@@ -579,6 +580,8 @@ sealed trait FileAction extends Action {
   val partitionValues: Map[String, String]
   @JsonIgnore
   def getFileSize: Long
+  def stats: String
+  def deletionVector: DeletionVectorDescriptor
 
   /** Returns the approx size of the remaining records after excluding the deleted ones. */
   @JsonIgnore
@@ -592,6 +595,71 @@ sealed trait FileAction extends Action {
 
 
   def toPath: Path = new Path(pathAsUri)
+}
+
+case class ParsedStatsFields(
+  numLogicalRecords: Option[Long],
+  tightBounds: Option[Boolean])
+
+/**
+ * Common trait for AddFile and RemoveFile actions providing methods for the computation of
+ * logical, physical and deleted number of records based on the statistics and the Deletion Vector
+ * of the file.
+ */
+trait HasNumRecords {
+  this: FileAction =>
+
+  @JsonIgnore
+  @transient
+  protected lazy val parsedStatsFields: Option[ParsedStatsFields] = Option(stats).collect {
+    case stats if stats.nonEmpty =>
+      val node = new ObjectMapper().readTree(stats)
+      val numLogicalRecords = if (node.has("numRecords")) {
+        Some(node.get("numRecords")).filterNot(_.isNull).map(_.asLong())
+          .map(_ - numDeletedRecords)
+      } else None
+      val tightBounds = if (node.has("tightBounds")) {
+        Some(node.get("tightBounds")).filterNot(_.isNull).map(_.asBoolean())
+      } else None
+
+      ParsedStatsFields(numLogicalRecords, tightBounds)
+  }
+
+  /** Returns the number of logical records, which do not include those marked as deleted. */
+  @JsonIgnore
+  @transient
+  override lazy val numLogicalRecords: Option[Long] = parsedStatsFields.flatMap(_.numLogicalRecords)
+
+  /** Returns the number of records marked as deleted. */
+  @JsonIgnore
+  def numDeletedRecords: Long = deletionVector match {
+    case dv: DeletionVectorDescriptor => dv.cardinality
+    case _ => 0L
+  }
+
+  /** Returns the total number of records, including those marked as deleted. */
+  @JsonIgnore
+  def numPhysicalRecords: Option[Long] = numLogicalRecords.map(_ + numDeletedRecords)
+
+  /** Returns the estimated size of the logical records in the file. */
+  @JsonIgnore
+  override def estLogicalFileSize: Option[Long] =
+    logicalToPhysicalRecordsRatio.map(n => (n * getFileSize).toLong)
+
+  /** Returns the ratio of the logical number of records to the total number of records. */
+  @JsonIgnore
+  def logicalToPhysicalRecordsRatio: Option[Double] = numLogicalRecords.map { numLogicalRecords =>
+    numLogicalRecords.toDouble / (numLogicalRecords + numDeletedRecords)
+  }
+
+  /** Returns the ratio of number of deleted records to the total number of records. */
+  @JsonIgnore
+  def deletedToPhysicalRecordsRatio: Option[Double] = logicalToPhysicalRecordsRatio.map(1.0d - _)
+
+  /** Returns whether the statistics are tight or wide. */
+  @JsonIgnore
+  @transient
+  lazy val tightBounds: Option[Boolean] = parsedStatsFields.flatMap(_.tightBounds)
 }
 
 /**
@@ -608,14 +676,15 @@ case class AddFile(
     size: Long,
     modificationTime: Long,
     override val dataChange: Boolean,
-    stats: String = null,
+    override val stats: String = null,
     override val tags: Map[String, String] = null,
-    deletionVector: DeletionVectorDescriptor = null,
+    override val deletionVector: DeletionVectorDescriptor = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    defaultRowCommitVersion: Option[Long] = None
-) extends FileAction {
+    defaultRowCommitVersion: Option[Long] = None,
+    clusteringProvider: Option[String] = None
+) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 
   override def wrap: SingleAction = SingleAction(add = this)
@@ -628,17 +697,15 @@ case class AddFile(
     ): RemoveFile = {
     var newTags = tags
     // scalastyle:off
-    val removedFile = RemoveFile(
+    RemoveFile(
       path, Some(timestamp), dataChange,
       extendedFileMetadata = Some(true), partitionValues, Some(size), newTags,
       deletionVector = deletionVector,
       baseRowId = baseRowId,
-      defaultRowCommitVersion = defaultRowCommitVersion
+      defaultRowCommitVersion = defaultRowCommitVersion,
+      stats = stats
     )
-    removedFile.numLogicalRecords = numLogicalRecords
-    removedFile.estLogicalFileSize = estLogicalFileSize
     // scalastyle:on
-    removedFile
   }
 
   /**
@@ -663,15 +730,19 @@ case class AddFile(
       case Some(_) => deletionVector.copy(maxRowIndex = None)
       case _ => deletionVector
     }
-    val withUpdatedDV =
+    var addFileWithNewDv =
       this.copy(deletionVector = dvDescriptorWithoutMaxRowIndex, dataChange = dataChange)
-    val addFile = if (updateStats) {
-      withUpdatedDV.withoutTightBoundStats
-    } else {
-      withUpdatedDV
+    if (updateStats) {
+      addFileWithNewDv = addFileWithNewDv.withoutTightBoundStats
     }
-    val removeFile = this.removeWithTimestamp(dataChange = dataChange)
-    (addFile, removeFile)
+    val removeFileWithOldDv = this.removeWithTimestamp(dataChange = dataChange)
+
+    // Sanity check for incremental DV updates.
+    if (addFileWithNewDv.numDeletedRecords < removeFileWithOldDv.numDeletedRecords) {
+      throw DeltaErrors.deletionVectorSizeMismatch()
+    }
+
+    (addFileWithNewDv, removeFileWithOldDv)
   }
 
   /**
@@ -706,6 +777,10 @@ case class AddFile(
     .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MILLISECONDS))
 
 
+  def copyWithTags(newTags: Map[String, String]): AddFile =
+    copy(tags = Option(tags).getOrElse(Map.empty) ++ newTags)
+
+
   def tag(tag: AddFile.Tags.KeyType): Option[String] = getTag(tag.name)
 
   def copyWithTag(tag: AddFile.Tags.KeyType, value: String): AddFile =
@@ -722,10 +797,6 @@ case class AddFile(
   @JsonIgnore
   override def getFileSize: Long = size
 
-  private case class ParsedStatsFields(
-      numLogicalRecords: Option[Long],
-      tightBounds: Option[Boolean])
-
   /**
    * Before serializing make sure deletionVector.maxRowIndex is not defined.
    * This is only a transient property and it is not intended to be stored in the log.
@@ -735,57 +806,6 @@ case class AddFile(
     super.json
   }
 
-  @JsonIgnore
-  @transient
-  private lazy val parsedStatsFields: Option[ParsedStatsFields] = {
-    if (stats == null || stats.isEmpty) {
-      None
-    } else {
-      val node = new ObjectMapper().readTree(stats)
-
-      val numLogicalRecords = if (node.has("numRecords")) {
-        Some(node.get("numRecords")).filterNot(_.isNull).map(_.asLong())
-          .map(_ - numDeletedRecords)
-      } else None
-      val tightBounds = if (node.has("tightBounds")) {
-        Some(node.get("tightBounds")).filterNot(_.isNull).map(_.asBoolean())
-      } else None
-
-      Some(ParsedStatsFields(numLogicalRecords, tightBounds))
-    }
-  }
-
-  @JsonIgnore
-  @transient
-  override lazy val numLogicalRecords: Option[Long] =
-    parsedStatsFields.flatMap(_.numLogicalRecords)
-
-  /** Returns the number of records marked as deleted. */
-  @JsonIgnore
-  def numDeletedRecords: Long = if (deletionVector != null) deletionVector.cardinality else 0L
-
-  /** Returns the total number of records, including those marked as deleted. */
-  @JsonIgnore
-  def numPhysicalRecords: Option[Long] = numLogicalRecords.map(_ + numDeletedRecords)
-
-  @JsonIgnore
-  override def estLogicalFileSize: Option[Long] =
-    logicalToPhysicalRecordsRatio.map(n => (n * size).toLong)
-
-  /** Returns the ratio of the logical number of records to the total number of records. */
-  @JsonIgnore
-  def logicalToPhysicalRecordsRatio: Option[Double] = {
-    numLogicalRecords.map(numLogicalRecords =>
-      numLogicalRecords.toDouble / (numLogicalRecords + numDeletedRecords).toDouble)
-  }
-
-  /** Returns the ratio of number of deleted records to the total number of records. */
-  @JsonIgnore
-  def deletedToPhysicalRecordsRatio: Option[Double] = logicalToPhysicalRecordsRatio.map(1.0d - _)
-
-  @JsonIgnore
-  @transient
-  lazy val tightBounds: Option[Boolean] = parsedStatsFields.flatMap(_.tightBounds)
 }
 
 object AddFile {
@@ -853,23 +873,17 @@ case class RemoveFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     size: Option[Long] = None,
     override val tags: Map[String, String] = null,
-    deletionVector: DeletionVectorDescriptor = null,
+    override val deletionVector: DeletionVectorDescriptor = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    defaultRowCommitVersion: Option[Long] = None
-) extends FileAction {
+    defaultRowCommitVersion: Option[Long] = None,
+    override val stats: String = null
+) extends FileAction with HasNumRecords {
   override def wrap: SingleAction = SingleAction(remove = this)
 
   @JsonIgnore
   val delTimestamp: Long = deletionTimestamp.getOrElse(0L)
-
-  /** The number of records contained inside the removed file. */
-  @JsonIgnore
-  var numLogicalRecords: Option[Long] = None
-
-  @JsonIgnore
-  var estLogicalFileSize: Option[Long] = None
 
   /**
    * Return the unique id of the deletion vector, if present, or `None` if there's no DV.
@@ -879,14 +893,6 @@ case class RemoveFile(
    */
   @JsonIgnore
   def getDeletionVectorUniqueId: Option[String] = Option(deletionVector).map(_.uniqueId)
-
-  /** Returns the number of records marked as deleted. */
-  @JsonIgnore
-  def numDeletedRecords: Long = if (deletionVector != null) deletionVector.cardinality else 0L
-
-  /** Returns the total number of records, including those marked as deleted. */
-  @JsonIgnore
-  def numPhysicalRecords: Option[Long] = numLogicalRecords.map(_ + numDeletedRecords)
 
   /**
    * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.
@@ -918,6 +924,10 @@ case class AddCDCFile(
     size: Long,
     override val tags: Map[String, String] = null) extends FileAction {
   override val dataChange = false
+  @JsonIgnore
+  override val stats: String = null
+  @JsonIgnore
+  override val deletionVector: DeletionVectorDescriptor = null
 
   override def wrap: SingleAction = SingleAction(cdc = this)
 
@@ -1160,6 +1170,61 @@ object CommitInfo {
 
 }
 
+/** A trait to represent actions which can only be part of Checkpoint */
+sealed trait CheckpointOnlyAction extends Action
+
+/**
+ * An [[Action]] containing the information about a sidecar file.
+ *
+ * @param path - sidecar path relative to `_delta_log/_sidecar` directory
+ * @param sizeInBytes - size in bytes for the sidecar file
+ * @param modificationTime - modification time of the sidecar file
+ * @param tags - attributes of the sidecar file, defaults to null (which is semantically same as an
+ *               empty Map). This is kept null to ensure that the field is not present in the
+ *               generated json.
+ */
+case class SidecarFile(
+    path: String,
+    sizeInBytes: Long,
+    modificationTime: Long,
+    tags: Map[String, String] = null)
+  extends Action with CheckpointOnlyAction {
+
+  override def wrap: SingleAction = SingleAction(sidecar = this)
+
+  def toFileStatus(logPath: Path): FileStatus = {
+    val partFilePath = new Path(FileNames.sidecarDirPath(logPath), path)
+    new FileStatus(sizeInBytes, false, 0, 0, modificationTime, partFilePath)
+  }
+}
+
+object SidecarFile {
+  def apply(fileStatus: SerializableFileStatus): SidecarFile = {
+    SidecarFile(fileStatus.getHadoopPath.getName, fileStatus.length, fileStatus.modificationTime)
+  }
+
+  def apply(fileStatus: FileStatus): SidecarFile = {
+    SidecarFile(fileStatus.getPath.getName, fileStatus.getLen, fileStatus.getModificationTime)
+  }
+}
+
+/**
+ * Holds information about the Delta Checkpoint. This action will only be part of checkpoints.
+ *
+ * @param version version of the checkpoint
+ * @param tags    attributes of the checkpoint, defaults to null (which is semantically same as an
+ *                empty Map). This is kept null to ensure that the field is not present in the
+ *                generated json.
+ */
+case class CheckpointMetadata(
+    version: Long,
+    tags: Map[String, String] = null)
+  extends Action with CheckpointOnlyAction {
+
+  override def wrap: SingleAction = SingleAction(checkpointMetadata = this)
+}
+
+
 /** A serialization helper to create a common action envelope. */
 case class SingleAction(
     txn: SetTransaction = null,
@@ -1168,6 +1233,8 @@ case class SingleAction(
     metaData: Metadata = null,
     protocol: Protocol = null,
     cdc: AddCDCFile = null,
+    checkpointMetadata: CheckpointMetadata = null,
+    sidecar: SidecarFile = null,
     domainMetadata: DomainMetadata = null,
     commitInfo: CommitInfo = null) {
 
@@ -1184,6 +1251,10 @@ case class SingleAction(
       protocol
     } else if (cdc != null) {
       cdc
+    } else if (sidecar != null) {
+      sidecar
+    } else if (checkpointMetadata != null) {
+      checkpointMetadata
     } else if (domainMetadata != null) {
       domainMetadata
     } else if (commitInfo != null) {

@@ -23,15 +23,17 @@ import java.util.{Date, Locale}
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaDataSource
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
-import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, TableFunctionRegistry, UnresolvedTableValuedFunction}
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, Literal}
-import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan}
+import org.apache.spark.sql.catalyst.FunctionIdentifier
+import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedLeafNode, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, StringLiteral}
+import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, UnaryNode}
+import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, TimestampType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -39,11 +41,8 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * Resolve Delta specific table-value functions.
  */
 object DeltaTableValueFunctions {
-
   val CDC_NAME_BASED = "table_changes"
-
   val CDC_PATH_BASED = "table_changes_by_path"
-
   val supportedFnNames = Seq(CDC_NAME_BASED, CDC_PATH_BASED)
 
   // For use with SparkSessionExtensions
@@ -63,36 +62,53 @@ object DeltaTableValueFunctions {
     val ident = FunctionIdentifier(fnName)
     (ident, info, builder)
   }
+}
 
-  /**
-   * Resolution for CDC read table valued functions. Currently we support two apis.
-   *      1. table_changes for CDC reads on metastore tables.
-   *      2. table_changes_by_path for CDC reads on path based tables.
-   */
-  private[delta] def resolveChangesTableValueFunctions(
-    session: SparkSession, fnName: String, args: Seq[Expression]): LogicalPlan = {
+///////////////////////////////////////////////////////////////////////////
+//                     Logical plans for Delta TVFs                      //
+///////////////////////////////////////////////////////////////////////////
 
-    if (args.size < 2) {
-      throw new DeltaAnalysisException(
-        errorClass = "INCORRECT_NUMBER_OF_ARGUMENTS",
-        messageParameters = Array(
-          "not enough args", // failure
-          fnName, // functionName
-          "2", // minArgs
-          "3")) // maxArgs
-    }
-    if (args.size > 3) {
-      throw new DeltaAnalysisException(
-        errorClass = "INCORRECT_NUMBER_OF_ARGUMENTS",
-        messageParameters = Array(
-          "too many args", // failure
-          fnName, // functionName
-          "2", // minArgs
-          "3")) // maxArgs
-    }
+/**
+ * Represents an unresolved Delta Table Value Function
+ */
+trait DeltaTableValueFunction extends UnresolvedLeafNode {
+  def fnName: String
+  val functionArgs: Seq[Expression]
+}
 
-    val tableNameExpr = args.head
+/**
+ * Base trait for analyzing `table_changes` and `table_changes_for_path`. The resolution works as
+ * follows:
+ *  1. The TVF logical plan is resolved using the TableFunctionRegistry in the Analyzer. This uses
+ *     reflection to create one of `CDCNameBased` or `CDCPathBased` by passing all the arguments.
+ *  2. DeltaAnalysis turns the plans to a `TableChanges` node to resolve the DeltaTable. This can
+ *     be resolved by the DeltaCatalog for tables or DeltaAnalysis for the path based use.
+ *  3. TableChanges then turns into a LogicalRelation that returns the CDC relation.
+ */
+trait CDCStatementBase extends DeltaTableValueFunction {
+  /** Get the table that the function is being called on as an unresolved relation */
+  protected def getTable(spark: SparkSession, name: Expression): LogicalPlan
 
+  if (functionArgs.size < 2) {
+    throw new DeltaAnalysisException(
+      errorClass = "INCORRECT_NUMBER_OF_ARGUMENTS",
+      messageParameters = Array(
+        "not enough args", // failure
+        fnName,
+        "2", // minArgs
+        "3")) // maxArgs
+  }
+  if (functionArgs.size > 3) {
+    throw new DeltaAnalysisException(
+      errorClass = "INCORRECT_NUMBER_OF_ARGUMENTS",
+      messageParameters = Array(
+        "too many args", // failure
+        fnName,
+        "2", // minArgs
+        "3")) // maxArgs
+  }
+
+  protected def getOptions: CaseInsensitiveStringMap = {
     def toDeltaOption(keyPrefix: String, value: Expression): (String, String) = {
       value.dataType match {
         // We dont need to explicitly handle ShortType as it is parsed as IntegerType.
@@ -110,81 +126,72 @@ object DeltaTableValueFunctions {
       }
     }
 
-    val startingOption = toDeltaOption("starting", args(1))
-    val endingOption = args.drop(2).headOption.map(toDeltaOption("ending", _))
+    val startingOption = toDeltaOption("starting", functionArgs(1))
+    val endingOption = functionArgs.drop(2).headOption.map(toDeltaOption("ending", _))
     val options = Map(DeltaDataSource.CDC_ENABLED_KEY -> "true", startingOption) ++ endingOption
-
-    val table = if (fnName.toLowerCase(Locale.ROOT) == CDC_NAME_BASED) {
-      val tableId: TableIdentifier = tableNameExpr match {
-        case l: Literal if l.dataType == StringType =>
-          session.sessionState.sqlParser.parseTableIdentifier(tableNameExpr.eval().toString)
-        case _ =>
-          throw DeltaErrors.unsupportedExpression(
-            "table name", tableNameExpr.dataType, Seq("Literal of type StringType"))
-      }
-      val catalogTable = session.sessionState.catalog.getTableMetadata(tableId)
-      DeltaTableV2(
-        session,
-        path = new Path(catalogTable.location),
-        catalogTable = Some(catalogTable),
-        tableIdentifier = Some(tableId.unquotedString),
-        timeTravelOpt = None,
-        options = Map.empty,
-        cdcOptions = new CaseInsensitiveStringMap(options.asJava))
-    } else if (fnName.toLowerCase(Locale.ROOT) == CDC_PATH_BASED) {
-      val path = tableNameExpr match {
-        case _: Literal  if tableNameExpr.dataType == StringType =>
-          tableNameExpr.eval().toString
-        case _ =>
-          throw DeltaErrors.unsupportedExpression(
-            "table path", tableNameExpr.dataType, Seq("StringType"))
-      }
-      DeltaTableV2(
-        session,
-        path = new Path(path),
-        catalogTable = None,
-        tableIdentifier = None,
-        timeTravelOpt = None,
-        options = Map.empty,
-        cdcOptions = new CaseInsensitiveStringMap(options.asJava))
-    } else {
-      throw DeltaErrors.invalidTableValueFunction(fnName)
-    }
-        val relation = table.toBaseRelation
-        LogicalRelation(
-          relation,
-          relation.schema.toAttributes,
-          // time traveled relations shouldn't pass catalog stats as stats may be incorrect
-          table.catalogTable.map(_.copy(stats = None)),
-          isStreaming = false)
+    new CaseInsensitiveStringMap(options.asJava)
   }
 
-}
+  protected def getStringLiteral(e: Expression, whatFor: String): String = e match {
+    case StringLiteral(value) => value
+    case o =>
+      throw DeltaErrors.unsupportedExpression(whatFor, o.dataType, Seq("StringType literal"))
+  }
 
-///////////////////////////////////////////////////////////////////////////
-//                     Logical plans for Delta TVFs                      //
-///////////////////////////////////////////////////////////////////////////
-
-/**
- * Represents an unresolved Delta Table Value Function
- *
- * @param fnName  can be one of [[DeltaTableValueFunctions.supportedFnNames]].
- */
-abstract class DeltaTableValueFunction(val fnName: String) extends LeafNode {
-  override def output: Seq[Attribute] = Nil
-  override lazy val resolved = false
-
-  val functionArgs: Seq[Expression]
+  def toTableChanges(spark: SparkSession): TableChanges =
+    TableChanges(getTable(spark, functionArgs.head), fnName)
 }
 
 /**
  * Plan for the "table_changes" function
  */
 case class CDCNameBased(override val functionArgs: Seq[Expression])
-  extends DeltaTableValueFunction(DeltaTableValueFunctions.CDC_NAME_BASED)
+  extends CDCStatementBase {
+  override def fnName: String = DeltaTableValueFunctions.CDC_NAME_BASED
+  // Provide a constructor to get a better error message, when no expressions are provided
+  def this() = this(Nil)
+
+  override protected def getTable(spark: SparkSession, name: Expression): LogicalPlan = {
+    val stringId = getStringLiteral(name, "table name")
+    val identifier = spark.sessionState.sqlParser.parseMultipartIdentifier(stringId)
+    UnresolvedRelation(identifier, getOptions, isStreaming = false)
+  }
+}
 
 /**
  * Plan for the "table_changes_by_path" function
  */
 case class CDCPathBased(override val functionArgs: Seq[Expression])
-  extends DeltaTableValueFunction(DeltaTableValueFunctions.CDC_PATH_BASED)
+  extends CDCStatementBase {
+  override def fnName: String = DeltaTableValueFunctions.CDC_PATH_BASED
+  // Provide a constructor to get a better error message, when no expressions are provided
+  def this() = this(Nil)
+
+  override protected def getTable(spark: SparkSession, name: Expression): LogicalPlan = {
+    UnresolvedPathBasedDeltaTableRelation(getStringLiteral(name, "table path"), getOptions)
+  }
+}
+
+case class TableChanges(
+    child: LogicalPlan,
+    fnName: String,
+    cdcAttr: Seq[Attribute] = CDCReader.cdcAttributes) extends UnaryNode {
+
+  override lazy val resolved: Boolean = false
+  override def withNewChildInternal(newChild: LogicalPlan): LogicalPlan =
+    this.copy(child = newChild)
+
+  override def output: Seq[Attribute] = Nil
+
+  /** Converts the table changes plan to a query over a Delta table */
+  def toReadQuery: LogicalPlan = child.transformUp {
+    case DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
+      // withOptions empties the catalog table stats
+      d.withOptions(options.asScala.toMap).toLogicalRelation
+    case r: NamedRelation =>
+      throw DeltaErrors.notADeltaTableException(fnName, r.name)
+    case l: LogicalRelation =>
+      val relationName = l.catalogTable.map(_.identifier.toString).getOrElse("relation")
+      throw DeltaErrors.notADeltaTableException(fnName, relationName)
+  }
+}

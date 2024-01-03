@@ -176,19 +176,14 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
   private def collectActions(
       startVersion: Long,
       endVersion: Long
-  )(matcher: Action => Boolean): Seq[(Long, Action)] = {
-    val metadataActions = mutable.ArrayBuffer[(Long, Action)]()
+  ): ClosableIterator[(Long, Action)] = {
     deltaLog.getChangeLogFiles(startVersion, options.failOnDataLoss).takeWhile {
       case (version, _) => version <= endVersion
-    }.foreach { case (version, fileStatus) =>
-      val fileIterator = DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)
-      fileIterator.processAndClose { actionsIter =>
-        actionsIter
-          .collectFirst { case a if matcher(a) => a }
-          .foreach { m => metadataActions.append((version, m)) }
-      }
+    }.flatMapWithClose { case (version, fileStatus) =>
+      DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)
+        .map((version, _))
+        .toClosable
     }
-    metadataActions.toSeq
   }
 
   /**
@@ -205,12 +200,9 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
    * mark the metadata and protocol safe to read for all data files between startVersion and
    * endVersion.
    */
-  private def resolveValidMetadataOfConstructedBatchForInitialization(
+  private def validateAndResolveMetadataForLogInitialization(
       startVersion: Long, endVersion: Long): (Metadata, Protocol) = {
-    assert(readyToInitializeMetadataTrackingEagerly)
-    val metadataChanges =
-      collectActions(startVersion, endVersion)(_.isInstanceOf[Metadata]).map(_._2)
-        .map(_.asInstanceOf[Metadata])
+    val metadataChanges = collectMetadataActions(startVersion, endVersion).map(_._2)
     val startSnapshot = getSnapshotFromDeltaLog(startVersion)
     val startMetadata = startSnapshot.metadata
 
@@ -236,9 +228,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
 
     // Check protocol changes and use the most supportive protocol
     val startProtocol = startSnapshot.protocol
-    val protocolChanges =
-      collectActions(startVersion, endVersion)(_.isInstanceOf[Protocol])
-        .map(_._2.asInstanceOf[Protocol])
+    val protocolChanges = collectProtocolActions(startVersion, endVersion).map(_._2)
 
     var mostSupportiveProtocol = startProtocol
     protocolChanges.foreach { p =>
@@ -259,16 +249,42 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
    * Collect a metadata action at the commit version if possible.
    */
   private def collectMetadataAtVersion(version: Long): Option[Metadata] = {
-    collectActions(version, version)(_.isInstanceOf[Metadata])
-      .headOption.map(_._2.asInstanceOf[Metadata])
+    collectActions(version, version).processAndClose { iter =>
+      iter.map(_._2).collectFirst {
+        case a: Metadata => a
+      }
+    }
+  }
+
+  protected def collectMetadataActions(
+      startVersion: Long,
+      endVersion: Long): Seq[(Long, Metadata)] = {
+    collectActions(startVersion, endVersion).processAndClose { iter =>
+      iter.collect {
+        case (version, a: Metadata) => (version, a)
+      }.toSeq
+    }
   }
 
   /**
    * Collect a protocol action at the commit version if possible.
    */
   private def collectProtocolAtVersion(version: Long): Option[Protocol] = {
-    collectActions(version, version)(_.isInstanceOf[Protocol])
-      .headOption.map(_._2.asInstanceOf[Protocol])
+    collectActions(version, version).processAndClose { iter =>
+      iter.map(_._2).collectFirst {
+        case a: Protocol => a
+      }
+    }
+  }
+
+  protected def collectProtocolActions(
+      startVersion: Long,
+      endVersion: Long): Seq[(Long, Protocol)] = {
+    collectActions(startVersion, endVersion).processAndClose { iter =>
+      iter.collect {
+        case (version, a: Protocol) => (version, a)
+      }.toSeq
+    }
   }
 
 
@@ -302,24 +318,27 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
 
   /**
    * Initialize the schema tracking log if an empty schema tracking log is provided.
+   * This method also checks the range between batchStartVersion and batchEndVersion to ensure we
+   * a safe schema to be initialized in the log.
    * @param batchStartVersion Start version of the batch of data to be proceed, it should typically
    *                          be the schema that is safe to process incoming data.
    * @param batchEndVersionOpt Optionally, if we are looking at a constructed batch with existing
    *                           end offset, we need to double verify to ensure no read-incompatible
    *                           within the batch range.
-   * @param alwaysFail Whether we should always fail with the schema evolution exception.
+   * @param alwaysFailUponLogInitialized Whether we should always fail with the schema evolution
+   *                                     exception.
    */
   protected def initializeMetadataTrackingAndExitStream(
       batchStartVersion: Long,
       batchEndVersionOpt: Option[Long] = None,
-      alwaysFail: Boolean = false): Unit = {
+      alwaysFailUponLogInitialized: Boolean = false): Unit = {
     // If possible, initialize the metadata log with the desired start metadata instead of failing.
     // If a `batchEndVersion` is provided, we also need to verify if there are no incompatible
     // schema changes in a constructed batch, if so, we cannot find a proper schema to init the
     // schema log.
     val (version, metadata, protocol) = batchEndVersionOpt.map { endVersion =>
       val (validMetadata, validProtocol) =
-        resolveValidMetadataOfConstructedBatchForInitialization(batchStartVersion, endVersion)
+        validateAndResolveMetadataForLogInitialization(batchStartVersion, endVersion)
       // `endVersion` should be valid for initialization
       (endVersion, validMetadata, validProtocol)
     }.getOrElse {
@@ -331,7 +350,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
     // Always initialize the metadata log
     metadataTrackingLog.get.writeNewMetadata(newMetadata)
     if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
-        Some(metadata), Some(protocol), version) || alwaysFail) {
+        Some(metadata), Some(protocol), version) || alwaysFailUponLogInitialized) {
       // But trigger evolution exception when there's a difference
       throw DeltaErrors.streamingMetadataEvolutionException(
         newMetadata.dataSchema,
@@ -347,11 +366,11 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
    * It's ok to fail during commit() because in streaming's semantics, the batch with offset ending
    * at `end` should've already being processed completely.
    */
-  protected def updateSchemaTrackingLogAndFailTheStreamIfNeeded(end: Offset): Unit = {
+  protected def updateMetadataTrackingLogAndFailTheStreamIfNeeded(end: Offset): Unit = {
     val offset = DeltaSourceOffset(tableId, end)
     if (trackingMetadataChange &&
-        (offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX ||
-          offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX)) {
+      (offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX ||
+        offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX)) {
       // The offset must point to a metadata or protocol change action
       val changedMetadataOpt = collectMetadataAtVersion(offset.reservoirVersion)
       val changedProtocolOpt = collectProtocolAtVersion(offset.reservoirVersion)
@@ -364,25 +383,45 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
       // second one is committed.
       // If the first one is committed (typically), the stream will fail and restart with the
       // evolved schema, then we should NOT fail/evolve again when we commit the second offset.
-      if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
-          changedMetadataOpt, changedProtocolOpt, offset.reservoirVersion)) {
+      updateMetadataTrackingLogAndFailTheStreamIfNeeded(
+        changedMetadataOpt, changedProtocolOpt, offset.reservoirVersion)
+    }
+  }
 
-        val schemaToPersist = PersistedMetadata(
-          deltaLog.tableId,
-          offset.reservoirVersion,
-          changedMetadataOpt.getOrElse(readSnapshotDescriptor.metadata),
-          changedProtocolOpt.getOrElse(readSnapshotDescriptor.protocol),
-          metadataPath
-        )
-        // Update schema log
+  /**
+   * Write a new potentially changed metadata into the metadata tracking log. Then fail the stream
+   * to allow reanalysis if there are changes.
+   * @param changedMetadataOpt Potentially changed metadata action
+   * @param changedProtocolOpt Potentially changed protocol action
+   * @param version The version of change
+   */
+  protected def updateMetadataTrackingLogAndFailTheStreamIfNeeded(
+      changedMetadataOpt: Option[Metadata],
+      changedProtocolOpt: Option[Protocol],
+      version: Long,
+      replace: Boolean = false): Unit = {
+    if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
+        changedMetadataOpt, changedProtocolOpt, version)) {
+
+      val schemaToPersist = PersistedMetadata(
+        deltaLog.tableId,
+        version,
+        changedMetadataOpt.getOrElse(readSnapshotDescriptor.metadata),
+        changedProtocolOpt.getOrElse(readSnapshotDescriptor.protocol),
+        metadataPath
+      )
+      // Update schema log
+      if (replace) {
+        metadataTrackingLog.get.writeNewMetadata(schemaToPersist, replaceCurrent = true)
+      } else {
         metadataTrackingLog.get.writeNewMetadata(schemaToPersist)
-        // Fail the stream with schema evolution exception
-        throw DeltaErrors.streamingMetadataEvolutionException(
-          schemaToPersist.dataSchema,
-          schemaToPersist.tableConfigurations.get,
-          schemaToPersist.protocol.get
-        )
       }
+      // Fail the stream with schema evolution exception
+      throw DeltaErrors.streamingMetadataEvolutionException(
+        schemaToPersist.dataSchema,
+        schemaToPersist.tableConfigurations.get,
+        schemaToPersist.protocol.get
+      )
     }
   }
 }
@@ -417,6 +456,12 @@ object DeltaSourceMetadataEvolutionSupport {
     }
   }
 
+  def getCheckpointHash(path: String): Int = path.hashCode
+
+  final val SQL_CONF_UNBLOCK_ALL = "allowSourceColumnRenameAndDrop"
+  final val SQL_CONF_UNBLOCK_RENAME = "allowSourceColumnRename"
+  final val SQL_CONF_UNBLOCK_DROP = "allowSourceColumnDrop"
+
   // scalastyle:off
   /**
    * Given a non-additive operation type from a previous schema evolution, check we can process
@@ -446,10 +491,7 @@ object DeltaSourceMetadataEvolutionSupport {
       currentSchema: PersistedMetadata,
       previousSchema: PersistedMetadata): Unit = {
     val sqlConfPrefix = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming"
-    val checkpointHash = metadataPath.hashCode
-    val allowAll = "allowSourceColumnRenameAndDrop"
-    val allowRename = "allowSourceColumnRename"
-    val allowDrop = "allowSourceColumnDrop"
+    val checkpointHash = getCheckpointHash(metadataPath)
 
     def getConf(key: String): Option[String] =
       Option(spark.sessionState.conf.getConfString(key, null))
@@ -463,45 +505,54 @@ object DeltaSourceMetadataEvolutionSupport {
         (s"$sqlConfPrefix.$allowSchemaChange.ckpt_$checkpointHash", schemaChangeVersion.toString)
       )
 
-    val schemaChangeVersion = currentSchema.deltaCommitVersion
+    // The start version of a possible series of consecutive schema changes.
+    val previousSchemaChangeVersion = previousSchema.deltaCommitVersion
+    // The end version of a possible series of consecutive schema changes.
+    val currentSchemaChangeVersion = currentSchema.deltaCommitVersion
     val confPairsToAllowAllSchemaChange =
-      getConfPairsToAllowSchemaChange(allowAll, schemaChangeVersion)
+      getConfPairsToAllowSchemaChange(SQL_CONF_UNBLOCK_ALL, currentSchemaChangeVersion)
 
     determineNonAdditiveSchemaChangeType(
       currentSchema.dataSchema, previousSchema.dataSchema).foreach {
       case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP =>
         val validConfKeysValuePair =
-          getConfPairsToAllowSchemaChange(allowDrop, schemaChangeVersion) ++
+          getConfPairsToAllowSchemaChange(SQL_CONF_UNBLOCK_DROP, currentSchemaChangeVersion) ++
             confPairsToAllowAllSchemaChange
         if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
           // Throw error to prompt user to set the correct confs
           throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
             NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP,
-            schemaChangeVersion,
+            previousSchemaChangeVersion,
+            currentSchemaChangeVersion,
             checkpointHash,
-            allowAll, allowDrop)
+            SQL_CONF_UNBLOCK_ALL,
+            SQL_CONF_UNBLOCK_DROP)
         }
       case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME =>
         val validConfKeysValuePair =
-          getConfPairsToAllowSchemaChange(allowRename, schemaChangeVersion) ++
+          getConfPairsToAllowSchemaChange(SQL_CONF_UNBLOCK_RENAME, currentSchemaChangeVersion) ++
             confPairsToAllowAllSchemaChange
         if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
           // Throw error to prompt user to set the correct confs
           throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
             NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME,
-            schemaChangeVersion,
+            previousSchemaChangeVersion,
+            currentSchemaChangeVersion,
             checkpointHash,
-            allowAll, allowRename)
+            SQL_CONF_UNBLOCK_ALL,
+            SQL_CONF_UNBLOCK_RENAME)
         }
       case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP =>
         val validConfKeysValuePair = confPairsToAllowAllSchemaChange
         if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
           // Throw error to prompt user to set the correct confs
           throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
-            NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP,
-            schemaChangeVersion,
+            NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP,
+            previousSchemaChangeVersion,
+            currentSchemaChangeVersion,
             checkpointHash,
-            allowAll, allowAll)
+            SQL_CONF_UNBLOCK_ALL,
+            SQL_CONF_UNBLOCK_ALL)
         }
     }
   }

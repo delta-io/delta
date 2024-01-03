@@ -30,7 +30,8 @@ import org.apache.spark.util.Utils
 
 trait OptimisticTransactionSuiteBase
   extends QueryTest
-    with SharedSparkSession    with DeletionVectorsTestUtils {
+    with SharedSparkSession
+    with DeletionVectorsTestUtils {
 
 
   /**

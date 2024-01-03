@@ -15,15 +15,18 @@
  */
 package io.delta.kernel.types;
 
+import io.delta.kernel.annotation.Evolving;
+
 /**
  * The data type representing {@code double} type values.
+ *
+ * @since 3.0.0
  */
-public class DoubleType extends BasePrimitiveType
-{
-    public static final DoubleType INSTANCE = new DoubleType();
+@Evolving
+public class DoubleType extends BasePrimitiveType {
+    public static final DoubleType DOUBLE = new DoubleType();
 
-    private DoubleType()
-    {
+    private DoubleType() {
         super("double");
     }
 }

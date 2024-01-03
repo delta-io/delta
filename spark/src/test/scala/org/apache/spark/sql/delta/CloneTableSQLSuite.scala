@@ -21,6 +21,7 @@ import scala.collection.immutable.NumericRange
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, Row}
@@ -38,7 +39,6 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
       target: String,
       sourceIsTable: Boolean = false,
       targetIsTable: Boolean = false,
-      sourceFormat: String = "delta",
       targetLocation: Option[String] = None,
       versionAsOf: Option[Long] = None,
       timestampAsOf: Option[String] = None,
@@ -47,10 +47,15 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
       tableProperties: Map[String, String] = Map.empty): Unit = {
     val commandSql = CloneTableSQLTestUtils.buildCloneSqlString(
       source, target,
-      sourceIsTable, targetIsTable,
-      sourceFormat, targetLocation,
-      versionAsOf, timestampAsOf,
-      isCreate, isReplace, tableProperties)
+      sourceIsTable,
+      targetIsTable,
+      "delta",
+      targetLocation,
+      versionAsOf,
+      timestampAsOf,
+      isCreate,
+      isReplace,
+      tableProperties)
     sql(commandSql)
   }
   // scalastyle:on argcount
@@ -447,13 +452,33 @@ class CloneTableScalaDeletionVectorSuite
     }
   }
 
+  private def tagAllFilesWithUniqueId(deltaLog: DeltaLog, tagName: String): Unit = {
+    deltaLog.withNewTransaction { txn =>
+      val allFiles = txn.snapshot.allFiles.collect()
+      val allFilesWithTags = allFiles.map { addFile =>
+        addFile.copyWithTags(Map(tagName -> java.util.UUID.randomUUID().toString))
+      }
+      txn.commit(allFilesWithTags, DeltaOperations.ManualUpdate)
+    }
+    // Double check that the result is as expected.
+    val snapshotWithTags = deltaLog.update()
+    val filesWithTags = snapshotWithTags.allFiles.collect()
+    assert(filesWithTags.forall(_.tags.get(tagName).isDefined))
+    assert(filesWithTags.map(_.tags(tagName)).toSet.size === filesWithTags.size)
+  }
+
   private def runAndValidateCloneWithDVs(
     source: String,
     target: String,
     expectedNumFilesWithDVs: Int,
     isReplaceOperation: Boolean = false): Unit = {
     val sourceDeltaLog = DeltaLog.forTable(spark, source)
-    val targetDeltaLog = DeltaLog.forTable(spark, source)
+    // Add a unique tag to each file, so we can use this later to match up pre-/post-clone entries
+    // without having to resolve all the possible combinations of relative vs. absolute paths.
+    val uniqueIdTag = "unique-file-id"
+    tagAllFilesWithUniqueId(sourceDeltaLog, uniqueIdTag)
+
+    val targetDeltaLog = DeltaLog.forTable(spark, target)
     val filesWithDVsInSource = getFilesWithDeletionVectors(sourceDeltaLog)
     assert(filesWithDVsInSource.size === expectedNumFilesWithDVs)
     val numberOfUniqueDVFilesInSource = filesWithDVsInSource
@@ -473,14 +498,14 @@ class CloneTableScalaDeletionVectorSuite
     // Make sure we didn't accidentally copy some file multiple times.
     assert(numberOfUniqueDVFilesInSource === numberOfUniqueDVFilesInTarget)
     // Check contents of the copied DV files.
-    val filesWithDVsInTargetByPath = filesWithDVsInTarget
-      .map(addFile => addFile.path -> addFile)
+    val filesWithDVsInTargetByUniqueId = filesWithDVsInTarget
+      .map(addFile => addFile.tags(uniqueIdTag) -> addFile)
       .toMap
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConf()
     // scalastyle:on deltahadoopconfiguration
     for (sourceFile <- filesWithDVsInSource) {
-      val targetFile = filesWithDVsInTargetByPath(sourceFile.path)
+      val targetFile = filesWithDVsInTargetByUniqueId(sourceFile.tags(uniqueIdTag))
       if (sourceFile.deletionVector.isInline) {
         assert(targetFile.deletionVector.isInline)
         assert(sourceFile.deletionVector.inlineData === targetFile.deletionVector.inlineData)

@@ -97,7 +97,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
 
       DeltaLog.clearCache()
       deltaLog = DeltaLog.forTable(spark, path)
-      val checkpointParts = deltaLog.snapshot.logSegment.checkpointProvider.files.size
+      val checkpointParts = deltaLog.snapshot.logSegment.checkpointProvider.topLevelFiles.size
       val multipart = partToCorrupt.map((_, checkpointParts))
 
       // We have different code paths for empty and non-empty checkpoints
@@ -126,7 +126,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
 
       DeltaLog.clearCache()
       deltaLog = DeltaLog.forTable(spark, path)
-      val checkpointParts = deltaLog.snapshot.logSegment.checkpointProvider.files.size
+      val checkpointParts = deltaLog.snapshot.logSegment.checkpointProvider.topLevelFiles.size
       val multipart = partToCorrupt.map((_, checkpointParts))
 
       // We have different code paths for empty and non-empty checkpoints
@@ -152,7 +152,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       DeltaLog.clearCache()
 
       val deltaLog = DeltaLog.forTable(spark, path)
-      val checkpointParts = deltaLog.snapshot.logSegment.checkpointProvider.files.size
+      val checkpointParts = deltaLog.snapshot.logSegment.checkpointProvider.topLevelFiles.size
       val multipart = partToCorrupt.map((_, checkpointParts))
 
       DeltaLog.clearCache()
@@ -179,8 +179,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
           // - fail to get an alternative LogSegment
           // - cannot find log file 0 so throw the above checkpoint 1 read failure
           // Guava cache wraps the root cause
-          assert(e.isInstanceOf[ExecutionException] &&
-            e.getCause.isInstanceOf[SparkException] &&
+          assert(e.isInstanceOf[SparkException] &&
             e.getMessage.contains("0001.checkpoint") &&
             e.getMessage.contains(".parquet is not a Parquet file"))
         }
@@ -200,7 +199,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       deltaLog.checkpoint()
       DeltaLog.clearCache()
       val checkpointParts0 =
-        DeltaLog.forTable(spark, path).snapshot.logSegment.checkpointProvider.files.size
+        DeltaLog.forTable(spark, path).snapshot.logSegment.checkpointProvider.topLevelFiles.size
 
       spark.range(10).write.format("delta").mode("append").save(path)
       deltaLog.update()
@@ -209,7 +208,7 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
 
       DeltaLog.clearCache()
       val checkpointParts1 =
-        DeltaLog.forTable(spark, path).snapshot.logSegment.checkpointProvider.files.size
+        DeltaLog.forTable(spark, path).snapshot.logSegment.checkpointProvider.topLevelFiles.size
 
       makeCorruptCheckpointFile(path, checkpointVersion = 0, shouldBeEmpty = false,
         multipart = partToCorrupt.map((_, checkpointParts0)))

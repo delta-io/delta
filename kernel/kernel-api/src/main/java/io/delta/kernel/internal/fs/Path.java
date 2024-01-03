@@ -26,10 +26,11 @@ import java.util.regex.Pattern;
 /**
  * Names a file or directory in a FileSystem.
  * Path strings use slash as the directory separator.
- *
- * Taken from https://github.com/apache/hadoop/blob/branch-3.3.4/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Path.java
- * TODO: remove unused parts
+ * <p>
+ * Taken from https://github.com/apache/hadoop/blob/branch-3.3
+ * .4/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Path.java
  */
+// TODO remove this class
 public class Path
     implements Comparable<Path>, Serializable, ObjectInputValidation {
 
@@ -55,12 +56,14 @@ public class Path
         System.getProperty("os.name").startsWith("Windows");
 
     /**
-     *  Pre-compiled regular expressions to detect path formats.
+     * Pre-compiled regular expressions to detect path formats.
      */
     private static final Pattern HAS_DRIVE_LETTER_SPECIFIER =
         Pattern.compile("^/?[a-zA-Z]:");
 
-    /** Pre-compiled regular expressions to detect duplicated slashes. */
+    /**
+     * Pre-compiled regular expressions to detect duplicated slashes.
+     */
     private static final Pattern SLASHES = Pattern.compile("/+");
 
     private static final long serialVersionUID = 0xad00f;
@@ -103,7 +106,7 @@ public class Path
      * Create a new Path based on the child path resolved against the parent path.
      *
      * @param parent the parent path
-     * @param child the child path
+     * @param child  the child path
      */
     public Path(String parent, String child) {
         this(new Path(parent), new Path(child));
@@ -113,7 +116,7 @@ public class Path
      * Create a new Path based on the child path resolved against the parent path.
      *
      * @param parent the parent path
-     * @param child the child path
+     * @param child  the child path
      */
     public Path(Path parent, String child) {
         this(parent, new Path(child));
@@ -123,7 +126,7 @@ public class Path
      * Create a new Path based on the child path resolved against the parent path.
      *
      * @param parent the parent path
-     * @param child the child path
+     * @param child  the child path
      */
     public Path(String parent, Path child) {
         this(new Path(parent), child);
@@ -133,7 +136,7 @@ public class Path
      * Create a new Path based on the child path resolved against the parent path.
      *
      * @param parent the parent path
-     * @param child the child path
+     * @param child  the child path
      */
     public Path(Path parent, Path child) {
         // Add a slash to parent's path so resolution is compatible with URI's
@@ -142,7 +145,7 @@ public class Path
         if (!(parentPath.equals("/") || parentPath.isEmpty())) {
             try {
                 parentUri = new URI(parentUri.getScheme(), parentUri.getAuthority(),
-                    parentUri.getPath()+"/", null, parentUri.getFragment());
+                    parentUri.getPath() + "/", null, parentUri.getFragment());
             } catch (URISyntaxException e) {
                 throw new IllegalArgumentException(e);
             }
@@ -152,13 +155,13 @@ public class Path
             resolved.getPath(), resolved.getFragment());
     }
 
-    private void checkPathArg( String path ) throws IllegalArgumentException {
+    private void checkPathArg(String path) throws IllegalArgumentException {
         // disallow construction of a Path from an empty string
-        if ( path == null ) {
+        if (path == null) {
             throw new IllegalArgumentException(
                 "Can not create a Path from a null string");
         }
-        if( path.length() == 0 ) {
+        if (path.length() == 0) {
             throw new IllegalArgumentException(
                 "Can not create a Path from an empty string");
         }
@@ -171,7 +174,7 @@ public class Path
      * @param pathString the path string
      */
     public Path(String pathString) throws IllegalArgumentException {
-        checkPathArg( pathString );
+        checkPathArg(pathString);
 
         // We can't use 'new URI(String)' directly, since it assumes things are
         // escaped, which we don't require of Paths.
@@ -193,15 +196,15 @@ public class Path
         if ((colon != -1) &&
             ((slash == -1) || (colon < slash))) {     // has a scheme
             scheme = pathString.substring(0, colon);
-            start = colon+1;
+            start = colon + 1;
         }
 
         // parse uri authority, if any
         if (pathString.startsWith("//", start) &&
-            (pathString.length()-start > 2)) {       // has authority
-            int nextSlash = pathString.indexOf('/', start+2);
+            (pathString.length() - start > 2)) {       // has authority
+            int nextSlash = pathString.indexOf('/', start + 2);
             int authEnd = nextSlash > 0 ? nextSlash : pathString.length();
-            authority = pathString.substring(start+2, authEnd);
+            authority = pathString.substring(start + 2, authEnd);
             start = authEnd;
         }
 
@@ -223,12 +226,12 @@ public class Path
     /**
      * Construct a Path from components.
      *
-     * @param scheme the scheme
+     * @param scheme    the scheme
      * @param authority the authority
-     * @param path the path
+     * @param path      the path
      */
     public Path(String scheme, String authority, String path) {
-        checkPathArg( path );
+        checkPathArg(path);
 
         // add a slash in front of paths with Windows drive letters
         if (hasWindowsDrive(path) && path.charAt(0) != '/') {
@@ -279,8 +282,8 @@ public class Path
      * the path separator and remove any trailing path separators.
      *
      * @param scheme the URI scheme. Used to deduce whether we
-     * should replace backslashes or not
-     * @param path the scheme-specific part
+     *               should replace backslashes or not
+     * @param path   the scheme-specific part
      * @return the normalized path string
      */
     private static String normalizePath(String scheme, String path) {
@@ -300,7 +303,7 @@ public class Path
         // trim trailing slash from non-root path (ignoring windows drive)
         int minLength = startPositionWithoutWindowsDrive(path) + 1;
         if (path.length() > minLength && path.endsWith(SEPARATOR)) {
-            path = path.substring(0, path.length()-1);
+            path = path.substring(0, path.length() - 1);
         }
 
         return path;
@@ -312,7 +315,7 @@ public class Path
 
     private static int startPositionWithoutWindowsDrive(String path) {
         if (hasWindowsDrive(path)) {
-            return path.charAt(0) ==  SEPARATOR_CHAR ? 3 : 2;
+            return path.charAt(0) == SEPARATOR_CHAR ? 3 : 2;
         } else {
             return 0;
         }
@@ -323,7 +326,7 @@ public class Path
      * Windows. e.g. "C:/a/b" is an absolute path. "C:a/b" is not.
      *
      * @param pathString the path string to evaluate
-     * @param slashed true if the given path is prefixed with "/"
+     * @param slashed    true if the given path is prefixed with "/"
      * @return true if the supplied path looks like an absolute path with a Windows
      * drive-specifier
      */
@@ -341,7 +344,9 @@ public class Path
      *
      * @return this Path as a URI
      */
-    public URI toUri() { return uri; }
+    public URI toUri() {
+        return uri;
+    }
 
     /**
      * Returns true if the path component (i.e. directory) of this URI is
@@ -352,7 +357,7 @@ public class Path
      * authority parts
      */
     public boolean isAbsoluteAndSchemeAuthorityNull() {
-        return  (isUriPathAbsolute() &&
+        return (isUriPathAbsolute() &&
             uri.getScheme() == null && uri.getAuthority() == null);
     }
 
@@ -394,11 +399,12 @@ public class Path
     public String getName() {
         String path = uri.getPath();
         int slash = path.lastIndexOf(SEPARATOR);
-        return path.substring(slash+1);
+        return path.substring(slash + 1);
     }
 
     /**
      * Returns the parent of a path or null if at root.
+     *
      * @return the parent of a path or null if at root
      */
     public Path getParent() {
@@ -406,14 +412,14 @@ public class Path
         int lastSlash = path.lastIndexOf('/');
         int start = startPositionWithoutWindowsDrive(path);
         if ((path.length() == start) ||               // empty path
-            (lastSlash == start && path.length() == start+1)) { // at root
+            (lastSlash == start && path.length() == start + 1)) { // at root
             return null;
         }
         String parent;
-        if (lastSlash==-1) {
+        if (lastSlash == -1) {
             parent = CUR_DIR;
         } else {
-            parent = path.substring(0, lastSlash==start?start+1:lastSlash);
+            parent = path.substring(0, lastSlash == start ? start + 1 : lastSlash);
         }
         return new Path(uri.getScheme(), uri.getAuthority(), parent);
     }
@@ -425,7 +431,7 @@ public class Path
      * @return a new path with the suffix added
      */
     public Path suffix(String suffix) {
-        return new Path(getParent(), getName()+suffix);
+        return new Path(getParent(), getName() + suffix);
     }
 
     @Override
@@ -443,7 +449,7 @@ public class Path
         }
         if (uri.getPath() != null) {
             String path = uri.getPath();
-            if (path.indexOf('/')==0 &&
+            if (path.indexOf('/') == 0 &&
                 hasWindowsDrive(path) &&                // has windows drive
                 uri.getScheme() == null &&              // but no scheme
                 uri.getAuthority() == null) {             // or authority
@@ -463,7 +469,7 @@ public class Path
         if (!(o instanceof Path)) {
             return false;
         }
-        Path that = (Path)o;
+        Path that = (Path) o;
         return this.uri.equals(that.uri);
     }
 
@@ -479,15 +485,16 @@ public class Path
 
     /**
      * Returns the number of elements in this path.
+     *
      * @return the number of elements in this path
      */
     public int depth() {
         String path = uri.getPath();
         int depth = 0;
-        int slash = path.length()==1 && path.charAt(0)=='/' ? -1 : 0;
+        int slash = path.length() == 1 && path.charAt(0) == '/' ? -1 : 0;
         while (slash != -1) {
             depth++;
-            slash = path.indexOf(SEPARATOR, slash+1);
+            slash = path.indexOf(SEPARATOR, slash + 1);
         }
         return depth;
     }
@@ -496,9 +503,9 @@ public class Path
      * Returns a qualified path object.
      *
      * @param defaultUri if this path is missing the scheme or authority
-     * components, borrow them from this URI
+     *                   components, borrow them from this URI
      * @param workingDir if this path isn't absolute, treat it as relative to this
-     * working directory
+     *                   working directory
      * @return this path if it contains a scheme and authority and is absolute, or
      * a new path that includes a path and authority and is fully qualified
      */
@@ -532,7 +539,7 @@ public class Path
 
         URI newUri = null;
         try {
-            newUri = new URI(scheme, authority ,
+            newUri = new URI(scheme, authority,
                 normalizePath(scheme, pathUri.getPath()), null, fragment);
         } catch (URISyntaxException e) {
             throw new IllegalArgumentException(e);
@@ -543,6 +550,7 @@ public class Path
     /**
      * Validate the contents of a deserialized Path, so as
      * to defend against malicious object streams.
+     *
      * @throws InvalidObjectException if there's no URI
      */
     @Override

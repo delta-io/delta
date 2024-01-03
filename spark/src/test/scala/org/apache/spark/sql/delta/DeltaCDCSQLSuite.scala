@@ -254,16 +254,12 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
       sql(s"SELECT * FROM table_changes(now(), 1, 1)")
     }
     assert(e.getMessage.contains("Unsupported expression type(TimestampType) for table name." +
-      " The supported types are [Literal of type StringType]"))
+      " The supported types are [StringType literal]"))
 
     e = intercept[AnalysisException] {
       sql(s"SELECT * FROM table_changes('invalidtable', 1, 1)")
     }
-    assert(
-      e.getMessage.contains("Table or view 'invalidtable' not found in database 'default'") ||
-      e.getMessage.contains("Table main.default.invalidtable not found") ||
-      e.getMessage.contains("table or view `default`.`invalidtable` cannot be found") ||
-      e.getMessage.contains("table or view `main`.`default`.`invalidtable` cannot be found"))
+    assert(e.getErrorClass === "TABLE_OR_VIEW_NOT_FOUND")
 
     withTable ("tbl") {
       spark.range(1).write.format("delta").saveAsTable("tbl")
@@ -271,7 +267,7 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
         sql(s"SELECT * FROM table_changes(concat('tb', 'l'), 1, 1)")
       }
       assert(e.getMessage.contains("Unsupported expression type(StringType) for table name." +
-        " The supported types are [Literal of type StringType]"))
+        " The supported types are [StringType literal]"))
     }
   }
 
@@ -306,7 +302,6 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
     }
   }
 
-
   test("table_changes and table_changes_by_path with a non-delta table") {
     withTempDir { dir =>
       withTable("tbl") {
@@ -317,14 +312,14 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
         var e = intercept[AnalysisException] {
           spark.sql(s"SELECT * FROM table_changes('tbl', 0, 1)")
         }
-        assert(e.getErrorClass == "DELTA_TABLE_NOT_FOUND")
-        assert(e.getMessage.contains("Delta table `default`.`tbl` doesn't exist"))
+        assert(e.getErrorClass == "DELTA_TABLE_ONLY_OPERATION")
+        assert(e.getMessage.contains("table_changes"))
 
         e = intercept[AnalysisException] {
           spark.sql(s"SELECT * FROM table_changes_by_path('${dir.getAbsolutePath}', 0, 1)")
         }
-        assert(e.getErrorClass == "DELTA_TABLE_NOT_FOUND")
-        assert(e.getMessage.contains(s"Delta table `${dir.getAbsolutePath}` doesn't exist"))
+        assert(e.getErrorClass == "DELTA_MISSING_DELTA_TABLE")
+        assert(e.getMessage.contains("not a Delta table"))
       }
     }
   }

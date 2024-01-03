@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.util
 
+// scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.atomic.AtomicReference
 
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}

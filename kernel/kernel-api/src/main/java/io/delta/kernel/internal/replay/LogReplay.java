@@ -18,94 +18,187 @@ package io.delta.kernel.internal.replay;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.stream.Stream;
 
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.fs.FileStatus;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.FileDataReadResult;
+import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
+import io.delta.kernel.utils.FileStatus;
 
-import io.delta.kernel.internal.actions.Action;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.lang.CloseableIterable;
-import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.Tuple2;
 
-public class LogReplay
-{
+/**
+ * Replays a history of actions, resolving them to produce the current state of the table. The
+ * protocol for resolution is as follows:
+ *  - The most recent {@code AddFile} and accompanying metadata for any `(path, dv id)` tuple wins.
+ *  - {@code RemoveFile} deletes a corresponding AddFile. A {@code RemoveFile} "corresponds" to
+ *    the AddFile that matches both the parquet file URI *and* the deletion vector's URI (if any).
+ *  - The most recent {@code Metadata} wins.
+ *  - The most recent {@code Protocol} version wins.
+ *  - For each `(path, dv id)` tuple, this class should always output only one {@code FileAction}
+ *    (either {@code AddFile} or {@code RemoveFile})
+ *
+ * This class exposes the following public APIs
+ * - {@link #getProtocol()}: latest non-null Protocol
+ * - {@link #getMetadata()}: latest non-null Metadata
+ * - {@link #getAddFilesAsColumnarBatches}: return all active (not tombstoned) AddFiles as
+ *                                          {@link ColumnarBatch}s
+ */
+public class LogReplay {
+
+    /** Read schema when searching for the latest Protocol and Metadata. */
+    public static final StructType PROTOCOL_METADATA_READ_SCHEMA = new StructType()
+        .add("protocol", Protocol.READ_SCHEMA)
+        .add("metaData", Metadata.READ_SCHEMA);
+
+    /** We don't need to read the entire RemoveFile, only the path and dv info */
+    private static StructType REMOVE_FILE_SCHEMA = new StructType()
+        .add("path", StringType.STRING, false /* nullable */)
+        .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */);
+
+    private static StructType getAddSchema(boolean shouldReadStats) {
+        return shouldReadStats ? AddFile.SCHEMA_WITH_STATS :
+            AddFile.SCHEMA_WITHOUT_STATS;
+    }
+
+    /**
+     * Read schema when searching for all the active AddFiles
+     */
+    public static StructType getAddRemoveReadSchema(boolean shouldReadStats) {
+        return new StructType()
+            .add("add", getAddSchema(shouldReadStats))
+            .add("remove", REMOVE_FILE_SCHEMA);
+    }
+
+    public static int ADD_FILE_ORDINAL = 0;
+    public static int ADD_FILE_PATH_ORDINAL = AddFile.SCHEMA_WITHOUT_STATS.indexOf("path");
+    public static int ADD_FILE_DV_ORDINAL = AddFile.SCHEMA_WITHOUT_STATS.indexOf("deletionVector");
+
+    public static int REMOVE_FILE_ORDINAL = 1;
+    public static int REMOVE_FILE_PATH_ORDINAL = REMOVE_FILE_SCHEMA.indexOf("path");
+    public static int REMOVE_FILE_DV_ORDINAL = REMOVE_FILE_SCHEMA.indexOf("deletionVector");
+
     private final Path dataPath;
     private final LogSegment logSegment;
-    private final CloseableIterable<Tuple2<Action, Boolean>> reverseActionsIterable;
-    private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
+    private final TableClient tableClient;
+
+    private final Tuple2<Protocol, Metadata> protocolAndMetadata;
 
     public LogReplay(
-        Path logPath,
-        Path dataPath,
-        TableClient tableHelper,
-        LogSegment logSegment)
-    {
+            Path logPath,
+            Path dataPath,
+            TableClient tableClient,
+            LogSegment logSegment) {
+        assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
+
         this.dataPath = dataPath;
         this.logSegment = logSegment;
-
-        final Stream<FileStatus> allFiles = Stream.concat(
-            logSegment.checkpoints.stream(),
-            logSegment.deltas.stream());
-        assertLogFilesBelongToTable(logPath, allFiles);
-
-        this.reverseActionsIterable = new ReverseFilesToActionsIterable(
-            tableHelper,
-            allFiles);
-        this.protocolAndMetadata = new Lazy<>(this::loadTableProtocolAndMetadata);
+        this.tableClient = tableClient;
+        this.protocolAndMetadata = loadTableProtocolAndMetadata();
     }
 
-    public Lazy<Tuple2<Protocol, Metadata>> lazyLoadProtocolAndMetadata()
-    {
-        return this.protocolAndMetadata;
+    /////////////////
+    // Public APIs //
+    /////////////////
+
+    public Protocol getProtocol() {
+        return this.protocolAndMetadata._1;
     }
 
-    public CloseableIterator<AddFile> getAddFiles()
-    {
-        final CloseableIterator<Tuple2<Action, Boolean>> reverseActionsIter =
-            reverseActionsIterable.iterator();
-        return new ReverseActionsToAddFilesIterator(dataPath, reverseActionsIter);
+    public Metadata getMetadata() {
+        return this.protocolAndMetadata._2;
     }
 
-    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata()
-    {
+    /**
+     * Returns an iterator of {@link FilteredColumnarBatch} representing all the active AddFiles
+     * in the table.
+     * <p>
+     * Statistics are conditionally read for the AddFiles based on {@code shouldReadStats}. The
+     * returned batches have schema:
+     * <ol>
+     *     <li>
+     *         name: {@code add}
+     *         <p>
+     *         type: {@link AddFile#SCHEMA_WITH_STATS} if {@code shouldReadStats=true}, otherwise
+     *         {@link AddFile#SCHEMA_WITHOUT_STATS}
+     *     </li>
+     * </ol>
+     */
+    public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
+           boolean shouldReadStats) {
+        final CloseableIterator<Tuple2<FileDataReadResult, Boolean>> addRemoveIter =
+            new ActionsIterator(
+                tableClient,
+                logSegment.allLogFilesReversed(),
+                getAddRemoveReadSchema(shouldReadStats));
+        return new ActiveAddFilesIterator(tableClient, addRemoveIter, dataPath);
+    }
+
+    ////////////////////
+    // Helper Methods //
+    ////////////////////
+
+    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata() {
         Protocol protocol = null;
         Metadata metadata = null;
 
-        try (CloseableIterator<Tuple2<Action, Boolean>> reverseIter =
-            reverseActionsIterable.iterator()) {
+        try (CloseableIterator<Tuple2<FileDataReadResult, Boolean>> reverseIter =
+                 new ActionsIterator(
+                     tableClient,
+                     logSegment.allLogFilesReversed(),
+                     PROTOCOL_METADATA_READ_SCHEMA)) {
             while (reverseIter.hasNext()) {
-                final Action action = reverseIter.next()._1;
+                final ColumnarBatch columnarBatch = reverseIter.next()._1.getData();
 
-                if (action instanceof Protocol && protocol == null) {
-                    // We only need the latest protocol
-                    protocol = (Protocol) action;
+                assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
 
-                    if (metadata != null) {
-                        // Stop since we have found the latest Protocol and Metadata.
-                        validateSupportedTable(protocol, metadata);
-                        return new Tuple2<>(protocol, metadata);
+                if (protocol == null) {
+                    final ColumnVector protocolVector = columnarBatch.getColumnVector(0);
+
+                    for (int i = 0; i < protocolVector.getSize(); i++) {
+                        if (!protocolVector.isNullAt(i)) {
+                            protocol = Protocol.fromColumnVector(protocolVector, i);
+
+                            if (metadata != null) {
+                                // Stop since we have found the latest Protocol and Metadata.
+                                validateSupportedTable(protocol, metadata);
+                                return new Tuple2<>(protocol, metadata);
+                            }
+
+                            break; // We already found the protocol, exit this for-loop
+                        }
                     }
                 }
-                else if (action instanceof Metadata && metadata == null) {
-                    // We only need the latest Metadata
-                    metadata = (Metadata) action;
+                if (metadata == null) {
+                    final ColumnVector metadataVector = columnarBatch.getColumnVector(1);
 
-                    if (protocol != null) {
-                        // Stop since we have found the latest Protocol and Metadata.
-                        validateSupportedTable(protocol, metadata);
-                        return new Tuple2<>(protocol, metadata);
+                    for (int i = 0; i < metadataVector.getSize(); i++) {
+                        if (!metadataVector.isNullAt(i)) {
+                            metadata = Metadata.fromColumnVector(metadataVector, i, tableClient);
+
+                            if (protocol != null) {
+                                // Stop since we have found the latest Protocol and Metadata.
+                                validateSupportedTable(protocol, metadata);
+                                return new Tuple2<>(protocol, metadata);
+                            }
+
+                            break; // We already found the metadata, exit this for-loop
+                        }
                     }
                 }
             }
-        }
-        catch (IOException ex) {
+        } catch (IOException ex) {
             throw new RuntimeException("Could not close iterator", ex);
         }
 
@@ -120,13 +213,12 @@ public class LogReplay
         );
     }
 
-    private void validateSupportedTable(Protocol protocol, Metadata metadata)
-    {
+    private void validateSupportedTable(Protocol protocol, Metadata metadata) {
         switch (protocol.getMinReaderVersion()) {
             case 1:
                 break;
             case 2:
-                verifySupportedColumnMappingMode(metadata);
+                ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
                 break;
             case 3:
                 List<String> readerFeatures = protocol.getReaderFeatures();
@@ -135,7 +227,7 @@ public class LogReplay
                         case "deletionVectors":
                             break;
                         case "columnMapping":
-                            verifySupportedColumnMappingMode(metadata);
+                            ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
                             break;
                         default:
                             throw new UnsupportedOperationException(
@@ -145,25 +237,22 @@ public class LogReplay
                 break;
             default:
                 throw new UnsupportedOperationException(
-                    "Unsupported protocol version: " + protocol.getMinReaderVersion());
-        }
-    }
-
-    private void verifySupportedColumnMappingMode(Metadata metadata) {
-        // Check if the mode is name. Id mode is not yet supported
-        String cmMode = metadata.getConfiguration().get("delta.columnMapping.mode");
-        if (!"none".equalsIgnoreCase(cmMode) &&
-            !"name".equalsIgnoreCase(cmMode)) {
-            throw new UnsupportedOperationException(
-                "Unsupported column mapping mode: " + cmMode);
+                    "Unsupported reader protocol version: " + protocol.getMinReaderVersion());
         }
     }
 
     /**
      * Verifies that a set of delta or checkpoint files to be read actually belongs to this table.
+     * Visible only for testing.
      */
-    private void assertLogFilesBelongToTable(Path logPath, Stream<FileStatus> allFiles)
-    {
-        // TODO:
+    protected static void assertLogFilesBelongToTable(Path logPath, List<FileStatus> allFiles) {
+        String logPathStr = logPath.toString(); // fully qualified path
+        for (FileStatus fileStatus : allFiles) {
+            String filePath = fileStatus.getPath();
+            if (!filePath.startsWith(logPathStr)) {
+                throw new RuntimeException("File (" + filePath + ") doesn't belong in the " +
+                    "transaction log at " + logPathStr + ".");
+            }
+        }
     }
 }

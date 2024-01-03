@@ -25,36 +25,43 @@ import shutil
 from os import path
 
 iceberg_lib_dir_name = "lib"
-iceberg_src_dir_name = "iceberg_src"
+iceberg_src_dir_name = "iceberg_src" # this is a git dir
 iceberg_patches_dir_name = "iceberg_src_patches"
 
 iceberg_src_commit_hash = "ede085d0f7529f24acd0c81dd0a43f7bb969b763"
-iceberg_src_branch_with_commit_hash = "master"   # only this branch will be downloaded
-iceberg_src_compiled_jar_rel_paths = [ # related to `iceberg_src_dir_name`
-    "bundled-guava/build/libs/iceberg-bundled-guava-1.2.0-SNAPSHOT.jar",
-    "common/build/libs/iceberg-common-1.2.0-SNAPSHOT.jar",
-    "api/build/libs/iceberg-api-1.2.0-SNAPSHOT.jar",
-    "core/build/libs/iceberg-core-1.2.0-SNAPSHOT.jar",
-    "parquet/build/libs/iceberg-parquet-1.2.0-SNAPSHOT.jar",
+iceberg_src_branch = "main"  # only this branch will be downloaded
+
+# Relative to iceberg_src directory.
+# We use * because after applying the patches, a random git hash will be appended to each jar name.
+# This, for all usages below, we must search for these jar files using `glob.glob(pattern)`
+iceberg_src_compiled_jar_rel_glob_patterns = [
+    "bundled-guava/build/libs/iceberg-bundled-guava-*.jar",
+    "common/build/libs/iceberg-common-*.jar",
+    "api/build/libs/iceberg-api-*.jar",
+    "core/build/libs/iceberg-core-*.jar",
+    "parquet/build/libs/iceberg-parquet-*.jar",
+    "hive-metastore/build/libs/iceberg-hive-*.jar",
+    "data/build/libs/iceberg-data-*.jar"
 ]
 
-iceberg_root_dir = path.abspath(path.dirname(__file__))
+iceberg_root_dir = path.abspath(path.dirname(__file__)) # this is NOT a git dir
 iceberg_src_dir = path.join(iceberg_root_dir, iceberg_src_dir_name)
 iceberg_patches_dir = path.join(iceberg_root_dir, iceberg_patches_dir_name)
 iceberg_lib_dir = path.join(iceberg_root_dir, iceberg_lib_dir_name)
 
 
-def compile_jar_rel_path_to_lib_jar_path(jar_rel_path):
-    jar_file_name = path.basename(path.normpath(jar_rel_path))
-    jar_file_name_splits = path.splitext(jar_file_name)
-    new_jar_file_name = "%s_%s%s" % (jar_file_name_splits[0], iceberg_src_commit_hash, jar_file_name_splits[1])
-    return path.join(iceberg_lib_dir, new_jar_file_name)
-
-
 def iceberg_jars_exists():
-    for jar_rel_path in iceberg_src_compiled_jar_rel_paths:
-        if not path.exists(compile_jar_rel_path_to_lib_jar_path(jar_rel_path)):
+    for compiled_jar_rel_glob_pattern in iceberg_src_compiled_jar_rel_glob_patterns:
+        jar_file_name_pattern = path.basename(path.normpath(compiled_jar_rel_glob_pattern))
+        lib_jar_abs_pattern = path.join(iceberg_lib_dir, jar_file_name_pattern)
+        results = glob.glob(lib_jar_abs_pattern)
+
+        if len(results) > 1:
+            raise Exception("More jars than expected: " + str(results))
+        
+        if len(results) == 0:
             return False
+
     return True
 
 
@@ -62,14 +69,17 @@ def prepare_iceberg_source():
     with WorkingDirectory(iceberg_root_dir):
         print(">>> Cloning Iceberg repo")
         shutil.rmtree(iceberg_src_dir_name, ignore_errors=True)
-        run_cmd("git config user.email \"<>\"")
-        run_cmd("git config user.name \"Anonymous\"")
-        run_cmd("git clone --branch %s https://github.com/apache/iceberg.git %s" %
-                (iceberg_src_branch_with_commit_hash, iceberg_src_dir_name))
+
+        # We just want the shallowest, smallest iceberg clone. We will check out the commit later.
+        run_cmd("git clone --depth 1 --branch %s https://github.com/apache/iceberg.git %s" %
+                (iceberg_src_branch, iceberg_src_dir_name))
 
     with WorkingDirectory(iceberg_src_dir):
         run_cmd("git config user.email \"<>\"")
         run_cmd("git config user.name \"Anonymous\"")
+
+        # Fetch just the single commit (shallow)
+        run_cmd("git fetch origin %s --depth 1" % iceberg_src_commit_hash)
         run_cmd("git checkout %s" % iceberg_src_commit_hash)
 
         print(">>> Applying patch files")
@@ -90,17 +100,32 @@ def generate_iceberg_jars():
         build_args = "-x spotlessCheck -x checkstyleMain -x test -x integrationTest"
         run_cmd("./gradlew :iceberg-core:build %s" % build_args)
         run_cmd("./gradlew :iceberg-parquet:build %s" % build_args)
+        run_cmd("./gradlew :iceberg-hive-metastore:build %s" % build_args)
+        run_cmd("./gradlew :iceberg-data:build %s" % build_args)
 
     print(">>> Copying JARs to lib directory")
     shutil.rmtree(iceberg_lib_dir, ignore_errors=True)
     os.mkdir(iceberg_lib_dir)
 
-    for compiled_jar_rel_path in iceberg_src_compiled_jar_rel_paths:
-        compiled_jar_full_path = path.join(iceberg_src_dir, compiled_jar_rel_path)
-        if not path.exists(compiled_jar_full_path):
-            raise Exception("Could not find the jar " + compiled_jar_full_path)
-        lib_jar_full_path = compile_jar_rel_path_to_lib_jar_path(compiled_jar_rel_path)
-        shutil.copyfile(compiled_jar_full_path, lib_jar_full_path)
+    # For each relative pattern p ...
+    for compiled_jar_rel_glob_pattern in iceberg_src_compiled_jar_rel_glob_patterns:
+        # Get the absolute pattern
+        compiled_jar_abs_pattern = path.join(iceberg_src_dir, compiled_jar_rel_glob_pattern)
+        # Search for all glob results
+        results = glob.glob(compiled_jar_abs_pattern)
+        # Compiled jars will include tests, sources, javadocs; exclude them
+        results = list(filter(lambda result: all(x not in result for x in ["tests.jar", "sources.jar", "javadoc.jar"]), results))
+
+        if len(results) == 0:
+            raise Exception("Could not find the jar: " + compled_jar_rel_glob_pattern)
+        if len(results) > 1:
+            raise Exception("More jars created than expected: " + str(results))
+
+        # Copy the one jar result into the <iceberg root>/lib directory
+        compiled_jar_abs_path = results[0]
+        compiled_jar_name = path.basename(path.normpath(compiled_jar_abs_path))
+        lib_jar_abs_path = path.join(iceberg_lib_dir, compiled_jar_name)
+        shutil.copyfile(compiled_jar_abs_path, lib_jar_abs_path)
 
     if not iceberg_jars_exists():
         raise Exception("JAR copying failed")

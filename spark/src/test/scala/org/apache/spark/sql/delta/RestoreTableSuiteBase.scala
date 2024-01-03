@@ -32,7 +32,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 /** Base suite containing the restore tests. */
-trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession  with DeltaSQLCommandTest {
+trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 

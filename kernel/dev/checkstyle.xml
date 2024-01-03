@@ -71,6 +71,10 @@
 
     <module name="NewlineAtEndOfFile"/>
 
+    <module name="RegexpHeader">
+        <property name="headerFile" value="kernel/dev/copyrightHeader"/>
+    </module>
+
     <module name="TreeWalker">
         <!--
         If you wish to turn off checking for a section of code, you can put a comment in the source
@@ -183,6 +187,9 @@
             <property name="arrayInitIndent" value="4"/>
         </module>
 
+        <module name="LeftCurly"/>
+        <module name="RightCurly"/>
+
         <!--
         We use the following import order:
         import java.*
@@ -194,11 +201,16 @@
         <blank line>
         import io.delta.kernel.*
         import io.delta.kernel.internal.*
+        <blank line>
+        import io.delta.kernel.defaults.*
+        import io.delta.kernel.defaults.internal.*
         -->
         <module name="ImportOrder">
             <property name="separated" value="true"/>
             <property name="ordered" value="true"/>
-            <property name="groups" value="java.,javax.,scala,*,io.delta.kernel,io.delta.kernel.internal"/>
+            <property name="groups"
+                      value="java,javax,scala,*,io.delta.kernel,io.delta.kernel.internal,io.delta.kernel.defaults,io.delta.kernel.defaults.internal"/>
+            <property name="option" value="under"/>
         </module>
 
         <!--
@@ -212,6 +224,13 @@
             <property name="checks" value="ImportOrder"/>
             <property name="message" value="^'io.delta.kernel.internal\..*'.*"/>
         </module>
+
+        <!-- io.delta.kernel.defaults and io.delta.kernel.defaults.internal -->
+        <module name="SuppressionXpathSingleFilter">
+            <property name="checks" value="ImportOrder"/>
+            <property name="message" value="^'io.delta.kernel.defaults.internal\..*'.*"/>
+        </module>
+
         <!-- java and javax -->
         <module name="SuppressionXpathSingleFilter">
             <property name="checks" value="ImportOrder"/>

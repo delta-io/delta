@@ -86,17 +86,18 @@ statement
       constraint                                                        #addTableConstraint
     | ALTER TABLE table=qualifiedName
         DROP CONSTRAINT (IF EXISTS)? name=identifier                    #dropTableConstraint
+    | ALTER TABLE table=qualifiedName
+        DROP FEATURE featureName=featureNameValue (TRUNCATE HISTORY)?   #alterTableDropFeature
     | OPTIMIZE (path=STRING | table=qualifiedName)
         (WHERE partitionPredicate=predicateToken)?
         (zorderSpec)?                                                   #optimizeTable
     | REORG TABLE table=qualifiedName
         (WHERE partitionPredicate=predicateToken)?
         APPLY LEFT_PAREN PURGE RIGHT_PAREN                              #reorgTable
-    | SHOW COLUMNS (IN | FROM) tableName=qualifiedName
-        ((IN | FROM) schemaName=identifier)?                            #showColumns
     | cloneTableHeader SHALLOW CLONE source=qualifiedName clause=temporalClause?
        (TBLPROPERTIES tableProps=propertyList)?
        (LOCATION location=stringLit)?                                   #clone
+    | .*? clusterBySpec+ .*?                                            #clusterBy
     | .*?                                                               #passThrough
     ;
 
@@ -116,6 +117,10 @@ cloneTableHeader
 zorderSpec
     : ZORDER BY LEFT_PAREN interleave+=qualifiedName (COMMA interleave+=qualifiedName)* RIGHT_PAREN
     | ZORDER BY interleave+=qualifiedName (COMMA interleave+=qualifiedName)*
+    ;
+
+clusterBySpec
+    : CLUSTER BY LEFT_PAREN interleave+=qualifiedName (COMMA interleave+=qualifiedName)* RIGHT_PAREN
     ;
 
 temporalClause
@@ -146,6 +151,11 @@ propertyValue
     | booleanValue
     | identifier LEFT_PAREN stringLit COMMA stringLit RIGHT_PAREN
     | value=stringLit
+    ;
+
+featureNameValue
+    : identifier
+    | stringLit
     ;
 
 stringLit
@@ -216,8 +226,10 @@ nonReserved
     | REORG | APPLY | PURGE
     | RESTORE | AS | OF
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
-    | SHOW | COLUMNS | IN | FROM | NO | STATISTICS
+    | NO | STATISTICS
     | CLONE | SHALLOW
+    | FEATURE | TRUNCATE
+    | CLUSTER
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -228,7 +240,7 @@ AS: 'AS';
 BY: 'BY';
 CHECK: 'CHECK';
 CLONE: 'CLONE';
-COLUMNS: 'COLUMNS';
+CLUSTER: 'CLUSTER';
 COMMA: ',';
 COMMENT: 'COMMENT';
 CONSTRAINT: 'CONSTRAINT';
@@ -243,13 +255,12 @@ DROP: 'DROP';
 DRY: 'DRY';
 EXISTS: 'EXISTS';
 FALSE: 'FALSE';
+FEATURE: 'FEATURE';
 FOR: 'FOR';
-FROM: 'FROM';
 GENERATE: 'GENERATE';
 HISTORY: 'HISTORY';
 HOURS: 'HOURS';
 IF: 'IF';
-IN: 'IN';
 LEFT_PAREN: '(';
 LIMIT: 'LIMIT';
 LOCATION: 'LOCATION';
@@ -269,12 +280,12 @@ RETAIN: 'RETAIN';
 RIGHT_PAREN: ')';
 RUN: 'RUN';
 SHALLOW: 'SHALLOW';
-SHOW: 'SHOW';
 SYSTEM_TIME: 'SYSTEM_TIME';
 SYSTEM_VERSION: 'SYSTEM_VERSION';
 TABLE: 'TABLE';
 TBLPROPERTIES: 'TBLPROPERTIES';
 TIMESTAMP: 'TIMESTAMP';
+TRUNCATE: 'TRUNCATE';
 TO: 'TO';
 TRUE: 'TRUE';
 VACUUM: 'VACUUM';

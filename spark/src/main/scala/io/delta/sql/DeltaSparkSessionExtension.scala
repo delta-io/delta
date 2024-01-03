@@ -79,6 +79,9 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new DeltaSqlParser(parser)
     }
     extensions.injectResolutionRule { session =>
+      ResolveDeltaPathTable(session)
+    }
+    extensions.injectResolutionRule { session =>
       new PreprocessTimeTravel(session)
     }
     extensions.injectResolutionRule { session =>
@@ -88,6 +91,11 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       session.sessionState.conf.setConf(SQLConf.PARQUET_FIELD_ID_READ_ENABLED, true)
       session.sessionState.conf.setConf(SQLConf.PARQUET_FIELD_ID_WRITE_ENABLED, true)
       new DeltaAnalysis(session)
+    }
+    // [SPARK-45383] Spark CheckAnalysis rule misses a case for RelationTimeTravel, and so a
+    // non-existent table throws an internal spark error instead of the expected AnalysisException.
+    extensions.injectCheckRule { session =>
+      new CheckUnresolvedRelationTimeTravel(session)
     }
     extensions.injectCheckRule { session =>
       new DeltaUnsupportedOperationsCheck(session)
@@ -106,6 +114,11 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     }
     extensions.injectPostHocResolutionRule { session =>
       new PreprocessTableDelete(session.sessionState.conf)
+    }
+    // Resolve new UpCast expressions that might have been introduced by [[PreprocessTableUpdate]]
+    // and [[PreprocessTableMerge]].
+    extensions.injectPostHocResolutionRule { session =>
+      PostHocResolveUpCast(session)
     }
     // We don't use `injectOptimizerRule` here as we won't want to apply further optimizations after
     // `PrepareDeltaScan`.

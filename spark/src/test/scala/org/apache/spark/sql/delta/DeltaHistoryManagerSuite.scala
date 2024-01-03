@@ -46,7 +46,8 @@ import org.apache.spark.util.Utils
 
 /** A set of tests which we can open source after Spark 3.0 is released. */
 trait DeltaTimeTravelTests extends QueryTest
-    with SharedSparkSession    with GivenWhenThen
+    with SharedSparkSession
+    with GivenWhenThen
     with DeltaSQLCommandTest
     with StatsUtils {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
@@ -235,7 +236,8 @@ trait DeltaTimeTravelTests extends QueryTest
       val e = intercept[Exception] {
         spark.sql("SELECT * FROM t1 VERSION AS OF 0")
       }.getMessage
-      assert(e.contains("does not support time travel"))
+      assert(e.contains("does not support time travel") ||
+        e.contains("The feature is not supported: Time travel on the relation"))
     }
   }
 
@@ -474,7 +476,10 @@ trait DeltaTimeTravelTests extends QueryTest
         val e = intercept[AnalysisException] {
           f
         }
-          assert(e.getMessage.contains("path-based tables"), s"Returned instead:\n$e")
+        assert(
+          e.getMessage.contains("path-based tables") ||
+            e.message.contains("[UNSUPPORTED_FEATURE.TIME_TRAVEL] The feature is not supported"),
+          s"Returned instead:\n$e")
       }
 
       assertFormatFailure {
@@ -503,9 +508,11 @@ trait DeltaTimeTravelTests extends QueryTest
         val e = intercept[Exception] {
           sql(s"select * from ${versionAsOf(tblName, 0)}").collect()
         }
-        var catalogPrefix = ""
+        val catalogName = CatalogManager.SESSION_CATALOG_NAME
+        val catalogPrefix = catalogName + "."
         assert(e.getMessage.contains(
-          s"Table ${catalogPrefix}default.parq_table does not support time travel"))
+          s"Table ${catalogPrefix}default.parq_table does not support time travel") ||
+          e.getMessage.contains(s"Time travel on the relation: `$catalogName`.`default`.`parq_table`"))
       }
 
       val viewName = "parq_view"

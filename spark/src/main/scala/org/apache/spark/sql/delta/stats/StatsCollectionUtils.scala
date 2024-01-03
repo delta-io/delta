@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.stats
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+import scala.concurrent.duration.Duration
 import scala.language.existentials
 import scala.util.control.NonFatal
 
@@ -27,18 +28,21 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils}
+import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.ParquetFileReader
 import org.apache.parquet.hadoop.metadata.{BlockMetaData, ParquetMetadata}
 import org.apache.parquet.io.api.Binary
-import org.apache.parquet.schema.LogicalTypeAnnotation.{DateLogicalTypeAnnotation, StringLogicalTypeAnnotation}
+import org.apache.parquet.schema.LogicalTypeAnnotation._
 import org.apache.parquet.schema.PrimitiveType
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
+import org.apache.spark.sql.execution.datasources.DataSourceUtils
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{ArrayType, LongType, MapType, StructField, StructType}
 import org.apache.spark.util.SerializableConfiguration
 
@@ -53,6 +57,7 @@ object StatsCollectionUtils
    * @param conf The Hadoop configuration used to access file system.
    * @param dataPath The data path of table, to which these AddFile(s) belong.
    * @param addFiles The list of target AddFile(s) to be processed.
+   * @param numFilesOpt The number of AddFile(s) to process if known. Speeds up the query.
    * @param columnMappingMode The column mapping mode of table.
    * @param dataSchema The data schema of table.
    * @param statsSchema The stats schema to be collected.
@@ -68,35 +73,88 @@ object StatsCollectionUtils
       conf: Configuration,
       dataPath: Path,
       addFiles: Dataset[AddFile],
+      numFilesOpt: Option[Long],
       columnMappingMode: DeltaColumnMappingMode,
       dataSchema: StructType,
       statsSchema: StructType,
       ignoreMissingStats: Boolean = true,
       setBoundsToWide: Boolean = false): Dataset[AddFile] = {
 
-    import org.apache.spark.sql.delta.implicits._
+    val useMultiThreadedStatsCollection = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_USE_MULTI_THREADED_STATS_COLLECTION)
+    val preparedAddFiles = if (useMultiThreadedStatsCollection) {
+      prepareRDDForMultiThreadedStatsCollection(spark, addFiles, numFilesOpt)
+    } else {
+      addFiles
+    }
+
+    val parquetRebaseMode =
+      spark.sessionState.conf.getConf(SQLConf.PARQUET_REBASE_MODE_IN_READ)
 
     val stringTruncateLength =
       spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
 
     val statsCollector = StatsCollector(columnMappingMode, dataSchema, statsSchema,
-      ignoreMissingStats, Some(stringTruncateLength))
+      parquetRebaseMode, ignoreMissingStats, Some(stringTruncateLength))
 
     val serializableConf = new SerializableConfiguration(conf)
     val broadcastConf = spark.sparkContext.broadcast(serializableConf)
 
     val dataRootDir = dataPath.toString
-    addFiles.mapPartitions { addFileIter =>
+
+    import org.apache.spark.sql.delta.implicits._
+    preparedAddFiles.mapPartitions { addFileIter =>
       val defaultFileSystem = new Path(dataRootDir).getFileSystem(broadcastConf.value.value)
-      addFileIter.map { addFile =>
-        computeStatsForFile(
-          addFile,
-          dataRootDir,
-          defaultFileSystem,
-          broadcastConf.value,
-          setBoundsToWide,
-          statsCollector)
+      if (useMultiThreadedStatsCollection) {
+        ParallelFetchPool.parallelMap(spark, addFileIter.toSeq) { addFile =>
+          computeStatsForFile(
+            addFile,
+            dataRootDir,
+            defaultFileSystem,
+            broadcastConf.value,
+            setBoundsToWide,
+            statsCollector)
+        }.toIterator
+      } else {
+        addFileIter.map { addFile =>
+          computeStatsForFile(
+            addFile,
+            dataRootDir,
+            defaultFileSystem,
+            broadcastConf.value,
+            setBoundsToWide,
+            statsCollector)
+        }
       }
+    }
+  }
+
+  /**
+   * Prepares the underlying RDD of [[addFiles]] for multi-threaded stats collection by splitting
+   * them up into more partitions if necessary.
+   * If the number of partitions is too small, not every executor might
+   * receive a partition, which reduces the achievable parallelism. By increasing the number of
+   * partitions we can achieve more parallelism.
+   */
+  private def prepareRDDForMultiThreadedStatsCollection(
+      spark: SparkSession,
+      addFiles: Dataset[AddFile],
+      numFilesOpt: Option[Long]): Dataset[AddFile] = {
+
+    val numFiles = numFilesOpt.getOrElse(addFiles.count())
+    val currNumPartitions = addFiles.rdd.getNumPartitions
+    val numFilesPerPartition = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_STATS_COLLECTION_NUM_FILES_PARTITION)
+
+    // We should not create more partitions than the cluster can currently handle.
+    val minNumPartitions = Math.min(
+      spark.sparkContext.defaultParallelism,
+      numFiles / numFilesPerPartition + 1).toInt
+    // Only repartition if it would increase the achievable parallelism
+    if (currNumPartitions < minNumPartitions) {
+      addFiles.repartition(minNumPartitions)
+    } else {
+      addFiles
     }
   }
 
@@ -132,6 +190,20 @@ object StatsCollectionUtils
   }
 }
 
+object ParallelFetchPool {
+  val NUM_THREADS_PER_CORE = 10
+  val MAX_THREADS = 1024
+
+  val NUM_THREADS = Math.min(
+    Runtime.getRuntime.availableProcessors() * NUM_THREADS_PER_CORE, MAX_THREADS)
+
+  lazy val threadPool = DeltaThreadPool("stats-collection", NUM_THREADS)
+  def parallelMap[T, R](
+      spark: SparkSession,
+      items: Iterable[T])(
+      f: T => R): Iterable[R] = threadPool.parallelMap(spark, items)(f)
+}
+
 /**
  * A helper class to collect stats of parquet data files for Delta table and its equivalent (tables
  * that can be converted into Delta table like Parquet/Iceberg table).
@@ -141,6 +213,7 @@ object StatsCollectionUtils
  *                   metadata.
  * @param statsSchema The schema of stats to be collected, statsSchema should follow the physical
  *                    schema and must be generated by StatisticsCollection.
+ * @param parquetRebaseMode The parquet rebase mode used to parse date and timestamp.
  * @param ignoreMissingStats Indicate whether to return partial result by ignoring missing stats
  *                           or throw an exception.
  * @param stringTruncateLength The optional max length of string stats to be truncated into.
@@ -170,6 +243,7 @@ object StatsCollectionUtils
 abstract class StatsCollector(
     dataSchema: StructType,
     statsSchema: StructType,
+    parquetRebaseMode: String,
     ignoreMissingStats: Boolean,
     stringTruncateLength: Option[Int])
   extends Serializable
@@ -251,6 +325,10 @@ abstract class StatsCollector(
     }
 
     val schemaPhysicalPathToParquetIndex = getSchemaPhysicalPathToParquetIndex(blocks.head)
+    val dateRebaseSpec = DataSourceUtils.datetimeRebaseSpec(
+      parquetMetadata.getFileMetaData.getKeyValueMetaData.get, parquetRebaseMode)
+    val dateRebaseFunc = DataSourceUtils.createDateRebaseFuncInRead(dateRebaseSpec.mode, "Parquet")
+
     val missingFieldCounts =
       mutable.Map(MAX -> 0L, MIN -> 0L, NULL_COUNT -> 0L, NUM_MISSING_TYPES -> 0L)
 
@@ -270,13 +348,13 @@ abstract class StatsCollector(
       case StructField(MIN, statsTypeSchema: StructType, _, _) =>
         val (minValues, numMissingFields) =
           collectStats(Seq.empty[String], statsTypeSchema, blocks, schemaPhysicalPathToParquetIndex,
-            ignoreMissingStats)(aggMaxOrMin(isMax = false))
+            ignoreMissingStats)(aggMaxOrMin(dateRebaseFunc, isMax = false))
         missingFieldCounts(MIN) += numMissingFields
         MIN -> minValues
       case StructField(MAX, statsTypeSchema: StructType, _, _) =>
         val (maxValues, numMissingFields) =
           collectStats(Seq.empty[String], statsTypeSchema, blocks, schemaPhysicalPathToParquetIndex,
-            ignoreMissingStats)(aggMaxOrMin(isMax = true))
+            ignoreMissingStats)(aggMaxOrMin(dateRebaseFunc, isMax = true))
         missingFieldCounts(MAX) += numMissingFields
         MAX -> maxValues
       case StructField(NULL_COUNT, statsTypeSchema: StructType, _, _) =>
@@ -381,14 +459,21 @@ abstract class StatsCollector(
     (stats.toMap, numMissingFields)
   }
 
-  /** The aggregation function used to collect max and min */
-  private def aggMaxOrMin(isMax: Boolean)(blocks: Seq[BlockMetaData], index: Int): Any = {
+  /**
+   * The aggregation function used to collect the max and min of a column across blocks,
+   * dateRebaseFunc is used to adapt legacy date.
+   */
+  private def aggMaxOrMin(
+      dateRebaseFunc: Int => Int, isMax: Boolean)(
+      blocks: Seq[BlockMetaData], index: Int): Any = {
     val columnMetadata = blocks.head.getColumns.get(index)
     val primitiveType = columnMetadata.getPrimitiveType
+    val logicalType = primitiveType.getLogicalTypeAnnotation
     // Physical type of timestamp is INT96 in both Parquet and Delta.
-    if (primitiveType.getPrimitiveTypeName == PrimitiveType.PrimitiveTypeName.INT96) {
+    if (primitiveType.getPrimitiveTypeName == PrimitiveType.PrimitiveTypeName.INT96 ||
+        logicalType.isInstanceOf[TimestampLogicalTypeAnnotation]) {
       throw new UnsupportedOperationException(
-        s"max/min stats is not supported for INT96 timestamp: ${columnMetadata.getPath}")
+        s"max/min stats is not supported for timestamp: ${columnMetadata.getPath}")
     }
 
     var aggregatedValue: Any = None
@@ -415,8 +500,12 @@ abstract class StatsCollector(
       }
     }
 
-    val logicalType = primitiveType.getLogicalTypeAnnotation
+    // All blocks have null stats for this column, returns None to indicate the stats of this
+    // column is undefined.
+    if (aggregatedValue == None) return None
+
     aggregatedValue match {
+      // String
       case bytes: Binary if logicalType.isInstanceOf[StringLogicalTypeAnnotation] =>
         val rawString = bytes.toStringUsingUTF8
         if (stringTruncateLength.isDefined && rawString.length > stringTruncateLength.get) {
@@ -430,16 +519,40 @@ abstract class StatsCollector(
         } else {
           rawString
         }
+      // Binary
       case _: Binary =>
         throw new UnsupportedOperationException(
           s"max/min stats is not supported for binary other than string: ${columnMetadata.getPath}")
+      // Date
       case date: Integer if logicalType.isInstanceOf[DateLogicalTypeAnnotation] =>
-        DateTimeUtils.toJavaDate(date).toString
-      case other => other
+        DateTimeUtils.toJavaDate(dateRebaseFunc(date)).toString
+      // Byte, Short, Integer and Long
+      case intValue @ (_: Integer | _: java.lang.Long)
+        if logicalType.isInstanceOf[IntLogicalTypeAnnotation] =>
+          logicalType.asInstanceOf[IntLogicalTypeAnnotation].getBitWidth match {
+            case 8 => intValue.asInstanceOf[Int].toByte
+            case 16 => intValue.asInstanceOf[Int].toShort
+            case 32 => intValue.asInstanceOf[Int]
+            case 64 => intValue.asInstanceOf[Long]
+            case other => throw new UnsupportedOperationException(
+              s"max/min stats is not supported for $other-bits Integer: ${columnMetadata.getPath}")
+          }
+      // Decimal
+      case _ if logicalType.isInstanceOf[DecimalLogicalTypeAnnotation] =>
+        throw new UnsupportedOperationException(
+          s"max/min stats is not supported for decimal: ${columnMetadata.getPath}")
+      // Integer, Long, Float and Double
+      case primitive @ (_: Integer | _: java.lang.Long | _: java.lang.Float | _: java.lang.Double)
+        if logicalType == null => primitive
+      // Throw an exception on the other unknown types for safety.
+      case unknown =>
+        throw new UnsupportedOperationException(
+          s"max/min stats is not supported for ${unknown.getClass.getName} with $logicalType:" +
+            columnMetadata.getPath.toString)
     }
   }
 
-  /** The aggregation function used to count null */
+  /** The aggregation function used to count null of a column across blocks */
   private def aggNullCount(blocks: Seq[BlockMetaData], index: Int): Any = {
     var count = 0L
     blocks.foreach { block =>
@@ -459,15 +572,16 @@ object StatsCollector {
       columnMappingMode: DeltaColumnMappingMode,
       dataSchema: StructType,
       statsSchema: StructType,
+      parquetRebaseMode: String,
       ignoreMissingStats: Boolean = true,
       stringTruncateLength: Option[Int] = None): StatsCollector = {
     columnMappingMode match {
       case NoMapping | NameMapping =>
         StatsCollectorNameMapping(
-          dataSchema, statsSchema, ignoreMissingStats, stringTruncateLength)
+          dataSchema, statsSchema, parquetRebaseMode, ignoreMissingStats, stringTruncateLength)
       case IdMapping =>
         StatsCollectorIdMapping(
-          dataSchema, statsSchema, ignoreMissingStats, stringTruncateLength)
+          dataSchema, statsSchema, parquetRebaseMode, ignoreMissingStats, stringTruncateLength)
       case _ =>
         throw new UnsupportedOperationException(
           s"$columnMappingMode mapping is currently not supported")
@@ -477,9 +591,11 @@ object StatsCollector {
   private case class StatsCollectorNameMapping(
       dataSchema: StructType,
       statsSchema: StructType,
+      parquetRebaseMode: String,
       ignoreMissingStats: Boolean,
       stringTruncateLength: Option[Int])
-    extends StatsCollector(dataSchema, statsSchema, ignoreMissingStats, stringTruncateLength) {
+    extends StatsCollector(
+      dataSchema, statsSchema, parquetRebaseMode, ignoreMissingStats, stringTruncateLength) {
 
     /**
      * Maps schema physical field path to parquet metadata column index via parquet metadata column
@@ -570,9 +686,11 @@ object StatsCollector {
   private case class StatsCollectorIdMapping(
       dataSchema: StructType,
       statsSchema: StructType,
+      parquetRebaseMode: String,
       ignoreMissingStats: Boolean,
       stringTruncateLength: Option[Int])
-    extends StatsCollector(dataSchema, statsSchema, ignoreMissingStats, stringTruncateLength) {
+    extends StatsCollector(
+      dataSchema, statsSchema, parquetRebaseMode, ignoreMissingStats, stringTruncateLength) {
 
     // Define a FieldId type to better disambiguate between ids and indices in the code
     type FieldId = Int

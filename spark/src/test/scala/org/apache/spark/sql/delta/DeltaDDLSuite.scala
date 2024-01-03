@@ -33,7 +33,8 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
 
-class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession  with DeltaSQLCommandTest {
+class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   override protected def verifyNullabilityFailure(exception: AnalysisException): Unit = {
     exception.getMessage.contains("Cannot change nullable column to non-nullable")
@@ -140,19 +141,20 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
 
   test("ALTER TABLE ADD COLUMNS with NOT NULL - not supported") {
     withTempDir { dir =>
-      withTable("delta_test") {
+      val tableName = "delta_test_add_not_null"
+      withTable(tableName) {
         sql(s"""
-               |CREATE TABLE delta_test(a LONG)
+               |CREATE TABLE $tableName(a LONG)
                |USING delta
                |OPTIONS('path'='${dir.getCanonicalPath}')""".stripMargin)
 
         val expectedSchema = new StructType().add("a", LongType, nullable = true)
-        assert(spark.table("delta_test").schema === expectedSchema)
+        assert(spark.table(tableName).schema === expectedSchema)
 
         val e = intercept[AnalysisException] {
           sql(
             s"""
-               |ALTER TABLE delta_test
+               |ALTER TABLE $tableName
                |ADD COLUMNS (b String NOT NULL, c Int)""".stripMargin)
         }
         val msg = "`NOT NULL in ALTER TABLE ADD COLUMNS` is not supported for Delta tables"
@@ -163,21 +165,22 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
 
   test("ALTER TABLE CHANGE COLUMN from nullable to NOT NULL - not supported") {
     withTempDir { dir =>
-      withTable("delta_test") {
+      val tableName = "delta_test_from_nullable_to_not_null"
+      withTable(tableName) {
         sql(s"""
-               |CREATE TABLE delta_test(a LONG, b String)
+               |CREATE TABLE $tableName(a LONG, b String)
                |USING delta
                |OPTIONS('path'='${dir.getCanonicalPath}')""".stripMargin)
 
         val expectedSchema = new StructType()
           .add("a", LongType, nullable = true)
           .add("b", StringType, nullable = true)
-        assert(spark.table("delta_test").schema === expectedSchema)
+        assert(spark.table(tableName).schema === expectedSchema)
 
         val e = intercept[AnalysisException] {
           sql(
             s"""
-               |ALTER TABLE delta_test
+               |ALTER TABLE $tableName
                |CHANGE COLUMN b b String NOT NULL""".stripMargin)
         }
         verifyNullabilityFailure(e)
@@ -187,35 +190,36 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
 
   test("ALTER TABLE CHANGE COLUMN from NOT NULL to nullable") {
     withTempDir { dir =>
-      withTable("delta_test") {
+      val tableName = "delta_test_not_null_to_nullable"
+      withTable(tableName) {
         sql(
           s"""
-             |CREATE TABLE delta_test(a LONG NOT NULL, b String)
+             |CREATE TABLE $tableName(a LONG NOT NULL, b String)
              |USING delta
              |OPTIONS('path'='${dir.getCanonicalPath}')""".stripMargin)
 
         val expectedSchema = new StructType()
           .add("a", LongType, nullable = false)
           .add("b", StringType, nullable = true)
-        assert(spark.table("delta_test").schema === expectedSchema)
+        assert(spark.table(tableName).schema === expectedSchema)
 
-        sql("INSERT INTO delta_test SELECT 1, 'a'")
+        sql(s"INSERT INTO $tableName SELECT 1, 'a'")
         checkAnswer(
-          sql("SELECT * FROM delta_test"),
+          sql(s"SELECT * FROM $tableName"),
           Seq(Row(1L, "a")))
 
         sql(
           s"""
-             |ALTER TABLE delta_test
+             |ALTER TABLE $tableName
              |ALTER COLUMN a DROP NOT NULL""".stripMargin)
         val expectedSchema2 = new StructType()
           .add("a", LongType, nullable = true)
           .add("b", StringType, nullable = true)
-        assert(spark.table("delta_test").schema === expectedSchema2)
+        assert(spark.table(tableName).schema === expectedSchema2)
 
-        sql("INSERT INTO delta_test SELECT NULL, 'b'")
+        sql(s"INSERT INTO $tableName SELECT NULL, 'b'")
         checkAnswer(
-          sql("SELECT * FROM delta_test"),
+          sql(s"SELECT * FROM $tableName"),
           Seq(Row(1L, "a"), Row(null, "b")))
       }
     }
@@ -290,20 +294,21 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
 
   test("ALTER TABLE ADD COLUMNS with NOT NULL in struct type - not supported") {
     withTempDir { dir =>
-      withTable("delta_test") {
+      val tableName = "delta_test_not_null_struct"
+      withTable(tableName) {
         sql(s"""
-               |CREATE TABLE delta_test
+               |CREATE TABLE $tableName
                |(y LONG)
                |USING delta
                |OPTIONS('path'='${dir.getCanonicalPath}')""".stripMargin)
         val expectedSchema = new StructType()
           .add("y", LongType, nullable = true)
-        assert(spark.table("delta_test").schema === expectedSchema)
+        assert(spark.table(tableName).schema === expectedSchema)
 
         val e = intercept[AnalysisException] {
           sql(
             s"""
-               |ALTER TABLE delta_test
+               |ALTER TABLE $tableName
                |ADD COLUMNS (x struct<a: LONG, b: String NOT NULL>, z INT)""".stripMargin)
         }
         val msg = "Operation not allowed: " +
@@ -315,20 +320,21 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
 
   test("ALTER TABLE ADD COLUMNS to table with existing NOT NULL fields") {
     withTempDir { dir =>
-      withTable("delta_test") {
+      val tableName = "delta_test_existing_not_null"
+      withTable(tableName) {
         sql(
           s"""
-             |CREATE TABLE delta_test
+             |CREATE TABLE $tableName
              |(y LONG NOT NULL)
              |USING delta
              |OPTIONS('path'='${dir.getCanonicalPath}')""".stripMargin)
         val expectedSchema = new StructType()
           .add("y", LongType, nullable = false)
-        assert(spark.table("delta_test").schema === expectedSchema)
+        assert(spark.table(tableName).schema === expectedSchema)
 
         sql(
           s"""
-             |ALTER TABLE delta_test
+             |ALTER TABLE $tableName
              |ADD COLUMNS (x struct<a: LONG, b: String>, z INT)""".stripMargin)
         val expectedSchema2 = new StructType()
           .add("y", LongType, nullable = false)
@@ -336,7 +342,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
             .add("a", LongType)
             .add("b", StringType))
           .add("z", IntegerType)
-        assert(spark.table("delta_test").schema === expectedSchema2)
+        assert(spark.table(tableName).schema === expectedSchema2)
       }
     }
   }
@@ -351,12 +357,14 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
       initialColumnType: String,
       fieldToAdd: (String, String),
       updatedColumnType: String): Unit = {
+    // Remove spaces in test name so we can re-use it as a unique table name.
+    val tableName = testName.replaceAll(" ", "")
     test(s"ALTER TABLE ADD/CHANGE COLUMNS - nested $testName") {
       withTempDir { dir =>
-        withTable("delta_test") {
+        withTable(tableName) {
           sql(
             s"""
-               |CREATE TABLE delta_test (data $initialColumnType)
+               |CREATE TABLE $tableName (data $initialColumnType)
                |USING delta
                |TBLPROPERTIES (${DeltaConfigs.COLUMN_MAPPING_MODE.key} = 'name')
                |OPTIONS('path'='${dir.getCanonicalPath}')""".stripMargin)
@@ -367,15 +375,15 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
           val fieldType = fieldToAdd._2
 
           def columnType: DataFrame =
-            sql("DESCRIBE TABLE delta_test")
+            sql(s"DESCRIBE TABLE $tableName")
               .where("col_name = 'data'")
               .select("data_type")
           checkAnswer(columnType, Row(expectedInitialType))
 
-          sql(s"ALTER TABLE delta_test ADD COLUMNS ($fieldName $fieldType)")
+          sql(s"ALTER TABLE $tableName ADD COLUMNS ($fieldName $fieldType)")
           checkAnswer(columnType, Row(expectedUpdatedType))
 
-          sql(s"ALTER TABLE delta_test CHANGE COLUMN $fieldName TYPE $fieldType")
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN $fieldName TYPE $fieldType")
           checkAnswer(columnType, Row(expectedUpdatedType))
         }
       }
@@ -397,12 +405,42 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     fieldToAdd = "element.b" -> "string",
     updatedColumnType = "array<struct<a: int, b: string>>")
 
+  testAlterTableNestedFields("struct in nested map keys")(
+    initialColumnType = "map<map<struct<a: int>, int>, int>",
+    fieldToAdd = "key.key.b" -> "string",
+    updatedColumnType = "map<map<struct<a: int, b: string>, int>, int>")
+
+  testAlterTableNestedFields("struct in nested map values")(
+    initialColumnType = "map<int, map<int, struct<a: int>>>",
+    fieldToAdd = "value.value.b" -> "string",
+    updatedColumnType = "map<int, map<int, struct<a: int, b: string>>>")
+
+  testAlterTableNestedFields("struct in nested arrays")(
+    initialColumnType = "array<array<struct<a: int>>>",
+    fieldToAdd = "element.element.b" -> "string",
+    updatedColumnType = "array<array<struct<a: int, b: string>>>")
+
+  testAlterTableNestedFields("struct in nested array and map")(
+    initialColumnType = "array<map<int, struct<a: int>>>",
+    fieldToAdd = "element.value.b" -> "string",
+    updatedColumnType = "array<map<int, struct<a: int, b: string>>>")
+
+  testAlterTableNestedFields("struct in nested map key and array")(
+    initialColumnType = "map<array<struct<a: int>>, int>",
+    fieldToAdd = "key.element.b" -> "string",
+    updatedColumnType = "map<array<struct<a: int, b: string>>, int>")
+
+  testAlterTableNestedFields("struct in nested map value and array")(
+    initialColumnType = "map<int, array<struct<a: int>>>",
+    fieldToAdd = "value.element.b" -> "string",
+    updatedColumnType = "map<int, array<struct<a: int, b: string>>>")
 
   test("ALTER TABLE CHANGE COLUMN with nullability change in struct type - not supported") {
     withTempDir { dir =>
-      withTable("delta_test") {
+      val tableName = "not_supported_delta_test"
+      withTable(tableName) {
         sql(s"""
-               |CREATE TABLE delta_test
+               |CREATE TABLE $tableName
                |(x struct<a: LONG, b: String>, y LONG)
                |USING delta
                |OPTIONS('path'='${dir.getCanonicalPath}')""".stripMargin)
@@ -411,19 +449,19 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
             .add("a", LongType)
             .add("b", StringType))
           .add("y", LongType, nullable = true)
-        assert(spark.table("delta_test").schema === expectedSchema)
+        assert(spark.table(tableName).schema === expectedSchema)
 
         val e1 = intercept[AnalysisException] {
           sql(
             s"""
-               |ALTER TABLE delta_test
+               |ALTER TABLE $tableName
                |CHANGE COLUMN x x struct<a: LONG, b: String NOT NULL>""".stripMargin)
         }
         assert(e1.getMessage.contains("Cannot update"))
         val e2 = intercept[AnalysisException] {
           sql(
             s"""
-               |ALTER TABLE delta_test
+               |ALTER TABLE $tableName
                |CHANGE COLUMN x.b b String NOT NULL""".stripMargin) // this syntax may change
         }
         verifyNullabilityFailure(e2)
@@ -494,14 +532,11 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
             |USING delta
             |AS SELECT 1 as a, 'a' as b
            """.stripMargin)
-
-
       sql(s"ALTER TABLE tbl RENAME TO newTbl")
-      checkDatasetUnorderly(
-        sql("SELECT * FROM newTbl").as[(Long, String)],
-        1L -> "a")
+      checkDatasetUnorderly(sql("SELECT * FROM newTbl").as[(Long, String)], 1L -> "a")
     }
   }
+
 
   /**
    * Although Spark 3.2 adds the support for SHOW CREATE TABLE for v2 tables, it doesn't work
@@ -577,11 +612,13 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
   }
 
   test("snapshot returned after renaming a managed table should be empty") {
-    withTable("delta_test", "delta_test2") {
-      sql("CREATE TABLE delta_test USING delta AS SELECT 'foo' as a")
-      val tableLocation = sql("DESC DETAIL delta_test").select("location").as[String].head()
+    val oldTableName = "oldTableName"
+    val newTableName = "newTableName"
+    withTable(oldTableName, newTableName) {
+      sql(s"CREATE TABLE $oldTableName USING delta AS SELECT 'foo' as a")
+      val tableLocation = sql(s"DESC DETAIL $oldTableName").select("location").as[String].head()
       val snapshotBefore = getDeltaLog(tableLocation).update()
-      sql("ALTER TABLE delta_test RENAME TO delta_test2")
+      sql(s"ALTER TABLE $oldTableName RENAME TO $newTableName")
       val snapshotAfter = getDeltaLog(tableLocation).update()
       assert(snapshotBefore ne snapshotAfter)
       assert(snapshotAfter.version === -1)

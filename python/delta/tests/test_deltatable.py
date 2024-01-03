@@ -14,10 +14,13 @@
 # limitations under the License.
 #
 
+# mypy: disable-error-code="union-attr"
+# mypy: disable-error-code="attr-defined"
 # type: ignore[union-attr]
 
 import unittest
 import os
+from multiprocessing.pool import ThreadPool
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
 from pyspark.sql import DataFrame, Row
@@ -469,6 +472,35 @@ class DeltaTableTestsMixin:
         with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
             dt.merge(source, "key = k").whenNotMatchedBySourceDelete(1)  # type: ignore[arg-type]
 
+    def test_merge_with_inconsistent_sessions(self) -> None:
+        source_path = os.path.join(self.tempFile, "source")
+        target_path = os.path.join(self.tempFile, "target")
+        spark = self.spark
+
+        def f(spark):
+            spark.range(20) \
+                .withColumn("x", col("id")) \
+                .withColumn("y", col("id")) \
+                .write.mode("overwrite").format("delta").save(source_path)
+            spark.range(1) \
+                .withColumn("x", col("id")) \
+                .write.mode("overwrite").format("delta").save(target_path)
+            target = DeltaTable.forPath(spark, target_path)
+            source = spark.read.format("delta").load(source_path).alias("s")
+            target.alias("t") \
+                .merge(source, "t.id = s.id") \
+                .whenMatchedUpdate(set={"t.x": "t.x + 1"}) \
+                .whenNotMatchedInsertAll() \
+                .execute()
+            assert(spark.read.format("delta").load(target_path).count() == 20)
+
+        pool = ThreadPool(3)
+        spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+        try:
+            pool.starmap(f, [(spark,)])
+        finally:
+            spark.conf.unset("spark.databricks.delta.schema.autoMerge.enabled")
+
     def test_history(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         self.__overwriteDeltaTable([('a', 3), ('b', 2), ('c', 1)])
@@ -828,7 +860,7 @@ class DeltaTableTestsMixin:
             with self.assertRaises(AnalysisException) as error_ctx:
                 self.__replace_table(False, tableName="testTable")
             msg = str(error_ctx.exception)
-            self.assertIn("testTable", msg)
+            self.assertIn("testtable", msg.lower())
             self.assertTrue("did not exist" in msg or "cannot be found" in msg)
             deltaTable = self.__replace_table(True, tableName="testTable")
             self.__verify_table_schema("testTable",
@@ -940,12 +972,12 @@ class DeltaTableTestsMixin:
             self.spark.conf.unset('spark.databricks.delta.minReaderVersion')
 
         # cannot downgrade once upgraded
-        failed = False
-        try:
-            dt.upgradeTableProtocol(1, 2)
-        except BaseException:
-            failed = True
-        self.assertTrue(failed, "The upgrade should have failed, because downgrades aren't allowed")
+        dt.upgradeTableProtocol(1, 2)
+        dt_details = dt.detail().collect()[0].asDict()
+        self.assertTrue(dt_details["minReaderVersion"] == 1,
+                        "The upgrade should be a no-op, because downgrades aren't allowed")
+        self.assertTrue(dt_details["minWriterVersion"] == 3,
+                        "The upgrade should be a no-op, because downgrades aren't allowed")
 
         # bad args
         with self.assertRaisesRegex(ValueError, "readerVersion"):

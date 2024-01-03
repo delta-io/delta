@@ -30,6 +30,22 @@ addSbtPlugin("com.simplytyped" % "sbt-antlr4" % "0.8.3")
 
 addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "3.9.15")
 
-addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.0")
+addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.6")
+//Upgrade sbt-scoverage to 2.0.3+ because 2.0.0 is not compatible to Scala 2.12.17:
+//sbt.librarymanagement.ResolveException: Error downloading org.scoverage:scalac-scoverage-plugin_2.12.17:2.0.0
+
+//It caused a conflict issue:
+//[error] java.lang.RuntimeException: found version conflict(s) in library dependencies; some are suspected to be binary incompatible:
+//[error] 
+//[error] 	* org.scala-lang.modules:scala-xml_2.12:2.1.0 (early-semver) is selected over 1.0.6
+//[error] 	    +- org.scoverage:scalac-scoverage-reporter_2.12:2.0.7 (depends on 2.1.0)
+//[error] 	    +- org.scalariform:scalariform_2.12:0.2.0             (depends on 1.0.6)
+//The following fix the conflict:
+libraryDependencySchemes += "org.scala-lang.modules" %% "scala-xml" % VersionScheme.Always % "test"
 
 addSbtPlugin("net.aichler" % "sbt-jupiter-interface" % "0.9.1")
+
+addSbtPlugin("com.etsy" % "sbt-checkstyle-plugin" % "3.1.1")
+// By default, sbt-checkstyle-plugin uses checkstyle version 6.15, but we should set it to use the
+// same version as Spark
+dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "8.43"

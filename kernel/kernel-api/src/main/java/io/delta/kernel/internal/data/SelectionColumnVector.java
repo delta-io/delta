@@ -26,7 +26,7 @@ import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray;
  * The selection vector for a columnar batch as a boolean {@link ColumnVector}.
  */
 public class SelectionColumnVector
-        implements ColumnVector {
+    implements ColumnVector {
 
     private final RoaringBitmapArray bitmap;
     private final ColumnVector rowIndices;
@@ -37,14 +37,12 @@ public class SelectionColumnVector
     }
 
     @Override
-    public DataType getDataType()
-    {
-        return BooleanType.INSTANCE;
+    public DataType getDataType() {
+        return BooleanType.BOOLEAN;
     }
 
     @Override
-    public int getSize()
-    {
+    public int getSize() {
         return rowIndices.getSize();
     }
 
@@ -54,14 +52,12 @@ public class SelectionColumnVector
     }
 
     @Override
-    public boolean isNullAt(int rowId)
-    {
+    public boolean isNullAt(int rowId) {
         return false;
     }
 
     @Override
-    public boolean getBoolean(int rowId)
-    {
+    public boolean getBoolean(int rowId) {
         return !bitmap.contains(rowIndices.getLong(rowId));
     }
 }
