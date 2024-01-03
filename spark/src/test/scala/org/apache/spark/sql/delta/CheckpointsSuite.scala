@@ -19,7 +19,10 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.net.URI
 
+import scala.concurrent.duration._
+
 // scalastyle:off import.ordering.noEmptyLine
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -913,6 +916,32 @@ class CheckpointsSuite
   testDifferentCheckpoints("intermittent error while reading checkpoint should not" +
       s" stick to snapshot [lastCheckpointMissing: $lastCheckpointMissing]") { (_, _) =>
     withTempDir { tempDir => checkIntermittentError(tempDir, lastCheckpointMissing) }
+  }
+
+  test("validate metadata cleanup is not called with createCheckpointAtVersion API") {
+    withTempDir { dir =>
+      val usageRecords1 = Log4jUsageLogger.track {
+        spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, dir)
+        log.createCheckpointAtVersion(0)
+      }
+      assert(filterUsageRecords(usageRecords1, "delta.log.cleanup").size === 0L)
+
+      val usageRecords2 = Log4jUsageLogger.track {
+        spark.range(10).write.mode("overwrite").format("delta").save(dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, dir)
+        log.checkpoint()
+
+      }
+      assert(filterUsageRecords(usageRecords2, "delta.log.cleanup").size > 0)
+    }
+  }
+
+  protected def filterUsageRecords(
+      usageRecords: Seq[UsageRecord], opType: String): Seq[UsageRecord] = {
+    usageRecords.filter { r =>
+      r.tags.get("opType").contains(opType) || r.opType.map(_.typeName).contains(opType)
+    }
   }
 }
 
