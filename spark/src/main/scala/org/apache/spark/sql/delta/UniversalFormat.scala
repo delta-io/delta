@@ -141,7 +141,7 @@ object UniversalFormat extends DeltaLogging {
 
           (None, Some(newestMetadata.copy(configuration = newConfiguration)))
         } else {
-          throw DeltaErrors.uniFormIcebergRequiresIcebergCompatV1()
+          throw DeltaErrors.uniFormIcebergRequiresIcebergCompat()
         }
     }
   }
@@ -149,12 +149,14 @@ object UniversalFormat extends DeltaLogging {
   /**
    * This method should be called before CTAS writer writes the new table to disk.
    * It will call [[enforceIcebergInvariantsAndDependencies]] to perform the actual check.
-   * @param writer delta writer used to write CTAS data.
-   * @return updated writer
+   * @param configuration of delta writer used to write CTAS data.
+   * @return updated configuration if any changes are required,
+   *         otherwise the original configuration.
    */
   def enforceInvariantsAndDependenciesForCTAS(
-      writer: WriteIntoDelta, snapshot: Snapshot): WriteIntoDelta = {
-    var metadata = Metadata(configuration = writer.configuration)
+      configuration: Map[String, String],
+      snapshot: Snapshot): Map[String, String] = {
+    var metadata = Metadata(configuration = configuration)
 
     // Check UniversalFormat related property dependencies
     val (_, universalMetadata) = UniversalFormat.enforceIcebergInvariantsAndDependencies(
@@ -176,10 +178,9 @@ object UniversalFormat extends DeltaLogging {
       actions = Seq()
     )
 
-    icebergMetadata.orElse(universalMetadata) match {
-      case Some(valid) => writer.copy(configuration = valid.configuration)
-      case _ => writer
-    }
+    icebergMetadata
+      .orElse(universalMetadata).map(_.configuration)
+      .getOrElse(configuration)
   }
 
   val ICEBERG_TABLE_TYPE_KEY = "table_type"

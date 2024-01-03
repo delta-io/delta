@@ -104,14 +104,17 @@ object IcebergCompatV1 extends DeltaLogging {
         // - CREATE TABLE partitioned by colA dataType1; REPLACE TABLE partitioned by colA dataType2
         if (prevMetadata.partitionColumns.nonEmpty &&
           prevMetadata.partitionColumns != newestMetadata.partitionColumns) {
-          throw DeltaErrors.icebergCompatV1ReplacePartitionedTableException(
-            prevMetadata.partitionColumns, newestMetadata.partitionColumns)
+          throw DeltaErrors.icebergCompatReplacePartitionedTableException(
+            version = 1, prevMetadata.partitionColumns, newestMetadata.partitionColumns)
         }
 
-        if (SchemaUtils.typeExistsRecursively(newestMetadata.schema) { f =>
+        SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
           f.isInstanceOf[MapType] || f.isInstanceOf[ArrayType] || f.isInstanceOf[NullType]
-        }) {
-          throw DeltaErrors.icebergCompatV1UnsupportedDataTypeException(newestMetadata.schema)
+        } match {
+          case Some(unsupportedType) =>
+            throw DeltaErrors.icebergCompatUnsupportedDataTypeException(
+              version = 1, dataType = unsupportedType, newestMetadata.schema)
+          case _ =>
         }
 
         // If this field is empty, then the AddFile is missing the `numRecords` statistic.
@@ -133,10 +136,10 @@ object IcebergCompatV1 extends DeltaLogging {
               if (isCreatingNewTable) {
                 tblFeatureUpdates += f
               } else {
-                throw DeltaErrors.icebergCompatV1MissingRequiredTableFeatureException(f)
+                throw DeltaErrors.icebergCompatMissingRequiredTableFeatureException(version = 1, f)
               }
             case (true, false) => // txn is removing/un-supporting it!
-              throw DeltaErrors.icebergCompatV1DisablingRequiredTableFeatureException(f)
+              throw DeltaErrors.icebergCompatDisablingRequiredTableFeatureException(version = 1, f)
           }
         }
 
@@ -145,7 +148,7 @@ object IcebergCompatV1 extends DeltaLogging {
         // to NOT write deletion vectors as that txn would need to make DVs writable, which
         // would conflict with current txn because of metadata change.
         if (DeletionVectorUtils.deletionVectorsWritable(newestProtocol, newestMetadata)) {
-          throw DeltaErrors.icebergCompatV1DeletionVectorsShouldBeDisabledException()
+          throw DeltaErrors.icebergCompatDeletionVectorsShouldBeDisabledException(version = 1)
         }
 
         // Check we have all required delta table properties
@@ -155,8 +158,8 @@ object IcebergCompatV1 extends DeltaLogging {
             val newestValueOkay = validator(newestValue)
             val newestValueExplicitlySet = newestMetadata.configuration.contains(deltaConfig.key)
 
-            val err = DeltaErrors.icebergCompatV1WrongRequiredTablePropertyException(
-              deltaConfig.key, newestValue.toString, autoSetValue)
+            val err = DeltaErrors.icebergCompatWrongRequiredTablePropertyException(
+              version = 1, deltaConfig.key, newestValue.toString, autoSetValue)
 
             if (!newestValueOkay) {
               if (!newestValueExplicitlySet && isCreatingNewTable) {
@@ -200,6 +203,12 @@ object IcebergCompatV1 extends DeltaLogging {
 
         (protocolResult, metadataResult)
     }
+  }
+}
+
+object IcebergCompatV2 extends DeltaLogging {
+  def isEnabled(metadata: Metadata): Boolean = {
+    DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED.fromMetaData(metadata).getOrElse(false)
   }
 }
 

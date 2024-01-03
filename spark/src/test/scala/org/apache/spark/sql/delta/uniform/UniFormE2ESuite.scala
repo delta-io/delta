@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.uniform
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.types._
 
 abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
 
@@ -48,6 +49,49 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
       write(s"DELETE FROM `$testTableName` WHERE col1 = 456")
 
       readAndVerify(testTableName, "col1", "col1", Seq(Row(123), Row(191), Row(331)))
+    }
+  }
+
+  test("Nested struct schema test") {
+    withTable(testTableName) {
+      write(s"""CREATE TABLE $testTableName
+           | (col1 INT, col2 STRUCT<f1: STRUCT<f2: INT, f3: STRUCT<f4: INT, f5: INT>
+           | , f6: INT>, f7: INT>) USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+
+      val data = Seq(
+        Row(1, Row(Row(2, Row(3, 4), 5), 6))
+      )
+
+      val innerStruct3 = StructType(
+          StructField("f4", IntegerType) ::
+            StructField("f5", IntegerType) :: Nil)
+
+      val innerStruct2 = StructType(
+        StructField("f2", IntegerType) ::
+          StructField("f3", innerStruct3) ::
+          StructField("f6", IntegerType) :: Nil)
+
+      val innerStruct = StructType(
+        StructField("f1", innerStruct2) ::
+          StructField("f7", IntegerType) :: Nil)
+
+      val schema = StructType(
+        StructField("col1", IntegerType) ::
+          StructField("col2", innerStruct) :: Nil)
+
+      val tableFullName = tableNameForRead(testTableName)
+
+      spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+        .write.format("delta").mode("append")
+        .saveAsTable(tableFullName)
+
+      val result = read(s"SELECT * FROM $tableFullName")
+
+      assert(result.head === data.head)
     }
   }
 }
