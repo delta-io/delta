@@ -18,16 +18,16 @@ package io.delta.kernel.defaults
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
-
-import io.delta.kernel.client.{FileReadContext, JsonHandler, ParquetHandler, TableClient}
-import io.delta.kernel.data.{FileDataReadResult, FilteredColumnarBatch}
+import io.delta.kernel.client.{JsonHandler, ParquetHandler, TableClient}
+import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.{Snapshot, Table}
-
 import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
 import io.delta.kernel.defaults.utils.TestUtils
+
+import java.util.Optional
 
 class ScanSuite extends AnyFunSuite with TestUtils {
   import io.delta.kernel.defaults.ScanSuite._
@@ -96,10 +96,11 @@ object ScanSuite {
       override def getParquetHandler: ParquetHandler = {
         new DefaultParquetHandler(hadoopConf) {
           override def readParquetFiles(
-            fileIter: CloseableIterator[FileReadContext],
-            physicalSchema: StructType): CloseableIterator[FileDataReadResult] = {
+              fileIter: CloseableIterator[FileStatus],
+              physicalSchema: StructType,
+              predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
             throwErrorIfAddStatsInSchema(physicalSchema)
-            super.readParquetFiles(fileIter, physicalSchema)
+            super.readParquetFiles(fileIter, physicalSchema, predicate)
           }
         }
       }
@@ -107,10 +108,11 @@ object ScanSuite {
       override def getJsonHandler: JsonHandler = {
         new DefaultJsonHandler(hadoopConf) {
           override def readJsonFiles(
-            fileIter: CloseableIterator[FileReadContext],
-            physicalSchema: StructType): CloseableIterator[FileDataReadResult] = {
+              fileIter: CloseableIterator[FileStatus],
+              physicalSchema: StructType,
+              predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
             throwErrorIfAddStatsInSchema(physicalSchema)
-            super.readJsonFiles(fileIter, physicalSchema)
+            super.readJsonFiles(fileIter, physicalSchema, predicate)
           }
         }
       }

@@ -27,7 +27,6 @@ import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.TableNotFoundException
 
 class LogReplaySuite extends AnyFunSuite with TestUtils {
 
