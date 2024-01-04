@@ -407,9 +407,14 @@ class GoldenTables extends QueryTest with SharedSparkSession {
   generateGoldenTable("deltalog-getChanges") { tablePath =>
     val log = DeltaLog.forTable(spark, new Path(tablePath))
 
+    val schema = new StructType()
+      .add("part", IntegerType)
+      .add("id", IntegerType)
+    val metadata = Metadata(schemaString = schema.json)
+
     val add1 = AddFile("fake/path/1", Map.empty, 1, 1, dataChange = true)
     val txn1 = log.startTransaction()
-    txn1.commitManually(Metadata() :: add1 :: Nil: _*)
+    txn1.commitManually(metadata :: add1 :: Nil: _*)
 
     val addCDC2 = AddCDCFile("fake/path/2", Map("partition_foo" -> "partition_bar"), 1,
       Map("tag_foo" -> "tag_bar"))
@@ -419,7 +424,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
     val setTransaction3 = SetTransaction("fakeAppId", 3L, Some(200))
     val txn3 = log.startTransaction()
-    txn3.commitManually(Protocol() :: setTransaction3 :: Nil: _*)
+    txn3.commitManually(Protocol(1, 2) :: setTransaction3 :: Nil: _*)
   }
 
   ///////////////////////////////////////////////////////////////////////////

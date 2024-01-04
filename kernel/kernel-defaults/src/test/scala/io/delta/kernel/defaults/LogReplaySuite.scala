@@ -16,18 +16,18 @@
 package io.delta.kernel.defaults
 
 import java.io.File
-
 import scala.collection.JavaConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.scalatest.funsuite.AnyFunSuite
 import org.apache.hadoop.conf.Configuration
-
 import io.delta.kernel.types.{LongType, StructType}
-import io.delta.kernel.internal.InternalScanFileUtils
+import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.TableNotFoundException
+import io.delta.kernel.Table
+
+import java.util.Optional
 
 class LogReplaySuite extends AnyFunSuite with TestUtils {
 
@@ -284,5 +284,17 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     // The second should remain, and should have a hard-coded modification time of 1700000000000L
     assert(
       foundFiles.find(_.getPath.endsWith("foo")).exists(_.getModificationTime == 1700000000000L))
+  }
+
+  test("get the last transaction version for appID") {
+    val unresolvedPath = goldenTablePath("deltalog-getChanges")
+    val table = Table.forPath(defaultTableClient, unresolvedPath)
+
+    val snapshot = table.getLatestSnapshot(defaultTableClient)
+    assert(snapshot.isInstanceOf[SnapshotImpl])
+    val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
+
+    assert(snapshotImpl.getLatestTransactionVersion("fakeAppId") === Optional.of(3L))
+    assert(snapshotImpl.getLatestTransactionVersion("nonExistentAppId") === Optional.empty())
   }
 }
