@@ -23,8 +23,11 @@ import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Table, TableNotFoundException}
+import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getTestResourceFilePath
+import io.delta.kernel.expressions.{And, Column, Literal, Predicate, ScalarExpression}
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.scalatest.funsuite.AnyFunSuite
@@ -462,5 +465,65 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         .build()
     }
     assert(e.getMessage.contains("Unsupported reader protocol version"))
+  }
+
+  // TODO remove these tests & their golden tables
+  private def checkNumScanFiles(
+    tablePath: String, filter: Predicate, numExpectedFiles: Int): Unit = {
+    val snapshot = latestSnapshot(tablePath)
+    val scan = snapshot.getScanBuilder(defaultTableClient)
+      .withFilter(defaultTableClient, filter)
+      .build()
+    assert(collectScanFileRows(scan).length == numExpectedFiles)
+  }
+
+  test("check data skipping prototype") {
+    checkNumScanFiles(
+      tablePath = goldenTablePath("basic-stats-prototype"),
+      filter = new Predicate("=", new Column("id"), Literal.ofLong(5L)),
+      numExpectedFiles = 1
+    )
+  }
+
+  test("check data skipping prototype checkpoint") {
+    // manually verified that we hit the isFromCheckpoint branch via logging output
+    checkNumScanFiles(
+      tablePath = getTestResourceFilePath("kernel-parquet-stats"),
+      filter = new Predicate("=", new Column("as_int"), Literal.ofLong(5L)),
+      numExpectedFiles = 1
+    )
+  }
+
+  test("check data skipping prototype missing stats") {
+    val path = goldenTablePath("missing-stats-prototype")
+    // if we only filter on col1 or col2 (available stats) we should be able to safely prune files
+    checkNumScanFiles(
+      tablePath = path,
+      filter = new Predicate("=", new Column("col1"), Literal.ofInt(10)),
+      numExpectedFiles = 1
+    )
+    // if we filter on col3 we should prune no files
+    checkNumScanFiles(
+      tablePath = path,
+      filter = new Predicate("=", new Column("col3"), Literal.ofInt(10)),
+      numExpectedFiles = 4
+    )
+    // we still safely prune files here?
+    checkNumScanFiles(
+      tablePath = path,
+      filter = new And(
+        new Predicate("=", new Column("col1"), Literal.ofInt(10)),
+        new Predicate("=", new Column("col3"), Literal.ofInt(10))
+      ),
+      numExpectedFiles = 1
+    )
+  }
+
+  test("check data skipping prototype date type") {
+    checkNumScanFiles(
+      tablePath = goldenTablePath("basic-stats-all-types"),
+      filter = new Predicate("=", new Column("as_date"), Literal.ofDate(10957)),
+      numExpectedFiles = 1
+    )
   }
 }

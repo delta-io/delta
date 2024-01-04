@@ -30,12 +30,12 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.network.util.JavaUtils
-import org.apache.spark.sql.{QueryTest, Row}
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, OptimisticTransaction}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Metadata, _}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils, Utils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
@@ -531,7 +531,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
   private def writeDataWithSchema(tblLoc: String, data: Seq[Row], schema: StructType): Unit = {
     val df = spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
-    df.write.format("delta").save(tblLoc)
+    df.write.format("delta").mode("append").save(tblLoc)
   }
 
   /** TEST: DeltaDataReaderSuite > read - primitives */
@@ -1411,6 +1411,392 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       AddFile("foo2", Map("part" -> "2"), 1L, 100L, dataChange = true,
         stats = "fake_statistics_string"))
     log.checkpoint(log.unsafeVolatileSnapshot)
+  }
+
+  /* -------- Data skipping tables copied from Delta Spark DataSkippingDeltaTests ----- */
+
+  private def getDataSkippingConfs(
+      indexedCols: Option[Int], deltaStatsColNamesOpt: Option[String]): Seq[(String, String)] = {
+    val numIndexedColsConfOpt = indexedCols
+      .map(DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultTablePropertyKey -> _.toString)
+    val indexedColNamesConfOpt = deltaStatsColNamesOpt
+      .map(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.defaultTablePropertyKey -> _)
+    (numIndexedColsConfOpt ++ indexedColNamesConfOpt).toSeq
+  }
+
+  def writeDataSkippingTable(
+        name: String,
+        data: String,
+        schema: StructType = null,
+        indexedCols: Option[Int] = None,
+        deltaStatsColNamesOpt: Option[String] = None): Unit = {
+    generateGoldenTable(name) { tablePath =>
+      withSQLConf(getDataSkippingConfs(indexedCols, deltaStatsColNamesOpt): _*) {
+        val jsonRecords = data.split("\n").toSeq
+        val reader = spark.read
+        if (schema != null) { reader.schema(schema) }
+        val df = reader.json(jsonRecords.toDS())
+
+        val r = DeltaLog.forTable(spark, tablePath)
+        df.coalesce(1).write.format("delta").save(r.dataPath.toString)
+      }
+    }
+  }
+
+  writeDataSkippingTable("data-skipping-top-level-single-1", """{"a": 1}""")
+  writeDataSkippingTable("data-skipping-nested-single-1", """{"a": {"b": 1}}""")
+  writeDataSkippingTable("data-skipping-double-nested-single-1", """{"a": {"b": {"c": 1}}}""")
+  private def longString(str: String) = str * 1000
+  writeDataSkippingTable(
+    "data-skipping-long-strings-long-min",
+    s"""
+       {"a": '${longString("A")}'}
+       {"a": 'B'}
+       {"a": 'C'}
+     """
+  )
+  writeDataSkippingTable(
+    "data-skipping-long-strings-long-max",
+    s"""
+       {"a": 'A'}
+       {"a": 'B'}
+       {"a": '${longString("C")}'}
+     """
+  )
+  writeDataSkippingTable("data-skipping-and-statements-simple",
+    """
+      {"a": 1}
+      {"a": 2}
+    """
+  )
+  writeDataSkippingTable("data-skipping-and-statements-two-fields",
+    """
+      {"a": 1, "b": "2017-09-01"}
+      {"a": 2, "b": "2017-08-31"}
+    """
+  )
+  writeDataSkippingTable("data-skipping-and-statements-one-side-unsupported",
+    """
+      {"a": 10, "b": 10}
+      {"a": 20: "b": 20}
+    """
+  )
+  writeDataSkippingTable("data-skipping-boolean-comparisons", """{"a": false}""")
+  writeDataSkippingTable(
+    "data-skipping-missing-stats-columns",
+    """
+      {"a": 1, "b": 10}
+      {"a": 2, "b": 20}
+    """,
+    indexedCols = Some(1)
+  )
+  private def generateJsonData(numCols: Int): String = {
+    val fields = (0 until numCols).map(i => s""""col${"%02d".format(i)}":$i""".stripMargin)
+
+    "{" + fields.mkString(",") + "}"
+  }
+  writeDataSkippingTable(
+    "data-skipping-more-columns-than-indexed",
+    generateJsonData(33) // defaultNumIndexedCols + 1
+  )
+  writeDataSkippingTable(
+    "data-skipping-nested-schema-3-indexed-column",
+    """{
+      "a": 1,
+      "b": {
+        "c": {
+          "d": 2,
+          "e": 3,
+          "f": {
+            "g": 4,
+            "h": 5,
+            "i": 6
+          },
+          "j": 7,
+          "k": 8
+        },
+        "l": 9
+      },
+      "m": 10
+    }""".replace("\n", ""),
+    indexedCols = Some(3)
+  )
+  writeDataSkippingTable(
+    "data-skipping-nested-schema-0-indexed-column",
+    """{
+      "a": 1,
+      "b": {
+        "c": {
+          "d": 2,
+          "e": 3,
+          "f": {
+            "g": 4,
+            "h": 5,
+            "i": 6
+          },
+          "j": 7,
+          "k": 8
+        },
+        "l": 9
+      },
+      "m": 10
+    }""".replace("\n", ""),
+    indexedCols = Some(0)
+  )
+  writeDataSkippingTable(
+    "data-skipping-indexed-column-names-naming-a-nested-column",
+    """{
+      "a": 1,
+      "b": {
+        "c": {
+          "d": 2,
+          "e": 3,
+          "f": {
+            "g": 4,
+            "h": 5,
+            "i": 6
+          },
+          "j": 7,
+          "k": 8
+        },
+        "l": 9
+      },
+      "m": 10
+    }""".replace("\n", ""),
+    indexedCols = Some(3),
+    deltaStatsColNamesOpt = Some("b.c")
+  )
+  writeDataSkippingTable(
+    "data-skipping-indexed-column-names-index-only-a-subset-of-leaf-columns",
+    """{
+      "a": 1,
+      "b": {
+        "c": {
+          "d": 2,
+          "e": 3,
+          "f": {
+            "g": 4,
+            "h": 5,
+            "i": 6
+          },
+          "j": 7,
+          "k": 8
+        },
+        "l": 9
+      },
+      "m": 10
+    }""".replace("\n", ""),
+    indexedCols = Some(3),
+    deltaStatsColNamesOpt = Some("b.c.e, b.c.f.h, b.c.k, b.l")
+  )
+  writeDataSkippingTable(
+    "data-skipping-nulls-only-null-in-file",
+    """
+      {"a": null }
+    """,
+    schema = new StructType().add(new StructField("a", IntegerType))
+  )
+  writeDataSkippingTable(
+    "data-skipping-nulls-null-plus-not-null-in-same-file",
+    """
+      {"a": null }
+      {"a": 1 }
+    """,
+    schema = new StructType().add(new StructField("a", IntegerType))
+  )
+  generateGoldenTable("data-skipping-on-TIMESTAMP") { tablePath =>
+    val data = "2019-09-09 01:02:03.456789"
+    val df = Seq(data).toDF("strTs")
+      .selectExpr(
+        s"CAST(strTs AS TIMESTAMP) AS ts",
+        s"STRUCT(CAST(strTs AS TIMESTAMP) AS ts) AS nested")
+
+    val r = DeltaLog.forTable(spark, tablePath)
+    df.coalesce(1).write.format("delta").save(r.dataPath.toString)
+  }
+  generateGoldenTable(
+    "data-skipping-basic-data-skipping-with-delta-statistic-column") { tablePath =>
+    val tableProperty = "TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9')"
+    sql(
+      s"""CREATE TABLE delta.`$tablePath`(
+         |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 DATE,
+         |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2)
+         |) USING delta $tableProperty""".stripMargin)
+    sql(
+      s"""insert into delta.`$tablePath` values
+        |(1, '1', 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01', '1111', true, 1.0),
+        |(2, '2', 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', '2222', false, 2.0)
+        |""".stripMargin)
+  }
+  generateGoldenTable(
+    "data-skipping-with-delta-statistic-column-rename-column") { tablePath =>
+    sql(
+      s"""CREATE TABLE delta.`$tablePath`(
+         |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 DATE,
+         |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2)
+         |) USING delta
+         |TBLPROPERTIES(
+         |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9',
+         |'delta.columnMapping.mode' = 'name',
+         |'delta.minReaderVersion' = '2',
+         |'delta.minWriterVersion' = '5'
+         |)
+         |""".stripMargin)
+    (1 to 9).foreach { i =>
+      sql(s"alter table delta.`$tablePath` RENAME COLUMN c$i to cc$i")
+    }
+    sql(
+      s"""insert into delta.`$tablePath` values
+        |(1, '1', 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01', '1111', true, 1.0),
+        |(2, '2', 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', '2222', false, 2.0)
+        |""".stripMargin)
+  }
+  generateGoldenTable("data-skipping-with-delta-statistic-column-drop-column") { tablePath =>
+    sql(
+      s"""CREATE TABLE delta.`$tablePath`(
+         |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 DATE,
+         |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2)
+         |) USING delta
+         |TBLPROPERTIES(
+         |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9',
+         |'delta.columnMapping.mode' = 'name',
+         |'delta.minReaderVersion' = '2',
+         |'delta.minWriterVersion' = '5'
+         |)
+         |""".stripMargin)
+    sql(s"alter table delta.`$tablePath` drop COLUMN c2")
+    sql(s"alter table delta.`$tablePath` drop COLUMN c7")
+    sql(s"alter table delta.`$tablePath` drop COLUMN c8")
+    sql(
+      s"""insert into delta.`$tablePath` values
+        |(1, 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01', 1.0),
+        |(2, 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', 2.0)
+        |""".stripMargin)
+  }
+
+  /* ----- Data skipping tables for Kernel ------ */
+
+  def writeBasicStatsAllTypesTable(tablePath: String): Unit = {
+    val schema = new StructType()
+      .add("as_int", IntegerType)
+      .add("as_long", LongType)
+      .add("as_byte", ByteType)
+      .add("as_short", ShortType)
+      .add("as_float", FloatType)
+      .add("as_double", DoubleType)
+      .add("as_string", StringType)
+      .add("as_date", DateType)
+      .add("as_timestamp", TimestampType)
+      .add("as_big_decimal", DecimalType(1, 0))
+
+    writeDataWithSchema(
+      tablePath,
+      Row(0, 0.longValue, 0.byteValue, 0.shortValue, 0.floatValue, 0.doubleValue, "0",
+        java.sql.Date.valueOf("2000-01-01"), Timestamp.valueOf("2000-01-01 00:00:00"),
+        new JBigDecimal(0)) :: Nil,
+      schema
+    )
+  }
+
+  generateGoldenTable("data-skipping-basic-stats-all-types") { tablePath =>
+    writeBasicStatsAllTypesTable(tablePath)
+  }
+  Seq("name", "id").foreach { columnMappingMode =>
+    generateGoldenTable(s"data-skipping-basic-stats-all-types-columnmapping-$columnMappingMode") {
+      tablePath =>
+        withSQLConf(
+          ("spark.databricks.delta.properties.defaults.columnMapping.mode", columnMappingMode)) {
+          writeBasicStatsAllTypesTable(tablePath)
+        }
+    }
+  }
+  generateGoldenTable("data-skipping-basic-stats-all-types-checkpoint") { tablePath =>
+    withSQLConf(
+      ("spark.databricks.delta.properties.defaults.checkpointInterval", "1")
+    ) {
+      writeBasicStatsAllTypesTable(tablePath)
+    }
+  }
+
+  generateGoldenTable("basic-stats-prototype") { tablePath =>
+    spark.range(10).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(10, 20).repartition(1).write.format("delta").mode("append").save(tablePath)
+    spark.range(20, 30).repartition(1).write.format("delta").mode("append").save(tablePath)
+  }
+
+
+  generateGoldenTable("missing-stats-prototype") { tablePath =>
+    // TODO is this the intentional "missing" stats?
+    // todo no stats at all?
+
+    val schema = new StructType()
+      .add("col1", IntegerType)
+      .add("col2", IntegerType)
+      .add("col3", IntegerType)
+      .add("col4", IntegerType)
+
+    withSQLConf(
+      DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultTablePropertyKey-> "2") {
+
+      writeDataWithSchema(
+        tablePath,
+        Row(0, 0, 0, 0) :: Row(1, 1, 1, 1) :: Nil,
+        schema
+      )
+
+      writeDataWithSchema(
+        tablePath,
+        Row(10, 10, 10, 10) :: Row(11, 11, 11, 11) :: Nil,
+        schema
+      )
+    }
+  }
+
+  generateGoldenTable("checkpoint-test") { path =>
+    withSQLConf(
+      (DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.defaultTablePropertyKey -> "false"),
+      (DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.defaultTablePropertyKey -> "true"),
+      (DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "1")
+    ) {
+      def dfWithSchema(rows: Seq[Row], schema: StructType): DataFrame = {
+        spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
+      }
+      val schema = new StructType()
+        .add("as_int", IntegerType)
+        .add("as_string", StringType)
+        .add("as_float", DoubleType)
+      dfWithSchema(Row(1, "one", 1.1) :: Row(2, "two", 2.2) :: Nil, schema).write
+        .format("delta")
+        .mode("append")
+        .save(path)
+      dfWithSchema(Row(5, "five", 5.5) :: Row(6, "size", 6.6) :: Nil, schema).write
+        .format("delta")
+        .mode("append")
+        .save(path)
+    }
+  }
+
+  // just checking generated stats - test with array type / others to come
+  generateGoldenTable("stats-with-array") { tablePath =>
+
+    val schema = new StructType()
+      .add("as_int", IntegerType)
+      .add("as_long", LongType)
+      .add("as_array", ArrayType(IntegerType))
+
+    writeDataWithSchema(
+      tablePath,
+      Row(0, 0.longValue, Array()) ::
+        Row(10, 10.longValue, Array(1, 2)) :: Nil,
+      schema
+    )
+
+    writeDataWithSchema(
+      tablePath,
+      Row(50, 50.longValue, Array(1)) ::
+        Row(50, 50.longValue, null) :: Nil,
+      schema
+    )
   }
 }
 

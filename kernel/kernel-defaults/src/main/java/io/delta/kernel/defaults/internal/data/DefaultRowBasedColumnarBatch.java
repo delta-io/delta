@@ -83,6 +83,38 @@ public class DefaultRowBasedColumnarBatch implements ColumnarBatch {
         return columnVectors.get(ordinal).get();
     }
 
+    @Override
+    public ColumnarBatch withNewColumn(int ordinal, StructField columnSchema,
+                                ColumnVector columnVector) {
+        if (ordinal < 0 || ordinal >= columnVectors.size() + 1) {
+            throw new IllegalArgumentException("Invalid ordinal: " + ordinal);
+        }
+
+        // Update the schema
+        final List<StructField> newStructFields = new ArrayList<>(schema.fields());
+        newStructFields.add(ordinal, columnSchema);
+        final StructType newSchema = new StructType(newStructFields);
+
+        for (int i = 0; i < columnVectors.size(); i++) {
+            getColumnVector(i);
+        }
+
+        // Add the vector at the target ordinal
+        final List<Optional<ColumnVector>> newColumnVectors = new ArrayList<>(columnVectors);
+        newColumnVectors.add(ordinal, Optional.of(columnVector));
+
+        // Fill the new array
+        ColumnVector[] newColumnVectorArr = new ColumnVector[newColumnVectors.size()];
+        for (int i = 0; i < newColumnVectorArr.length; i++) {
+            newColumnVectorArr[i] = newColumnVectors.get(i).get();
+        }
+
+        return new DefaultColumnarBatch(
+            getSize(), // # of rows hasn't changed
+            newSchema,
+            newColumnVectorArr);
+    }
+
     /**
      * TODO this implementation sucks
      */
