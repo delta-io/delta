@@ -56,79 +56,81 @@ public class DataSkippingUtils {
     /**
      * Returns a file skipping predicate expression, derived from the user query, which uses column
      * statistics to prune away files that provably contain no rows the query cares about.
-     *
+     * <p>
      * Specifically, the filter extraction code must obey the following rules:
-     *
-     * 1. Given a query predicate `e`, `constructDataFilters(e)` must return TRUE for a file unless
-     *    we can prove `e` will not return TRUE for any row the file might contain. For example,
-     *    given `a = 3` and min/max stat values [0, 100], this skipping predicate is safe:
-     *
-     *      AND(minValues.a <= 3, maxValues.a >= 3)
-     *
-     *    Because that condition must be true for any file that might possibly contain `a = 3`; the
-     *    skipping predicate could return FALSE only if the max is too low, or the min too high; it
-     *    could return NULL only if a is NULL in every row of the file. In both latter cases, it is
-     *    safe to skip the file because `a = 3` can never evaluate to TRUE.
-     *
+     * <p>
+     * 1. Given a query predicate `e`, `constructDataSkippingFilter(e)` must return TRUE for a
+     * file unless
+     * we can prove `e` will not return TRUE for any row the file might contain. For example,
+     * given `a = 3` and min/max stat values [0, 100], this skipping predicate is safe:
+     * <p>
+     * AND(minValues.a <= 3, maxValues.a >= 3)
+     * <p>
+     * Because that condition must be true for any file that might possibly contain `a = 3`; the
+     * skipping predicate could return FALSE only if the max is too low, or the min too high; it
+     * could return NULL only if a is NULL in every row of the file. In both latter cases, it is
+     * safe to skip the file because `a = 3` can never evaluate to TRUE.
+     * <p>
      * 2. It is unsafe to apply skipping to operators that can evaluate to NULL or produce an error
-     *    for non-NULL inputs. For example, consider this query predicate involving integer
-     *    addition:
-     *
-     *      a + 1 = 3
-     *
-     *    It might be tempting to apply the standard equality skipping predicate:
-     *
-     *      AND(minValues.a + 1 <= 3, 3 <= maxValues.a + 1)
-     *
-     *    However, the skipping predicate would be unsound, because the addition operator could
-     *    trigger integer overflow (e.g. minValues.a = 0 and maxValues.a = INT_MAX), even though the
-     *    file could very well contain rows satisfying a + 1 = 3.
-     *
+     * for non-NULL inputs. For example, consider this query predicate involving integer
+     * addition:
+     * <p>
+     * a + 1 = 3
+     * <p>
+     * It might be tempting to apply the standard equality skipping predicate:
+     * <p>
+     * AND(minValues.a + 1 <= 3, 3 <= maxValues.a + 1)
+     * <p>
+     * However, the skipping predicate would be unsound, because the addition operator could
+     * trigger integer overflow (e.g. minValues.a = 0 and maxValues.a = INT_MAX), even though the
+     * file could very well contain rows satisfying a + 1 = 3.
+     * <p>
      * 3. Predicates involving NOT are ineligible for skipping, because
-     *    `Not(constructDataFilters(e))` is seldom equivalent to `constructDataFilters(Not(e))`.
-     *    For example, consider the query predicate:
-     *
-     *      NOT(a = 1)
-     *
-     *    A simple inversion of the data skipping predicate would be:
-     *
-     *      NOT(AND(minValues.a <= 1, maxValues.a >= 1))
-     *      ==> OR(NOT(minValues.a <= 1), NOT(maxValues.a >= 1))
-     *      ==> OR(minValues.a > 1, maxValues.a < 1)
-     *
-     *    By contrast, if we first combine the NOT with = to obtain
-     *
-     *      a != 1
-     *
-     *    We get a different skipping predicate:
-     *
-     *      NOT(AND(minValues.a = 1, maxValues.a = 1))
-     *      ==> OR(NOT(minValues.a = 1), NOT(maxValues.a = 1))
-     *      ==>  OR(minValues.a != 1, maxValues.a != 1)
-     *
-     *    A truth table confirms that the first (naively inverted) skipping predicate is incorrect:
-     *
-     *      minValues.a
-     *      | maxValues.a
-     *      | | OR(minValues.a > 1, maxValues.a < 1)
-     *      | | | OR(minValues.a != 1, maxValues.a != 1)
-     *      0 0 T T
-     *      0 1 F T    !! first predicate wrongly skipped a = 0
-     *      1 1 F F
-     *
-     *    Fortunately, we may be able to eliminate NOT from some (branches of some) predicates:
-     *
-     *    a. It is safe to push the NOT into the children of AND and OR using de Morgan's Law, e.g.
-     *
-     *         NOT(AND(a, b)) ==> OR(NOT(a), NOT(B)).
-     *
-     *    b. It is safe to fold NOT into other operators, when a negated form of the operator
-     *       exists:
-     *
-     *         NOT(NOT(x)) ==> x
-     *         NOT(a == b) ==> a != b
-     *         NOT(a > b) ==> a <= b
-     *
+     * `Not(constructDataSkippingFilter(e))` is seldom equivalent to `constructDataSkippingFilter
+     * (Not(e))`.
+     * For example, consider the query predicate:
+     * <p>
+     * NOT(a = 1)
+     * <p>
+     * A simple inversion of the data skipping predicate would be:
+     * <p>
+     * NOT(AND(minValues.a <= 1, maxValues.a >= 1))
+     * ==> OR(NOT(minValues.a <= 1), NOT(maxValues.a >= 1))
+     * ==> OR(minValues.a > 1, maxValues.a < 1)
+     * <p>
+     * By contrast, if we first combine the NOT with = to obtain
+     * <p>
+     * a != 1
+     * <p>
+     * We get a different skipping predicate:
+     * <p>
+     * NOT(AND(minValues.a = 1, maxValues.a = 1))
+     * ==> OR(NOT(minValues.a = 1), NOT(maxValues.a = 1))
+     * ==>  OR(minValues.a != 1, maxValues.a != 1)
+     * <p>
+     * A truth table confirms that the first (naively inverted) skipping predicate is incorrect:
+     * <p>
+     * minValues.a
+     * | maxValues.a
+     * | | OR(minValues.a > 1, maxValues.a < 1)
+     * | | | OR(minValues.a != 1, maxValues.a != 1)
+     * 0 0 T T
+     * 0 1 F T    !! first predicate wrongly skipped a = 0
+     * 1 1 F F
+     * <p>
+     * Fortunately, we may be able to eliminate NOT from some (branches of some) predicates:
+     * <p>
+     * a. It is safe to push the NOT into the children of AND and OR using de Morgan's Law, e.g.
+     * <p>
+     * NOT(AND(a, b)) ==> OR(NOT(a), NOT(B)).
+     * <p>
+     * b. It is safe to fold NOT into other operators, when a negated form of the operator
+     * exists:
+     * <p>
+     * NOT(NOT(x)) ==> x
+     * NOT(a == b) ==> a != b
+     * NOT(a > b) ==> a <= b
+     * <p>
      * NOTE: The skipping predicate must handle the case where min and max stats for a column are
      * both NULL -- which indicates that all values in the file are NULL. Fortunately, most of the
      * operators we support data skipping for are NULL intolerant, and thus trivially satisfy this
@@ -136,24 +138,25 @@ public class DataSkippingUtils {
      * we support -- IS [NOT] NULL -- is specifically NULL aware. The predicate evaluates to NULL
      * if any required statistics are missing.
      */
-    public static Optional<Predicate> constructDataFilters(
-            Predicate dataFilter, StructType dataSchema) {
+    public static Optional<Predicate> constructDataSkippingFilter(
+            Predicate dataFilters, StructType dataSchema) {
             StatsSchemaHelper schemaHelper = new StatsSchemaHelper(dataSchema);
-        return constructDataFilters(dataFilter, schemaHelper);
+        return constructDataSkippingFilter(dataFilters, schemaHelper);
     }
 
-    private static Optional<Predicate> constructDataFilters(
-            Predicate dataFilter, StatsSchemaHelper schemaHelper) {
+    private static Optional<Predicate> constructDataSkippingFilter(
+            Predicate dataFilters, StatsSchemaHelper schemaHelper) {
 
-        switch (dataFilter.getName().toUpperCase(Locale.ROOT)) {
+        switch (dataFilters.getName().toUpperCase(Locale.ROOT)) {
 
             // Push skipping predicate generation through the AND:
             //
-            // constructDataFilters(AND(a, b))
-            // ==> AND(constructDataFilters(a), constructDataFilters(b))
+            // constructDataSkippingFilter(AND(a, b))
+            // ==> AND(constructDataSkippingFilter(a), constructDataSkippingFilter(b))
             //
-            // To see why this transformation is safe, consider that `constructDataFilters(a)` must
-            // evaluate to TRUE *UNLESS* we can prove that `a` would not evaluate to TRUE for any
+            // To see why this transformation is safe, consider that
+            // `constructDataSkippingFilter(a)` must evaluate to TRUE *UNLESS* we can prove that
+            // `a` would not evaluate to TRUE for any
             // row the file might contain. Thus, if the rewritten form of the skipping predicate
             // does not evaluate to TRUE, at least one of the skipping predicates must not have
             // evaluated to TRUE, which in turn means we were able to prove that `a` and/or `b`
@@ -164,10 +167,10 @@ public class DataSkippingUtils {
             // NOTE: AND is special -- we can safely skip the file if one leg does not evaluate to
             // TRUE, even if we cannot construct a skipping filter for the other leg.
             case "AND":
-                Optional<Predicate> e1Filter = constructDataFilters(
-                    asPredicate(getLeft(dataFilter)), schemaHelper);
-                Optional<Predicate> e2Filter = constructDataFilters(
-                    asPredicate(getRight(dataFilter)), schemaHelper);
+                Optional<Predicate> e1Filter = constructDataSkippingFilter(
+                    asPredicate(getLeft(dataFilters)), schemaHelper);
+                Optional<Predicate> e2Filter = constructDataSkippingFilter(
+                    asPredicate(getRight(dataFilters)), schemaHelper);
                 if (e1Filter.isPresent() && e2Filter.isPresent()) {
                     return Optional.of(new And(e1Filter.get(), e2Filter.get()));
                 } else if (e1Filter.isPresent()) {
@@ -177,19 +180,19 @@ public class DataSkippingUtils {
                 }
 
             case "=": case "<": case "<=": case ">": case ">=":
-                Expression left = getLeft(dataFilter);
-                Expression right = getRight(dataFilter);
+                Expression left = getLeft(dataFilters);
+                Expression right = getRight(dataFilters);
 
                 if (left instanceof Column && right instanceof Literal) {
                     Column leftCol = (Column) left;
                     Literal rightLit = (Literal) right;
                     if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol) &&
                         schemaHelper.isSkippingEligibleLiteral(rightLit)) {
-                        return Optional.of(constructComparatorDataFilters(
-                            dataFilter.getName(), leftCol, rightLit, schemaHelper));
+                        return Optional.of(constructComparatorDataSkippingFilters(
+                            dataFilters.getName(), leftCol, rightLit, schemaHelper));
                     }
                 } else if (right instanceof Column && left instanceof Literal) {
-                    return constructDataFilters(reverseComparatorFilter(dataFilter), schemaHelper);
+                    return constructDataSkippingFilter(reverseComparatorFilter(dataFilters), schemaHelper);
                 }
             // TODO more expressions
             default:
@@ -202,7 +205,7 @@ public class DataSkippingUtils {
     //////////////////////////////////////////////////////////////////////////////////
 
     /** Construct the skipping predicate for a given comparator */
-    private static Predicate constructComparatorDataFilters(
+    private static Predicate constructComparatorDataSkippingFilters(
             String comparator, Column leftCol, Literal rightLit, StatsSchemaHelper schemaHelper) {
 
         switch (comparator.toUpperCase(Locale.ROOT)) {

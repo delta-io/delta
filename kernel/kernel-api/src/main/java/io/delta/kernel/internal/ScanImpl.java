@@ -94,8 +94,8 @@ public class ScanImpl implements Scan {
         accessedScanFiles = true;
 
         // Generate data skipping filter and decide if we should read the stats column
-        Optional<Predicate> dataFilter = getDataSkippingPredicate();
-        boolean shouldReadStats = dataFilter.isPresent();
+        Optional<Predicate> dataSkippingFilter = getDataSkippingFilter();
+        boolean shouldReadStats = dataSkippingFilter.isPresent();
 
         // Get active AddFiles via log replay
         CloseableIterator<FilteredColumnarBatch> scanFileIter = logReplay
@@ -108,7 +108,7 @@ public class ScanImpl implements Scan {
         if (shouldReadStats) {
             // there was a usable data skipping filter --> apply data skipping
             // TODO drop stats column before returning
-            return applyDataSkipping(tableClient, scanFileIter, dataFilter.get());
+            return applyDataSkipping(tableClient, scanFileIter, dataSkippingFilter.get());
         } else {
             return scanFileIter;
         }
@@ -206,18 +206,18 @@ public class ScanImpl implements Scan {
         };
     }
 
-    private Optional<Predicate> getDataSkippingPredicate() {
-        return getDataFilters().flatMap(dataPredicate ->
-            DataSkippingUtils.constructDataFilters(dataPredicate, metadata.getSchema())
+    private Optional<Predicate> getDataSkippingFilter() {
+        return getDataFilters().flatMap(dataFilters ->
+            DataSkippingUtils.constructDataSkippingFilter(dataFilters, metadata.getSchema())
         );
     }
 
     private CloseableIterator<FilteredColumnarBatch> applyDataSkipping(
             TableClient tableClient,
             CloseableIterator<FilteredColumnarBatch> scanFileIter,
-            Predicate dataFilter) {
+            Predicate dataSkippingFilter) {
         // Get the stats schema
-        // TODO prune stats schema according to the data filter
+        // TODO prune stats schema according to the data skipping filter
         StructType statsSchema = DataSkippingUtils.getStatsSchema(metadata.getSchema());
 
         // Skipping happens in two steps:
@@ -229,7 +229,7 @@ public class ScanImpl implements Scan {
             "=",
             new ScalarExpression(
                 "COALESCE",
-                Arrays.asList(dataFilter, Literal.ofBoolean(true))),
+                Arrays.asList(dataSkippingFilter, Literal.ofBoolean(true))),
             AlwaysTrue.ALWAYS_TRUE);
 
         PredicateEvaluator predicateEvaluator = tableClient
