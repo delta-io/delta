@@ -20,13 +20,15 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
-import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
+import org.apache.spark.sql.delta.commands.{DeletionVectorBitmapGenerator, DMLWithDeletionVectorsHelper, MergeIntoCommandBase}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC}
 import org.apache.spark.sql.delta.commands.merge.MergeOutputGeneration.{SOURCE_ROW_INDEX_COL, TARGET_ROW_INDEX_COL}
+import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.util.SetAccumulator
 
 import org.apache.spark.sql.{Column, Dataset, SparkSession}
-import org.apache.spark.sql.catalyst.expressions.{Literal, Or}
+import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal, Or}
+import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeIntoClause
 import org.apache.spark.sql.functions.{coalesce, col, count, input_file_name, lit, monotonically_increasing_id, sum}
 
 /**
@@ -42,10 +44,19 @@ import org.apache.spark.sql.functions.{coalesce, col, count, input_file_name, li
  *
  * Phase 2: Read the touched files again and write new files with updated and/or inserted rows.
  *    If there are updates, then use an outer join using the given condition to write the
- *    updates and inserts (see [[writeAllChanges()]]. If there are no matches for updates,
- *    only inserts, then write them directly (see [[writeInsertsOnlyWhenNoMatches()]].
+ *    updates and inserts (see [[writeAllChanges()]]). If there are no matches for updates,
+ *    only inserts, then write them directly (see [[writeInsertsOnlyWhenNoMatches()]]).
  *
- * See [[InsertOnlyMergeExecutor]] for the optimized executor used in case there are only inserts.
+ *    Note, when deletion vectors are enabled, phase 2 is split into two parts:
+ *    2.a. Read the touched files again and only write modified and new
+ *         rows (see [[writeAllChanges()]]).
+ *    2.b. Read the touched files and generate deletion vectors for the modified
+ *         rows (see [[writeDVs()]]).
+ *
+ * If there are no matches for updates, only inserts, then write them directly
+ * (see [[writeInsertsOnlyWhenNoMatches()]]). This remains the same when DVs are enabled since there
+ * are no modified rows. Furthermore, eee [[InsertOnlyMergeExecutor]] for the optimized executor
+ * used in case there are only inserts.
  */
 trait ClassicMergeExecutor extends MergeOutputGeneration {
   self: MergeIntoCommandBase =>
@@ -200,6 +211,70 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
   }
 
   /**
+   * Helper function that produces an expression by combining a sequence of clauses with OR.
+   * Requires the sequence to be non-empty.
+   */
+  protected def clauseDisjunction(clauses: Seq[DeltaMergeIntoClause]): Expression = {
+    require(clauses.nonEmpty)
+    clauses
+      .map(_.condition.getOrElse(Literal.TrueLiteral))
+      .reduceLeft(Or)
+  }
+
+  /**
+   * Returns the expression that can be used for selecting the modified rows generated
+   * by the merge operation. The expression is to designed to work irrespectively
+   * of the join type used between the source and target tables.
+   *
+   * The expression consists of two parts, one for each of the action clause types that produce
+   * row modifications: MATCHED, NOT MATCHED BY SOURCE. All actions of the same clause type form
+   * a disjunctive clause. The result is then conjucted to an expression that filters the rows
+   * of the particular action clause type. For example:
+   *
+   * MERGE INTO t
+   * USING s
+   * ON s.id = t.id
+   * WHEN MATCHED AND id < 5 THEN ...
+   * WHEN MATCHED AND id > 10 THEN ...
+   * WHEN NOT MATCHED BY SOURCE AND id > 20 THEN ...
+   *
+   * Produces the following expression:
+   *
+   * ((as.id = t.id) AND (id < 5 OR id > 10))
+   * OR
+   * ((SOURCE TABLE IS NULL) AND (id > 20))
+   */
+  protected def generateFilterForModifiedRows(): Expression = {
+    val matchedExpression = if (matchedClauses.nonEmpty) {
+      And(Column(condition).expr, clauseDisjunction(matchedClauses))
+    } else {
+      Column(condition).expr
+    }
+
+    val notMatchedBySourceExpression = if (notMatchedBySourceClauses.nonEmpty) {
+      val combinedClauses = clauseDisjunction(notMatchedBySourceClauses)
+      And(col(SOURCE_ROW_PRESENT_COL).isNull.expr, combinedClauses)
+    } else {
+      Literal.FalseLiteral
+    }
+
+    Or(matchedExpression, notMatchedBySourceExpression)
+  }
+
+  /**
+   * Returns the expression that can be used for selecting the new rows generated
+   * by the merge operation.
+   */
+  protected def generateFilterForNewRows(): Expression = {
+    if (notMatchedClauses.nonEmpty) {
+      val combinedClauses = clauseDisjunction(notMatchedClauses)
+      And(col(TARGET_ROW_PRESENT_COL).isNull.expr, combinedClauses)
+    } else {
+      Literal.FalseLiteral
+    }
+  }
+
+  /**
    * Write new files by reading the touched files and updating/inserting data using the source
    * query/table. This is implemented using a full-outer-join using the merge condition.
    *
@@ -210,13 +285,17 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       spark: SparkSession,
       deltaTxn: OptimisticTransaction,
       filesToRewrite: Seq[AddFile],
-      deduplicateCDFDeletes: DeduplicateCDFDeletes): Seq[FileAction] =
-    recordMergeOperation(
-      extraOpType =
-        if (shouldOptimizeMatchedOnlyMerge(spark)) "writeAllUpdatesAndDeletes"
-        else "writeAllChanges",
-      status = s"MERGE operation - Rewriting ${filesToRewrite.size} files",
-      sqlMetricName = "rewriteTimeMs") {
+      deduplicateCDFDeletes: DeduplicateCDFDeletes,
+      writeUnmodifiedRows: Boolean): Seq[FileAction] = recordMergeOperation(
+        extraOpType = if (!writeUnmodifiedRows) {
+            "writeModifiedRowsOnly"
+          } else if (shouldOptimizeMatchedOnlyMerge(spark)) {
+            "writeAllUpdatesAndDeletes"
+          } else {
+            "writeAllChanges"
+          },
+        status = s"MERGE operation - Rewriting ${filesToRewrite.size} files",
+        sqlMetricName = "rewriteTimeMs") {
 
       val cdcEnabled = isCdcEnabled(deltaTxn)
 
@@ -233,10 +312,23 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       columnsToDrop = Nil)
     val baseTargetDF = Dataset.ofRows(spark, targetPlan)
 
-    val joinType = if (shouldOptimizeMatchedOnlyMerge(spark)) {
-      "rightOuter"
+    val joinType = if (writeUnmodifiedRows) {
+      if (shouldOptimizeMatchedOnlyMerge(spark)) {
+        "rightOuter"
+      } else {
+        "fullOuter"
+      }
     } else {
-      "fullOuter"
+      // Since we do not need to write unmodified rows, we can perform stricter joins.
+      if (isMatchedOnly) {
+        "inner"
+      } else if (notMatchedBySourceClauses.isEmpty) {
+        "leftOuter"
+      } else if (notMatchedClauses.isEmpty) {
+        "rightOuter"
+      } else {
+        "fullOuter"
+      }
     }
 
     logDebug(s"""writeAllChanges using $joinType join:
@@ -256,7 +348,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     // with value `true`, one to each side of the join. Whether this field is null or not after
     // the outer join, will allow us to identify whether the joined row was a
     // matched inner result or an unmatched result with null on one side.
-    val joinedDF = {
+    val joinedBaseDF = {
       var sourceDF = getMergeSource.df
       if (deduplicateCDFDeletes.enabled && deduplicateCDFDeletes.includesInserts) {
         // Add row index for the source rows to identify inserted rows during the cdf deleted rows
@@ -264,7 +356,11 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         sourceDF = sourceDF.withColumn(SOURCE_ROW_INDEX_COL, monotonically_increasing_id())
       }
       val left = sourceDF
-        .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
+          .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
+          // In some cases, the optimizer (incorrectly) decides to omit the metrics column.
+          // This causes issues in the source determinism validation. We work around the issue by
+          // adding a redundant dummy filter to make sure the column is not pruned.
+          .filter(SOURCE_ROW_PRESENT_COL)
       val targetDF = baseTargetDF
         .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
       val right = if (deduplicateCDFDeletes.enabled) {
@@ -274,6 +370,14 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       }
       left.join(right, Column(condition), joinType)
     }
+
+    val joinedDF =
+      if (writeUnmodifiedRows) {
+        joinedBaseDF
+      } else {
+        val filter = Or(generateFilterForModifiedRows(), generateFilterForNewRows())
+        joinedBaseDF.filter(Column(filter))
+      }
 
     // Precompute conditions in matched and not matched clauses and generate
     // the joinedDF with precomputed columns and clauses with rewritten conditions.
@@ -355,5 +459,66 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     }
 
     newFiles
+  }
+
+  /**
+   * Writes Deletion Vectors for rows modified by the merge operation.
+   */
+  protected def writeDVs(
+    spark: SparkSession,
+    deltaTxn: OptimisticTransaction,
+    filesToRewrite: Seq[AddFile]): Seq[FileAction] = recordMergeOperation(
+      extraOpType = "writeDeletionVectors",
+      status = s"MERGE operation - Rewriting Deletion Vectors to ${filesToRewrite.size} files",
+      sqlMetricName = "rewriteTimeMs") {
+
+    val fileIndex = new TahoeBatchFileIndex(
+      spark,
+      "merge",
+      filesToRewrite,
+      deltaTxn.deltaLog,
+      deltaTxn.deltaLog.dataPath,
+      deltaTxn.snapshot)
+
+    val targetDF = DMLWithDeletionVectorsHelper.createTargetDfForScanningForMatches(
+      spark,
+      target,
+      fileIndex)
+
+    // For writing DVs we are only interested in the target table. When there are no
+    // notMatchedBySource clauses an inner join is sufficient. Otherwise, we need an rightOuter
+    // join to include target rows that are not matched.
+    val joinType = if (notMatchedBySourceClauses.isEmpty) {
+      "inner"
+    } else {
+      "rightOuter"
+    }
+
+    val joinedDF = getMergeSource.df
+      .withColumn(SOURCE_ROW_PRESENT_COL, lit(true))
+      .join(targetDF, Column(condition), joinType)
+
+    val modifiedRowsFilter = generateFilterForModifiedRows()
+    val matchedDVResult =
+      DeletionVectorBitmapGenerator.buildRowIndexSetsForFilesMatchingCondition(
+        spark,
+        deltaTxn,
+        tableHasDVs = true,
+        joinedDF,
+        filesToRewrite,
+        modifiedRowsFilter
+      )
+
+    val nameToAddFileMap = generateCandidateFileMap(targetDeltaLog.dataPath, filesToRewrite)
+
+    val touchedFilesWithDVs = DMLWithDeletionVectorsHelper
+      .findFilesWithMatchingRows(deltaTxn, nameToAddFileMap, matchedDVResult)
+
+    val (dvActions, _) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
+      spark,
+      touchedFilesWithDVs,
+      deltaTxn.snapshot)
+
+    dvActions
   }
 }

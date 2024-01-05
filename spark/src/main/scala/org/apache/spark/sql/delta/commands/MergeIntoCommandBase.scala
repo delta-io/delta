@@ -55,6 +55,13 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
   val notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause]
   val migratedSchema: Option[StructType]
 
+  protected def shouldWritePersistentDeletionVectors(
+      spark: SparkSession,
+      txn: OptimisticTransaction): Boolean = {
+    spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS) &&
+      DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
+  }
+
   override val (canMergeSchema, canOverwriteSchema) = {
     // Delta options can't be passed to MERGE INTO currently, so they'll always be empty.
     // The methods in options check if the auto migration flag is on, in which case schema evolution
