@@ -270,15 +270,16 @@ public class LogReplay {
     }
 
     private Optional<Long> loadRecentTransactionVersion(String applicationId) {
-        try (CloseableIterator<Tuple2<FileDataReadResult, Boolean>> reverseIter =
+        try (CloseableIterator<ActionWrapper> reverseIter =
                  new ActionsIterator(
                      tableClient,
                      logSegment.allLogFilesReversed(),
                      SET_TRANSACTION_READ_SCHEMA)) {
             while (reverseIter.hasNext()) {
-                final ColumnarBatch columnarBatch = reverseIter.next()._1.getData();
-
+                final ColumnarBatch columnarBatch =
+                    reverseIter.next().getFileDataReadResult().getData();
                 assert(columnarBatch.getSchema().equals(SET_TRANSACTION_READ_SCHEMA));
+
                 final ColumnVector txnVector = columnarBatch.getColumnVector(0);
                 for (int rowId = 0; rowId < txnVector.getSize(); rowId++) {
                     if (!txnVector.isNullAt(rowId)) {
