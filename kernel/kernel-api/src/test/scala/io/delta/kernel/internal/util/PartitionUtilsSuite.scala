@@ -128,7 +128,11 @@ class PartitionUtilsSuite extends AnyFunSuite {
       (
         "(column(`part3`) >= sss)",
         "(column(`data1`) = column(`part1`))"
-      )
+      ),
+
+    // predicate only on data column but reverse order of literal and column
+    predicate("=", ofInt(12), col("data1")) ->
+      ("ALWAYS_TRUE()", "(12 = column(`data1`))")
   )
 
   partitionTestCases.foreach {

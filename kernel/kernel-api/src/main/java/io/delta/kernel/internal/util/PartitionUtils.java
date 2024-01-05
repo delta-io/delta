@@ -204,7 +204,9 @@ public class PartitionUtils {
                     return true;
                 }
             } else {
-                return hasNonPartitionColumns(child.getChildren(), partitionColNames);
+                if(hasNonPartitionColumns(child.getChildren(), partitionColNames)) {
+                    return true;
+                }
             }
         }
         return false;
