@@ -19,12 +19,15 @@ import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import static java.lang.String.format;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.types.*;
-
+import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
@@ -241,5 +244,121 @@ class ExpressionUtils {
 
     static Expression childAt(Expression expression, int index) {
         return expression.getChildren().get(index);
+    }
+
+    /**
+     * Combines a list of column vectors into one column vector based on the resolution of
+     * idxToReturn
+     * @param vectors List of ColumnVectors of the same data type with length >= 1
+     * @param idxToReturn Function that takes in a rowId and returns the index of the column vector
+     *                    to use as the return value
+     */
+    static ColumnVector combinationVector(
+        List<ColumnVector> vectors,
+        Function<Integer, Integer> idxToReturn) {
+        return new ColumnVector() {
+            // Store the last lookup value to avoid multiple looks up for same rowId.
+            // The general pattern is call `isNullAt(rowId)` followed by `getBoolean(rowId)` or
+            // some other value accessor. So the cache of one value is enough.
+            private int lastLookupRowId = -1;
+            private ColumnVector lastLookupVector = null;
+
+            @Override
+            public DataType getDataType() {
+                return vectors.get(0).getDataType();
+            }
+
+            @Override
+            public int getSize() {
+                return vectors.get(0).getSize();
+            }
+
+            @Override
+            public void close() {
+                Utils.closeCloseables(vectors.toArray(new ColumnVector[0]));
+            }
+
+            @Override
+            public boolean isNullAt(int rowId) {
+                return getVector(rowId).isNullAt(rowId);
+            }
+
+            @Override
+            public boolean getBoolean(int rowId) {
+                return getVector(rowId).getBoolean(rowId);
+            }
+
+            @Override
+            public byte getByte(int rowId) {
+                return getVector(rowId).getByte(rowId);
+            }
+
+            @Override
+            public short getShort(int rowId) {
+                return getVector(rowId).getShort(rowId);
+            }
+
+            @Override
+            public int getInt(int rowId) {
+                return getVector(rowId).getInt(rowId);
+            }
+
+            @Override
+            public long getLong(int rowId) {
+                return getVector(rowId).getLong(rowId);
+            }
+
+            @Override
+            public float getFloat(int rowId) {
+                return getVector(rowId).getFloat(rowId);
+            }
+
+            @Override
+            public double getDouble(int rowId) {
+                return getVector(rowId).getDouble(rowId);
+            }
+
+            @Override
+            public byte[] getBinary(int rowId) {
+                return getVector(rowId).getBinary(rowId);
+            }
+
+            @Override
+            public String getString(int rowId) {
+                return getVector(rowId).getString(rowId);
+            }
+
+            @Override
+            public BigDecimal getDecimal(int rowId) {
+                return getVector(rowId).getDecimal(rowId);
+            }
+
+            @Override
+            public MapValue getMap(int rowId) {
+                return getVector(rowId).getMap(rowId);
+            }
+
+            @Override
+            public ArrayValue getArray(int rowId) {
+                return getVector(rowId).getArray(rowId);
+            }
+
+            @Override
+            public ColumnVector getChild(int ordinal) {
+                return combinationVector(
+                    vectors.stream().map(v -> v.getChild(ordinal)).collect(Collectors.toList()),
+                    idxToReturn
+                );
+            }
+
+            private ColumnVector getVector(int rowId) {
+                if (rowId == lastLookupRowId) {
+                    return lastLookupVector;
+                }
+                lastLookupRowId = rowId;
+                lastLookupVector = vectors.get(idxToReturn.apply(rowId));
+                return lastLookupVector;
+            }
+        };
     }
 }

@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal;
 
+import java.util.Optional;
+
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.client.TableClient;
@@ -25,6 +27,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.snapshot.SnapshotHint;
 
 /**
  * Implementation of {@link Snapshot}.
@@ -42,15 +45,17 @@ public class SnapshotImpl implements Snapshot {
             long version,
             LogSegment logSegment,
             TableClient tableClient,
-            long timestamp) {
+            long timestamp,
+            Optional<SnapshotHint> snapshotHint) {
         this.dataPath = dataPath;
         this.version = version;
         this.logReplay = new LogReplay(
             logPath,
             dataPath,
+            version,
             tableClient,
-            logSegment);
-
+            logSegment,
+            snapshotHint);
         this.protocol = logReplay.getProtocol();
         this.metadata = logReplay.getMetadata();
     }
@@ -83,5 +88,19 @@ public class SnapshotImpl implements Snapshot {
 
     public Protocol getProtocol() {
         return protocol;
+    }
+
+    /**
+     * Get the latest transaction version for given <i>applicationId</i>. This information comes
+     * from the transactions identifiers stored in Delta transaction log. This API is not a public
+     * API. For now keep this internal to enable Flink upgrade to use Kernel.
+     *
+     * @param applicationId Identifier of the application that put transaction identifiers in
+     *                      Delta transaction log
+     * @return Last transaction version or {@link Optional#empty()} if no transaction identifier
+     * exists for this application.
+     */
+    public Optional<Long> getLatestTransactionVersion(String applicationId) {
+        return logReplay.getLatestTransactionIdentifier(applicationId);
     }
 }

@@ -29,7 +29,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
-import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
@@ -41,7 +41,7 @@ import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
  * <p>
  * Users must pass in a `readSchema` to select which actions and sub-fields they want to consume.
  */
-class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean>> {
+class ActionsIterator implements CloseableIterator<ActionWrapper> {
     private final TableClient tableClient;
 
     /**
@@ -54,19 +54,19 @@ class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean
     private final StructType readSchema;
 
     /**
-     * The current (FileDataReadResult, isFromCheckpoint) tuple. Whenever this iterator
+     * The current (ColumnarBatch, isFromCheckpoint) tuple. Whenever this iterator
      * is exhausted, we will try and fetch the next one from the `filesIter`.
      * <p>
      * If it is ever empty, that means there are no more batches to produce.
      */
-    private Optional<CloseableIterator<Tuple2<ColumnarBatch, Boolean>>> actionsIter;
+    private Optional<CloseableIterator<ActionWrapper>> actionsIter;
 
     private boolean closed;
 
     ActionsIterator(
-        TableClient tableClient,
-        List<FileStatus> files,
-        StructType readSchema) {
+            TableClient tableClient,
+            List<FileStatus> files,
+            StructType readSchema) {
         this.tableClient = tableClient;
         this.filesIter = files.iterator();
         this.readSchema = readSchema;
@@ -92,7 +92,7 @@ class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean
      * to the instance {@link #readSchema}.
      */
     @Override
-    public Tuple2<ColumnarBatch, Boolean> next() {
+    public ActionWrapper next() {
         if (closed) {
             throw new IllegalStateException("Can't call `next` on a closed iterator.");
         }
@@ -155,7 +155,7 @@ class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean
      * <p>
      * Requires that `filesIter.hasNext` is true.
      */
-    private CloseableIterator<Tuple2<ColumnarBatch, Boolean>> getNextActionsIter() {
+    private CloseableIterator<ActionWrapper> getNextActionsIter() {
         final FileStatus nextFile = filesIter.next();
 
         // TODO: [#1965] It should be possible to read our JSON and parquet files
@@ -163,6 +163,8 @@ class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean
 
         try {
             if (nextFile.getPath().endsWith(".json")) {
+                final long fileVersion = FileNames.deltaVersion(nextFile.getPath());
+
                 // Read that file
                 final CloseableIterator<ColumnarBatch> dataIter =
                     tableClient.getJsonHandler().readJsonFiles(
@@ -170,15 +172,18 @@ class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean
                         readSchema,
                         Optional.empty());
 
-                return combine(dataIter, false /* isFromCheckpoint */);
+                return combine(dataIter, false /* isFromCheckpoint */, fileVersion);
             } else if (nextFile.getPath().endsWith(".parquet")) {
+                final long fileVersion = FileNames.checkpointVersion(nextFile.getPath());
+
+                // Read that file
                 final CloseableIterator<ColumnarBatch> dataIter =
                     tableClient.getParquetHandler().readParquetFiles(
                         singletonCloseableIterator(nextFile),
                         readSchema,
                         Optional.empty());
 
-                return combine(dataIter, true /* isFromCheckpoint */);
+                return combine(dataIter, true /* isFromCheckpoint */, fileVersion);
             } else {
                 throw new IllegalStateException(
                     String.format("Unexpected log file path: %s", nextFile.getPath())
@@ -192,18 +197,19 @@ class ActionsIterator implements CloseableIterator<Tuple2<ColumnarBatch, Boolean
     /**
      * Take input (iterator<T>, boolean) and produce an iterator<T, boolean>.
      */
-    private CloseableIterator<Tuple2<ColumnarBatch, Boolean>> combine(
+    private CloseableIterator<ActionWrapper> combine(
             CloseableIterator<ColumnarBatch> fileReadDataIter,
-            boolean isFromCheckpoint) {
-        return new CloseableIterator<Tuple2<ColumnarBatch, Boolean>>() {
+            boolean isFromCheckpoint,
+            long version) {
+        return new CloseableIterator<ActionWrapper>() {
             @Override
             public boolean hasNext() {
                 return fileReadDataIter.hasNext();
             }
 
             @Override
-            public Tuple2<ColumnarBatch, Boolean> next() {
-                return new Tuple2<>(fileReadDataIter.next(), isFromCheckpoint);
+            public ActionWrapper next() {
+                return new ActionWrapper(fileReadDataIter.next(), isFromCheckpoint, version);
             }
 
             @Override

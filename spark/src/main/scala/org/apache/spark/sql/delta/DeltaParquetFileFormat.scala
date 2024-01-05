@@ -28,10 +28,13 @@ import org.apache.spark.sql.delta.deletionvectors.{DropMarkedRowsFilter, KeepAll
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.hadoop.mapreduce.Job
+import org.apache.parquet.hadoop.util.ContextUtil
 
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.execution.datasources.OutputWriterFactory
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.vectorized.{OffHeapColumnVector, OnHeapColumnVector, WritableColumnVector}
@@ -197,6 +200,22 @@ case class DeltaParquetFileFormat(
     // For Delta Parquet readers don't expose the row_index field as a metadata field.
     super.metadataSchemaFields.filter(field => field != ParquetFileFormat.ROW_INDEX_FIELD)
   }
+
+  override def prepareWrite(
+       sparkSession: SparkSession,
+       job: Job,
+       options: Map[String, String],
+       dataSchema: StructType): OutputWriterFactory = {
+    val factory = super.prepareWrite(sparkSession, job, options, dataSchema)
+    val conf = ContextUtil.getConfiguration(job)
+    // Always write timestamp as TIMESTAMP_MICROS for Iceberg compat based on Iceberg spec
+    if (IcebergCompatV1.isEnabled(metadata) || IcebergCompatV2.isEnabled(metadata)) {
+      conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
+        SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
+    }
+    factory
+  }
+
   def copyWithDVInfo(
       tablePath: String,
       broadcastDvMap: Broadcast[Map[URI, DeletionVectorDescriptorWithFilterType]],
