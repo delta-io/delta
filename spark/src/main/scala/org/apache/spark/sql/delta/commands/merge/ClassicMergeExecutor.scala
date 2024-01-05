@@ -311,7 +311,6 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       filesToRewrite,
       columnsToDrop = Nil)
     val baseTargetDF = Dataset.ofRows(spark, targetPlan)
-
     val joinType = if (writeUnmodifiedRows) {
       if (shouldOptimizeMatchedOnlyMerge(spark)) {
         "rightOuter"
