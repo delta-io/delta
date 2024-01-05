@@ -839,7 +839,7 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       spark.range(1, 10, 1, 1).write.format("delta").save(tempPath)
       val querySql = s"SELECT MIN(id), MAX(id) FROM delta.`$tempPath`"
       checkResultsAndOptimizedPlan(querySql, "LocalRelation [none#0L, none#1L]")
-        
+
       enableDeletionVectorsInTable(new Path(tempPath), true)
       DeltaTable.forPath(spark, tempPath).delete("id = 1")
       assert(!getFilesWithDeletionVectors(DeltaLog.forTable(spark, new Path(tempPath))).isEmpty)
