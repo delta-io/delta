@@ -538,7 +538,8 @@ object IcebergCompatV2TableFeature extends WriterFeature(name = "icebergCompatV2
 /**
  * Clustering table feature is enabled when a table is created with CLUSTER BY clause.
  */
-object ClusteringTableFeature extends WriterFeature("clustering") {
+object ClusteringTableFeature extends WriterFeature("clustering")
+{
   override val requiredFeatures: Set[TableFeature] = Set(DomainMetadataTableFeature)
 }
 
