@@ -1357,26 +1357,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // Protocol change (stored in newProtocol)
 
     val (protocolUpdate1, metadataUpdate1) =
-      UniversalFormat.enforceIcebergInvariantsAndDependencies(
+      UniversalFormat.enforceInvariantsAndDependencies(
         // Note: if this txn has no protocol or metadata updates, then `prev` will equal `newest`.
-        prevProtocol = snapshot.protocol,
-        prevMetadata = snapshot.metadata,
+        snapshot,
         newestProtocol = protocol, // Note: this will try to use `newProtocol`
         newestMetadata = metadata, // Note: this will try to use `newMetadata`
-        isCreatingNewTable
+        isCreatingNewTable,
+        otherActions
       )
     newProtocol = protocolUpdate1.orElse(newProtocol)
     newMetadata = metadataUpdate1.orElse(newMetadata)
-
-    val (protocolUpdate2, metadataUpdate2) = IcebergCompatV1.enforceInvariantsAndDependencies(
-      snapshot,
-      newestProtocol = protocol, // Note: this will try to use `newProtocol`
-      newestMetadata = metadata, // Note: this will try to use `newMetadata`
-      isCreatingNewTable,
-      otherActions
-    )
-    newProtocol = protocolUpdate2.orElse(newProtocol)
-    newMetadata = metadataUpdate2.orElse(newMetadata)
 
     var finalActions = newMetadata.toSeq ++ newProtocol.toSeq ++ otherActions
 

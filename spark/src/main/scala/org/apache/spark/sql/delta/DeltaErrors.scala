@@ -3000,7 +3000,7 @@ trait DeltaErrorsBase
   def icebergCompatVersionMutualExclusive(version: Int): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.VERSION_MUTUAL_EXCLUSIVE",
-      messageParameters = Array(version.toString, version.toString)
+      messageParameters = Array(version.toString)
     )
   }
 
@@ -3008,7 +3008,7 @@ trait DeltaErrorsBase
     val newVersionString = newVersion.toString
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.CHANGE_VERSION_NEED_REWRITE",
-      messageParameters = Array(version.toString, newVersionString, newVersionString,
+      messageParameters = Array(newVersionString, newVersionString, newVersionString,
         newVersionString)
     )
   }
