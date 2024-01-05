@@ -171,8 +171,6 @@ case class DeltaSharingFileAction(
         .DeltaSharingPath(
           URLEncoder.encode(tablePath, "UTF-8"),
           URLEncoder.encode(deletionVectorFileId, "UTF-8"),
-          // This is computing the totalSize of the deletionVector file, copied from
-          // DeletionVectorStoreEdge.readRange()
           dvFileSize
         )
         .toPath

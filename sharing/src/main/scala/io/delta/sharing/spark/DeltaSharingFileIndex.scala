@@ -59,8 +59,6 @@ case class DeltaSharingFileIndex(
   override def sizeInBytes: Long =
     Option(params.metadata.size).getOrElse {
       // Throw error if metadata.size is not returned, to urge the server to respond a table size.
-      // Since this code path is used in delta format sharing which mostly happens between D2D, and
-      // in databricks delta sharing server the size should always be returned.
       throw new IllegalStateException(
         "size is null in the metadata returned from the delta " +
         s"sharing server: ${params.metadata}."
