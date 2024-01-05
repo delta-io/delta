@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.apache.hadoop.conf.Configuration
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Row => SparkRow, SparkSession}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.types.{StructType => SparkStructType}
@@ -923,7 +923,22 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     )
   }
 
-  // todo Tests based on code written
+  test("data skipping - non-eligible data skipping types") {
+    withTempDir { tempDir =>
+      val schema = SparkStructType.fromDDL("`id` INT, `arr_col` ARRAY<INT>, " +
+        "`map_col` MAP<STRING, INT>, `struct_col` STRUCT<`field1`: INT>")
+      val data = SparkRow(0, Array(1, 2), Map("foo" -> 1), SparkRow(5)) :: Nil
+      spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+        .write.format("delta").save(tempDir.getCanonicalPath)
+      // For now just filter on the one eligible column to ensure we can read stats from tables with
+      // these types. In the future we should be able to skip with null predicates on these columns
+      checkSkipping(
+        tempDir.getCanonicalPath,
+        hits = Seq(equals(col("id"), ofInt(0))),
+        misses = Seq(equals(col("id"), ofInt(1)))
+      )
+    }
+  }
 
   test("don't read stats column when there is no usable data skipping filter") {
     val path = goldenTablePath("data-skipping-basic-stats-all-types")
