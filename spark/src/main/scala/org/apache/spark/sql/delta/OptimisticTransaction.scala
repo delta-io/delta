@@ -1575,7 +1575,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // We are borrowing the `snapshotLock` even for commits because multiple threads fighting over
       // a commit shouldn't interfere with normal snapshot updates by readers. Ideally we should be
       // using a separate lock for this purpose.
-      deltaLog.lockInterruptibly(body)
+      deltaLog.withSnapshotLockInterruptibly(body)
     } else {
       body
     }

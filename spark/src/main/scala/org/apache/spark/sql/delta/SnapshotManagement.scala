@@ -59,14 +59,14 @@ trait SnapshotManagement { self: DeltaLog =>
 
   @volatile protected var currentSnapshot: CapturedSnapshot = getSnapshotAtInit
 
-  /** Use ReentrantLock to allow us to call `lockInterruptibly` */
+  /** Use ReentrantLock to allow us to call `withSnapshotLockInterruptibly` */
   protected val snapshotLock = new ReentrantLock()
 
   /**
-   * Run `body` inside `snapshotLock` lock using `lockInterruptibly` so that the thread can be
+   * Run `body` inside `snapshotLock` lock using `withSnapshotLockInterruptibly` so that the thread can be
    * interrupted when waiting for the lock.
    */
-  def lockInterruptibly[T](body: => T): T = {
+  def withSnapshotLockInterruptibly[T](body: => T): T = {
     snapshotLock.lockInterruptibly()
     try {
       body
@@ -710,7 +710,7 @@ trait SnapshotManagement { self: DeltaLog =>
     val doAsync = stalenessAcceptable && !isCurrentlyStale(capturedSnapshot.updateTimestamp)
     if (!doAsync) {
       recordFrameProfile("Delta", "SnapshotManagement.update") {
-        lockInterruptibly {
+        withSnapshotLockInterruptibly {
           val newSnapshot = updateInternal(isAsync = false)
           sendEvent(newSnapshot = capturedSnapshot.snapshot)
           newSnapshot
@@ -844,7 +844,7 @@ trait SnapshotManagement { self: DeltaLog =>
   def updateAfterCommit(
       committedVersion: Long,
       newChecksumOpt: Option[VersionChecksum],
-      preCommitLogSegment: LogSegment): Snapshot = lockInterruptibly {
+      preCommitLogSegment: LogSegment): Snapshot = withSnapshotLockInterruptibly {
     recordDeltaOperation(this, "delta.log.updateAfterCommit") {
       val updateTimestamp = clock.getTimeMillis()
       val previousSnapshot = currentSnapshot.snapshot
