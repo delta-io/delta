@@ -27,6 +27,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.snapshot.SnapshotHint;
 
 /**
  * Implementation of {@link Snapshot}.
@@ -44,15 +45,17 @@ public class SnapshotImpl implements Snapshot {
             long version,
             LogSegment logSegment,
             TableClient tableClient,
-            long timestamp) {
+            long timestamp,
+            Optional<SnapshotHint> snapshotHint) {
         this.dataPath = dataPath;
         this.version = version;
         this.logReplay = new LogReplay(
             logPath,
             dataPath,
+            version,
             tableClient,
-            logSegment);
-
+            logSegment,
+            snapshotHint);
         this.protocol = logReplay.getProtocol();
         this.metadata = logReplay.getMetadata();
     }
@@ -98,6 +101,6 @@ public class SnapshotImpl implements Snapshot {
      * exists for this application.
      */
     public Optional<Long> getLatestTransactionVersion(String applicationId) {
-        return logReplay.getRecentTransactionIdentifier(applicationId);
+        return logReplay.getLatestTransactionIdentifier(applicationId);
     }
 }

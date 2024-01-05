@@ -57,7 +57,7 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
 
     private final TableClient tableClient;
     private final Path tableRoot;
-    private final CloseableIterator<Tuple2<FileDataReadResult, Boolean>> iter;
+    private final CloseableIterator<ActionWrapper> iter;
     private final Set<UniqueFileActionTuple> tombstonesFromJson;
     private final Set<UniqueFileActionTuple> addFilesFromJson;
 
@@ -71,9 +71,9 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
     private boolean closed;
 
     ActiveAddFilesIterator(
-        TableClient tableClient,
-        CloseableIterator<Tuple2<FileDataReadResult, Boolean>> iter,
-        Path tableRoot) {
+            TableClient tableClient,
+            CloseableIterator<ActionWrapper> iter,
+            Path tableRoot) {
         this.tableClient = tableClient;
         this.tableRoot = tableRoot;
         this.iter = iter;
@@ -144,9 +144,9 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
             return; // no next result, and no batches to read
         }
 
-        final Tuple2<FileDataReadResult, Boolean> _next = iter.next();
-        final FileDataReadResult fileDataReadResult = _next._1;
-        final boolean isFromCheckpoint = _next._2;
+        final ActionWrapper _next = iter.next();
+        final FileDataReadResult fileDataReadResult = _next.getFileDataReadResult();
+        final boolean isFromCheckpoint = _next.isFromCheckpoint();
         final ColumnarBatch addRemoveColumnarBatch = fileDataReadResult.getData();
 
         // Step 1: Update `tombstonesFromJson` with all the RemoveFiles in this columnar batch, if
