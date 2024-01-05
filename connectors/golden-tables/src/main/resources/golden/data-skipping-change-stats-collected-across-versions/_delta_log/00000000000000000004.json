@@ -1,0 +1,2 @@
+{"commitInfo":{"timestamp":1704475714170,"operation":"WRITE","operationParameters":{"mode":"Append","partitionBy":"[]"},"readVersion":3,"isolationLevel":"Serializable","isBlindAppend":true,"operationMetrics":{"numFiles":"2","numOutputRows":"1","numOutputBytes":"1065"},"engineInfo":"Apache-Spark/3.5.0 Delta-Lake/3.1.0-SNAPSHOT","txnId":"54e1aab7-1f28-4b2a-9041-42cea24f89f2"}}
+{"add":{"path":"part-00001-2074c680-4ed3-405a-a3ab-3fbd3224f57f-c000.snappy.parquet","partitionValues":{},"size":684,"modificationTime":1704475714000,"dataChange":true,"stats":"{\"numRecords\":1}"}}
