@@ -54,6 +54,22 @@ public class DataSkippingUtils {
     }
 
     /**
+     * Constructs a data skipping filter to prune files using column statistics given
+     * a query data filter if possible. The returned filter will evaluate to FALSE for any files
+     * that can be safely skipped. If the filter evaluates to NULL or TRUE, the file should not
+     * be skipped.
+     *
+     * @param dataFilters query filters on the data columns
+     * @param dataSchema the data schema of the table
+     * @return data skipping filter to prune files if it exists
+     */
+    public static Optional<Predicate> constructDataSkippingFilter(
+            Predicate dataFilters, StructType dataSchema) {
+            StatsSchemaHelper schemaHelper = new StatsSchemaHelper(dataSchema);
+        return constructDataSkippingFilter(dataFilters, schemaHelper);
+    }
+
+    /**
      * Returns a file skipping predicate expression, derived from the user query, which uses column
      * statistics to prune away files that provably contain no rows the query cares about.
      * <p>
@@ -138,12 +154,6 @@ public class DataSkippingUtils {
      * we support -- IS [NOT] NULL -- is specifically NULL aware. The predicate evaluates to NULL
      * if any required statistics are missing.
      */
-    public static Optional<Predicate> constructDataSkippingFilter(
-            Predicate dataFilters, StructType dataSchema) {
-            StatsSchemaHelper schemaHelper = new StatsSchemaHelper(dataSchema);
-        return constructDataSkippingFilter(dataFilters, schemaHelper);
-    }
-
     private static Optional<Predicate> constructDataSkippingFilter(
             Predicate dataFilters, StatsSchemaHelper schemaHelper) {
 
@@ -212,6 +222,7 @@ public class DataSkippingUtils {
 
             // Match any file whose min/max range contains the requested point.
             case "=":
+                // For example a = 1 --> minValue.a <= 1 AND 1 <= maxValue.a
                 return new And(
                     new Predicate("<=", schemaHelper.getMinColumn(leftCol), rightLit),
                     new Predicate("<=", rightLit, schemaHelper.getMaxColumn(leftCol))
