@@ -18,7 +18,7 @@ package io.delta.kernel.defaults.utils
 import io.delta.kernel.expressions.{Column, Expression, Literal, Predicate}
 
 /** Useful helper functions for creating expressions in tests */
-trait ExpressionUtils {
+trait ExpressionTestUtils {
 
   def equals(e1: Expression, e2: Expression): Predicate = {
     new Predicate("=", e1, e2)
@@ -44,6 +44,10 @@ trait ExpressionUtils {
     new Predicate("NOT", pred)
   }
 
+  def isNotNull(e1: Expression): Predicate = {
+    new Predicate("IS_NOT_NULL", e1)
+  }
+
   def col(name: String): Column = new Column(name)
 
   def nestedCol(name: String): Column = {
@@ -62,5 +66,9 @@ trait ExpressionUtils {
 
   def startsWith(e1: Expression, e2: Expression): Predicate = {
     new Predicate("STARTS_WITH", e1, e2)
+  }
+
+  def isNull(e1: Expression): Predicate = {
+    new Predicate("IS_NULL", e1)
   }
 }

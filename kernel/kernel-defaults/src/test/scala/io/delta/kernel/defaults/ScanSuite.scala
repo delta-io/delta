@@ -27,21 +27,20 @@ import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 import io.delta.kernel.client.{FileReadContext, JsonHandler, ParquetHandler, TableClient}
 import io.delta.kernel.data.{FileDataReadResult, FilteredColumnarBatch}
-import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Literal, Or, Predicate, ScalarExpression}
+import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.CloseableIterator
 import io.delta.kernel.{Snapshot, Table}
 import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
-import io.delta.kernel.defaults.utils.{ExpressionUtils, TestUtils}
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.expressions.Literal._
 
-class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
+class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
   import io.delta.kernel.defaults.ScanSuite._
 
-  // TODO no more golden tables, write the tables here!
+  // todo write tables here? how to deal with conflicting testutils with spark? separate writer?
 
-  // docs
   def checkSkipping(tablePath: String, hits: Seq[Predicate], misses: Seq[Predicate]): Unit = {
     val snapshot = latestSnapshot(tablePath)
     hits.foreach { predicate =>
@@ -58,6 +57,24 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
           .build())
       assert(scanFiles.isEmpty, s"Expected miss but got hit for $predicate")
     }
+  }
+
+  def checkSkipping(tablePath: String, filterToNumExpFiles: Map[Predicate, Int]): Unit = {
+    val snapshot = latestSnapshot(tablePath)
+    filterToNumExpFiles.foreach { case (filter, numExpFiles) =>
+      val scanFiles = collectScanFileRows(
+        snapshot.getScanBuilder(defaultTableClient)
+          .withFilter(defaultTableClient, filter)
+          .build())
+      assert(scanFiles.length == numExpFiles,
+        s"Expected $numExpFiles but found ${scanFiles.length} for $filter")
+    }
+  }
+
+  /* Where timestampStr is in the format of "yyyy-MM-dd'T'HH:mm:ss.SSSXXX" */
+  def getTimestampPredicate(expr: String, col: Column, timestampStr: String): Predicate = {
+    val time = OffsetDateTime.parse(timestampStr)
+    new Predicate(expr, col, ofTimestamp(ChronoUnit.MICROS.between(Instant.EPOCH, time)))
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -79,12 +96,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
         greaterThanOrEqual(ofInt(1), col("a")), // 1 >= a
         greaterThanOrEqual(ofInt(2), col("a")), // 2 >= a
         lessThanOrEqual(ofInt(0), col("a")), // 0 <= a
-
         // note <=> is not supported yet but these should still be hits once supported
         nullSafeEquals(col("a"), ofInt(1)), // a <=> 1
         nullSafeEquals(ofInt(1), col("a")), // 1 <=> a
         not(nullSafeEquals(col("a"), ofInt(2))), // NOT a <=> 2
-
         // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
         not(equals(col("a"), ofInt(1))), // NOT a = 1
         not(nullSafeEquals(col("a"), ofInt(1))), // NOT a <=> 1
@@ -396,10 +411,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
     )
   }
 
-  // TODO below here clean up
-  //  - use expression helpers
-  //  - add unsupported expressions to hits with note to move them
-
+  // todo for this test use expression helpers & add unsupported expressions to hits with notes
   // Data skipping by stats should still work even when the only data in file is null, in spite of
   // the NULL min/max stats that result -- this is different to having no stats at all.
   test("data skipping - nulls - only null in file") {
@@ -409,7 +421,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
         // Ideally this should not hit as it is always FALSE, but its correct to not skip
         equals(col("a"), ofNull(IntegerType.INTEGER)),
         AlwaysTrue.ALWAYS_TRUE,
-        // TODO how is this skipped in delta spark? Shouldn't it be null || !true --> null
+        // todo how is this skipped in delta spark? Shouldn't it be null || !true --> null
         //   can we just add a "isNotNull" when it's a comparison with non-null value?
         //  Does having verifyStatsForFilter fix this?
         equals(col("a"), ofInt(1)),
@@ -445,38 +457,37 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
         equals(col("a"), ofNull(IntegerType.INTEGER)),
         equals(col("a"), ofInt(1)),
         AlwaysTrue.ALWAYS_TRUE,
-        /*
-        "a IS NULL",
-        "a IS NOT NULL",
-        "NOT a = NULL", // Same as previous case
-        "a <=> NULL", // This is optimized to `IsNull(a)` by NullPropagation
-        "NOT a <=> NULL", // This is optimized to `IsNotNull(a)`
-        "a <=> 1",
-        "NULL AND a = 1", // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
-        "NOT a <=> 1"
-         */
+        isNotNull(col("a")),
+
+        // Note these expressions either aren't supported or aren't added to skipping yet
+        // but should still be hits once supported
+        isNull(col("a")),
+        not(equals(col("a"), ofNull(IntegerType.INTEGER))),
+        // This is optimized to `IsNull(a)` by NullPropagation in Spark
+        nullSafeEquals(col("a"), ofNull(IntegerType.INTEGER)),
+        // This is optimized to `IsNotNull(a)` by NullPropagation in Spark
+        not(nullSafeEquals(col("a"), ofNull(IntegerType.INTEGER))),
+        nullSafeEquals(col("a"), ofInt(1)),
+        not(nullSafeEquals(col("a"), ofInt(1))),
+
+        // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
+        notEquals(col("a"), ofInt(1)),
+        not(equals(col("a"), ofInt(1)))
+
       ),
       misses = Seq(
         AlwaysFalse.ALWAYS_FALSE,
         lessThan(col("a"), ofInt(1)),
         greaterThan(col("a"), ofInt(1)),
-        /*
-        "a <> 1",
-        "NOT a = 1"
-         */
       )
     )
   }
 
-  // TODO "data skipping by partitions and data values - nulls"
+  // todo "data skipping by partitions and data values - nulls"
 
   // TODO JSON serialization truncates to milliseconds, to safely skip for timestamp stats we need
   //   to add a millisecond to any max stat
   ignore("data skipping - on TIMESTAMP type") {
-    def getTimestampPredicate(expr: String, col: Column, timestampStr: String): Predicate = {
-      val time = OffsetDateTime.parse(timestampStr)
-      new Predicate(expr, col, ofTimestamp(ChronoUnit.MICROS.between(Instant.EPOCH, time)))
-    }
     checkSkipping(
       goldenTablePath("data-skipping-on-TIMESTAMP"),
       hits = Seq(
@@ -513,9 +524,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
         equals(col("c8"), ofBoolean(true)),
         equals(col("c8"), ofBoolean(false)),
         greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
-        /*
-        "c5 >= \"2001-01-01 01:00:00\"",
-         */
+        // TODO we don't currently skip for timestamps but this will still be a hit once we do
+        getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00"),
+        // TODO once we skip for timestamps this should be a miss
+        getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00")
       ),
       misses = Seq(
         equals(col("c1"), ofInt(10)),
@@ -524,9 +536,6 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
         greaterThan(col("c4"), ofFloat(5.0f)),
         equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
         greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2)),
-        /*
-        c5 >= \"2003-01-01 01:00:00\"",
-         */
       )
     )
   }
@@ -546,9 +555,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
         equals(col("cc8"), ofBoolean(true)),
         equals(col("cc8"), ofBoolean(false)),
         greaterThan(col("cc9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
-        /*
-        "c5 >= \"2001-01-01 01:00:00\"",
-         */
+        // We don't currently skip for timestamps but this will still be a hit once we do
+        getTimestampPredicate(">=", col("cc5"), "2001-01-01T01:00:00-07:00"),
+        // Once we skip for timestamps this should be a miss
+        getTimestampPredicate(">=", col("cc5"), "2003-01-01T01:00:00-07:00")
       ),
       misses = Seq(
         equals(col("cc1"), ofInt(10)),
@@ -557,9 +567,6 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
         greaterThan(col("cc4"), ofFloat(5.0f)),
         equals(col("cc6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
         greaterThan(col("cc9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2)),
-        /*
-        c5 >= \"2003-01-01 01:00:00\"",
-         */
       )
     )
   }
@@ -573,9 +580,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
         greaterThan(col("c4"), ofFloat(1.0f)),
         equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2002-02-02")))),
         greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
-        /*
-        "c5 >= \"2001-01-01 01:00:00\"",
-         */
+        // We don't currently skip for timestamps but this will still be a hit once we do
+        getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00"),
+        // Once we skip for timestamps this should be a miss
+        getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00")
       ),
       misses = Seq(
         equals(col("c1"), ofInt(10)),
@@ -583,9 +591,6 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
         greaterThan(col("c4"), ofFloat(5.0f)),
         equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
         greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2)),
-        /*
-        c5 >= \"2003-01-01 01:00:00\"",
-         */
       )
     )
   }
@@ -594,7 +599,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
   // Kernel data skipping tests
   //////////////////////////////////////////////////////////////////////////////////
 
-  test("basic data skipping for all types") {
+  test("basic data skipping for all types - all CM modes + checkpoint") {
     // Map of column name to (value_in_table, smaller_value, bigger_value)
     val colToLits = Map(
       "as_int" -> (ofInt(0), ofInt(-1), ofInt(1)),
@@ -607,7 +612,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
       "as_date" -> (ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2000-01-01"))),
         ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("1999-01-01"))),
         ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2000-01-02")))),
-      // TODO Timestamp
+      // TODO add Timestamp once we support skipping for TimestampType
       "as_big_decimal" -> (ofDecimal(JBigDecimal.valueOf(0), 1, 0),
         ofDecimal(JBigDecimal.valueOf(-1), 1, 0),
         ofDecimal(JBigDecimal.valueOf(1), 1, 0))
@@ -630,46 +635,111 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
         lessThanOrEqual(col(colName), value)
       )
     }.toSeq
-    // todo reorganize this test and don't use golden tables
+    Seq(
+      "data-skipping-basic-stats-all-types",
+      "data-skipping-basic-stats-all-types-columnmapping-name",
+      "data-skipping-basic-stats-all-types-columnmapping-id",
+      "data-skipping-basic-stats-all-types-checkpoint"
+    ).foreach { goldenTable =>
+      checkSkipping(
+        goldenTablePath(goldenTable),
+        hits,
+        misses
+      )
+    }
+  }
+
+  test("data skipping - implicit casting works") {
     checkSkipping(
       goldenTablePath("data-skipping-basic-stats-all-types"),
-      hits,
-      misses
-    )
-    checkSkipping(
-      goldenTablePath("data-skipping-basic-stats-all-types-columnmapping-name"),
-      hits,
-      misses
-    )
-    checkSkipping(
-      goldenTablePath("data-skipping-basic-stats-all-types-columnmapping-id"),
-      hits,
-      misses
-    )
-    checkSkipping(
-      goldenTablePath("data-skipping-basic-stats-all-types-checkpoint"),
-      hits,
-      misses
+      hits = Seq(
+        equals(col("as_short"), ofFloat(0f)),
+        equals(col("as_float"), ofShort(0))
+      ),
+      misses = Seq(
+        equals(col("as_short"), ofFloat(1f)),
+        equals(col("as_float"), ofShort(1))
+      )
     )
   }
 
-  // is it necessary to test stats where MIN != MAX?
+  test("data skipping - incompatible schema change doesn't break") {
+    checkSkipping(
+      goldenTablePath("data-skipping-incompatible-schema-change"),
+      hits = Seq(
+        equals(col("value"), ofString("1"))
+      ),
+      misses = Seq(
+        equals(col("value"), ofString("3"))
+      )
+    )
+  }
 
-  // Other testing
+  test("data skipping - filter on non-existent column") {
+    checkSkipping(
+      goldenTablePath("data-skipping-basic-stats-all-types"),
+      hits = Seq(equals(col("foo"), ofInt(1))),
+      misses = Seq()
+    )
+  }
 
-  // Tests based on code written
-  // Skip on array columns for null_count stats
-  // Implicit casting vs correct data types
-  // Filter on non-existent columns
-  // Filter on incompatible data type?
-  // Filter on partition AND data column
-  // Test with tightBound = true/false; test with DV
-  // Changing which stats are collected between AddFiles (missing stats)
-  // Incompatible readSchema
+  // todo add a test with dvs where tightBounds=false
+
+  test("data skipping - filter on partition AND data column") {
+    checkSkipping(
+      goldenTablePath("data-skipping-basic-stats-all-types"),
+      filterToNumExpFiles = Map(
+        new And(
+          greaterThan(col("part"), ofInt(0)),
+          greaterThan(col("id"), ofInt(0))
+        ) -> 1 // should prune 3 files from partition + data filter
+      )
+    )
+  }
+
+  test("data skipping - stats collected changing across versions") {
+    checkSkipping(
+      goldenTablePath("data-skipping-change-stats-collected-across-versions"),
+      filterToNumExpFiles = Map(
+        equals(col("col1"), ofInt(1)) -> 1, // should prune 2 files
+        equals(col("col2"), ofInt(1)) -> 2, // should prune 1 file
+        new And(
+          equals(col("col1"), ofInt(1)),
+          equals(col("col2"), ofInt(1))
+        ) -> 1 // should prune 2 files
+      )
+    )
+  }
+
+  test("data skipping - range of ints") {
+    // to test where MIN != MAX
+    checkSkipping(
+      goldenTablePath("data-skipping-range-of-ints"),
+      hits = Seq(
+        equals(col("id"), ofInt(5)),
+        lessThan(col("id"), ofInt(7)),
+        lessThan(col("id"), ofInt(15)),
+        lessThanOrEqual(col("id"), ofInt(9)),
+        greaterThan(col("id"), ofInt(3)),
+        greaterThan(col("id"), ofInt(-1)),
+        greaterThanOrEqual(col("id"), ofInt(0))
+      ),
+      misses = Seq(
+        equals(col("id"), ofInt(10)),
+        lessThan(col("id"), ofInt(0)),
+        lessThan(col("id"), ofInt(-1)),
+        lessThanOrEqual(col("id"), ofInt(-1)),
+        greaterThan(col("id"), ofInt(10)),
+        greaterThan(col("id"), ofInt(11)),
+        greaterThanOrEqual(col("id"), ofInt(11))
+      )
+    )
+  }
+
+  // todo Tests based on code written
 
   test("don't read stats column when there is no usable data skipping filter") {
-    // todo Remove this golden table when updating this test to read real stats
-    val path = goldenTablePath("conditionally-read-add-stats")
+    val path = goldenTablePath("data-skipping-basic-stats-all-types")
     val tableClient = tableClientDisallowedStatsReads
 
     def snapshot(tableClient: TableClient): Snapshot = {
@@ -697,7 +767,13 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionUtils {
         .getScanFiles(tableClient))
 
     // no eligible data skipping filter --> don't read stats
-    // todo add non-eligible expression
+    val nonEligibleFilter = lessThan(
+      new ScalarExpression("%", Seq(col("as_int"), ofInt(10)).asJava),
+      ofInt(1))
+    verifyNoStatsColumn(
+      snapshot(tableClientDisallowedStatsReads)
+        .getScanBuilder(tableClient).withFilter(tableClient, nonEligibleFilter).build()
+        .getScanFiles(tableClient))
   }
 }
 

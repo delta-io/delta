@@ -1395,24 +1395,6 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     sql(s"RESTORE TABLE delta.`$tablePath` TO VERSION AS OF 1")
   }
 
-  generateGoldenTable("conditionally-read-add-stats") { tablePath =>
-    val log = DeltaLog.forTable(spark, new Path(tablePath))
-    new File(log.logPath.toUri).mkdirs()
-    val schema = new StructType()
-      .add("part", IntegerType)
-      .add("id", IntegerType)
-    val add = AddFile("foo", Map("part" -> "1"), 1L, 100L, dataChange = true,
-      stats = "fake_statistics_string")
-    log.startTransaction().commit(
-      Metadata(schemaString = schema.json, partitionColumns = Seq("part")) :: add :: Nil,
-      ManualUpdate
-    )
-    log.startTransaction().commitManually(
-      AddFile("foo2", Map("part" -> "2"), 1L, 100L, dataChange = true,
-        stats = "fake_statistics_string"))
-    log.checkpoint(log.unsafeVolatileSnapshot)
-  }
-
   /* -------- Data skipping tables copied from Delta Spark DataSkippingDeltaTests ----- */
 
   private def getDataSkippingConfs(
@@ -1697,7 +1679,6 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       schema
     )
   }
-
   generateGoldenTable("data-skipping-basic-stats-all-types") { tablePath =>
     writeBasicStatsAllTypesTable(tablePath)
   }
@@ -1718,85 +1699,71 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
-  generateGoldenTable("basic-stats-prototype") { tablePath =>
-    spark.range(10).repartition(1).write.format("delta").mode("append").save(tablePath)
-    spark.range(10, 20).repartition(1).write.format("delta").mode("append").save(tablePath)
-    spark.range(20, 30).repartition(1).write.format("delta").mode("append").save(tablePath)
+  generateGoldenTable("data-skipping-incompatible-schema-change") { tablePath =>
+    // initially write with integer column value
+    Seq(0, 1, 2).toDF.repartition(1).write.format("delta").save(tablePath)
+    // overwrite with string column value
+    Seq("0", "1", "2").toDF.repartition(1).write
+      .format("delta").mode("overwrite").option("overwriteSchema", true).save(tablePath)
   }
 
-
-  generateGoldenTable("missing-stats-prototype") { tablePath =>
-    // TODO is this the intentional "missing" stats?
-    // todo no stats at all?
-
+  generateGoldenTable("data-skipping-change-stats-collected-across-versions") { tablePath =>
     val schema = new StructType()
       .add("col1", IntegerType)
       .add("col2", IntegerType)
-      .add("col3", IntegerType)
-      .add("col4", IntegerType)
-
-    withSQLConf(
-      DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultTablePropertyKey-> "2") {
-
-      writeDataWithSchema(
-        tablePath,
-        Row(0, 0, 0, 0) :: Row(1, 1, 1, 1) :: Nil,
-        schema
-      )
-
-      writeDataWithSchema(
-        tablePath,
-        Row(10, 10, 10, 10) :: Row(11, 11, 11, 11) :: Nil,
-        schema
-      )
-    }
+    // write stats for all columns
+    writeDataWithSchema(
+      tablePath,
+      Row(0, 0) :: Nil,
+      schema
+    )
+    // write stats for just 1 column
+    sql(
+      s"""
+        |ALTER TABLE delta.`$tablePath`
+        |SET TBLPROPERTIES('delta.dataSkippingNumIndexedCols' = 1)
+        |""".stripMargin)
+    writeDataWithSchema(
+      tablePath,
+      Row(0, 0) :: Nil,
+      schema)
+    // write stats for no columns
+    sql(
+      s"""
+         |ALTER TABLE delta.`$tablePath`
+         |SET TBLPROPERTIES('delta.dataSkippingNumIndexedCols' = 0)
+         |""".stripMargin)
+    writeDataWithSchema(
+      tablePath,
+      Row(0, 0) :: Nil,
+      schema)
   }
 
-  generateGoldenTable("checkpoint-test") { path =>
-    withSQLConf(
-      (DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.defaultTablePropertyKey -> "false"),
-      (DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.defaultTablePropertyKey -> "true"),
-      (DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "1")
-    ) {
-      def dfWithSchema(rows: Seq[Row], schema: StructType): DataFrame = {
-        spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
-      }
-      val schema = new StructType()
-        .add("as_int", IntegerType)
-        .add("as_string", StringType)
-        .add("as_float", DoubleType)
-      dfWithSchema(Row(1, "one", 1.1) :: Row(2, "two", 2.2) :: Nil, schema).write
-        .format("delta")
-        .mode("append")
-        .save(path)
-      dfWithSchema(Row(5, "five", 5.5) :: Row(6, "size", 6.6) :: Nil, schema).write
-        .format("delta")
-        .mode("append")
-        .save(path)
-    }
+  generateGoldenTable("data-skipping-range-of-ints") { tablePath =>
+    spark.range(10).repartition(1).write.format("delta").save(tablePath)
   }
 
-  // just checking generated stats - test with array type / others to come
-  generateGoldenTable("stats-with-array") { tablePath =>
-
+  generateGoldenTable("data-skipping-partition-and-data-column") { tablePath =>
     val schema = new StructType()
-      .add("as_int", IntegerType)
-      .add("as_long", LongType)
-      .add("as_array", ArrayType(IntegerType))
-
+      .add("part", IntegerType)
+      .add("id", IntegerType)
     writeDataWithSchema(
       tablePath,
-      Row(0, 0.longValue, Array()) ::
-        Row(10, 10.longValue, Array(1, 2)) :: Nil,
+      Row(1, 0) :: Nil,
       schema
     )
-
     writeDataWithSchema(
       tablePath,
-      Row(50, 50.longValue, Array(1)) ::
-        Row(50, 50.longValue, null) :: Nil,
-      schema
-    )
+      Row(1, 1) :: Nil,
+      schema)
+    writeDataWithSchema(
+      tablePath,
+      Row(0, 1) :: Nil,
+      schema)
+    writeDataWithSchema(
+      tablePath,
+      Row(0, 0) :: Nil,
+      schema)
   }
 }
 
