@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.cdc.MergeCDCTests
@@ -72,7 +73,6 @@ trait MergeCDCWithDVsTests extends MergeCDCTests with DeletionVectorsTestUtils {
     super.excluded :+ miscFailures
   }
 }
-
 /**
  * Includes the entire MergeIntoSQLSuite with CDC enabled.
  */

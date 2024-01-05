@@ -360,6 +360,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
           // This causes issues in the source determinism validation. We work around the issue by
           // adding a redundant dummy filter to make sure the column is not pruned.
           .filter(SOURCE_ROW_PRESENT_COL)
+
       val targetDF = baseTargetDF
         .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
       val right = if (deduplicateCDFDeletes.enabled) {
