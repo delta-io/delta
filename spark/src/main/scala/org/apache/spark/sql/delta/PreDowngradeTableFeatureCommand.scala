@@ -117,3 +117,14 @@ case class V2CheckpointPreDowngradeCommand(table: DeltaTableV2)
     true
   }
 }
+
+case class ClusteringPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+    with DeltaLogging {
+  /**
+   * It returns false as no cleaning action is required.
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    false
+  }
+}

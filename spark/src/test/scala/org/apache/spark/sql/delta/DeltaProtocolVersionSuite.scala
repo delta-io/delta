@@ -3467,6 +3467,38 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     testV2CheckpointTableFeatureDrop(V2Checkpoint.Format.PARQUET, true, true)
   }
 
+  private def testRemoveClusteringTableFeature(tableFeature: TableFeature): Unit = {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      sql(
+        s"""CREATE TABLE delta.`${deltaLog.dataPath}` (id bigint) USING delta
+           |CLUSTER BY (id)
+           |TBLPROPERTIES (
+           |delta.minReaderVersion = $TABLE_FEATURES_MIN_READER_VERSION
+           |)""".stripMargin)
+
+      val protocol = deltaLog.update().protocol
+      assert(protocol.minReaderVersion == TABLE_FEATURES_MIN_READER_VERSION)
+      assert(protocol.minWriterVersion == TABLE_FEATURES_MIN_WRITER_VERSION)
+      assert(protocol.writerFeatures.get.contains(tableFeature.name))
+
+      AlterTableDropFeatureDeltaCommand(
+        DeltaTableV2(spark, deltaLog.dataPath),
+        tableFeature.name).run(spark)
+
+      // ClusteringTableFeature is removed from the writer features set.
+      // Note that the table still has other dependent table features.
+      assert(!deltaLog.update().protocol.writerFeatures.contains(tableFeature.name))
+      assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
+    }
+  }
+
+  test("Remove ClusteringTableFeature") {
+    withSQLConf(DeltaSQLConf.DELTA_ENABLE_CLUSTERING_TABLE_FEATURE.key -> true.toString) {
+      testRemoveClusteringTableFeature(ClusteringTableFeature)
+    }
+  }
+
   // Create a table for testing that has an unsupported feature.
   private def withTestTableWithUnsupportedWriterFeature(
       emptyTable: Boolean)(testCode: String => Unit): Unit = {

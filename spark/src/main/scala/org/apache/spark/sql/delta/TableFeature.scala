@@ -538,8 +538,16 @@ object IcebergCompatV2TableFeature extends WriterFeature(name = "icebergCompatV2
 /**
  * Clustering table feature is enabled when a table is created with CLUSTER BY clause.
  */
-object ClusteringTableFeature extends WriterFeature("clustering") {
+object ClusteringTableFeature extends WriterFeature("clustering") with RemovableFeature {
   override val requiredFeatures: Set[TableFeature] = Set(DomainMetadataTableFeature)
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    ClusteringPreDowngradeCommand(table)
+
+  // Dropping ClusteringTableFeature is always allowed without any action.
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  // Writer features should directly return false, as it is only used for reader+writer features.
+  override def actionUsesFeature(action: Action): Boolean = false
 }
 
 /**
