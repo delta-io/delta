@@ -44,6 +44,8 @@ import org.apache.spark.storage.{BlockId, StorageLevel}
 
 object DeltaSharingUtils extends Logging {
 
+  // The prefix will be used for block ids of all blocks that store the delta log in BlockManager.
+  // It's used to ensure delta sharing queries don't mess up with blocks with other applications.
   val DELTA_SHARING_BLOCK_ID_PREFIX = "test_delta-sharing"
 
   // Refresher function for CachedTableManager to use.
@@ -55,7 +57,6 @@ object DeltaSharingUtils extends Logging {
       protocol: model.DeltaSharingProtocol,
       metadata: model.DeltaSharingMetadata
   )
-
 
   private def getTableRefreshResult(tableFiles: DeltaTableFiles): TableRefreshResult = {
     var minUrlExpiration: Option[Long] = None
@@ -107,7 +108,6 @@ object DeltaSharingUtils extends Logging {
     }
   }
 
-
   def overrideSingleBlock[T: ClassTag](blockId: BlockId, value: T): Unit = {
     assert(
       blockId.name.startsWith(DELTA_SHARING_BLOCK_ID_PREFIX),
@@ -136,7 +136,6 @@ object DeltaSharingUtils extends Logging {
     )
   }
 
-
   // Get a query hash id based on the query parameters: time travel options and filters.
   // The id concatenated with table name and used in local DeltaLog and CachedTableManager.
   // This is to uniquely identify the delta sharing table used twice in the same query but with
@@ -152,13 +151,11 @@ object DeltaSharingUtils extends Logging {
     Hashing.sha256().hashString(fullQueryString, UTF_8).toString
   }
 
-
   // Concatenate table path with an id as a suffix, to uniquely identify a delta sharing table and
   // its corresponding delta log in a query.
   private[sharing] def getTablePathWithIdSuffix(customTablePath: String, id: String): String = {
     s"${customTablePath}_${id}"
   }
-
 
   private def removeBlockForJsonLogIfExists(blockId: BlockId): Unit = {
     val blockManager = SparkEnv.get.blockManager
@@ -168,6 +165,9 @@ object DeltaSharingUtils extends Logging {
     }
   }
 
+  // This is a base64 encoded string of the content of an empty delta checkpoint file.
+  // Will be used to fake a checkpoint file in the locally constructed delta log for cdf and
+  // streaming queries.
   val FAKE_CHECKPOINT_FILE_BASE64_ENCODED_STRING =
     """
 UEFSMRUAFQ4VEhX63MfpAxwVBBUAFQYVCAAABxgDAAAAAwAAFQAVDhUSFfrcx+kDHBUEFQAVBhUIAAAHGAMAAAADAAAVABUOFRIV

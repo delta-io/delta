@@ -39,6 +39,11 @@ private[sharing] case class DeltaSharingFileIndexParams(
     metadata: model.DeltaSharingMetadata,
     options: DeltaSharingOptions)
 
+/**
+ * A file index for delta sharing batch queries, that wraps a delta sharing table and client, which
+ * is used to issue rpcs to delta sharing server to fetch pre-signed urls, then a local delta log is
+ * constructed, and a TahoeFileIndex can be built on top of it.
+ */
 case class DeltaSharingFileIndex(
     params: DeltaSharingFileIndexParams,
     table: DeltaSharingTable,
