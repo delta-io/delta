@@ -16,19 +16,17 @@
 package io.delta.kernel.defaults.client;
 
 import java.io.IOException;
+import java.util.Optional;
 
 import org.apache.hadoop.conf.Configuration;
 
-import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.ParquetHandler;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FileDataReadResult;
-import io.delta.kernel.data.Row;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
-import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.util.Utils;
 
 import io.delta.kernel.defaults.internal.parquet.ParquetBatchReader;
@@ -36,7 +34,7 @@ import io.delta.kernel.defaults.internal.parquet.ParquetBatchReader;
 /**
  * Default implementation of {@link ParquetHandler} based on Hadoop APIs.
  */
-public class DefaultParquetHandler extends DefaultFileHandler implements ParquetHandler {
+public class DefaultParquetHandler implements ParquetHandler {
     private final Configuration hadoopConf;
 
     /**
@@ -49,11 +47,13 @@ public class DefaultParquetHandler extends DefaultFileHandler implements Parquet
     }
 
     @Override
-    public CloseableIterator<FileDataReadResult> readParquetFiles(
-        CloseableIterator<FileReadContext> fileIter, StructType physicalSchema) throws IOException {
-        return new CloseableIterator<FileDataReadResult>() {
+    public CloseableIterator<ColumnarBatch> readParquetFiles(
+            CloseableIterator<FileStatus> fileIter,
+            StructType physicalSchema,
+            Optional<Predicate> predicate) throws IOException {
+        return new CloseableIterator<ColumnarBatch>() {
             private final ParquetBatchReader batchReader = new ParquetBatchReader(hadoopConf);
-            private FileReadContext currentFile;
+            private FileStatus currentFile;
             private CloseableIterator<ColumnarBatch> currentFileReader;
 
             @Override
@@ -73,9 +73,7 @@ public class DefaultParquetHandler extends DefaultFileHandler implements Parquet
                     currentFileReader = null;
                     if (fileIter.hasNext()) {
                         currentFile = fileIter.next();
-                        FileStatus fileStatus =
-                            InternalScanFileUtils.getAddFileStatus(currentFile.getScanFileRow());
-                        currentFileReader = batchReader.read(fileStatus.getPath(), physicalSchema);
+                        currentFileReader = batchReader.read(currentFile.getPath(), physicalSchema);
                         return hasNext(); // recurse since it's possible the loaded file is empty
                     } else {
                         return false;
@@ -84,19 +82,8 @@ public class DefaultParquetHandler extends DefaultFileHandler implements Parquet
             }
 
             @Override
-            public FileDataReadResult next() {
-                final ColumnarBatch data = currentFileReader.next();
-                return new FileDataReadResult() {
-                    @Override
-                    public ColumnarBatch getData() {
-                        return data;
-                    }
-
-                    @Override
-                    public Row getScanFileRow() {
-                        return currentFile.getScanFileRow();
-                    }
-                };
+            public ColumnarBatch next() {
+                return currentFileReader.next();
             }
         };
     }

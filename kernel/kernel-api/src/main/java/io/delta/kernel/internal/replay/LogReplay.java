@@ -200,7 +200,7 @@ public class LogReplay {
                 ColumnarBatch columnarBatch = null;
 
                 if (protocol == null) {
-                    columnarBatch = nextElem.getFileDataReadResult().getData();
+                    columnarBatch = nextElem.getColumnarBatch();
                     assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
 
                     final ColumnVector protocolVector = columnarBatch.getColumnVector(0);
@@ -221,7 +221,7 @@ public class LogReplay {
 
                 if (metadata == null) {
                     if (columnarBatch == null) {
-                        columnarBatch = nextElem.getFileDataReadResult().getData();
+                        columnarBatch = nextElem.getColumnarBatch();
                         assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
                     }
                     final ColumnVector metadataVector = columnarBatch.getColumnVector(1);
@@ -277,7 +277,7 @@ public class LogReplay {
                      SET_TRANSACTION_READ_SCHEMA)) {
             while (reverseIter.hasNext()) {
                 final ColumnarBatch columnarBatch =
-                    reverseIter.next().getFileDataReadResult().getData();
+                    reverseIter.next().getColumnarBatch();
                 assert(columnarBatch.getSchema().equals(SET_TRANSACTION_READ_SCHEMA));
 
                 final ColumnVector txnVector = columnarBatch.getColumnVector(0);

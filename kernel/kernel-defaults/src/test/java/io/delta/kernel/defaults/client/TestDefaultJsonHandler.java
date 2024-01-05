@@ -23,19 +23,15 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.FileSystemClient;
 import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
-import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
-import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector;
 
@@ -51,37 +47,23 @@ public class TestDefaultJsonHandler {
         new DefaultFileSystemClient(new Configuration());
 
     @Test
-    public void contextualizeFiles()
-        throws Exception {
-        try (CloseableIterator<Row> inputScanFiles = testFiles();
-            CloseableIterator<FileReadContext> fileReadContexts =
-                JSON_HANDLER.contextualizeFileReads(testFiles(), ALWAYS_TRUE)) {
-            while (inputScanFiles.hasNext() || fileReadContexts.hasNext()) {
-                assertEquals(inputScanFiles.hasNext(), fileReadContexts.hasNext());
-                Row inputScanFile = inputScanFiles.next();
-                FileReadContext outputScanContext = fileReadContexts.next();
-                compareScanFileRows(inputScanFile, outputScanContext.getScanFileRow());
-            }
-        }
-    }
-
-    @Test
     public void readJsonFiles()
         throws Exception {
         try (
-            CloseableIterator<FileDataReadResult> data =
+            CloseableIterator<ColumnarBatch> data =
                 JSON_HANDLER.readJsonFiles(
-                    JSON_HANDLER.contextualizeFileReads(testFiles(), ALWAYS_TRUE),
+                    testFiles(),
                     new StructType()
                         .add("path", StringType.STRING)
                         .add("size", LongType.LONG)
-                        .add("dataChange", BooleanType.BOOLEAN))) {
+                        .add("dataChange", BooleanType.BOOLEAN),
+                    Optional.empty())) {
 
             List<String> actPaths = new ArrayList<>();
             List<Long> actSizes = new ArrayList<>();
             List<Boolean> actDataChanges = new ArrayList<>();
             while (data.hasNext() && data.hasNext()) {
-                ColumnarBatch dataBatch = data.next().getData();
+                ColumnarBatch dataBatch = data.next();
                 try (CloseableIterator<Row> dataBatchRows = dataBatch.getRows()) {
                     while (dataBatchRows.hasNext()) {
                         Row row = dataBatchRows.next();
@@ -225,15 +207,9 @@ public class TestDefaultJsonHandler {
         }
     }
 
-    private static CloseableIterator<Row> testFiles()
-        throws Exception {
+    private static CloseableIterator<FileStatus> testFiles()
+            throws Exception {
         String listFrom = DefaultKernelTestUtils.getTestResourceFilePath("json-files/1.json");
-        CloseableIterator<FileStatus> list = FS_CLIENT.listFrom(listFrom);
-        return list.map(fileStatus -> InternalScanFileUtils.generateScanFileRow(fileStatus));
-    }
-
-    private static void compareScanFileRows(Row expected, Row actual) {
-        // basically compare the paths
-        assertEquals(expected.getStruct(0).getString(0), actual.getStruct(0).getString(0));
+        return FS_CLIENT.listFrom(listFrom);
     }
 }

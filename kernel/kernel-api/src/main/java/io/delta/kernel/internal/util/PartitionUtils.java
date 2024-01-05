@@ -72,7 +72,6 @@ public class PartitionUtils {
     public static ColumnarBatch withPartitionColumns(
         ExpressionHandler expressionHandler,
         ColumnarBatch dataBatch,
-        StructType dataBatchSchema,
         Map<String, String> partitionValues,
         StructType schemaWithPartitionCols) {
         if (partitionValues == null || partitionValues.size() == 0) {
@@ -87,7 +86,7 @@ public class PartitionUtils {
                 // Create a partition vector
 
                 ExpressionEvaluator evaluator = expressionHandler.getEvaluator(
-                    dataBatchSchema,
+                    dataBatch.getSchema(),
                     literalForPartitionValue(
                         structField.getDataType(),
                         partitionValues.get(structField.getName())),

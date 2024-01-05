@@ -25,6 +25,7 @@ import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+
 import io.delta.kernel.Table
 
 import java.util.Optional

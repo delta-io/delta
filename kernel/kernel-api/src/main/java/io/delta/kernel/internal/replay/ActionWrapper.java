@@ -13,26 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
 package io.delta.kernel.internal.replay;
 
-import io.delta.kernel.data.FileDataReadResult;
+import io.delta.kernel.data.ColumnarBatch;
 
 /** Internal wrapper class holding information needed to perform log replay. */
 class ActionWrapper {
-    private final FileDataReadResult fileDataReadResult;
+    private final ColumnarBatch columnarBatch;
     private final boolean isFromCheckpoint;
     private final long version;
 
-    ActionWrapper(FileDataReadResult data, boolean isFromCheckpoint, long version) {
-        this.fileDataReadResult = data;
+    ActionWrapper(ColumnarBatch data, boolean isFromCheckpoint, long version) {
+        this.columnarBatch = data;
         this.isFromCheckpoint = isFromCheckpoint;
         this.version = version;
     }
 
-    public FileDataReadResult getFileDataReadResult() {
-        return fileDataReadResult;
+    public ColumnarBatch getColumnarBatch() {
+        return columnarBatch;
     }
 
     public boolean isFromCheckpoint() {
