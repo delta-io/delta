@@ -45,7 +45,7 @@ public class DataSkippingUtils {
      * return the parsed JSON stats from the scan files.
      */
     public static ColumnarBatch parseJsonStats(
-        TableClient tableClient, FilteredColumnarBatch scanFileBatch, StructType statsSchema) {
+            TableClient tableClient, FilteredColumnarBatch scanFileBatch, StructType statsSchema) {
         ColumnVector statsVector = scanFileBatch.getData()
             .getColumnVector(ADD_FILE_ORDINAL)
             .getChild(ADD_FILE_STATS_ORDINAL);
@@ -137,12 +137,12 @@ public class DataSkippingUtils {
      * if any required statistics are missing.
      */
     public static Optional<Predicate> constructDataFilters(
-        Predicate dataFilter, StructType dataSchema) {
-        StatsSchemaHelper schemaHelper = new StatsSchemaHelper(dataSchema);
+            Predicate dataFilter, StructType dataSchema) {
+            StatsSchemaHelper schemaHelper = new StatsSchemaHelper(dataSchema);
         return constructDataFilters(dataFilter, schemaHelper);
     }
 
-    public static Optional<Predicate> constructDataFilters(
+    private static Optional<Predicate> constructDataFilters(
             Predicate dataFilter, StatsSchemaHelper schemaHelper) {
 
         switch (dataFilter.getName().toUpperCase(Locale.ROOT)) {

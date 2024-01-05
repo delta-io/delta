@@ -207,17 +207,15 @@ public class ScanImpl implements Scan {
     }
 
     private Optional<Predicate> getDataSkippingPredicate() {
-        Optional<Predicate> dataPredicate = getDataFilters();
-        if (!dataPredicate.isPresent()) { // no data filter
-            return Optional.empty();
-        }
-        return DataSkippingUtils.constructDataFilters(dataPredicate.get(), metadata.getSchema());
+        return getDataFilters().flatMap(dataPredicate ->
+            DataSkippingUtils.constructDataFilters(dataPredicate, metadata.getSchema())
+        );
     }
 
     private CloseableIterator<FilteredColumnarBatch> applyDataSkipping(
-        TableClient tableClient,
-        CloseableIterator<FilteredColumnarBatch> scanFileIter,
-        Predicate dataFilter) {
+            TableClient tableClient,
+            CloseableIterator<FilteredColumnarBatch> scanFileIter,
+            Predicate dataFilter) {
         // Get the stats schema
         // TODO prune stats schema according to the data filter
         StructType statsSchema = DataSkippingUtils.getStatsSchema(metadata.getSchema());
@@ -233,7 +231,6 @@ public class ScanImpl implements Scan {
                 "COALESCE",
                 Arrays.asList(dataFilter, Literal.ofBoolean(true))),
             AlwaysTrue.ALWAYS_TRUE);
-        logger.info(String.format("totalFilter=%s", filterToEval));
 
         PredicateEvaluator predicateEvaluator = tableClient
             .getExpressionHandler()

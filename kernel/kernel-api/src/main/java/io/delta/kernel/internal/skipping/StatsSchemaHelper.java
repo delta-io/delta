@@ -64,6 +64,8 @@ public class StatsSchemaHelper {
      */
     private static boolean isSkippingEligibleDataType(DataType dataType) {
         return skippingEligibleTypeNames.contains(dataType.toString()) ||
+            // DecimalType is eligible but since its string includes scale + precision it needs to
+            // be matched separately
             dataType instanceof DecimalType;
     }
 

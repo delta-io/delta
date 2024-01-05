@@ -84,8 +84,8 @@ public class DefaultRowBasedColumnarBatch implements ColumnarBatch {
     }
 
     @Override
-    public ColumnarBatch withNewColumn(int ordinal, StructField columnSchema,
-                                ColumnVector columnVector) {
+    public ColumnarBatch withNewColumn(
+            int ordinal, StructField columnSchema, ColumnVector columnVector) {
         if (ordinal < 0 || ordinal >= columnVectors.size() + 1) {
             throw new IllegalArgumentException("Invalid ordinal: " + ordinal);
         }
