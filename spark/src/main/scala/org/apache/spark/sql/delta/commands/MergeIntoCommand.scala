@@ -127,8 +127,8 @@ case class MergeIntoCommand(
                 }
 
                 val dvActions = withStatusCode(
-                  "DELTA",
-                  "Writing Deletion Vectors for modified data") {
+                   "DELTA",
+                   "Writing Deletion Vectors for modified data") {
                   writeDVs(spark, deltaTxn, filesToRewrite)
                 }
 

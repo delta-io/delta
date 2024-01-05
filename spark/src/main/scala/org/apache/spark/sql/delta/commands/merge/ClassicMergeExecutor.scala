@@ -288,7 +288,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       deduplicateCDFDeletes: DeduplicateCDFDeletes,
       writeUnmodifiedRows: Boolean): Seq[FileAction] = recordMergeOperation(
         extraOpType = if (!writeUnmodifiedRows) {
-           "writeModifiedRowsOnly"
+            "writeModifiedRowsOnly"
           } else if (shouldOptimizeMatchedOnlyMerge(spark)) {
             "writeAllUpdatesAndDeletes"
           } else {
@@ -465,12 +465,12 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
    * Writes Deletion Vectors for rows modified by the merge operation.
    */
   protected def writeDVs(
-      spark: SparkSession,
-      deltaTxn: OptimisticTransaction,
-      filesToRewrite: Seq[AddFile]): Seq[FileAction] = recordMergeOperation(
-        extraOpType = "writeDeletionVectors",
-        status = s"MERGE operation - Rewriting Deletion Vectors to ${filesToRewrite.size} files",
-        sqlMetricName = "rewriteTimeMs") {
+    spark: SparkSession,
+    deltaTxn: OptimisticTransaction,
+    filesToRewrite: Seq[AddFile]): Seq[FileAction] = recordMergeOperation(
+      extraOpType = "writeDeletionVectors",
+      status = s"MERGE operation - Rewriting Deletion Vectors to ${filesToRewrite.size} files",
+      sqlMetricName = "rewriteTimeMs") {
 
     val fileIndex = new TahoeBatchFileIndex(
       spark,
