@@ -18,15 +18,11 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.cdc.MergeCDCTests
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.types.StructType
-
 trait MergeIntoDVsTests extends MergeIntoSQLSuite with DeletionVectorsTestUtils {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "true")
-    spark.conf.set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "true")
+    enableDeletionVectors(spark, merge = true)
   }
 
   override def excluded: Seq[String] = {
@@ -60,47 +56,24 @@ trait MergeIntoDVsTests extends MergeIntoSQLSuite with DeletionVectorsTestUtils 
 
 class MergeIntoDVsSuite extends MergeIntoDVsTests
 
-class MergeIntoDVsCDCSuite extends MergeIntoDVsTests with MergeCDCTests {
+trait MergeCDCWithDVsTests extends MergeCDCTests with DeletionVectorsTestUtils {
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "true")
-    spark.conf.set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "true")
+    enableDeletionVectors(spark, merge = true)
   }
 
-  /**
-   * Merge commands that result to no actions do not generate a new commit when DVs are enabled.
-   * We correct affected tests by changing the expected CDC result (Create table CDC).
-   */
-  override protected def testMergeCdcUnlimitedClauses(name: String)(
-      target: => DataFrame,
-      source: => DataFrame,
-      mergeCondition: String = "s.key = t.key",
-      clauses: Seq[MergeClause],
-      expectedTableData: => DataFrame = null,
-      expectedCdcDataWithoutVersion: => DataFrame = null,
-      expectErrorContains: String = null,
-      confs: Seq[(String, String)] = Seq(),
-      targetTableSchema: Option[StructType] = None): Unit = {
-    import testImplicits._
+  override def excluded: Seq[String] = {
+    /**
+     * Merge commands that result to no actions do not generate a new commit when DVs are enabled.
+     * We correct affected tests by changing the expected CDC result (Create table CDC).
+     */
+    val miscFailures = "merge CDC - all conditions failed for all rows"
 
-    // Make sure session is initialized.
-    initializeSession()
-
-    val createTableCDC =
-      Seq((1, "a", "insert"), (2, "b", "insert")).toDF("key", "targetVal", "_change_type")
-    // Test name -> CDC expected value override.
-    val cdcOverrides = Map("all conditions failed for all rows" -> createTableCDC)
-
-    super.testMergeCdcUnlimitedClauses(
-      name)(
-      target,
-      source,
-      mergeCondition,
-      clauses,
-      expectedTableData,
-      cdcOverrides.getOrElse(name, expectedCdcDataWithoutVersion),
-      expectErrorContains,
-      confs,
-      targetTableSchema)
+    super.excluded :+ miscFailures
   }
 }
+
+/**
+ * Includes the entire MergeIntoSQLSuite with CDC enabled.
+ */
+class MergeIntoDVsCDCSuite extends MergeIntoDVsTests with MergeCDCWithDVsTests

@@ -134,7 +134,7 @@ case class MergeIntoCommand(
 
                 newWrittenFiles ++ dvActions
               } else {
-                val newWrittenFiles = withStatusCode("DELTA", "Writing merged data") {
+                val newWrittenFiles = withStatusCode("DELTA", "Writing modified data") {
                   writeAllChanges(
                     spark,
                     deltaTxn,
@@ -142,7 +142,7 @@ case class MergeIntoCommand(
                     deduplicateCDFDeletes,
                     writeUnmodifiedRows = true)
                 }
-                filesToRewrite.map(_.remove) ++ newWrittenFiles
+                newWrittenFiles ++ filesToRewrite.map(_.remove)
               }
             } else {
               // Run an insert-only job instead of WriteChanges

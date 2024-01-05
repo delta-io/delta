@@ -214,37 +214,64 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
    * Helper function that produces an expression by combining a sequence of clauses with OR.
    * Requires the sequence to be non-empty.
    */
-  protected def combineClausesWithOr(clauses: Seq[DeltaMergeIntoClause]): Expression = {
+  protected def clauseDisjunction(clauses: Seq[DeltaMergeIntoClause]): Expression = {
     require(clauses.nonEmpty)
     clauses
       .map(_.condition.getOrElse(Literal.TrueLiteral))
-      .reduce((a, b) => Or(a, b))
+      .reduceLeft(Or)
   }
 
-  protected def generateFilterForModifiedAndNewRows(
-      includeNotMatchedFilter: Boolean = true): Expression = {
+  /**
+   * Returns the expression that can be used for selecting the modified rows generated
+   * by the merge operation. The expression is to designed to work irrespectively
+   * of the join type used between the source and target tables.
+   *
+   * The expression consists of two parts, one for each of the action clause types that produce
+   * row modifications: MATCHED, NOT MATCHED BY SOURCE. All actions of the same clause type form
+   * a disjunctive clause. The result is then conjucted to an expression that filters the rows
+   * of the particular action clause type. For example:
+   *
+   * MERGE INTO t
+   * USING s
+   * ON s.id = t.id
+   * WHEN MATCHED AND id < 5 THEN ...
+   * WHEN MATCHED AND id > 10 THEN ...
+   * WHEN NOT MATCHED BY SOURCE AND id > 20 THEN ...
+   *
+   * Produces the following expression:
+   *
+   * ((as.id = t.id) AND (id < 5 OR id > 10))
+   * OR
+   * ((SOURCE TABLE IS NULL) AND (id > 20))
+   */
+  protected def generateFilterForModifiedRows(): Expression = {
     val matchedExpression = if (matchedClauses.nonEmpty) {
-      Seq(And(Column(condition).expr, combineClausesWithOr(matchedClauses)))
+      And(Column(condition).expr, clauseDisjunction(matchedClauses))
     } else {
-      Seq(Column(condition).expr)
+      Column(condition).expr
     }
 
-    val notMatchedExpressionOpt = if (includeNotMatchedFilter && notMatchedClauses.nonEmpty) {
-      val combinedClauses = combineClausesWithOr(notMatchedClauses)
-      Some(And(col(TARGET_ROW_PRESENT_COL).isNull.expr, combinedClauses))
+    val notMatchedBySourceExpression = if (notMatchedBySourceClauses.nonEmpty) {
+      val combinedClauses = clauseDisjunction(notMatchedBySourceClauses)
+      And(col(SOURCE_ROW_PRESENT_COL).isNull.expr, combinedClauses)
     } else {
-      None
+      Literal.FalseLiteral
     }
 
-    val notMatchedBySourceExpressionOpt = if (notMatchedBySourceClauses.nonEmpty) {
-      val combinedClauses = combineClausesWithOr(notMatchedBySourceClauses)
-      Some(And(col(SOURCE_ROW_PRESENT_COL).isNull.expr, combinedClauses))
-    } else {
-      None
-    }
+    Or(matchedExpression, notMatchedBySourceExpression)
+  }
 
-    (matchedExpression ++ notMatchedExpressionOpt ++ notMatchedBySourceExpressionOpt)
-      .reduce((a, b) => Or(a, b))
+  /**
+   * Returns the expression that can be used for selecting the new rows generated
+   * by the merge operation.
+   */
+  protected def generateFilterForNewRows(): Expression = {
+    if (notMatchedClauses.nonEmpty) {
+      val combinedClauses = clauseDisjunction(notMatchedClauses)
+      And(col(TARGET_ROW_PRESENT_COL).isNull.expr, combinedClauses)
+    } else {
+      Literal.FalseLiteral
+    }
   }
 
   /**
@@ -259,12 +286,14 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       deltaTxn: OptimisticTransaction,
       filesToRewrite: Seq[AddFile],
       deduplicateCDFDeletes: DeduplicateCDFDeletes,
-      writeUnmodifiedRows: Boolean): Seq[FileAction] =
-    recordMergeOperation(
-      extraOpType =
-        if (!writeUnmodifiedRows) "writeModifiedRowsOnly"
-        else if (shouldOptimizeMatchedOnlyMerge(spark)) "writeAllUpdatesAndDeletes"
-        else "writeAllChanges",
+      writeUnmodifiedRows: Boolean): Seq[FileAction] = recordMergeOperation(
+        extraOpType = if (!writeUnmodifiedRows) {
+          "writeModifiedRowsOnly"
+        } else if (shouldOptimizeMatchedOnlyMerge(spark)) {
+          "writeAllUpdatesAndDeletes"
+        } else {
+          "writeAllChanges"
+        },
       status = s"MERGE operation - Rewriting ${filesToRewrite.size} files",
       sqlMetricName = "rewriteTimeMs") {
 
@@ -326,16 +355,12 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         // deduplication. See [[deduplicateCDFDeletes()]]
         sourceDF = sourceDF.withColumn(SOURCE_ROW_INDEX_COL, monotonically_increasing_id())
       }
-      val left = if (writeUnmodifiedRows) {
-        sourceDF.withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
-      } else {
-        sourceDF
-          .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
-          // In some cases, the optimiser (incorrectly) decides to omit the metrics column.
-          // This causes issues in the source determinism validation. We work around the issue by
-          // adding a redundant dummy filter to make sure the column is not pruned.
-          .filter(SOURCE_ROW_PRESENT_COL)
-      }
+      val left = sourceDF
+        .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
+        // In some cases, the optimizer (incorrectly) decides to omit the metrics column.
+        // This causes issues in the source determinism validation. We work around the issue by
+        // adding a redundant dummy filter to make sure the column is not pruned.
+        .filter(SOURCE_ROW_PRESENT_COL)
       val targetDF = baseTargetDF
         .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
       val right = if (deduplicateCDFDeletes.enabled) {
@@ -350,7 +375,8 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       if (writeUnmodifiedRows) {
         joinedBaseDF
       } else {
-        joinedBaseDF.filter(generateFilterForModifiedAndNewRows().sql)
+        val filter = Or(generateFilterForModifiedRows(), generateFilterForNewRows())
+        joinedBaseDF.filter(Column(filter))
       }
 
     // Precompute conditions in matched and not matched clauses and generate
@@ -439,12 +465,12 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
    * Writes Deletion Vectors for rows modified by the merge operation.
    */
   protected def writeDVs(
-    spark: SparkSession,
-    deltaTxn: OptimisticTransaction,
-    filesToRewrite: Seq[AddFile]): Seq[FileAction] = recordMergeOperation(
-      extraOpType = "writeDeletionVectors",
-      status = s"MERGE operation - Rewriting Deletion Vectors to ${filesToRewrite.size} files",
-      sqlMetricName = "rewriteTimeMs") {
+      spark: SparkSession,
+      deltaTxn: OptimisticTransaction,
+      filesToRewrite: Seq[AddFile]): Seq[FileAction] = recordMergeOperation(
+        extraOpType = "writeDeletionVectors",
+        status = s"MERGE operation - Rewriting Deletion Vectors to ${filesToRewrite.size} files",
+        sqlMetricName = "rewriteTimeMs") {
 
     val fileIndex = new TahoeBatchFileIndex(
       spark,
@@ -472,8 +498,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       .withColumn(SOURCE_ROW_PRESENT_COL, lit(true))
       .join(targetDF, Column(condition), joinType)
 
-    val modifiedRowsFilter = generateFilterForModifiedAndNewRows(includeNotMatchedFilter = false)
-
+    val modifiedRowsFilter = generateFilterForModifiedRows()
     val matchedDVResult =
       DeletionVectorBitmapGenerator.buildRowIndexSetsForFilesMatchingCondition(
         spark,
