@@ -367,8 +367,7 @@ object DeletionVectorBitmapGenerator {
       candidateFiles: Seq[AddFile],
       condition: Expression,
       fileNameColumnOpt: Option[Column] = None,
-      rowIndexColumnOpt: Option[Column] = None)
-    : Seq[DeletionVectorResult] = {
+      rowIndexColumnOpt: Option[Column] = None): Seq[DeletionVectorResult] = {
     val fileNameColumn = fileNameColumnOpt.getOrElse(col(s"${METADATA_NAME}.${FILE_PATH}"))
     val rowIndexColumn = rowIndexColumnOpt.getOrElse(col(ROW_INDEX_COLUMN_NAME))
     val matchedRowsDf = targetDf

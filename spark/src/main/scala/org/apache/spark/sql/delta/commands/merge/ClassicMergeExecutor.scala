@@ -288,14 +288,14 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       deduplicateCDFDeletes: DeduplicateCDFDeletes,
       writeUnmodifiedRows: Boolean): Seq[FileAction] = recordMergeOperation(
         extraOpType = if (!writeUnmodifiedRows) {
-          "writeModifiedRowsOnly"
-        } else if (shouldOptimizeMatchedOnlyMerge(spark)) {
-          "writeAllUpdatesAndDeletes"
-        } else {
-          "writeAllChanges"
-        },
-      status = s"MERGE operation - Rewriting ${filesToRewrite.size} files",
-      sqlMetricName = "rewriteTimeMs") {
+           "writeModifiedRowsOnly"
+          } else if (shouldOptimizeMatchedOnlyMerge(spark)) {
+            "writeAllUpdatesAndDeletes"
+          } else {
+            "writeAllChanges"
+          },
+        status = s"MERGE operation - Rewriting ${filesToRewrite.size} files",
+        sqlMetricName = "rewriteTimeMs") {
 
       val cdcEnabled = isCdcEnabled(deltaTxn)
 
@@ -356,11 +356,11 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         sourceDF = sourceDF.withColumn(SOURCE_ROW_INDEX_COL, monotonically_increasing_id())
       }
       val left = sourceDF
-        .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
-        // In some cases, the optimizer (incorrectly) decides to omit the metrics column.
-        // This causes issues in the source determinism validation. We work around the issue by
-        // adding a redundant dummy filter to make sure the column is not pruned.
-        .filter(SOURCE_ROW_PRESENT_COL)
+          .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
+          // In some cases, the optimizer (incorrectly) decides to omit the metrics column.
+          // This causes issues in the source determinism validation. We work around the issue by
+          // adding a redundant dummy filter to make sure the column is not pruned.
+          .filter(SOURCE_ROW_PRESENT_COL)
       val targetDF = baseTargetDF
         .withColumn(TARGET_ROW_PRESENT_COL, lit(true))
       val right = if (deduplicateCDFDeletes.enabled) {
