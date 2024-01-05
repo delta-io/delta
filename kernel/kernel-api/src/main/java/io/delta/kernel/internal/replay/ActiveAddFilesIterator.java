@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.replay;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.*;
