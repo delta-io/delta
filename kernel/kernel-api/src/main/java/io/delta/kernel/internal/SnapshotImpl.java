@@ -101,6 +101,6 @@ public class SnapshotImpl implements Snapshot {
      * exists for this application.
      */
     public Optional<Long> getLatestTransactionVersion(String applicationId) {
-        return logReplay.getRecentTransactionIdentifier(applicationId);
+        return logReplay.getLatestTransactionIdentifier(applicationId);
     }
 }

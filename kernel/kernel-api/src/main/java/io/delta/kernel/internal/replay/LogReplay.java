@@ -131,8 +131,8 @@ public class LogReplay {
         return this.protocolAndMetadata._2;
     }
 
-    public Optional<Long> getRecentTransactionIdentifier(String applicationId) {
-        return loadRecentTransactionVersion(applicationId);
+    public Optional<Long> getLatestTransactionIdentifier(String applicationId) {
+        return loadLatestTransactionVersion(applicationId);
     }
 
     /**
@@ -269,7 +269,7 @@ public class LogReplay {
         );
     }
 
-    private Optional<Long> loadRecentTransactionVersion(String applicationId) {
+    private Optional<Long> loadLatestTransactionVersion(String applicationId) {
         try (CloseableIterator<ActionWrapper> reverseIter =
                  new ActionsIterator(
                      tableClient,
