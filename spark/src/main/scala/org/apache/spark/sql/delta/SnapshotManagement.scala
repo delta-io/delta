@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.FileNotFoundException
 import java.util.Objects
 import java.util.concurrent.Future
+import java.util.concurrent.locks.ReentrantLock
 
 import scala.collection.mutable
 import scala.util.control.NonFatal
@@ -57,6 +58,22 @@ trait SnapshotManagement { self: DeltaLog =>
   @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
 
   @volatile protected var currentSnapshot: CapturedSnapshot = getSnapshotAtInit
+
+  /** Use ReentrantLock to allow us to call `lockInterruptibly` */
+  protected val snapshotLock = new ReentrantLock()
+
+  /**
+   * Run `body` inside `snapshotLock` lock using `lockInterruptibly` so that the thread can be
+   * interrupted when waiting for the lock.
+   */
+  def lockInterruptibly[T](body: => T): T = {
+    snapshotLock.lockInterruptibly()
+    try {
+      body
+    } finally {
+      snapshotLock.unlock()
+    }
+  }
 
   /**
    * Get the LogSegment that will help in computing the Snapshot of the table at DeltaLog
@@ -727,11 +744,11 @@ trait SnapshotManagement { self: DeltaLog =>
    * at once and return the current snapshot. The return snapshot may be stale.
    */
   private def tryUpdate(isAsync: Boolean): Snapshot = {
-    if (deltaLogLock.tryLock()) {
+    if (snapshotLock.tryLock()) {
       try {
         updateInternal(isAsync)
       } finally {
-        deltaLogLock.unlock()
+        snapshotLock.unlock()
       }
     } else {
       currentSnapshot.snapshot
@@ -740,7 +757,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
   /**
    * Queries the store for new delta files and applies them to the current state.
-   * Note: the caller should hold `deltaLogLock` before calling this method.
+   * Note: the caller should hold `snapshotLock` before calling this method.
    */
   protected def updateInternal(isAsync: Boolean): Snapshot =
     recordDeltaOperation(this, "delta.log.update", Map(TAG_ASYNC -> isAsync.toString)) {
@@ -779,7 +796,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
   /** Replace the given snapshot with the provided one. */
   protected def replaceSnapshot(newSnapshot: Snapshot, updateTimestamp: Long): Unit = {
-    if (!deltaLogLock.isHeldByCurrentThread) {
+    if (!snapshotLock.isHeldByCurrentThread) {
       recordDeltaEvent(this, "delta.update.unsafeReplace")
     }
     val oldSnapshot = currentSnapshot.snapshot
