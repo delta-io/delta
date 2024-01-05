@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.perf
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
@@ -34,17 +35,17 @@ import java.util.Locale
 
 /** Optimize COUNT, MIN and MAX expressions on Delta tables.
  * This optimization is only applied when the following conditions are met:
- * - The MIN/MAX columns data type is supported by the optimization (ByteType, ShortType,
- * IntegerType, LongType, FloatType, DoubleType, DateType).
+ * - The MIN/MAX columns are not nested and data type is supported by the optimization (ByteType,
+ * ShortType, IntegerType, LongType, FloatType, DoubleType, DateType).
  * - All AddFiles in the Delta Log must have stats on columns used in MIN/MAX expressions,
  * or the columns must be partitioned, in the latter case it uses partitionValues, a required field.
  * - Table has no deletion vectors, or query has no MIN/MAX expressions.
  * - COUNT has no DISTINCT.
  * - Query has no filters.
  * - Query has no GROUP BY.
- * Example of valid query: SELECT COUNT(*), MIN(id), MAX(id) FROM MyDeltaTable
+ * Example of valid query: SELECT COUNT(*), MIN(id), MAX(partition_col) FROM MyDeltaTable
  */
-trait OptimizeMetadataOnlyDeltaQuery {
+trait OptimizeMetadataOnlyDeltaQuery extends Logging {
   def optimizeQueryWithMetadata(plan: LogicalPlan): LogicalPlan = {
     plan.transformUpWithSubqueries {
       case agg@AggregateDeltaTable(tahoeLogFileIndex) =>
@@ -63,9 +64,9 @@ trait OptimizeMetadataOnlyDeltaQuery {
 
     def checkStatsExists(attrRef: AttributeReference): Boolean = {
       columnStats.contains(attrRef.name) &&
-        // Avoid StructType, it is not supported by this optimization
+        // Avoid StructType, it is not supported by this optimization.
         // Sanity check only. If reference is nested column it would be GetStructType
-        // instead of AttributeReference
+        // instead of AttributeReference.
         attrRef.references.size == 1 && attrRef.references.head.dataType != StructType
     }
 
@@ -110,6 +111,7 @@ trait OptimizeMetadataOnlyDeltaQuery {
         Seq(InternalRow.fromSeq(rewrittenAggregationValues)))
       r
     } else {
+      logInfo(s"Query can't be optimized using metadata because stats are missing")
       plan
     }
   }
