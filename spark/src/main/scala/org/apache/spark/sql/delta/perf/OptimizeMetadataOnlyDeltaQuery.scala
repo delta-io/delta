@@ -137,8 +137,6 @@ trait OptimizeMetadataOnlyDeltaQuery {
   private def extractCountMinMaxFromStats(
     deltaScanGenerator: DeltaScanGenerator,
     lowerCaseColumnNames: Set[String]): (Option[Long], Map[String, DeltaColumnStat]) = {
-    // TODO Update this to work with DV (https://github.com/delta-io/delta/issues/1485)
-
     val snapshot = deltaScanGenerator.snapshotToScan
 
     // Count - account for deleted rows according to deletion vectors
@@ -170,7 +168,7 @@ trait OptimizeMetadataOnlyDeltaQuery {
     lazy val files = filesWithStatsForScan.filter(col("stats.numRecords") > 0)
     lazy val statsMinMaxNullColumns = files.select(col("stats.*"))
     if (dataColumns.isEmpty
-      || !isTableDVFree(snapshot)
+      || !isTableDVFree(snapshot) // When DV enabled we can't rely on stats values easily
       || numFiles == 0
       || !statsMinMaxNullColumns.columns.contains("minValues")
       || !statsMinMaxNullColumns.columns.contains("maxValues")
