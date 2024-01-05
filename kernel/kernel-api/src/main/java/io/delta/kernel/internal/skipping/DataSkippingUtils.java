@@ -16,17 +16,17 @@
 package io.delta.kernel.internal.skipping;
 
 import java.util.*;
+import static java.lang.String.format;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.expressions.*;
-import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.types.*;
+import io.delta.kernel.internal.actions.AddFile;
 import static io.delta.kernel.internal.InternalScanFileUtils.SCAN_FILE_SCHEMA;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static java.lang.String.format;
 
 public class DataSkippingUtils {
 
@@ -129,16 +129,12 @@ public class DataSkippingUtils {
      *         NOT(a == b) ==> a != b
      *         NOT(a > b) ==> a <= b
      *
-     * TODO update these docs about missing stats
      * NOTE: The skipping predicate must handle the case where min and max stats for a column are
      * both NULL -- which indicates that all values in the file are NULL. Fortunately, most of the
      * operators we support data skipping for are NULL intolerant, and thus trivially satisfy this
      * requirement because they never return TRUE for NULL inputs. The only NULL tolerant operator
-     * we support -- IS [NOT] NULL -- is specifically NULL aware.
-     *
-     * NOTE: The skipping predicate does *NOT* need to worry about missing stats columns (which also
-     * manifest as NULL). That case is handled separately by `verifyStatsForFilter` (which disables
-     * skipping for any file that lacks the needed stats columns).
+     * we support -- IS [NOT] NULL -- is specifically NULL aware. The predicate evaluates to NULL
+     * if any required statistics are missing.
      */
     public static Optional<Predicate> constructDataFilters(
         Predicate dataFilter, StructType dataSchema) {
@@ -157,15 +153,16 @@ public class DataSkippingUtils {
             // ==> AND(constructDataFilters(a), constructDataFilters(b))
             //
             // To see why this transformation is safe, consider that `constructDataFilters(a)` must
-            // evaluate to TRUE *UNLESS* we can prove that `a` would not evaluate to TRUE for any row the
-            // file might contain. Thus, if the rewritten form of the skipping predicate does not evaluate
-            // to TRUE, at least one of the skipping predicates must not have evaluated to TRUE, which in
-            // turn means we were able to prove that `a` and/or `b` will not evaluate to TRUE for any row
-            // of the file. If that is the case, then `AND(a, b)` also cannot evaluate to TRUE for any row
-            // of the file, which proves we have a valid data skipping predicate.
+            // evaluate to TRUE *UNLESS* we can prove that `a` would not evaluate to TRUE for any
+            // row the file might contain. Thus, if the rewritten form of the skipping predicate
+            // does not evaluate to TRUE, at least one of the skipping predicates must not have
+            // evaluated to TRUE, which in turn means we were able to prove that `a` and/or `b`
+            // will not evaluate to TRUE for any row of the file. If that is the case, then
+            // `AND(a, b)` also cannot evaluate to TRUE for any row of the file, which proves we
+            // have a valid data skipping predicate.
             //
-            // NOTE: AND is special -- we can safely skip the file if one leg does not evaluate to TRUE,
-            // even if we cannot construct a skipping filter for the other leg.
+            // NOTE: AND is special -- we can safely skip the file if one leg does not evaluate to
+            // TRUE, even if we cannot construct a skipping filter for the other leg.
             case "AND":
                 Optional<Predicate> e1Filter = constructDataFilters(
                     asPredicate(getLeft(dataFilter)), schemaHelper);
@@ -194,7 +191,6 @@ public class DataSkippingUtils {
                 } else if (right instanceof Column && left instanceof Literal) {
                     return constructDataFilters(reverseComparatorFilter(dataFilter), schemaHelper);
                 }
-
             // TODO more expressions
             default:
                 return Optional.empty();
@@ -240,13 +236,15 @@ public class DataSkippingUtils {
         }
     }
 
-    private static Map<String, String> reverseComparators = new HashMap<String, String>(){{
-        put("=", "=");
-        put("<", ">");
-        put("<=", ">=");
-        put(">", "<");
-        put(">=", "<=");
-    }};
+    private static Map<String, String> reverseComparators = new HashMap<String, String>(){
+        {
+            put("=", "=");
+            put("<", ">");
+            put("<=", ">=");
+            put(">", "<");
+            put(">=", "<=");
+        }
+    };
 
     private static Predicate reverseComparatorFilter(Predicate predicate) {
         return new Predicate(

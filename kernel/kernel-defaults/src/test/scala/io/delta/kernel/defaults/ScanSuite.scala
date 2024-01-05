@@ -24,22 +24,67 @@ import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.apache.hadoop.conf.Configuration
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.plans.SQLHelper
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
+import org.apache.spark.sql.types.{StructType => SparkStructType}
 import org.scalatest.funsuite.AnyFunSuite
+
 import io.delta.kernel.client.{FileReadContext, JsonHandler, ParquetHandler, TableClient}
 import io.delta.kernel.data.{FileDataReadResult, FilteredColumnarBatch}
 import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
-import io.delta.kernel.types.{IntegerType, StructType}
+import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.types.StructType
+import io.delta.kernel.types.StringType.STRING
+import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.CloseableIterator
 import io.delta.kernel.{Snapshot, Table}
+import io.delta.kernel.internal.util.InternalUtils
+import io.delta.kernel.internal.InternalScanFileUtils
+
 import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
-import io.delta.kernel.internal.util.InternalUtils
-import io.delta.kernel.expressions.Literal._
 
-class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
+class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
   import io.delta.kernel.defaults.ScanSuite._
 
-  // todo write tables here? how to deal with conflicting testutils with spark? separate writer?
+  val spark = SparkSession
+    .builder()
+    .appName("Spark Test Writer for Delta Kernel")
+    .config("spark.master", "local")
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .getOrCreate()
+  // scalastyle:off sparkimplicits
+  import spark.implicits._
+  // scalastyle:on sparkimplicits
+
+  private def getDataSkippingConfs(
+    indexedCols: Option[Int], deltaStatsColNamesOpt: Option[String]): Seq[(String, String)] = {
+    val numIndexedColsConfOpt = indexedCols
+      .map(DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultTablePropertyKey -> _.toString)
+    val indexedColNamesConfOpt = deltaStatsColNamesOpt
+      .map(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.defaultTablePropertyKey -> _)
+    (numIndexedColsConfOpt ++ indexedColNamesConfOpt).toSeq
+  }
+
+  def writeDataSkippingTable(
+    tablePath: String,
+    data: String,
+    schema: SparkStructType = null,
+    indexedCols: Option[Int] = None,
+    deltaStatsColNamesOpt: Option[String] = None): Unit = {
+    withSQLConf(getDataSkippingConfs(indexedCols, deltaStatsColNamesOpt): _*) {
+      val jsonRecords = data.split("\n").toSeq
+      val reader = spark.read
+      if (schema != null) { reader.schema(schema) }
+      val df = reader.json(jsonRecords.toDS())
+
+      val r = DeltaLog.forTable(spark, tablePath)
+      df.coalesce(1).write.format("delta").save(r.dataPath.toString)
+    }
+  }
+  // todo write tables here instead of golden tables
 
   def checkSkipping(tablePath: String, hits: Seq[Predicate], misses: Seq[Predicate]): Unit = {
     val snapshot = latestSnapshot(tablePath)
@@ -106,7 +151,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
         nullSafeEquals(col("a"), ofInt(2)), // a <=> 2
         notEquals(col("a"), ofInt(1)), // a != 1
         nullSafeEquals(col("a"), ofInt(2)), // a <=> 2
-        notEquals(ofInt(1), col("a")), // 1 != a
+        notEquals(ofInt(1), col("a")) // 1 != a
       ),
       misses = Seq(
         equals(col("a"), ofInt(2)), // a = 2
@@ -206,17 +251,17 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
       hits = Seq(
         new And(
           greaterThan(col("a"), ofInt(0)),
-          lessThan(col("a"), ofInt(3)),
+          lessThan(col("a"), ofInt(3))
         ),
         new And(
           lessThanOrEqual(col("a"), ofInt(1)),
-          greaterThan(col("a"), ofInt(-1)),
+          greaterThan(col("a"), ofInt(-1))
         )
       ),
       misses = Seq(
         new And(
           lessThan(col("a"), ofInt(0)),
-          greaterThan(col("a"), ofInt(-2)),
+          greaterThan(col("a"), ofInt(-2))
         )
       )
     )
@@ -244,7 +289,6 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
           greaterThan(col("a"), ofInt(0)),
           startsWith(col("b"), ofString("2016-"))
         )
-
       ),
       misses = Seq()
     )
@@ -257,7 +301,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
       goldenTablePath("data-skipping-and-statements-one-side-unsupported"),
       hits = Seq(
         // a % 100 < 10 AND b % 100 > 20
-        new And(lessThan(aRem100, ofInt(10)), greaterThan(bRem100, ofInt(20))),
+        new And(lessThan(aRem100, ofInt(10)), greaterThan(bRem100, ofInt(20)))
       ),
       misses = Seq(
         // a < 10 AND b % 100 > 20
@@ -294,7 +338,6 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
           lessThan(col("a"), ofInt(1)),
           new And(greaterThan(col("a"), ofInt(10)), lessThan(col("b"), ofInt(10)))
         )
-
       ),
       misses = Seq(
         new And( // a < 1 AND b < 10: ==> a < 1 ==> FALSE
@@ -309,7 +352,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
       hits = Seq(
         equals(col("col00"), ofInt(0)),
         equals(col("col32"), ofInt(32)),
-        equals(col("col32"), ofInt(-1)),
+        equals(col("col32"), ofInt(-1))
       ),
       misses = Seq(
         equals(col("col00"), ofInt(1))
@@ -411,40 +454,41 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
     )
   }
 
-  // todo for this test use expression helpers & add unsupported expressions to hits with notes
   // Data skipping by stats should still work even when the only data in file is null, in spite of
   // the NULL min/max stats that result -- this is different to having no stats at all.
   test("data skipping - nulls - only null in file") {
     checkSkipping(
       goldenTablePath("data-skipping-nulls-only-null-in-file"),
       hits = Seq(
-        // Ideally this should not hit as it is always FALSE, but its correct to not skip
-        equals(col("a"), ofNull(IntegerType.INTEGER)),
         AlwaysTrue.ALWAYS_TRUE,
-        // todo how is this skipped in delta spark? Shouldn't it be null || !true --> null
-        //   can we just add a "isNotNull" when it's a comparison with non-null value?
-        //  Does having verifyStatsForFilter fix this?
+        // Ideally this should not hit as it is always FALSE, but its correct to not skip
+        equals(col("a"), ofNull(INTEGER)),
+        not(equals(col("a"), ofNull(INTEGER))), // Same as previous case
+        isNull(col("a")),
+        // This is optimized to `IsNull(a)` by NullPropagation in Spark
+        nullSafeEquals(col("a"), ofNull(INTEGER)),
+        not(nullSafeEquals(col("a"), ofInt(1))),
+        // In delta-spark we use verifyStatsForFilter to deal with missing stats instead of
+        // converting all nulls ==> true (keep). For comparisons with null statistics we end up with
+        // filter: dataFilter || !(verifyStatsForFilter) = null || false = null
+        // When filtering on a DF nulls are counted as false and eliminated. Thus these are misses
+        // in Delta-Spark.
+        // Including them is not incorrect. To skip these filters for Kernel we could use
+        // verifyStatsForFilter or some other solution like inserting a && isNotNull(a) expression.
         equals(col("a"), ofInt(1)),
         lessThan(col("a"), ofInt(1)),
         greaterThan(col("a"), ofInt(1)),
-        /*
-        "a IS NULL",
-        "NOT a = NULL", // Same as previous case
-        "a <=> NULL", // This is optimized to `IsNull(a)` by NullPropagation
-        "NULL AND a = 1", // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
-        "NOT a <=> 1"
-         */
+        not(equals(col("a"), ofInt(1))),
+        notEquals(col("a"), ofInt(1)),
+        nullSafeEquals(col("a"), ofInt(1)),
+
+        // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
+        isNotNull(col("a")),
+        // This can be optimized to `IsNotNull(a)` (done by NullPropagation in Spark)
+        not(nullSafeEquals(col("a"), ofNull(INTEGER)))
       ),
       misses = Seq(
         AlwaysFalse.ALWAYS_FALSE
-        /*
-        // stats tell us a is always NULL, so any predicate that requires non-NULL a should skip
-        "a IS NOT NULL",
-        "NOT a <=> NULL", // This is optimized to `IsNotNull(a)`
-        "NOT a = 1",
-        "a <> 1",
-        "a <=> 1"
-         */
       )
     )
   }
@@ -454,7 +498,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
       goldenTablePath("data-skipping-nulls-null-plus-not-null-in-same-file"),
       hits = Seq(
         // Ideally this should not hit as it is always FALSE, but its correct to not skip
-        equals(col("a"), ofNull(IntegerType.INTEGER)),
+        equals(col("a"), ofNull(INTEGER)),
         equals(col("a"), ofInt(1)),
         AlwaysTrue.ALWAYS_TRUE,
         isNotNull(col("a")),
@@ -462,11 +506,11 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
         // Note these expressions either aren't supported or aren't added to skipping yet
         // but should still be hits once supported
         isNull(col("a")),
-        not(equals(col("a"), ofNull(IntegerType.INTEGER))),
+        not(equals(col("a"), ofNull(INTEGER))),
         // This is optimized to `IsNull(a)` by NullPropagation in Spark
-        nullSafeEquals(col("a"), ofNull(IntegerType.INTEGER)),
+        nullSafeEquals(col("a"), ofNull(INTEGER)),
         // This is optimized to `IsNotNull(a)` by NullPropagation in Spark
-        not(nullSafeEquals(col("a"), ofNull(IntegerType.INTEGER))),
+        not(nullSafeEquals(col("a"), ofNull(INTEGER))),
         nullSafeEquals(col("a"), ofInt(1)),
         not(nullSafeEquals(col("a"), ofInt(1))),
 
@@ -478,12 +522,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
       misses = Seq(
         AlwaysFalse.ALWAYS_FALSE,
         lessThan(col("a"), ofInt(1)),
-        greaterThan(col("a"), ofInt(1)),
+        greaterThan(col("a"), ofInt(1))
       )
     )
   }
-
-  // todo "data skipping by partitions and data values - nulls"
 
   // TODO JSON serialization truncates to milliseconds, to safely skip for timestamp stats we need
   //   to add a millisecond to any max stat
@@ -535,7 +577,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
         lessThan(col("c3"), ofFloat(0.5f)),
         greaterThan(col("c4"), ofFloat(5.0f)),
         equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
-        greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2)),
+        greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))
       )
     )
   }
@@ -566,7 +608,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
         lessThan(col("cc3"), ofFloat(0.5f)),
         greaterThan(col("cc4"), ofFloat(5.0f)),
         equals(col("cc6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
-        greaterThan(col("cc9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2)),
+        greaterThan(col("cc9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))
       )
     )
   }
@@ -590,9 +632,154 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
         lessThan(col("c3"), ofFloat(0.5f)),
         greaterThan(col("c4"), ofFloat(5.0f)),
         equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
-        greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2)),
+        greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))
       )
     )
+  }
+
+  test("data skipping by partition and data values - nulls") {
+    withTempDir { tableDir =>
+      val dataSeqs = Seq( // each sequence produce a single file
+        Seq((null, null)),
+        Seq((null, "a")),
+        Seq((null, "b")),
+        Seq(("a", "a"), ("a", null)),
+        Seq(("b", null))
+      )
+      dataSeqs.foreach { seq =>
+        seq.toDF("key", "value").coalesce(1)
+          .write.format("delta").partitionBy("key").mode("append").save(tableDir.getCanonicalPath)
+      }
+      def checkResults(
+          predicate: Predicate, expNumPartitions: Int, expNumFiles: Long): Unit = {
+        val snapshot = latestSnapshot(tableDir.getCanonicalPath)
+        val scanFiles = collectScanFileRows(
+          snapshot.getScanBuilder(defaultTableClient)
+            .withFilter(defaultTableClient, predicate)
+            .build())
+        assert(scanFiles.length == expNumFiles,
+          s"Expected $expNumFiles but found ${scanFiles.length} for $predicate")
+
+        val partitionValues = scanFiles.map { row =>
+          InternalScanFileUtils.getPartitionValues(row)
+        }.distinct
+        assert(partitionValues.length == expNumPartitions,
+          s"Expected $expNumPartitions partitions but found ${partitionValues.length}")
+      }
+
+      // Trivial base case
+      checkResults(
+        predicate = AlwaysTrue.ALWAYS_TRUE,
+        expNumPartitions = 3,
+        expNumFiles = 5)
+
+      // Conditions on partition key
+      checkResults(
+        predicate = isNotNull(col("key")),
+        expNumPartitions = 2,
+        expNumFiles = 2) // 2 files with key = 'a', and 1 file with key = 'b'
+
+      checkResults(
+        predicate = equals(col("key"), ofString("a")),
+        expNumPartitions = 1,
+        expNumFiles = 1) // 1 files with key = 'a'
+
+
+      checkResults(
+        predicate = equals(col("key"), ofString("b")),
+        expNumPartitions = 1,
+        expNumFiles = 1) // 1 files with key = 'b'
+
+      // TODO shouldn't partition filters on unsupported expressions just not prune instead of fail?
+      /*
+      NOT YET SUPPORTED EXPRESSIONS
+      checkResults(
+        predicate = isNull(col("key")),
+        expNumPartitions = 1,
+        expNumFiles = 3) // 3 files with key = null
+
+      checkResults(
+        predicate = nullSafeEquals(col("key"), ofNull(string)),
+        expNumPartitions = 1,
+        expNumFiles = 3) // 3 files with key = null
+
+      checkResults(
+        predicate = nullSafeEquals(col("key"), ofString("a")),
+        expNumPartitions = 1,
+        expNumFiles = 1) // 1 files with key <=> 'a'
+
+      checkResults(
+        predicate = nullSafeEquals(col("key"), ofString("b")),
+        expNumPartitions = 1,
+        expNumFiles = 1) // 1 files with key <=> 'b'
+        */
+
+      // Conditions on partitions keys and values
+      checkResults(
+        predicate = isNull(col("value")),
+        expNumPartitions = 3,
+        expNumFiles = 5) // should be 3 once IS_NULL is supported
+
+      checkResults(
+        predicate = isNotNull(col("value")),
+        expNumPartitions = 3, // should be 2 once IS_NOT_NULL is supported for data skipping
+        expNumFiles = 5) // should be 5 once IS_NOT_NULL is supported for skipping
+
+      checkResults(
+        predicate = nullSafeEquals(col("value"), ofNull(STRING)),
+        expNumPartitions = 3,
+        expNumFiles = 5) // should be 3 once <=> is supported
+
+      checkResults(
+        predicate = equals(col("value"), ofString("a")),
+        expNumPartitions = 3, // should be 2 if we can correctly skip "value = 'a'" for nulls
+        expNumFiles = 4) // should be 2 if we can correctly skip "value = 'a'" for nulls
+
+      checkResults(
+        predicate = nullSafeEquals(col("value"), ofString("a")),
+        expNumPartitions = 3, // should be 2 once <=> is supported
+        expNumFiles = 5) // should be 2 once <=> is supported
+
+      checkResults(
+        predicate = notEquals(col("value"), ofString("a")),
+        expNumPartitions = 3, // should be 1 once <> is supported
+        expNumFiles = 5) // should be 1 once <> is supported
+
+      checkResults(
+        predicate = equals(col("value"), ofString("b")),
+        expNumPartitions = 2, // should be 1 if we can correctly skip "value = 'b'" for nulls
+        expNumFiles = 3) // should be 1 if we can correctly skip "value = 'a'" for nulls
+
+      checkResults(
+        predicate = nullSafeEquals(col("value"), ofString("b")),
+        expNumPartitions = 3, // should be 1 once <=> is supported
+        expNumFiles = 5) // should be 1 once <=> is supported
+
+      // Conditions on both, partition keys and values
+      /*
+      NOT YET SUPPORTED EXPRESSIONS
+      checkResults(
+        predicate = new And(isNull(col("key")), equals(col("value"), ofString("a"))),
+        expNumPartitions = 2,
+        expNumFiles = 1) // only one file in the partition has (*, "a")
+
+      checkResults(
+        predicate = new And(nullSafeEquals(col("key"), ofNull(STRING)), nullSafeEquals(col("value"),
+        ofNull(STRING))),
+        expNumPartitions = 1,
+        expNumFiles = 1) // 3 files with key = null, but only 1 with val = null.       */
+
+      checkResults(
+        predicate = new And(isNotNull(col("key")), isNotNull(col("value"))),
+        expNumPartitions = 2, // should be 1 once we do data skipping for IS_NOT_NULL
+        expNumFiles = 2) // should be 2 once we do data skipping for IS_NUT_NULL
+
+      checkResults(
+        predicate = new Or(
+          nullSafeEquals(col("key"), ofNull(STRING)), nullSafeEquals(col("value"), ofNull(STRING))),
+        expNumPartitions = 3,
+        expNumFiles = 5) // all 5 files
+    }
   }
 
   //////////////////////////////////////////////////////////////////////////////////
