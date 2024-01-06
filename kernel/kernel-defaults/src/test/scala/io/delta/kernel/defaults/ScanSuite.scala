@@ -48,7 +48,7 @@ import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
   import io.delta.kernel.defaults.ScanSuite._
 
-  val spark = SparkSession
+  private val spark = SparkSession
     .builder()
     .appName("Spark Test Writer for Delta Kernel")
     .config("spark.master", "local")
@@ -84,7 +84,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       df.coalesce(1).write.format("delta").save(r.dataPath.toString)
     }
   }
-  // todo write tables here instead of golden tables
+  // todo write tables in this test suite instead of using golden tables (use above methods)
 
   private def getScanFileStats(scanFiles: Seq[Row]): Seq[String] = {
     scanFiles.map { scanFile =>
@@ -550,7 +550,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
   }
 
   // TODO JSON serialization truncates to milliseconds, to safely skip for timestamp stats we need
-  //   to add a millisecond to any max stat
+  //   to add a millisecond to any max stat (requires time addition expression)
   ignore("data skipping - on TIMESTAMP type") {
     checkSkipping(
       goldenTablePath("data-skipping-on-TIMESTAMP"),
