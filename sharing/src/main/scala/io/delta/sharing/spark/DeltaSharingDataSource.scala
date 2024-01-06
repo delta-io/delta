@@ -227,7 +227,7 @@ private[sharing] class DeltaSharingDataSource
         )
       ),
       bucketSpec = None,
-      // Copied from DeltaFileFormatEdge, to handle column mapping metadata in schema.
+      // Handle column mapping metadata in schema.
       fileFormat = fileIndex.fileFormat(
         deltaSharingTableMetadata.protocol.deltaProtocol,
         deltaSharingTableMetadata.metadata.deltaMetadata
