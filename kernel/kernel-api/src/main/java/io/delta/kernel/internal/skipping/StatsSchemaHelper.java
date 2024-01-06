@@ -50,6 +50,34 @@ public class StatsSchemaHelper {
 
     /**
      * Returns the expected statistics schema given a table schema.
+     *
+     * Here is an example of a data schema along with the schema of the statistics
+     * that would be collected.
+     *
+     * Data Schema:
+     *  {{{
+     *  |-- a: struct (nullable = true)
+     *  |    |-- b: struct (nullable = true)
+     *  |    |    |-- c: long (nullable = true)
+     *  }}}
+     *
+     * Collected Statistics:
+     *  {{{
+     *  |-- stats: struct (nullable = true)
+     *  |    |-- numRecords: long (nullable = false)
+     *  |    |-- minValues: struct (nullable = false)
+     *  |    |    |-- a: struct (nullable = false)
+     *  |    |    |    |-- b: struct (nullable = false)
+     *  |    |    |    |    |-- c: long (nullable = true)
+     *  |    |-- maxValues: struct (nullable = false)
+     *  |    |    |-- a: struct (nullable = false)
+     *  |    |    |    |-- b: struct (nullable = false)
+     *  |    |    |    |    |-- c: long (nullable = true)
+     *  |    |-- nullCount: struct (nullable = false)
+     *  |    |    |-- a: struct (nullable = false)
+     *  |    |    |    |-- b: struct (nullable = false)
+     *  |    |    |    |    |-- c: long (nullable = true)
+     *  }}}
      */
     public static StructType getStatsSchema(StructType dataSchema) {
         StructType statsSchema = new StructType()
@@ -235,8 +263,9 @@ public class StatsSchemaHelper {
                 Map<Column, Tuple2<Column, DataType>> nestedCols =
                     getLogicalToPhysicalColumnAndDataType((StructType) field.getDataType());
                 for (Column childLogicalCol : nestedCols.keySet()) {
-                    Column childPhysicalCol = nestedCols.get(childLogicalCol)._1;
-                    DataType childColDataType = nestedCols.get(childLogicalCol)._2;
+                    Tuple2<Column, DataType> childCol = nestedCols.get(childLogicalCol);
+                    Column childPhysicalCol = childCol._1;
+                    DataType childColDataType = childCol._2;
                     result.put(
                         getChildColumn(childLogicalCol, field.getName()),
                         new Tuple2<>(
