@@ -27,16 +27,16 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 
+import static io.delta.kernel.internal.util.ExpressionUtils.getLeft;
+import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.booleanWrapperVector;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.childAt;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.compare;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.evalNullability;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.getLeft;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.getRight;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.booleanWrapperVector;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.childAt;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.compare;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.evalNullability;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**
@@ -519,7 +519,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 .stream()
                 .map(this::visit)
                 .collect(Collectors.toList());
-            return ExpressionUtils.combinationVector(
+            return DefaultExpressionUtils.combinationVector(
                 childResults,
                 rowId -> {
                     for (int idx = 0; idx < childResults.size(); idx++) {

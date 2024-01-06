@@ -16,7 +16,7 @@
 package io.delta.kernel.internal.skipping;
 
 import java.util.*;
-import static java.lang.String.format;
+
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
@@ -25,8 +25,8 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 import io.delta.kernel.internal.actions.AddFile;
+import static io.delta.kernel.internal.util.ExpressionUtils.*;
 import static io.delta.kernel.internal.InternalScanFileUtils.SCAN_FILE_SCHEMA;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public class DataSkippingUtils {
 
@@ -267,36 +267,4 @@ public class DataSkippingUtils {
             getLeft(predicate)
         );
     }
-
-    /**
-     * Return an expression cast as a predicate, throw an error if it is not a predicate
-     */
-    private static Predicate asPredicate(Expression expression) {
-        checkArgument(expression instanceof Predicate,
-            String.format("Expected predicate but got %s", expression));
-        return (Predicate) expression;
-    }
-
-    /**
-     * Utility method to return the left child of the binary input expression
-     */
-    static Expression getLeft(Expression expression) {
-        List<Expression> children = expression.getChildren();
-        checkArgument(
-            children.size() == 2,
-            format("%s: expected two inputs, but got %s", expression, children.size()));
-        return children.get(0);
-    }
-
-    /**
-     * Utility method to return the right child of the binary input expression
-     */
-    static Expression getRight(Expression expression) {
-        List<Expression> children = expression.getChildren();
-        checkArgument(
-            children.size() == 2,
-            format("%s: expected two inputs, but got %s", expression, children.size()));
-        return children.get(1);
-    }
-
 }

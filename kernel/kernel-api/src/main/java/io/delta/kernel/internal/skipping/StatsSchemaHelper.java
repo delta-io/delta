@@ -37,6 +37,104 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 public class StatsSchemaHelper {
 
     //////////////////////////////////////////////////////////////////////////////////
+    // Public static fields and methods
+    //////////////////////////////////////////////////////////////////////////////////
+
+    /**
+     * Returns true if the given literal is skipping-eligible. Delta tracks min/max stats for a
+     * limited set of data types and only literals of those types are skipping eligible.
+     */
+    public static boolean isSkippingEligibleLiteral(Literal literal) {
+        return isSkippingEligibleDataType(literal.getDataType());
+    }
+
+    /**
+     * Returns the expected statistics schema given a table schema.
+     */
+    public static StructType getStatsSchema(StructType dataSchema) {
+        StructType statsSchema = new StructType()
+            .add(NUM_RECORDS, LongType.LONG, true);
+        StructType minMaxStatsSchema = getMinMaxStatsSchema(dataSchema);
+        if (minMaxStatsSchema.length() > 0) {
+            statsSchema = statsSchema
+                .add(MIN, getMinMaxStatsSchema(dataSchema), true)
+                .add(MAX, getMinMaxStatsSchema(dataSchema), true);
+        }
+        StructType nullCountSchema = getNullCountSchema(dataSchema);
+        if (nullCountSchema.length() > 0) {
+            statsSchema = statsSchema
+                .add(NULL_COUNT, getNullCountSchema(dataSchema), true);
+        }
+        return statsSchema;
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////
+    // Instance fields and public methods
+    //////////////////////////////////////////////////////////////////////////////////
+
+    private final StructType dataSchema;
+    /* Map of all leaf columns from logical to physical names */
+    private final Map<Column, Column> logicalToPhysicalColumn;
+    /* Map of all leaf logical columns to their data type */
+    private final Map<Column, DataType> logicalToDataType;
+
+    public StatsSchemaHelper(StructType dataSchema) {
+        this.dataSchema = dataSchema;
+        Map<Column, Tuple2<Column, DataType>> logicalToPhysicalColumnAndDataType =
+            getLogicalToPhysicalColumnAndDataType(dataSchema);
+        this.logicalToPhysicalColumn = logicalToPhysicalColumnAndDataType.entrySet().stream()
+            .collect(
+                Collectors.toMap(
+                    Map.Entry::getKey,
+                    e -> e.getValue()._1 // map to just the column
+                )
+            );
+        this.logicalToDataType =
+            logicalToPhysicalColumnAndDataType.entrySet().stream()
+                .collect(
+                    Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> e.getValue()._2 // map to just the data type
+                    )
+                );
+    }
+
+    /** Given a logical column returns corresponding the MIN column in the statistic schema */
+    public Column getMinColumn(Column column) {
+        checkArgument(isSkippingEligibleMinMaxColumn(column),
+            String.format("%s is not a valid min column for data schema %s", column, dataSchema));
+        return getStatsColumn(column, MIN);
+    }
+
+    /** Given a logical column returns corresponding the MAX column in the statistic schema */
+    public Column getMaxColumn(Column column) {
+        checkArgument(isSkippingEligibleMinMaxColumn(column),
+            String.format("%s is not a valid min column for data schema %s", column, dataSchema));
+        return getStatsColumn(column, MAX);
+    }
+
+    /**
+     * Returns true if the given column is skipping-eligible using min/max statistics. This means
+     * the column exists, is a leaf column, and is of a skipping-eligible data-type.
+     */
+    public boolean isSkippingEligibleMinMaxColumn(Column column) {
+        return logicalToDataType.containsKey(column) &&
+            isSkippingEligibleDataType(logicalToDataType.get(column)) &&
+            // TODO for now we block using min/max columns of timestamps. JSON serialization
+            //   truncates to milliseconds. To safely use timestamp min/max stats we need to add
+            //   a millisecond to max statistics which requires time addition expression
+            !(logicalToDataType.get(column) instanceof TimestampType);
+    }
+
+    /**
+     * Returns true if the given column is skipping-eligible using null count statistics. This means
+     * the column exists and is a leaf column as we only collect stats for leaf columns.
+     */
+    public boolean isSkippingEligibleNullCountColumn(Column column) {
+        return logicalToPhysicalColumn.containsKey(column);
+    }
+
+    //////////////////////////////////////////////////////////////////////////////////
     // Private static fields and methods
     //////////////////////////////////////////////////////////////////////////////////
 
@@ -112,105 +210,7 @@ public class StatsSchemaHelper {
     }
 
     //////////////////////////////////////////////////////////////////////////////////
-    // Public static fields and methods
-    //////////////////////////////////////////////////////////////////////////////////
-
-    /**
-     * Returns true if the given literal is skipping-eligible. Delta tracks min/max stats for a
-     * limited set of data types and only literals of those types are skipping eligible.
-     */
-    public static boolean isSkippingEligibleLiteral(Literal literal) {
-        return isSkippingEligibleDataType(literal.getDataType());
-    }
-
-    /**
-     * Returns the expected statistics schema given a table schema.
-     */
-    public static StructType getStatsSchema(StructType dataSchema) {
-        StructType statsSchema = new StructType()
-            .add(NUM_RECORDS, LongType.LONG, true);
-        StructType minMaxStatsSchema = getMinMaxStatsSchema(dataSchema);
-        if (minMaxStatsSchema.length() > 0) {
-            statsSchema = statsSchema
-                .add(MIN, getMinMaxStatsSchema(dataSchema), true)
-                .add(MAX, getMinMaxStatsSchema(dataSchema), true);
-        }
-        StructType nullCountSchema = getNullCountSchema(dataSchema);
-        if (nullCountSchema.length() > 0) {
-            statsSchema = statsSchema
-                .add(NULL_COUNT, getNullCountSchema(dataSchema), true);
-        }
-        return statsSchema;
-    }
-
-    //////////////////////////////////////////////////////////////////////////////////
-    // Instance fields and methods
-    //////////////////////////////////////////////////////////////////////////////////
-
-    private final StructType dataSchema;
-    /* Map of all leaf columns from logical to physical names */
-    private final Map<Column, Column> logicalToPhysicalColumn;
-    /* Map of all leaf logical columns to their data type */
-    private final Map<Column, DataType> logicalToDataType;
-
-    public StatsSchemaHelper(StructType dataSchema) {
-        this.dataSchema = dataSchema;
-        Map<Column, Tuple2<Column, DataType>> logicalToPhysicalColumnAndDataType =
-            getLogicalToPhysicalColumnAndDataType(dataSchema);
-        this.logicalToPhysicalColumn = logicalToPhysicalColumnAndDataType.entrySet().stream()
-            .collect(
-                Collectors.toMap(
-                    Map.Entry::getKey,
-                    e -> e.getValue()._1 // map to just the column
-                )
-            );
-        this.logicalToDataType =
-            logicalToPhysicalColumnAndDataType.entrySet().stream()
-                .collect(
-                    Collectors.toMap(
-                        Map.Entry::getKey,
-                        e -> e.getValue()._2 // map to just the data type
-                    )
-                );
-    }
-
-    /** Given a logical column returns corresponding the MIN column in the statistic schema */
-    public Column getMinColumn(Column column) {
-        checkArgument(isSkippingEligibleMinMaxColumn(column),
-            String.format("%s is not a valid min column for data schema %s", column, dataSchema));
-        return getStatsColumn(column, MIN);
-    }
-
-    /** Given a logical column returns corresponding the MAX column in the statistic schema */
-    public Column getMaxColumn(Column column) {
-        checkArgument(isSkippingEligibleMinMaxColumn(column),
-            String.format("%s is not a valid min column for data schema %s", column, dataSchema));
-        return getStatsColumn(column, MAX);
-    }
-
-    /**
-     * Returns true if the given column is skipping-eligible using min/max statistics. This means
-     * the column exists, is a leaf column, and is of a skipping-eligible data-type.
-     */
-    public boolean isSkippingEligibleMinMaxColumn(Column column) {
-        return logicalToDataType.containsKey(column) &&
-            isSkippingEligibleDataType(logicalToDataType.get(column)) &&
-            // TODO for now we block using min/max columns of timestamps. JSON serialization
-            //   truncates to milliseconds. To safely use timestamp min/max stats we need to add
-            //   a millisecond to max statistics which requires time addition expression
-            !(logicalToDataType.get(column) instanceof TimestampType);
-    }
-
-    /**
-     * Returns true if the given column is skipping-eligible using null count statistics. This means
-     * the column exists and is a leaf column as we only collect stats for leaf columns.
-     */
-    public boolean isSkippingEligibleNullCountColumn(Column column) {
-        return logicalToPhysicalColumn.containsKey(column);
-    }
-
-    //////////////////////////////////////////////////////////////////////////////////
-    // Private helpers
+    // Private class helpers
     //////////////////////////////////////////////////////////////////////////////////
 
     /**

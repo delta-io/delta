@@ -24,14 +24,14 @@ import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.apache.hadoop.conf.Configuration
-import org.apache.spark.sql.{Row => SparkRow, SparkSession}
+import org.apache.spark.sql.{SparkSession, Row => SparkRow}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.types.{StructType => SparkStructType}
 import org.scalatest.funsuite.AnyFunSuite
 
 import io.delta.kernel.client.{FileReadContext, JsonHandler, ParquetHandler, TableClient}
-import io.delta.kernel.data.{FileDataReadResult, FilteredColumnarBatch}
+import io.delta.kernel.data.{FileDataReadResult, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.types.StructType
@@ -86,6 +86,22 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
   }
   // todo write tables here instead of golden tables
 
+  private def getScanFileStats(scanFiles: Seq[Row]): Seq[String] = {
+    scanFiles.map { scanFile =>
+      val addFile = scanFile.getStruct(scanFile.getSchema.indexOf("add"))
+      if (scanFile.getSchema.indexOf("stats") >= 0) {
+        addFile.getString(scanFile.getSchema.indexOf("stats"))
+      } else {
+        "[No stats read]"
+      }
+    }
+  }
+
+  /**
+   * @param tablePath the table to scan
+   * @param hits query filters that should yield at least one scan file
+   * @param misses query filters that should yield no scan files
+   */
   def checkSkipping(tablePath: String, hits: Seq[Predicate], misses: Seq[Predicate]): Unit = {
     val snapshot = latestSnapshot(tablePath)
     hits.foreach { predicate =>
@@ -100,10 +116,16 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         snapshot.getScanBuilder(defaultTableClient)
           .withFilter(defaultTableClient, predicate)
           .build())
-      assert(scanFiles.isEmpty, s"Expected miss but got hit for $predicate")
+      assert(scanFiles.isEmpty, s"Expected miss but got hit for $predicate\n" +
+        s"Returned scan files have stats: ${getScanFileStats(scanFiles)}"
+      )
     }
   }
 
+  /**
+   * @param tablePath the table to scan
+   * @param filterToNumExpFiles map of {predicate -> number of expected scan files}
+   */
   def checkSkipping(tablePath: String, filterToNumExpFiles: Map[Predicate, Int]): Unit = {
     val snapshot = latestSnapshot(tablePath)
     filterToNumExpFiles.foreach { case (filter, numExpFiles) =>
