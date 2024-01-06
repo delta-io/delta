@@ -95,9 +95,6 @@ public class SingleThreadedTableReader
     private int readData(StructType readSchema, Scan scan, int maxRowCount) throws IOException {
         printSchema(readSchema);
 
-        Row row;
-        row.getLong(2);
-
         Row scanState = scan.getScanState(tableClient);
         CloseableIterator<FilteredColumnarBatch> scanFileIter = scan.getScanFiles(tableClient);
 
