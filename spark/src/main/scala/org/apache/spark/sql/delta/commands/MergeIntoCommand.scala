@@ -115,10 +115,35 @@ case class MergeIntoCommand(
           } else {
             val (filesToRewrite, deduplicateCDFDeletes) = findTouchedFiles(spark, deltaTxn)
             if (filesToRewrite.nonEmpty) {
-              val newWrittenFiles = withStatusCode("DELTA", "Writing merged data") {
-                writeAllChanges(spark, deltaTxn, filesToRewrite, deduplicateCDFDeletes)
+              val shouldWriteDeletionVectors = shouldWritePersistentDeletionVectors(spark, deltaTxn)
+              if (shouldWriteDeletionVectors) {
+                val newWrittenFiles = withStatusCode("DELTA", "Writing modified data") {
+                  writeAllChanges(
+                    spark,
+                    deltaTxn,
+                    filesToRewrite,
+                    deduplicateCDFDeletes,
+                    writeUnmodifiedRows = false)
+                }
+
+                val dvActions = withStatusCode(
+                   "DELTA",
+                   "Writing Deletion Vectors for modified data") {
+                  writeDVs(spark, deltaTxn, filesToRewrite)
+                }
+
+                newWrittenFiles ++ dvActions
+              } else {
+                val newWrittenFiles = withStatusCode("DELTA", "Writing modified data") {
+                  writeAllChanges(
+                    spark,
+                    deltaTxn,
+                    filesToRewrite,
+                    deduplicateCDFDeletes,
+                    writeUnmodifiedRows = true)
+                }
+                newWrittenFiles ++ filesToRewrite.map(_.remove)
               }
-              filesToRewrite.map(_.remove) ++ newWrittenFiles
             } else {
               // Run an insert-only job instead of WriteChanges
               writeOnlyInserts(

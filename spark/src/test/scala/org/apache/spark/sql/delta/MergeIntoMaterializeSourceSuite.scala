@@ -774,4 +774,8 @@ trait MergeIntoMaterializeSourceTests
 
 // MERGE + materialize
 class MergeIntoMaterializeSourceSuite extends MergeIntoMaterializeSourceTests
+{
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
+}
 

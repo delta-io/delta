@@ -1269,6 +1269,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_USE_PERSISTENT_DELETION_VECTORS =
+    buildConf("merge.deletionVectors.persistent")
+      .internal()
+      .doc("Enable persistent Deletion Vectors in Merge command.")
+      .booleanConf
+      .createWithDefault(true)
+
   val UPDATE_USE_PERSISTENT_DELETION_VECTORS =
     buildConf("update.deletionVectors.persistent")
       .internal()
