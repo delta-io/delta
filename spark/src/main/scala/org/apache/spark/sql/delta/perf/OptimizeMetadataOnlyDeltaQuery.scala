@@ -48,7 +48,7 @@ import java.util.Locale
 trait OptimizeMetadataOnlyDeltaQuery extends Logging {
   def optimizeQueryWithMetadata(plan: LogicalPlan): LogicalPlan = {
     plan.transformUpWithSubqueries {
-      case agg@AggregateDeltaTable(tahoeLogFileIndex) =>
+      case agg@MetadataOptimizableAggregate(tahoeLogFileIndex) =>
         createLocalRelationPlan(agg, tahoeLogFileIndex)
     }
   }
@@ -309,7 +309,7 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
     (rowCount, CaseInsensitiveMap(columnStats ++ partitionedValues))
   }
 
-  object AggregateDeltaTable {
+  object MetadataOptimizableAggregate {
 
     /** Only data type that are stored in stats without any loss of precision are supported. */
     def isSupportedDataType(dataType: DataType): Boolean = {
