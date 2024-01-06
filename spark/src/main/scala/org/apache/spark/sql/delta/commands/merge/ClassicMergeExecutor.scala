@@ -248,7 +248,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     val matchedExpression = if (matchedClauses.nonEmpty) {
       And(Column(condition).expr, clauseDisjunction(matchedClauses))
     } else {
-      Column(condition).expr
+      Literal.FalseLiteral
     }
 
     val notMatchedBySourceExpression = if (notMatchedBySourceClauses.nonEmpty) {
@@ -474,11 +474,11 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
 
     val fileIndex = new TahoeBatchFileIndex(
       spark,
-      "merge",
-      filesToRewrite,
-      deltaTxn.deltaLog,
-      deltaTxn.deltaLog.dataPath,
-      deltaTxn.snapshot)
+      actionType = "merge",
+      addFiles = filesToRewrite,
+      deltaLog = deltaTxn.deltaLog,
+      path = deltaTxn.deltaLog.dataPath,
+      snapshot = deltaTxn.snapshot)
 
     val targetDF = DMLWithDeletionVectorsHelper.createTargetDfForScanningForMatches(
       spark,
@@ -504,9 +504,9 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         spark,
         deltaTxn,
         tableHasDVs = true,
-        joinedDF,
-        filesToRewrite,
-        modifiedRowsFilter
+        targetDf = joinedDF,
+        candidateFiles = filesToRewrite,
+        condition = modifiedRowsFilter
       )
 
     val nameToAddFileMap = generateCandidateFileMap(targetDeltaLog.dataPath, filesToRewrite)

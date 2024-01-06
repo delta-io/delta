@@ -40,7 +40,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
       delete: Boolean = false,
       update: Boolean = false,
       merge: Boolean = false): Unit = {
-    val global = delete | update | merge
+    val global = delete || update || merge
     spark.conf
       .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, global.toString)
     spark.conf.set(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key, delete.toString)
