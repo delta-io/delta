@@ -208,9 +208,7 @@ In the previous section showing how to read a simple table, we were briefly intr
 Here are the libraries/capabilities you need to build a connector that can read the Delta table
 
 * Perform file listing and file reads from your storage/file system.
-* Read Parquet files. Specifically, 
-    * Read the Parquet file footer
-    * Read the Parquet columnar data, preferably in an in-memory columnar format.
+* Read Parquet files in columnar data, preferably in an in-memory columnar format.
 * Parse JSON data
 * Read JSON files
 * Evaluate expressions on in-memory columnar batches
@@ -220,7 +218,7 @@ For each of these capabilities, you can choose to build your own implementation 
 ### Step 1: Set up Delta Kernel in your connector project
 In the Delta Kernel project, there are multiple dependencies you can choose to depend on.
 
-1. Delta Kernel core APIs - This is a must-have dependency, which contains all the main APIs like Table, Snapshot, and Scan that you will use to access the metadata and data of the Delta table. This has very few dependencies reducing the chance of conflicts with any dependencies in your connector and engine. This also provides the [`TableClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/client/TableClient.html) interface which allows you to plug in your implementations of computationally-expensive operations, but it does not provide any implementation of this interface. 
+1. Delta Kernel core APIs - This is a must-have dependency, which contains all the main APIs like Table, Snapshot, and Scan that you will use to access the metadata and data of the Delta table. This has very few dependencies reducing the chance of conflicts with any dependencies in your connector and engine. This also provides the [`TableClient`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/client/TableClient.html) interface which allows you to plug in your implementations of computationally expensive operations, but it does not provide any implementation of this interface. 
 2. Delta Kernel default- This has a default implementation called [`DefaultTableClient`](https://delta-io.github.io/delta/snapshot/kernel-defaults/java/io/delta/kernel/defaults/client/DefaultTableClient.html) and additional dependencies such as `Hadoop`. If you wish to reuse all or parts of this implementation, then you can optionally depend on this. 
 
 #### Set up Java projects
@@ -307,18 +305,9 @@ The [`FileSystemClient`](https://delta-io.github.io/delta/snapshot/kernel-api/ja
 
 As the name suggests, this interface contains everything related to reading Parquet files. It has been designed such that a connector can plug in a wide variety of implementations, from a simple single-threaded reader to a very advanced multi-threaded reader with pre-fetching and advanced connector-specific expression pushdown. Let's explore the methods to implement, and the guarantees associated with them. 
 
-##### Method [`contextualizeFileReads()`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/client/FileHandler.html#contextualizeFileReads-io.delta.kernel.utils.CloseableIterator-io.delta.kernel.expressions.Expression-)
-
-This method associates the information of a to-be-read file to a connector-specific context object, called `FileReadContext`. Implementations can use this method to inject connector-specific information to optimize the file read. For example, if you want split reading a 256 MB Parquet file (say, `file1.parquet`) into 2 chunks of size 128 MB, then you can create two successive entries `fileReadContext1(file1.parquet)` and `fileReadContext2(file1.parquet)` where the context objects created by this method contains the byte ranges to read. This byte ranges will be used by the next method to do the necessary partial reads of the file `file1.parquet`.
-
-##### Requirements and guarantees
-
-Any implementation must adhere to the following guarantees.
-* The output iterator must maintain the same ordering as the input iterator. For example, if file1 is before file2 in the input iterator, then all the contexts associated with file1 must be before those of file2 in the output iterator.
-
 ##### Method [`readParquetFiles()`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/client/ParquetHandler.html#readParquetFiles-io.delta.kernel.utils.CloseableIterator-io.delta.kernel.types.StructType-)
 
-This method takes as input information as `FileReadContext`s that were created using the `contextualizeFileReader` method above and returns the data in a series of columnar batches. The columns to be read from the Parquet file are defined by the physical schema, and the return batches must match that schema. To implement this method, you may have to first implement your own [`ColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnarBatch.html) and [`ColumnVector`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnVector.html) which is used to represent the in-memory data generated from the Parquet files.
+This method takes as input information as `FileStatus`s that were created using the `contextualizeFileReader` method above and returns the data in a series of columnar batches. The columns to be read from the Parquet file are defined by the physical schema, and the return batches must match that schema. To implement this method, you may have to first implement your own [`ColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnarBatch.html) and [`ColumnVector`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnVector.html) which is used to represent the in-memory data generated from the Parquet files.
 
 When identifying the columns to read, note that there are multiple types of columns in the physical schema (represented as a [`StructType`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/types/StructType.html)). 
 
