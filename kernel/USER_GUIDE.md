@@ -109,8 +109,8 @@ while(fileIter.hasNext()) {
           Optional.empty() /* additional predicate the connector can apply to filter data from the reader */
         );
 
-      // Now the physical data read from the Parquet data file is converted to table
-      // logical data. Logical data may include addition of partition columns and/or
+      // Now the physical data read from the Parquet data file is converted to a table
+      // logical data. Logical data may include the addition of partition columns and/or
       // subset of rows deleted
       try (
          CloseableIterator<FilteredColumnarBatch> transformedData =
@@ -160,12 +160,12 @@ while(fileIter.hasNext()) {
 A few working examples to read Delta tables within a single process are available [here](https://github.com/delta-io/delta/tree/master/kernel/examples).
 
 #### Important Note
-* All the Delta protocol-level details are encoded in the rows returned by `Scan.getScanFiles` API, but you do not have to understand them in order to read the table data correctly. You can mostly treat these rows as opaque objects and pass them correctly to the `Scan.readData()` method. In the future, there will be more information (that is, more columns) added to these rows, but your code will not have to change to accommodate those changes. This is the major advantage of the abstractions provided by Delta Kernel.
+* All the Delta protocol-level details are encoded in the rows returned by `Scan.getScanFiles` API, but you do not have to understand them in order to read the table data correctly. All you need is to get the physical Parquet file details from the scan file row and read the data from the Parquet file and return as `ColumnarBatch` format. The physical data can be converted into the data in the logical data of the table using [`Scan.transformPhysicalData`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html#transformPhysicalData-io.delta.kernel.client.TableClient-io.delta.kernel.data.Row-io.delta.kernel.data.Row-io.delta.kernel.utils.CloseableIterator-). Transformation to logical data involves adding partition column data, deleting rows that are marked as deleted by the scan file deletion vector. In the future, there will be more information (that is, more columns) added to these rows, but your code will not have to change to accommodate those changes. This is the major advantage of the abstractions provided by Delta Kernel.
 
 * Observe that the same `TableClient` instance `myTableClient` is passed multiple times whenever a call to Delta Kernel API is made. The reason for passing this instance for every call is because it is the connector context, it should maintained outside of the Delta Kernel APIs to give the connector control over the `TableClient`.
 
 ### Step 3: Improve scan performance with file skipping
-We have explored how to do a full table scan. However, the real advantage of using the Delta format is that you can skip files using your query filters. To make this possible, Delta Kernel provides an expression framework to encode your filters and provide them to Delta Kernel to skip files during the scan file generation. For example, say your table is partitioned by `columnX`, you want to query only the partition `columnX=1`. You can generate the expression and use it to build the scan as follows:
+We have explored how to do a full table scan. However, the real advantage of using the Delta format is that you can skip files using your query filters. To make this possible, Delta Kernel provides an [expression framework](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/expressions/package-summary.html) to encode your filters and provide them to Delta Kernel to skip files during the scan file generation. For example, say your table is partitioned by `columnX`, you want to query only the partition `columnX=1`. You can generate the expression and use it to build the scan as follows:
 
 ```java
 import io.delta.kernel.expressions.*;
