@@ -63,7 +63,7 @@ long version = mySnapshot.getVersion(myTableClient);
 StructType tableSchema = mySnapshot.getSchema(myTableClient);
 ```
 
-Next, to read the table data, we have to *build* a [`Scan`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html) object. In order to build a `Scan` object, create a [`ScanBuilder`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/ScanBuilder.html) object which allows optional selection of subset of columns to read and/or set the query filter. For now ignore these optional settings.
+Next, to read the table data, we have to *build* a [`Scan`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html) object. In order to build a `Scan` object, create a [`ScanBuilder`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/ScanBuilder.html) object which allows optional selection of a subset of columns to read and/or set the query filter. For now, ignore these optional settings.
 
 ```java
 Scan myScan = mySnapshot.getScanBuilder(myTableClient).build()
@@ -91,44 +91,68 @@ while(fileIter.hasNext()) {
   FilteredColumnarBatch scanFileColumnarBatch = fileIter.next();
   CloseableIterator<Row> scanFileRows = scanFileColumnarBatch.getRows();
 
-  CloseableIterator<DataReadResult> dataResultIter = Scan.readData(
-    myTableClient,
-    scanStateRow,
-    scanFileRows,
-    Optional.empty() /* filter */
-  );
+  try (CloseableIterator<Row> scanFileRows = scanFileColumnarBatch.getRows()) {
+    while (scanFileRows.hasNext()) {
+      Row scanFileRow = scanFileRows.next();
 
-  while(dataResultIter.hasNext()) {
-    DataReadResult dataReadResult = dataResultIter.next();
+      // From the scan file row, extract the file path, size and modification metadata
+      // needed to read the file.
+      FileStatus fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow);
 
-    ColumnarBatch dataBatch = dataReadResult.getData();
+      // Open the scan file which is a Parquet file using connector's own
+      // Parquet reader or default Parquet reader provided by the Kernel (which
+      // is used in this example).
+      CloseableIterator<ColumnarBatch> physicalDataIter =
+        tableClient.getParquetHandler().readParquetFiles(
+          singletonCloseableIterator(fileStatus),
+          physicalReadSchema,
+          Optional.empty() /* additional predicate the connector can apply to filter data from the reader */
+        );
 
-    // Not all rows in `dataBatch` are in the selected output. An optional selection vector
-    // determines whether a row with a specific row index is in the final output or not.
-    Optional<ColumnVector> selectionVector = dataReadResult.getSelectionVector();
+      // Now the physical data read from the Parquet data file is converted to table
+      // logical data. Logical data may include addition of partition columns and/or
+      // subset of rows deleted
+      try (
+         CloseableIterator<FilteredColumnarBatch> transformedData =
+           Scan.transformPhysicalData(
+             tableClient,
+             scanState,
+             scanFileRow,
+             physicalDataIter)) {
+        while (transformedData.hasNext()) {
+          FilteredColumnarBatch filteredData = transformedData.next();
+          ColumnarBatch dataBatch = filteredData.getData();
 
-    // access the data for the column at ordinal 0
-    ColumnVector column0 = dataBatch.getColumnVector(0);
-    for (int rowIndex = 0; rowIndex < column0.getSize(); rowIndex++) {
-      // check if the row is selected or not
-      if (selectionVector.isEmpty() || selectionVector.get().getBoolean(rowIndex)) {
-        // Assuming the column type is String.
-        // If it is a different type, call the relevant function on the `ColumnVector`
-        System.out.println(column0.getString(rowIndex));
+          // Not all rows in `dataBatch` are in the selected output.
+          // An optional selection vector determines whether a row with a
+          // specific row index is in the final output or not.
+          Optional<ColumnVector> selectionVector = dataReadResult.getSelectionVector();
+
+          // access the data for the column at ordinal 0
+          ColumnVector column0 = dataBatch.getColumnVector(0);
+          for (int rowIndex = 0; rowIndex < column0.getSize(); rowIndex++) {
+            // check if the row is selected or not
+            if (selectionVector.isEmpty() || selectionVector.get().getBoolean(rowIndex)) {
+              // Assuming the column type is String.
+              // If it is a different type, call the relevant function on the `ColumnVector`
+              System.out.println(column0.getString(rowIndex));
+            }
+          }
+
+	  // access the data for column at ordinal 1
+	  ColumnVector column1 = dataBatch.getColumnVector(1);
+	  for (int rowIndex = 0; rowIndex < column1.getSize(); rowIndex++) {
+            // check if the row is selected or not
+            if (selectionVector.isEmpty() || selectionVector.get().getBoolean(rowIndex)) {
+              // Assuming the column type is Long.
+              // If it is a different type, call the relevant function on the `ColumnVector`
+              System.out.println(column1.getLong(rowIndex));
+            }
+          }
+	  // .. more ..
+        }
       }
     }
-
-    // access the data for column at ordinal 1
-    ColumnVector column1 = dataBatch.getColumnVector(1);
-    for (int rowIndex = 0; rowIndex < column1.getSize(); rowIndex++) {
-      // check if the row is selected or not
-      if (selectionVector.isEmpty() || selectionVector.get().getBoolean(rowIndex)) {
-        // Assuming the column type is Long.
-        // If it is a different type, call the relevant function on the `ColumnVector`
-        System.out.println(column1.getLong(rowIndex));
-      }
-    }
-	// .. more ..
   }
 }
 ```
