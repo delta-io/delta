@@ -61,13 +61,6 @@ object DeltaSharingUtils extends Logging {
       metadata: model.DeltaSharingMetadata
   )
 
-  def getDeltaSharingTableMetadata(
-      client: DeltaSharingClient,
-      table: Table): DeltaSharingTableMetadata = {
-    val deltaTableMetadata = client.getMetadata(table)
-    getDeltaSharingTableMetadata(table, deltaTableMetadata)
-  }
-
   def queryDeltaTableMetadata(
       client: DeltaSharingClient,
       table: Table,
@@ -82,6 +75,9 @@ object DeltaSharingUtils extends Logging {
     deltaTableMetadata
   }
 
+  /**
+   * parse the protocol and metadata from rpc response for getMetadata.
+   */
   def getDeltaSharingTableMetadata(
       table: Table,
       deltaTableMetadata: DeltaTableMetadata): DeltaSharingTableMetadata = {

@@ -53,9 +53,10 @@ trait DeltaSharingDataSourceDeltaSuiteBase
           value = 1
         )
         // JsonParseException on "bad protocol string"
-        intercept[com.fasterxml.jackson.core.JsonParseException] {
+        val exception = intercept[com.fasterxml.jackson.core.JsonParseException] {
           spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath).schema
         }
+        assert(exception.getMessage.contains("Unrecognized token 'bad'"))
 
         // table_with_broken_protocol
         // able to parse as a DeltaSharingSingleAction, but it's an addFile, not metadata.

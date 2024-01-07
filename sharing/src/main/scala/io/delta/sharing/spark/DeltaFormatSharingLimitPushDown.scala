@@ -24,6 +24,8 @@ import org.apache.spark.sql.catalyst.plans.logical.{LocalLimit, LogicalPlan}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 
+// A spark rule that applies limit pushdown to DeltaSharingFileIndex, when the config is enabled.
+// To allow only fetching needed files from delta sharing server.
 object DeltaFormatSharingLimitPushDown extends Rule[LogicalPlan] {
 
   def setup(spark: SparkSession): Unit = synchronized {
@@ -33,31 +35,19 @@ object DeltaFormatSharingLimitPushDown extends Rule[LogicalPlan] {
   }
 
   def apply(p: LogicalPlan): LogicalPlan = {
-    if (ConfUtils.limitPushdownEnabled(p.conf)) {
-      p transform {
-        case localLimit @ LocalLimit(
-              literalExpr @ IntegerLiteral(limit),
-              l @ LogicalRelation(
-                r @ HadoopFsRelation(remoteIndex: DeltaSharingFileIndex, _, _, _, _, _),
-                _,
-                _,
-                _
-              )
-            ) =>
-          if (remoteIndex.limitHint.isEmpty) {
-            val spark = SparkSession.active
-            LocalLimit(
-              literalExpr,
-              l.copy(
-                relation = r.copy(location = remoteIndex.copy(limitHint = Some(limit)))(spark)
-              )
+    p transform {
+      case localLimit @ LocalLimit(
+            literalExpr @ IntegerLiteral(limit),
+            l @ LogicalRelation(
+              r @ HadoopFsRelation(remoteIndex: DeltaSharingFileIndex, _, _, _, _, _),
+              _,
+              _,
+              _
             )
-          } else {
-            localLimit
-          }
-      }
-    } else {
-      p
+          ) if (ConfUtils.limitPushdownEnabled(p.conf) && remoteIndex.limitHint.isEmpty) =>
+          val spark = SparkSession.active
+          val newRel = r.copy(location = remoteIndex.copy(limitHint = Some(limit)))(spark)
+          LocalLimit(literalExpr, l.copy(relation = newRel))
     }
   }
 }

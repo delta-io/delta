@@ -36,7 +36,9 @@ import org.apache.spark.SparkEnv
 import org.apache.spark.storage.BlockId
 
 /**
- * A mocked delta sharing client for DeltaFormatSharing
+ * A mocked delta sharing client for DeltaFormatSharing.
+ * The test suite need to prepare the mocked delta sharing rpc response and store them in
+ * BlockManager. Then this client will just load the response of return upon rpc call.
  */
 private[spark] class TestClientForDeltaFormatSharing(
     profileProvider: DeltaSharingProfileProvider,

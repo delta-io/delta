@@ -46,7 +46,8 @@ import org.apache.spark.sql.sources.{
 import org.apache.spark.sql.types.StructType
 
 /**
- * A DataSource for Delta Sharing, used to support all queries on a delta sharing table.
+ * A DataSource for Delta Sharing, used to support all types of queries on a delta sharing table:
+ * batch, cdf, streaming, time travel, filters, etc.
  */
 private[sharing] class DeltaSharingDataSource
     extends RelationProvider
@@ -65,6 +66,8 @@ private[sharing] class DeltaSharingDataSource
 
     val path = options.options.getOrElse("path", throw DeltaSharingErrors.pathNotSpecifiedException)
     if (options.responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET) {
+      // When user explicitly set responseFormat=parquet, to query shared tables without advanced
+      // delta features.
       logInfo(s"createRelation with parquet format for table path:$path, parameters:$parameters")
       val deltaLog = RemoteDeltaLog(
         path,
@@ -77,6 +80,8 @@ private[sharing] class DeltaSharingDataSource
         options.cdfOptions
       )
     } else if (options.responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
+      // When user explicitly set responseFormat=delta, to query shared tables with advanced
+      // delta features.
       logInfo(s"createRelation with delta format for table path:$path, parameters:$parameters")
       //  1. create delta sharing client
       val parsedPath = DeltaSharingRestClient.parsePath(path)
@@ -121,6 +126,15 @@ private[sharing] class DeltaSharingDataSource
     }
   }
 
+  /**
+   * "parquet format sharing" leverages the existing set of remote classes to directly handle the
+   * list of presigned urls and read data.
+   * "delta format sharing" instead constructs a local delta log and leverages the delta library to
+   * read data.
+   * Firstly we sends a getMetadata call to the delta sharing server the suggested response format
+   * of the shared table by the server (based on whether there are advanced delta features in the
+   * shared table), and then decide the code path on the client side.
+   */
   private def autoResolveBaseRelationForSnapshotQuery(
       options: DeltaSharingOptions): BaseRelation = {
     val path = options.options.getOrElse("path", throw DeltaSharingErrors.pathNotSpecifiedException)
@@ -185,6 +199,11 @@ private[sharing] class DeltaSharingDataSource
     }
   }
 
+  /**
+   * Prepare a HadoopFsRelation for the snapshot query on a delta sharing table. It will contain a
+   * DeltaSharingFileIndex which is used to handle delta sharing rpc, and construct the local delta
+   * log, and then build a TahoeFileIndex on top of the delta log.
+   */
   private def getHadoopFsRelationForDeltaSnapshotQuery(
       path: String,
       options: DeltaSharingOptions,
