@@ -305,19 +305,19 @@ The [`FileSystemClient`](https://delta-io.github.io/delta/snapshot/kernel-api/ja
 * Credentials and permissions: The connector must populate its `FileSystemClient` with the necessary configurations and credentials for the client to retrieve the necessary data from the storage system. For example, an implementation based on Hadoop's FileSystem abstractions can be passed S3 credentials via the Hadoop configurations.
 * Decryption: If file system objects are encrypted, then the implementation must decrypt the data before returning the data.
 
-#### Step 2.3: Implement [`ParquetReader`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/client/ParquetHandler.html)
+#### Step 2.3: Implement [`ParquetHandler`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/client/ParquetHandler.html)
 
 As the name suggests, this interface contains everything related to reading Parquet files. It has been designed such that a connector can plug in a wide variety of implementations, from a simple single-threaded reader to a very advanced multi-threaded reader with pre-fetching and advanced connector-specific expression pushdown. Let's explore the methods to implement, and the guarantees associated with them. 
 
 ##### Method [`readParquetFiles()`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/client/ParquetHandler.html#readParquetFiles-io.delta.kernel.utils.CloseableIterator-io.delta.kernel.types.StructType-)
 
-This method takes as input information as `FileStatus`s that were created derived from scan file rows returned by the [`Scan.getScanFiles()`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html#getScanFiles-io.delta.kernel.client.TableClient-) API. The columns to be read from the Parquet file are defined by the physical schema which is derived from the scan state returned by [`Scan.getScanState()`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html#getScanState-io.delta.kernel.client.TableClient-). To implement this method, you may have to first implement your own [`ColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnarBatch.html) and [`ColumnVector`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnVector.html) which is used to represent the in-memory data generated from the Parquet files.
+This method takes as input `FileStatus`s which contains metadata such as file path, size etc. of the Parquet file to read. The columns to be read from the Parquet file are defined by the physical schema. To implement this method, you may have to first implement your own [`ColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnarBatch.html) and [`ColumnVector`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnVector.html) which is used to represent the in-memory data generated from the Parquet files.
 
 When identifying the columns to read, note that there are multiple types of columns in the physical schema (represented as a [`StructType`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/types/StructType.html)). 
 
-* Data columns: Columns that are expected to be read from the Parquet file. Based on the `StructField` object defining the column, read the column in the Parquet file that matches the same name or field id. If a the column has a field id (as `parquet.field.id` in column field metadata) then it is used to match the column in Parquet file otherwise name is used for matching.
+* Data columns: Columns that are expected to be read from the Parquet file. Based on the `StructField` object defining the column, read the column in the Parquet file that matches the same name or field id. If the column has a field id (as `parquet.field.id` in column field metadata) then it is used to match the column in Parquet file otherwise name is used for matching.
 * Metadata columns: These are special columns that must be populated using metadata about the Parquet file ([`StructField#isMetadataColumn`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/types/StructField.html#isMetadataColumn--) tells whether a column in `StructType` is a metadata column). To understand how to populate such a column, first match the column name against the set of standard metadata column name constants. For example, 
-    * `StructFileld#isMetadataColumn()` returns true and the column name is `StructField.METADATA_ROW_INDEX_COLUMN_NAME`, then you have to a generate column vector populated with the actual index of each row in the Parquet file (that is, not indexed by the possible subset of rows return after Parquet data skipping).
+    * `StructFileld#isMetadataColumn()` returns true and the column name is `StructField.METADATA_ROW_INDEX_COLUMN_NAME`, then you have to a generate column vector populated with the actual index of each row in the Parquet file (that is, not indexed by the possible subset of rows returned after Parquet data skipping).
 
 ##### Requirements and guarantees
 Any implementation must adhere to the following guarantees.
@@ -356,7 +356,7 @@ This client interface allows the connector to use plug-in their own JSON handlin
 
 ##### Method [`readJsonFiles()`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/client/JsonHandler.html#readJsonFiles-io.delta.kernel.utils.CloseableIterator-io.delta.kernel.types.StructType-)
 
-This method takes as input information as `FileStatus`s of the JSON files and returns the data in a series of columnar batches. The columns to be read from the JSON file are defined by the physical schema, and the return batches must match that schema. To implement this method, you may have to first implement your own [`ColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnarBatch.html)and [`ColumnVector`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnVector.html) which is used to represent the in-memory data generated from the JSON files.
+This method takes as input `FileStatus`s of the JSON files and returns the data in a series of columnar batches. The columns to be read from the JSON file are defined by the physical schema, and the return batches must match that schema. To implement this method, you may have to first implement your own [`ColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnarBatch.html)and [`ColumnVector`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnVector.html) which is used to represent the in-memory data generated from the JSON files.
 
 When identifying the columns to read, note that there are multiple types of columns in the physical schema (represented as a [`StructType`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/types/StructType.html)). 
  
@@ -523,7 +523,8 @@ Split split = ... deserialize split info ...;
 #### Step 3.4: Read the columnar data 
 Finally, we are ready to read the columnar data. You will have to do the following:
 
-* Get the iterator of `ColumnarBatch`es: Use the scan state row and scan file row(s) to call the following to get a new iterator of data batches.
+* Read the physical data from Parquet file as indicated by the scan file row, scan state, and optionally the split info
+* Convert the physical data into logical data of the table using the Kernel's APIs.
 
 ```java
 Row scanStateRow = ... ;
@@ -543,7 +544,7 @@ StructType physicalReadSchema =
 FileStatus fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow);
 
 // Open the scan file which is a Parquet file using connector's own
-// Parquet reader which support reading specific part (split) of the file.
+// Parquet reader which supports reading specific parts (split) of the file.
 // If the connector doesn't have its own Parquet reader, it can use the
 // default Parquet reader provider which at the moment doesn't support reading
 // a specific part of the file, but reads the entire file from the beginning.
@@ -558,46 +559,12 @@ CloseableIterator<ColumnarBatch> physicalDataIter =
 // Now the physical data read from the Parquet data file is converted to a table
 // logical data. Logical data may include the addition of partition columns and/or
 // subset of rows deleted
-try (
- CloseableIterator<FilteredColumnarBatch> transformedData =
-   Scan.transformPhysicalData(
-     tableClient,
-     scanState,
-     scanFileRow,
-     physicalDataIter)) {
-  while (transformedData.hasNext()) {
-    FilteredColumnarBatch filteredData = transformedData.next();
-    ColumnarBatch dataBatch = filteredData.getData();
-
-    // Not all rows in `dataBatch` are in the selected output.
-    // An optional selection vector determines whether a row with a
-    // specific row index is in the final output or not.
-    Optional<ColumnVector> selectionVector = dataReadResult.getSelectionVector();
-
-    // access the data for the column at ordinal 0
-    ColumnVector column0 = dataBatch.getColumnVector(0);
-    for (int rowIndex = 0; rowIndex < column0.getSize(); rowIndex++) {
-      // check if the row is selected or not
-      if (selectionVector.isEmpty() || selectionVector.get().getBoolean(rowIndex)) {
-        // Assuming the column type is String.
-        // If it is a different type, call the relevant function on the `ColumnVector`
-        System.out.println(column0.getString(rowIndex));
-      }
-    }
-
-    // access the data for column at ordinal 1
-    ColumnVector column1 = dataBatch.getColumnVector(1);
-    for (int rowIndex = 0; rowIndex < column1.getSize(); rowIndex++) {
-      // check if the row is selected or not
-      if (selectionVector.isEmpty() || selectionVector.get().getBoolean(rowIndex)) {
-        // Assuming the column type is Long.
-        // If it is a different type, call the relevant function on the `ColumnVector`
-        System.out.println(column1.getLong(rowIndex));
-      }
-    }
-    // .. more ..
-  }
-}
+CloseableIterator<FilteredColumnarBatch> transformedData =
+  Scan.transformPhysicalData(
+    tableClient,
+    scanState,
+    scanFileRow,
+    physicalDataIter)) 
 ```
 
 * Resolve the data in the batches: Each [`FilteredColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/FilteredColumnarBatch.html) has two components:
@@ -610,6 +577,6 @@ If the selection vector is present, then you will have to apply it to the batch 
   * Matching the engine-specific format: Some engines may expect the data in an in-memory format that may be different from the data produced by `getData()`. So you will have to do the data conversion for each column vector in the batch as needed. 
   * Matching the engine-specific interfaces: You may have to implement wrapper classes that extend the engine-specific interfaces and appropriately encapsulate the row data.
 
-For best performance, you can implement your own `ParquetHandler` and other interfaces to make sure that every `ColumnVector` generated is already in the engine-native format thus eliminating any need to convert. 
+For best performance, you can implement your own Parquet reader and other `TableClient` implementations to make sure that every `ColumnVector` generated is already in the engine-native format thus eliminating any need to convert. 
 
 Now you should be able to read the Delta table correctly.
