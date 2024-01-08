@@ -241,6 +241,7 @@ class DeltaSharingFileIndexSuite
   }
 
   test("basic functions works") {
+    debug("basic functions START")
     withTempDir { tempDir =>
       val profileFile = new File(tempDir, "foo.share")
       FileUtils.writeStringToFile(
@@ -318,6 +319,7 @@ class DeltaSharingFileIndexSuite
   }
 
   test("refresh works") {
+    debug("refresh works START")
     PreSignedUrlCache.registerIfNeeded(SparkEnv.get)
 
     withTempDir { tempDir =>
@@ -351,7 +353,7 @@ class DeltaSharingFileIndexSuite
               )
               debug(s"before: ${decodedPath.fileId}, ${fetcher.getUrl}")
               // sleep for expirationTimeMs to ensure that the urls are refreshed.
-              Thread.sleep(defaultUrlExpirationMs)
+              Thread.sleep(15000)
               debug(s"after : ${decodedPath.fileId}, ${fetcher.getUrl}")
 
               // Verify that the url is refreshed as paths(1), not paths(0) anymore.
@@ -384,6 +386,7 @@ class DeltaSharingFileIndexSuite
   }
 
   test("jsonPredicate test") {
+    debug("jsonPredicate test START")
     withTempDir { tempDir =>
       val profileFile = new File(tempDir, "foo.share")
       FileUtils.writeStringToFile(
