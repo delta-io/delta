@@ -17,13 +17,8 @@
 package org.apache.spark.sql.delta.perf
 
 import scala.collection.mutable
-import io.delta.tables.DeltaTable
-import org.apache.hadoop.fs.Path
-import org.apache.spark.sql.{DataFrame, Dataset, QueryTest, Row, SaveMode}
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
-import org.apache.spark.sql.delta.{DeltaColumnMappingEnableIdMode,
-  DeltaColumnMappingEnableNameMode, DeletionVectorsTestUtils, DeltaLog, DeltaTestUtils}
+
+import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaLog, DeltaTestUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
@@ -31,9 +26,15 @@ import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import io.delta.tables.DeltaTable
+import org.apache.hadoop.fs.Path
+import org.scalatest.BeforeAndAfterAll
+
+import org.apache.spark.sql.{DataFrame, Dataset, QueryTest, Row, SaveMode}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
-import org.scalatest.BeforeAndAfterAll
 
 class OptimizeMetadataOnlyDeltaQuerySuite
   extends QueryTest
