@@ -353,7 +353,7 @@ class DeltaSharingFileIndexSuite
               )
               debug(s"before: ${decodedPath.fileId}, ${fetcher.getUrl}")
               // sleep for expirationTimeMs to ensure that the urls are refreshed.
-              Thread.sleep(15000)
+              Thread.sleep(60000)
               debug(s"after : ${decodedPath.fileId}, ${fetcher.getUrl}")
 
               // Verify that the url is refreshed as paths(1), not paths(0) anymore.
