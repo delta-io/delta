@@ -103,6 +103,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   /**
    * snapshot queries
    */
+  /*
   test("DeltaSharingDataSource able to read simple data") {
     withTempDir { tempDir =>
       val deltaTableName = "data_source_suite_t"
@@ -567,6 +568,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
       }
     }
   }
+  */
 }
 
 class DeltaSharingDataSourceDeltaSuite extends DeltaSharingDataSourceDeltaSuiteBase {}

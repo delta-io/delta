@@ -351,13 +351,19 @@ class DeltaSharingFileIndexSuite
                 decodedPath.fileId,
                 1000
               )
-              val a = spark.sessionState.conf.getConfString(
+              val a = SparkEnv.get.conf.getOption(
                 "spark.delta.sharing.preSignedUrl.expirationMs"
               )
-              debug(s"before: ${decodedPath.fileId}, ${fetcher.getUrl}, $a")
+              val b = SparkEnv.get.conf.getOption(
+                "spark.delta.sharing.driver.refreshCheckIntervalMs")
+              val c = SparkEnv.get.conf.getOption(
+                "spark.delta.sharing.driver.refreshThresholdMs")
+              val d = SparkEnv.get.conf.getOption(
+                "spark.delta.sharing.driver.accessThresholdToExpireMs")
+              debug(s"before: ${decodedPath.fileId}, ${fetcher.getUrl}, $a, $b, $c, $d")
               // sleep for expirationTimeMs to ensure that the urls are refreshed.
               Thread.sleep(20000)
-              debug(s"after : ${decodedPath.fileId}, ${fetcher.getUrl}, $a")
+              debug(s"after : ${decodedPath.fileId}, ${fetcher.getUrl}, $a, $b, $c, $d")
 
               // Verify that the url is refreshed as paths(1), not paths(0) anymore.
               assert(fetcher.getUrl == paths(1))
