@@ -41,6 +41,7 @@ object IcebergCompatV1 extends IcebergCompat(
   requiredTableFeatures = Seq(ColumnMappingTableFeature),
   requiredTableProperties = Seq(RequireColumnMapping),
   checks = Seq(
+    CheckOnlySingleVersionEnabled,
     CheckAddFileHasStats,
     CheckNoPartitionEvolution,
     CheckNoListMapNullType,
@@ -54,6 +55,7 @@ object IcebergCompatV2 extends IcebergCompat(
   requiredTableFeatures = Seq(ColumnMappingTableFeature),
   requiredTableProperties = Seq(RequireColumnMapping),
   checks = Seq(
+    CheckOnlySingleVersionEnabled,
     CheckAddFileHasStats,
     CheckTypeInV2AllowList,
     CheckNoPartitionEvolution,
@@ -102,7 +104,7 @@ case class IcebergCompat(
       prevSnapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
-      isCreatingNewTable: Boolean,
+      isCreatingOrReorgTable: Boolean,
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
     val prevProtocol = prevSnapshot.protocol
     val prevMetadata = prevSnapshot.metadata
@@ -111,12 +113,7 @@ case class IcebergCompat(
     val tableId = newestMetadata.id
 
     (wasEnabled, isEnabled) match {
-      case (false, false) => (None, None) // Ignore
-      case (true, false) => // Disabling
-        // UniversalFormat.validateIceberg should detect that IcebergCompatV1 is being disabled,
-        // and automatically disable Universal Format (Iceberg)
-        assert(!UniversalFormat.icebergEnabled(newestMetadata))
-        (None, None)
+      case (_, false) => (None, None) // not enable or disabling, Ignore
       case (_, true) => // Enabling now or already-enabled
         val tblFeatureUpdates = scala.collection.mutable.Set.empty[TableFeature]
         val tblPropertyUpdates = scala.collection.mutable.Map.empty[String, String]
@@ -126,11 +123,11 @@ case class IcebergCompat(
           (prevProtocol.isFeatureSupported(f), newestProtocol.isFeatureSupported(f)) match {
             case (_, true) => // all good
             case (false, false) => // txn has not supported it!
-              // Note: this code path should be impossible, since the IcebergCompatV1TableFeature
+              // Note: this code path should be impossible, since the IcebergCompatVxTableFeature
               //       specifies ColumnMappingTableFeature as a required table feature. Thus,
               //       it should already have been added during
               //       OptimisticTransaction::updateMetadataInternal
-              if (isCreatingNewTable) {
+              if (isCreatingOrReorgTable) {
                 tblFeatureUpdates += f
               } else {
                 throw DeltaErrors.icebergCompatMissingRequiredTableFeatureException(version, f)
@@ -151,7 +148,7 @@ case class IcebergCompat(
               version, deltaConfig.key, newestValue.toString, autoSetValue)
 
             if (!newestValueOkay) {
-              if (!newestValueExplicitlySet && isCreatingNewTable) {
+              if (!newestValueExplicitlySet && isCreatingOrReorgTable) {
                 // This case covers both CREATE and REPLACE TABLE commands that
                 // did not explicitly specify the required deltaConfig. In these
                 // cases, we set the property automatically.
@@ -178,7 +175,7 @@ case class IcebergCompat(
           var tmpNewMetadata = newestMetadata.copy(configuration = newConfiguration)
 
           requiredTableProperties.foreach { tp =>
-            tmpNewMetadata = tp.postProcess(prevMetadata, tmpNewMetadata, isCreatingNewTable)
+            tmpNewMetadata = tp.postProcess(prevMetadata, tmpNewMetadata, isCreatingOrReorgTable)
           }
 
           Some(tmpNewMetadata)
@@ -188,7 +185,7 @@ case class IcebergCompat(
         val context = IcebergCompatContext(prevSnapshot,
           protocolResult.getOrElse(newestProtocol),
           metadataResult.getOrElse(newestMetadata),
-          isCreatingNewTable, actions, tableId, version)
+          isCreatingOrReorgTable, actions, tableId, version)
         checks.foreach(_.apply(context))
 
         (protocolResult, metadataResult)
@@ -199,9 +196,9 @@ case class IcebergCompat(
 /**
  * Util methods to manage between IcebergCompat versions
  */
-object IcebergCompat {
+object IcebergCompat extends DeltaLogging {
 
-  private val knownVersions = Seq(
+  val knownVersions = Seq(
     DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED -> 1,
     DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED -> 2)
 
@@ -214,6 +211,18 @@ object IcebergCompat {
     knownVersions
       .find{ case (config, _) => config.fromMetaData(metadata).getOrElse(false) }
       .map{ case (_, version) => version }
+
+  /**
+   * @return true if any version of IcebergCompat is enabled
+   */
+  def isAnyEnabled(metadata: Metadata): Boolean =
+    knownVersions.exists{ case (config, _) => config.fromMetaData(metadata).getOrElse(false) }
+
+  /**
+   * @return true if the target version is enabled on the table.
+   */
+  def isVersionEnabled(metadata: Metadata, version: Integer): Boolean =
+    knownVersions.exists{ case (_, v) => v == version }
 }
 
 /**
@@ -265,7 +274,7 @@ case class IcebergCompatContext(
     prevSnapshot: Snapshot,
     newestProtocol: Protocol,
     newestMetadata: Metadata,
-    isCreatingNewTable: Boolean,
+    isCreatingOrReorgTable: Boolean,
     actions: Seq[Action],
     tableId: String,
     version: Integer) {
@@ -275,6 +284,21 @@ case class IcebergCompatContext(
 }
 
 trait IcebergCompatCheck extends (IcebergCompatContext => Unit)
+
+/**
+ * Checks that ensures no more than one IcebergCompatVx is enabled.
+ */
+object CheckOnlySingleVersionEnabled extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    val numEnabled = IcebergCompat.knownVersions
+      .map{ case (config, _) =>
+        if (config.fromMetaData(context.newestMetadata).getOrElse(false)) 1 else 0 }
+      .sum
+    if (numEnabled > 1) {
+      throw DeltaErrors.icebergCompatVersionMutualExclusive(context.version)
+    }
+  }
+}
 
 object CheckAddFileHasStats extends IcebergCompatCheck {
   override def apply(context: IcebergCompatContext): Unit = {
@@ -368,7 +392,7 @@ object CheckVersionChangeNeedsRewrite extends IcebergCompatCheck {
   private val versionChangesWithoutRewrite: Map[Int, Set[Int]] =
     Map(0 -> Set(0, 1), 1 -> Set(0, 1), 2 -> Set(0, 1, 2))
   override def apply(context: IcebergCompatContext): Unit = {
-    if (!context.isCreatingNewTable) {
+    if (!context.isCreatingOrReorgTable) {
       val oldVersion = IcebergCompat.getEnabledVersion(context.prevMetadata).getOrElse(0)
       val allowedChanges = versionChangesWithoutRewrite.getOrElse(oldVersion, Set.empty[Int])
       if (!allowedChanges.contains(context.version)) {
