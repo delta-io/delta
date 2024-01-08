@@ -349,12 +349,12 @@ class DeltaSharingFileIndexSuite
                 decodedPath.fileId,
                 1000
               )
-              debug(s"before: ${decodedPath.fileId}, ${fetcher.getUrl}" +
-                s"${System.currentTimeMillis()/1000.0}")
+              debug(s"before: ${decodedPath.fileId}, ${fetcher.getUrl} " +
+                s"${(System.currentTimeMillis()/1000).toString}")
               // sleep for expirationTimeMs to ensure that the urls are refreshed.
               Thread.sleep(defaultUrlExpirationMs)
               debug(s"after : ${decodedPath.fileId}, ${fetcher.getUrl} " +
-                s" ${System.currentTimeMillis()/1000.0}")
+                s"${(System.currentTimeMillis()/1000).toString}")
 
               // Verify that the url is refreshed as paths(1), not paths(0) anymore.
               assert(fetcher.getUrl == paths(1))
