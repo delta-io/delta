@@ -1,2 +1,1 @@
 org.apache.spark.sql.delta.sources.DeltaDataSource
-io.delta.sharing.spark.DeltaSharingDataSource
