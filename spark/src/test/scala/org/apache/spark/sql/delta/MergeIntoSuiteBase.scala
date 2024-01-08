@@ -2236,8 +2236,10 @@ abstract class MergeIntoSuiteBase
       .collect().head.getMap(0).asInstanceOf[Map[String, String]]
     assert(metrics.contains("numTargetFilesRemoved"))
     // If insert-only code path is not used, then the general code path will rewrite existing
-    // target files.
-    assert(metrics("numTargetFilesRemoved").toInt > 0)
+    // target files when DVs are not enabled.
+    if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
+      assert(metrics("numTargetFilesRemoved").toInt > 0)
+    }
   }
 
   test("insert only merge - multiple matches when feature flag off") {
@@ -2577,7 +2579,9 @@ abstract class MergeIntoSuiteBase
             assert(stats.targetBeforeSkipping.files.get > stats.targetAfterSkipping.files.get)
           }
         } else {
-          assert(stats.targetFilesRemoved > 0)
+          if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
+            assert(stats.targetFilesRemoved > 0)
+          }
           // If there is no insert clause and the flag is enabled, data skipping should be
           // performed on targetOnly predicates.
           // However, with insert clauses, it's expected that no additional data skipping
