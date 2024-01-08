@@ -89,10 +89,12 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       spark.sql(s"DELETE FROM $testTableName WHERE id = 11")
     }
 
-    val result = spark.sql(s"SELECT COUNT(*), MIN(id), MAX(id) FROM $testTableName").head
-    totalRows = result.getLong(0)
-    minId = result.getLong(1)
-    maxId = result.getLong(2)
+    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "false") {
+      val result = spark.sql(s"SELECT COUNT(*), MIN(id), MAX(id) FROM $testTableName").head
+      totalRows = result.getLong(0)
+      minId = result.getLong(1)
+      maxId = result.getLong(2)
+    }
   }
 
   /** Class to hold test parameters */
