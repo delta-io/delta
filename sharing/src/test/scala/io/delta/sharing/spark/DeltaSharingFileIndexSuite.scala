@@ -61,7 +61,7 @@ private object TestUtils {
 
   def debug(str: String): Unit = {
     // scalastyle:off println
-    Console.println(s"----[linzhou]----$str")
+    Console.println(s"----[linzhou]----$str, ${(System.currentTimeMillis()/1000).toString}")
   }
 
   // scalastyle:off line.size.limit
@@ -139,7 +139,7 @@ class TestDeltaSharingClientForFileIndex(
 
   def debug(str: String): Unit = {
     // scalastyle:off println
-    Console.println(s"----[linzhou]----$str")
+    Console.println(s"----[linzhou]----$str, ${(System.currentTimeMillis()/1000).toString}")
   }
 
   override def getFiles(
@@ -306,7 +306,7 @@ class DeltaSharingFileIndexSuite
 
   def debug(str: String): Unit = {
     // scalastyle:off println
-    Console.println(s"----[linzhou]----$str")
+    Console.println(s"----[linzhou]----$str, ${(System.currentTimeMillis()/1000).toString}")
   }
 
   override protected def sparkConf: SparkConf = {
@@ -349,12 +349,10 @@ class DeltaSharingFileIndexSuite
                 decodedPath.fileId,
                 1000
               )
-              debug(s"before: ${decodedPath.fileId}, ${fetcher.getUrl} " +
-                s"${(System.currentTimeMillis()/1000).toString}")
+              debug(s"before: ${decodedPath.fileId}, ${fetcher.getUrl}")
               // sleep for expirationTimeMs to ensure that the urls are refreshed.
               Thread.sleep(defaultUrlExpirationMs)
-              debug(s"after : ${decodedPath.fileId}, ${fetcher.getUrl} " +
-                s"${(System.currentTimeMillis()/1000).toString}")
+              debug(s"after : ${decodedPath.fileId}, ${fetcher.getUrl}")
 
               // Verify that the url is refreshed as paths(1), not paths(0) anymore.
               assert(fetcher.getUrl == paths(1))
