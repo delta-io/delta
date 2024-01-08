@@ -223,7 +223,7 @@ object AutoCompactType {
   private[hooks] val DISABLED = "false"
 
   /**
-   * Enable auto compact
+   * Enable auto compact.
    * 1. MAX_FILE_SIZE is configurable and defaults to 128 MB unless overridden.
    * 2. MIN_FILE_SIZE is configurable and defaults to MAX_FILE_SIZE / 2 unless overridden.
    * Note: User can use DELTA_AUTO_COMPACT_MAX_FILE_SIZE to override this value.

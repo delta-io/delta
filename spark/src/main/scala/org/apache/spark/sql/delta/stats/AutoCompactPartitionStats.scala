@@ -127,8 +127,7 @@ class AutoCompactPartitionStats(
      */
     private def collectPartitionStatsForFile(file: FileAction, addSub: Int): Unit = {
       try {
-        val minSizeThreshold =
-              minFileSize
+        val minSizeThreshold = minFileSize
         if (shouldCollect &&
           file.estLogicalFileSize.getOrElse(file.getFileSize) <= minSizeThreshold
         ) {
