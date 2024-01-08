@@ -127,6 +127,19 @@ case class DeltaSharingFileIndex(
         )
 
       // 3. Register parquet file id to url mapping
+      val a = DeltaSharingUtils.getTablePathWithIdSuffix(
+        params.path.toString,
+        queryParamsHashId
+      )
+      val expTime = if (CachedTableManager.INSTANCE
+        .isValidUrlExpirationTime(deltaLogMetadata.minUrlExpirationTimestamp)) {
+        deltaLogMetadata.minUrlExpirationTimestamp.get
+      } else {
+        System.currentTimeMillis() + CachedTableManager.INSTANCE.preSignedUrlExpirationMs
+      }
+      // scalastyle:off println
+      Console.println(s"----[linzhou]----register:$a, expTime: $expTime, ${expTime -
+        System.currentTimeMillis()}")
       CachedTableManager.INSTANCE.register(
         // Using params.path instead of queryCustomTablePath because it will be customized
         // within CachedTableManager.
@@ -147,13 +160,7 @@ case class DeltaSharingFileIndex(
           jsonPredicateHints = jsonPredicateHints,
           refreshToken = deltaTableFiles.refreshToken
         ),
-        expirationTimestamp =
-          if (CachedTableManager.INSTANCE
-              .isValidUrlExpirationTime(deltaLogMetadata.minUrlExpirationTimestamp)) {
-            deltaLogMetadata.minUrlExpirationTimestamp.get
-          } else {
-            System.currentTimeMillis() + CachedTableManager.INSTANCE.preSignedUrlExpirationMs
-          },
+        expirationTimestamp = expTime,
         refreshToken = deltaTableFiles.refreshToken
       )
 
