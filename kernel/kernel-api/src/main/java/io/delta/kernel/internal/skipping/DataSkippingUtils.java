@@ -24,21 +24,11 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
-import io.delta.kernel.internal.actions.AddFile;
 import static io.delta.kernel.internal.util.ExpressionUtils.*;
-import static io.delta.kernel.internal.InternalScanFileUtils.SCAN_FILE_SCHEMA;
+import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_ORDINAL;
+import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_STATS_ORDINAL;
 
 public class DataSkippingUtils {
-
-    private static final int ADD_FILE_ORDINAL = SCAN_FILE_SCHEMA.indexOf("add");
-    private static final int ADD_FILE_STATS_ORDINAL = AddFile.SCHEMA_WITH_STATS.indexOf("stats");
-
-    /**
-     * Given the table schema return the expected statistics schema.
-     */
-    public static StructType getStatsSchema(StructType dataSchema) {
-        return StatsSchemaHelper.getStatsSchema(dataSchema);
-    }
 
     /**
      * Given a {@code FilteredColumnarBatch} of scan files and the statistics schema to parse,
@@ -250,7 +240,7 @@ public class DataSkippingUtils {
         }
     }
 
-    private static Map<String, String> reverseComparators = new HashMap<String, String>(){
+    private static final Map<String, String> REVERSE_COMPARATORS = new HashMap<String, String>(){
         {
             put("=", "=");
             put("<", ">");
@@ -262,7 +252,7 @@ public class DataSkippingUtils {
 
     private static Predicate reverseComparatorFilter(Predicate predicate) {
         return new Predicate(
-            reverseComparators.get(predicate.getName().toUpperCase(Locale.ROOT)),
+            REVERSE_COMPARATORS.get(predicate.getName().toUpperCase(Locale.ROOT)),
             getRight(predicate),
             getLeft(predicate)
         );

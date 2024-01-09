@@ -127,7 +127,11 @@ public class StatsSchemaHelper {
                 );
     }
 
-    /** Given a logical column returns corresponding the MIN column in the statistic schema */
+    /**
+     * Given a logical column in the data schema provided when creating {@code this}, return
+     * the corresponding MIN column in the statistic schema that stores the MIN values for the
+     * provided logical column.
+     */
     public Column getMinColumn(Column column) {
         checkArgument(isSkippingEligibleMinMaxColumn(column),
             String.format("%s is not a valid min column for data schema %s", column, dataSchema));
@@ -166,12 +170,13 @@ public class StatsSchemaHelper {
     // Private static fields and methods
     //////////////////////////////////////////////////////////////////////////////////
 
-    private static String NUM_RECORDS = "numRecords";
-    private static String MIN = "minValues";
-    private static String MAX = "maxValues";
-    private static String NULL_COUNT = "nullCount";
+    /* Delta statistics field names for file statistics */
+    private static final String NUM_RECORDS = "numRecords";
+    private static final String MIN = "minValues";
+    private static final String MAX = "maxValues";
+    private static final String NULL_COUNT = "nullCount";
 
-    private static Set<String> skippingEligibleTypeNames = new HashSet<String>() {
+    private static final Set<String> SKIPPING_ELIGIBLE_TYPE_NAMES = new HashSet<String>() {
         {
             add("byte");
             add("short");
@@ -189,7 +194,7 @@ public class StatsSchemaHelper {
      * Returns true if the given data type is eligible for MIN/MAX data skipping.
      */
     private static boolean isSkippingEligibleDataType(DataType dataType) {
-        return skippingEligibleTypeNames.contains(dataType.toString()) ||
+        return SKIPPING_ELIGIBLE_TYPE_NAMES.contains(dataType.toString()) ||
             // DecimalType is eligible but since its string includes scale + precision it needs to
             // be matched separately
             dataType instanceof DecimalType;

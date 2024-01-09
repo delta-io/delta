@@ -37,6 +37,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
+import static io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
@@ -218,7 +219,7 @@ public class ScanImpl implements Scan {
             Predicate dataSkippingFilter) {
         // Get the stats schema
         // TODO prune stats schema according to the data skipping filter
-        StructType statsSchema = DataSkippingUtils.getStatsSchema(metadata.getSchema());
+        StructType statsSchema = getStatsSchema(metadata.getSchema());
 
         // Skipping happens in two steps:
         // 1. The predicate produces false for any file whose stats prove we can safely skip it. A
