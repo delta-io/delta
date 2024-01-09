@@ -61,9 +61,6 @@ private[spark] class TestClientForDeltaFormatSharing(
 
   import TestClientForDeltaFormatSharing._
 
-  TestClientForDeltaFormatSharing.requestedFormat =
-    TestClientForDeltaFormatSharing.requestedFormat :+ responseFormat
-
   override def listAllTables(): Seq[Table] = throw new UnsupportedOperationException("not needed")
 
   override def getMetadata(
@@ -126,11 +123,10 @@ private[spark] class TestClientForDeltaFormatSharing(
       jsonPredicateHints: Option[String],
       refreshToken: Option[String]
   ): DeltaTableFiles = {
-    limit.foreach(
-      lim =>
-        TestClientForDeltaFormatSharing.limits =
-          TestClientForDeltaFormatSharing.limits :+ lim
-    )
+    limit.foreach(lim => TestClientForDeltaFormatSharing.limits.put(
+      s"${table.share}.${table.schema}.${table.name}", lim))
+    TestClientForDeltaFormatSharing.requestedFormat.put(
+      s"${table.share}.${table.schema}.${table.name}", responseFormat)
     val iterator = SparkEnv.get.blockManager
       .get[String](getBlockId(table.name, "getFiles", versionAsOf, timestampAsOf))
       .map(_.data.asInstanceOf[Iterator[String]])
@@ -269,11 +265,6 @@ object TestClientForDeltaFormatSharing {
     )
   }
 
-  def clear(): Unit = {
-    limits = Seq.empty[Long]
-    requestedFormat = Seq.empty[String]
-  }
-
-  var limits = Seq.empty[Long]
-  var requestedFormat = Seq.empty[String]
+  val limits = scala.collection.mutable.Map[String, Long]()
+  val requestedFormat = scala.collection.mutable.Map[String, String]()
 }

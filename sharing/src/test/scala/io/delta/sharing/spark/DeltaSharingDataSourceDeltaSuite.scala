@@ -100,6 +100,14 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     }
   }
 
+  def assertLimit(tablePath: String, expectedLimit: Seq[Long]): Unit = {
+    assert(expectedLimit ==
+      TestClientForDeltaFormatSharing.limits.filter(_._1.contains(tablePath)).map(_._2))
+  }
+  def assertRequestedFormat(tablePath: String, expectedFormat: Seq[String]): Unit = {
+    assert(expectedFormat ==
+      TestClientForDeltaFormatSharing.requestedFormat.filter(_._1.contains(tablePath)).map(_._2))
+  }
   /**
    * snapshot queries
    */
@@ -114,10 +122,6 @@ trait DeltaSharingDataSourceDeltaSuiteBase
               |(2, "two", "2023-02-02", "2023-02-02 00:00:00")""".stripMargin
         )
 
-        val sharedTableName = "shared_table_simple"
-        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
-        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
-
         val expectedSchema: StructType = new StructType()
           .add("c1", IntegerType)
           .add("c2", StringType)
@@ -128,48 +132,41 @@ trait DeltaSharingDataSourceDeltaSuiteBase
           Row(2, "two", sqlDate("2023-02-02"), sqlTimestamp("2023-02-02 00:00:00"))
         )
 
-        def test(tablePath: String): Unit = {
-          assert(
-            expectedSchema == spark.read
+        Seq(true, false).foreach { enableLimitPushdown =>
+          val sharedTableName = s"shared_table_simple_$enableLimitPushdown"
+          prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+          def test(tablePath: String, tableName: String): Unit = {
+            assert(
+              expectedSchema == spark.read
+                .format("deltaSharing")
+                .option("responseFormat", "delta")
+                .load(tablePath)
+                .schema
+            )
+            val df =
+              spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+            checkAnswer(df, expected)
+            assert(df.count() > 0)
+            assertLimit(tableName, Seq.empty[Long])
+            val limitDf = spark.read
               .format("deltaSharing")
               .option("responseFormat", "delta")
               .load(tablePath)
-              .schema
+              .limit(1)
+            assert(limitDf.collect().size == 1)
+            assertLimit(tableName, Some(1L).filter(_ => enableLimitPushdown).toSeq)
+          }
+
+          val limitPushdownConfig = Map(
+            "spark.delta.sharing.limitPushdown.enabled" -> enableLimitPushdown.toString
           )
-          val df =
-            spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
-            checkAnswer(df, expected)
-          assert(df.count() > 0)
-          assert(TestClientForDeltaFormatSharing.limits.isEmpty)
-          val limitDf = spark.read
-            .format("deltaSharing")
-            .option("responseFormat", "delta")
-            .load(tablePath)
-            .limit(1)
-          assert(limitDf.collect().size == 1)
-          assert(TestClientForDeltaFormatSharing.limits === Seq(1L))
-          TestClientForDeltaFormatSharing.clear()
-        }
-
-        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
-          val profileFile = prepareProfileFile(tempDir)
-          test(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
-        }
-
-        def testNoLimitPushDown(tablePath: String): Unit = {
-          val limitDf = spark.read
-            .format("deltaSharing")
-            .option("responseFormat", "delta")
-            .load(tablePath)
-            .limit(1)
-          assert(limitDf.collect().size == 1)
-          assert(TestClientForDeltaFormatSharing.limits === Nil)
-        }
-
-        val noLimitPushdownConfig = Map("spark.delta.sharing.limitPushdown.enabled" -> "false")
-        withSQLConf((noLimitPushdownConfig ++ getDeltaSharingClassesSQLConf).toSeq: _*) {
-          val profileFile = prepareProfileFile(tempDir)
-          testNoLimitPushDown(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+          withSQLConf((limitPushdownConfig ++ getDeltaSharingClassesSQLConf).toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            val tableName = s"share1.default.$sharedTableName"
+            test(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName", tableName)
+          }
         }
       }
     }
@@ -191,42 +188,34 @@ trait DeltaSharingDataSourceDeltaSuiteBase
           .add("c1", IntegerType)
           .add("c2", StringType)
 
-        def testAutoResolve(tablePath: String, expectedFormat: String): Unit = {
+        def testAutoResolve(tablePath: String, tableName: String, expectedFormat: String): Unit = {
           assert(
             expectedSchema == spark.read
               .format("deltaSharing")
               .load(tablePath)
               .schema
           )
-          TestClientForDeltaFormatSharing.clear()
 
           val deltaDf = spark.read.format("delta").table(deltaTableName)
           val sharingDf = spark.read.format("deltaSharing").load(tablePath)
           checkAnswer(deltaDf, sharingDf)
           assert(sharingDf.count() > 0)
-          assert(TestClientForDeltaFormatSharing.limits.isEmpty)
-          assert(
-            TestClientForDeltaFormatSharing.requestedFormat === Seq("parquet,delta", expectedFormat)
-          )
-          TestClientForDeltaFormatSharing.clear()
+          assertLimit(tableName, Seq.empty[Long])
+          assertRequestedFormat(tableName, Seq(expectedFormat))
 
           val limitDf = spark.read
             .format("deltaSharing")
             .load(tablePath)
             .limit(1)
           assert(limitDf.collect().size == 1)
-          assert(TestClientForDeltaFormatSharing.limits === Seq(1L))
-          TestClientForDeltaFormatSharing.clear()
+          assertLimit(tableName, Seq(1L))
 
           val deltaDfV1 = spark.read.format("delta").option("versionAsOf", 1).table(deltaTableName)
           val sharingDfV1 =
             spark.read.format("deltaSharing").option("versionAsOf", 1).load(tablePath)
           checkAnswer(deltaDfV1, sharingDfV1)
           assert(sharingDfV1.count() > 0)
-          assert(
-            TestClientForDeltaFormatSharing.requestedFormat === Seq("parquet,delta", expectedFormat)
-          )
-          TestClientForDeltaFormatSharing.clear()
+          assertRequestedFormat(tableName, Seq(expectedFormat))
         }
 
         // Test for delta format response
@@ -243,6 +232,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
           val profileFile = prepareProfileFile(tempDir)
           testAutoResolve(
             s"${profileFile.getCanonicalPath}#share1.default.$sharedDeltaTable",
+            s"share1.default.$sharedDeltaTable",
             "delta"
           )
         }
@@ -264,6 +254,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
           val profileFile = prepareProfileFile(tempDir)
           testAutoResolve(
             s"${profileFile.getCanonicalPath}#share1.default.$sharedParquetTable",
+            s"share1.default.$sharedParquetTable",
             "parquet"
           )
         }
