@@ -58,9 +58,9 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
 
   override protected def sparkConf: SparkConf = {
     super.sparkConf
-      .set("spark.delta.sharing.preSignedUrl.expirationMs", "10000")
-      .set("spark.delta.sharing.driver.refreshCheckIntervalMs", "2000")
-      .set("spark.delta.sharing.driver.refreshThresholdMs", "4000")
+      .set("spark.delta.sharing.preSignedUrl.expirationMs", "15000")
+      .set("spark.delta.sharing.driver.refreshCheckIntervalMs", "5000")
+      .set("spark.delta.sharing.driver.refreshThresholdMs", "10000")
       .set("spark.delta.sharing.driver.accessThresholdToExpireMs", "120000")
   }
 

@@ -334,7 +334,7 @@ class DeltaSharingFileIndexSuite
                 "spark.delta.sharing.driver.accessThresholdToExpireMs")
 
               // sleep for expirationTimeMs to ensure that the urls are refreshed.
-              Thread.sleep(defaultUrlExpirationMs)
+              Thread.sleep(15000)
 
               // Verify that the url is refreshed as paths(1), not paths(0) anymore.
               assert(fetcher.getUrl == paths(1))

@@ -105,7 +105,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
    */
   test("DeltaSharingDataSource able to read simple data") {
     withTempDir { tempDir =>
-      val deltaTableName = "data_source_suite_t"
+      val deltaTableName = "delta_table_simple"
       withTable(deltaTableName) {
         createTable(deltaTableName)
         sql(
@@ -114,7 +114,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
               |(2, "two", "2023-02-02", "2023-02-02 00:00:00")""".stripMargin
         )
 
-        val sharedTableName = "shared_table"
+        val sharedTableName = "shared_table_simple"
         prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
         prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
@@ -177,7 +177,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
 
   test("DeltaSharingDataSource able to auto resolve responseFormat") {
     withTempDir { tempDir =>
-      val deltaTableName = "delta_basic_table"
+      val deltaTableName = "delta_table_auto"
       withTable(deltaTableName) {
         createSimpleTable(deltaTableName, enableCdf = false)
         sql(
@@ -273,16 +273,16 @@ trait DeltaSharingDataSourceDeltaSuiteBase
 
   test("DeltaSharingDataSource able to read data with filters and select") {
     withTempDir { tempDir =>
-      val tableName = "data_source_suite_t"
-      withTable(tableName) {
-        createSimpleTable(tableName, enableCdf = false)
-        sql(s"""INSERT INTO $tableName VALUES (1, "first"), (2, "first")""")
-        sql(s"""INSERT INTO $tableName VALUES (1, "second"), (2, "second")""")
-        sql(s"""INSERT INTO $tableName VALUES (1, "third"), (2, "third")""")
+      val deltaTableName = "delta_table_filters"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = false)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "first"), (2, "first")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "second"), (2, "second")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "third"), (2, "third")""")
 
-        val sharedTableName = "shared_table"
-        prepareMockedClientAndFileSystemResult(tableName, sharedTableName)
-        prepareMockedClientGetTableVersion(tableName, sharedTableName)
+        val sharedTableName = "shared_table_filters"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
         // The files returned from delta sharing client are the same for these queries.
         // This is to test the filters are passed correctly to TahoeLogFileIndex for the local delta
@@ -356,7 +356,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
 
   test("DeltaSharingDataSource able to read data for time travel queries") {
     withTempDir { tempDir =>
-      val deltaTableName = "time_travel_table"
+      val deltaTableName = "delta_table_time_travel"
       withTable(deltaTableName) {
         createTable(deltaTableName)
 
@@ -464,7 +464,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
 
   test("DeltaSharingDataSource able to read data with more entries") {
     withTempDir { tempDir =>
-      val deltaTableName = "table_with_more_records"
+      val deltaTableName = "delta_table_more"
       withTable(deltaTableName) {
         createSimpleTable(deltaTableName, enableCdf = false)
         // The table operations take about 6~10 seconds.
@@ -477,7 +477,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
           sql(s"INSERT INTO $deltaTableName VALUES ${valuesBuilder.result().mkString(",")}")
         }
 
-        val sharedTableName = "shared_table"
+        val sharedTableName = "shared_table_more"
         prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
         prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
@@ -509,14 +509,14 @@ trait DeltaSharingDataSourceDeltaSuiteBase
 
   test("DeltaSharingDataSource able to read data with join on the same table") {
     withTempDir { tempDir =>
-      val deltaTableName = "base_delta_table"
+      val deltaTableName = "delta_table_join"
       withTable(deltaTableName) {
         createSimpleTable(deltaTableName, enableCdf = false)
         sql(s"""INSERT INTO $deltaTableName VALUES (1, "first"), (2, "first")""")
         sql(s"""INSERT INTO $deltaTableName VALUES (1, "second"), (2, "second")""")
         sql(s"""INSERT INTO $deltaTableName VALUES (1, "third"), (2, "third")""")
 
-        val sharedTableName = "shared_table"
+        val sharedTableName = "shared_table_join"
         prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
         prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
         prepareMockedClientAndFileSystemResult(
