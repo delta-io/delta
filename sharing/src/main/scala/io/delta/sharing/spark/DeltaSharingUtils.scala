@@ -44,6 +44,9 @@ import org.apache.spark.storage.{BlockId, StorageLevel}
 
 object DeltaSharingUtils extends Logging {
 
+  val SUPPORTED_READER_FEATURES: Seq[String] =
+    Seq(DeletionVectorsTableFeature.name, ColumnMappingTableFeature.name)
+
   // The prefix will be used for block ids of all blocks that store the delta log in BlockManager.
   // It's used to ensure delta sharing queries don't mess up with blocks with other applications.
   val DELTA_SHARING_BLOCK_ID_PREFIX = "test_delta-sharing"
@@ -57,6 +60,57 @@ object DeltaSharingUtils extends Logging {
       protocol: model.DeltaSharingProtocol,
       metadata: model.DeltaSharingMetadata
   )
+
+  def queryDeltaTableMetadata(
+      client: DeltaSharingClient,
+      table: Table,
+      versionAsOf: Option[Long] = None,
+      timestampAsOf: Option[String] = None): DeltaTableMetadata = {
+    val deltaTableMetadata = client.getMetadata(table, versionAsOf, timestampAsOf)
+    logInfo(
+      s"getMetadata returned in ${deltaTableMetadata.respondedFormat} format for table " +
+      s"$table with v_${versionAsOf.map(_.toString).getOrElse("None")} " +
+      s"t_${timestampAsOf.getOrElse("None")} from delta sharing server."
+    )
+    deltaTableMetadata
+  }
+
+  /**
+   * parse the protocol and metadata from rpc response for getMetadata.
+   */
+  def getDeltaSharingTableMetadata(
+      table: Table,
+      deltaTableMetadata: DeltaTableMetadata): DeltaSharingTableMetadata = {
+
+    var metadataOption: Option[model.DeltaSharingMetadata] = None
+    var protocolOption: Option[model.DeltaSharingProtocol] = None
+
+    deltaTableMetadata.lines
+      .map(
+        JsonUtils.fromJson[model.DeltaSharingSingleAction](_).unwrap
+      )
+      .foreach {
+        case m: model.DeltaSharingMetadata => metadataOption = Some(m)
+        case p: model.DeltaSharingProtocol => protocolOption = Some(p)
+        case _ => // ignore other lines
+      }
+
+    DeltaSharingTableMetadata(
+      version = deltaTableMetadata.version,
+      protocol = protocolOption.getOrElse {
+        throw new IllegalStateException(
+          s"Failed to get Protocol for ${table.toString}, " +
+          s"response from server:${deltaTableMetadata.lines}."
+        )
+      },
+      metadata = metadataOption.getOrElse {
+        throw new IllegalStateException(
+          s"Failed to get Metadata for ${table.toString}, " +
+          s"response from server:${deltaTableMetadata.lines}."
+        )
+      }
+    )
+  }
 
   private def getTableRefreshResult(tableFiles: DeltaTableFiles): TableRefreshResult = {
     var minUrlExpiration: Option[Long] = None
