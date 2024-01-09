@@ -416,7 +416,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       }
 
       // Iceberg spec requires partition columns in data files
-      val writePartitionColumns = IcebergCompatV1.isEnabled(metadata)
+      val writePartitionColumns = IcebergCompat.isAnyEnabled(metadata)
       // Retain only a minimal selection of Spark writer options to avoid any potential
       // compatibility issues
       val options = (writeOptions match {

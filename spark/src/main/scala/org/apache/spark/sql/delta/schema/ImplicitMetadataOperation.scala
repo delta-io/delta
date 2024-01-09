@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.schema
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.actions.Metadata
@@ -154,10 +156,11 @@ trait ImplicitMetadataOperation extends DeltaLogging {
   protected final def getNewDomainMetadata(
       txn: OptimisticTransaction,
       canUpdateMetadata: Boolean,
-      isReplacingTable: Boolean
-      ): Seq[DomainMetadata] = {
+      isReplacingTable: Boolean,
+      clusterBySpecOpt: Option[ClusterBySpec] = None): Seq[DomainMetadata] = {
     if (canUpdateMetadata && (!txn.deltaLog.tableExists || isReplacingTable)) {
-      val newDomainMetadata = Seq.empty[DomainMetadata]
+      val newDomainMetadata = Seq.empty[DomainMetadata] ++
+        ClusteredTableUtils.getDomainMetadataOptional(clusterBySpecOpt, txn)
       if (!txn.deltaLog.tableExists) {
         newDomainMetadata
       } else {

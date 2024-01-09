@@ -642,6 +642,7 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       )
     }
   }
+
   protected def getDeltaSharingClassesSQLConf: Map[String, String] = {
     Map(
       "fs.delta-sharing.impl" -> classOf[TestDeltaSharingFileSystem].getName,
