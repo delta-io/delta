@@ -39,7 +39,6 @@ import org.apache.spark.sql.catalyst.expressions.{
   Literal => SqlLiteral
 }
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
-import org.apache.spark.sql.test.{SharedSparkSession}
 import org.apache.spark.sql.types.{FloatType, IntegerType}
 
 private object TestUtils {
@@ -59,18 +58,12 @@ private object TestUtils {
     }
   }
 
-  def debug(str: String): Unit = {
-    // scalastyle:off println
-    Console.println(s"----[linzhou]----$str, ${(System.currentTimeMillis()/1000).toString}")
-  }
-
   // scalastyle:off line.size.limit
   val metaDataStr =
     """{"metaData":{"size":809,"deltaMetadata":{"id":"testId","format":{"provider":"parquet","options":{}},"schemaString":"{\"type\":\"struct\",\"fields\":[{\"name\":\"c1\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}},{\"name\":\"c2\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]}","partitionColumns":["c2"],"configuration":{},"createdTime":1691734718560}}}"""
   val metaDataWithoutSizeStr =
     """{"metaData":{"deltaMetadata":{"id":"testId","format":{"provider":"parquet","options":{}},"schemaString":"{\"type\":\"struct\",\"fields\":[{\"name\":\"c1\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}},{\"name\":\"c2\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]}","partitionColumns":["c2"],"configuration":{},"createdTime":1691734718560}}}"""
   def getAddFileStr1(path: String, urlExpirationMs: Option[Int] = None): String = {
-    debug(s"path: $path")
     s"""{"file":{"id":"11d9b72771a72f178a6f2839f7f08528",${getExpirationTimestampStr(
       urlExpirationMs
     )}"deltaSingleAction":{"add":{"path":"${path}",""" + """"partitionValues":{"c2":"one"},"size":809,"modificationTime":1691734726073,"dataChange":true,"stats":"{\"numRecords\":2,\"minValues\":{\"c1\":1,\"c2\":\"one\"},\"maxValues\":{\"c1\":2,\"c2\":\"one\"},\"nullCount\":{\"c1\":0,\"c2\":0}}","tags":{"INSERTION_TIME":"1691734726073000","MIN_INSERTION_TIME":"1691734726073000","MAX_INSERTION_TIME":"1691734726073000","OPTIMIZE_TARGET_SIZE":"268435456"}}}}}"""
@@ -137,11 +130,6 @@ class TestDeltaSharingClientForFileIndex(
     throw new UnsupportedOperationException("getTableVersion is not supported now.")
   }
 
-  def debug(str: String): Unit = {
-    // scalastyle:off println
-    Console.println(s"----[linzhou]----$str, ${(System.currentTimeMillis()/1000).toString}")
-  }
-
   override def getFiles(
       table: Table,
       predicates: Seq[String],
@@ -157,7 +145,6 @@ class TestDeltaSharingClientForFileIndex(
       savedJsonPredicateHints = savedJsonPredicateHints :+ p
     })
 
-    debug(s"getFiles, $numGetFileCalls")
     DeltaTableFiles(
       version = 0,
       lines = Seq[String](
@@ -202,7 +189,7 @@ class TestDeltaSharingClientForFileIndex(
 class DeltaSharingFileIndexSuite
     extends QueryTest
     with DeltaSQLCommandTest
-    with SharedSparkSession
+    with DeltaSharingDataSourceDeltaTestUtils
     with DeltaSharingTestSparkUtils {
 
   import TestUtils._
@@ -241,7 +228,6 @@ class DeltaSharingFileIndexSuite
   }
 
   test("basic functions works") {
-    debug("basic functions START")
     withTempDir { tempDir =>
       val profileFile = new File(tempDir, "foo.share")
       FileUtils.writeStringToFile(
@@ -305,21 +291,7 @@ class DeltaSharingFileIndexSuite
     }
   }
 
-  def debug(str: String): Unit = {
-    // scalastyle:off println
-    Console.println(s"----[linzhou]----$str, ${(System.currentTimeMillis()/1000).toString}")
-  }
-
-  override protected def sparkConf: SparkConf = {
-    super.sparkConf
-      .set("spark.delta.sharing.preSignedUrl.expirationMs", defaultUrlExpirationMs.toString)
-      .set("spark.delta.sharing.driver.refreshCheckIntervalMs", "1000")
-      .set("spark.delta.sharing.driver.refreshThresholdMs", "2000")
-      .set("spark.delta.sharing.driver.accessThresholdToExpireMs", "60000")
-  }
-
   test("refresh works") {
-    debug("refresh works START")
     PreSignedUrlCache.registerIfNeeded(SparkEnv.get)
 
     withTempDir { tempDir =>
@@ -360,10 +332,9 @@ class DeltaSharingFileIndexSuite
                 "spark.delta.sharing.driver.refreshThresholdMs")
               val d = SparkEnv.get.conf.getOption(
                 "spark.delta.sharing.driver.accessThresholdToExpireMs")
-              debug(s"before: ${decodedPath.fileId}, ${fetcher.getUrl}, $a, $b, $c, $d")
+
               // sleep for expirationTimeMs to ensure that the urls are refreshed.
-              Thread.sleep(20000)
-              debug(s"after : ${decodedPath.fileId}, ${fetcher.getUrl}, $a, $b, $c, $d")
+              Thread.sleep(defaultUrlExpirationMs)
 
               // Verify that the url is refreshed as paths(1), not paths(0) anymore.
               assert(fetcher.getUrl == paths(1))
@@ -395,7 +366,6 @@ class DeltaSharingFileIndexSuite
   }
 
   test("jsonPredicate test") {
-    debug("jsonPredicate test START")
     withTempDir { tempDir =>
       val profileFile = new File(tempDir, "foo.share")
       FileUtils.writeStringToFile(
