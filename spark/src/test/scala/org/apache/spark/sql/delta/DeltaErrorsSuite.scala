@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.constraints.Constraints.NotNull
+import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
