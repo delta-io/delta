@@ -147,12 +147,13 @@ case class DeltaSharingFileIndex(
           jsonPredicateHints = jsonPredicateHints,
           refreshToken = deltaTableFiles.refreshToken
         ),
-        expirationTimestamp = if (CachedTableManager.INSTANCE
-          .isValidUrlExpirationTime(deltaLogMetadata.minUrlExpirationTimestamp)) {
-          deltaLogMetadata.minUrlExpirationTimestamp.get
-        } else {
-          System.currentTimeMillis() + CachedTableManager.INSTANCE.preSignedUrlExpirationMs
-        },
+        expirationTimestamp =
+          if (CachedTableManager.INSTANCE
+              .isValidUrlExpirationTime(deltaLogMetadata.minUrlExpirationTimestamp)) {
+            deltaLogMetadata.minUrlExpirationTimestamp.get
+          } else {
+            System.currentTimeMillis() + CachedTableManager.INSTANCE.preSignedUrlExpirationMs
+          },
         refreshToken = deltaTableFiles.refreshToken
       )
 

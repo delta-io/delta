@@ -71,7 +71,7 @@ private object TestUtils {
   def getAddFileStr2(urlExpirationMs: Option[Int] = None): String = {
     s"""{"file":{"id":"22d9b72771a72f178a6f2839f7f08529",${getExpirationTimestampStr(
       urlExpirationMs
-    )}""" + """"deltaSingleAction":{"add":{"path":"http://path3","partitionValues":{"c2":"two"},"size":809,"modificationTime":1691734726073,"dataChange":true,"stats":"{\"numRecords\":2,\"minValues\":{\"c1\":1,\"c2\":\"two\"},\"maxValues\":{\"c1\":2,\"c2\":\"two\"},\"nullCount\":{\"c1\":0,\"c2\":0}}","tags":{"INSERTION_TIME":"1691734726073000","MIN_INSERTION_TIME":"1691734726073000","MAX_INSERTION_TIME":"1691734726073000","OPTIMIZE_TARGET_SIZE":"268435456"}}}}}"""
+    )}""" + """"deltaSingleAction":{"add":{"path":"http://path2","partitionValues":{"c2":"two"},"size":809,"modificationTime":1691734726073,"dataChange":true,"stats":"{\"numRecords\":2,\"minValues\":{\"c1\":1,\"c2\":\"two\"},\"maxValues\":{\"c1\":2,\"c2\":\"two\"},\"nullCount\":{\"c1\":0,\"c2\":0}}","tags":{"INSERTION_TIME":"1691734726073000","MIN_INSERTION_TIME":"1691734726073000","MAX_INSERTION_TIME":"1691734726073000","OPTIMIZE_TARGET_SIZE":"268435456"}}}}}"""
   }
   // scalastyle:on line.size.limit
 }
@@ -323,16 +323,6 @@ class DeltaSharingFileIndexSuite
                 decodedPath.fileId,
                 1000
               )
-              val a = SparkEnv.get.conf.getOption(
-                "spark.delta.sharing.preSignedUrl.expirationMs"
-              )
-              val b = SparkEnv.get.conf.getOption(
-                "spark.delta.sharing.driver.refreshCheckIntervalMs")
-              val c = SparkEnv.get.conf.getOption(
-                "spark.delta.sharing.driver.refreshThresholdMs")
-              val d = SparkEnv.get.conf.getOption(
-                "spark.delta.sharing.driver.accessThresholdToExpireMs")
-
               // sleep for expirationTimeMs to ensure that the urls are refreshed.
               Thread.sleep(15000)
 
