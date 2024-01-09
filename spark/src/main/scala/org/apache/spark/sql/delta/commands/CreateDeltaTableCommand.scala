@@ -316,7 +316,7 @@ case class CreateDeltaTableCommand(
         protocol.foreach { protocol =>
           txn.updateProtocol(protocol)
         }
-        Nil ++ ClusteredTableUtils.getDomainMetadataOptional(table, txn)
+        ClusteredTableUtils.getDomainMetadataOptional(table, txn).toSeq
       } else {
         verifyTableMetadata(txn, tableWithLocation)
         Nil
