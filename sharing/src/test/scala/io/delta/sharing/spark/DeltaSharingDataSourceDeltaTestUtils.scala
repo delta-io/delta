@@ -61,7 +61,7 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       .set("spark.delta.sharing.preSignedUrl.expirationMs", "10000")
       .set("spark.delta.sharing.driver.refreshCheckIntervalMs", "2000")
       .set("spark.delta.sharing.driver.refreshThresholdMs", "4000")
-      .set("spark.delta.sharing.driver.accessThresholdToExpireMs", "60000")
+      .set("spark.delta.sharing.driver.accessThresholdToExpireMs", "120000")
   }
 
   private[spark] def removePartitionPrefix(filePath: String): String = {
