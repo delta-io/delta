@@ -919,8 +919,13 @@
     "subClass" : {
       "CHANGE_VERSION_NEED_REWRITE" : {
         "message" : [
-          "Changing to IcebergCompatV<newVersion> requires rewriting the table. Please run REORG TABLE APPLY (UPGRADE UNIFORM ('IcebergCompatVersion = <newVersion>'));",
+          "Changing to IcebergCompatV<newVersion> requires rewriting the table. Please run REORG TABLE APPLY (UPGRADE UNIFORM ('ICEBERG_COMPAT_VERSION = <newVersion>'));",
           "Note that REORG enables table feature IcebergCompatV<newVersion> and other Delta lake clients without that table feature support may not be able to write to the table."
+        ]
+      },
+      "COMPAT_VERSION_NOT_SUPPORTED" : {
+        "message" : [
+          "IcebergCompatVersion = <version> is not supported. Supported versions are between 1 and <maxVersion> "
         ]
       },
       "DELETION_VECTORS_NOT_PURGED" : {
@@ -938,6 +943,13 @@
           "IcebergCompatV<version> requires feature <feature> to be supported and enabled. You cannot drop it from the table. Instead, please disable IcebergCompatV<version> first."
         ]
       },
+      "FILES_NOT_ICEBERG_COMPAT" : {
+        "message" : [
+          "Enabling Uniform Iceberg with IcebergCompatV<version> requires all files to be iceberg compatible.",
+          "There are <addFilesCount> files in table version <tableVersion> and <addFilesWithoutTag> files are not iceberg compatible, which is usually a result of concurrent write.",
+          "Please run the REORG TABLE table APPLY (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION=<version>) command again."
+        ]
+      },
       "INCOMPATIBLE_TABLE_FEATURE" : {
         "message" : [
           "IcebergCompatV<version> is incompatible with feature <feature>."
@@ -953,6 +965,12 @@
           "IcebergCompatV<version> doesn't support replacing partitioned tables with a differently-named partition spec, because Iceberg-Spark 1.1.0 doesn't.",
           "Prev Partition Spec: <prevPartitionSpec>",
           "New Partition Spec: <newPartitionSpec>"
+        ]
+      },
+      "REWRITE_DATA_FAILED" : {
+        "message" : [
+          "Rewriting data to IcebergCompatV<version> failed.",
+          "Please run the REORG TABLE table APPLY (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION=<version>) command again."
         ]
       },
       "UNSUPPORTED_DATA_TYPE" : {
