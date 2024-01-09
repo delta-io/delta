@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import shadedForDelta.org.apache.iceberg.{DataFile, DataFiles, FileFormat, PartitionSpec, Schema => IcebergSchema}
+import shadedForDelta.org.apache.iceberg.Metrics
 // scalastyle:off import.ordering.noEmptyLine
 import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
 // scalastyle:on import.ordering.noEmptyLine
@@ -75,6 +76,28 @@ object IcebergTransactionUtils
         // throw an exception when building the data file.
         .withRecordCount(add.numLogicalRecords.getOrElse(-1L))
 
+    if (add.stats != null && add.stats.nonEmpty) {
+      try {
+        val statsRow = statsParser(add.stats)
+
+        val metricsConverter = IcebergStatsConverter(statsRow, statsSchema)
+        val metrics = new Metrics(
+          metricsConverter.numRecordsStat, // rowCount
+          null, // columnSizes
+          null, // valueCounts
+          metricsConverter.nullValueCountsStat.getOrElse(null).asJava, // nullValueCounts
+          null, // nanValueCounts
+          metricsConverter.lowerBoundsStat.getOrElse(null).asJava, // lowerBounds
+          metricsConverter.upperBoundsStat.getOrElse(null).asJava // upperBounds
+        )
+
+        dataFileBuilder = dataFileBuilder.withMetrics(metrics)
+      } catch {
+        case NonFatal(e) =>
+          logWarning("Failed to convert Delta stats to Iceberg stats. Iceberg conversion will " +
+          "attempt to proceed without stats.", e)
+      }
+    }
 
     dataFileBuilder.build()
   }
