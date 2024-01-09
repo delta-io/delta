@@ -883,7 +883,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * A subclass of AutoCompactPartitionStatsCollector that's to be used if the config to collect
    * auto compaction stats is turned off. This subclass intentionally does nothing.
    */
-  class DisabledAutoCompactPartitionStatsCollector extends AutoCompactPartitionStatsCollector{
+  class DisabledAutoCompactPartitionStatsCollector extends AutoCompactPartitionStatsCollector {
     override def collectPartitionStatsForAdd(file: AddFile): Unit = {}
     override def collectPartitionStatsForRemove(file: RemoveFile): Unit = {}
     override def finalizeStats(tableId: String): Unit = {}

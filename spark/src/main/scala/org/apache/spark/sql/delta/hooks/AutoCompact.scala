@@ -32,7 +32,8 @@ import org.apache.spark.sql.internal.SQLConf
 
 /**
  * A trait for post commit hook which compacts files in a Delta table. This hook acts as a cheaper
- * version of the OPTIMIZE command, by attempting to compact files to a smaller size.
+ * version of the OPTIMIZE command, by attempting to compact small files together into fewer bigger
+ * files.
  *
  * Auto Compact chooses files to compact greedily by looking at partition directories which
  * have the largest number of files that are under a certain size threshold and launches a bounded
