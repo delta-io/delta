@@ -8,7 +8,10 @@ import io.delta.standalone.DeltaLog;
 public class BoundedSnapshotSupplierFactory implements SnapshotSupplierFactory {
 
     @Override
-    public BoundedSourceSnapshotSupplier create(DeltaLog deltaLog, TableClient tableClient, Table table) {
+    public BoundedSourceSnapshotSupplier create(
+          DeltaLog deltaLog,
+          TableClient tableClient,
+          Table table) {
         return new BoundedSourceSnapshotSupplier(deltaLog, tableClient, table);
     }
 }

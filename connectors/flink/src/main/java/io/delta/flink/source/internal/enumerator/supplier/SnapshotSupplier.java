@@ -2,7 +2,6 @@ package io.delta.flink.source.internal.enumerator.supplier;
 
 import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.utils.TransitiveOptional;
-
 import io.delta.kernel.Table;
 import io.delta.kernel.TableNotFoundException;
 import io.delta.kernel.client.TableClient;

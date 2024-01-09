@@ -16,8 +16,6 @@
 
 package io.delta.kernel;
 
-import java.util.Optional;
-
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.types.StructType;

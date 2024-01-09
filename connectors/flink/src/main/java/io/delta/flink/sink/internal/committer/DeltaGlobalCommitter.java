@@ -60,9 +60,8 @@ import io.delta.standalone.actions.Action;
 import io.delta.standalone.actions.AddFile;
 import io.delta.standalone.actions.Metadata;
 import io.delta.standalone.actions.SetTransaction;
-import io.delta.standalone.internal.KernelDeltaLogDelegator;
 import io.delta.standalone.types.StructType;
-
+import io.delta.standalone.internal.KernelDeltaLogDelegator;
 
 /**
  * A {@link GlobalCommitter} implementation for
@@ -112,7 +111,8 @@ public class DeltaGlobalCommitter
     // /**
     //  * Keeping a reference to the DeltaLog will make future `deltaLog.startTransaction()` calls,
     //  * which internally will call `deltaLog.update()`, cheaper. This is because we don't need to
-    //  * do a full table replay, but instead only need to append the changes to the latest snapshot`.
+    //  * do a full table replay, but instead only need to append the changes to the latest
+    //  * snapshot`.
     //  */
     // private final transient DeltaLog deltaLog;
 
@@ -249,7 +249,7 @@ public class DeltaGlobalCommitter
                     appId,
                     globalCommittables,
                     this.kernelDeltaLog);
-            
+
             // We used SortedMap and SortedMap.values() maintain the sorted order.
             for (List<CheckpointData> checkpointData : committablesPerCheckpoint.values()) {
                 doCommit(
@@ -362,7 +362,8 @@ public class DeltaGlobalCommitter
             } catch (IOException e) {
                 throw new RuntimeException(
                     String.format("Exception in Delta Sink, during iterating over Delta table "
-                    + "changes for table path {%s}", kernelDeltaLog.getPath().toUri().toString()), e);
+                    + "changes for table path {%s}", kernelDeltaLog.getPath().toUri().toString()),
+                    e);
             }
         }
 
