@@ -167,7 +167,7 @@ class MergeIntoDVsSuite extends MergeIntoDVsTests {
         numUpdatedRows = 7,
         numCopiedRows = 0, // No rows were copied.
         numTargetFilesRemoved = 1, // 1 file was removed entirely.
-        numDeletionVectorsAdded = 1, // 1 files was deleted partially.
+        numDeletionVectorsAdded = 1, // 1 file was deleted partially.
         numDeletionVectorsRemoved = 0,
         numDeletionVectorsUpdated = 0)
     }
