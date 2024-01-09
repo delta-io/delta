@@ -55,7 +55,124 @@ trait MergeIntoDVsTests extends MergeIntoSQLSuite with DeletionVectorsTestUtils 
     "delta.dml.merge")
 }
 
-class MergeIntoDVsSuite extends MergeIntoDVsTests
+class MergeIntoDVsSuite extends MergeIntoDVsTests {
+  import testImplicits._
+
+  def assertOperationalDVMetrics(
+      tablePath: String,
+      numDeletedRows: Long,
+      numUpdatedRows: Long,
+      numCopiedRows: Long,
+      numTargetFilesRemoved: Long,
+      numDeletionVectorsAdded: Long,
+      numDeletionVectorsRemoved: Long,
+      numDeletionVectorsUpdated: Long): Unit = {
+    val table = io.delta.tables.DeltaTable.forPath(tablePath)
+    val mergeMetrics = DeltaMetricsUtils.getLastOperationMetrics(table)
+    assert(mergeMetrics.getOrElse("numTargetRowsDeleted", -1) === numDeletedRows)
+    assert(mergeMetrics.getOrElse("numTargetRowsUpdated", -1) === numUpdatedRows)
+    assert(mergeMetrics.getOrElse("numTargetRowsCopied", -1) === numCopiedRows)
+    assert(mergeMetrics.getOrElse("numTargetFilesRemoved", -1) === numTargetFilesRemoved)
+    assert(mergeMetrics.getOrElse("numTargetDeletionVectorsAdded", -1) === numDeletionVectorsAdded)
+    assert(
+      mergeMetrics.getOrElse("numTargetDeletionVectorsRemoved", -1) === numDeletionVectorsRemoved)
+    assert(
+      mergeMetrics.getOrElse("numTargetDeletionVectorsUpdated", -1) === numDeletionVectorsUpdated)
+  }
+
+  test(s"Merge with DVs metrics - Incremental Updates") {
+    withTempDir { dir =>
+      val sourcePath = s"$dir/source"
+      val targetPath = s"$dir/target"
+
+      spark.range(0, 10, 2).write.format("delta").save(sourcePath)
+      spark.range(10).write.format("delta").save(targetPath)
+
+      executeMerge(
+        tgt = s"delta.`$targetPath` t",
+        src = s"delta.`$sourcePath` s",
+        cond = "t.id = s.id",
+        clauses = updateNotMatched(set = "id = t.id * 10"))
+
+      checkAnswer(readDeltaTable(targetPath), Seq(0, 10, 2, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+
+      assertOperationalDVMetrics(
+        targetPath,
+        numDeletedRows = 0,
+        numUpdatedRows = 5,
+        numCopiedRows = 0,
+        numTargetFilesRemoved = 0, // No files were fully deleted.
+        numDeletionVectorsAdded = 2,
+        numDeletionVectorsRemoved = 0,
+        numDeletionVectorsUpdated = 0)
+
+      executeMerge(
+        tgt = s"delta.`$targetPath` t",
+        src = s"delta.`$sourcePath` s",
+        cond = "t.id = s.id",
+        clauses = delete(condition = "t.id = 2"))
+
+      checkAnswer(readDeltaTable(targetPath), Seq(0, 10, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+
+      assertOperationalDVMetrics(
+        targetPath,
+        numDeletedRows = 1,
+        numUpdatedRows = 0,
+        numCopiedRows = 0,
+        numTargetFilesRemoved = 0,
+        numDeletionVectorsAdded = 1, // Updating a DV equals removing and adding.
+        numDeletionVectorsRemoved = 1, // Updating a DV equals removing and adding.
+        numDeletionVectorsUpdated = 1)
+
+      // Delete all rows from a file.
+      executeMerge(
+        tgt = s"delta.`$targetPath` t",
+        src = s"delta.`$sourcePath` s",
+        cond = "t.id = s.id",
+        clauses = delete(condition = "t.id < 5"))
+
+      checkAnswer(readDeltaTable(targetPath), Seq(10, 30, 50, 6, 70, 8, 90).toDF("id"))
+
+      assertOperationalDVMetrics(
+        targetPath,
+        numDeletedRows = 2,
+        numUpdatedRows = 0,
+        numCopiedRows = 0,
+        numTargetFilesRemoved = 1,
+        numDeletionVectorsAdded = 0,
+        numDeletionVectorsRemoved = 1,
+        numDeletionVectorsUpdated = 0)
+    }
+  }
+
+  test(s"Merge with DVs metrics - delete entire file") {
+    withTempDir { dir =>
+      val sourcePath = s"$dir/source"
+      val targetPath = s"$dir/target"
+
+      spark.range(0, 7).write.format("delta").save(sourcePath)
+      spark.range(10).write.format("delta").save(targetPath)
+
+      executeMerge(
+        tgt = s"delta.`$targetPath` t",
+        src = s"delta.`$sourcePath` s",
+        cond = "t.id = s.id",
+        clauses = update(set = "id = t.id * 10"))
+
+      checkAnswer(readDeltaTable(targetPath), Seq(0, 10, 20, 30, 40, 50, 60, 7, 8, 9).toDF("id"))
+
+      assertOperationalDVMetrics(
+        targetPath,
+        numDeletedRows = 0,
+        numUpdatedRows = 7,
+        numCopiedRows = 0, // No rows were copied.
+        numTargetFilesRemoved = 1, // 1 file was removed entirely.
+        numDeletionVectorsAdded = 1, // 1 file was deleted partially.
+        numDeletionVectorsRemoved = 0,
+        numDeletionVectorsUpdated = 0)
+    }
+  }
+}
 
 trait MergeCDCWithDVsTests extends MergeCDCTests with DeletionVectorsTestUtils {
   override def beforeAll(): Unit = {
