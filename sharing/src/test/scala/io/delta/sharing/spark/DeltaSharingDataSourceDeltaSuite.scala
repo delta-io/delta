@@ -104,6 +104,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     assert(expectedLimit ==
       TestClientForDeltaFormatSharing.limits.filter(_._1.contains(tablePath)).map(_._2))
   }
+
   def assertRequestedFormat(tablePath: String, expectedFormat: Seq[String]): Unit = {
     assert(expectedFormat ==
       TestClientForDeltaFormatSharing.requestedFormat.filter(_._1.contains(tablePath)).map(_._2))
