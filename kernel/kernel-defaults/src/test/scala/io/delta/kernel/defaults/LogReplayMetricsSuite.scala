@@ -17,22 +17,22 @@
 package io.delta.kernel.defaults
 
 import java.io.File
-
 import io.delta.kernel.Table
-import io.delta.kernel.client.{ExpressionHandler, FileHandler, FileReadContext, FileSystemClient, TableClient}
-import io.delta.kernel.data.FileDataReadResult
+import io.delta.kernel.client.{ExpressionHandler, FileSystemClient, TableClient}
+import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
-import io.delta.kernel.internal.InternalScanFileUtils
+import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.apache.hadoop.conf.Configuration
-
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
+
+import java.util.Optional
 
 class LogReplayMetricsSuite extends QueryTest
     with SharedSparkSession
@@ -241,7 +241,7 @@ class MetricsTableClient(config: Configuration) extends TableClient {
  * Helper trait which wraps an underlying json/parquet read and collects the versions (e.g. 10.json,
  * 10.checkpoint.parquet) read
  */
-trait FileReadMetrics { self: FileHandler =>
+trait FileReadMetrics { self: Object =>
   private val versionsRead = scala.collection.mutable.ArrayBuffer[Long]()
 
   private def updateVersionsRead(fileStatus: FileStatus): Unit = {
@@ -260,20 +260,11 @@ trait FileReadMetrics { self: FileHandler =>
 
   def resetMetrics(): Unit = versionsRead.clear()
 
-  def readAndCollectMetrics(
-      iter: CloseableIterator[FileDataReadResult]): CloseableIterator[FileDataReadResult] = {
-    new CloseableIterator[FileDataReadResult] {
-      override def close(): Unit = iter.close()
-
-      override def hasNext: Boolean = iter.hasNext
-
-      override def next(): FileDataReadResult = {
-        val result = iter.next()
-        val scanFile = result.getScanFileRow
-        updateVersionsRead(InternalScanFileUtils.getAddFileStatus(scanFile))
-        result
-      }
-    }
+  def collectReadFiles(fileIter: CloseableIterator[FileStatus]): CloseableIterator[FileStatus] = {
+    fileIter.map(file => {
+      updateVersionsRead(file)
+      file
+    })
   }
 }
 
@@ -283,9 +274,10 @@ class MetricsJsonHandler(config: Configuration)
     with FileReadMetrics {
 
   override def readJsonFiles(
-      fileIter: CloseableIterator[FileReadContext],
-      physicalSchema: StructType): CloseableIterator[FileDataReadResult] = {
-    readAndCollectMetrics(super.readJsonFiles(fileIter, physicalSchema))
+      fileIter: CloseableIterator[FileStatus],
+      physicalSchema: StructType,
+      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+    super.readJsonFiles(collectReadFiles(fileIter), physicalSchema, predicate)
   }
 }
 
@@ -295,8 +287,9 @@ class MetricsParquetHandler(config: Configuration)
     with FileReadMetrics {
 
   override def readParquetFiles(
-      fileIter: CloseableIterator[FileReadContext],
-      physicalSchema: StructType): CloseableIterator[FileDataReadResult] = {
-    readAndCollectMetrics(super.readParquetFiles(fileIter, physicalSchema))
+      fileIter: CloseableIterator[FileStatus],
+      physicalSchema: StructType,
+      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+    super.readParquetFiles(collectReadFiles(fileIter), physicalSchema, predicate)
   }
 }

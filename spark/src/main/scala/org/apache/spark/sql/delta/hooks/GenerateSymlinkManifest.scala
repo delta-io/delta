@@ -245,7 +245,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
   }
 
   protected def assertTableIsDVFree(spark: SparkSession, snapshot: Snapshot): Unit = {
-    if (!isTableDVFree(spark, snapshot)) {
+    if (!isTableDVFree(snapshot)) {
       throw DeltaErrors.generateNotSupportedWithDeletionVectors()
     }
   }

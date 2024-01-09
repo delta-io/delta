@@ -19,6 +19,7 @@ import java.math.{BigDecimal => JBigDecimal}
 import java.sql.Date
 import java.time.{Instant, OffsetDateTime}
 import java.time.temporal.ChronoUnit
+import java.util.Optional
 
 import scala.collection.JavaConverters._
 
@@ -30,22 +31,22 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.types.{StructType => SparkStructType}
 import org.scalatest.funsuite.AnyFunSuite
 
-import io.delta.kernel.client.{FileReadContext, JsonHandler, ParquetHandler, TableClient}
-import io.delta.kernel.data.{FileDataReadResult, FilteredColumnarBatch, Row}
+import io.delta.kernel.client.{JsonHandler, ParquetHandler, TableClient}
+import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.types.StructType
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.utils.{CloseableIterator. FileStatus}
 import io.delta.kernel.{Snapshot, Table}
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.internal.InternalScanFileUtils
-
 import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 
 class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
+
   import io.delta.kernel.defaults.ScanSuite._
 
   private val spark = SparkSession
@@ -1021,10 +1022,11 @@ object ScanSuite {
       override def getParquetHandler: ParquetHandler = {
         new DefaultParquetHandler(hadoopConf) {
           override def readParquetFiles(
-            fileIter: CloseableIterator[FileReadContext],
-            physicalSchema: StructType): CloseableIterator[FileDataReadResult] = {
+              fileIter: CloseableIterator[FileStatus],
+              physicalSchema: StructType,
+              predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
             throwErrorIfAddStatsInSchema(physicalSchema)
-            super.readParquetFiles(fileIter, physicalSchema)
+            super.readParquetFiles(fileIter, physicalSchema, predicate)
           }
         }
       }
@@ -1032,10 +1034,11 @@ object ScanSuite {
       override def getJsonHandler: JsonHandler = {
         new DefaultJsonHandler(hadoopConf) {
           override def readJsonFiles(
-            fileIter: CloseableIterator[FileReadContext],
-            physicalSchema: StructType): CloseableIterator[FileDataReadResult] = {
+              fileIter: CloseableIterator[FileStatus],
+              physicalSchema: StructType,
+              predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
             throwErrorIfAddStatsInSchema(physicalSchema)
-            super.readJsonFiles(fileIter, physicalSchema)
+            super.readJsonFiles(fileIter, physicalSchema, predicate)
           }
         }
       }

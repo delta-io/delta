@@ -1269,6 +1269,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_USE_PERSISTENT_DELETION_VECTORS =
+    buildConf("merge.deletionVectors.persistent")
+      .internal()
+      .doc("Enable persistent Deletion Vectors in Merge command.")
+      .booleanConf
+      .createWithDefault(true)
+
   val UPDATE_USE_PERSISTENT_DELETION_VECTORS =
     buildConf("update.deletionVectors.persistent")
       .internal()
@@ -1417,12 +1424,24 @@ trait DeltaSQLConfBase {
   // Clustered Table
   //////////////////
 
-  val DELTA_ENABLE_CLUSTERING_TABLE_FEATURE =
-    buildConf("clusteringTable.enableClusteringTableFeature")
+  val DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED =
+    buildConf("clusteredTable.enableClusteringTablePreview")
       .internal()
-      .doc("If true, enable ClusteringTableFeature when the table is a clustered table.")
-    .booleanConf
-    .createWithDefault(false)
+      .doc("Whether to enable the clustering table preview.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_NUM_CLUSTERING_COLUMNS_LIMIT =
+    buildStaticConf("clusteredTable.numClusteringColumnsLimit")
+      .internal()
+      .doc("""The maximum number of clustering columns allowed for a clustered table.
+        """.stripMargin)
+      .intConf
+      .checkValue(
+        _ > 0,
+        "'clusteredTable.numClusteringColumnsLimit' must be positive."
+      )
+    .createWithDefault(4)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

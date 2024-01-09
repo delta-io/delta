@@ -48,6 +48,7 @@ trait MergeCDCTests extends QueryTest
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
+    .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
 
   // scalastyle:off argcount
   /**

@@ -18,17 +18,18 @@ package io.delta.kernel.defaults.utils
 import java.io.File
 import java.nio.file.Files
 import java.util.{Optional, TimeZone, UUID}
-
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
-
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.client.TableClient
-import io.delta.kernel.data.{ColumnVector, MapValue, Row}
+import io.delta.kernel.data.{ColumnVector, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.expressions.Predicate
+import io.delta.kernel.internal.InternalScanFileUtils
+import io.delta.kernel.internal.data.ScanStateRow
+import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
@@ -119,30 +120,43 @@ trait TestUtils extends Assertions {
     val scanState = scan.getScanState(tableClient);
     val fileIter = scan.getScanFiles(tableClient)
 
+    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState)
     fileIter.forEach { fileColumnarBatch =>
-      val dataBatches = Scan.readData(
-        tableClient,
-        scanState,
-        fileColumnarBatch.getRows(),
-        Optional.empty()
-      )
-
-      dataBatches.forEach { batch =>
-        val selectionVector = batch.getSelectionVector()
-        val data = batch.getData()
-
-        var i = 0
-        val rowIter = data.getRows()
+      fileColumnarBatch.getRows().forEach { scanFileRow =>
+        val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
+        val physicalDataIter = tableClient.getParquetHandler().readParquetFiles(
+          singletonCloseableIterator(fileStatus),
+          physicalDataReadSchema,
+          Optional.empty())
+        var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
         try {
-          while (rowIter.hasNext) {
-            val row = rowIter.next()
-            if (!selectionVector.isPresent || selectionVector.get.getBoolean(i)) { // row is valid
-              result.append(row)
+          dataBatches = Scan.transformPhysicalData(
+            tableClient,
+            scanState,
+            scanFileRow,
+            physicalDataIter)
+
+          dataBatches.forEach { batch =>
+            val selectionVector = batch.getSelectionVector()
+            val data = batch.getData()
+
+            var i = 0
+            val rowIter = data.getRows()
+            try {
+              while (rowIter.hasNext) {
+                val row = rowIter.next()
+                if (!selectionVector.isPresent || selectionVector.get.getBoolean(i)) {
+                  // row is valid
+                  result.append(row)
+                }
+                i += 1
+              }
+            } finally {
+              rowIter.close()
             }
-            i += 1
           }
         } finally {
-          rowIter.close()
+          dataBatches.close()
         }
       }
     }

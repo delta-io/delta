@@ -17,13 +17,15 @@
 package io.delta.kernel.client;
 
 import java.io.IOException;
+import java.util.Optional;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FileDataReadResult;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 
 /**
  * Provides Parquet file related functionalities to Delta Kernel. Connectors can leverage this
@@ -33,8 +35,7 @@ import io.delta.kernel.utils.CloseableIterator;
  * @since 3.0.0
  */
 @Evolving
-public interface ParquetHandler
-    extends FileHandler {
+public interface ParquetHandler {
     /**
      * Read the Parquet format files at the given locations and return the data as a
      * {@link ColumnarBatch} with the columns requested by {@code physicalSchema}.
@@ -49,15 +50,19 @@ public interface ParquetHandler
      * matched by name. When trying to find the column in Parquet by name,
      * first case-sensitive match is used. If not found then a case-insensitive match is attempted.
      *
-     * @param fileIter       Iterator of {@link FileReadContext} objects to read data from.
+     * @param fileIter       Iterator of files to read data from.
      * @param physicalSchema Select list of columns to read from the Parquet file.
-     * @return an iterator of {@link FileDataReadResult}s containing the data in columnar format
-     * and the corresponding scan file information. It is the responsibility of the caller
-     * to close the iterator. The data returned is in the same as the order of files given
-     * in <i>fileIter</i>.
-     * @throws IOException if an error occurs during the read.
+     * @param predicate      Optional predicate which the Parquet reader can optionally use to prune
+     *                       rows that don't satisfy the predicate. Because pruning is optional and
+     *                       may be incomplete, caller is still responsible apply the predicate on
+     *                       the data returned by this method.
+     * @return an iterator of {@link ColumnarBatch}s containing the data in columnar format.
+     * It is the responsibility of the caller to close the iterator. The data returned is in the
+     * same as the order of files given in {@code scanFileIter}.
+     * @throws IOException if an I/O error occurs during the read.
      */
-    CloseableIterator<FileDataReadResult> readParquetFiles(
-        CloseableIterator<FileReadContext> fileIter,
-        StructType physicalSchema) throws IOException;
+    CloseableIterator<ColumnarBatch> readParquetFiles(
+        CloseableIterator<FileStatus> fileIter,
+        StructType physicalSchema,
+        Optional<Predicate> predicate) throws IOException;
 }
