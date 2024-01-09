@@ -72,7 +72,7 @@ Scan myScan = mySnapshot.getScanBuilder(myTableClient).build()
 Row scanState = myScan.getScanState(myTableClient)
 
 // Information about the list of scan files to read
-CloseableIterator<ColumnarBatch> scanFiles = myScan.getScanFiles(myTableClient)
+CloseableIterator<FilteredColumnarBatch> scanFiles = myScan.getScanFiles(myTableClient)
 ```
 
 This [`Scan`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html) object has all the necessary metadata to start reading the table. There are two crucial pieces of information needed for reading data from a file in the table. 
@@ -80,7 +80,7 @@ This [`Scan`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta
 * `myScan.getScanFiles(TableClient)`:  Returns scan files as columnar batches (represented as an iterator of `FilteredColumnarBatch`es, more on that later) where each selected row in the batch has information about a single file containing the table data.
 * `myScan.getScanState(TableClient)`: Returns the snapshot-level information needed for reading any file. Note that this is a single row and common to all scan files.
 
-To read the data, you have to call[`ScanFile.readData()`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html#readData-io.delta.kernel.client.TableClient-io.delta.kernel.data.Row-io.delta.kernel.utils.CloseableIterator-java.util.Optional-) with the scan state and each of the scan files (that is, each row returned by `myScan.getScanFiles()`). Here is an example of reading all the table data in a single thread. 
+To read the data, for each scan file open it and read the physical data from the file. What columns from the file to read are mentioned in the scan state. Once the physical data is read, you have to call [`ScanFile.transformPhysicalData()`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html#transformPhysicalData-io.delta.kernel.client.TableClient-io.delta.kernel.data.Row-io.delta.kernel.data.Row-io.delta.kernel.utils.CloseableIterator-) with the scan state and the physical data read from scan file. This API takes care of transforming (e.g. adding partition columns) the physical data into logical data of the table. Here is an example of reading all the table data in a single thread. 
 
 ```java
 CloserableIterator<FilteredColumnarBatch> fileIter = scanObject.getScanFiles(myTableClient);
@@ -99,7 +99,7 @@ while(fileIter.hasNext()) {
     while (scanFileRows.hasNext()) {
       Row scanFileRow = scanFileRows.next();
 
-      // From the scan file row, extract the file path, size and modification metadata
+      // From the scan file row, extract the file path, size and modification time metadata
       // needed to read the file.
       FileStatus fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow);
 
@@ -110,7 +110,7 @@ while(fileIter.hasNext()) {
         tableClient.getParquetHandler().readParquetFiles(
           singletonCloseableIterator(fileStatus),
           physicalReadSchema,
-          Optional.empty() /* additional predicate the connector can apply to filter data from the reader */
+          Optional.empty() /* optional predicate the connector can apply to filter data from the reader */
         );
 
       // Now the physical data read from the Parquet data file is converted to a table
@@ -164,7 +164,7 @@ while(fileIter.hasNext()) {
 A few working examples to read Delta tables within a single process are available [here](https://github.com/delta-io/delta/tree/master/kernel/examples).
 
 #### Important Note
-* All the Delta protocol-level details are encoded in the rows returned by `Scan.getScanFiles` API, but you do not have to understand them in order to read the table data correctly. All you need is to get the physical Parquet file details from the scan file row and read the data from the Parquet file and return as `ColumnarBatch` format. The physical data can be converted into the data in the logical data of the table using [`Scan.transformPhysicalData`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html#transformPhysicalData-io.delta.kernel.client.TableClient-io.delta.kernel.data.Row-io.delta.kernel.data.Row-io.delta.kernel.utils.CloseableIterator-). Transformation to logical data involves adding partition column data, deleting rows that are marked as deleted by the scan file deletion vector. In the future, there will be more information (that is, more columns) added to these rows, but your code will not have to change to accommodate those changes. This is the major advantage of the abstractions provided by Delta Kernel.
+* All the Delta protocol-level details are encoded in the rows returned by `Scan.getScanFiles` API, but you do not have to understand them in order to read the table data correctly. All you need is to get the physical Parquet file details from the scan file row, read the data from the Parquet file, and return in `ColumnarBatch` format. The physical data can be converted into the data in the logical data of the table using [`Scan.transformPhysicalData`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html#transformPhysicalData-io.delta.kernel.client.TableClient-io.delta.kernel.data.Row-io.delta.kernel.data.Row-io.delta.kernel.utils.CloseableIterator-). Transformation to logical data involves adding partition column data, deleting rows that are marked as deleted by the scan file deletion vector. In the future, there will be more information (i.e. more columns) added to these logical data returned, but your code will not have to change to accommodate those changes. This is the major advantage of the abstractions provided by Delta Kernel.
 
 * Observe that the same `TableClient` instance `myTableClient` is passed multiple times whenever a call to Delta Kernel API is made. The reason for passing this instance for every call is because it is the connector context, it should maintained outside of the Delta Kernel APIs to give the connector control over the `TableClient`.
 
