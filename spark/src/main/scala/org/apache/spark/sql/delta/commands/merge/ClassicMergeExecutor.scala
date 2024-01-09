@@ -514,10 +514,25 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     val touchedFilesWithDVs = DMLWithDeletionVectorsHelper
       .findFilesWithMatchingRows(deltaTxn, nameToAddFileMap, matchedDVResult)
 
-    val (dvActions, _) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
+    val (dvActions, metricsMap) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
       spark,
       touchedFilesWithDVs,
       deltaTxn.snapshot)
+
+    metrics("numTargetDeletionVectorsAdded")
+      .set(metricsMap.getOrElse("numDeletionVectorsAdded", 0L))
+    metrics("numTargetDeletionVectorsRemoved")
+      .set(metricsMap.getOrElse("numDeletionVectorsRemoved", 0L))
+    metrics("numTargetDeletionVectorsUpdated")
+      .set(metricsMap.getOrElse("numDeletionVectorsUpdated", 0L))
+
+    // When DVs are enabled we override metrics related to removed files.
+    metrics("numTargetFilesRemoved").set(metricsMap.getOrElse("numRemovedFiles", 0L))
+
+    val fullyRemovedFiles = touchedFilesWithDVs.filter(_.isFullyReplaced()).map(_.fileLogEntry)
+    val (removedBytes, removedPartitions) = totalBytesAndDistinctPartitionValues(fullyRemovedFiles)
+    metrics("numTargetBytesRemoved").set(removedBytes)
+    metrics("numTargetPartitionsRemovedFrom").set(removedPartitions)
 
     dvActions
   }
