@@ -89,15 +89,17 @@ private[delta] trait CompactionTestHelperForAutoCompaction extends CompactionTes
   override def compactAndGetMetrics(tablePath: String, where: String = ""): OptimizeMetrics = {
     // Set min num files to 2 - so that even if two small files are present in a partition, then
     // also they are compacted.
-    var metrics: Seq[OptimizeMetrics] = Nil
+    var metrics: Option[OptimizeMetrics] = None
     withSQLConf(DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "2") {
         metrics =
+          Some(
             AutoCompact.compact(
               spark,
               DeltaLog.forTable(spark, tablePath)
+            ).head
           )
     }
-    metrics.head
+    metrics.get
   }
 
   override val minFileSizeConf: String = DELTA_AUTO_COMPACT_MIN_FILE_SIZE.key

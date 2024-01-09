@@ -227,7 +227,6 @@ class AutoCompactSuite extends
     }
   }
 
-
   test("auto compact should not kick in after optimize") {
     withTempDir { tempDir =>
         val dir = tempDir.getCanonicalPath
@@ -249,7 +248,6 @@ class AutoCompactSuite extends
         assert(lastEvent.operationParameters("auto") === "false")
     }
   }
-
 
   testBothModesViaProperty("auto compact should not kick in when there aren't " +
     "enough files") { dir =>
