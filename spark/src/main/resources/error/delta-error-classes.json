@@ -362,6 +362,18 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_CLUSTERING_WITH_PARTITION_PREDICATE" : {
+    "message" : [
+      "OPTIMIZE command for Delta table with clustering doesn't support partition predicates. Please remove the predicates: <predicates>."
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_CLUSTERING_WITH_ZORDER_BY" : {
+    "message" : [
+      "OPTIMIZE command for Delta table with clustering cannot specify ZORDER BY. Please remove ZORDER BY (<zOrderBy>)."
+    ],
+    "sqlState" : "42613"
+  },
   "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS" : {
     "message" : [
       "CLUSTER BY supports up to <numColumnsLimit> clustering columns, but the table has <actualNumColumns> clustering columns. Please remove the extra clustering columns."

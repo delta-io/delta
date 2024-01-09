@@ -3125,6 +3125,19 @@ trait DeltaErrorsBase
       messageParameters = Array.empty)
   }
 
+  def clusteringWithPartitionPredicatesException(predicates: Seq[String]): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CLUSTERING_WITH_PARTITION_PREDICATE",
+      messageParameters = Array(s"${predicates.mkString(" ")}")
+    )
+  }
+
+  def clusteringWithZOrderByException(zOrderBy: Seq[UnresolvedAttribute]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTERING_WITH_ZORDER_BY",
+      messageParameters = Array(s"${zOrderBy.map(_.name).mkString(", ")}"))
+  }
+
   def clusteringTablePreviewDisabledException(): Throwable = {
     val msg = s"""
       |A clustered table is currently in preview and is disabled by default. Please set
