@@ -3013,6 +3013,50 @@ trait DeltaErrorsBase
     )
   }
 
+  def icebergCompatVersionNotSupportedException(
+      currVersion: Int,
+      maxVersion: Int): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.COMPAT_VERSION_NOT_SUPPORTED",
+      messageParameters = Array(
+        currVersion.toString,
+        currVersion.toString,
+        maxVersion.toString
+      )
+    )
+  }
+
+  def icebergCompatReorgAddFileTagsMissingException(
+      tableVersion: Long,
+      icebergCompatVersion: Int,
+      addFilesCount: Long,
+      addFilesWithTagsCount: Long): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.FILES_NOT_ICEBERG_COMPAT",
+      messageParameters = Array(
+        icebergCompatVersion.toString,
+        icebergCompatVersion.toString,
+        addFilesCount.toString,
+        tableVersion.toString,
+        (addFilesCount - addFilesWithTagsCount).toString,
+        icebergCompatVersion.toString
+      )
+    )
+  }
+
+  def icebergCompatDataFileRewriteFailedException(
+      icebergCompatVersion: Int,
+      cause: Throwable): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "",
+      messageParameters = Array(
+        icebergCompatVersion.toString,
+        icebergCompatVersion.toString
+      ),
+      cause
+    )
+  }
+
   def icebergCompatReplacePartitionedTableException(
       version: Int,
       prevPartitionCols: Seq[String],
