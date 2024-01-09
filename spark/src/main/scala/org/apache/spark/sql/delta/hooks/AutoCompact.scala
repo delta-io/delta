@@ -150,7 +150,7 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
         // partitions stay eligible for subsequent auto compactions.
         partitionsStats.markPartitionsAsCompacted(
           tableId,
-          autoCompactRequest.allowedPartitions()
+          autoCompactRequest.allowedPartitions
         )
         metrics
       } catch {
@@ -161,7 +161,7 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
         if (AutoCompactUtils.reservePartitionEnabled(spark)) {
           AutoCompactPartitionReserve.releasePartitions(
             tableId,
-            autoCompactRequest.allowedPartitions()
+            autoCompactRequest.allowedPartitions
           )
         }
       }
