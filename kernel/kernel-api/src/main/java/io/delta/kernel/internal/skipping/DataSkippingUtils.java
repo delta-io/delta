@@ -24,9 +24,9 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
-import static io.delta.kernel.internal.util.ExpressionUtils.*;
 import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_ORDINAL;
 import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_STATS_ORDINAL;
+import static io.delta.kernel.internal.util.ExpressionUtils.*;
 
 public class DataSkippingUtils {
 
@@ -55,7 +55,7 @@ public class DataSkippingUtils {
      */
     public static Optional<Predicate> constructDataSkippingFilter(
             Predicate dataFilters, StructType dataSchema) {
-            StatsSchemaHelper schemaHelper = new StatsSchemaHelper(dataSchema);
+        StatsSchemaHelper schemaHelper = new StatsSchemaHelper(dataSchema);
         return constructDataSkippingFilter(dataFilters, schemaHelper);
     }
 
@@ -192,12 +192,15 @@ public class DataSkippingUtils {
                             dataFilters.getName(), leftCol, rightLit, schemaHelper));
                     }
                 } else if (right instanceof Column && left instanceof Literal) {
-                    return constructDataSkippingFilter(reverseComparatorFilter(dataFilters), schemaHelper);
+                    return constructDataSkippingFilter(
+                        reverseComparatorFilter(dataFilters), schemaHelper);
                 }
+                break;
             // TODO more expressions
             default:
                 return Optional.empty();
         }
+        return Optional.empty();
     }
 
     //////////////////////////////////////////////////////////////////////////////////

@@ -16,11 +16,11 @@
 package io.delta.kernel.internal.util;
 
 import java.util.List;
+import static java.lang.String.format;
 
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static java.lang.String.format;
 
 public class ExpressionUtils {
     /**
