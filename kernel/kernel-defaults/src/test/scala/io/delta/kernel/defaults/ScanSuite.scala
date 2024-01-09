@@ -38,7 +38,7 @@ import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.types.StructType
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.utils.{CloseableIterator. FileStatus}
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.{Snapshot, Table}
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.internal.InternalScanFileUtils
