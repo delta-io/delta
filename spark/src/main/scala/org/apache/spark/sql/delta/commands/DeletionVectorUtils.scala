@@ -33,7 +33,7 @@ trait DeletionVectorUtils {
    * Run a query on the delta log to determine if the given snapshot contains no deletion vectors.
    * Return `false` if it does contain deletion vectors.
    */
-  def isTableDVFree(spark: SparkSession, snapshot: Snapshot): Boolean = {
+  def isTableDVFree(snapshot: Snapshot): Boolean = {
     val dvsReadable = deletionVectorsReadable(snapshot)
 
     if (dvsReadable) {
