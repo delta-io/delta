@@ -13,7 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+<<<<<<< HEAD
 
+=======
+>>>>>>> c19d70ac (v1)
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.cdc.MergeCDCTests
