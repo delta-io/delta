@@ -19,8 +19,6 @@ package org.apache.spark.sql.delta.commands
 import java.util.ConcurrentModificationException
 
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.parallel.ForkJoinTaskSupport
-import scala.collection.parallel.immutable.ParVector
 
 import org.apache.spark.sql.delta.skipping.MultiDimClustering
 import org.apache.spark.sql.delta._

@@ -20,12 +20,10 @@ import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeltaConfigs, Sn
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.files.SupportsRowIndexFilters
 import org.apache.spark.sql.delta.files.TahoeFileIndex
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.FileIndex
 import org.apache.spark.sql.functions.col
-import org.apache.spark.util.Utils
 
 trait DeletionVectorUtils {
 
