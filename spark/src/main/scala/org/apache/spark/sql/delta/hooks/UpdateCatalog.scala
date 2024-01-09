@@ -109,6 +109,9 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
       spark: SparkSession,
       snapshot: Snapshot
       ): Boolean = {
+    if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED)) {
+      return false
+    }
     // Do not execute for path based tables, because they don't exist in the MetaStore
     if (isPathBasedDeltaTable(table, spark)) return false
     // Only execute if this is a Delta table
