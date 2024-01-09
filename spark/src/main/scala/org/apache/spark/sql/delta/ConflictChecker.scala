@@ -135,15 +135,22 @@ private[delta] class ConflictChecker(
    * the transaction as if it had started while reading the `winningCommitVersion`.
    */
   def checkConflicts(): CurrentTransactionInfo = {
+    // Protocol and metadata checks.
     checkProtocolCompatibility()
     checkNoMetadataUpdates()
+    checkIfDomainMetadataConflict()
+    checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
+
+    // Row Tracking reconciliation. We perform this before the file checks to ensure that
+    // no files have duplicate row IDs.
+    reassignOverlappingRowIds()
+    reassignRowCommitVersions()
+
+    // Data file checks.
     checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn()
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
-    checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
-    reassignOverlappingRowIds()
-    reassignRowCommitVersions()
-    checkIfDomainMetadataConflict()
+
     logMetrics()
     currentTransactionInfo
   }
