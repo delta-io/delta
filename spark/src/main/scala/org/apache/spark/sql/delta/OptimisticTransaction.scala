@@ -892,7 +892,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def createAutoCompactStatsCollector(): AutoCompactPartitionStatsCollector = {
     try {
       if (spark.conf.get(DeltaSQLConf.DELTA_AUTO_COMPACT_RECORD_PARTITION_STATS_ENABLED)) {
-        val minFileSize = spark.conf.get(DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_FILE_SIZE)
+        val minFileSize = spark.conf
+              .get(DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_FILE_SIZE)
               .getOrElse(Long.MaxValue)
         return AutoCompactPartitionStats.instance(spark)
           .createStatsCollector(minFileSize, reportAutoCompactStatsError)
