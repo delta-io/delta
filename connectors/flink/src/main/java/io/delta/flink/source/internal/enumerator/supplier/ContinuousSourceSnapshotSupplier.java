@@ -3,12 +3,11 @@ package io.delta.flink.source.internal.enumerator.supplier;
 import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.utils.TransitiveOptional;
+import io.delta.kernel.Table;
+import io.delta.kernel.client.TableClient;
 import static io.delta.flink.source.internal.DeltaSourceOptions.STARTING_TIMESTAMP;
 import static io.delta.flink.source.internal.DeltaSourceOptions.STARTING_VERSION;
 import static io.delta.flink.source.internal.DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS;
-
-import io.delta.kernel.Table;
-import io.delta.kernel.client.TableClient;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
@@ -20,7 +19,10 @@ import io.delta.standalone.Snapshot;
  */
 public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
 
-    public ContinuousSourceSnapshotSupplier(DeltaLog deltaLog, TableClient tableClient, Table table) {
+    public ContinuousSourceSnapshotSupplier(
+          DeltaLog deltaLog,
+          TableClient tableClient,
+          Table table) {
         super(deltaLog, tableClient, table);
     }
 
@@ -41,7 +43,8 @@ public class ContinuousSourceSnapshotSupplier extends SnapshotSupplier {
      */
     @Override
     public Snapshot getSnapshot(DeltaConnectorConfiguration sourceConfiguration) {
-        TransitiveOptional<Snapshot> snapshot = getSnapshotFromStartingVersionOption(sourceConfiguration)
+        TransitiveOptional<Snapshot> snapshot =
+            getSnapshotFromStartingVersionOption(sourceConfiguration)
             .or(() -> getSnapshotFromStartingTimestampOption(sourceConfiguration));
         boolean useKernel = sourceConfiguration.getValue(USE_KERNEL_FOR_SNAPSHOTS);
         if (useKernel) {

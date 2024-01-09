@@ -1,5 +1,7 @@
 package io.delta.standalone.internal
 
+import java.util.Optional
+
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -23,7 +25,8 @@ class InitialKernelSnapshotImpl(logPath: Path, dataPath: Path, tableClient: Defa
       -1,
       io.delta.kernel.internal.snapshot.LogSegment.empty(new KernelPath(logPath.toString())),
       tableClient,
-      -1)
+      -1,
+      Optional.empty())
 
 /**
  * We want to be able to construct an OptimisticTransactionImpl that uses a delta log and a snapshot

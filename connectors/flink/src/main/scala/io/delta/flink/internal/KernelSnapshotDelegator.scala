@@ -18,7 +18,7 @@ import io.delta.standalone.internal.util.ConversionUtils
  */
 class AppIdDeferedMap(snapshot: SnapshotImplKernel) extends Map[String, Long] {
   def get(applicationId: String): Option[Long] = {
-    val versionJOpt = snapshot.getRecentTransactionVersion(applicationId)
+    val versionJOpt = snapshot.getLatestTransactionVersion(applicationId)
     if (versionJOpt.isPresent) {
       Some(versionJOpt.get)
     } else {

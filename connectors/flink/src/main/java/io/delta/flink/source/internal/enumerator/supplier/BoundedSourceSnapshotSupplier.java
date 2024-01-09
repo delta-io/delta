@@ -3,14 +3,11 @@ package io.delta.flink.source.internal.enumerator.supplier;
 import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.utils.TransitiveOptional;
-
 import io.delta.kernel.Table;
 import io.delta.kernel.client.TableClient;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
-
-import org.apache.flink.core.fs.Path;
 
 /**
  * An implementation of {@link SnapshotSupplier} for {#link

@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Optional;
 
 import io.delta.kernel.data.ColumnVector;
+
 import io.delta.standalone.DeltaScan;
 import io.delta.standalone.actions.AddFile;
 import io.delta.standalone.actions.Metadata;
@@ -26,7 +27,7 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
     // and cache the result.
     private Optional<Metadata> metadata = Optional.empty();
     private io.delta.kernel.internal.SnapshotImpl kernelSnapshot;
-    
+
     public KernelSnapshotWrapper(io.delta.kernel.internal.SnapshotImpl kernelSnapshot) {
         this.kernelSnapshot = kernelSnapshot;
     }
@@ -66,8 +67,10 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
         for (io.delta.kernel.types.StructField kernelField: kernelFields) {
             io.delta.standalone.types.FieldMetadata.Builder metadataBuilder =
                 io.delta.standalone.types.FieldMetadata.builder();
-            for (java.util.Map.Entry<String,String> entry : kernelField.getMetadata().entrySet()) {
-                metadataBuilder.putString(entry.getKey(), entry.getValue());
+            // TODO: Don't use Object and toString here
+            for (java.util.Map.Entry<String, Object> entry :
+                     kernelField.getMetadata().getEntries().entrySet()) {
+                metadataBuilder.putString(entry.getKey(), entry.getValue().toString());
             }
             fields[index] = new io.delta.standalone.types.StructField(
                 kernelField.getName(),
@@ -91,9 +94,9 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
             kernelMetadata.getConfiguration(),
             kernelMetadata.getCreatedTime(),
             schema
-        );      
+        );
     }
-    
+
     /**
      * @return the table metadata for this snapshot.
      *
