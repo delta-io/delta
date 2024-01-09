@@ -218,7 +218,7 @@ public class ScanImpl implements Scan {
             CloseableIterator<FilteredColumnarBatch> scanFileIter,
             Predicate dataSkippingFilter) {
         // Get the stats schema
-        // TODO prune stats schema according to the data skipping filter
+        // TODO prune stats schema according to the data skipping filter delta-io/delta#2458
         StructType statsSchema = getStatsSchema(metadata.getSchema());
 
         // Skipping happens in two steps:
