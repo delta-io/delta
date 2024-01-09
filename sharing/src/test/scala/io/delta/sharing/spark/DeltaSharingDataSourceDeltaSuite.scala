@@ -165,7 +165,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
           withSQLConf((limitPushdownConfig ++ getDeltaSharingClassesSQLConf).toSeq: _*) {
             val profileFile = prepareProfileFile(tempDir)
             val tableName = s"share1.default.$sharedTableName"
-            test(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName", tableName)
+            test(s"${profileFile.getCanonicalPath}#$tableName", tableName)
           }
         }
       }
