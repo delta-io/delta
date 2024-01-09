@@ -30,7 +30,7 @@ import io.delta.sharing.client.util.JsonUtils
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.{SparkConf, SparkEnv}
+import org.apache.spark.SparkEnv
 import org.apache.spark.delta.sharing.{PreSignedUrlCache, PreSignedUrlFetcher}
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{
@@ -39,7 +39,6 @@ import org.apache.spark.sql.catalyst.expressions.{
   Literal => SqlLiteral
 }
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
-import org.apache.spark.sql.test.{SharedSparkSession}
 import org.apache.spark.sql.types.{FloatType, IntegerType}
 
 private object TestUtils {
@@ -190,7 +189,7 @@ class TestDeltaSharingClientForFileIndex(
 class DeltaSharingFileIndexSuite
     extends QueryTest
     with DeltaSQLCommandTest
-    with SharedSparkSession
+    with DeltaSharingDataSourceDeltaTestUtils
     with DeltaSharingTestSparkUtils {
 
   import TestUtils._
@@ -292,14 +291,6 @@ class DeltaSharingFileIndexSuite
     }
   }
 
-  override protected def sparkConf: SparkConf = {
-    super.sparkConf
-      .set("spark.delta.sharing.preSignedUrl.expirationMs", defaultUrlExpirationMs.toString)
-      .set("spark.delta.sharing.driver.refreshCheckIntervalMs", "1000")
-      .set("spark.delta.sharing.driver.refreshThresholdMs", "2000")
-      .set("spark.delta.sharing.driver.accessThresholdToExpireMs", "60000")
-  }
-
   test("refresh works") {
     PreSignedUrlCache.registerIfNeeded(SparkEnv.get)
 
@@ -333,7 +324,7 @@ class DeltaSharingFileIndexSuite
                 1000
               )
               // sleep for expirationTimeMs to ensure that the urls are refreshed.
-              Thread.sleep(defaultUrlExpirationMs)
+              Thread.sleep(15000)
 
               // Verify that the url is refreshed as paths(1), not paths(0) anymore.
               assert(fetcher.getUrl == paths(1))

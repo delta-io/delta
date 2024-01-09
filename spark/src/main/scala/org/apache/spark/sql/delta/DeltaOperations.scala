@@ -250,6 +250,10 @@ object DeltaOperations {
         strMetrics += "numOutputRows" -> actualNumOutputRows.toString
       }
 
+      val dvMetrics = transformDeletionVectorMetrics(
+        metrics, dvMetrics = DeltaOperationMetrics.MERGE_DELETION_VECTORS)
+      strMetrics ++= dvMetrics
+
       strMetrics
     }
 
@@ -719,6 +723,16 @@ private[delta] object DeltaOperationMetrics {
       SumMetrics("numDeletionVectorsRemoved", "numDeletionVectorsUpdated")
   )
 
+  // The same as [[DELETION_VECTORS]] but with the "Target" prefix that is used by MERGE.
+  val MERGE_DELETION_VECTORS = Map(
+    // Adding "numDeletionVectorsUpdated" here makes the values line up with how
+    // "numFilesAdded"/"numFilesRemoved" behave.
+    "numTargetDeletionVectorsAdded" ->
+      SumMetrics("numTargetDeletionVectorsAdded", "numTargetDeletionVectorsUpdated"),
+    "numTargetDeletionVectorsRemoved" ->
+      SumMetrics("numTargetDeletionVectorsRemoved", "numTargetDeletionVectorsUpdated")
+  )
+
   val TRUNCATE = Set(
     "numRemovedFiles", // number of files removed
     "executionTimeMs" // time taken to execute the entire operation
@@ -748,7 +762,10 @@ private[delta] object DeltaOperationMetrics {
     "numTargetChangeFilesAdded", // number of CDC files
     "executionTimeMs",  // time taken to execute the entire operation
     "scanTimeMs", // time taken to scan the files for matches
-    "rewriteTimeMs" // time taken to rewrite the matched files
+    "rewriteTimeMs", // time taken to rewrite the matched files
+    "numTargetDeletionVectorsAdded", // number of deletion vectors added
+    "numTargetDeletionVectorsRemoved", // number of deletion vectors removed
+    "numTargetDeletionVectorsUpdated" // number of deletion vectors updated
   )
 
   val UPDATE = Set(

@@ -342,6 +342,32 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CLUSTERING_COLUMNS_MISMATCH" : {
+    "message" : [
+      "The provided clustering columns do not match the existing table's.",
+      "- provided: <providedClusteringColumns>",
+      "- existing: <existingClusteringColumns>"
+    ],
+    "sqlState" : "42P10"
+  },
+  "DELTA_CLUSTERING_COLUMN_MISSING_STATS" : {
+    "message" : [
+      "Clustering requires clustering columns to have stats. Couldn't find clustering column(s) '<columns>' in stats schema:\n<schema>"
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_CLUSTERING_REPLACE_TABLE_WITH_PARTITIONED_TABLE" : {
+    "message" : [
+      "Replacing a clustered Delta table with a partitioned table is not allowed."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS" : {
+    "message" : [
+      "CLUSTER BY supports up to <numColumnsLimit> clustering columns, but the table has <actualNumColumns> clustering columns. Please remove the extra clustering columns."
+    ],
+    "sqlState" : "54000"
+  },
   "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" : {
     "message" : [
       "Data skipping is not supported for partition column '<column>'."
@@ -2256,6 +2282,12 @@
       "<view> is a view. DESCRIBE DETAIL is only supported for tables."
     ],
     "sqlState" : "42809"
+  },
+  "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN" : {
+    "message" : [
+      "Dropping clustering columns (<columnList>) is not allowed."
+    ],
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_DROP_COLUMN" : {
     "message" : [

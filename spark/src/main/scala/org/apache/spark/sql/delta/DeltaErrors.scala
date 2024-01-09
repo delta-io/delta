@@ -3093,6 +3093,55 @@ trait DeltaErrorsBase
       messageParameters = Array(value, AutoCompactType.ALLOWED_VALUES.mkString("(", ",", ")"))
     )
   }
+
+  def clusterByInvalidNumColumnsException(
+      numColumnsLimit: Int,
+      actualNumColumns: Int): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+      messageParameters = Array(numColumnsLimit.toString, actualNumColumns.toString)
+    )
+  }
+
+  def clusteringColumnMissingStats(
+      clusteringColumnWithoutStats: String,
+      statsSchema: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+      messageParameters = Array(clusteringColumnWithoutStats, statsSchema)
+    )
+  }
+
+  def clusteringColumnsMismatchException(
+      providedClusteringColumns: String,
+      existingClusteringColumns: String): Throwable = {
+    new DeltaAnalysisException(
+      "DELTA_CLUSTERING_COLUMNS_MISMATCH",
+      Array(providedClusteringColumns, existingClusteringColumns)
+    )
+  }
+
+  def dropClusteringColumnNotSupported(droppingClusteringCols: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+      Array(droppingClusteringCols.mkString(",")))
+  }
+
+  def replacingClusteredTableWithPartitionedTableNotAllowed(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTERING_REPLACE_TABLE_WITH_PARTITIONED_TABLE",
+      messageParameters = Array.empty)
+  }
+
+  def clusteringTablePreviewDisabledException(): Throwable = {
+    val msg = s"""
+      |A clustered table is currently in preview and is disabled by default. Please set
+      |${DeltaSQLConf.DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED.key} to true to enable it.
+      |Note that a clustered table is not recommended for production use (e.g., unsupported
+      |incremental clustering).
+      |""".stripMargin.replace("\n", " ")
+    new UnsupportedOperationException(msg)
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

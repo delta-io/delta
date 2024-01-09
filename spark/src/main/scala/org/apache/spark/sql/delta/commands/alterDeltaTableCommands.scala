@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit
 
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteringColumnInfo
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -465,6 +466,12 @@ case class AlterTableDropColumnsDeltaCommand(
       val droppingPartitionCols = metadata.partitionColumns.filter(droppedColumnSet.contains(_))
       if (droppingPartitionCols.nonEmpty) {
         throw DeltaErrors.dropPartitionColumnNotSupported(droppingPartitionCols)
+      }
+      // Disallow dropping clustering columns.
+      val clusteringCols = ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
+      val droppingClusteringCols = clusteringCols.filter(droppedColumnSet.contains(_))
+      if (droppingClusteringCols.nonEmpty) {
+        throw DeltaErrors.dropClusteringColumnNotSupported(droppingClusteringCols)
       }
       // Updates the delta statistics column list by removing the dropped columns from it.
       val newConfiguration = metadata.configuration ++

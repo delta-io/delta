@@ -1339,11 +1339,20 @@ object MergeIntoMetricsBase extends QueryTest with SharedSparkSession {
   val mergeTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
   // Metrics related with CDF. Available only when CDF is available.
   val mergeCdfMetrics = Set("numTargetChangeFilesAdded")
+  // DV Metrics.
+  val mergeDVMetrics = Set(
+    "numTargetDeletionVectorsAdded",
+    "numTargetDeletionVectorsUpdated",
+    "numTargetDeletionVectorsRemoved")
 
   // Ensure that all metrics are properly copied here.
   assert(
     DeltaOperationMetrics.MERGE.size ==
-      mergeRowMetrics.size + mergeFileMetrics.size + mergeTimeMetrics.size + mergeCdfMetrics.size
+      mergeRowMetrics.size +
+      mergeFileMetrics.size +
+      mergeTimeMetrics.size +
+      mergeCdfMetrics.size +
+      mergeDVMetrics.size
   )
 
   ///////////////////
