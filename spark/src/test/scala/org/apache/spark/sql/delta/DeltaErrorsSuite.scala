@@ -444,6 +444,14 @@ trait DeltaErrorsSuiteBase
         Some("Column c is not specified in INSERT"))
     }
     {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.invalidAutoCompactType("invalid")
+      }
+      val allowed = AutoCompactType.ALLOWED_VALUES.mkString("(", ",", ")")
+      checkErrorMessage(e, None, None,
+        Some(s"Invalid auto-compact type: invalid. Allowed values are: $allowed."))
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.missingColumnsInInsertInto("c")
       }

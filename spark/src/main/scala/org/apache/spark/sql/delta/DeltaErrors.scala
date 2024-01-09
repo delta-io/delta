@@ -3090,7 +3090,7 @@ trait DeltaErrorsBase
   def invalidAutoCompactType(value: String): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_INVALID_AUTO_COMPACT_TYPE",
-      messageParameters = Array(AutoCompactType.ALLOWED_VALUES.mkString("(", ",", ")"), value)
+      messageParameters = Array(value, AutoCompactType.ALLOWED_VALUES.mkString("(", ",", ")"))
     )
   }
 }
