@@ -59,11 +59,11 @@ trait SnapshotManagement { self: DeltaLog =>
 
   @volatile protected var currentSnapshot: CapturedSnapshot = getSnapshotAtInit
 
-  /** Use ReentrantLock to allow us to call `withSnapshotLockInterruptibly` */
+  /** Use ReentrantLock to allow us to call `lockInterruptibly` */
   protected val snapshotLock = new ReentrantLock()
 
   /**
-   * Run `body` inside `snapshotLock` lock using `withSnapshotLockInterruptibly` so that the thread
+   * Run `body` inside `snapshotLock` lock using `lockInterruptibly` so that the thread
    * can be interrupted when waiting for the lock.
    */
   def withSnapshotLockInterruptibly[T](body: => T): T = {
