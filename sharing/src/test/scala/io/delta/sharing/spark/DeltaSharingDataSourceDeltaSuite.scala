@@ -41,7 +41,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
    */
   test("failed to getMetadata") {
     withTempDir { tempDir =>
-      val sharedTableName = "table_with_broken_json"
+      val sharedTableName = "shared_table_broken_json"
 
       def test(tablePath: String, tableFullName: String): Unit = {
         DeltaSharingUtils.overrideIteratorBlock[String](
