@@ -49,7 +49,7 @@ class ExistingDeletionVectorsSuite extends QueryTest
   with DeltaTestUtilsForTempViews {
   import testImplicits._
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     enableDeletionVectors(spark, delete = false, update = false)
     super.beforeAll()
   }
