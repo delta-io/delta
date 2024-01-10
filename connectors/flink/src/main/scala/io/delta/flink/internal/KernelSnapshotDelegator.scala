@@ -13,26 +13,6 @@ import io.delta.standalone.internal.actions.{AddFile, Metadata, Protocol, SetTra
 import io.delta.standalone.internal.scan.DeltaScanImpl
 import io.delta.standalone.internal.util.ConversionUtils
 
-/**
- * Utility class for transactions method
- */
-class AppIdDeferedMap(snapshot: SnapshotImplKernel) extends Map[String, Long] {
-  def get(applicationId: String): Option[Long] = {
-    val versionJOpt = snapshot.getLatestTransactionVersion(applicationId)
-    if (versionJOpt.isPresent) {
-      Some(versionJOpt.get)
-    } else {
-      None
-    }
-  }
-
-  // we don't support iterating, so return an empty one (so that printing etc can work)
-  def iterator: Iterator[(String, Long)] = Iterator()
-
-  // we don't support add/remove, so throw exceptions for those
-  def +[V1 >: Long](kv: (String, V1)): Map[String,V1] = throw new RuntimeException()
-  def -(key: String): Map[String,Long] = throw new RuntimeException()
-}
 
 /**
  * This class is designed to be passed to OptimisticTransactionImpl, and provide exactly what that
@@ -69,35 +49,24 @@ class KernelSnapshotDelegator(
    * Internal vals we need to override
    */
   override lazy val protocolScala: Protocol = {
-    if (kernelSnapshot.isInstanceOf[InitialKernelSnapshotImpl]) {
-      Protocol()
-    } else {
-      val kernelProtocol = kernelSnapshot.getProtocol()
-      new Protocol(kernelProtocol.getMinReaderVersion(), kernelProtocol.getMinWriterVersion())
-    }
+    val kernelProtocol = kernelSnapshot.getProtocol()
+    new Protocol(kernelProtocol.getMinReaderVersion(), kernelProtocol.getMinWriterVersion())
   }
 
   override lazy val metadataScala: Metadata = {
-    if (kernelSnapshot.isInstanceOf[InitialKernelSnapshotImpl]) {
-      Metadata()
-    } else {
-      val metadata = snapshotWrapper.getMetadata()
-      ConversionUtils.convertMetadataJ(metadata)
-    }
+    val metadata = snapshotWrapper.getMetadata()
+    ConversionUtils.convertMetadataJ(metadata)
   }
 
-  // we provide a more efficient version of getting transactions
-  override lazy val transactions: Map[String, Long] = {
-    if (kernelSnapshot.isInstanceOf[InitialKernelSnapshotImpl]) {
-      Map()
+  // provide a path to use the faster txn lookup in kernel
+  def getLatestTransactionVersion(id: String): Option[Long] = {
+    val versionJOpt = kernelSnapshot.getLatestTransactionVersion(id)
+    if (versionJOpt.isPresent) {
+      Some(versionJOpt.get)
     } else {
-      // we use an optimized version to quickly read the most recent appId, but, since
-      // OptimisticTransactionImpl hasn't told us what appId it wants here yet, we return a map that
-      // will do the work when requested and that information is available
-      new AppIdDeferedMap(kernelSnapshot)
+      None
     }
   }
-
 
   // Public APIS
   override def getMetadata: MetadataJ = snapshotWrapper.getMetadata()
@@ -113,12 +82,8 @@ class KernelSnapshotDelegator(
     standaloneSnapshot.setTransactionsScala
   }
   override def numOfFiles: Long = {
-    if (kernelSnapshot.isInstanceOf[InitialKernelSnapshotImpl]) {
-      0L
-    } else {
-      logInfo("Calling numOfFiles on KernelSnapshotDelegator")
-      standaloneSnapshot.numOfFiles
-    }
+    logInfo("Calling numOfFiles on KernelSnapshotDelegator")
+    standaloneSnapshot.numOfFiles
   }
   override def allFilesScala: Seq[AddFile] = {
     logInfo("Calling allFilesScala on KernelSnapshotDelegator")
