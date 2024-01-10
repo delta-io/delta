@@ -35,13 +35,11 @@ import io.delta.kernel.client.{JsonHandler, ParquetHandler, TableClient}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.types.{DataType, StructField, StructType}
+import io.delta.kernel.types.{StructType}
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.{CloseableIterator, ExpressionTestUtils, FileStatus}
 import io.delta.kernel.{Snapshot, Table}
-import io.delta.kernel.internal.skipping.DataSkippingUtils
-import io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
