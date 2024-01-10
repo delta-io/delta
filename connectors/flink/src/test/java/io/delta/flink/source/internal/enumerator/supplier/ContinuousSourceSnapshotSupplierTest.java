@@ -34,13 +34,13 @@ class ContinuousSourceSnapshotSupplierTest {
 
     @BeforeEach
     public void setUp() {
-        supplier = new ContinuousSourceSnapshotSupplier(deltaLog, null, null);
+        supplier = new ContinuousSourceSnapshotSupplier(deltaLog);
     }
 
     @Test
     public void shouldGetSnapshotFromTableHead() {
-        DeltaConnectorConfiguration sourceConfig = new DeltaConnectorConfiguration()
-            .addOption(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS, false);
+
+        DeltaConnectorConfiguration sourceConfig = new DeltaConnectorConfiguration();
         when(deltaLog.snapshot()).thenReturn(deltaSnapshot);
 
         Snapshot snapshot = supplier.getSnapshot(sourceConfig);
@@ -57,7 +57,7 @@ class ContinuousSourceSnapshotSupplierTest {
 
         DeltaConnectorConfiguration sourceConfig = new DeltaConnectorConfiguration(
             Collections.singletonMap(DeltaSourceOptions.STARTING_VERSION.key(), version)
-        ).addOption(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS, false);
+        );
         when(deltaLog.getSnapshotForVersionAsOf(Long.parseLong(version))).thenReturn(deltaSnapshot);
 
         Snapshot snapshot = supplier.getSnapshot(sourceConfig);
@@ -74,7 +74,7 @@ class ContinuousSourceSnapshotSupplierTest {
 
         DeltaConnectorConfiguration sourceConfig = new DeltaConnectorConfiguration(
             Collections.singletonMap(DeltaSourceOptions.STARTING_VERSION.key(), version)
-        ).addOption(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS, false);;
+        );
         when(deltaLog.snapshot()).thenReturn(deltaSnapshot);
 
         Snapshot snapshot = supplier.getSnapshot(sourceConfig);
@@ -92,7 +92,7 @@ class ContinuousSourceSnapshotSupplierTest {
 
         DeltaConnectorConfiguration sourceConfig = new DeltaConnectorConfiguration(
             Collections.singletonMap(DeltaSourceOptions.STARTING_TIMESTAMP.key(), dateTime)
-        ).addOption(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS, false);;
+        );
         long snapshotVersion = deltaSnapshot.getVersion();
         when(deltaLog.getVersionAtOrAfterTimestamp(timestamp)).thenReturn(snapshotVersion);
         when(deltaLog.getSnapshotForVersionAsOf(snapshotVersion)).thenReturn(deltaSnapshot);
@@ -109,10 +109,7 @@ class ContinuousSourceSnapshotSupplierTest {
     public void shouldThrowIfNoSnapshotFound() {
         assertThrows(
             NoSuchElementException.class,
-            () -> supplier.getSnapshot(
-                new DeltaConnectorConfiguration()
-                .addOption(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS, false)
-            )
+            () -> supplier.getSnapshot(new DeltaConnectorConfiguration())
         );
     }
 }

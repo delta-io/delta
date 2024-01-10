@@ -3,8 +3,6 @@ package io.delta.flink.source.internal.enumerator.supplier;
 import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.utils.TransitiveOptional;
-import io.delta.kernel.Table;
-import io.delta.kernel.client.TableClient;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
@@ -16,8 +14,8 @@ import io.delta.standalone.Snapshot;
  */
 public class BoundedSourceSnapshotSupplier extends SnapshotSupplier {
 
-    public BoundedSourceSnapshotSupplier(DeltaLog deltaLog, TableClient tableClient, Table table) {
-        super(deltaLog, tableClient, table);
+    public BoundedSourceSnapshotSupplier(DeltaLog deltaLog) {
+        super(deltaLog);
     }
 
     /**

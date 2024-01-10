@@ -10,8 +10,6 @@ import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.internal.options.DeltaOptionValidationException;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.builder.DeltaSourceBuilderBase;
-import io.delta.kernel.Table;
-import io.delta.kernel.client.TableClient;
 import org.apache.hadoop.conf.Configuration;
 import org.codehaus.janino.util.Producer;
 import org.junit.jupiter.api.Test;
@@ -55,17 +53,9 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
 
     protected MockedStatic<DeltaLog> deltaLogStatic;
 
-    @Mock
-    private Table kernelTable;
-
-    protected MockedStatic<Table> kernelTableStatic;
-
-    public void closeStaticLogs() {
+    public void closeDeltaLogStatic() {
         if (deltaLogStatic != null) {
             deltaLogStatic.close();
-        }
-        if (kernelTableStatic != null) {
-            kernelTableStatic.close();
         }
     }
 
@@ -354,10 +344,6 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
             .thenReturn(
                 new StructType(fields)
             );
-
-        kernelTableStatic = Mockito.mockStatic(Table.class);
-        kernelTableStatic.when(() -> Table.forPath(any(TableClient.class), anyString()))
-            .thenReturn(kernelTable);
     }
 
     protected  <T> DeltaSourceBuilderBase<?, ?> setOptionOnBuilder(String optionName, T value,
