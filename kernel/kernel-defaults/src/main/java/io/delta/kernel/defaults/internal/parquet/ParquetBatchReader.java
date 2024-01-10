@@ -55,6 +55,7 @@ public class ParquetBatchReader {
         BatchReadSupport batchReadSupport = new BatchReadSupport(maxBatchSize, schema);
         ParquetRecordReader<Object> reader = new ParquetRecordReader<>(batchReadSupport);
         final boolean hasRowIndexCol =
+            schema.indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME) >= 0 &&
             schema.get(StructField.METADATA_ROW_INDEX_COLUMN_NAME).isMetadataColumn();
 
         Path filePath = new Path(URI.create(path));
