@@ -53,6 +53,8 @@ public class ParquetBatchReader {
     public CloseableIterator<ColumnarBatch> read(String path, StructType schema) {
         BatchReadSupport batchReadSupport = new BatchReadSupport(maxBatchSize, schema);
         ParquetRecordReader<Object> reader = new ParquetRecordReader<>(batchReadSupport);
+        final boolean hasRowIndexCol =
+            schema.get(StructField.METADATA_ROW_INDEX_COLUMN_NAME).isMetadataColumn();
 
         Path filePath = new Path(URI.create(path));
         try {
@@ -96,7 +98,12 @@ public class ParquetBatchReader {
                     hasNotConsumedNextElement = false;
                     // hasNext reads to row to confirm there is a next element.
                     try {
-                        batchReadSupport.finalizeCurrentRow(reader.getCurrentRowIndex());
+                        long rowIndex = 0;
+                        if (hasRowIndexCol) {
+                            // get the row index only if required by the read schema
+                            rowIndex = reader.getCurrentRowIndex();
+                        }
+                        batchReadSupport.finalizeCurrentRow(rowIndex);
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     }
