@@ -39,7 +39,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats._
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
@@ -1823,8 +1823,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         tags = Map(TAG_LOG_STORE_CLASS -> deltaLog.store.getClass.getName)) {
 
     DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+      val fileStatuses = getConflictingVersions(checkVersion)
+      val nextAttemptVersion = checkVersion + fileStatuses.size
 
-      val nextAttemptVersion = getNextAttemptVersion(checkVersion)
+      // validate that information about conflicting winning commit files is continuous and in the
+      // right order.
+      val expected = (checkVersion until nextAttemptVersion)
+      val found = fileStatuses.map(deltaVersion)
+      val mismatch = expected.zip(found).dropWhile{ case (v1, v2) => v1 == v2 }.take(10)
+      assert(mismatch.isEmpty,
+        s"Expected ${mismatch.map(_._1).mkString(",")} but got ${mismatch.map(_._2).mkString(",")}")
 
       val logPrefixStr = s"[attempt $attemptNumber]"
       val txnDetailsLogStr = {
@@ -1843,10 +1851,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         s"[$checkVersion, $nextAttemptVersion) with current txn having $txnDetailsLogStr")
 
       var updatedCurrentTransactionInfo = currentTransactionInfo
-      (checkVersion until nextAttemptVersion).foreach { otherCommitVersion =>
+      (checkVersion until nextAttemptVersion)
+        .zip(fileStatuses)
+        .foreach { case (otherCommitVersion, otherCommitFileStatus) =>
         updatedCurrentTransactionInfo = checkForConflictsAgainstVersion(
           updatedCurrentTransactionInfo,
-          otherCommitVersion,
+          otherCommitFileStatus,
           commitIsolationLevel)
         logInfo(s"$logPrefixStr No conflicts in version $otherCommitVersion, " +
           s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start")
@@ -1861,13 +1871,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   protected def checkForConflictsAgainstVersion(
       currentTransactionInfo: CurrentTransactionInfo,
-      otherCommitVersion: Long,
+      otherCommitFileStatus: FileStatus,
       commitIsolationLevel: IsolationLevel): CurrentTransactionInfo = {
 
     val conflictChecker = new ConflictChecker(
       spark,
       currentTransactionInfo,
-      otherCommitVersion,
+      otherCommitFileStatus,
       commitIsolationLevel)
     conflictChecker.checkConflicts()
   }
@@ -1875,11 +1885,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /** Returns the version that the first attempt will try to commit at. */
   protected def getFirstAttemptVersion: Long = readVersion + 1L
 
-  /** Returns the next attempt version given the last attempted version */
-  protected def getNextAttemptVersion(previousAttemptVersion: Long): Long = {
-    val latestSnapshot = deltaLog.update()
-    preCommitLogSegment = latestSnapshot.logSegment
-    latestSnapshot.version + 1
+  /** Returns the conflicting commit information */
+  protected def getConflictingVersions(previousAttemptVersion: Long): Seq[FileStatus] = {
+    assert(previousAttemptVersion == preCommitLogSegment.version + 1)
+    val (newPreCommitLogSegment, newCommitFileStatuses) =
+      deltaLog.getUpdatedLogSegment(preCommitLogSegment)
+    assert(preCommitLogSegment.version + newCommitFileStatuses.size ==
+      newPreCommitLogSegment.version)
+    preCommitLogSegment = newPreCommitLogSegment
+    newCommitFileStatuses
   }
 
   /** Register a hook that will be executed once a commit is successful. */

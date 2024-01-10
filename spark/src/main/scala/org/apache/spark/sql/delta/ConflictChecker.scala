@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet, Or}
@@ -118,9 +119,10 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
 private[delta] class ConflictChecker(
     spark: SparkSession,
     initialCurrentTransactionInfo: CurrentTransactionInfo,
-    winningCommitVersion: Long,
+    winningCommitFileStatus: FileStatus,
     isolationLevel: IsolationLevel) extends DeltaLogging {
 
+  protected val winningCommitVersion = FileNames.deltaVersion(winningCommitFileStatus)
   protected val startTimeMs = System.currentTimeMillis()
   protected val timingStats = mutable.HashMap[String, Long]()
   protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
@@ -155,7 +157,7 @@ private[delta] class ConflictChecker(
   protected def createWinningCommitSummary(): WinningCommitSummary = {
     recordTime("initialize-old-commit") {
       val winningCommitActions = deltaLog.store.read(
-        FileNames.deltaFile(deltaLog.logPath, winningCommitVersion),
+        winningCommitFileStatus,
         deltaLog.newDeltaHadoopConf()
       ).map(Action.fromJson)
       new WinningCommitSummary(winningCommitActions, winningCommitVersion)
