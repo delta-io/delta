@@ -602,15 +602,26 @@ object DeltaMergeInto {
       // clause, then merge this schema with the target to give the final schema.
       def filterSchema(sourceSchema: StructType, basePath: Seq[String]): StructType =
         StructType(sourceSchema.flatMap { field =>
-          val fieldPath = basePath :+ field.name.toLowerCase(Locale.ROOT)
-          val childAssignedInMergeClause = assignments.exists(_.startsWith(fieldPath))
+          val fieldPath = basePath :+ field.name
+
+          // Helper method to check if a given field path is a prefix of another path. Delegates
+          // equality to conf.resolver to correctly handle case sensitivity.
+          def isPrefix(prefix: Seq[String], path: Seq[String]): Boolean =
+            prefix.length <= path.length && prefix.zip(path).forall {
+              case (prefixNamePart, pathNamePart) => conf.resolver(prefixNamePart, pathNamePart)
+            }
+
+          // Helper method to check if a given field path is equal to another path.
+          def isEqual(path1: Seq[String], path2: Seq[String]): Boolean =
+            path1.length == path2.length && isPrefix(path1, path2)
+
 
           field.dataType match {
             // Specifically assigned to in one clause: always keep, including all nested attributes
-            case _ if assignments.contains(fieldPath) => Some(field)
+            case _ if assignments.exists(isEqual(_, fieldPath)) => Some(field)
             // If this is a struct and one of the children is being assigned to in a merge clause,
             // keep it and continue filtering children.
-            case struct: StructType if childAssignedInMergeClause =>
+            case struct: StructType if assignments.exists(isPrefix(fieldPath, _)) =>
               Some(field.copy(dataType = filterSchema(struct, fieldPath)))
             // The field isn't assigned to directly or indirectly (i.e. its children) in any non-*
             // clause. Check if it should be kept with any * action.

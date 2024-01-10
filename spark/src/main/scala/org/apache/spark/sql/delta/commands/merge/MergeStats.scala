@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.commands.merge
 
+import org.apache.spark.sql.util.ScalaExtensions._
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -104,6 +105,9 @@ case class MergeStats(
     targetRowsDeleted: Long,
     targetRowsMatchedDeleted: Long,
     targetRowsNotMatchedBySourceDeleted: Long,
+    numTargetDeletionVectorsAdded: Long,
+    numTargetDeletionVectorsRemoved: Long,
+    numTargetDeletionVectorsUpdated: Long,
 
     // MergeMaterializeSource stats
     materializeSourceReason: Option[String] = None,
@@ -119,7 +123,8 @@ object MergeStats {
       matchedClauses: Seq[DeltaMergeIntoMatchedClause],
       notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
       notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
-      isPartitioned: Boolean): MergeStats = {
+      isPartitioned: Boolean,
+      performedSecondSourceScan: Boolean): MergeStats = {
 
     def metricValueIfPartitioned(metricName: String): Option[Long] = {
       if (isPartitioned) Some(metrics(metricName).value) else None
@@ -152,7 +157,7 @@ object MergeStats {
           bytes = Some(metrics("numTargetBytesAfterSkipping").value),
           partitions = metricValueIfPartitioned("numTargetPartitionsAfterSkipping")),
       sourceRowsInSecondScan =
-        metrics.get("numSourceRowsInSecondScan").map(_.value).filter(_ >= 0),
+        Option.when(performedSecondSourceScan)(metrics("numSourceRowsInSecondScan").value),
 
       // Data change sizes
       targetFilesAdded = metrics("numTargetFilesAdded").value,
@@ -171,6 +176,11 @@ object MergeStats {
       targetRowsDeleted = metrics("numTargetRowsDeleted").value,
       targetRowsMatchedDeleted = metrics("numTargetRowsMatchedDeleted").value,
       targetRowsNotMatchedBySourceDeleted = metrics("numTargetRowsNotMatchedBySourceDeleted").value,
+
+      // Deletion Vector metrics.
+      numTargetDeletionVectorsAdded = metrics("numTargetDeletionVectorsAdded").value,
+      numTargetDeletionVectorsRemoved = metrics("numTargetDeletionVectorsRemoved").value,
+      numTargetDeletionVectorsUpdated = metrics("numTargetDeletionVectorsUpdated").value,
 
       // Deprecated fields
       updateConditionExpr = null,

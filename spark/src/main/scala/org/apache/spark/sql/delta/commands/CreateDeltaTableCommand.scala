@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
@@ -143,7 +144,7 @@ case class CreateDeltaTableCommand(
       case Some(cmd: CloneTableCommand) =>
         checkPathEmpty(txn)
         cmd.handleClone(sparkSession, txn, targetDeltaLog = deltaLog)
-      case Some(deltaWriter: WriteIntoDelta) =>
+      case Some(deltaWriter: WriteIntoDeltaLike) =>
         checkPathEmpty(txn)
         handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
         Nil
@@ -207,7 +208,7 @@ case class CreateDeltaTableCommand(
       sparkSession: SparkSession,
       txn: OptimisticTransaction,
       deltaLog: DeltaLog,
-      deltaWriter: WriteIntoDelta,
+      deltaWriter: WriteIntoDeltaLike,
       tableWithLocation: CatalogTable): Unit = {
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
@@ -219,7 +220,7 @@ case class CreateDeltaTableCommand(
     //     new created actions,
     //   - returning the Delta Operation type of this DataFrameWriter
     def doDeltaWrite(
-        deltaWriter: WriteIntoDelta,
+        deltaWriter: WriteIntoDeltaLike,
         schema: StructType): (Seq[Action], DeltaOperations.Operation) = {
       // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
       // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
@@ -232,23 +233,27 @@ case class CreateDeltaTableCommand(
       }
       var actions = deltaWriter.write(
         txn,
-        sparkSession
+        sparkSession,
+        ClusteredTableUtils.getClusterBySpecOptional(table)
       )
-      val newDomainMetadata = Seq.empty[DomainMetadata]
-      if (isReplace) {
+      // Metadata updates for creating table (with any writer) and replacing table
+      // (only with V1 writer) will be handled inside WriteIntoDelta.
+      // For createOrReplace operation, metadata updates are handled here if the table already
+      // exists (replacing table), otherwise it is handled inside WriteIntoDelta (creating table).
+      if (!isV1Writer && isReplace && txn.readVersion > -1L) {
+        val newDomainMetadata = Seq.empty[DomainMetadata] ++
+          ClusteredTableUtils.getDomainMetadataOptional(table, txn)
         // Ensure to remove any domain metadata for REPLACE TABLE.
         actions = actions ++ DomainMetadataUtils.handleDomainMetadataForReplaceTable(
           txn.snapshot.domainMetadata, newDomainMetadata)
-      } else {
-        actions = actions ++ newDomainMetadata
       }
       val op = getOperation(txn.metadata, isManagedTable, Some(options)
       )
       (actions, op)
     }
-
-    val updatedWriter = UniversalFormat.enforceInvariantsAndDependenciesForCTAS(deltaWriter)
-
+    val updatedConfiguration = UniversalFormat
+      .enforceInvariantsAndDependenciesForCTAS(deltaWriter.configuration, txn.snapshot)
+    val updatedWriter = deltaWriter.withNewWriterConfiguration(updatedConfiguration)
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
       val (actions, op) = doDeltaWrite(updatedWriter, updatedWriter.data.schema.asNullable)
@@ -311,7 +316,7 @@ case class CreateDeltaTableCommand(
         protocol.foreach { protocol =>
           txn.updateProtocol(protocol)
         }
-        Nil
+        ClusteredTableUtils.getDomainMetadataOptional(table, txn).toSeq
       } else {
         verifyTableMetadata(txn, tableWithLocation)
         Nil
@@ -346,7 +351,10 @@ case class CreateDeltaTableCommand(
         val operationTimestamp = System.currentTimeMillis()
         var actionsToCommit = Seq.empty[Action]
         val removes = txn.filterFiles().map(_.removeWithTimestamp(operationTimestamp))
-        actionsToCommit = removes
+        actionsToCommit = removes ++
+          DomainMetadataUtils.handleDomainMetadataForReplaceTable(
+            txn.snapshot.domainMetadata,
+            ClusteredTableUtils.getDomainMetadataOptional(table, txn).toSeq)
         actionsToCommit
     }
 
@@ -364,7 +372,9 @@ case class CreateDeltaTableCommand(
       description = table.comment.orNull,
       schemaString = schemaString,
       partitionColumns = table.partitionColumnNames,
-      configuration = table.properties,
+      // Filter out ephemeral clustering columns config because we don't want to persist
+      // it in delta log. This will be persisted in CatalogTable's table properties instead.
+      configuration = ClusteredTableUtils.removeClusteringColumnsProperty(table.properties),
       createdTime = Some(System.currentTimeMillis()))
   }
 
@@ -616,12 +626,29 @@ case class CreateDeltaTableCommand(
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
     val txn = deltaLog.startTransaction(None, snapshotOpt)
+    validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
     // During CREATE/REPLACE, we synchronously run conversion (if Uniform is enabled) so
     // we always remove the post commit hook here.
     txn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
 
     txn
+  }
+
+  /**
+   * Validate pre-requisites for clustered tables for CREATE/REPLACE operations.
+   * @param protocol Protocol used for validations. This protocol should
+   *                 be used during the CREATE/REPLACE commit.
+   * @param deltaLog Delta log used for logging purposes.
+   */
+  private def validatePrerequisitesForClusteredTable(
+      protocol: Protocol,
+      deltaLog: DeltaLog): Unit = {
+    // Validate a clustered table is not replaced by a partitioned table.
+    if (table.partitionColumnNames.nonEmpty &&
+      ClusteredTableUtils.isSupported(protocol)) {
+      throw DeltaErrors.replacingClusteredTableWithPartitionedTableNotAllowed()
+    }
   }
 }
 

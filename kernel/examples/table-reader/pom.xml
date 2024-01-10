@@ -27,7 +27,7 @@ limitations under the License.-->
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
         <staging.repo.url>""</staging.repo.url>
-        <delta-kernel.version>3.0.0-SNAPSHOT</delta-kernel.version>
+        <delta-kernel.version>3.1.0-SNAPSHOT</delta-kernel.version>
         <hadoop.version>3.3.1</hadoop.version>
     </properties>
 

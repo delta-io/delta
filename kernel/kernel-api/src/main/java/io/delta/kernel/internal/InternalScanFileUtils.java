@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -53,16 +52,20 @@ public class InternalScanFileUtils {
     public static StructField TABLE_ROOT_STRUCT_FIELD = new StructField(
         TABLE_ROOT_COL_NAME,
         TABLE_ROOT_DATA_TYPE,
-        false, /* nullable */
-        Collections.emptyMap());
+        false /* nullable */);
 
+    // TODO update this when stats columns are dropped from the returned scan files
+    /**
+     * Scan file rows may have an additional column "add.stats" at the end of the "add" columns
+     * that is not represented in the schema here.
+     */
     public static final StructType SCAN_FILE_SCHEMA = new StructType()
-        .add("add", AddFile.SCHEMA)
+        .add("add", AddFile.SCHEMA_WITHOUT_STATS)
         // NOTE: table root is temporary, until the path in `add.path` is converted to
         // an absolute path. https://github.com/delta-io/delta/issues/2089
         .add(TABLE_ROOT_COL_NAME, TABLE_ROOT_DATA_TYPE);
 
-    private static final int ADD_FILE_ORDINAL = SCAN_FILE_SCHEMA.indexOf("add");
+    public static final int ADD_FILE_ORDINAL = SCAN_FILE_SCHEMA.indexOf("add");
 
     private static final StructType ADD_FILE_SCHEMA =
         (StructType) SCAN_FILE_SCHEMA.get("add").getDataType();
@@ -82,6 +85,8 @@ public class InternalScanFileUtils {
     private static final int ADD_FILE_DV_ORDINAL = ADD_FILE_SCHEMA.indexOf("deletionVector");
 
     private static final int TABLE_ROOT_ORDINAL = SCAN_FILE_SCHEMA.indexOf(TABLE_ROOT_COL_NAME);
+
+    public static final int ADD_FILE_STATS_ORDINAL = AddFile.SCHEMA_WITH_STATS.indexOf("stats");
 
     /**
      * Get the {@link FileStatus} of {@code AddFile} from given scan file {@link Row}. The

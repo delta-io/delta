@@ -23,7 +23,6 @@ import java.util.*;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Literal;
@@ -42,11 +41,11 @@ import static io.delta.kernel.internal.replay.LogReplay.REMOVE_FILE_ORDINAL;
 import static io.delta.kernel.internal.replay.LogReplay.REMOVE_FILE_PATH_ORDINAL;
 
 /**
- * This class takes an iterator of ({@link FileDataReadResult}, isFromCheckpoint), where the
- * columnar data inside the FileDataReadResult represents {@link LogReplay#ADD_REMOVE_READ_SCHEMA},
- * and produces an iterator of {@link FilteredColumnarBatch} with schema
- * {@link LogReplay#ADD_ONLY_DATA_SCHEMA}, and with a selection vector indicating which AddFiles are
- * still active in the table (have not been tombstoned).
+ * This class takes an iterator of ({@link ColumnarBatch}, isFromCheckpoint), where the
+ * columnar data inside the columnar batch represents has top level columns "add" and "remove",
+ * and produces an iterator of {@link FilteredColumnarBatch} with only the "add" column and
+ * with a selection vector indicating which AddFiles are still active in the table
+ * (have not been tombstoned).
  */
 class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch> {
     private static class UniqueFileActionTuple extends Tuple2<URI, Optional<String>> {
@@ -57,7 +56,9 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
 
     private final TableClient tableClient;
     private final Path tableRoot;
-    private final CloseableIterator<Tuple2<FileDataReadResult, Boolean>> iter;
+
+    private final CloseableIterator<ActionWrapper> iter;
+
     private final Set<UniqueFileActionTuple> tombstonesFromJson;
     private final Set<UniqueFileActionTuple> addFilesFromJson;
 
@@ -71,9 +72,9 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
     private boolean closed;
 
     ActiveAddFilesIterator(
-        TableClient tableClient,
-        CloseableIterator<Tuple2<FileDataReadResult, Boolean>> iter,
-        Path tableRoot) {
+            TableClient tableClient,
+            CloseableIterator<ActionWrapper> iter,
+            Path tableRoot) {
         this.tableClient = tableClient;
         this.tableRoot = tableRoot;
         this.iter = iter;
@@ -144,12 +145,9 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
             return; // no next result, and no batches to read
         }
 
-        final Tuple2<FileDataReadResult, Boolean> _next = iter.next();
-        final FileDataReadResult fileDataReadResult = _next._1;
-        final boolean isFromCheckpoint = _next._2;
-        final ColumnarBatch addRemoveColumnarBatch = fileDataReadResult.getData();
-
-        assert (addRemoveColumnarBatch.getSchema().equals(LogReplay.ADD_REMOVE_READ_SCHEMA));
+        final ActionWrapper _next = iter.next();
+        final ColumnarBatch addRemoveColumnarBatch = _next.getColumnarBatch();
+        final boolean isFromCheckpoint = _next.isFromCheckpoint();
 
         // Step 1: Update `tombstonesFromJson` with all the RemoveFiles in this columnar batch, if
         //         and only if this batch is not from a checkpoint.

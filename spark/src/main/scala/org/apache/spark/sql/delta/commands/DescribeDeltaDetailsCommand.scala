@@ -28,8 +28,7 @@ import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, TableIdentifier}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.trees.UnaryLike
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.types.StructType
@@ -71,7 +70,7 @@ case class DescribeDeltaDetailCommand(
     override val child: LogicalPlan,
     hadoopConf: Map[String, String])
   extends RunnableCommand
-    with UnaryLike[LogicalPlan]
+    with UnaryNode
     with DeltaLogging
     with DeltaCommand
 {

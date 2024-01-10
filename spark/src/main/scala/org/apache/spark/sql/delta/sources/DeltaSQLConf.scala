@@ -21,8 +21,10 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.network.util.ByteUnit
+import org.apache.spark.sql.catalyst.FileSourceOptions
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
+import org.apache.spark.util.Utils
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -478,6 +480,20 @@ trait DeltaSQLConfBase {
       .checkValues(MergeMaterializeSource.list)
       .createWithDefault(MergeMaterializeSource.AUTO)
 
+  val MERGE_FORCE_SOURCE_MATERIALIZATION_WITH_UNREADABLE_FILES =
+    buildConf("merge.forceSourceMaterializationWithUnreadableFilesConfig")
+      .internal()
+      .doc(
+        s"""
+           |When set to true, merge command will force source materialization if Spark configs
+           |${SQLConf.IGNORE_CORRUPT_FILES.key}, ${SQLConf.IGNORE_MISSING_FILES.key} or
+           |file source read options ${FileSourceOptions.IGNORE_CORRUPT_FILES}
+           |${FileSourceOptions.IGNORE_MISSING_FILES} are enabled on the source.
+           |This is done so to prevent irrecoverable data loss or unexpected results.
+           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL =
     buildConf("merge.materializeSource.rddStorageLevel")
       .internal()
@@ -889,6 +905,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED =
+    buildConf("uniform.iceberg.sync.convert.enabled")
+      .doc("If enabled, iceberg conversion will be done synchronously. " +
+        "This can cause slow down in Delta commits and should only be used " +
+        "for debugging or in test suites.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()
@@ -1244,6 +1269,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_USE_PERSISTENT_DELETION_VECTORS =
+    buildConf("merge.deletionVectors.persistent")
+      .internal()
+      .doc("Enable persistent Deletion Vectors in Merge command.")
+      .booleanConf
+      .createWithDefault(true)
+
   val UPDATE_USE_PERSISTENT_DELETION_VECTORS =
     buildConf("update.deletionVectors.persistent")
       .internal()
@@ -1282,15 +1314,6 @@ trait DeltaSQLConfBase {
         """Check the table-property and verify that deletion vectors may be added
           |to this table.
           |Only change this for testing!""".stripMargin)
-      .booleanConf
-      .createWithDefault(true)
-
-  val TABLE_FEATURE_DROP_ENABLED =
-    buildConf("tableFeatures.dropEnabled")
-      .internal()
-      .doc("""Controls whether table feature removal is allowed.
-             |Table feature removal is currently a feature in development.
-             |This is a dev only config.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 
@@ -1343,6 +1366,82 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_USE_MULTI_THREADED_STATS_COLLECTION =
+    buildConf("collectStats.useMultiThreadedStatsCollection")
+      .internal()
+      .doc("Whether to use multi-threaded statistics collection. If false, statistics will be " +
+        "collected sequentially within each partition.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_STATS_COLLECTION_NUM_FILES_PARTITION =
+    buildConf("collectStats.numFilesPerPartition")
+      .internal()
+      .doc("Controls the number of files that should be within a RDD partition " +
+        "during multi-threaded optimized statistics collection. A larger number will lead to " +
+        "less parallelism, but can reduce scheduling overhead.")
+      .intConf
+      .checkValue(v => v >= 1, "Must be at least 1.")
+      .createWithDefault(100)
+
+  /////////////////////
+  // Optimized Write
+  /////////////////////
+
+  val DELTA_OPTIMIZE_WRITE_ENABLED =
+    buildConf("optimizeWrite.enabled")
+      .doc("Whether to optimize writes made into Delta tables from this session.")
+      .booleanConf
+      .createOptional
+
+  val DELTA_OPTIMIZE_WRITE_SHUFFLE_BLOCKS =
+    buildConf("optimizeWrite.numShuffleBlocks")
+      .internal()
+      .doc("Maximum number of shuffle blocks to target for the adaptive shuffle " +
+        "in optimized writes.")
+      .intConf
+      .createWithDefault(50000000)
+
+  val DELTA_OPTIMIZE_WRITE_MAX_SHUFFLE_PARTITIONS =
+    buildConf("optimizeWrite.maxShufflePartitions")
+      .internal()
+      .doc("Max number of output buckets (reducers) that can be used by optimized writes. This " +
+        "can be thought of as: 'how many target partitions are we going to write to in our " +
+        "table in one write'. This should not be larger than " +
+        "spark.shuffle.minNumPartitionsToHighlyCompress. Otherwise, partition coalescing and " +
+        "skew split may not work due to incomplete stats from HighlyCompressedMapStatus")
+      .intConf
+      .createWithDefault(2000)
+
+  val DELTA_OPTIMIZE_WRITE_BIN_SIZE =
+    buildConf("optimizeWrite.binSize")
+      .internal()
+      .doc("Bin size for the adaptive shuffle in optimized writes in megabytes.")
+      .bytesConf(ByteUnit.MiB)
+      .createWithDefault(512)
+
+  //////////////////
+  // Clustered Table
+  //////////////////
+
+  val DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED =
+    buildConf("clusteredTable.enableClusteringTablePreview")
+      .internal()
+      .doc("Whether to enable the clustering table preview.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_NUM_CLUSTERING_COLUMNS_LIMIT =
+    buildStaticConf("clusteredTable.numClusteringColumnsLimit")
+      .internal()
+      .doc("""The maximum number of clustering columns allowed for a clustered table.
+        """.stripMargin)
+      .intConf
+      .checkValue(
+        _ > 0,
+        "'clusteredTable.numClusteringColumnsLimit' must be positive."
+      )
+    .createWithDefault(4)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

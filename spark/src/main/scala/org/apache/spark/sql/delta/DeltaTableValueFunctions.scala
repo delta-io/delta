@@ -153,8 +153,8 @@ case class CDCNameBased(override val functionArgs: Seq[Expression])
 
   override protected def getTable(spark: SparkSession, name: Expression): LogicalPlan = {
     val stringId = getStringLiteral(name, "table name")
-    val tableId = spark.sessionState.sqlParser.parseTableIdentifier(stringId)
-    UnresolvedRelation(tableId, getOptions, isStreaming = false)
+    val identifier = spark.sessionState.sqlParser.parseMultipartIdentifier(stringId)
+    UnresolvedRelation(identifier, getOptions, isStreaming = false)
   }
 }
 

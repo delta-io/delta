@@ -228,6 +228,7 @@ object CheckpointInstance {
     CheckpointInstance(
       version = metadata.version,
       format = metadata.getFormatEnum(),
+      fileName = metadata.v2Checkpoint.map(_.path),
       numParts = metadata.parts)
   }
 
@@ -303,6 +304,21 @@ trait Checkpoints extends DeltaLogging {
       checkpointAndCleanUpDeltaLog(snapshotToCheckpoint)
     }
   }
+
+  /**
+   * Creates a checkpoint at given version. Does not invoke metadata cleanup as part of it.
+   * @param version - version at which we want to create a checkpoint.
+   */
+  def createCheckpointAtVersion(version: Long): Unit =
+    recordDeltaOperation(this, "delta.createCheckpointAtVersion") {
+      val snapshot = getSnapshotAt(version)
+      withCheckpointExceptionHandling(this, "delta.checkpoint.sync.error") {
+        if (snapshot.version < 0) {
+          throw DeltaErrors.checkpointNonExistTable(dataPath)
+        }
+        writeCheckpointFiles(snapshot)
+      }
+    }
 
   def checkpointAndCleanUpDeltaLog(
       snapshotToCheckpoint: Snapshot): Unit = {
@@ -571,7 +587,7 @@ object Checkpoints
       .executedPlan
       .execute()
       .mapPartitions { case iter =>
-        val actualNumParts = Option(TaskContext.get).map(_.numPartitions())
+        val actualNumParts = Option(TaskContext.get()).map(_.numPartitions())
           .getOrElse(numParts)
         val partition = TaskContext.getPartitionId()
         val (writtenPath, finalPath) = Checkpoints.getCheckpointWritePath(
@@ -842,7 +858,7 @@ object Checkpoints
       .executedPlan
       .execute()
       .mapPartitions { iter =>
-        val actualNumParts = Option(TaskContext.get).map(_.numPartitions()).getOrElse(1)
+        val actualNumParts = Option(TaskContext.get()).map(_.numPartitions()).getOrElse(1)
         require(actualNumParts == 1, "The parquet V2 checkpoint must be written in 1 file")
         val partition = TaskContext.getPartitionId()
         val finalPath = finalSparkPath.toPath
@@ -993,7 +1009,8 @@ object Checkpoints
         col("add.tags"),
         col("add.deletionVector"),
         col("add.baseRowId"),
-        col("add.defaultRowCommitVersion")) ++
+        col("add.defaultRowCommitVersion"),
+        col("add.clusteringProvider")) ++
         additionalCols: _*
       ))
     )

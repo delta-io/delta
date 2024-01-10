@@ -39,25 +39,31 @@ object DeltaTestImplicits {
     /** Ensure that the initial commit of a Delta table always contains a Metadata action */
     def commitActions(op: Operation, actions: Action*): Long = {
       if (txn.readVersion == -1) {
-        val metadataOpt = if (!actions.exists(_.isInstanceOf[Metadata])) Some(Metadata()) else None
-        val metadata = metadataOpt.getOrElse(actions.collectFirst { case m: Metadata => m }.get)
-        val needsProtocolUpdate = Protocol.upgradeProtocolFromMetadataForExistingTable(
-          SparkSession.active, metadata, txn.protocol)
-        if (needsProtocolUpdate.isDefined) {
-          // if the metadata triggers a protocol upgrade, commit without an explicit protocol
-          // action as otherwise, we will create two (potentially different) protocol actions
-          // for this commit
-          txn.commit(actions ++ metadataOpt, op)
-        } else {
-          // if we don't have an implicit protocol action, make sure the first commit
-          // contains one explicitly
-          val protocolOpt = if (!actions.exists(_.isInstanceOf[Protocol])) {
-            Some(Action.supportedProtocolVersion())
-          } else {
-            None
-          }
-          txn.commit(actions ++ metadataOpt ++ protocolOpt, op)
+        val metadataOpt = actions.collectFirst { case m: Metadata => m }
+        val protocolOpt = actions.collectFirst { case p: Protocol => p }
+        val otherActions =
+          actions.filterNot(a => a.isInstanceOf[Metadata] || a.isInstanceOf[Protocol])
+        (metadataOpt, protocolOpt) match {
+          case (Some(metadata), Some(protocol)) =>
+            // When both metadata and protocol are explicitly passed, use them.
+            txn.updateProtocol(protocol)
+            // This will auto upgrade any required table features in the passed protocol as per
+            // given metadata.
+            txn.updateMetadataForNewTable(metadata)
+          case (Some(metadata), None) =>
+            // When just metadata is passed, use it.
+            // This will auto generate protocol as per metadata.
+            txn.updateMetadataForNewTable(metadata)
+          case (None, Some(protocol)) =>
+            txn.updateProtocol(protocol)
+            txn.updateMetadataForNewTable(Metadata())
+          case (None, None) =>
+            // If neither metadata nor protocol is explicitly passed, then use default Metadata and
+            // with the maximum protocol.
+            txn.updateMetadataForNewTable(Metadata())
+            txn.updateProtocol(Action.supportedProtocolVersion())
         }
+        txn.commit(otherActions, op)
       } else {
         txn.commit(actions, op)
       }

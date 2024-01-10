@@ -26,7 +26,7 @@ import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
-import org.apache.spark.sql.delta.DeltaOperations.Operation
+import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -46,8 +46,8 @@ import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.catalyst.util.CharVarcharUtils
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
+import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{Clock, Utils}
 
 /** Record metrics about a successful commit. */
@@ -160,18 +160,23 @@ object OptimisticTransaction {
   def getActive(): Option[OptimisticTransaction] = Option(active.get())
 
   /**
-   * Runs the passed block of code with the given active transaction
+   * Runs the passed block of code with the given active transaction. This fails if a transaction is
+   * already active unless `overrideExistingTransaction` is set.
    */
-  def withActive[T](activeTransaction: OptimisticTransaction)(block: => T): T = {
+  def withActive[T](
+      activeTransaction: OptimisticTransaction,
+      overrideExistingTransaction: Boolean = false)(block: => T): T = {
     val original = getActive()
+    if (overrideExistingTransaction) {
+      clearActive()
+    }
     setActive(activeTransaction)
     try {
       block
     } finally {
+      clearActive()
       if (original.isDefined) {
         setActive(original.get)
-      } else {
-        clearActive()
       }
     }
   }
@@ -385,6 +390,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
     updateMetadataInternal(proposedNewMetadata, ignoreDefaultProperties)
+  }
+
+  /**
+   * Can this transaction still update the metadata?
+   * This is allowed only once per transaction.
+   */
+  def canUpdateMetadata: Boolean = {
+    !hasWritten && newMetadata.isEmpty
   }
 
   /**
@@ -1161,11 +1174,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite
               fromProtocol = snapshot.protocol,
               toProtocol = p,
               isCreatingNewTable)
+            DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+              deltaLog.protocolWrite(p)
+            }
           case d: DomainMetadata =>
             numOfDomainMetadatas += 1
           case _ =>
         }
         action
+      }
+
+      // Validate protocol support, specifically writer features.
+      DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+        deltaLog.protocolWrite(snapshot.protocol)
       }
 
       allActions = RowId.assignFreshRowIds(protocol, snapshot, allActions)
@@ -1327,33 +1348,25 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     protocolChanges.foreach { p =>
       newProtocol = Some(p)
       recordProtocolChanges("delta.protocol.change", snapshot.protocol, p, isCreatingNewTable)
+      DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+        deltaLog.protocolWrite(p)
+      }
     }
 
     // Now, we know that there is at most 1 Metadata change (stored in newMetadata) and at most 1
     // Protocol change (stored in newProtocol)
 
     val (protocolUpdate1, metadataUpdate1) =
-      UniversalFormat.enforceIcebergInvariantsAndDependencies(
+      UniversalFormat.enforceInvariantsAndDependencies(
         // Note: if this txn has no protocol or metadata updates, then `prev` will equal `newest`.
-        prevProtocol = snapshot.protocol,
-        prevMetadata = snapshot.metadata,
+        snapshot,
         newestProtocol = protocol, // Note: this will try to use `newProtocol`
         newestMetadata = metadata, // Note: this will try to use `newMetadata`
-        isCreatingNewTable
+        isCreatingNewTable,
+        otherActions
       )
     newProtocol = protocolUpdate1.orElse(newProtocol)
     newMetadata = metadataUpdate1.orElse(newMetadata)
-
-    val (protocolUpdate2, metadataUpdate2) = IcebergCompatV1.enforceInvariantsAndDependencies(
-      prevProtocol = snapshot.protocol,
-      prevMetadata = snapshot.metadata,
-      newestProtocol = protocol, // Note: this will try to use `newProtocol`
-      newestMetadata = metadata, // Note: this will try to use `newMetadata`
-      isCreatingNewTable,
-      otherActions
-    )
-    newProtocol = protocolUpdate2.orElse(newProtocol)
-    newMetadata = metadataUpdate2.orElse(newMetadata)
 
     var finalActions = newMetadata.toSeq ++ newProtocol.toSeq ++ otherActions
 
@@ -1417,7 +1430,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case other => other
     }
 
-    DeltaTableV2.withEnrichedInvalidProtocolVersionException(catalogTable) {
+    DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+      newProtocol.foreach(deltaLog.protocolWrite)
       deltaLog.protocolWrite(snapshot.protocol)
     }
 
@@ -1432,6 +1446,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
     actions.foreach(assertDeletionVectorWellFormed)
+
+    // Make sure this operation does not include default column values if the corresponding table
+    // feature is not enabled.
+    if (!protocol.isFeatureSupported(AllowColumnDefaultsTableFeature)) {
+      checkNoColumnDefaults(op)
+    }
 
     finalActions
   }
@@ -1741,7 +1761,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         "delta.commit.retry.conflictCheck",
         tags = Map(TAG_LOG_STORE_CLASS -> deltaLog.store.getClass.getName)) {
 
-    DeltaTableV2.withEnrichedInvalidProtocolVersionException(catalogTable) {
+    DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
 
       val nextAttemptVersion = getNextAttemptVersion(checkVersion)
 
@@ -1875,4 +1895,41 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   override def logError(msg: => String, throwable: Throwable): Unit = {
     super.logError(logPrefix + msg, throwable)
   }
+
+  /**
+   * If the operation assigns or modifies column default values, this method checks that the
+   * corresponding table feature is enabled and throws an error if not.
+   */
+  protected def checkNoColumnDefaults(op: DeltaOperations.Operation): Unit = {
+    def usesDefaults(column: StructField): Boolean = {
+      column.metadata.contains(ResolveDefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY) ||
+        column.metadata.contains(ResolveDefaultColumns.EXISTS_DEFAULT_COLUMN_METADATA_KEY)
+    }
+
+    def throwError(errorClass: String, parameters: Array[String]): Unit = {
+      throw new DeltaAnalysisException(
+        errorClass = errorClass,
+        messageParameters = parameters)
+    }
+
+    op match {
+      case change: ChangeColumn if usesDefaults(change.newColumn) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Array("ALTER TABLE"))
+      case create: CreateTable if create.metadata.schema.fields.exists(usesDefaults) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Array("CREATE TABLE"))
+      case replace: ReplaceColumns if replace.columns.exists(usesDefaults) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Array("CREATE TABLE"))
+      case replace: ReplaceTable if replace.metadata.schema.fields.exists(usesDefaults) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Array("CREATE TABLE"))
+      case update: UpdateSchema if update.newSchema.fields.exists(usesDefaults) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Array("ALTER TABLE"))
+      case _ =>
+    }
+  }
+
 }

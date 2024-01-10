@@ -97,9 +97,8 @@ case class MergeIntoCommand(
             isOverwriteMode = false, rearrangeOnly = false)
         }
 
-        // If materialized, prepare the DF reading the materialize source
-        // Otherwise, prepare a regular DF from source plan.
-        val materializeSourceReason = prepareSourceDFAndReturnMaterializeReason(
+        // Materialize the source if needed.
+        prepareMergeSource(
           spark,
           source,
           condition,
@@ -110,16 +109,41 @@ case class MergeIntoCommand(
         val mergeActions = {
           if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
             // This is a single-job execution so there is no WriteChanges.
-            metrics("numSourceRowsInSecondScan").set(-1)
+            performedSecondSourceScan = false
             writeOnlyInserts(
               spark, deltaTxn, filterMatchedRows = true, numSourceRowsMetric = "numSourceRows")
           } else {
             val (filesToRewrite, deduplicateCDFDeletes) = findTouchedFiles(spark, deltaTxn)
             if (filesToRewrite.nonEmpty) {
-              val newWrittenFiles = withStatusCode("DELTA", "Writing merged data") {
-                writeAllChanges(spark, deltaTxn, filesToRewrite, deduplicateCDFDeletes)
+              val shouldWriteDeletionVectors = shouldWritePersistentDeletionVectors(spark, deltaTxn)
+              if (shouldWriteDeletionVectors) {
+                val newWrittenFiles = withStatusCode("DELTA", "Writing modified data") {
+                  writeAllChanges(
+                    spark,
+                    deltaTxn,
+                    filesToRewrite,
+                    deduplicateCDFDeletes,
+                    writeUnmodifiedRows = false)
+                }
+
+                val dvActions = withStatusCode(
+                   "DELTA",
+                   "Writing Deletion Vectors for modified data") {
+                  writeDVs(spark, deltaTxn, filesToRewrite)
+                }
+
+                newWrittenFiles ++ dvActions
+              } else {
+                val newWrittenFiles = withStatusCode("DELTA", "Writing modified data") {
+                  writeAllChanges(
+                    spark,
+                    deltaTxn,
+                    filesToRewrite,
+                    deduplicateCDFDeletes,
+                    writeUnmodifiedRows = true)
+                }
+                newWrittenFiles ++ filesToRewrite.map(_.remove)
               }
-              filesToRewrite.map(_.remove) ++ newWrittenFiles
             } else {
               // Run an insert-only job instead of WriteChanges
               writeOnlyInserts(
@@ -135,7 +159,7 @@ case class MergeIntoCommand(
           deltaTxn,
           mergeActions,
           startTime,
-          materializeSourceReason)
+          getMergeSource.materializeReason)
       }
       spark.sharedState.cacheManager.recacheByPlan(spark, target)
     }

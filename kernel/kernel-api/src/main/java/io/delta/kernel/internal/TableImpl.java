@@ -25,9 +25,8 @@ import io.delta.kernel.client.TableClient;
 
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
-import io.delta.kernel.internal.util.Logging;
 
-public class TableImpl implements Table, Logging {
+public class TableImpl implements Table {
     public static Table forPath(TableClient tableClient, String path)
         throws TableNotFoundException {
         // Resolve the path to fully qualified table path using the `TableClient` APIs
@@ -47,14 +46,16 @@ public class TableImpl implements Table, Logging {
 
     private final Path logPath;
     private final Path dataPath;
+    private final SnapshotManager snapshotManager;
 
     public TableImpl(Path logPath, Path dataPath) {
         this.logPath = logPath;
         this.dataPath = dataPath;
+        this.snapshotManager = new SnapshotManager();
     }
 
     @Override
     public Snapshot getLatestSnapshot(TableClient tableClient) throws TableNotFoundException {
-        return new SnapshotManager().buildLatestSnapshot(tableClient, logPath, dataPath);
+        return snapshotManager.buildLatestSnapshot(tableClient, logPath, dataPath);
     }
 }

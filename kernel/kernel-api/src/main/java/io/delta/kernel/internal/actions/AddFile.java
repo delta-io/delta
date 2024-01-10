@@ -21,9 +21,15 @@ import io.delta.kernel.types.*;
  * Delta log action representing an `AddFile`
  */
 public class AddFile {
-    // Note: these are more optional fields in `AddFile` according to the spec. We will be adding
-    // them in read schema as we support the related features.
-    public static final StructType SCHEMA = new StructType()
+
+    /* We conditionally read this field based on the query filter */
+    private static final StructField JSON_STATS_FIELD = new StructField(
+        "stats",
+        StringType.STRING,
+        true /* nullable */
+    );
+
+    public static final StructType SCHEMA_WITHOUT_STATS = new StructType()
         .add("path", StringType.STRING, false /* nullable */)
         .add("partitionValues",
             new MapType(StringType.STRING, StringType.STRING, true),
@@ -32,4 +38,7 @@ public class AddFile {
         .add("modificationTime", LongType.LONG, false /* nullable*/)
         .add("dataChange", BooleanType.BOOLEAN, false /* nullable*/)
         .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */);
+
+    public static final StructType SCHEMA_WITH_STATS = SCHEMA_WITHOUT_STATS
+        .add(JSON_STATS_FIELD);
 }

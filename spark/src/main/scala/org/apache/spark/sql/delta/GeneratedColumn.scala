@@ -546,7 +546,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         case GreaterThanOrEqual(ExtractBaseColumn(nameParts, _), lit: Literal) =>
           toPartitionFilter(nameParts, _.greaterThanOrEqual(lit))
         case IsNull(ExtractBaseColumn(nameParts, _)) =>
-          toPartitionFilter(nameParts, _.isNull)
+          toPartitionFilter(nameParts, _.isNull())
         case _ => Nil
       }
     }

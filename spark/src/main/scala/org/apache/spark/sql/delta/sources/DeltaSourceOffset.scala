@@ -38,8 +38,6 @@ import org.apache.spark.sql.execution.streaming.Offset
  * Note this class retains the naming of `Reservoir` to maintain compatibility
  * with serialized offsets from the beta period.
  *
- * @param sourceVersion     The version of serialization that this offset is encoded with.
- *                          It should not be set manually!
  * @param reservoirId       The id of the table we are reading from. Used to detect
  *                          misconfiguration when restarting a query.
  * @param reservoirVersion  The version of the table that we are current processing.
@@ -55,7 +53,6 @@ import org.apache.spark.sql.execution.streaming.Offset
 @JsonDeserialize(using = classOf[DeltaSourceOffset.Deserializer])
 @JsonSerialize(using = classOf[DeltaSourceOffset.Serializer])
 case class DeltaSourceOffset private(
-    sourceVersion: Long,
     reservoirId: String,
     reservoirVersion: Long,
     index: Long,
@@ -63,6 +60,8 @@ case class DeltaSourceOffset private(
   ) extends Offset with Comparable[DeltaSourceOffset] {
 
   import DeltaSourceOffset._
+
+  assert(index != -1, "Index should never be -1, it should be set to the BASE_INDEX instead.")
 
   override def json: String = {
     JsonUtils.toJson(this)
@@ -114,6 +113,11 @@ object DeltaSourceOffset extends Logging {
   // The index for an IndexedFile that is right after a metadata change. (from VERSION_3)
   val POST_METADATA_CHANGE_INDEX: Long = -19
 
+  // A value close to the end of the Long space. This is used to indicate that we are at the end of
+  // a reservoirVersion and need to move on to the next one. This should never be serialized into
+  // the offset log.
+  val END_INDEX: Long = Long.MaxValue - 100
+
   /**
    * The ONLY external facing constructor to create a DeltaSourceOffset in memory.
    * @param reservoirId Table id
@@ -129,7 +133,6 @@ object DeltaSourceOffset extends Logging {
   ): DeltaSourceOffset = {
     // TODO should we detect `reservoirId` changes when a query is running?
     new DeltaSourceOffset(
-      CURRENT_VERSION,
       reservoirId,
       reservoirVersion,
       index,
@@ -160,9 +163,9 @@ object DeltaSourceOffset extends Logging {
    * re-process data and cause data duplication.
    */
   def validateOffsets(previousOffset: DeltaSourceOffset, currentOffset: DeltaSourceOffset): Unit = {
-    if (!previousOffset.isInitialSnapshot && currentOffset.isInitialSnapshot) {
+    if (previousOffset.isInitialSnapshot == false && currentOffset.isInitialSnapshot == true) {
       throw new IllegalStateException(
-        s"Found invalid offsets: 'isInitialSnapshot' fliped incorrectly. " +
+        s"Found invalid offsets: 'isInitialSnapshot' flipped incorrectly. " +
           s"Previous: $previousOffset, Current: $currentOffset")
     }
     if (previousOffset.reservoirVersion > currentOffset.reservoirVersion) {
@@ -230,6 +233,8 @@ object DeltaSourceOffset extends Logging {
       } else {
         o.index
       }
+      assert(offsetIndex != END_INDEX, "Should not deserialize END_INDEX")
+
       // Leverage the only external facing constructor to initialize with latest sourceVersion
       DeltaSourceOffset(
         reservoirId = o.reservoirId,
@@ -248,6 +253,8 @@ object DeltaSourceOffset extends Logging {
         o: DeltaSourceOffset,
         gen: JsonGenerator,
         provider: SerializerProvider): Unit = {
+      assert(o.index != END_INDEX, "Should not serialize END_INDEX")
+
       // We handle a few backward compatibility scenarios during Serialization here:
       // 1. [Backward compatibility] If the source index is a schema changing base index, then
       //    replace it with index = -1 and use VERSION_1. This allows older Delta to at least be

@@ -28,17 +28,21 @@ import org.apache.spark.sql.delta.deletionvectors.{DropMarkedRowsFilter, KeepAll
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.hadoop.mapreduce.Job
+import org.apache.parquet.hadoop.ParquetOutputFormat
+import org.apache.parquet.hadoop.util.ContextUtil
 
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.execution.datasources.OutputWriterFactory
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.vectorized.{OffHeapColumnVector, OnHeapColumnVector, WritableColumnVector}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.{ByteType, LongType, MetadataBuilder, StructField, StructType}
-import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector}
+import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnarBatchRow, ColumnVector}
 import org.apache.spark.util.SerializableConfiguration
 
 /**
@@ -88,6 +92,7 @@ case class DeltaParquetFileFormat(
         field.copy(metadata = new MetadataBuilder()
           .withMetadata(field.metadata)
           .remove(DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY)
+          .remove(DeltaColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY)
           .build())
       }
     } else schema
@@ -96,7 +101,7 @@ case class DeltaParquetFileFormat(
   override def isSplitable(
     sparkSession: SparkSession, options: Map[String, String], path: Path): Boolean = isSplittable
 
-  def hasDeletionVectorMap(): Boolean = broadcastDvMap.isDefined && broadcastHadoopConf.isDefined
+  def hasDeletionVectorMap: Boolean = broadcastDvMap.isDefined && broadcastHadoopConf.isDefined
 
   /**
    * We sometimes need to replace FileFormat within LogicalPlans, so we have to override
@@ -197,6 +202,28 @@ case class DeltaParquetFileFormat(
     // For Delta Parquet readers don't expose the row_index field as a metadata field.
     super.metadataSchemaFields.filter(field => field != ParquetFileFormat.ROW_INDEX_FIELD)
   }
+
+  override def prepareWrite(
+       sparkSession: SparkSession,
+       job: Job,
+       options: Map[String, String],
+       dataSchema: StructType): OutputWriterFactory = {
+    val factory = super.prepareWrite(sparkSession, job, options, dataSchema)
+    val conf = ContextUtil.getConfiguration(job)
+    // Always write timestamp as TIMESTAMP_MICROS for Iceberg compat based on Iceberg spec
+    if (IcebergCompatV1.isEnabled(metadata) || IcebergCompatV2.isEnabled(metadata)) {
+      conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
+        SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
+    }
+    if (IcebergCompatV2.isEnabled(metadata)) {
+      // For Uniform with IcebergCompatV2, we need to write nested field IDs for list and map
+      // types to the parquet schema. Spark currently does not support it so we hook in our
+      // own write support class.
+      ParquetOutputFormat.setWriteSupportClass(job, classOf[DeltaParquetWriteSupport])
+    }
+    factory
+  }
+
   def copyWithDVInfo(
       tablePath: String,
       broadcastDvMap: Broadcast[Map[URI, DeletionVectorDescriptorWithFilterType]],
@@ -289,16 +316,30 @@ case class DeltaParquetFileFormat(
             newBatch
           }
 
+        case columnarRow: ColumnarBatchRow =>
+          // When vectorized reader is enabled but returns immutable rows instead of
+          // columnar batches [[ColumnarBatchRow]]. So we have to copy the row as a
+          // mutable [[InternalRow]] and set the `row_index` and `is_row_deleted`
+          // column values. This is not efficient. It should affect only the wide
+          // tables. https://github.com/delta-io/delta/issues/2246
+          val newRow = columnarRow.copy();
+          isRowDeletedColumn.foreach { columnMetadata =>
+            rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
+            newRow.setByte(columnMetadata.index, tempVector.getByte(0))
+          }
+
+          rowIndexColumn.foreach(columnMetadata => newRow.setLong(columnMetadata.index, rowIndex))
+          rowIndex += 1
+          newRow
+
         case rest: InternalRow => // When vectorized Parquet reader is disabled
           // Temporary vector variable used to get DV values from RowIndexFilter
           // Currently the RowIndexFilter only supports writing into a columnar vector
           // and doesn't have methods to get DV value for a specific row index.
           // TODO: This is not efficient, but it is ok given the default reader is vectorized
-          // reader and this will be temporary until Delta upgrades to Spark with Parquet
-          // reader that automatically generates the row index column.
           isRowDeletedColumn.foreach { columnMetadata =>
             rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
-            rest.setLong(columnMetadata.index, tempVector.getByte(0))
+            rest.setByte(columnMetadata.index, tempVector.getByte(0))
           }
 
           rowIndexColumn.foreach(columnMetadata => rest.setLong(columnMetadata.index, rowIndex))

@@ -87,6 +87,19 @@ object SchemaUtils extends DeltaLogging {
       f(other)
   }
 
+  def findAnyTypeRecursively(dt: DataType)(f: DataType => Boolean): Option[DataType] = dt match {
+    case s: StructType =>
+      Some(s).filter(f).orElse(s.fields
+          .find(field => findAnyTypeRecursively(field.dataType)(f).nonEmpty).map(_.dataType))
+    case a: ArrayType =>
+      Some(a).filter(f).orElse(findAnyTypeRecursively(a.elementType)(f))
+    case m: MapType =>
+      Some(m).filter(f).orElse(findAnyTypeRecursively(m.keyType)(f))
+        .orElse(findAnyTypeRecursively(m.valueType)(f))
+    case other =>
+      Some(other).filter(f)
+  }
+
   /** Turns the data types to nullable in a recursive manner for nested columns. */
   def typeAsNullable(dt: DataType): DataType = dt match {
     case s: StructType => s.asNullable
@@ -699,6 +712,16 @@ object SchemaUtils extends DeltaLogging {
         case other =>
           throw DeltaErrors.addColumnParentNotStructException(column, other)
       }
+    }
+    // If the proposed new column includes a default value, return a specific "not supported" error.
+    // The rationale is that such operations require the data source scan operator to implement
+    // support for filling in the specified default value when the corresponding field is not
+    // present in storage. That is not implemented yet for Delta, so we return this error instead.
+    // The error message is descriptive and provides an easy workaround for the user.
+    if (column.metadata.contains("CURRENT_DEFAULT")) {
+      throw new DeltaAnalysisException(
+        errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED",
+        messageParameters = Array.empty)
     }
 
     require(position.nonEmpty, s"Don't know where to add the column $column")

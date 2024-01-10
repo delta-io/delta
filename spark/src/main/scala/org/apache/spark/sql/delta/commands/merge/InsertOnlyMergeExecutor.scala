@@ -64,20 +64,15 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
 
       // If nothing to do when not matched, then nothing to insert, that is, no new files to write
       if (!includesInserts && !filterMatchedRows) {
-        metrics("numSourceRowsInSecondScan").set(-1)
+        performedSecondSourceScan = false
         return Seq.empty
       }
 
-      // Expression to update metrics
-      val incrSourceRowCountExpr = incrementMetricAndReturnBool(numSourceRowsMetric, true)
       // source DataFrame
-      var sourceDF = getSourceDF.filter(Column(incrSourceRowCountExpr))
-      // If there is only one insert clause, then filter out the source rows that do not
-      // satisfy the clause condition because those rows will not be written out.
-      if (notMatchedClauses.size == 1 && notMatchedClauses.head.condition.isDefined) {
-        sourceDF =
-          sourceDF.filter(Column(notMatchedClauses.head.condition.get))
-      }
+      val mergeSource = getMergeSource
+      // Expression to update metrics.
+      val incrSourceRowCountExpr = incrementMetricAndReturnBool(numSourceRowsMetric, true)
+      val sourceDF = filterSource(mergeSource.df.filter(Column(incrSourceRowCountExpr)))
 
       var dataSkippedFiles: Option[Seq[AddFile]] = None
       val preparedSourceDF = if (filterMatchedRows) {
@@ -126,6 +121,16 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       metrics("numTargetBytesAdded") += addedBytes
       metrics("numTargetPartitionsAddedTo") += addedPartitions
       newFiles
+    }
+  }
+
+  private def filterSource(source: DataFrame): DataFrame = {
+    // If there is only one insert clause, then filter out the source rows that do not
+    // satisfy the clause condition because those rows will not be written out.
+    if (notMatchedClauses.size == 1 && notMatchedClauses.head.condition.isDefined) {
+      source.filter(Column(notMatchedClauses.head.condition.get))
+    } else {
+      source
     }
   }
 

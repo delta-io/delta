@@ -93,7 +93,7 @@ object ScanWithDeletionVectors {
 
     // See if the relation is already modified to include DV reads as part of
     // a previous invocation of this rule on this table
-    if (fileFormat.hasDeletionVectorMap()) return None
+    if (fileFormat.hasDeletionVectorMap) return None
 
     // See if any files actually have a DV
     val spark = SparkSession.getActiveSession.get

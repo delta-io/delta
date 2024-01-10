@@ -42,95 +42,6 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, MetadataBuilder, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.UTF8String
 
-trait GeneratedColumnTest extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
-
-
-  protected def sqlDate(date: String): java.sql.Date = {
-    toJavaDate(stringToDate(UTF8String.fromString(date)).get)
-  }
-
-  protected def sqlTimestamp(timestamp: String): java.sql.Timestamp = {
-    toJavaTimestamp(stringToTimestamp(
-      UTF8String.fromString(timestamp),
-      getZoneId(SQLConf.get.sessionLocalTimeZone)).get)
-  }
-
-  protected def withTableName[T](tableName: String)(func: String => T): Unit = {
-    withTable(tableName) {
-      func(tableName)
-    }
-  }
-
-  /** Create a new field with the given generation expression. */
-  def withGenerationExpression(field: StructField, expr: String): StructField = {
-    val newMetadata = new MetadataBuilder()
-      .withMetadata(field.metadata)
-      .putString(GENERATION_EXPRESSION_METADATA_KEY, expr)
-      .build()
-    field.copy(metadata = newMetadata)
-  }
-
-  protected def buildTable(
-      builder: DeltaTableBuilder,
-      tableName: String,
-      path: Option[String],
-      schemaString: String,
-      generatedColumns: Map[String, String],
-      partitionColumns: Seq[String],
-      notNullColumns: Set[String],
-      comments: Map[String, String],
-      properties: Map[String, String]): DeltaTableBuilder = {
-    val schema = if (schemaString.nonEmpty) {
-      StructType.fromDDL(schemaString)
-    } else {
-      new StructType()
-    }
-    val cols = schema.map(field => (field.name, field.dataType))
-    if (tableName != null) {
-      builder.tableName(tableName)
-    }
-    cols.foreach(col => {
-      val (colName, dataType) = col
-      val nullable = !notNullColumns.contains(colName)
-      var columnBuilder = io.delta.tables.DeltaTable.columnBuilder(spark, colName)
-      columnBuilder.dataType(dataType.sql)
-      columnBuilder.nullable(nullable)
-      if (generatedColumns.contains(colName)) {
-        columnBuilder.generatedAlwaysAs(generatedColumns(colName))
-      }
-      if (comments.contains(colName)) {
-        columnBuilder.comment(comments(colName))
-      }
-      builder.addColumn(columnBuilder.build())
-    })
-    if (partitionColumns.nonEmpty) {
-      builder.partitionedBy(partitionColumns: _*)
-    }
-    if (path.nonEmpty) {
-      builder.location(path.get)
-    }
-    properties.foreach { case (key, value) =>
-      builder.property(key, value)
-    }
-    builder
-  }
-
-  protected def createTable(
-      tableName: String,
-      path: Option[String],
-      schemaString: String,
-      generatedColumns: Map[String, String],
-      partitionColumns: Seq[String],
-      notNullColumns: Set[String] = Set.empty,
-      comments: Map[String, String] = Map.empty,
-      properties: Map[String, String] = Map.empty): Unit = {
-    var tableBuilder = io.delta.tables.DeltaTable.create(spark)
-    buildTable(tableBuilder, tableName, path, schemaString,
-      generatedColumns, partitionColumns, notNullColumns, comments, properties)
-      .execute()
-  }
-}
-
 trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
 
   import GeneratedColumn._
@@ -405,7 +316,8 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       sql(s"INSERT OVERWRITE $table (c6, c8, c1, c3_p) VALUES" +
         s"(100, '2020-11-12', 1L, 'foo')")
     }
-    assert(e.getMessage.contains("Column c5 is not specified in INSERT"))
+    assert(e.getMessage.contains("with name `c5` cannot be resolved") ||
+        e.getMessage.contains("Column c5 is not specified in INSERT"))
     Nil
   }
 
@@ -1720,6 +1632,42 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
             )
           )
         }
+      }
+    }
+  }
+
+  test("MERGE INSERT with schema evolution on different name case") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(
+          tableName = src,
+          path = None,
+          schemaString = "c1 INT, c2 INT",
+          generatedColumns = Map.empty,
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${src} values (2, 4);")
+        createTable(
+          tableName = tgt,
+          path = None,
+          schemaString = "c1 INT, c3 INT",
+          generatedColumns = Map("c3" -> "c1 + 1"),
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${tgt} values (1, 2);")
+
+        withSQLConf(("spark.databricks.delta.schema.autoMerge.enabled", "true")) {
+          sql(s"""
+             |MERGE INTO ${tgt}
+             |USING ${src}
+             |on ${tgt}.c1 = ${src}.c1
+             |WHEN NOT MATCHED THEN INSERT (c1, C2) VALUES (${src}.c1, ${src}.c2)
+             |""".stripMargin)
+        }
+        checkAnswer(
+          sql(s"SELECT * FROM ${tgt}"),
+          Seq(Row(1, 2, null), Row(2, 3, 4))
+        )
       }
     }
   }

@@ -342,6 +342,32 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CLUSTERING_COLUMNS_MISMATCH" : {
+    "message" : [
+      "The provided clustering columns do not match the existing table's.",
+      "- provided: <providedClusteringColumns>",
+      "- existing: <existingClusteringColumns>"
+    ],
+    "sqlState" : "42P10"
+  },
+  "DELTA_CLUSTERING_COLUMN_MISSING_STATS" : {
+    "message" : [
+      "Clustering requires clustering columns to have stats. Couldn't find clustering column(s) '<columns>' in stats schema:\n<schema>"
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_CLUSTERING_REPLACE_TABLE_WITH_PARTITIONED_TABLE" : {
+    "message" : [
+      "Replacing a clustered Delta table with a partitioned table is not allowed."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS" : {
+    "message" : [
+      "CLUSTER BY supports up to <numColumnsLimit> clustering columns, but the table has <actualNumColumns> clustering columns. Please remove the extra clustering columns."
+    ],
+    "sqlState" : "54000"
+  },
   "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" : {
     "message" : [
       "Data skipping is not supported for partition column '<column>'."
@@ -886,42 +912,81 @@
     ],
     "sqlState" : "42K09"
   },
-  "DELTA_ICEBERG_COMPAT_V1_VIOLATION" : {
+  "DELTA_ICEBERG_COMPAT_VIOLATION" : {
     "message" : [
-      "The validation of IcebergCompatV1 has failed."
+      "The validation of IcebergCompatV<version> has failed."
     ],
     "subClass" : {
+      "CHANGE_VERSION_NEED_REWRITE" : {
+        "message" : [
+          "Changing to IcebergCompatV<newVersion> requires rewriting the table. Please run REORG TABLE APPLY (UPGRADE UNIFORM ('ICEBERG_COMPAT_VERSION = <newVersion>'));",
+          "Note that REORG enables table feature IcebergCompatV<newVersion> and other Delta lake clients without that table feature support may not be able to write to the table."
+        ]
+      },
+      "COMPAT_VERSION_NOT_SUPPORTED" : {
+        "message" : [
+          "IcebergCompatVersion = <version> is not supported. Supported versions are between 1 and <maxVersion> "
+        ]
+      },
+      "DELETION_VECTORS_NOT_PURGED" : {
+        "message" : [
+          "IcebergCompatV<version> requires Deletion Vectors to be completely purged from the table. Please run the REORG TABLE APPLY (PURGE) command."
+        ]
+      },
+      "DELETION_VECTORS_SHOULD_BE_DISABLED" : {
+        "message" : [
+          "IcebergCompatV<version> requires Deletion Vectors to be disabled on the table. Please use the ALTER TABLE DROP FEATURE command to disable Deletion Vectors and to remove the existing Deletion Vectors from the table."
+        ]
+      },
       "DISABLING_REQUIRED_TABLE_FEATURE" : {
         "message" : [
-          "IcebergCompatV1 requires feature <feature> to be supported and enabled. You cannot drop it from the table. Instead, please disable IcebergCompatV1 first."
+          "IcebergCompatV<version> requires feature <feature> to be supported and enabled. You cannot drop it from the table. Instead, please disable IcebergCompatV<version> first."
+        ]
+      },
+      "FILES_NOT_ICEBERG_COMPAT" : {
+        "message" : [
+          "Enabling Uniform Iceberg with IcebergCompatV<version> requires all files to be iceberg compatible.",
+          "There are <addFilesCount> files in table version <tableVersion> and <addFilesWithoutTag> files are not iceberg compatible, which is usually a result of concurrent write.",
+          "Please run the REORG TABLE table APPLY (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION=<version>) command again."
         ]
       },
       "INCOMPATIBLE_TABLE_FEATURE" : {
         "message" : [
-          "IcebergCompatV1 is incompatible with feature <feature>."
+          "IcebergCompatV<version> is incompatible with feature <feature>."
         ]
       },
       "MISSING_REQUIRED_TABLE_FEATURE" : {
         "message" : [
-          "IcebergCompatV1 requires feature <feature> to be supported and enabled."
+          "IcebergCompatV<version> requires feature <feature> to be supported and enabled."
         ]
       },
       "REPLACE_TABLE_CHANGE_PARTITION_NAMES" : {
         "message" : [
-          "IcebergCompatV1 doesn't support replacing partitioned tables with a differently-named partition spec, because Iceberg-Spark 1.1.0 doesn't.",
+          "IcebergCompatV<version> doesn't support replacing partitioned tables with a differently-named partition spec, because Iceberg-Spark 1.1.0 doesn't.",
           "Prev Partition Spec: <prevPartitionSpec>",
           "New Partition Spec: <newPartitionSpec>"
         ]
       },
+      "REWRITE_DATA_FAILED" : {
+        "message" : [
+          "Rewriting data to IcebergCompatV<version> failed.",
+          "Please run the REORG TABLE table APPLY (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION=<version>) command again."
+        ]
+      },
       "UNSUPPORTED_DATA_TYPE" : {
         "message" : [
-          "IcebergCompatV1 doesn't support schema with MapType or ArrayType or NullType. Your schema:",
+          "IcebergCompatV<version> does not support the data type <dataType> in your schema. Your schema:",
           "<schema>"
+        ]
+      },
+      "VERSION_MUTUAL_EXCLUSIVE" : {
+        "message" : [
+          "Only one IcebergCompat version can be enabled."
         ]
       },
       "WRONG_REQUIRED_TABLE_PROPERTY" : {
         "message" : [
-          "IcebergCompatV1 requires table property '<key>' to be set to '<requiredValue>'. Current value: '<actualValue>'."
+          "IcebergCompatV<version> requires table property '<key>' to be set to '<requiredValue>'. Current value: '<actualValue>'."
         ]
       }
     },
@@ -1544,6 +1609,42 @@
       "'overwriteSchema' cannot be used in dynamic partition overwrite mode."
     ],
     "sqlState" : "42613"
+  },
+  "DELTA_PARSING_ANALYSIS_ERROR" : {
+    "message" : [
+      "<msg>"
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_ILLEGAL_TABLE_NAME" : {
+    "message" : [
+      "Illegal table name `<tableName>`."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_INCORRECT_CLONE_HEADER" : {
+    "message" : [
+      "Incorrect CLONE header. Expected REPLACE or CREATE table."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_MISSING_TABLE_NAME_OR_PATH" : {
+    "message" : [
+      "<command> command requires a file path or table name."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_MUTUALLY_EXCLUSIVE_CLAUSES" : {
+    "message" : [
+      "<clauseOne> cannot be used together with <clauseTwo>."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_UNSUPPORTED_DATA_TYPE" : {
+    "message" : [
+      "DataType <dataType> is not supported."
+    ],
+    "sqlState" : "KD009"
   },
   "DELTA_PARTITION_COLUMN_CAST_FAILED" : {
     "message" : [
@@ -2194,6 +2295,12 @@
     ],
     "sqlState" : "42809"
   },
+  "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN" : {
+    "message" : [
+      "Dropping clustering columns (<columnList>) is not allowed."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_DROP_COLUMN" : {
     "message" : [
       "DROP COLUMN is not supported for your Delta table. <advice>"
@@ -2226,13 +2333,13 @@
   },
   "DELTA_UNSUPPORTED_FEATURES_FOR_READ" : {
     "message" : [
-      "Unable to read this table because it requires reader table feature(s) that are unsupported by this version of Delta Lake: <unsupported>."
+      "Unsupported Delta read feature: table \"<tableNameOrPath>\" requires reader table feature(s) that are unsupported by Delta Lake \"<deltaVersion>\": <unsupported>."
     ],
     "sqlState" : "56038"
   },
   "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE" : {
     "message" : [
-      "Unable to write this table because it requires writer table feature(s) that are unsupported by this version of Delta Lake: <unsupported>."
+      "Unsupported Delta write feature: table \"<tableNameOrPath>\" requires writer table feature(s) that are unsupported by Delta Lake \"<deltaVersion>\": <unsupported>."
     ],
     "sqlState" : "56038"
   },
@@ -2471,5 +2578,23 @@
       "<config> to false."
     ],
     "sqlState" : "42939"
+  },
+  "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED" : {
+    "message" : [
+      "Failed to execute the command because DEFAULT values are not supported when adding new",
+      "columns to previously existing Delta tables; please add the column without a default",
+      "value first, then run a second ALTER TABLE ALTER COLUMN SET DEFAULT command to apply",
+      "for future inserted rows instead."
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED" : {
+    "message" : [
+      "Failed to execute <commandType> command because it assigned a column DEFAULT value,",
+      "but the corresponding table feature was not enabled. Please retry the command again",
+      "after executing ALTER TABLE tableName SET",
+      "TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')."
+    ],
+    "sqlState" : "0AKDE"
   }
 }

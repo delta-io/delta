@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSource, MergeIntoMaterializeSourceReason, MergeStats}
-import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
+import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex, TransactionalWrite}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -54,6 +54,13 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
   val notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause]
   val notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause]
   val migratedSchema: Option[StructType]
+
+  protected def shouldWritePersistentDeletionVectors(
+      spark: SparkSession,
+      txn: OptimisticTransaction): Boolean = {
+    spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS) &&
+      DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
+  }
 
   override val (canMergeSchema, canOverwriteSchema) = {
     // Delta options can't be passed to MERGE INTO currently, so they'll always be empty.
@@ -173,7 +180,10 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     "scanTimeMs" ->
       createTimingMetric(sc, "time taken to scan the files for matches"),
     "rewriteTimeMs" ->
-      createTimingMetric(sc, "time taken to rewrite the matched files")
+      createTimingMetric(sc, "time taken to rewrite the matched files"),
+    "numTargetDeletionVectorsAdded" -> createMetric(sc, "number of deletion vectors added"),
+    "numTargetDeletionVectorsRemoved" -> createMetric(sc, "number of deletion vectors removed"),
+    "numTargetDeletionVectorsUpdated" -> createMetric(sc, "number of deletion vectors updated")
   )
 
   /**
@@ -191,7 +201,8 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       matchedClauses,
       notMatchedClauses,
       notMatchedBySourceClauses,
-      isPartitioned = deltaTxn.metadata.partitionColumns.nonEmpty)
+      isPartitioned = deltaTxn.metadata.partitionColumns.nonEmpty,
+      performedSecondSourceScan = performedSecondSourceScan)
     stats.copy(
       materializeSourceReason = Some(materializeSourceReason.toString),
       materializeSourceAttempts = Some(attempt))
@@ -228,7 +239,11 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       txn: OptimisticTransaction,
       outputDF: DataFrame): Seq[FileAction] = {
     val partitionColumns = txn.metadata.partitionColumns
-    if (partitionColumns.nonEmpty && spark.conf.get(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE)) {
+    // If the write will be an optimized write, which shuffles the data anyway, then don't
+    // repartition. Optimized writes can handle both splitting very large tasks and coalescing
+    // very small ones.
+    if (partitionColumns.nonEmpty && spark.conf.get(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE)
+      && !TransactionalWrite.shouldOptimizeWrite(txn.metadata, spark.sessionState.conf)) {
       txn.writeFiles(outputDF.repartition(partitionColumns.map(col): _*))
     } else {
       txn.writeFiles(outputDF)
@@ -427,6 +442,10 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     }
   }
 
+  // Whether we actually scanned the source twice or the value in numSourceRowsInSecondScan is
+  // uninitialised.
+  protected var performedSecondSourceScan: Boolean = true
+
   /**
    * Throws an exception if merge metrics indicate that the source table changed between the first
    * and the second source table scans.
@@ -437,8 +456,8 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     // in both jobs.
     // If numSourceRowsInSecondScan is < 0 then it hasn't run, e.g. for insert-only merges.
     // In that case we have only read the source table once.
-    if (metrics("numSourceRowsInSecondScan").value >= 0 &&
-      metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
+    if (performedSecondSourceScan &&
+        metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
       log.warn(s"Merge source has ${metrics("numSourceRows")} rows in initial scan but " +
         s"${metrics("numSourceRowsInSecondScan")} rows in second scan")
       if (conf.getConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED)) {

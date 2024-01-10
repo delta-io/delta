@@ -411,7 +411,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       Seq(10, 100).foreach { count =>
         appendToDeltaTable(
           spark.range(count)
-              .select('id, lit("2017-10-10").cast("date") as 'date, 'id % 5 as 'part),
+              .select('id, lit("2017-10-10").cast("date") as "date", 'id % 5 as "part"),
           path,
           Some(partitionColumns))
       }
@@ -486,7 +486,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
   test("optimize command with multiple partition predicates") {
     withTempDir { tempDir =>
       def writeData(count: Int): Unit = {
-        spark.range(count).select('id, lit("2017-10-10").cast("date") as 'date, 'id % 5 as 'part)
+        spark.range(count).select('id, lit("2017-10-10").cast("date") as "date", 'id % 5 as "part")
             .write
             .partitionBy("date", "part")
             .format("delta")
@@ -511,7 +511,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
   test("optimize command with multiple partition predicates with multiple where") {
     withTempDir { tempDir =>
       def writeData(count: Int): Unit = {
-        spark.range(count).select('id, lit("2017-10-10").cast("date") as 'date, 'id % 5 as 'part)
+        spark.range(count).select('id, lit("2017-10-10").cast("date") as "date", 'id % 5 as "part")
           .write
           .partitionBy("date", "part")
           .format("delta")

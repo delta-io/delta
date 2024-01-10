@@ -19,7 +19,10 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.net.URI
 
+import scala.concurrent.duration._
+
 // scalastyle:off import.ordering.noEmptyLine
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.deletionvectors.ExistingDeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -38,7 +41,12 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
-trait CheckpointsSuiteBase extends QueryTest with SharedSparkSession {
+class CheckpointsSuite
+  extends QueryTest
+  with SharedSparkSession
+  with DeltaCheckpointTestUtils
+  with DeltaSQLCommandTest {
+
   def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
     for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
       test(s"$testName [v2CheckpointFormat: $checkpointFormat]") {
@@ -70,12 +78,6 @@ trait CheckpointsSuiteBase extends QueryTest with SharedSparkSession {
           s"It is: ${other.getClass.getName}")
     }
   }
-}
-
-class CheckpointsSuite
-  extends CheckpointsSuiteBase
-  with DeltaCheckpointTestUtils
-  with DeltaSQLCommandTest {
 
   protected override def sparkConf = {
     // Set the gs LogStore impl to `LocalLogStore` so that it will work with `FakeGCSFileSystem`.
@@ -136,9 +138,13 @@ class CheckpointsSuite
         val fileActions = getCheckpointDfForFilesContainingFileActions(deltaLog, checkpointFile)
         assert(fileActions.where("add is not null or remove is not null").collect().size === 0)
         if (checkpointPolicy == CheckpointPolicy.V2) {
-          val v2CheckpointProvider =
-            snapshot.checkpointProvider.asInstanceOf[LazyCompleteCheckpointProvider]
-              .underlyingCheckpointProvider.asInstanceOf[V2CheckpointProvider]
+          val v2CheckpointProvider = snapshot.checkpointProvider match {
+            case lazyCompleteCheckpointProvider: LazyCompleteCheckpointProvider =>
+              lazyCompleteCheckpointProvider.underlyingCheckpointProvider
+                .asInstanceOf[V2CheckpointProvider]
+            case cp: V2CheckpointProvider => cp
+            case _ => throw new IllegalStateException("Unexpected checkpoint provider")
+          }
           assert(v2CheckpointProvider.sidecarFiles.size === 1)
           val sidecar = v2CheckpointProvider.sidecarFiles.head.toFileStatus(deltaLog.logPath)
           assert(spark.read.parquet(sidecar.getPath.toString).count() === 0)
@@ -911,6 +917,32 @@ class CheckpointsSuite
   testDifferentCheckpoints("intermittent error while reading checkpoint should not" +
       s" stick to snapshot [lastCheckpointMissing: $lastCheckpointMissing]") { (_, _) =>
     withTempDir { tempDir => checkIntermittentError(tempDir, lastCheckpointMissing) }
+  }
+
+  test("validate metadata cleanup is not called with createCheckpointAtVersion API") {
+    withTempDir { dir =>
+      val usageRecords1 = Log4jUsageLogger.track {
+        spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, dir)
+        log.createCheckpointAtVersion(0)
+      }
+      assert(filterUsageRecords(usageRecords1, "delta.log.cleanup").size === 0L)
+
+      val usageRecords2 = Log4jUsageLogger.track {
+        spark.range(10).write.mode("overwrite").format("delta").save(dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, dir)
+        log.checkpoint()
+
+      }
+      assert(filterUsageRecords(usageRecords2, "delta.log.cleanup").size > 0)
+    }
+  }
+
+  protected def filterUsageRecords(
+      usageRecords: Seq[UsageRecord], opType: String): Seq[UsageRecord] = {
+    usageRecords.filter { r =>
+      r.tags.get("opType").contains(opType) || r.opType.map(_.typeName).contains(opType)
+    }
   }
 }
 

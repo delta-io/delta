@@ -520,113 +520,6 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  test("non-correlated scalar subquery in source query") {
-    withTable("source") {
-      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
-        .createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = "(SELECT * FROM source WHERE value = (SELECT max(value) FROM source)) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(21, 26) :: // UPDATE
-          Nil)
-    }
-  }
-
-  test("correlated scalar subquery in source query") {
-    withTable("source") {
-      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
-        .createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = "(SELECT * FROM source WHERE " +
-          s"value = (SELECT MAX(value) FROM delta.`$tempPath` WHERE key1 = key2)) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(1, 4) :: // No change
-          Nil)
-    }
-  }
-
-  test("non-correlated exists subquery in source query") {
-    withTable("source") {
-      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
-        .createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = s"(SELECT * FROM source WHERE EXISTS (SELECT * FROM delta.`$tempPath`)) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(
-        readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(21, 26) :: // Update
-          Row(-10, 13) :: // Insert
-          Nil)
-    }
-  }
-
-  test("correlated exists subquery in source query") {
-    withTable("source") {
-      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
-        .createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = s"(SELECT * FROM source WHERE " +
-          s"EXISTS (SELECT * FROM delta.`$tempPath` WHERE key1 = key2)) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(
-        readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(21, 26) :: // Update
-          Nil)
-    }
-  }
-
-  test("in subquery in source query") {
-    withTable("source") {
-      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
-        .createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = s"(SELECT * FROM source WHERE " +
-          s"key1 IN (SELECT key2 FROM delta.`$tempPath`)) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(
-        readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(21, 26) :: // Update
-          Nil)
-    }
-  }
-
   testQuietly("Negative case - more than one source rows match the same target row") {
     withTable("source") {
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
@@ -776,6 +669,35 @@ abstract class MergeIntoSuiteBase
       }.getMessage
 
       errorContains(e, "Aggregate functions are not supported in the search condition")
+    }
+  }
+
+  test("Merge should use the same SparkSession consistently") {
+    withTempDir { dir =>
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
+        val r = dir.getCanonicalPath
+        val sourcePath = s"$r/source"
+        val targetPath = s"$r/target"
+        val numSourceRecords = 20
+        spark.range(numSourceRecords)
+          .withColumn("x", $"id")
+          .withColumn("y", $"id")
+          .write.mode("overwrite").format("delta").save(sourcePath)
+        spark.range(1)
+          .withColumn("x", $"id")
+          .write.mode("overwrite").format("delta").save(targetPath)
+        val spark2 = spark.newSession
+        spark2.conf.set(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")
+        val target = io.delta.tables.DeltaTable.forPath(spark2, targetPath)
+        val source = spark.read.format("delta").load(sourcePath).alias("s")
+        val merge = target.alias("t")
+          .merge(source, "t.id = s.id")
+          .whenMatched.updateExpr(Map("t.x" -> "t.x + 1"))
+          .whenNotMatched.insertAll()
+          .execute()
+        // The target table should have the same number of rows as the source after the merge
+        assert(spark.read.format("delta").load(targetPath).count() == numSourceRecords)
+      }
     }
   }
 
@@ -2314,8 +2236,10 @@ abstract class MergeIntoSuiteBase
       .collect().head.getMap(0).asInstanceOf[Map[String, String]]
     assert(metrics.contains("numTargetFilesRemoved"))
     // If insert-only code path is not used, then the general code path will rewrite existing
-    // target files.
-    assert(metrics("numTargetFilesRemoved").toInt > 0)
+    // target files when DVs are not enabled.
+    if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
+      assert(metrics("numTargetFilesRemoved").toInt > 0)
+    }
   }
 
   test("insert only merge - multiple matches when feature flag off") {
@@ -2655,7 +2579,9 @@ abstract class MergeIntoSuiteBase
             assert(stats.targetBeforeSkipping.files.get > stats.targetAfterSkipping.files.get)
           }
         } else {
-          assert(stats.targetFilesRemoved > 0)
+          if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
+            assert(stats.targetFilesRemoved > 0)
+          }
           // If there is no insert clause and the flag is enabled, data skipping should be
           // performed on targetOnly predicates.
           // However, with insert clauses, it's expected that no additional data skipping

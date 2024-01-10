@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.util.JsonUtils
 import org.scalactic.source.Position
 import org.scalatest.Tag
 
-import org.apache.spark.{SparkConf, SparkException, TaskContext}
+import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -770,49 +770,12 @@ trait MergeIntoMaterializeSourceTests
     assert(stats.materializeSourceReason.isDefined)
     stats.materializeSourceReason.get
   }
-
-  test("merge with non-deterministic scalar subquery in source") {
-    {
-      val numRows = 1000
-
-      val chooseOneRow = udf { i: Long =>
-        val stageId = TaskContext.get().stageId()
-        stageId % numRows == i
-      }
-      assert(chooseOneRow.deterministic)
-
-      // Create a subquery that returns a different row every time it is executed.
-      val subqueryViewName = "subquery_view"
-      spark.range(start = 0, end = numRows, step = 1, numPartitions = 1)
-        .filter(chooseOneRow(col("id")))
-        .createTempView(subqueryViewName)
-
-      val targetTableName = "target_table"
-      val sourceTableName = "source_table"
-      withTable(targetTableName, sourceTableName) {
-        spark.range(numRows).select(col("id").as("key"), col("id").as("value"))
-          .write.mode("overwrite").format("delta").saveAsTable(targetTableName)
-        spark.sql(s"SELECT key, value + $numRows AS value FROM $targetTableName")
-          .write.mode("overwrite").format("delta").saveAsTable(sourceTableName)
-
-        spark.sql(
-          s"""MERGE INTO $targetTableName t
-             |USING (SELECT * FROM $sourceTableName WHERE key = (SELECT * FROM $subqueryViewName)) s
-             |ON t.key = s.key
-             |WHEN MATCHED THEN UPDATE SET *
-             |WHEN NOT MATCHED THEN INSERT *""".stripMargin
-        )
-
-        // No new rows should have been inserted, as all keys in the source are already present in
-        // the target. If the subquery is evaluated multiple times, however, then the source may
-        // return different rows when finding the touched files and when writing the modified rows,
-        // in which case an update may be incorrectly treated as an insert.
-        assert(spark.table(targetTableName).count() === numRows)
-      }
-    }
-  }
 }
 
 // MERGE + materialize
 class MergeIntoMaterializeSourceSuite extends MergeIntoMaterializeSourceTests
+{
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
+}
 

@@ -69,8 +69,10 @@ private[delta] case class IndexedFile(
     add: AddFile,
     remove: RemoveFile = null,
     cdc: AddCDCFile = null,
-    isLast: Boolean = false,
     shouldSkip: Boolean = false) {
+
+  require(Option(add).size + Option(remove).size + Option(cdc).size <= 1,
+    "IndexedFile must have at most one of add, remove, or cdc")
 
   def getFileAction: FileAction = {
     if (add != null) {
@@ -279,10 +281,7 @@ trait DeltaSourceBase extends Source
         changes
       } else {
         val admissionControl = limits.get
-        changes.withClose { it =>
-          it.takeWhile { index =>
-            admissionControl.admit(Option(index.add))
-          }
+        changes.withClose { it => it.takeWhile { admissionControl.admit(_) }
         }
       }
     }
@@ -450,14 +449,15 @@ trait DeltaSourceBase extends Source
       indexedFile: IndexedFile,
       version: Long,
       isInitialSnapshot: Boolean): Option[DeltaSourceOffset] = {
-    val (v, i, isLastFileInVersion) = (indexedFile.version, indexedFile.index, indexedFile.isLast)
+    val (v, i) = (indexedFile.version, indexedFile.index)
     assert(v >= version,
       s"buildOffsetFromIndexedFile returns an invalid version: $v (expected: >= $version), " +
         s"tableId: $tableId")
 
-    // If the last file in previous batch is the last file of that version, automatically bump
-    // to next version to skip accessing that version file altogether.
-    val offset = if (isLastFileInVersion) {
+    // If the last file in previous batch is the end index of that version, automatically bump
+    // to next version to skip accessing that version file altogether. The END_INDEX should never
+    // be returned as an offset.
+    val offset = if (indexedFile.index == DeltaSourceOffset.END_INDEX) {
       // isInitialSnapshot must be false here as we have bumped the version.
       Some(DeltaSourceOffset(
         tableId,
@@ -748,7 +748,7 @@ case class DeltaSource(
             .processAndClose { actionsIter =>
               validateCommitAndDecideSkipping(
                 actionsIter, version,
-                fromVersion, endOffset.map(_.reservoirVersion),
+                fromVersion, endOffset,
                 verifyMetadataAction && !trackingMetadataChange
               )
             }
@@ -796,6 +796,18 @@ case class DeltaSource(
   }
 
   /**
+   * Adds dummy BEGIN_INDEX and END_INDEX IndexedFiles for @version before and after the
+   * contents of the iterator. The contents of the iterator must be the IndexedFiles that correspond
+   * to this version.
+   */
+  protected def addBeginAndEndIndexOffsetsForVersion(
+      version: Long, iterator: Iterator[IndexedFile]): Iterator[IndexedFile] = {
+    Iterator.single(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, add = null)) ++
+      iterator ++
+      Iterator.single(IndexedFile(version, DeltaSourceOffset.END_INDEX, add = null))
+  }
+
+  /**
    * This method computes the initial snapshot to read when Delta Source was initialized on a fresh
    * stream.
    */
@@ -832,7 +844,7 @@ case class DeltaSource(
         )
       }
     }
-    initialState.iterator()
+    addBeginAndEndIndexOffsetsForVersion(version, initialState.iterator())
   }
 
   /**
@@ -931,13 +943,13 @@ case class DeltaSource(
       override def next(): IndexedFile = {
         index += 1 // pre-increment the index (so it starts from 0)
         val add = filteredIterator.next().copy(stats = null)
-        IndexedFile(version, index, add, isLast = !filteredIterator.hasNext)
+        IndexedFile(version, index, add)
       }
     }
-
-    Iterator.single(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, null)) ++
-    getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
-    indexedFiles
+    addBeginAndEndIndexOffsetsForVersion(
+      version,
+      getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
+        indexedFiles)
   }
 
   /**
@@ -952,9 +964,16 @@ case class DeltaSource(
       actions: Iterator[Action],
       version: Long,
       batchStartVersion: Long,
-      batchEndVersionOpt: Option[Long] = None,
+      batchEndOffsetOpt: Option[DeltaSourceOffset] = None,
       verifyMetadataAction: Boolean = true
   ): (Boolean, Option[Metadata], Option[Protocol]) = {
+    // If the batch end is at the beginning of this exact version, then we actually stop reading
+    // just _before_ this version. So then we can ignore the version contents entirely.
+    if (batchEndOffsetOpt.exists(end =>
+      end.reservoirVersion == version && end.index == DeltaSourceOffset.BASE_INDEX)) {
+      return (false, None, None)
+    }
+
     /** A check on the source table that disallows changes on the source data. */
     val shouldAllowChanges = options.ignoreChanges || ignoreFileDeletion || skipChangeCommits
     /** A check on the source table that disallows commits that only include deletes to the data. */
@@ -975,7 +994,8 @@ case class DeltaSource(
         }
       case m: Metadata =>
         if (verifyMetadataAction) {
-          checkReadIncompatibleSchemaChanges(m, version, batchStartVersion, batchEndVersionOpt)
+          checkReadIncompatibleSchemaChanges(
+            m, version, batchStartVersion, batchEndOffsetOpt.map(_.reservoirVersion))
         }
         assert(metadataAction.isEmpty,
           "Should not encounter two metadata actions in the same commit")
@@ -1170,47 +1190,43 @@ case class DeltaSource(
      * This overloaded method checks if all the FileActions for a commit can be accommodated by
      * the rate limit.
      */
-    def admit(fileActions: Seq[FileAction]): Boolean = {
-      def getSize(actions: Seq[FileAction]): Long = {
-        actions.foldLeft(0L) { (l, r) => l + r.getFileSize }
+    def admit(indexedFiles: Seq[IndexedFile]): Boolean = {
+      def getSize(actions: Seq[IndexedFile]): Long = {
+        actions.filter(_.hasFileAction).foldLeft(0L) { (l, r) => l + r.getFileAction.getFileSize }
       }
-      if (fileActions.isEmpty) {
+      if (indexedFiles.isEmpty) {
         true
       } else {
         // if no files have been admitted, then admit all to avoid deadlock
         // else check if all of the files together satisfy the limit, only then admit
+        val bytesInFiles = getSize(indexedFiles)
         val shouldAdmit = !commitProcessedInBatch ||
-          (filesToTake - fileActions.size >= 0 && bytesToTake - getSize(fileActions) >= 0)
+          (filesToTake - indexedFiles.size >= 0 && bytesToTake - bytesInFiles >= 0)
 
         commitProcessedInBatch = true
-        take(files = fileActions.size, bytes = getSize(fileActions))
+        take(files = indexedFiles.size, bytes = bytesInFiles)
         shouldAdmit
       }
     }
 
-    /** Whether to admit the next file */
-    def admit(fileAction: Option[FileAction]): Boolean = {
+    /**
+     * Whether to admit the next file. Dummy IndexedFile entries with no attached file action are
+     * always admitted.
+     */
+    def admit(indexedFile: IndexedFile): Boolean = {
       commitProcessedInBatch = true
 
-      def getSize(action: FileAction): Long = {
-        action match {
-          case a: AddFile =>
-            a.size
-          case r: RemoveFile =>
-            r.size.getOrElse(0L)
-          case cdc: AddCDCFile =>
-            cdc.size
-        }
+      if (!indexedFile.hasFileAction) {
+        // Don't count placeholders. They are not files. If we have empty commits, then we should
+        // not count the placeholders as files, or else we'll end up with under-filled batches.
+        return true
       }
 
+      // We always admit a file if we still have capacity _before_ we take it. This ensures that we
+      // will even admit a file when it is larger than the remaining capacity, and that we will
+      // admit at least one file.
       val shouldAdmit = hasCapacity
-
-      if (fileAction.isEmpty) {
-        return shouldAdmit
-      }
-
-      take(files = 1, bytes = getSize(fileAction.get))
-
+      take(files = 1, bytes = indexedFile.getFileAction.getFileSize)
       shouldAdmit
     }
 

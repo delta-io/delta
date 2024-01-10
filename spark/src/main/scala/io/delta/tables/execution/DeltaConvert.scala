@@ -16,6 +16,7 @@
 
 package io.delta.tables.execution
 
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand
 import io.delta.tables.DeltaTable
 
@@ -28,7 +29,7 @@ trait DeltaConvertBase {
       spark: SparkSession,
       tableIdentifier: TableIdentifier,
       partitionSchema: Option[StructType],
-      deltaPath: Option[String]): DeltaTable = {
+      deltaPath: Option[String]): DeltaTable = withActiveSession(spark) {
     val cvt = ConvertToDeltaCommand(tableIdentifier, partitionSchema, collectStats = true,
       deltaPath)
     cvt.run(spark)

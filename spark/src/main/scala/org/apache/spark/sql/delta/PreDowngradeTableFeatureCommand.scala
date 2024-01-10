@@ -15,9 +15,10 @@
  */
 
 package org.apache.spark.sql.delta
+import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.commands.AlterTableUnsetPropertiesDeltaCommand
+import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 /**
@@ -84,6 +85,35 @@ case class TestLegacyReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
 
     val properties = Seq(TestRemovableLegacyReaderWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    true
+  }
+}
+
+case class V2CheckpointPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+  with DeltaLogging {
+  /**
+   * We set the checkpoint policy to classic to prevent any transactions from creating
+   * v2 checkpoints.
+   *
+   * @return True if it changed checkpoint policy metadata property to classic.
+   *         False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+
+    if (V2CheckpointTableFeature.validateRemoval(table.initialSnapshot)) return false
+
+    val startTimeNs = System.nanoTime()
+    val properties = Map(DeltaConfigs.CHECKPOINT_POLICY.key -> CheckpointPolicy.Classic.name)
+    AlterTableSetPropertiesDeltaCommand(table, properties).run(table.spark)
+
+    recordDeltaEvent(
+      table.deltaLog,
+      opType = "delta.v2CheckpointFeatureRemovalMetrics",
+      data =
+        Map(("downgradeTimeMs", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)))
+    )
+
     true
   }
 }

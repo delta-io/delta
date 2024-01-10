@@ -101,7 +101,7 @@ object Action {
     JsonUtils.mapper.readValue[SingleAction](json).unwrap
   }
 
-  lazy val logSchema = ExpressionEncoder[SingleAction].schema
+  lazy val logSchema = ExpressionEncoder[SingleAction]().schema
   lazy val addFileSchema = logSchema("add").dataType.asInstanceOf[StructType]
 }
 
@@ -528,7 +528,7 @@ object Protocol {
     }
     if (manifestGenerationEnabled) {
       // Only allow enabling this, if there are no DVs present.
-      if (!DeletionVectorUtils.isTableDVFree(spark, snapshot)) {
+      if (!DeletionVectorUtils.isTableDVFree(snapshot)) {
         throw new DeltaTablePropertyValidationFailedException(
           table = tableName,
           subClass = ExistingDeletionVectorsWithIncrementalManifestGeneration)
@@ -682,7 +682,8 @@ case class AddFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    defaultRowCommitVersion: Option[Long] = None
+    defaultRowCommitVersion: Option[Long] = None,
+    clusteringProvider: Option[String] = None
 ) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 

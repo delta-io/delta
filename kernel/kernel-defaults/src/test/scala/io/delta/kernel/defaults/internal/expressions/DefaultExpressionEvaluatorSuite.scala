@@ -191,9 +191,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val rightColumn = booleanVector(
       Seq[BooleanJ](true, false, false, true, true, null, false, null, null))
     val expAndOutputVector = booleanVector(
-      Seq[BooleanJ](true, false, false, false, null, null, null, null, null))
+      Seq[BooleanJ](true, false, false, false, null, null, false, false, null))
     val expOrOutputVector = booleanVector(
-      Seq[BooleanJ](true, true, false, true, null, null, null, null, null))
+      Seq[BooleanJ](true, true, false, true, true, true, null, null, null))
 
     val schema = new StructType()
       .add("left", BooleanType.BOOLEAN)
@@ -212,6 +212,85 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val orExpression = or(left, right)
     val actOrOutputVector = evaluator(schema, orExpression, BooleanType.BOOLEAN).eval(batch)
     checkBooleanVectors(actOrOutputVector, expOrOutputVector)
+  }
+
+  test("evaluate expression: not") {
+    val childColumn = booleanVector(Seq[BooleanJ](true, false, null))
+
+    val schema = new StructType().add("child", BooleanType.BOOLEAN)
+    val batch = new DefaultColumnarBatch(childColumn.getSize, schema, Array(childColumn))
+
+    val notExpression = new Predicate(
+      "NOT",
+      comparator("=", new Column("child"), Literal.ofBoolean(true))
+    )
+    val expOutputVector = booleanVector(Seq[BooleanJ](false, true, null))
+    val actOutputVector = evaluator(schema, notExpression, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector, expOutputVector)
+  }
+
+  test("evaluate expression: is not null") {
+    val childColumn = booleanVector(Seq[BooleanJ](true, false, null))
+
+    val schema = new StructType().add("child", BooleanType.BOOLEAN)
+    val batch = new DefaultColumnarBatch(childColumn.getSize, schema, Array(childColumn))
+
+    val isNotNullExpression = new Predicate("IS_NOT_NULL", new Column("child"))
+    val expOutputVector = booleanVector(Seq[BooleanJ](true, true, false))
+    val actOutputVector = evaluator(schema, isNotNullExpression, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector, expOutputVector)
+  }
+
+  test("evaluate expression: coalesce") {
+    val col1 = booleanVector(Seq[BooleanJ](true, null, null, null))
+    val col2 = booleanVector(Seq[BooleanJ](false, false, null, null))
+    val col3 = booleanVector(Seq[BooleanJ](true, true, true, null))
+
+    val schema = new StructType()
+      .add("col1", BooleanType.BOOLEAN)
+      .add("col2", BooleanType.BOOLEAN)
+      .add("col3", BooleanType.BOOLEAN)
+
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2, col3))
+
+    val coalesceEpxr1 = new ScalarExpression(
+      "COALESCE",
+      util.Arrays.asList(new Column("col1")))
+    val expOutputVector1 = booleanVector(Seq[BooleanJ](true, null, null, null))
+    val actOutputVector1 = evaluator(schema, coalesceEpxr1, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector1, expOutputVector1)
+
+    val coalesceEpxr3 = new ScalarExpression(
+      "COALESCE",
+      util.Arrays.asList(
+        new Column("col1"), new Column("col2"), new Column("col3")))
+    val expOutputVector3 = booleanVector(Seq[BooleanJ](true, false, true, null))
+    val actOutputVector3 = evaluator(schema, coalesceEpxr3, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector3, expOutputVector3)
+
+    def checkUnsupportedTypes(
+          col1Type: DataType, col2Type: DataType, messageContains: String): Unit = {
+      val schema = new StructType()
+        .add("col1", col1Type)
+        .add("col2", col2Type)
+      val batch = new DefaultColumnarBatch(5, schema,
+        Array(testColumnVector(5, col1Type), testColumnVector(5, col2Type)))
+      val e = intercept[UnsupportedOperationException] {
+        evaluator(
+          schema,
+          new ScalarExpression("COALESCE",
+            util.Arrays.asList(new Column("col1"), new Column("col2"))),
+          col1Type
+        ).eval(batch)
+      }
+      assert(e.getMessage.contains(messageContains))
+    }
+    // TODO support least-common-type resolution
+    checkUnsupportedTypes(LongType.LONG, IntegerType.INTEGER,
+      "Coalesce is only supported for arguments of the same type")
+    // TODO support other types besides boolean
+    checkUnsupportedTypes(IntegerType.INTEGER, IntegerType.INTEGER,
+      "Coalesce is only supported for boolean type expressions")
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
@@ -619,7 +698,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
   private def testComparator(
     comparator: String, left: Expression, right: Expression, expResult: BooleanJ): Unit = {
-    val expression = new Predicate(comparator, util.Arrays.asList(left, right))
+    val expression = new Predicate(comparator, left, right)
     val batch = zeroColumnBatch(rowCount = 1)
     val outputVector = evaluator(batch.getSchema, expression, BooleanType.BOOLEAN).eval(batch)
 

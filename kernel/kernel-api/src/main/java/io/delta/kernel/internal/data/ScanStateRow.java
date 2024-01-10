@@ -15,9 +15,7 @@
  */
 package io.delta.kernel.internal.data;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.IntStream;
 import static java.util.stream.Collectors.toMap;
 
@@ -28,7 +26,7 @@ import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.types.TableSchemaSerDe;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.VectorUtils;
 
 /**
@@ -39,6 +37,7 @@ public class ScanStateRow extends GenericRow {
         .add("configuration", new MapType(StringType.STRING, StringType.STRING, false))
         .add("logicalSchemaString", StringType.STRING)
         .add("physicalSchemaString", StringType.STRING)
+        .add("physicalDataReadSchemaString", StringType.STRING)
         .add("partitionColumns", new ArrayType(StringType.STRING, false))
         .add("minReaderVersion", IntegerType.INTEGER)
         .add("minWriterVersion", IntegerType.INTEGER)
@@ -54,11 +53,14 @@ public class ScanStateRow extends GenericRow {
         Protocol protocol,
         String readSchemaLogicalJson,
         String readSchemaPhysicalJson,
+        String readPhysicalDataSchemaJson,
         String tablePath) {
         HashMap<Integer, Object> valueMap = new HashMap<>();
         valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
         valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), readSchemaLogicalJson);
         valueMap.put(COL_NAME_TO_ORDINAL.get("physicalSchemaString"), readSchemaPhysicalJson);
+        valueMap.put(
+            COL_NAME_TO_ORDINAL.get("physicalDataReadSchemaString"), readPhysicalDataSchemaJson);
         valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
         valueMap.put(COL_NAME_TO_ORDINAL.get("minReaderVersion"), protocol.getMinReaderVersion());
         valueMap.put(COL_NAME_TO_ORDINAL.get("minWriterVersion"), protocol.getMinWriterVersion());
@@ -81,7 +83,7 @@ public class ScanStateRow extends GenericRow {
     public static StructType getLogicalSchema(TableClient tableClient, Row scanState) {
         String serializedSchema =
             scanState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
-        return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
+        return tableClient.getJsonHandler().deserializeStructType(serializedSchema);
     }
 
     /**
@@ -95,7 +97,22 @@ public class ScanStateRow extends GenericRow {
     public static StructType getPhysicalSchema(TableClient tableClient, Row scanState) {
         String serializedSchema =
             scanState.getString(COL_NAME_TO_ORDINAL.get("physicalSchemaString"));
-        return TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), serializedSchema);
+        return tableClient.getJsonHandler().deserializeStructType(serializedSchema);
+    }
+
+    /**
+     * Utility method to get the physical data read schema from the scan state {@link Row}
+     * returned by {@link Scan#getScanState(TableClient)}. This schema is used to request data
+     * from the scan files for the query.
+     *
+     * @param tableClient instance of {@link TableClient} to use.
+     * @param scanState   Scan state {@link Row}
+     * @return Physical schema to read from the data files.
+     */
+    public static StructType getPhysicalDataReadSchema(TableClient tableClient, Row scanState) {
+        String serializedSchema =
+            scanState.getString(COL_NAME_TO_ORDINAL.get("physicalDataReadSchemaString"));
+        return tableClient.getJsonHandler().deserializeStructType(serializedSchema);
     }
 
     /**
@@ -117,7 +134,7 @@ public class ScanStateRow extends GenericRow {
     public static String getColumnMappingMode(Row scanState) {
         Map<String, String> configuration = VectorUtils.toJavaMap(
                 scanState.getMap(COL_NAME_TO_ORDINAL.get("configuration")));
-        return configuration.getOrDefault("delta.columnMapping.mode", "none");
+        return ColumnMapping.getColumnMappingMode(configuration);
     }
 
     /**

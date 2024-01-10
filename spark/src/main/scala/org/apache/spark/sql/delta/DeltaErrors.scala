@@ -929,7 +929,7 @@ trait DeltaErrorsBase
       spark: SparkSession, deltaVersions: Seq[Long]): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_VERSIONS_NOT_CONTIGUOUS",
-      messageParameters = Array(deltaVersions.toString())
+      messageParameters = Array(deltaVersions.mkString(", "))
     )
   }
 
@@ -2131,17 +2131,21 @@ trait DeltaErrorsBase
   }
 
   def unsupportedReaderTableFeaturesInTableException(
-    unsupported: Iterable[String]): DeltaTableFeatureException = {
-    new DeltaTableFeatureException(
+    tableNameOrPath: String,
+    unsupported: Iterable[String]): DeltaUnsupportedTableFeatureException = {
+    new DeltaUnsupportedTableFeatureException(
       errorClass = "DELTA_UNSUPPORTED_FEATURES_FOR_READ",
-      messageParameters = Array(unsupported.mkString(", ")))
+      tableNameOrPath = tableNameOrPath,
+      unsupported = unsupported)
   }
 
   def unsupportedWriterTableFeaturesInTableException(
-    unsupported: Iterable[String]): DeltaTableFeatureException = {
-    new DeltaTableFeatureException(
+    tableNameOrPath: String,
+    unsupported: Iterable[String]): DeltaUnsupportedTableFeatureException = {
+    new DeltaUnsupportedTableFeatureException(
       errorClass = "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE",
-      messageParameters = Array(unsupported.mkString(", ")))
+      tableNameOrPath = tableNameOrPath,
+      unsupported = unsupported)
   }
 
   def unsupportedTableFeatureConfigsException(
@@ -2981,66 +2985,198 @@ trait DeltaErrorsBase
     )
   }
 
-  def uniFormIcebergRequiresIcebergCompatV1(): Throwable = {
+  def uniFormIcebergRequiresIcebergCompat(): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
       messageParameters = Array(
         UniversalFormat.ICEBERG_FORMAT,
-        "Requires IcebergCompatV1 to be manually enabled in order for Universal Format (Iceberg) " +
-        "to be enabled on an existing table. To enable IcebergCompatV1, set the table property " +
-        "'delta.enableIcebergCompatV1' = 'true'."
+        "Requires IcebergCompat to be explicitly enabled in order for Universal Format (Iceberg) " +
+        "to be enabled on an existing table. To enable IcebergCompatV2, set the table property " +
+        "'delta.enableIcebergCompatV2' = 'true'."
       )
     )
   }
 
-  def icebergCompatV1ReplacePartitionedTableException(
+  def icebergCompatVersionMutualExclusive(version: Int): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.VERSION_MUTUAL_EXCLUSIVE",
+      messageParameters = Array(version.toString)
+    )
+  }
+
+  def icebergCompatChangeVersionNeedRewrite(version: Int, newVersion: Int): Throwable = {
+    val newVersionString = newVersion.toString
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.CHANGE_VERSION_NEED_REWRITE",
+      messageParameters = Array(newVersionString, newVersionString, newVersionString,
+        newVersionString)
+    )
+  }
+
+  def icebergCompatVersionNotSupportedException(
+      currVersion: Int,
+      maxVersion: Int): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.COMPAT_VERSION_NOT_SUPPORTED",
+      messageParameters = Array(
+        currVersion.toString,
+        currVersion.toString,
+        maxVersion.toString
+      )
+    )
+  }
+
+  def icebergCompatReorgAddFileTagsMissingException(
+      tableVersion: Long,
+      icebergCompatVersion: Int,
+      addFilesCount: Long,
+      addFilesWithTagsCount: Long): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.FILES_NOT_ICEBERG_COMPAT",
+      messageParameters = Array(
+        icebergCompatVersion.toString,
+        icebergCompatVersion.toString,
+        addFilesCount.toString,
+        tableVersion.toString,
+        (addFilesCount - addFilesWithTagsCount).toString,
+        icebergCompatVersion.toString
+      )
+    )
+  }
+
+  def icebergCompatDataFileRewriteFailedException(
+      icebergCompatVersion: Int,
+      cause: Throwable): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "",
+      messageParameters = Array(
+        icebergCompatVersion.toString,
+        icebergCompatVersion.toString
+      ),
+      cause
+    )
+  }
+
+  def icebergCompatReplacePartitionedTableException(
+      version: Int,
       prevPartitionCols: Seq[String],
       newPartitionCols: Seq[String]): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_ICEBERG_COMPAT_V1_VIOLATION.REPLACE_TABLE_CHANGE_PARTITION_NAMES",
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.REPLACE_TABLE_CHANGE_PARTITION_NAMES",
       messageParameters = Array(
+        version.toString,
+        version.toString,
         prevPartitionCols.mkString("(", ",", ")"),
         newPartitionCols.mkString("(", ",", ")")
       )
     )
   }
 
-  def icebergCompatV1UnsupportedDataTypeException(schema: StructType): Throwable = {
+  def icebergCompatUnsupportedDataTypeException(
+      version: Int, dataType: DataType, schema: StructType): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_ICEBERG_COMPAT_V1_VIOLATION.UNSUPPORTED_DATA_TYPE",
-      messageParameters = Array(schema.treeString)
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(version.toString, version.toString,
+        dataType.typeName, schema.treeString)
     )
   }
 
-  def icebergCompatV1MissingRequiredTableFeatureException(tf: TableFeature): Throwable = {
+  def icebergCompatMissingRequiredTableFeatureException(
+      version: Int, tf: TableFeature): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_ICEBERG_COMPAT_V1_VIOLATION.MISSING_REQUIRED_TABLE_FEATURE",
-      messageParameters = Array(tf.toString)
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.MISSING_REQUIRED_TABLE_FEATURE",
+      messageParameters = Array(version.toString, version.toString, tf.toString)
     )
   }
 
-  def icebergCompatV1DisablingRequiredTableFeatureException(tf: TableFeature): Throwable = {
+  def icebergCompatDisablingRequiredTableFeatureException(
+      version: Int, tf: TableFeature): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_ICEBERG_COMPAT_V1_VIOLATION.DISABLING_REQUIRED_TABLE_FEATURE",
-      messageParameters = Array(tf.toString)
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.DISABLING_REQUIRED_TABLE_FEATURE",
+      messageParameters = Array(version.toString, version.toString, tf.toString, version.toString)
     )
   }
 
-  def icebergCompatV1IncompatibleTableFeatureException(tf: TableFeature): Throwable = {
+  def icebergCompatIncompatibleTableFeatureException(
+      version: Int, tf: TableFeature): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_ICEBERG_COMPAT_V1_VIOLATION.INCOMPATIBLE_TABLE_FEATURE",
-      messageParameters = Array(tf.toString)
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.INCOMPATIBLE_TABLE_FEATURE",
+      messageParameters = Array(version.toString, version.toString, tf.toString)
     )
   }
 
-  def icebergCompatV1WrongRequiredTablePropertyException(
+  def icebergCompatDeletionVectorsShouldBeDisabledException(version: Int): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.DELETION_VECTORS_SHOULD_BE_DISABLED",
+      messageParameters = Array(version.toString, version.toString)
+    )
+  }
+
+  def icebergCompatDeletionVectorsNotPurgedException(version: Int): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.DELETION_VECTORS_NOT_PURGED",
+      messageParameters = Array(version.toString, version.toString)
+    )
+  }
+
+  def icebergCompatWrongRequiredTablePropertyException(
+      version: Int,
       key: String,
       actualValue: String,
       requiredValue: String): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_ICEBERG_COMPAT_V1_VIOLATION.WRONG_REQUIRED_TABLE_PROPERTY",
-      messageParameters = Array(key, requiredValue, actualValue)
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.WRONG_REQUIRED_TABLE_PROPERTY",
+      messageParameters = Array(version.toString, version.toString, key, requiredValue, actualValue)
     )
+  }
+
+  def clusterByInvalidNumColumnsException(
+      numColumnsLimit: Int,
+      actualNumColumns: Int): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+      messageParameters = Array(numColumnsLimit.toString, actualNumColumns.toString)
+    )
+  }
+
+  def clusteringColumnMissingStats(
+      clusteringColumnWithoutStats: String,
+      statsSchema: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+      messageParameters = Array(clusteringColumnWithoutStats, statsSchema)
+    )
+  }
+
+  def clusteringColumnsMismatchException(
+      providedClusteringColumns: String,
+      existingClusteringColumns: String): Throwable = {
+    new DeltaAnalysisException(
+      "DELTA_CLUSTERING_COLUMNS_MISMATCH",
+      Array(providedClusteringColumns, existingClusteringColumns)
+    )
+  }
+
+  def dropClusteringColumnNotSupported(droppingClusteringCols: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+      Array(droppingClusteringCols.mkString(",")))
+  }
+
+  def replacingClusteredTableWithPartitionedTableNotAllowed(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTERING_REPLACE_TABLE_WITH_PARTITIONED_TABLE",
+      messageParameters = Array.empty)
+  }
+
+  def clusteringTablePreviewDisabledException(): Throwable = {
+    val msg = s"""
+      |A clustered table is currently in preview and is disabled by default. Please set
+      |${DeltaSQLConf.DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED.key} to true to enable it.
+      |Note that a clustered table is not recommended for production use (e.g., unsupported
+      |incremental clustering).
+      |""".stripMargin.replace("\n", " ")
+    new UnsupportedOperationException(msg)
   }
 }
 
@@ -3308,6 +3444,14 @@ class DeltaTableFeatureException(
     errorClass: String,
     messageParameters: Array[String] = Array.empty)
   extends DeltaRuntimeException(errorClass, messageParameters)
+
+case class DeltaUnsupportedTableFeatureException(
+    errorClass: String,
+    tableNameOrPath: String,
+    unsupported: Iterable[String])
+  extends DeltaTableFeatureException(
+    errorClass,
+    Array(tableNameOrPath, io.delta.VERSION, unsupported.mkString(", ")))
 
 class DeltaRuntimeException(
     errorClass: String,
