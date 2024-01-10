@@ -181,7 +181,7 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-    val DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE =
+  val DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE =
     buildConf("createEmptySchemaTable.enabled")
       .internal()
       .doc(
@@ -193,6 +193,130 @@ trait DeltaSQLConfBase {
            |`df.save()` with `mergeSchema = true`.
            |Reading the empty schema table using DataframeReader or `SELECT` is not allowed.
            |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val AUTO_COMPACT_ALLOWED_VALUES = Seq(
+    "false",
+    "true"
+  )
+
+  val DELTA_AUTO_COMPACT_ENABLED =
+    buildConf("autoCompact.enabled")
+      .doc(s"""Whether to compact files after writes made into Delta tables from this session. This
+        | conf can be set to "true" to enable Auto Compaction, OR "false" to disable Auto Compaction
+        | on all writes across all delta tables in this session.
+        | """.stripMargin)
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValue(AUTO_COMPACT_ALLOWED_VALUES.contains(_),
+        """"spark.databricks.delta.autoCompact.enabled" must be one of: """ +
+          s"""${AUTO_COMPACT_ALLOWED_VALUES.mkString("(", ",", ")")}""")
+      .createOptional
+
+  val DELTA_AUTO_COMPACT_RECORD_PARTITION_STATS_ENABLED =
+    buildConf("autoCompact.recordPartitionStats.enabled")
+      .internal()
+      .doc(s"""When enabled, each committed write delta transaction records the number of qualified
+              |files of each partition of the target table for Auto Compact in driver's
+              |memory.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_AUTO_COMPACT_EARLY_SKIP_PARTITION_TABLE_ENABLED =
+    buildConf("autoCompact.earlySkipPartitionTable.enabled")
+      .internal()
+      .doc(s"""Auto Compaction will be skipped if there is no partition with
+              |sufficient number of small files.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_AUTO_COMPACT_MAX_TABLE_PARTITION_STATS =
+    buildConf("autoCompact.maxTablePartitionStats")
+      .internal()
+      .doc(
+        s"""The maximum number of Auto Compaction partition statistics of each table. This controls
+           |the maximum number of partitions statistics each delta table can have. Increasing
+           |this value reduces the hash conflict and makes partitions statistics more accurate with
+           |the cost of more memory consumption.
+           |""".stripMargin)
+      .intConf
+      .checkValue(_ > 0, "The value of maxTablePartitionStats should be positive.")
+      .createWithDefault(16 * 1024)
+
+  val DELTA_AUTO_COMPACT_PARTITION_STATS_SIZE =
+    buildConf("autoCompact.partitionStatsSize")
+      .internal()
+      .doc(
+        s"""The total number of partitions statistics entries can be kept in memory for all
+           |tables in each driver. If this threshold is reached, the partitions statistics of
+           |least recently accessed tables will be evicted out.""".stripMargin)
+      .intConf
+      .checkValue(_ > 0, "The value of partitionStatsSize should be positive.")
+      .createWithDefault(64 * 1024)
+
+  val DELTA_AUTO_COMPACT_MAX_FILE_SIZE =
+    buildConf("autoCompact.maxFileSize")
+      .internal()
+      .doc(s"Target file size produced by auto compaction. The default value of this config" +
+        " is 128 MB.")
+      .longConf
+      .checkValue(_ >= 0, "maxFileSize has to be positive")
+      .createWithDefault(128 * 1024 * 1024)
+
+  val DELTA_AUTO_COMPACT_MIN_NUM_FILES =
+    buildConf("autoCompact.minNumFiles")
+      .internal()
+      .doc("Number of small files that need to be in a directory before it can be optimized.")
+      .intConf
+      .checkValue(_ >= 0, "minNumFiles has to be positive")
+      .createWithDefault(50)
+
+  val DELTA_AUTO_COMPACT_MIN_FILE_SIZE =
+    buildConf("autoCompact.minFileSize")
+      .internal()
+      .doc("Files which are smaller than this threshold (in bytes) will be grouped together and " +
+        "rewritten as larger files by the Auto Compaction. The default value of this config " +
+        s"is set to half of the config ${DELTA_AUTO_COMPACT_MAX_FILE_SIZE.key}")
+      .longConf
+      .checkValue(_ >= 0, "minFileSize has to be positive")
+      .createOptional
+
+  val DELTA_AUTO_COMPACT_MODIFIED_PARTITIONS_ONLY_ENABLED =
+    buildConf("autoCompact.modifiedPartitionsOnly.enabled")
+      .internal()
+      .doc(
+        s"""When enabled, Auto Compaction only works on the modified partitions of the delta
+           |transaction that triggers compaction.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_AUTO_COMPACT_NON_BLIND_APPEND_ENABLED =
+    buildConf("autoCompact.nonBlindAppend.enabled")
+      .internal()
+      .doc(
+        s"""When enabled, Auto Compaction is only triggered by non-blind-append write
+           |transaction.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_AUTO_COMPACT_MAX_NUM_MODIFIED_PARTITIONS =
+    buildConf("autoCompact.maxNumModifiedPartitions")
+      .internal()
+      .doc(
+        s"""The maximum number of partition can be selected for Auto Compaction when
+           | Auto Compaction runs on modified partition is enabled.""".stripMargin)
+      .intConf
+      .checkValue(_ > 0, "The value of maxNumModifiedPartitions should be positive.")
+      .createWithDefault(128)
+
+  val DELTA_AUTO_COMPACT_RESERVE_PARTITIONS_ENABLED =
+    buildConf("autoCompact.reservePartitions.enabled")
+      .internal()
+      .doc(
+        s"""When enabled, each Auto Compact thread reserves its target partitions and skips the
+           |partitions that are under Auto Compaction by another thread
+           |concurrently.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 

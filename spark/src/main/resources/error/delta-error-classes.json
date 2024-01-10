@@ -1079,6 +1079,12 @@
     ],
     "sqlState" : "42802"
   },
+  "DELTA_INVALID_AUTO_COMPACT_TYPE" : {
+    "message" : [
+      "Invalid auto-compact type: <value>. Allowed values are: <allowed>."
+    ],
+    "sqlState" : "22023"
+  },
   "DELTA_INVALID_CALENDAR_INTERVAL_EMPTY" : {
     "message" : [
       "Interval cannot be null or blank."

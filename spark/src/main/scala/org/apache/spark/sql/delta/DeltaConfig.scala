@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.util.{HashMap, Locale}
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
@@ -392,6 +393,21 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toInt,
     _ > 0,
     "needs to be a positive integer.")
+
+  /**
+   * Enable auto compaction for a Delta table. When enabled, we will check if files already
+   * written to a Delta table can leverage compaction after a commit. If so, we run a post-commit
+   * hook to compact the files.
+   *  It can be enabled by setting the property to `true`
+   * Note that the behavior from table property can be overridden by the config:
+   * [[org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED]]
+   */
+  val AUTO_COMPACT = buildConfig[Option[String]](
+    "autoOptimize.autoCompact",
+    null,
+    v => Option(v).map(_.toLowerCase(Locale.ROOT)),
+    v => v.isEmpty || AutoCompactType.ALLOWED_VALUES.contains(v.get),
+      s""""needs to be one of: ${AutoCompactType.ALLOWED_VALUES.mkString(",")}""")
 
   /** Whether to clean up expired checkpoints and delta logs. */
   val ENABLE_EXPIRED_LOG_CLEANUP = buildConfig[Boolean](

@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.constraints.Constraints.NotNull
+import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -442,6 +443,14 @@ trait DeltaErrorsSuiteBase
       }
       checkErrorMessage(e, None, None,
         Some("Column c is not specified in INSERT"))
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.invalidAutoCompactType("invalid")
+      }
+      val allowed = AutoCompactType.ALLOWED_VALUES.mkString("(", ",", ")")
+      checkErrorMessage(e, None, None,
+        Some(s"Invalid auto-compact type: invalid. Allowed values are: $allowed."))
     }
     {
       val table = DeltaTableIdentifier(Some("path"))
