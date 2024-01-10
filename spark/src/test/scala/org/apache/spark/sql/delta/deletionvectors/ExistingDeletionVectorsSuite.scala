@@ -280,9 +280,7 @@ class ExistingDeletionVectorsSuite extends QueryTest
             "part").save(path)
           val tableLog = DeltaLog.forTable(spark, path)
           enableDeletionVectorsInTable(tableLog, true)
-          withDeletionVectorsEnabled(true) {
-            spark.sql(s"DELETE FROM delta.`$path` WHERE col1 = 2")
-          }
+          spark.sql(s"DELETE FROM delta.`$path` WHERE col1 = 2")
           checkAnswer(spark.sql(s"select * from delta.`$path` WHERE col1 = 2"), Seq())
           verifyDVsExist(tableLog, 1)
         }
