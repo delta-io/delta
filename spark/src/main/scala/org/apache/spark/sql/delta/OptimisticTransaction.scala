@@ -1362,7 +1362,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         snapshot,
         newestProtocol = protocol, // Note: this will try to use `newProtocol`
         newestMetadata = metadata, // Note: this will try to use `newMetadata`
-        isCreatingNewTable,
+        isCreatingNewTable || op.isInstanceOf[DeltaOperations.UpgradeUniformProperties],
         otherActions
       )
     newProtocol = protocolUpdate1.orElse(newProtocol)

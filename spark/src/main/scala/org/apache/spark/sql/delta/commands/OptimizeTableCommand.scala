@@ -182,12 +182,15 @@ case class OptimizeTableCommand(
  *                            specified, [[DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO]]
  *                            will be used. This parameter must be set to `0` when [[isPurge]] is
  *                            true.
+ * @param icebergCompatVersion The iceberg compatibility version used to rewrite data for
+ *                             uniform tables.
  */
 case class DeltaOptimizeContext(
     isPurge: Boolean = false,
     minFileSize: Option[Long] = None,
-    maxDeletedRowsRatio: Option[Double] = None) {
-  if (isPurge) {
+    maxDeletedRowsRatio: Option[Double] = None,
+    icebergCompatVersion: Option[Int] = None) {
+  if (isPurge || icebergCompatVersion.isDefined) {
     require(
       minFileSize.contains(0L) && maxDeletedRowsRatio.contains(0d),
       "minFileSize and maxDeletedRowsRatio must be 0 when running PURGE.")
@@ -316,9 +319,16 @@ class OptimizeExecutor(
           file.deletedToPhysicalRecordsRatio.getOrElse(0d) > maxDeletedRowsRatio
     }
 
+    def shouldRewriteToBeIcebergCompat(file: AddFile): Boolean = {
+      val icebergCompatVersion =
+        file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
+      optimizeContext.icebergCompatVersion.exists(_.toString == icebergCompatVersion)
+    }
+
     // Select files that are small or have too many deleted rows
     files.filter(
-      addFile => addFile.size < minFileSize || shouldCompactBecauseOfDeletedRows(addFile))
+      addFile => addFile.size < minFileSize || shouldCompactBecauseOfDeletedRows(addFile) ||
+        shouldRewriteToBeIcebergCompat(addFile))
   }
 
   /**
