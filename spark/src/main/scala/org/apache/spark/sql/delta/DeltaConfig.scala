@@ -82,6 +82,11 @@ case class DeltaConfig[T](
  */
 trait DeltaConfigsBase extends DeltaLogging {
 
+  // Special properties stored in the Hive MetaStore that specifies which version last updated
+  // the entry in the MetaStore with the latest schema and table property information
+  val METASTORE_LAST_UPDATE_VERSION = "delta.lastUpdateVersion"
+  val METASTORE_LAST_COMMIT_TIMESTAMP = "delta.lastCommitTimestamp"
+
   /**
    * Convert a string to [[CalendarInterval]]. This method is case-insensitive and will throw
    * [[IllegalArgumentException]] when the input string is not a valid interval.

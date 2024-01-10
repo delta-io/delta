@@ -559,6 +559,293 @@ trait DeltaSharingDataSourceDeltaSuiteBase
       }
     }
   }
+
+  test("DeltaSharingDataSource able to read empty data") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_empty"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = true)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "first"), (2, "first")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "second"), (2, "second")""")
+        sql(s"DELETE FROM $deltaTableName WHERE c1 <= 2")
+        // This command is just to create an empty table version at version 4.
+        spark.sql(s"ALTER TABLE $deltaTableName SET TBLPROPERTIES('delta.minReaderVersion' = 1)")
+
+        val sharedTableName = "shared_table_empty"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        def testEmpty(tablePath: String): Unit = {
+          // linzhou
+          val deltaDf = spark.read.format("delta").table(deltaTableName)
+          val sharingDf =
+            spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+          checkAnswer(deltaDf, sharingDf)
+          assert(sharingDf.count() == 0)
+
+          val deltaCdfDf = spark.read
+            .format("delta")
+            .option("readChangeFeed", "true")
+            .option("startingVersion", 4)
+            .table(deltaTableName)
+          val sharingCdfDf = spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .option("readChangeFeed", "true")
+            .option("startingVersion", 4)
+            .load(tablePath)
+          checkAnswer(deltaCdfDf, sharingCdfDf)
+          assert(sharingCdfDf.count() == 0)
+        }
+
+        // There's only metadata change but not actual files in version 4.
+        prepareMockedClientAndFileSystemResultForCdf(
+          deltaTableName,
+          sharedTableName,
+          startingVersion = 4
+        )
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          testEmpty(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+        }
+      }
+    }
+  }
+
+  /**
+   * cdf queries
+   */
+  test("DeltaSharingDataSource able to read data for simple cdf query") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_cdf"
+      withTable(deltaTableName) {
+        sql(s"""
+               |CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true)
+               |""".stripMargin)
+        // 2 inserts in version 1, 1 with c1=2
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "two")""")
+        // 1 insert in version 2, 0 with c1=2
+        sql(s"""INSERT INTO $deltaTableName VALUES (3, "two")""")
+        // 0 operations in version 3
+        sql(s"""OPTIMIZE $deltaTableName""")
+        // 2 updates in version 4, 2 with c1=2
+        sql(s"""UPDATE $deltaTableName SET c2="new two" where c1=2""")
+        // 1 delete in version 5, 1 with c1=2
+        sql(s"""DELETE FROM $deltaTableName WHERE c1 = 2""")
+
+        val sharedTableName = "shard_table_cdf"
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        Seq(0, 1, 2, 3, 4, 5).foreach { startingVersion =>
+          val ts = getTimeStampForVersion(deltaTableName, startingVersion)
+          val startingTimestamp = DateTimeUtils.toJavaTimestamp(ts * 1000).toInstant.toString
+          prepareMockedClientAndFileSystemResultForCdf(
+            deltaTableName,
+            sharedTableName,
+            startingVersion,
+            Some(startingTimestamp)
+          )
+
+          def test(tablePath: String): Unit = {
+            val expectedSchema: StructType = new StructType()
+              .add("c1", IntegerType)
+              .add("c2", StringType)
+              .add("_change_type", StringType)
+              .add("_commit_version", LongType)
+              .add("_commit_timestamp", TimestampType)
+            val schema = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .load(tablePath)
+              .schema
+            assert(expectedSchema == schema)
+
+            val expected = spark.read
+              .format("delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .table(deltaTableName)
+            val df = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .load(tablePath)
+            checkAnswer(df, expected)
+            assert(df.count() > 0)
+          }
+
+          def testFiltersAndSelect(tablePath: String): Unit = {
+            val expectedSchema: StructType = new StructType()
+              .add("c2", StringType)
+              .add("_change_type", StringType)
+              .add("_commit_version", LongType)
+            val schema = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .load(tablePath)
+              .select("c2", "_change_type", "_commit_version")
+              .schema
+            assert(expectedSchema == schema)
+
+            val expected = spark.read
+              .format("delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .table(deltaTableName)
+              .select("c2", "_change_type", "_commit_version")
+            val dfVersion = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .load(tablePath)
+              .select("c2", "_change_type", "_commit_version")
+            checkAnswer(dfVersion, expected)
+            val dfTime = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingTimestamp", startingTimestamp)
+              .load(tablePath)
+              .select("c2", "_change_type", "_commit_version")
+            checkAnswer(dfTime, expected)
+            assert(dfTime.count() > 0)
+
+            val expectedFiltered = spark.read
+              .format("delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .table(deltaTableName)
+              .select("c2", "_change_type", "_commit_version")
+              .filter(col("c1") === 2)
+            val dfFiltered = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .load(tablePath)
+              .select("c2", "_change_type", "_commit_version")
+              .filter(col("c1") === 2)
+            checkAnswer(dfFiltered, expectedFiltered)
+            assert(dfFiltered.count() > 0)
+          }
+
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            test(profileFile.getCanonicalPath + s"#share1.default.$sharedTableName")
+            testFiltersAndSelect(
+              profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+            )
+          }
+        }
+
+        // test join on the same table in cdf query
+        def testJoin(tablePath: String): Unit = {
+          val deltaV0 = spark.read
+            .format("delta")
+            .option("readChangeFeed", "true")
+            .option("startingVersion", 0)
+            .table(deltaTableName)
+          val deltaV3 = spark.read
+            .format("delta")
+            .option("readChangeFeed", "true")
+            .option("startingVersion", 3)
+            .table(deltaTableName)
+          val sharingV0 = spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .option("readChangeFeed", "true")
+            .option("startingVersion", 0)
+            .load(tablePath)
+          val sharingV3 = spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .option("readChangeFeed", "true")
+            .option("startingVersion", 3)
+            .load(tablePath)
+
+          def testJoinedDf(
+              deltaLeft: DataFrame,
+              deltaRight: DataFrame,
+              sharingLeft: DataFrame,
+              sharingRight: DataFrame,
+              expectedSize: Int): Unit = {
+            val deltaJoined = deltaLeft.join(deltaRight, usingColumns = Seq("c1", "c2"))
+            val sharingJoined = sharingLeft.join(sharingRight, usingColumns = Seq("c1", "c2"))
+            checkAnswer(deltaJoined, sharingJoined)
+            assert(sharingJoined.count() > 0)
+          }
+          testJoinedDf(deltaV0, deltaV0, sharingV0, sharingV0, 10)
+          testJoinedDf(deltaV3, deltaV3, sharingV3, sharingV3, 5)
+          testJoinedDf(deltaV0, deltaV3, sharingV0, sharingV3, 6)
+        }
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          testJoin(profileFile.getCanonicalPath + s"#share1.default.$sharedTableName")
+        }
+      }
+    }
+  }
+
+  test("DeltaSharingDataSource able to read data for cdf query with more entries") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_cdf_more"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = true)
+        // The table operations take about 20~30 seconds.
+        for (i <- 0 to 9) {
+          val iteration = s"iteration $i"
+          val valuesBuilder = Seq.newBuilder[String]
+          for (j <- 0 to 49) {
+            valuesBuilder += s"""(${i * 10 + j}, "$iteration")"""
+          }
+          sql(s"INSERT INTO $deltaTableName VALUES ${valuesBuilder.result().mkString(",")}")
+          sql(s"""UPDATE $deltaTableName SET c1 = c1 + 100 where c2 = "${iteration}"""")
+          sql(s"""DELETE FROM $deltaTableName where c2 = "${iteration}"""")
+        }
+
+        val sharedTableName = "shard_table_cdf_more"
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        Seq(0, 10, 20, 30).foreach { startingVersion =>
+          prepareMockedClientAndFileSystemResultForCdf(
+            deltaTableName,
+            sharedTableName,
+            startingVersion
+          )
+
+          val expected = spark.read
+            .format("delta")
+            .option("readChangeFeed", "true")
+            .option("startingVersion", startingVersion)
+            .table(deltaTableName)
+
+          def test(tablePath: String): Unit = {
+            val df = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .load(tablePath)
+            checkAnswer(df, expected)
+            assert(df.count() > 0)
+          }
+
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            test(profileFile.getCanonicalPath + s"#share1.default.$sharedTableName")
+          }
+        }
+      }
+    }
+  }
 }
 
 class DeltaSharingDataSourceDeltaSuite extends DeltaSharingDataSourceDeltaSuiteBase {}

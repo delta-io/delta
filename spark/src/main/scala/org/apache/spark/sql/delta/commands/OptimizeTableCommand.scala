@@ -19,10 +19,9 @@ package org.apache.spark.sql.delta.commands
 import java.util.ConcurrentModificationException
 
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.parallel.ForkJoinTaskSupport
-import scala.collection.parallel.immutable.ParVector
 
 import org.apache.spark.sql.delta.skipping.MultiDimClustering
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, FileAction, RemoveFile}
@@ -147,6 +146,17 @@ case class OptimizeTableCommand(
       throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
     }
 
+    if (ClusteredTableUtils.isSupported(txn.protocol)) {
+      // Validate that the preview is enabled if we are optimizing a clustered table.
+      ClusteredTableUtils.validatePreviewEnabled(txn.snapshot.protocol)
+      if (userPartitionPredicates.nonEmpty) {
+        throw DeltaErrors.clusteringWithPartitionPredicatesException(userPartitionPredicates)
+      }
+      if (zOrderBy.nonEmpty) {
+        throw DeltaErrors.clusteringWithZOrderByException(zOrderBy)
+      }
+    }
+
     val partitionColumns = txn.snapshot.metadata.partitionColumns
     // Parse the predicate expression into Catalyst expression and verify only simple filters
     // on partition columns are present
@@ -221,7 +231,28 @@ class OptimizeExecutor(
   /** Timestamp to use in [[FileAction]] */
   private val operationTimestamp = new SystemClock().getTimeMillis()
 
-  private val isMultiDimClustering = zOrderByColumns.nonEmpty
+  private val isClusteredTable = ClusteredTableUtils.isSupported(txn.snapshot.protocol)
+
+  private val isMultiDimClustering = isClusteredTable || zOrderByColumns.nonEmpty
+
+  private val clusteringColumns: Seq[String] = {
+    if (zOrderByColumns.nonEmpty) {
+      zOrderByColumns
+    } else if (isClusteredTable) {
+      ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
+    } else {
+      Nil
+    }
+  }
+
+  private lazy val curve: String = {
+    if (zOrderByColumns.nonEmpty) {
+      "zorder"
+    } else {
+      assert(isClusteredTable)
+      "hilbert"
+    }
+  }
 
   def optimize(): Seq[Row] = {
     recordDeltaOperation(txn.deltaLog, "delta.optimize") {
@@ -399,8 +430,8 @@ class OptimizeExecutor(
       MultiDimClustering.cluster(
         input,
         approxNumFiles,
-        zOrderByColumns,
-        "zorder")
+        clusteringColumns,
+        curve)
     } else {
       val useRepartition = sparkSession.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_OPTIMIZE_REPARTITION_ENABLED)
@@ -421,7 +452,11 @@ class OptimizeExecutor(
 
     val addFiles = txn.writeFiles(repartitionDF, None, isOptimize = true, Nil).collect {
       case a: AddFile =>
-        a.copy(dataChange = false)
+        (if (isClusteredTable) {
+          a.copy(clusteringProvider = Some(ClusteredTableUtils.clusteringProvider))
+        } else {
+          a
+        }).copy(dataChange = false)
       case other =>
         throw new IllegalStateException(
           s"Unexpected action $other with type ${other.getClass}. File compaction job output" +
@@ -466,7 +501,7 @@ class OptimizeExecutor(
     if (optimizeContext.isPurge) {
       DeltaOperations.Reorg(partitionPredicate)
     } else {
-      DeltaOperations.Optimize(partitionPredicate, zOrderByColumns, auto = isAutoCompact)
+      DeltaOperations.Optimize(partitionPredicate, clusteringColumns, auto = isAutoCompact)
     }
   }
 

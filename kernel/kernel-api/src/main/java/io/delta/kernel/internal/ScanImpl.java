@@ -19,11 +19,13 @@ import java.io.IOException;
 import java.util.*;
 import static java.util.stream.Collectors.toMap;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
-import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.expressions.PredicateEvaluator;
+import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -34,10 +36,9 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
-import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.PartitionUtils;
-import io.delta.kernel.internal.util.Tuple2;
-import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.internal.skipping.DataSkippingUtils;
+import io.delta.kernel.internal.util.*;
+import static io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
@@ -45,6 +46,8 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
  * Implementation of {@link Scan}
  */
 public class ScanImpl implements Scan {
+    private static final Logger logger = LoggerFactory.getLogger(ScanImpl.class);
+
     /**
      * Schema of the snapshot from the Delta log being scanned in this scan. It is a logical schema
      * with metadata properties to derive the physical schema.
@@ -91,13 +94,26 @@ public class ScanImpl implements Scan {
             throw new IllegalStateException("Scan files are already fetched from this instance");
         }
         accessedScanFiles = true;
+
+        // Generate data skipping filter and decide if we should read the stats column
+        Optional<Predicate> dataSkippingFilter = getDataSkippingFilter();
+        boolean shouldReadStats = dataSkippingFilter.isPresent();
+
         // Get active AddFiles via log replay
-        final boolean shouldReadStats = getDataFilters().isPresent();
         CloseableIterator<FilteredColumnarBatch> scanFileIter = logReplay
             .getAddFilesAsColumnarBatches(shouldReadStats);
 
         // Apply partition pruning
-        return applyPartitionPruning(tableClient, scanFileIter);
+        scanFileIter = applyPartitionPruning(tableClient, scanFileIter);
+
+        // Apply data skipping
+        if (shouldReadStats) {
+            // there was a usable data skipping filter --> apply data skipping
+            // TODO drop stats column before returning
+            return applyDataSkipping(tableClient, scanFileIter, dataSkippingFilter.get());
+        } else {
+            return scanFileIter;
+        }
     }
 
     @Override
@@ -209,6 +225,53 @@ public class ScanImpl implements Scan {
                 scanFileIter.close();
             }
         };
+    }
+
+    private Optional<Predicate> getDataSkippingFilter() {
+        return getDataFilters().flatMap(dataFilters ->
+            DataSkippingUtils.constructDataSkippingFilter(dataFilters, metadata.getSchema())
+        );
+    }
+
+    private CloseableIterator<FilteredColumnarBatch> applyDataSkipping(
+            TableClient tableClient,
+            CloseableIterator<FilteredColumnarBatch> scanFileIter,
+            Predicate dataSkippingFilter) {
+        // Get the stats schema
+        // TODO prune stats schema according to the data skipping filter delta-io/delta#2458
+        StructType statsSchema = getStatsSchema(metadata.getSchema());
+
+        // Skipping happens in two steps:
+        // 1. The predicate produces false for any file whose stats prove we can safely skip it. A
+        //    value of true means the stats say we must keep the file, and null means we could not
+        //    determine whether the file is safe to skip, because its stats were missing/null.
+        // 2. The coalesce(skip, true) converts null (= keep) to true
+        Predicate filterToEval = new Predicate(
+            "=",
+            new ScalarExpression(
+                "COALESCE",
+                Arrays.asList(dataSkippingFilter, Literal.ofBoolean(true))),
+            AlwaysTrue.ALWAYS_TRUE);
+
+        PredicateEvaluator predicateEvaluator = tableClient
+            .getExpressionHandler()
+            .getPredicateEvaluator(statsSchema, filterToEval);
+
+        return scanFileIter.map(filteredScanFileBatch -> {
+
+            ColumnVector newSelectionVector = predicateEvaluator.eval(
+                DataSkippingUtils.parseJsonStats(
+                    tableClient,
+                    filteredScanFileBatch,
+                    statsSchema
+                ),
+                filteredScanFileBatch.getSelectionVector());
+
+            return new FilteredColumnarBatch(
+                filteredScanFileBatch.getData(),
+                Optional.of(newSelectionVector));
+            }
+        );
     }
 
     /**

@@ -165,4 +165,15 @@ public class ColumnMapping {
         }
         return logicalType;
     }
+
+    /** Returns the physical name for a given {@link StructField} */
+    public static String getPhysicalName(StructField field) {
+        if (field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY)) {
+            return (String) field
+                .getMetadata()
+                .get(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+        } else {
+            return field.getName();
+        }
+    }
 }

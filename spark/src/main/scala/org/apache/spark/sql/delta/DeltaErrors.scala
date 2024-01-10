@@ -3014,6 +3014,50 @@ trait DeltaErrorsBase
     )
   }
 
+  def icebergCompatVersionNotSupportedException(
+      currVersion: Int,
+      maxVersion: Int): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.COMPAT_VERSION_NOT_SUPPORTED",
+      messageParameters = Array(
+        currVersion.toString,
+        currVersion.toString,
+        maxVersion.toString
+      )
+    )
+  }
+
+  def icebergCompatReorgAddFileTagsMissingException(
+      tableVersion: Long,
+      icebergCompatVersion: Int,
+      addFilesCount: Long,
+      addFilesWithTagsCount: Long): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.FILES_NOT_ICEBERG_COMPAT",
+      messageParameters = Array(
+        icebergCompatVersion.toString,
+        icebergCompatVersion.toString,
+        addFilesCount.toString,
+        tableVersion.toString,
+        (addFilesCount - addFilesWithTagsCount).toString,
+        icebergCompatVersion.toString
+      )
+    )
+  }
+
+  def icebergCompatDataFileRewriteFailedException(
+      icebergCompatVersion: Int,
+      cause: Throwable): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "",
+      messageParameters = Array(
+        icebergCompatVersion.toString,
+        icebergCompatVersion.toString
+      ),
+      cause
+    )
+  }
+
   def icebergCompatReplacePartitionedTableException(
       version: Int,
       prevPartitionCols: Seq[String],
@@ -3131,6 +3175,18 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CLUSTERING_REPLACE_TABLE_WITH_PARTITIONED_TABLE",
       messageParameters = Array.empty)
+  }
+
+  def clusteringWithPartitionPredicatesException(predicates: Seq[String]): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CLUSTERING_WITH_PARTITION_PREDICATE",
+      messageParameters = Array(s"${predicates.mkString(" ")}"))
+  }
+
+  def clusteringWithZOrderByException(zOrderBy: Seq[UnresolvedAttribute]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTERING_WITH_ZORDER_BY",
+      messageParameters = Array(s"${zOrderBy.map(_.name).mkString(", ")}"))
   }
 
   def clusteringTablePreviewDisabledException(): Throwable = {

@@ -99,6 +99,9 @@ private[sharing] class DeltaSharingDataSource
         name = parsedPath.table
       )
 
+      if (options.readChangeFeed) {
+        return DeltaSharingCDFUtils.prepareCDFRelation(sqlContext, options, dsTable, client)
+      }
       //  2. getMetadata for schema to be used in the file index.
       val deltaTableMetadata = DeltaSharingUtils.queryDeltaTableMetadata(
         client = client,
