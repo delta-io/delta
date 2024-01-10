@@ -63,6 +63,8 @@ object DeltaSharingUtils extends Logging {
       metadata: model.DeltaSharingMetadata
   )
 
+  // A wrapper function for streaming query to get the latest version/protocol/metadata of the
+  // shared table.
   def getDeltaSharingTableMetadata(
       client: DeltaSharingClient,
       table: Table): DeltaSharingTableMetadata = {
