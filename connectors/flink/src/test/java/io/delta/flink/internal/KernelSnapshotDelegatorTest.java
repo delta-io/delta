@@ -4,30 +4,29 @@ import java.io.IOException;
 import java.util.Optional;
 
 import io.delta.flink.utils.DeltaTestUtils;
-import io.delta.standalone.actions.AddFile;
-import io.delta.standalone.actions.Metadata;
-import io.delta.standalone.actions.Protocol;
-import io.delta.standalone.data.CloseableIterator;
-import io.delta.standalone.internal.SnapshotImpl;
-import io.delta.standalone.internal.KernelDeltaLogDelegator;
-import io.delta.standalone.internal.scan.DeltaScanImpl;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.rules.TemporaryFolder;
 import org.mockito.junit.jupiter.MockitoExtension;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import io.delta.standalone.actions.AddFile;
+import io.delta.standalone.actions.Metadata;
+import io.delta.standalone.actions.Protocol;
+import io.delta.standalone.data.CloseableIterator;
+import io.delta.standalone.internal.KernelDeltaLogDelegator;
+import io.delta.standalone.internal.SnapshotImpl;
+import io.delta.standalone.internal.scan.DeltaScanImpl;
 
 @ExtendWith(MockitoExtension.class)
 class KernelSnapshotDelegatorTest {
     private static final TemporaryFolder TEMPORARY_FOLDER = new TemporaryFolder();
     private KernelDeltaLogDelegator kernelDeltaLog;
-    
+
     @BeforeAll
     public static void beforeAll() throws IOException {
         TEMPORARY_FOLDER.create();
@@ -46,12 +45,12 @@ class KernelSnapshotDelegatorTest {
             sourceTablePath
             );
     }
-    
+
     @Test
     public void testSnapshotVersion() throws Exception {
         KernelDeltaLogDelegator kernelDeltaLog = getLog();
         SnapshotImpl snapshot = kernelDeltaLog.snapshot();
-        assertEquals(snapshot.getVersion(), 0l);
+        assertEquals(snapshot.getVersion(), 0L);
     }
 
     @Test
