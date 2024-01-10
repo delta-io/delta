@@ -118,7 +118,8 @@ public class DeltaGlobalCommitterTestParametrized {
             DeltaTestUtils.getHadoopConf(),
             tablePath,
             rowTypeToCommit,
-            mergeSchema);
+            mergeSchema,
+            false); // useKernel
         int numAddedFiles = 3;
         List<DeltaGlobalCommittable> globalCommittables =
                 DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(numAddedFiles, partitionSpec);

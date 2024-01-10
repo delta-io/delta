@@ -108,19 +108,12 @@ public class DeltaGlobalCommitter
      */
     private final boolean mergeSchema;
 
-    // /**
-    //  * Keeping a reference to the DeltaLog will make future `deltaLog.startTransaction()` calls,
-    //  * which internally will call `deltaLog.update()`, cheaper. This is because we don't need to
-    //  * do a full table replay, but instead only need to append the changes to the latest
-    //  * snapshot`.
-    //  */
-    // private final transient DeltaLog deltaLog;
-
     /**
-     * A special log that uses the delta kernel to get protocol and metadata and make transactions
-     * faster.
+     * Keeping a reference to the DeltaLog will make future `deltaLog.startTransaction()` calls,
+     * which internally will call `deltaLog.update()`, cheaper. This is because we don't need to
+     * do a full table replay, but instead only need to append the changes to the latest snapshot`.
      */
-    private final transient KernelDeltaLogDelegator kernelDeltaLog;
+    private final transient DeltaLog deltaLog;
 
     private transient boolean firstCommit = true;
 
@@ -128,12 +121,18 @@ public class DeltaGlobalCommitter
             Configuration conf,
             Path basePath,
             RowType rowType,
-            boolean mergeSchema) {
+            boolean mergeSchema,
+            boolean useKernel) {
 
         this.conf = conf;
         this.rowType = rowType;
         this.mergeSchema = mergeSchema;
-        this.kernelDeltaLog = KernelDeltaLogDelegator.forTable(conf, basePath.toString());
+        if (useKernel) {
+            this.deltaLog = KernelDeltaLogDelegator.forTable(conf, basePath.toString());
+        } else {
+            this.deltaLog = DeltaLog.forTable(conf,
+                new org.apache.hadoop.fs.Path(basePath.toUri()));
+        }
     }
 
     /**
@@ -248,14 +247,14 @@ public class DeltaGlobalCommitter
                 getCommittablesPerCheckpoint(
                     appId,
                     globalCommittables,
-                    this.kernelDeltaLog);
+                    this.deltaLog);
 
             // We used SortedMap and SortedMap.values() maintain the sorted order.
             for (List<CheckpointData> checkpointData : committablesPerCheckpoint.values()) {
                 doCommit(
-                    this.kernelDeltaLog.startTransaction(),
+                    this.deltaLog.startTransaction(),
                     checkpointData,
-                    this.kernelDeltaLog.tableExists());
+                    this.deltaLog.tableExists());
             }
         }
         long timeElapsed = System.nanoTime() - start;
@@ -284,7 +283,7 @@ public class DeltaGlobalCommitter
         // We can access this value using the thread-unsafe `Lazy::get` because Flink's threading
         // model guarantees that GlobalCommitter::commit will be executed by a single thread.
         Lazy<Long> lastCommittedTableVersion =
-            new Lazy<>(() -> kernelDeltaLog.startTransaction().txnVersion(appId));
+            new Lazy<>(() -> deltaLog.startTransaction().txnVersion(appId));
 
         // Keep `lastCommittedTableVersion.get() < 0` as the second predicate in the OR statement
         // below since it is expensive and we should avoid computing it if possible.
@@ -326,8 +325,8 @@ public class DeltaGlobalCommitter
                     AddFile addFile = committable.getDeltaPendingFile().toAddFile();
                     filePathToActionMap.put(
                         ConnectorUtils.tryRelativizePath(
-                            kernelDeltaLog.getPath().getFileSystem(conf),
-                            kernelDeltaLog.getPath(),
+                            deltaLog.getPath().getFileSystem(conf),
+                            deltaLog.getPath(),
                             new org.apache.hadoop.fs.Path(addFile.getPath())
                         ),
                         new CheckpointData(committable, addFile)
@@ -339,11 +338,11 @@ public class DeltaGlobalCommitter
                 String.format(
                     "Exception in Delta Sink, during iterating over Committable data for table "
                         + "path {%s}",
-                    kernelDeltaLog.getPath().toUri().toString()), e);
+                    deltaLog.getPath().toUri().toString()), e);
         }
 
         // failOnDataLoss=true
-        Iterator<VersionLog> changes = kernelDeltaLog.getChanges(tableVersion, true);
+        Iterator<VersionLog> changes = deltaLog.getChanges(tableVersion, true);
 
         StringJoiner duplicatedFiles = new StringJoiner(", ");
         while (changes.hasNext()) {
@@ -362,8 +361,7 @@ public class DeltaGlobalCommitter
             } catch (IOException e) {
                 throw new RuntimeException(
                     String.format("Exception in Delta Sink, during iterating over Delta table "
-                    + "changes for table path {%s}", kernelDeltaLog.getPath().toUri().toString()),
-                    e);
+                    + "changes for table path {%s}", deltaLog.getPath().toUri().toString()), e);
             }
         }
 
