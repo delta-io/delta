@@ -452,7 +452,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       }
     }
 
-    val resultFiles =
+    var resultFiles =
       (if (optionalStatsTracker.isDefined) {
         committer.addedStatuses.map { a =>
           a.copy(stats = optionalStatsTracker.map(
@@ -471,6 +471,14 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       // b) don't have any stats so we don't know the number of rows at all
       case a: AddFile => a.numLogicalRecords.forall(_ > 0)
       case _ => true
+    }
+
+    // add [[AddFile.Tags.ICEBERG_COMPAT_VERSION.name]] tags to addFiles
+    if (IcebergCompatV2.isEnabled(metadata)) {
+      resultFiles = resultFiles.map { addFile =>
+        addFile.copy(tags = addFile.tags + (AddFile.Tags.ICEBERG_COMPAT_VERSION.name ->
+          "2"))
+      }
     }
 
 

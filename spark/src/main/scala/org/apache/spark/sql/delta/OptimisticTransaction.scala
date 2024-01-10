@@ -1418,7 +1418,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         snapshot,
         newestProtocol = protocol, // Note: this will try to use `newProtocol`
         newestMetadata = metadata, // Note: this will try to use `newMetadata`
-        isCreatingNewTable,
+        isCreatingNewTable || op.isInstanceOf[DeltaOperations.UpgradeUniformProperties],
         otherActions
       )
     newProtocol = protocolUpdate1.orElse(newProtocol)
@@ -1618,7 +1618,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   private def lockCommitIfEnabled[T](body: => T): T = {
     if (isCommitLockEnabled) {
-      deltaLog.lockInterruptibly(body)
+      // We are borrowing the `snapshotLock` even for commits. Ideally we should be
+      // using a separate lock for this purpose, because multiple threads fighting over
+      // a commit shouldn't interfere with normal snapshot updates by readers.
+      deltaLog.withSnapshotLockInterruptibly(body)
     } else {
       body
     }
