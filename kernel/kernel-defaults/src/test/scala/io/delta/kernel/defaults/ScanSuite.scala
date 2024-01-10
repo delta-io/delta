@@ -32,14 +32,16 @@ import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField 
 import org.scalatest.funsuite.AnyFunSuite
 
 import io.delta.kernel.client.{JsonHandler, ParquetHandler, TableClient}
-import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.types.StructType
+import io.delta.kernel.types.{DataType, StructField, StructType}
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.{Snapshot, Table}
+import io.delta.kernel.internal.skipping.DataSkippingUtils
+import io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
@@ -1203,6 +1205,185 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         .getScanBuilder(tableClient).withFilter(tableClient, nonEligibleFilter).build()
         .getScanFiles(tableClient))
   }
+
+  // docs?
+  private def structTypeToLeafColumns(schema: StructType, parentPath: Seq[String]): Set[Column] = {
+    schema.fields().asScala.flatMap { field =>
+      field.getDataType() match {
+        case nestedSchema: StructType =>
+          assert(nestedSchema.fields().size() > 0,
+            "Schema should not have field of type StructType with no child fields")
+          structTypeToLeafColumns(nestedSchema, parentPath ++ Seq(field.getName()))
+        case _ =>
+          Seq(new Column(parentPath.toArray :+ field.getName()))
+      }
+    }.toSet
+  }
+
+  test("data skipping - prune schema correctly for various predicates") {
+    def verifySchema(expectedReadCols: Set[Column]): StructType => Unit = { readSchema =>
+      assert(structTypeToLeafColumns(readSchema, Seq()) == expectedReadCols)
+    }
+    val path = goldenTablePath("data-skipping-basic-stats-all-types")
+    Map(
+      equals(col("as_int"), ofInt(0)) ->
+        Set(nestedCol("minValues.as_int"), nestedCol("maxValues.as_int")),
+      lessThan(col("as_int"), ofInt(0)) -> Set(nestedCol("minValues.as_int")),
+      greaterThan(col("as_int"), ofInt(0)) -> Set(nestedCol("maxValues.as_int")),
+      greaterThanOrEqual(col("as_int"), ofInt(0)) -> Set(nestedCol("maxValues.as_int")),
+      lessThanOrEqual(col("as_int"), ofInt(0)) -> Set(nestedCol("minValues.as_int")),
+      new And(
+        lessThan(col("as_int"), ofInt(0)),
+        greaterThan(col("as_long"), ofInt(0))
+      ) -> Set(nestedCol("minValues.as_int"), nestedCol("maxValues.as_long"))
+    ).foreach { case (predicate, expectedCols) =>
+      val tableClient = tableClientVerifyJsonParseSchema(verifySchema(expectedCols))
+      collectScanFileRows(
+        Table.forPath(tableClient, path).getLatestSnapshot(tableClient)
+          .getScanBuilder(tableClient)
+          .withFilter(tableClient, predicate)
+          .build(),
+        tableClient = tableClient)
+    }
+  }
+
+  // only checks name and dataType
+  def compareDataTypeUnordered(type1: DataType, type2: DataType): Boolean = (type1, type2) match {
+    case (schema1: StructType, schema2: StructType) =>
+      val fields1 = schema1.fields().asScala.sortBy(_.getName)
+      val fields2 = schema2.fields().asScala.sortBy(_.getName)
+      if (fields1.length != fields2.length) {
+        false
+      } else {
+        fields1.zip(fields2).forall { case (field1: StructField, field2: StructField) =>
+          field1.getName == field2.getName &&
+            compareDataTypeUnordered(field1.getDataType, field2.getDataType)
+        }
+      }
+    case _ =>
+      type1 == type2
+  }
+
+  def checkPruneStatsSchema(
+      inputSchema: StructType, referencedCols: Set[Column], expectedSchema: StructType): Unit = {
+    val prunedSchema = DataSkippingUtils.pruneStatsSchema(inputSchema, referencedCols.asJava)
+    assert(compareDataTypeUnordered(expectedSchema, prunedSchema),
+      s"expected=$expectedSchema\nfound=$prunedSchema")
+  }
+
+  // TODO move this test elsewhere?
+  test("pruneStatsSchema - multiple basic cases one level of nesting") {
+    val nestedField = new StructField(
+      "nested",
+      new StructType()
+        .add("col1", INTEGER)
+        .add("col2", INTEGER),
+      true
+    )
+    val testSchema = new StructType()
+      .add(nestedField)
+      .add("top_level_col", INTEGER)
+    // no columns pruned
+    checkPruneStatsSchema(
+      testSchema,
+      Set(col("top_level_col"), nestedCol("nested.col1"), nestedCol("nested.col2")),
+      testSchema
+    )
+    // top level column pruned
+    checkPruneStatsSchema(
+      testSchema,
+      Set(nestedCol("nested.col1"), nestedCol("nested.col2")),
+      new StructType().add(nestedField)
+    )
+    // nested column only one field pruned
+    checkPruneStatsSchema(
+      testSchema,
+      Set(nestedCol("top_level_col"), nestedCol("nested.col1")),
+      new StructType()
+        .add("nested", new StructType().add("col1", INTEGER))
+        .add("top_level_col", INTEGER)
+    )
+    // nested column completely pruned
+    checkPruneStatsSchema(
+      testSchema,
+      Set(nestedCol("top_level_col")),
+      new StructType().add("top_level_col", INTEGER)
+    )
+    // prune all columns
+    checkPruneStatsSchema(
+      testSchema,
+      Set(),
+      new StructType()
+    )
+  }
+
+  test("pruneStatsSchema - 3 levels of nesting") {
+    /*
+    |--level1: struct
+    |   |--level2: struct
+    |       |--level3: struct
+    |           |--level_4_col: int
+    |       |--level_3_col: int
+    |   |--level_2_col: int
+     */
+    val testSchema = new StructType()
+      .add("level1",
+        new StructType()
+          .add(
+            "level2",
+            new StructType()
+              .add(
+                "level3",
+                new StructType().add("level_4_col", INTEGER))
+              .add("level_3_col", INTEGER)
+          )
+          .add("level_2_col", INTEGER)
+      )
+    // prune only 4th level col
+    checkPruneStatsSchema(
+      testSchema,
+      Set(nestedCol("level1.level2.level_3_col"), nestedCol("level1.level_2_col")),
+      new StructType()
+        .add(
+          "level1",
+          new StructType()
+            .add("level2", new StructType().add("level_3_col", INTEGER))
+            .add("level_2_col", INTEGER))
+    )
+    // prune only 3rd level column
+    checkPruneStatsSchema(
+      testSchema,
+      Set(nestedCol("level1.level2.level3.level_4_col"), nestedCol("level1.level_2_col")),
+      new StructType()
+        .add("level1",
+          new StructType()
+            .add(
+              "level2",
+              new StructType()
+                .add(
+                  "level3",
+                  new StructType().add("level_4_col", INTEGER))
+            )
+            .add("level_2_col", INTEGER)
+        )
+    )
+    // prune 4th and 3rd level column
+    checkPruneStatsSchema(
+      testSchema,
+      Set(nestedCol("level1.level_2_col")),
+      new StructType()
+        .add("level1",
+          new StructType()
+            .add("level_2_col", INTEGER)
+        )
+    )
+    // prune all columns
+    checkPruneStatsSchema(
+      testSchema,
+      Set(),
+      new StructType()
+    )
+  }
 }
 
 object ScanSuite {
@@ -1242,6 +1423,21 @@ object ScanSuite {
               predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
             throwErrorIfAddStatsInSchema(physicalSchema)
             super.readJsonFiles(fileIter, physicalSchema, predicate)
+          }
+        }
+      }
+    }
+  }
+
+  def tableClientVerifyJsonParseSchema(verifyFx: StructType => Unit): TableClient = {
+    val hadoopConf = new Configuration()
+    new DefaultTableClient(hadoopConf) {
+      override def getJsonHandler: JsonHandler = {
+        new DefaultJsonHandler(hadoopConf) {
+          override def parseJson(stringVector: ColumnVector, schema: StructType,
+              selectionVector: Optional[ColumnVector]): ColumnarBatch = {
+            verifyFx(schema)
+            super.parseJson(stringVector, schema, selectionVector)
           }
         }
       }
