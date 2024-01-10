@@ -18,13 +18,34 @@ package org.apache.spark.sql.delta.skipping
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumn}
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
 trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession {
+  import testImplicits._
+
+  /**
+   * Helper for running optimize on the table with different APIs.
+   * @param table the name of table
+   */
+  def optimizeTable(table: String): DataFrame = {
+    sql(s"OPTIMIZE $table")
+  }
+
+  /**
+   * Runs optimize on the table and calls postHook on the metrics.
+   * @param table the name of table
+   * @param postHook callback triggered with OptimizeMetrics returned by the OPTIMIZE command
+   */
+  def runOptimize(table: String)(postHook: OptimizeMetrics => Unit): Unit = {
+    postHook(optimizeTable(table).select($"metrics.*").as[OptimizeMetrics].head())
+  }
+
   def verifyClusteringColumnsInDomainMetadata(
       snapshot: Snapshot,
       expectedLogicalClusteringColumns: String): Unit = {

@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.skipping.clustering
 import java.io.File
 
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaLog}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
@@ -435,7 +435,31 @@ trait ClusteredTableCreateOrReplaceDDLSuite
 
 trait ClusteredTableDDLSuiteBase
   extends ClusteredTableCreateOrReplaceDDLSuite
-    with DeltaSQLCommandTest
+    with DeltaSQLCommandTest {
+
+  test("optimize clustered table - error scenarios") {
+    withClusteredTable(testTable, "a INT, b STRING", "a") {
+      // Specify partition predicate.
+      val e = intercept[DeltaUnsupportedOperationException] {
+        sql(s"OPTIMIZE $testTable WHERE a > 0 and b = foo")
+      }
+      checkError(
+        e,
+        "DELTA_CLUSTERING_WITH_PARTITION_PREDICATE",
+        parameters = Map("predicates" -> "a > 0 and b = foo")
+      )
+
+      // Specify ZORDER BY.
+      val e2 = intercept[DeltaAnalysisException] {
+        sql(s"OPTIMIZE $testTable ZORDER BY (a)")
+      }
+      checkError(
+        e2,
+        "DELTA_CLUSTERING_WITH_ZORDER_BY"
+      )
+    }
+  }
+}
 
 trait ClusteredTableDDLSuite extends ClusteredTableDDLSuiteBase
 trait ClusteredTableDDLWithNameColumnMapping
