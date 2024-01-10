@@ -355,7 +355,7 @@ public class DataSkippingUtils {
      * Given an array {@code arr} and a string element {@code appendElem} return a new array with
      * {@code appendElem} inserted at the end
      */
-    public static String[] appendArray(String[] arr, String appendElem) {
+    private static String[] appendArray(String[] arr, String appendElem) {
         String[] newNames = new String[arr.length + 1];
         System.arraycopy(arr, 0, newNames, 0, arr.length);
         newNames[arr.length] = appendElem;

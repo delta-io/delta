@@ -1222,6 +1222,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       assert(structTypeToLeafColumns(readSchema) == expectedReadCols)
     }
     val path = goldenTablePath("data-skipping-basic-stats-all-types")
+    // Map of expression -> expected read columns
     Map(
       equals(col("as_int"), ofInt(0)) ->
         Set(nestedCol("minValues.as_int"), nestedCol("maxValues.as_int")),
