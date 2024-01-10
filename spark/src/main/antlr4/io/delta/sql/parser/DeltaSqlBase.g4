@@ -93,7 +93,7 @@ statement
         (zorderSpec)?                                                   #optimizeTable
     | REORG TABLE table=qualifiedName
         (
-            (WHERE partitionPredicate=predicateToken)?APPLY LEFT_PAREN PURGE RIGHT_PAREN |
+            (WHERE partitionPredicate=predicateToken)? APPLY LEFT_PAREN PURGE RIGHT_PAREN |
             APPLY LEFT_PAREN UPGRADE UNIFORM LEFT_PAREN ICEBERG_COMPAT_VERSION EQ version=INTEGER_VALUE RIGHT_PAREN RIGHT_PAREN
         )                                                               #reorgTable
     | cloneTableHeader SHALLOW CLONE source=qualifiedName clause=temporalClause?

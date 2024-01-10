@@ -319,17 +319,18 @@ class OptimizeExecutor(
           file.deletedToPhysicalRecordsRatio.getOrElse(0d) > maxDeletedRowsRatio
     }
 
-    def shouldRewriteToBeIcebergCompat(file: AddFile): Boolean = {
+    def shouldRewriteToBeIcebergCompatible(file: AddFile): Boolean = {
       if (optimizeContext.icebergCompatVersion.isEmpty) return false
       if (file.tags == null) return true
       val icebergCompatVersion = file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
       !optimizeContext.icebergCompatVersion.exists(_.toString == icebergCompatVersion)
     }
 
-    // Select files that are small or have too many deleted rows
+    // Select files that are small, have too many deleted rows,
+    // or need to be made iceberg compatible
     files.filter(
       addFile => addFile.size < minFileSize || shouldCompactBecauseOfDeletedRows(addFile) ||
-        shouldRewriteToBeIcebergCompat(addFile))
+        shouldRewriteToBeIcebergCompatible(addFile))
   }
 
   /**
