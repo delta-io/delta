@@ -146,9 +146,9 @@ case class OptimizeTableCommand(
       throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
     }
 
-    // Validate that the preview is enabled if we are optimizing a clustered table.
-    ClusteredTableUtils.validatePreviewEnabled(txn.snapshot.protocol)
     if (ClusteredTableUtils.isSupported(txn.protocol)) {
+      // Validate that the preview is enabled if we are optimizing a clustered table.
+      ClusteredTableUtils.validatePreviewEnabled(txn.snapshot.protocol)
       if (userPartitionPredicates.nonEmpty) {
         throw DeltaErrors.clusteringWithPartitionPredicatesException(userPartitionPredicates)
       }
