@@ -3128,8 +3128,7 @@ trait DeltaErrorsBase
   def clusteringWithPartitionPredicatesException(predicates: Seq[String]): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_CLUSTERING_WITH_PARTITION_PREDICATE",
-      messageParameters = Array(s"${predicates.mkString(" ")}")
-    )
+      messageParameters = Array(s"${predicates.mkString(" ")}"))
   }
 
   def clusteringWithZOrderByException(zOrderBy: Seq[UnresolvedAttribute]): Throwable = {
