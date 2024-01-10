@@ -35,6 +35,7 @@ import org.apache.parquet.io.api.RecordMaterializer;
 import org.apache.parquet.schema.MessageType;
 
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;

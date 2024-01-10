@@ -36,6 +36,11 @@ class KernelDeltaLogDelegator(
     clock: Clock)
   extends DeltaLogImpl(hadoopConf, logPath, dataPath, clock) {
 
+  // We override this so our super DeltaLogImpl constructor doesn't actually try and read the log
+  // none of the delegated methods require access to the current snapshot, so it's safe to just have
+  // this be null
+  override def getSnapshotAtInit(): SnapshotImpl = null
+
   var currKernelSnapshot: Option[KernelSnapshotDelegator] = None
 
   override def snapshot(): StandaloneSnapshotImpl = { // but is actually a KernelSnapshotDelegator

@@ -59,7 +59,7 @@ private[internal] class DeltaLogImpl private[internal](
 
   // TODO: There is a race here where files could get dropped when increasing the
   // retention interval...
-  protected def metadata = if (currentSnapshot.isEmpty) Metadata() else snapshot.metadataScala
+  protected def metadata = if (snapshot == null) Metadata() else snapshot.metadataScala
 
   /** How long to keep around logically deleted files before physically deleting them. */
   def tombstoneRetentionMillis: Long =
