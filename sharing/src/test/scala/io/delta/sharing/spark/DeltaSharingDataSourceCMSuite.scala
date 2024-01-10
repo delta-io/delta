@@ -227,7 +227,7 @@ class DeltaSharingDataSourceCMSuite
     "DeltaSharingDataSource able to read data for cm name mode"
   ) {
     withTempDir { tempDir =>
-      val deltaTableName = "cm_name_table"
+      val deltaTableName = "delta_table_cm_name"
       withTable(deltaTableName) {
         createSimpleTable(deltaTableName, enableCdf = true)
         sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "one")""")
@@ -242,7 +242,7 @@ class DeltaSharingDataSourceCMSuite
         sql(s"""DELETE FROM $deltaTableName where c1=1""")
         sql(s"""UPDATE $deltaTableName set c1="3" where c2rename="one"""")
 
-        val sharedTableName = "shared_cm_table"
+        val sharedTableName = "shared_table_cm_name"
         testReadingSharedCMTable(tempDir, deltaTableName, sharedTableName)
       }
     }
@@ -250,7 +250,7 @@ class DeltaSharingDataSourceCMSuite
 
   test("DeltaSharingDataSource able to read data for cm id mode") {
     withTempDir { tempDir =>
-      val deltaTableName = "cm_id_table"
+      val deltaTableName = "delta_table_cm_id"
       withTable(deltaTableName) {
         createCMIdTableWithCdf(deltaTableName)
         sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "one")""")
@@ -262,7 +262,7 @@ class DeltaSharingDataSourceCMSuite
         sql(s"""DELETE FROM $deltaTableName where c1=1""")
         sql(s"""UPDATE $deltaTableName set c1="3" where c2rename="one"""")
 
-        val sharedTableName = "shared_cm_id_table"
+        val sharedTableName = "shared_table_cm_id"
         testReadingSharedCMTable(tempDir, deltaTableName, sharedTableName)
       }
     }
@@ -515,10 +515,10 @@ class DeltaSharingDataSourceCMSuite
 
   test("cm streaming works with newly added schemaTrackingLocation") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val deltaTableName = "basic_restart_cm_table"
+      val deltaTableName = "delta_table_cm_streaming_basic"
       withTable(deltaTableName) {
         createCMIdTableWithCdf(deltaTableName)
-        val sharedTableName = "shared_streaming_cm_table"
+        val sharedTableName = "shared_table_cm_streaming_basic"
         val profileFile = prepareProfileFile(inputDir)
         val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
 
@@ -608,10 +608,10 @@ class DeltaSharingDataSourceCMSuite
     // (instead of after making continuous progress), to test that the restart could fetch the
     // latest metadata and the metadata from lastest offset.
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val deltaTableName = "basic_restart_cm_table"
+      val deltaTableName = "delta_table_streaming_restart"
       withTable(deltaTableName) {
         createCMIdTableWithCdf(deltaTableName)
-        val sharedTableName = "shared_streaming_cm_table"
+        val sharedTableName = "shared_table_streaming_restart"
         val profileFile = prepareProfileFile(inputDir)
         val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
 
@@ -666,10 +666,10 @@ class DeltaSharingDataSourceCMSuite
 
   test("cm streaming works with schemaTracking used at start") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val deltaTableName = "basic_restart_cm_table"
+      val deltaTableName = "delta_table_streaming_schematracking"
       withTable(deltaTableName) {
         createCMIdTableWithCdf(deltaTableName)
-        val sharedTableName = "shared_streaming_cm_table"
+        val sharedTableName = "shared_table_streaming_schematracking"
         val profileFile = prepareProfileFile(inputDir)
         val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
 
@@ -741,10 +741,10 @@ class DeltaSharingDataSourceCMSuite
 
   test("cm streaming works with restart with accumulated inserts after rename") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val deltaTableName = "basic_restart_cm_table"
+      val deltaTableName = "delta_table_streaming_accumulate"
       withTable(deltaTableName) {
         createCMIdTableWithCdf(deltaTableName)
-        val sharedTableName = "shared_streaming_cm_table"
+        val sharedTableName = "shared_table_streaming_accumulate"
         val profileFile = prepareProfileFile(inputDir)
         val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
 
@@ -790,10 +790,10 @@ class DeltaSharingDataSourceCMSuite
 
   test("cm streaming works with column drop and add") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val deltaTableName = "basic_restart_cm_table"
+      val deltaTableName = "delta_table_column_drop"
       withTable(deltaTableName) {
         createCMIdTableWithCdf(deltaTableName)
-        val sharedTableName = "shared_streaming_cm_table"
+        val sharedTableName = "shared_table_column_drop"
         val profileFile = prepareProfileFile(inputDir)
         val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
 
@@ -870,10 +870,10 @@ class DeltaSharingDataSourceCMSuite
 
   test("cm streaming works with MaxFilesPerTrigger") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val deltaTableName = "basic_restart_cm_table"
+      val deltaTableName = "delta_table_maxfiles"
       withTable(deltaTableName) {
         createCMIdTableWithCdf(deltaTableName)
-        val sharedTableName = "shared_streaming_cm_table"
+        val sharedTableName = "shared_table_maxfiles"
         val profileFile = prepareProfileFile(inputDir)
         val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
 
