@@ -199,7 +199,7 @@ public class DeltaSourceOptions {
      */
     public static final DeltaConfigOption<Boolean> USE_KERNEL_FOR_SNAPSHOTS =
         DeltaConfigOption.of(
-            ConfigOptions.key("useKernelForSnapshots").booleanType().defaultValue(true),
+            ConfigOptions.key("useKernelForSnapshots").booleanType().defaultValue(false),
             Boolean.class,
             new BooleanOptionTypeConverter());
 
