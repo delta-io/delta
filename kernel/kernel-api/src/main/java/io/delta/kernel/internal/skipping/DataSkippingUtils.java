@@ -315,11 +315,11 @@ public class DataSkippingUtils {
     }
 
     /**
-     * Prunes the given schema according to the provided set of top-level columns to keep. The
+     * Prunes the given schema according to the provided set of top-level leaf columns to keep. The
      * columns in {@code schema} are taken to be nested under {@code parentPath}.
      *
      * @param schema schema to prune
-     * @param columnsToKeep set of top-level columns to keep
+     * @param columnsToKeep set of top-level leaf columns to keep
      * @param parentPath parent path of the fields in {@code schema} relative to the top-level
      *                   schema
      */
