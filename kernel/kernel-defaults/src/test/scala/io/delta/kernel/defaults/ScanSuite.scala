@@ -213,7 +213,6 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       greaterThanOrEqual(ofInt(0), col("a")), // 0 >= a
       not(equals(col("a"), ofInt(1))), // NOT a = 1
       not(equals(ofInt(1), col("a"))) // NOT 1 = a
-
     )
   )
 
@@ -372,10 +371,75 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     )
   )
 
-  // Test: 'or statements - simple' Expression: OR
-  // Test: 'or statements - two fields' Expression: OR
-  // Test: 'or statements - one side supported' Expression: OR
-  // Test: 'NOT statements - or' Expression: NOT, OR
+  testSkipping(
+    "data skipping - or statements - simple",
+    """
+      {"a": 1}
+      {"a": 2}
+    """,
+    hits = Seq(
+      // a > 0 or a < -3
+      new Or(greaterThan(col("a"), ofInt(0)), lessThan(col("a"), ofInt(-3))),
+      // a >= 2 or a < -1
+      new Or(greaterThanOrEqual(col("a"), ofInt(2)), lessThan(col("a"), ofInt(-1)))
+    ),
+    misses = Seq(
+      // a > 5 or a < -2
+      new Or(greaterThan(col("a"), ofInt(5)), lessThan(col("a"), ofInt(-2)))
+    )
+  )
+
+  testSkipping(
+    "data skipping - or statements - two fields",
+    """
+      {"a": 1, "b": "2017-09-01"}
+      {"a": 2, "b": "2017-08-31"}
+    """,
+    hits = Seq(
+      new Or(
+        lessThan(col("a"), ofInt(0)),
+        equals(col("b"), ofString("2017-09-01"))
+      ),
+      new Or(
+        equals(col("a"), ofInt(2)),
+        lessThan(col("b"), ofString("2017-08-30"))
+      ),
+      // note startsWith is not supported yet but these should still be hits once supported
+      new Or( //  a < 2 or b like '2017-08-%'
+        lessThan(col("a"), ofInt(2)),
+        startsWith(col("b"), ofString("2017-08-"))
+      ),
+      new Or( //  a >= 2 or b like '2016-08-%'
+        greaterThanOrEqual(col("a"), ofInt(2)),
+        startsWith(col("b"), ofString("2016-08-"))
+      ),
+      // MOVE BELOW EXPRESSION TO MISSES ONCE SUPPORTED BY DATA SKIPPING
+      new Or( // a < 0 or b like '2016-%'
+        lessThan(col("a"), ofInt(0)),
+        startsWith(col("b"), ofString("2016-"))
+      )
+    ),
+    misses = Seq()
+  )
+
+  // One side of OR by itself isn't powerful enough to prune any files.
+  testSkipping(
+    "data skipping - or statements - one side unsupported",
+    """
+      {"a": 10, "b": 10}
+      {"a": 20: "b": 20}
+    """,
+    hits = Seq(
+      // a % 100 < 10 OR b > 20
+      new Or(lessThan(aRem100, ofInt(10)), greaterThan(col("b"), ofInt(20))),
+      // a < 10 OR b % 100 > 20
+      new Or(lessThan(col("a"), ofInt(10)), greaterThan(bRem100, ofInt(20)))
+    ),
+    misses = Seq(
+      // a < 10 OR b > 20
+      new Or(lessThan(col("a"), ofInt(10)), greaterThan(col("b"), ofInt(20)))
+    )
+  )
 
   testSkipping(
     "data skipping - not statements - simple",
@@ -421,16 +485,45 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           greaterThanOrEqual(aRem100, ofInt(10)),
           lessThanOrEqual(col("b"), ofInt(20))
         )
-      ),
-      // MOVE BELOW EXPRESSION TO MISSES ONCE OR IS SUPPORTED BY DATA SKIPPING
+      )
+    ),
+    misses = Seq(
       not(
         new And(
           greaterThanOrEqual(col("a"), ofInt(10)),
           lessThanOrEqual(col("b"), ofInt(20))
         )
       )
+    )
+  )
+
+  // NOT(OR(a, b)) === AND(NOT(a), NOT(b)) => One side by itself is enough to prune.
+  testSkipping(
+    "data skipping - not statements - or",
+    """
+      {"a": 1, "b": 10}
+      {"a": 2, "b": 20}
+    """,
+    hits = Seq(
+      // NOT(a < 1 OR b > 20),
+      not(new Or(lessThan(col("a"), ofInt(1)), greaterThan(col("b"), ofInt(20)))),
+      // NOT(a % 100 >= 1 OR b % 100 <= 20)
+      not(new Or(greaterThanOrEqual(aRem100, ofInt(1)), lessThanOrEqual(bRem100, ofInt(20))))
     ),
-    misses = Seq()
+    misses = Seq(
+      // NOT(a >= 1 OR b <= 20)
+      not(
+        new Or(greaterThanOrEqual(col("a"), ofInt(1)), lessThanOrEqual(col("b"), ofInt(20)))
+      ),
+      // NOT(a % 100 >= 1 OR b <= 20),
+      not(
+        new Or(greaterThanOrEqual(aRem100, ofInt(1)), lessThanOrEqual(col("b"), ofInt(20)))
+      ),
+      // NOT(a >= 1 OR b % 100 <= 20)
+      not(
+        new Or(greaterThanOrEqual(col("a"), ofInt(1)), lessThanOrEqual(bRem100, ofInt(20)))
+      )
+    )
   )
 
   // If a column does not have stats, it does not participate in data skipping, which disqualifies
@@ -450,16 +543,15 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       new Or( // a < 1 OR (a >= 1 AND b < 10): ==> a < 1 OR a >=1 ==> TRUE
         lessThan(col("a"), ofInt(1)),
         new And(greaterThanOrEqual(col("a"), ofInt(1)), lessThan(col("b"), ofInt(10)))
-      ),
-      // MOVE BELOW EXPRESSION TO MISSES ONCE SUPPORTED BY DATA SKIPPING
-      new Or( // a < 1 OR (a > 10 AND b < 10): ==> a < 1 OR a > 10 ==> FALSE
-        lessThan(col("a"), ofInt(1)),
-        new And(greaterThan(col("a"), ofInt(10)), lessThan(col("b"), ofInt(10)))
       )
     ),
     misses = Seq(
       new And( // a < 1 AND b < 10: ==> a < 1 ==> FALSE
-        lessThan(col("a"), ofInt(1)), lessThan(col("b"), ofInt(10)))
+        lessThan(col("a"), ofInt(1)), lessThan(col("b"), ofInt(10))),
+      new Or( // a < 1 OR (a > 10 AND b < 10): ==> a < 1 OR a > 10 ==> FALSE
+        lessThan(col("a"), ofInt(1)),
+        new And(greaterThan(col("a"), ofInt(10)), lessThan(col("b"), ofInt(10)))
+      )
     )
   )
 
