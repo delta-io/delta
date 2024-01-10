@@ -352,6 +352,106 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     f1.id < f2.id
   }
 
+  /**
+   * Cleanup the delta log upon explicit stop of a query on a delta sharing table.
+   *
+   * @param deltaLogPath deltaLogPath is constructed per query with credential scope id as prefix
+   *                     and a uuid as suffix, which is very unique to the query and won't interfere
+   *                     with other queries.
+   */
+  def tryToCleanUpDeltaLog(deltaLogPath: String): Unit = {
+    def shouldCleanUp(blockId: BlockId): Boolean = {
+      if (!blockId.name.startsWith(DELTA_SHARING_LOG_BLOCK_ID_PREFIX)) {
+        return false
+      }
+      val blockName = blockId.name
+      // deltaLogPath is constructed per query with credential scope id as prefix and a uuid as
+      // suffix, which is very unique to the query and won't interfere with other queries.
+      blockName.startsWith(BLOCK_ID_TEST_PREFIX + deltaLogPath)
+    }
+
+    val blockManager = SparkEnv.get.blockManager
+    val matchingBlockIds = blockManager.getMatchingBlockIds(shouldCleanUp(_))
+    logInfo(
+      s"Trying to clean up ${matchingBlockIds.size} blocks for $deltaLogPath."
+    )
+
+    val problematicBlockIds = Seq.newBuilder[BlockId]
+    matchingBlockIds.foreach { b =>
+      try {
+        blockManager.removeBlock(b)
+      } catch {
+        case _: Throwable => problematicBlockIds += b
+      }
+    }
+
+    val problematicBlockIdsSeq = problematicBlockIds.result().toSeq
+    if (problematicBlockIdsSeq.size > 0) {
+      logWarning(
+        s"Done cleaning up ${matchingBlockIds.size} blocks for $deltaLogPath, but " +
+        s"failed to remove: ${problematicBlockIdsSeq}."
+      )
+    } else {
+      logInfo(
+        s"Done cleaning up ${matchingBlockIds.size} blocks for $deltaLogPath."
+      )
+    }
+  }
+
+  /**
+   * @param deltaLogPath The delta log directory to clean up. It is constructed per query with
+   *                     credential scope id as prefix and a uuid as suffix, which is very unique
+   *                     to the query and won't interfere with other queries.
+   * @param maxVersion maxVersion of any checkpoint or delta file that needs clean up, inclusive.
+   */
+  def tryToCleanUpPreviousBlocks(deltaLogPath: String, maxVersion: Long): Unit = {
+    if (maxVersion < 0) {
+      logInfo(
+        s"Skipping clean up previous blocks for $deltaLogPath because maxVersion(" +
+        s"$maxVersion) < 0."
+      )
+      return
+    }
+
+    def shouldCleanUp(blockId: BlockId): Boolean = {
+      if (!blockId.name.startsWith(DELTA_SHARING_LOG_BLOCK_ID_PREFIX)) {
+        return false
+      }
+      val blockName = blockId.name
+      blockName.startsWith(BLOCK_ID_TEST_PREFIX + deltaLogPath) && FileNames
+        .getFileVersionOpt(new Path(blockName.stripPrefix(BLOCK_ID_TEST_PREFIX)))
+        .exists(_ <= maxVersion)
+    }
+
+    val blockManager = SparkEnv.get.blockManager
+    val matchingBlockIds = blockManager.getMatchingBlockIds(shouldCleanUp(_))
+    logInfo(
+      s"Trying to clean up ${matchingBlockIds.size} previous blocks for $deltaLogPath " +
+      s"before version: $maxVersion."
+    )
+
+    val problematicBlockIds = Seq.newBuilder[BlockId]
+    matchingBlockIds.foreach { b =>
+      try {
+        blockManager.removeBlock(b)
+      } catch {
+        case _: Throwable => problematicBlockIds += b
+      }
+    }
+
+    val problematicBlockIdsSeq = problematicBlockIds.result().toSeq
+    if (problematicBlockIdsSeq.size > 0) {
+      logWarning(
+        s"Done cleaning up ${matchingBlockIds.size} previous blocks for $deltaLogPath " +
+        s"before version: $maxVersion, but failed to remove: ${problematicBlockIdsSeq}."
+      )
+    } else {
+      logInfo(
+        s"Done cleaning up ${matchingBlockIds.size} previous blocks for $deltaLogPath " +
+        s"before version: $maxVersion."
+      )
+    }
+  }
 
   /**
    * Construct local delta log based on delta log actions returned from delta sharing server.
@@ -704,6 +804,39 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     )
   }
 
+  // Create a delta log directory with protocol and metadata at version 0.
+  // Used by DeltaSharingSource to initialize a DeltaLog class, which is then used to initialize
+  // a DeltaSource class, also the metadata id will be used for schemaTrackingLocation.
+  // There are no data files in the delta log because the DeltaSource class is initialized before
+  // any rpcs to the delta sharing server, so no data files are available yet.
+  def constructDeltaLogWithMetadataAtVersionZero(
+      customTablePath: String,
+      deltaSharingTableMetadata: DeltaSharingTableMetadata): Unit = {
+    val encodedTablePath = DeltaSharingLogFileSystem.encode(customTablePath)
+    val deltaLogPath = s"${encodedTablePath.toString}/_delta_log"
+
+    // Always use 0.json for snapshot queries.
+    val jsonLogStr = deltaSharingTableMetadata.protocol.deltaProtocol.json + "\n" +
+      deltaSharingTableMetadata.metadata.deltaMetadata.json + "\n"
+
+    val jsonFilePath = FileNames.deltaFile(new Path(deltaLogPath), 0).toString
+    DeltaSharingUtils.overrideIteratorBlock[String](
+      getDeltaSharingLogBlockId(jsonFilePath),
+      Seq(jsonLogStr).toIterator
+    )
+
+    val fileStatusSeq = Seq(
+      DeltaSharingLogFileStatus(
+        path = jsonFilePath,
+        size = jsonLogStr.length,
+        modificationTime = 0L
+      )
+    )
+    DeltaSharingUtils.overrideIteratorBlock[DeltaSharingLogFileStatus](
+      getDeltaSharingLogBlockId(deltaLogPath),
+      fileStatusSeq.toIterator
+    )
+  }
 }
 
 /**
