@@ -580,6 +580,17 @@ object DeltaOperations {
     val maxToStringFields = SQLConf.get.maxToStringFields
     predicates.map(_.simpleString(maxToStringFields))
   }
+
+  /** Recorded when the table properties are set. */
+  private val OP_UPGRADE_UNIFORM_BY_REORG = "REORG TABLE UPGRADE UNIFORM"
+
+  /**
+   * recorded when upgrading a table set uniform properties by REORG TABLE ... UPGRADE UNIFORM
+   */
+  case class UpgradeUniformProperties(properties: Map[String, String]) extends Operation(
+      OP_UPGRADE_UNIFORM_BY_REORG) {
+    override val parameters: Map[String, Any] = Map("properties" -> JsonUtils.toJson(properties))
+  }
 }
 
 private[delta] object DeltaOperationMetrics {

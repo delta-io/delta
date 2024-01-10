@@ -557,10 +557,10 @@ class DeltaAnalysis(session: SparkSession)
       }
       merge
 
-    case reorg @ DeltaReorgTable(resolved @ ResolvedTable(_, _, _: DeltaTableV2, _)) =>
-      DeltaReorgTableCommand(resolved)(reorg.predicates)
+    case reorg @ DeltaReorgTable(resolved @ ResolvedTable(_, _, _: DeltaTableV2, _), spec) =>
+      DeltaReorgTableCommand(resolved, spec)(reorg.predicates)
 
-    case DeltaReorgTable(ResolvedTable(_, _, t, _)) =>
+    case DeltaReorgTable(ResolvedTable(_, _, t, _), _) =>
       throw DeltaErrors.notADeltaTable(t.name())
 
     case cmd @ ShowColumns(child @ ResolvedTable(_, _, table: DeltaTableV2, _), namespace, _) =>
