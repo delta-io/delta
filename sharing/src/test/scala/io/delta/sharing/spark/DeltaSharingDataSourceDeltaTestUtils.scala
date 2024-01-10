@@ -622,6 +622,7 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
         )
       }
     }
+
     if (assertMultipleDvsInOneFile) {
       assert(dvPathToCount.max._2 > 1)
     }
