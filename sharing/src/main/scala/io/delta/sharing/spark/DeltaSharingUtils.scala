@@ -162,6 +162,44 @@ object DeltaSharingUtils extends Logging {
     }
   }
 
+  /**
+   * Get the refresher function for a delta sharing table who calls client.getCDFFiles with the
+   * provided parameters.
+   *
+   * @return A refresher function used by the CachedTableManager to refresh urls.
+   */
+  def getRefresherForGetCDFFiles(
+      client: DeltaSharingClient,
+      table: Table,
+      cdfOptions: Map[String, String]): RefresherFunction = { (_: Option[String]) =>
+    {
+      val tableFiles = client.getCDFFiles(
+        table = table,
+        cdfOptions = cdfOptions,
+        includeHistoricalMetadata = true
+      )
+      getTableRefreshResult(tableFiles)
+    }
+  }
+
+  /**
+   * Get the refresher function for a delta sharing table who calls client.getFiles with the
+   * provided parameters.
+   *
+   * @return A refresher function used by the CachedTableManager to refresh urls.
+   */
+  def getRefresherForGetFilesWithStartingVersion(
+      client: DeltaSharingClient,
+      table: Table,
+      startingVersion: Long,
+      endingVersion: Option[Long]): RefresherFunction = { (_: Option[String]) =>
+    {
+      val tableFiles = client
+        .getFiles(table = table, startingVersion = startingVersion, endingVersion = endingVersion)
+      getTableRefreshResult(tableFiles)
+    }
+  }
+
   def overrideSingleBlock[T: ClassTag](blockId: BlockId, value: T): Unit = {
     assert(
       blockId.name.startsWith(DELTA_SHARING_BLOCK_ID_PREFIX),
@@ -203,6 +241,15 @@ object DeltaSharingUtils extends Logging {
     val fullQueryString = s"${options.versionAsOf}_${options.timestampAsOf}_" +
       s"${partitionFiltersString}_${dataFiltersString}_${jsonPredicateHints}"
     Hashing.sha256().hashString(fullQueryString, UTF_8).toString
+  }
+
+  // Get a query hash id based on the query parameters: cdfOptions.
+  // The id concatenated with table name and used in local DeltaLoc and CachedTableManager.
+  // This is to uniquely identify the delta sharing table used twice in the same query but with
+  // different query parameters, so we can differentiate their delta log and entries in the
+  // CachedTableManager.
+  private[sharing] def getQueryParamsHashId(cdfOptions: Map[String, String]): String = {
+    Hashing.sha256().hashString(cdfOptions.toString, UTF_8).toString
   }
 
   // Concatenate table path with an id as a suffix, to uniquely identify a delta sharing table and

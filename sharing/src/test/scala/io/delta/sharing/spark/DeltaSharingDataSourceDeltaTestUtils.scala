@@ -525,6 +525,123 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
     )
   }
 
+  private[spark] def prepareMockedClientAndFileSystemResultForCdf(
+      deltaTable: String,
+      sharedTable: String,
+      startingVersion: Long,
+      startingTimestamp: Option[String] = None,
+      inlineDvFormat: Option[RoaringBitmapArrayFormat.Value] = None,
+      assertMultipleDvsInOneFile: Boolean = false): Unit = {
+    val actionLines = Seq.newBuilder[String]
+
+    var maxVersion = -1L
+    var totalSize = 0L
+
+    val deltaLog = DeltaLog.forTable(spark, new TableIdentifier(deltaTable))
+    val startingSnapshot = deltaLog.getSnapshotAt(startingVersion)
+    actionLines += DeltaSharingProtocol(deltaProtocol = startingSnapshot.protocol).json
+    actionLines += DeltaSharingMetadata(
+      deltaMetadata = startingSnapshot.metadata,
+      version = startingVersion
+    ).json
+
+    val dvPathToCount = scala.collection.mutable.Map[String, Int]()
+    val files =
+      FileUtils.listFiles(new File(deltaLog.logPath.toUri()), null, true).asScala
+    files.foreach { f =>
+      if (FileNames.isDeltaFile(new Path(f.getName))) {
+        val version = FileNames.getFileVersion(new Path(f.getName))
+        if (version >= startingVersion) {
+          // protocol/metadata are processed from startingSnapshot, only process versions greater
+          // than startingVersion for real actions and possible metadata changes.
+          maxVersion = maxVersion.max(version)
+          val timestamp = f.lastModified
+          FileUtils.readLines(f).asScala.foreach { l =>
+            val action = Action.fromJson(l)
+            action match {
+              case m: Metadata =>
+                actionLines += DeltaSharingMetadata(
+                  deltaMetadata = m,
+                  version = version
+                ).json
+              case addFile: AddFile if addFile.dataChange =>
+                if (assertMultipleDvsInOneFile) {
+                  updateDvPathToCount(addFile, dvPathToCount)
+                }
+                val updatedAdd = if (inlineDvFormat.isDefined) {
+                  // Remove row 0 and 1 in the AddFile.
+                  updateAddFileWithInlineDV(addFile, inlineDvFormat.get, RoaringBitmapArray(0L, 1L))
+                } else {
+                  addFile
+                }
+                val dsAddFile =
+                  getDeltaSharingFileActionForAddFile(updatedAdd, sharedTable, version, timestamp)
+                totalSize = totalSize + updatedAdd.size
+                actionLines += dsAddFile.json
+              case removeFile: RemoveFile if removeFile.dataChange =>
+                // scalastyle:off removeFile
+                val dsRemoveFile = getDeltaSharingFileActionForRemoveFile(
+                  removeFile,
+                  sharedTable,
+                  version,
+                  timestamp
+                )
+                // scalastyle:on removeFile
+                totalSize = totalSize + removeFile.size.getOrElse(0L)
+                actionLines += dsRemoveFile.json
+              case cdcFile: AddCDCFile =>
+                val parquetFile = removePartitionPrefix(cdcFile.path)
+
+                // Convert from delta AddCDCFile to DeltaSharingFileAction to serialize to json.
+                val dsCDCFile = DeltaSharingFileAction(
+                  id = Hashing.sha256().hashString(parquetFile, UTF_8).toString,
+                  version = version,
+                  timestamp = timestamp,
+                  deltaSingleAction = cdcFile
+                    .copy(
+                      path = TestDeltaSharingFileSystem.encode(sharedTable, parquetFile)
+                    )
+                    .wrap
+                )
+                totalSize = totalSize + cdcFile.size
+                actionLines += dsCDCFile.json
+              case _ => // ignore other lines
+            }
+          }
+        }
+      }
+    }
+    val dataFiles =
+      FileUtils.listFiles(new File(deltaLog.dataPath.toUri()), null, true).asScala
+    dataFiles.foreach { f =>
+      val filePath = f.getCanonicalPath
+      if (isDataFile(filePath)) {
+        DeltaSharingUtils.overrideIteratorBlock[Byte](
+          blockId = TestDeltaSharingFileSystem.getBlockId(sharedTable, f.getName),
+          values = FileUtils.readFileToByteArray(f).toIterator
+        )
+      }
+    }
+
+    if (assertMultipleDvsInOneFile) {
+      assert(dvPathToCount.max._2 > 1)
+    }
+
+    DeltaSharingUtils.overrideIteratorBlock[String](
+      blockId =
+        TestClientForDeltaFormatSharing.getBlockId(sharedTable, s"getCDFFiles_$startingVersion"),
+      values = actionLines.result().toIterator
+    )
+    if (startingTimestamp.isDefined) {
+      DeltaSharingUtils.overrideIteratorBlock[String](
+        blockId = TestClientForDeltaFormatSharing.getBlockId(
+          sharedTable,
+          s"getCDFFiles_${startingTimestamp.get}"
+        ),
+        values = actionLines.result().toIterator
+      )
+    }
+  }
 
   protected def getDeltaSharingClassesSQLConf: Map[String, String] = {
     Map(
