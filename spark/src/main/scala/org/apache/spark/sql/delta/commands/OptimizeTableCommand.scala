@@ -227,13 +227,22 @@ class OptimizeExecutor(
 
   private val isMultiDimClustering = isClusteredTable || zOrderByColumns.nonEmpty
 
-  private val (clusteringColumns, curve): (Seq[String], String) = {
+  private val clusteringColumns: Seq[String] = {
     if (zOrderByColumns.nonEmpty) {
-      (zOrderByColumns, "zorder")
+      zOrderByColumns
     } else if (isClusteredTable) {
-      (ClusteringColumnInfo.extractLogicalNames(txn.snapshot), "hilbert")
+      ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
     } else {
-      Nil -> ""
+      Nil
+    }
+  }
+
+  private lazy val curve: String = {
+    if (zOrderByColumns.nonEmpty) {
+      "zorder"
+    } else {
+      assert(isClusteredTable)
+      "hilbert"
     }
   }
 
