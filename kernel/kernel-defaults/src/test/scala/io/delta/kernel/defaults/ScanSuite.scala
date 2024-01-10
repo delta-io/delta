@@ -28,7 +28,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.{SparkSession, Row => SparkRow}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
-import org.apache.spark.sql.types.{StructType => SparkStructType}
+import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
 import org.scalatest.funsuite.AnyFunSuite
 
 import io.delta.kernel.client.{JsonHandler, ParquetHandler, TableClient}
@@ -72,9 +72,9 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
   def writeDataSkippingTable(
     tablePath: String,
     data: String,
-    schema: SparkStructType = null,
-    indexedCols: Option[Int] = None,
-    deltaStatsColNamesOpt: Option[String] = None): Unit = {
+    schema: SparkStructType,
+    indexedCols: Option[Int],
+    deltaStatsColNamesOpt: Option[String]): Unit = {
     withSQLConf(getDataSkippingConfs(indexedCols, deltaStatsColNamesOpt): _*) {
       val jsonRecords = data.split("\n").toSeq
       val reader = spark.read
@@ -85,7 +85,6 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       df.coalesce(1).write.format("delta").save(r.dataPath.toString)
     }
   }
-  // todo write tables in this test suite instead of using golden tables (use above methods)
 
   private def getScanFileStats(scanFiles: Seq[Row]): Seq[String] = {
     scanFiles.map { scanFile =>
@@ -139,6 +138,32 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     }
   }
 
+  def testSkipping(
+    testName: String,
+    data: String,
+    schema: SparkStructType = null,
+    hits: Seq[Predicate],
+    misses: Seq[Predicate],
+    indexedCols: Option[Int] = None,
+    deltaStatsColNamesOpt: Option[String] = None): Unit = {
+    test(testName) {
+      withTempDir { tempDir =>
+        writeDataSkippingTable(
+          tempDir.getCanonicalPath,
+          data,
+          schema,
+          indexedCols,
+          deltaStatsColNamesOpt
+        )
+        checkSkipping(
+          tempDir.getCanonicalPath,
+          hits,
+          misses
+        )
+      }
+    }
+  }
+
   /* Where timestampStr is in the format of "yyyy-MM-dd'T'HH:mm:ss.SSSXXX" */
   def getTimestampPredicate(expr: String, col: Column, timestampStr: String): Predicate = {
     val time = OffsetDateTime.parse(timestampStr)
@@ -149,191 +174,201 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
   // Skipping tests from Spark's DataSkippingDeltaTests
   //////////////////////////////////////////////////////////////////////////////////
 
-  test("data skipping - top level, single 1") {
-    checkSkipping(
-      goldenTablePath("data-skipping-top-level-single-1"),
-      hits = Seq(
-        AlwaysTrue.ALWAYS_TRUE, // trivial base case
-        equals(col("a"), ofInt(1)), // a = 1
-        equals(ofInt(1), col("a")), // 1 = a
-        greaterThanOrEqual(col("a"), ofInt(1)), // a >= 1
-        lessThanOrEqual(col("a"), ofInt(1)), // a <= 1
-        lessThanOrEqual(col("a"), ofInt(2)), // a <= 2
-        greaterThanOrEqual(col("a"), ofInt(0)), // a >= 0
-        lessThanOrEqual(ofInt(1), col("a")), // 1 <= a
-        greaterThanOrEqual(ofInt(1), col("a")), // 1 >= a
-        greaterThanOrEqual(ofInt(2), col("a")), // 2 >= a
-        lessThanOrEqual(ofInt(0), col("a")), // 0 <= a
-        // note <=> is not supported yet but these should still be hits once supported
-        nullSafeEquals(col("a"), ofInt(1)), // a <=> 1
-        nullSafeEquals(ofInt(1), col("a")), // 1 <=> a
-        not(nullSafeEquals(col("a"), ofInt(2))), // NOT a <=> 2
-        // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
-        not(equals(col("a"), ofInt(1))), // NOT a = 1
-        not(nullSafeEquals(col("a"), ofInt(1))), // NOT a <=> 1
-        nullSafeEquals(col("a"), ofInt(2)), // a <=> 2
-        notEquals(col("a"), ofInt(1)), // a != 1
-        nullSafeEquals(col("a"), ofInt(2)), // a <=> 2
-        notEquals(ofInt(1), col("a")) // 1 != a
-      ),
-      misses = Seq(
-        equals(col("a"), ofInt(2)), // a = 2
-        equals(ofInt(2), col("a")), // 2 = a
-        greaterThan(col("a"), ofInt(1)), // a > 1
-        lessThan(col("a"), ofInt(1)), // a  < 1
-        greaterThanOrEqual(col("a"), ofInt(2)), // a >= 2
-        lessThanOrEqual(col("a"), ofInt(0)), // a <= 0
-        lessThan(ofInt(1), col("a")), // 1 < a
-        greaterThan(ofInt(1), col("a")), // 1 > a
-        lessThanOrEqual(ofInt(2), col("a")), // 2 <= a
-        greaterThanOrEqual(ofInt(0), col("a")) // 0 >= a
-      )
+  testSkipping(
+    "data skipping - top level, single 1",
+    """{"a": 1}""",
+    hits = Seq(
+      AlwaysTrue.ALWAYS_TRUE, // trivial base case
+      equals(col("a"), ofInt(1)), // a = 1
+      equals(ofInt(1), col("a")), // 1 = a
+      greaterThanOrEqual(col("a"), ofInt(1)), // a >= 1
+      lessThanOrEqual(col("a"), ofInt(1)), // a <= 1
+      lessThanOrEqual(col("a"), ofInt(2)), // a <= 2
+      greaterThanOrEqual(col("a"), ofInt(0)), // a >= 0
+      lessThanOrEqual(ofInt(1), col("a")), // 1 <= a
+      greaterThanOrEqual(ofInt(1), col("a")), // 1 >= a
+      greaterThanOrEqual(ofInt(2), col("a")), // 2 >= a
+      lessThanOrEqual(ofInt(0), col("a")), // 0 <= a
+      // note <=> is not supported yet but these should still be hits once supported
+      nullSafeEquals(col("a"), ofInt(1)), // a <=> 1
+      nullSafeEquals(ofInt(1), col("a")), // 1 <=> a
+      not(nullSafeEquals(col("a"), ofInt(2))), // NOT a <=> 2
+      // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
+      not(equals(col("a"), ofInt(1))), // NOT a = 1
+      not(nullSafeEquals(col("a"), ofInt(1))), // NOT a <=> 1
+      nullSafeEquals(col("a"), ofInt(2)), // a <=> 2
+      notEquals(col("a"), ofInt(1)), // a != 1
+      nullSafeEquals(col("a"), ofInt(2)), // a <=> 2
+      notEquals(ofInt(1), col("a")) // 1 != a
+    ),
+    misses = Seq(
+      equals(col("a"), ofInt(2)), // a = 2
+      equals(ofInt(2), col("a")), // 2 = a
+      greaterThan(col("a"), ofInt(1)), // a > 1
+      lessThan(col("a"), ofInt(1)), // a  < 1
+      greaterThanOrEqual(col("a"), ofInt(2)), // a >= 2
+      lessThanOrEqual(col("a"), ofInt(0)), // a <= 0
+      lessThan(ofInt(1), col("a")), // 1 < a
+      greaterThan(ofInt(1), col("a")), // 1 > a
+      lessThanOrEqual(ofInt(2), col("a")), // 2 <= a
+      greaterThanOrEqual(ofInt(0), col("a")) // 0 >= a
     )
-  }
+  )
 
-  test("data skipping - nested, single 1") {
-    checkSkipping(
-      goldenTablePath("data-skipping-nested-single-1"),
-      hits = Seq(
-        equals(nestedCol("a.b"), ofInt(1)), // a.b = 1
-        greaterThanOrEqual(nestedCol("a.b"), ofInt(1)), // a.b >= 1
-        lessThanOrEqual(nestedCol("a.b"), ofInt(1)), // a.b <= 1
-        lessThanOrEqual(nestedCol("a.b"), ofInt(2)), // a.b <= 2
-        greaterThanOrEqual(nestedCol("a.b"), ofInt(0)) // a.b >= 0
-      ),
-      misses = Seq(
-        equals(nestedCol("a.b"), ofInt(2)), // a.b = 2
-        greaterThan(nestedCol("a.b"), ofInt(1)), // a.b > 1
-        lessThan(nestedCol("a.b"), ofInt(1)) // a.b < 1
-      )
+  testSkipping(
+    "data skipping - nested, single 1",
+    """{"a": {"b": 1}}""",
+    hits = Seq(
+      equals(nestedCol("a.b"), ofInt(1)), // a.b = 1
+      greaterThanOrEqual(nestedCol("a.b"), ofInt(1)), // a.b >= 1
+      lessThanOrEqual(nestedCol("a.b"), ofInt(1)), // a.b <= 1
+      lessThanOrEqual(nestedCol("a.b"), ofInt(2)), // a.b <= 2
+      greaterThanOrEqual(nestedCol("a.b"), ofInt(0)) // a.b >= 0
+    ),
+    misses = Seq(
+      equals(nestedCol("a.b"), ofInt(2)), // a.b = 2
+      greaterThan(nestedCol("a.b"), ofInt(1)), // a.b > 1
+      lessThan(nestedCol("a.b"), ofInt(1)) // a.b < 1
     )
-  }
+  )
 
-  test("data skipping - double nested, single 1") {
-    checkSkipping(
-      goldenTablePath("data-skipping-double-nested-single-1"),
-      hits = Seq(
-        equals(nestedCol("a.b.c"), ofInt(1)), // a.b.c = 1
-        greaterThanOrEqual(nestedCol("a.b.c"), ofInt(1)), // a.b.c >= 1
-        lessThanOrEqual(nestedCol("a.b.c"), ofInt(1)), // a.b.c <= 1
-        lessThanOrEqual(nestedCol("a.b.c"), ofInt(2)), // a.b.c <= 2
-        greaterThanOrEqual(nestedCol("a.b.c"), ofInt(0)) // a.b.c >= 0
-      ),
-      misses = Seq(
-        equals(nestedCol("a.b.c"), ofInt(2)), // a.b.c = 2
-        greaterThan(nestedCol("a.b.c"), ofInt(1)), // a.b.c > 1
-        lessThan(nestedCol("a.b.c"), ofInt(1)) // a.b.c < 1
-      )
+  testSkipping(
+    "data skipping - double nested, single 1",
+    """{"a": {"b": {"c": 1}}}""",
+    hits = Seq(
+      equals(nestedCol("a.b.c"), ofInt(1)), // a.b.c = 1
+      greaterThanOrEqual(nestedCol("a.b.c"), ofInt(1)), // a.b.c >= 1
+      lessThanOrEqual(nestedCol("a.b.c"), ofInt(1)), // a.b.c <= 1
+      lessThanOrEqual(nestedCol("a.b.c"), ofInt(2)), // a.b.c <= 2
+      greaterThanOrEqual(nestedCol("a.b.c"), ofInt(0)) // a.b.c >= 0
+    ),
+    misses = Seq(
+      equals(nestedCol("a.b.c"), ofInt(2)), // a.b.c = 2
+      greaterThan(nestedCol("a.b.c"), ofInt(1)), // a.b.c > 1
+      lessThan(nestedCol("a.b.c"), ofInt(1)) // a.b.c < 1
     )
-  }
+  )
 
   private def longString(str: String) = str * 1000
 
-  test("data skipping - long strings - long min") {
-    checkSkipping(
-      goldenTablePath("data-skipping-long-strings-long-min"),
-      hits = Seq(
-        equals(col("a"), ofString(longString("A"))),
-        greaterThan(col("a"), ofString("BA")),
-        lessThan(col("a"), ofString("AB")),
-        // note startsWith is not supported yet but these should still be hits once supported
-        startsWith(col("a"), ofString("A")) // a like 'A%'
-      ),
-      misses = Seq(
-        lessThan(col("a"), ofString("AA")),
-        greaterThan(col("a"), ofString("CD"))
-      )
+  testSkipping(
+    "data skipping - long strings - long min",
+    s"""
+       {"a": '${longString("A")}'}
+       {"a": 'B'}
+       {"a": 'C'}
+     """,
+    hits = Seq(
+      equals(col("a"), ofString(longString("A"))),
+      greaterThan(col("a"), ofString("BA")),
+      lessThan(col("a"), ofString("AB")),
+      // note startsWith is not supported yet but these should still be hits once supported
+      startsWith(col("a"), ofString("A")) // a like 'A%'
+    ),
+    misses = Seq(
+      lessThan(col("a"), ofString("AA")),
+      greaterThan(col("a"), ofString("CD"))
     )
-  }
+  )
 
-  test("data skipping - long strings - long max") {
-    checkSkipping(
-      goldenTablePath("data-skipping-long-strings-long-max"),
-      hits = Seq(
-        equals(col("a"), ofString(longString("C"))),
-        greaterThan(col("a"), ofString("BA")),
-        lessThan(col("a"), ofString("AB")),
-        greaterThan(col("a"), ofString("CC")),
-        // note startsWith is not supported yet but these should still be hits once supported
-        startsWith(col("a"), ofString("A")), // a like 'A%'
-        startsWith(col("a"), ofString("C")) // a like 'C%'
-      ),
-      misses = Seq(
-        greaterThanOrEqual(col("a"), ofString("D")),
-        greaterThan(col("a"), ofString("CD"))
-      )
+  testSkipping(
+    "data skipping - long strings - long max",
+    s"""
+       {"a": 'A'}
+       {"a": 'B'}
+       {"a": '${longString("C")}'}
+     """,
+    hits = Seq(
+      equals(col("a"), ofString(longString("C"))),
+      greaterThan(col("a"), ofString("BA")),
+      lessThan(col("a"), ofString("AB")),
+      greaterThan(col("a"), ofString("CC")),
+      // note startsWith is not supported yet but these should still be hits once supported
+      startsWith(col("a"), ofString("A")), // a like 'A%'
+      startsWith(col("a"), ofString("C")) // a like 'C%'
+    ),
+    misses = Seq(
+      greaterThanOrEqual(col("a"), ofString("D")),
+      greaterThan(col("a"), ofString("CD"))
     )
-  }
+  )
 
   // Test:'starts with'  Expression: like
   // Test:'starts with, nested'  Expression: like
 
-  test("data skipping - and statements - simple") {
-    checkSkipping(
-      goldenTablePath("data-skipping-and-statements-simple"),
-      hits = Seq(
-        new And(
-          greaterThan(col("a"), ofInt(0)),
-          lessThan(col("a"), ofInt(3))
-        ),
-        new And(
-          lessThanOrEqual(col("a"), ofInt(1)),
-          greaterThan(col("a"), ofInt(-1))
-        )
+  testSkipping(
+    "data skipping - and statements - simple",
+    """
+      {"a": 1}
+      {"a": 2}
+    """,
+    hits = Seq(
+      new And(
+        greaterThan(col("a"), ofInt(0)),
+        lessThan(col("a"), ofInt(3))
       ),
-      misses = Seq(
-        new And(
-          lessThan(col("a"), ofInt(0)),
-          greaterThan(col("a"), ofInt(-2))
-        )
+      new And(
+        lessThanOrEqual(col("a"), ofInt(1)),
+        greaterThan(col("a"), ofInt(-1))
+      )
+    ),
+    misses = Seq(
+      new And(
+        lessThan(col("a"), ofInt(0)),
+        greaterThan(col("a"), ofInt(-2))
       )
     )
-  }
+  )
 
-  test("data skipping - and statements - two fields") {
-    checkSkipping(
-      goldenTablePath("data-skipping-and-statements-two-fields"),
-      hits = Seq(
-        new And(
-          greaterThan(col("a"), ofInt(0)),
-          equals(col("b"), ofString("2017-09-01"))
-        ),
-        new And(
-          equals(col("a"), ofInt(2)),
-          greaterThanOrEqual(col("b"), ofString("2017-08-30"))
-        ),
-        // note startsWith is not supported yet but these should still be hits once supported
-        new And( //  a >= 2 AND b like '2017-08-%'
-          greaterThanOrEqual(col("a"), ofInt(2)),
-          startsWith(col("b"), ofString("2017-08-"))
-        ),
-        // MOVE BELOW EXPRESSION TO MISSES ONCE SUPPORTED BY DATA SKIPPING
-        new And( // a > 0 AND b like '2016-%'
-          greaterThan(col("a"), ofInt(0)),
-          startsWith(col("b"), ofString("2016-"))
-        )
+  testSkipping(
+    "data skipping - and statements - two fields",
+    """
+      {"a": 1, "b": "2017-09-01"}
+      {"a": 2, "b": "2017-08-31"}
+    """,
+    hits = Seq(
+      new And(
+        greaterThan(col("a"), ofInt(0)),
+        equals(col("b"), ofString("2017-09-01"))
       ),
-      misses = Seq()
-    )
-  }
-
-  test("data skipping - and statements - one side unsupported") {
-    val aRem100 = new ScalarExpression("%", Seq(col("a"), ofInt(100)).asJava)
-    val bRem100 = new ScalarExpression("%", Seq(col("b"), ofInt(100)).asJava)
-    checkSkipping(
-      goldenTablePath("data-skipping-and-statements-one-side-unsupported"),
-      hits = Seq(
-        // a % 100 < 10 AND b % 100 > 20
-        new And(lessThan(aRem100, ofInt(10)), greaterThan(bRem100, ofInt(20)))
+      new And(
+        equals(col("a"), ofInt(2)),
+        greaterThanOrEqual(col("b"), ofString("2017-08-30"))
       ),
-      misses = Seq(
-        // a < 10 AND b % 100 > 20
-        new And(lessThan(col("a"), ofInt(10)), greaterThan(bRem100, ofInt(20))),
-        // a % 100 < 10 AND b > 20
-        new And(lessThan(aRem100, ofInt(10)), greaterThan(col("b"), ofInt(20)))
+      // note startsWith is not supported yet but these should still be hits once supported
+      new And( //  a >= 2 AND b like '2017-08-%'
+        greaterThanOrEqual(col("a"), ofInt(2)),
+        startsWith(col("b"), ofString("2017-08-"))
+      ),
+      // MOVE BELOW EXPRESSION TO MISSES ONCE SUPPORTED BY DATA SKIPPING
+      new And( // a > 0 AND b like '2016-%'
+        greaterThan(col("a"), ofInt(0)),
+        startsWith(col("b"), ofString("2016-"))
       )
+    ),
+    misses = Seq()
+  )
+
+  private val aRem100 = new ScalarExpression("%", Seq(col("a"), ofInt(100)).asJava)
+  private val bRem100 = new ScalarExpression("%", Seq(col("b"), ofInt(100)).asJava)
+
+  testSkipping(
+    "data skipping - and statements - one side unsupported",
+    """
+      {"a": 10, "b": 10}
+      {"a": 20: "b": 20}
+    """,
+    hits = Seq(
+      // a % 100 < 10 AND b % 100 > 20
+      new And(lessThan(aRem100, ofInt(10)), greaterThan(bRem100, ofInt(20)))
+    ),
+    misses = Seq(
+      // a < 10 AND b % 100 > 20
+      new And(lessThan(col("a"), ofInt(10)), greaterThan(bRem100, ofInt(20))),
+      // a % 100 < 10 AND b > 20
+      new And(lessThan(aRem100, ofInt(10)), greaterThan(col("b"), ofInt(20)))
     )
-  }
+  )
 
   // Test: 'or statements - simple' Expression: OR
   // Test: 'or statements - two fields' Expression: OR
@@ -344,321 +379,476 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
   // If a column does not have stats, it does not participate in data skipping, which disqualifies
   // that leg of whatever conjunct it was part of.
-  test("data skipping - missing stats columns") {
-    checkSkipping(
-      goldenTablePath("data-skipping-missing-stats-columns"),
-      hits = Seq(
-        lessThan(col("b"), ofInt(10)), // b < 10: disqualified
-        // note OR is not supported yet but these should still be hits once supported
-        new Or( // a < 1 OR b < 10: a disqualified by b (same conjunct)
-          lessThan(col("a"), ofInt(1)), lessThan(col("b"), ofInt(10))),
-        new Or( // a < 1 OR (a >= 1 AND b < 10): ==> a < 1 OR a >=1 ==> TRUE
-          lessThan(col("a"), ofInt(1)),
-          new And(greaterThanOrEqual(col("a"), ofInt(1)), lessThan(col("b"), ofInt(10)))
-        ),
-        // MOVE BELOW EXPRESSION TO MISSES ONCE SUPPORTED BY DATA SKIPPING
-        new Or( // a < 1 OR (a > 10 AND b < 10): ==> a < 1 OR a > 10 ==> FALSE
-          lessThan(col("a"), ofInt(1)),
-          new And(greaterThan(col("a"), ofInt(10)), lessThan(col("b"), ofInt(10)))
-        )
+  testSkipping(
+    "data skipping - missing stats columns",
+    """
+      {"a": 1, "b": 10}
+      {"a": 2, "b": 20}
+    """,
+    indexedCols = Some(1),
+    hits = Seq(
+      lessThan(col("b"), ofInt(10)), // b < 10: disqualified
+      // note OR is not supported yet but these should still be hits once supported
+      new Or( // a < 1 OR b < 10: a disqualified by b (same conjunct)
+        lessThan(col("a"), ofInt(1)), lessThan(col("b"), ofInt(10))),
+      new Or( // a < 1 OR (a >= 1 AND b < 10): ==> a < 1 OR a >=1 ==> TRUE
+        lessThan(col("a"), ofInt(1)),
+        new And(greaterThanOrEqual(col("a"), ofInt(1)), lessThan(col("b"), ofInt(10)))
       ),
-      misses = Seq(
-        new And( // a < 1 AND b < 10: ==> a < 1 ==> FALSE
-          lessThan(col("a"), ofInt(1)), lessThan(col("b"), ofInt(10)))
+      // MOVE BELOW EXPRESSION TO MISSES ONCE SUPPORTED BY DATA SKIPPING
+      new Or( // a < 1 OR (a > 10 AND b < 10): ==> a < 1 OR a > 10 ==> FALSE
+        lessThan(col("a"), ofInt(1)),
+        new And(greaterThan(col("a"), ofInt(10)), lessThan(col("b"), ofInt(10)))
       )
+    ),
+    misses = Seq(
+      new And( // a < 1 AND b < 10: ==> a < 1 ==> FALSE
+        lessThan(col("a"), ofInt(1)), lessThan(col("b"), ofInt(10)))
     )
+  )
+
+  private def generateJsonData(numCols: Int): String = {
+    val fields = (0 until numCols).map(i => s""""col${"%02d".format(i)}":$i""".stripMargin)
+
+    "{" + fields.mkString(",") + "}"
   }
 
-  test("data-skipping - more columns than indexed") {
-    checkSkipping(
-      goldenTablePath("data-skipping-more-columns-than-indexed"),
-      hits = Seq(
-        equals(col("col00"), ofInt(0)),
-        equals(col("col32"), ofInt(32)),
-        equals(col("col32"), ofInt(-1))
-      ),
-      misses = Seq(
-        equals(col("col00"), ofInt(1))
-      )
+  testSkipping(
+    "data-skipping - more columns than indexed",
+    generateJsonData(33), // defaultNumIndexedCols + 1
+    hits = Seq(
+      equals(col("col00"), ofInt(0)),
+      equals(col("col32"), ofInt(32)),
+      equals(col("col32"), ofInt(-1))
+    ),
+    misses = Seq(
+      equals(col("col00"), ofInt(1))
     )
-  }
+  )
 
-  test("data skipping - nested schema - # indexed column = 3") {
-    checkSkipping(
-      goldenTablePath("data-skipping-nested-schema-3-indexed-column"),
-      hits = Seq(
-        equals(col("a"), ofInt(1)), // a = 1
-        equals(nestedCol("b.c.d"), ofInt(2)), // b.c.d = 2
-        equals(nestedCol("b.c.e"), ofInt(3)), // b.c.e = 3
-        // below matches due to missing stats
-        lessThan(nestedCol("b.c.f.g"), ofInt(0)), // b.c.f.g < 0
-        lessThan(nestedCol("b.c.f.i"), ofInt(0)), // b.c.f.i < 0
-        lessThan(nestedCol("b.l"), ofInt(0)) // b.l < 0
-      ),
-      misses = Seq(
-        lessThan(col("a"), ofInt(0)), // a < 0
-        lessThan(nestedCol("b.c.d"), ofInt(0)), // b.c.d < 0
-        lessThan(nestedCol("b.c.e"), ofInt(0)) // b.c.e < 0
-      )
+  testSkipping(
+    "data skipping - nested schema - # indexed column = 3",
+    """{
+      "a": 1,
+      "b": {
+        "c": {
+          "d": 2,
+          "e": 3,
+          "f": {
+            "g": 4,
+            "h": 5,
+            "i": 6
+          },
+          "j": 7,
+          "k": 8
+        },
+        "l": 9
+      },
+      "m": 10
+    }""".replace("\n", ""),
+    indexedCols = Some(3),
+    hits = Seq(
+      equals(col("a"), ofInt(1)), // a = 1
+      equals(nestedCol("b.c.d"), ofInt(2)), // b.c.d = 2
+      equals(nestedCol("b.c.e"), ofInt(3)), // b.c.e = 3
+      // below matches due to missing stats
+      lessThan(nestedCol("b.c.f.g"), ofInt(0)), // b.c.f.g < 0
+      lessThan(nestedCol("b.c.f.i"), ofInt(0)), // b.c.f.i < 0
+      lessThan(nestedCol("b.l"), ofInt(0)) // b.l < 0
+    ),
+    misses = Seq(
+      lessThan(col("a"), ofInt(0)), // a < 0
+      lessThan(nestedCol("b.c.d"), ofInt(0)), // b.c.d < 0
+      lessThan(nestedCol("b.c.e"), ofInt(0)) // b.c.e < 0
     )
-  }
+  )
 
-  test("data skipping - nested schema - # indexed column = 0") {
-    checkSkipping(
-      goldenTablePath("data-skipping-nested-schema-0-indexed-column"),
-      hits = Seq(
-        // all included due to missing stats
-        lessThan(col("a"), ofInt(0)),
-        lessThan(nestedCol("b.c.d"), ofInt(0)),
-        lessThan(nestedCol("b.c.f.i"), ofInt(0)),
-        lessThan(nestedCol("b.l"), ofInt(0)),
-        lessThan(col("m"), ofInt(0))
-      ),
-      misses = Seq()
-    )
-  }
+  testSkipping(
+    "data skipping - nested schema - # indexed column = 0",
+    """{
+      "a": 1,
+      "b": {
+        "c": {
+          "d": 2,
+          "e": 3,
+          "f": {
+            "g": 4,
+            "h": 5,
+            "i": 6
+          },
+          "j": 7,
+          "k": 8
+        },
+        "l": 9
+      },
+      "m": 10
+    }""".replace("\n", ""),
+    indexedCols = Some(0),
+    hits = Seq(
+      // all included due to missing stats
+      lessThan(col("a"), ofInt(0)),
+      lessThan(nestedCol("b.c.d"), ofInt(0)),
+      lessThan(nestedCol("b.c.f.i"), ofInt(0)),
+      lessThan(nestedCol("b.l"), ofInt(0)),
+      lessThan(col("m"), ofInt(0))
+    ),
+    misses = Seq()
+  )
 
-  test("data skipping - " +
-    "indexed column names - naming a nested column indexes all leaf fields of that column") {
-    checkSkipping(
-      goldenTablePath("data-skipping-indexed-column-names-naming-a-nested-column"),
-      hits = Seq(
-        // these all have missing stats
-        lessThan(col("a"), ofInt(0)),
-        lessThan(nestedCol("b.l"), ofInt(0)),
-        lessThan(col("m"), ofInt(0))
-      ),
-      misses = Seq(
-        lessThan(nestedCol("b.c.d"), ofInt(0)),
-        lessThan(nestedCol("b.c.e"), ofInt(0)),
-        lessThan(nestedCol("b.c.f.g"), ofInt(0)),
-        lessThan(nestedCol("b.c.f.h"), ofInt(0)),
-        lessThan(nestedCol("b.c.f.i"), ofInt(0)),
-        lessThan(nestedCol("b.c.j"), ofInt(0)),
-        lessThan(nestedCol("b.c.k"), ofInt(0))
-      )
+  testSkipping(
+    "data skipping - indexed column names - " +
+      "naming a nested column indexes all leaf fields of that column",
+    """{
+      "a": 1,
+      "b": {
+        "c": {
+          "d": 2,
+          "e": 3,
+          "f": {
+            "g": 4,
+            "h": 5,
+            "i": 6
+          },
+          "j": 7,
+          "k": 8
+        },
+        "l": 9
+      },
+      "m": 10
+    }""".replace("\n", ""),
+    indexedCols = Some(3),
+    deltaStatsColNamesOpt = Some("b.c"),
+    hits = Seq(
+      // these all have missing stats
+      lessThan(col("a"), ofInt(0)),
+      lessThan(nestedCol("b.l"), ofInt(0)),
+      lessThan(col("m"), ofInt(0))
+    ),
+    misses = Seq(
+      lessThan(nestedCol("b.c.d"), ofInt(0)),
+      lessThan(nestedCol("b.c.e"), ofInt(0)),
+      lessThan(nestedCol("b.c.f.g"), ofInt(0)),
+      lessThan(nestedCol("b.c.f.h"), ofInt(0)),
+      lessThan(nestedCol("b.c.f.i"), ofInt(0)),
+      lessThan(nestedCol("b.c.j"), ofInt(0)),
+      lessThan(nestedCol("b.c.k"), ofInt(0))
     )
-  }
+  )
 
-  test("data skipping - indexed column names - index only a subset of leaf columns") {
-    checkSkipping(
-      goldenTablePath("data-skipping-indexed-column-names-index-only-a-subset-of-leaf-columns"),
-      hits = Seq(
-        // these all have missing stats
-        lessThan(col("a"), ofInt(0)),
-        lessThan(nestedCol("b.c.d"), ofInt(0)),
-        lessThan(nestedCol("b.c.f.g"), ofInt(0)),
-        lessThan(nestedCol("b.c.f.i"), ofInt(0)),
-        lessThan(nestedCol("b.c.j"), ofInt(0)),
-        lessThan(col("m"), ofInt(0))
-      ),
-      misses = Seq(
-        lessThan(nestedCol("b.c.e"), ofInt(0)),
-        lessThan(nestedCol("b.c.f.h"), ofInt(0)),
-        lessThan(nestedCol("b.c.k"), ofInt(0)),
-        lessThan(nestedCol("b.l"), ofInt(0))
-      )
+  testSkipping(
+    "data skipping - indexed column names - index only a subset of leaf columns",
+    """{
+      "a": 1,
+      "b": {
+        "c": {
+          "d": 2,
+          "e": 3,
+          "f": {
+            "g": 4,
+            "h": 5,
+            "i": 6
+          },
+          "j": 7,
+          "k": 8
+        },
+        "l": 9
+      },
+      "m": 10
+    }""".replace("\n", ""),
+    indexedCols = Some(3),
+    deltaStatsColNamesOpt = Some("b.c.e, b.c.f.h, b.c.k, b.l"),
+    hits = Seq(
+      // these all have missing stats
+      lessThan(col("a"), ofInt(0)),
+      lessThan(nestedCol("b.c.d"), ofInt(0)),
+      lessThan(nestedCol("b.c.f.g"), ofInt(0)),
+      lessThan(nestedCol("b.c.f.i"), ofInt(0)),
+      lessThan(nestedCol("b.c.j"), ofInt(0)),
+      lessThan(col("m"), ofInt(0))
+    ),
+    misses = Seq(
+      lessThan(nestedCol("b.c.e"), ofInt(0)),
+      lessThan(nestedCol("b.c.f.h"), ofInt(0)),
+      lessThan(nestedCol("b.c.k"), ofInt(0)),
+      lessThan(nestedCol("b.l"), ofInt(0))
     )
-  }
+  )
 
-  test("data skipping - boolean comparisons") {
-    checkSkipping(
-      goldenTablePath("data-skipping-boolean-comparisons"),
-      hits = Seq(
-        equals(col("a"), ofBoolean(false)),
-        greaterThan(col("a"), ofBoolean(true)),
-        lessThanOrEqual(col("a"), ofBoolean(false)),
-        equals(ofBoolean(true), col("a")),
-        lessThan(ofBoolean(true), col("a")),
-        // note NOT is not supported yet but these should still be hits once supported
-        not(equals(col("a"), ofBoolean(false)))
-      ),
-      misses = Seq()
-    )
-  }
+  testSkipping(
+    "data skipping - boolean comparisons",
+    """{"a": false}""",
+    hits = Seq(
+      equals(col("a"), ofBoolean(false)),
+      greaterThan(col("a"), ofBoolean(true)),
+      lessThanOrEqual(col("a"), ofBoolean(false)),
+      equals(ofBoolean(true), col("a")),
+      lessThan(ofBoolean(true), col("a")),
+      // note NOT is not supported yet but these should still be hits once supported
+      not(equals(col("a"), ofBoolean(false)))
+    ),
+    misses = Seq()
+  )
 
   // Data skipping by stats should still work even when the only data in file is null, in spite of
   // the NULL min/max stats that result -- this is different to having no stats at all.
-  test("data skipping - nulls - only null in file") {
-    checkSkipping(
-      goldenTablePath("data-skipping-nulls-only-null-in-file"),
-      hits = Seq(
-        AlwaysTrue.ALWAYS_TRUE,
-        // Ideally this should not hit as it is always FALSE, but its correct to not skip
-        equals(col("a"), ofNull(INTEGER)),
-        not(equals(col("a"), ofNull(INTEGER))), // Same as previous case
-        isNull(col("a")),
-        // This is optimized to `IsNull(a)` by NullPropagation in Spark
-        nullSafeEquals(col("a"), ofNull(INTEGER)),
-        not(nullSafeEquals(col("a"), ofInt(1))),
-        // In delta-spark we use verifyStatsForFilter to deal with missing stats instead of
-        // converting all nulls ==> true (keep). For comparisons with null statistics we end up with
-        // filter: dataFilter || !(verifyStatsForFilter) = null || false = null
-        // When filtering on a DF nulls are counted as false and eliminated. Thus these are misses
-        // in Delta-Spark.
-        // Including them is not incorrect. To skip these filters for Kernel we could use
-        // verifyStatsForFilter or some other solution like inserting a && isNotNull(a) expression.
-        equals(col("a"), ofInt(1)),
-        lessThan(col("a"), ofInt(1)),
-        greaterThan(col("a"), ofInt(1)),
-        not(equals(col("a"), ofInt(1))),
-        notEquals(col("a"), ofInt(1)),
-        nullSafeEquals(col("a"), ofInt(1)),
+  testSkipping(
+    "data skipping - nulls - only null in file",
+    """
+      {"a": null }
+    """,
+    schema = new SparkStructType().add(new SparkStructField("a", SparkIntegerType)),
+    hits = Seq(
+      AlwaysTrue.ALWAYS_TRUE,
+      // Ideally this should not hit as it is always FALSE, but its correct to not skip
+      equals(col("a"), ofNull(INTEGER)),
+      not(equals(col("a"), ofNull(INTEGER))), // Same as previous case
+      isNull(col("a")),
+      // This is optimized to `IsNull(a)` by NullPropagation in Spark
+      nullSafeEquals(col("a"), ofNull(INTEGER)),
+      not(nullSafeEquals(col("a"), ofInt(1))),
+      // In delta-spark we use verifyStatsForFilter to deal with missing stats instead of
+      // converting all nulls ==> true (keep). For comparisons with null statistics we end up with
+      // filter: dataFilter || !(verifyStatsForFilter) = null || false = null
+      // When filtering on a DF nulls are counted as false and eliminated. Thus these are misses
+      // in Delta-Spark.
+      // Including them is not incorrect. To skip these filters for Kernel we could use
+      // verifyStatsForFilter or some other solution like inserting a && isNotNull(a) expression.
+      equals(col("a"), ofInt(1)),
+      lessThan(col("a"), ofInt(1)),
+      greaterThan(col("a"), ofInt(1)),
+      not(equals(col("a"), ofInt(1))),
+      notEquals(col("a"), ofInt(1)),
+      nullSafeEquals(col("a"), ofInt(1)),
 
-        // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
-        isNotNull(col("a")),
-        // This can be optimized to `IsNotNull(a)` (done by NullPropagation in Spark)
-        not(nullSafeEquals(col("a"), ofNull(INTEGER)))
-      ),
-      misses = Seq(
-        AlwaysFalse.ALWAYS_FALSE
-      )
+      // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
+      isNotNull(col("a")),
+      // This can be optimized to `IsNotNull(a)` (done by NullPropagation in Spark)
+      not(nullSafeEquals(col("a"), ofNull(INTEGER)))
+    ),
+    misses = Seq(
+      AlwaysFalse.ALWAYS_FALSE
     )
-  }
+  )
 
-  test("data skipping - nulls - null + not-null in same file") {
-    checkSkipping(
-      goldenTablePath("data-skipping-nulls-null-plus-not-null-in-same-file"),
-      hits = Seq(
-        // Ideally this should not hit as it is always FALSE, but its correct to not skip
-        equals(col("a"), ofNull(INTEGER)),
-        equals(col("a"), ofInt(1)),
-        AlwaysTrue.ALWAYS_TRUE,
-        isNotNull(col("a")),
+  testSkipping(
+    "data skipping - nulls - null + not-null in same file",
+    """
+      {"a": null }
+      {"a": 1 }
+    """,
+    schema = new SparkStructType().add(new SparkStructField("a", SparkIntegerType)),
+    hits = Seq(
+      // Ideally this should not hit as it is always FALSE, but its correct to not skip
+      equals(col("a"), ofNull(INTEGER)),
+      equals(col("a"), ofInt(1)),
+      AlwaysTrue.ALWAYS_TRUE,
+      isNotNull(col("a")),
 
-        // Note these expressions either aren't supported or aren't added to skipping yet
-        // but should still be hits once supported
-        isNull(col("a")),
-        not(equals(col("a"), ofNull(INTEGER))),
-        // This is optimized to `IsNull(a)` by NullPropagation in Spark
-        nullSafeEquals(col("a"), ofNull(INTEGER)),
-        // This is optimized to `IsNotNull(a)` by NullPropagation in Spark
-        not(nullSafeEquals(col("a"), ofNull(INTEGER))),
-        nullSafeEquals(col("a"), ofInt(1)),
-        not(nullSafeEquals(col("a"), ofInt(1))),
+      // Note these expressions either aren't supported or aren't added to skipping yet
+      // but should still be hits once supported
+      isNull(col("a")),
+      not(equals(col("a"), ofNull(INTEGER))),
+      // This is optimized to `IsNull(a)` by NullPropagation in Spark
+      nullSafeEquals(col("a"), ofNull(INTEGER)),
+      // This is optimized to `IsNotNull(a)` by NullPropagation in Spark
+      not(nullSafeEquals(col("a"), ofNull(INTEGER))),
+      nullSafeEquals(col("a"), ofInt(1)),
+      not(nullSafeEquals(col("a"), ofInt(1))),
 
-        // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
-        notEquals(col("a"), ofInt(1)),
-        not(equals(col("a"), ofInt(1)))
+      // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
+      notEquals(col("a"), ofInt(1)),
+      not(equals(col("a"), ofInt(1)))
 
-      ),
-      misses = Seq(
-        AlwaysFalse.ALWAYS_FALSE,
-        lessThan(col("a"), ofInt(1)),
-        greaterThan(col("a"), ofInt(1))
-      )
+    ),
+    misses = Seq(
+      AlwaysFalse.ALWAYS_FALSE,
+      lessThan(col("a"), ofInt(1)),
+      greaterThan(col("a"), ofInt(1))
     )
-  }
+  )
 
   // TODO (delta-io/delta#2462) JSON serialization truncates to milliseconds, to safely skip for
   //  timestamp stats we need to add a millisecond to any max stat (requires time add expression)
   ignore("data skipping - on TIMESTAMP type") {
-    checkSkipping(
-      goldenTablePath("data-skipping-on-TIMESTAMP"),
-      hits = Seq(
-        getTimestampPredicate(">=", col("ts"), "2019-09-09T01:02:03.456789-07:00"),
-        getTimestampPredicate("<=", col("ts"), "2019-09-09T01:02:03.456789-07:00"),
-        getTimestampPredicate(
-          ">=", nestedCol("nested.ts"), "2019-09-09T01:02:03.456789-07:00"),
-        getTimestampPredicate(
-          "<=", nestedCol("nested.ts"), "2019-09-09T01:02:03.456789-07:00")
-      ),
-      misses = Seq(
-        getTimestampPredicate(">=", col("ts"), "2019-09-09T01:02:03.457001-07:00"),
-        getTimestampPredicate("<=", col("ts"), "2019-09-09T01:02:03.455999-07:00"),
-        getTimestampPredicate(
-          ">=", nestedCol("nested.ts"), "2019-09-09T01:02:03.457001-07:00"),
-        getTimestampPredicate(
-          "<=", nestedCol("nested.ts"), "2019-09-09T01:02:03.455999-07:00")
+    withTempDir { tempDir =>
+      val data = "2019-09-09 01:02:03.456789"
+      val df = Seq(data).toDF("strTs")
+        .selectExpr(
+          s"CAST(strTs AS TIMESTAMP) AS ts",
+          s"STRUCT(CAST(strTs AS TIMESTAMP) AS ts) AS nested")
+
+      val r = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+      df.coalesce(1).write.format("delta").save(r.dataPath.toString)
+
+      checkSkipping(
+        tempDir.getCanonicalPath,
+        hits = Seq(
+          getTimestampPredicate(">=", col("ts"), "2019-09-09T01:02:03.456789-07:00"),
+          getTimestampPredicate("<=", col("ts"), "2019-09-09T01:02:03.456789-07:00"),
+          getTimestampPredicate(
+            ">=", nestedCol("nested.ts"), "2019-09-09T01:02:03.456789-07:00"),
+          getTimestampPredicate(
+            "<=", nestedCol("nested.ts"), "2019-09-09T01:02:03.456789-07:00")
+        ),
+        misses = Seq(
+          getTimestampPredicate(">=", col("ts"), "2019-09-09T01:02:03.457001-07:00"),
+          getTimestampPredicate("<=", col("ts"), "2019-09-09T01:02:03.455999-07:00"),
+          getTimestampPredicate(
+            ">=", nestedCol("nested.ts"), "2019-09-09T01:02:03.457001-07:00"),
+          getTimestampPredicate(
+            "<=", nestedCol("nested.ts"), "2019-09-09T01:02:03.455999-07:00")
+        )
       )
-    )
+
+    }
   }
 
   test("data skipping - Basic: Data skipping with delta statistic column") {
-    checkSkipping(
-      goldenTablePath("data-skipping-basic-data-skipping-with-delta-statistic-column"),
-      hits = Seq(
-        equals(col("c1"), ofInt(1)),
-        equals(col("c2"), ofString("2")),
-        lessThan(col("c3"), ofFloat(1.5f)),
-        greaterThan(col("c4"), ofFloat(1.0F)),
-        equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2002-02-02")))),
-        // Binary Column doesn't support delta statistics.
-        equals(col("c7"), ofBinary("1111".getBytes)),
-        equals(col("c7"), ofBinary("3333".getBytes)),
-        equals(col("c8"), ofBoolean(true)),
-        equals(col("c8"), ofBoolean(false)),
-        greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
-        // TODO (delta-io/delta#2462) we don't currently skip for timestamps but this will still be
-        //  a hit once we do
-        getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00"),
-        // TODO (delta-io/delta#2462) once we skip for timestamps this should be a miss
-        getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00")
-      ),
-      misses = Seq(
-        equals(col("c1"), ofInt(10)),
-        equals(col("c2"), ofString("4")),
-        lessThan(col("c3"), ofFloat(0.5f)),
-        greaterThan(col("c4"), ofFloat(5.0f)),
-        equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
-        greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      val tableProperty = "TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9')"
+      spark.sql(
+        s"""CREATE TABLE delta.`$tablePath`(
+           |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 DATE,
+           |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2)
+           |) USING delta $tableProperty""".stripMargin)
+      spark.sql(
+        s"""insert into delta.`$tablePath` values
+           |(1, '1', 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01', '1111', true, 1.0),
+           |(2, '2', 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', '2222', false, 2.0)
+           |""".stripMargin)
+      checkSkipping(
+        tablePath,
+        hits = Seq(
+          equals(col("c1"), ofInt(1)),
+          equals(col("c2"), ofString("2")),
+          lessThan(col("c3"), ofFloat(1.5f)),
+          greaterThan(col("c4"), ofFloat(1.0F)),
+          equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2002-02-02")))),
+          // Binary Column doesn't support delta statistics.
+          equals(col("c7"), ofBinary("1111".getBytes)),
+          equals(col("c7"), ofBinary("3333".getBytes)),
+          equals(col("c8"), ofBoolean(true)),
+          equals(col("c8"), ofBoolean(false)),
+          greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
+          // TODO (delta-io/delta#2462) we don't currently skip for timestamps but this will still
+          //  be a hit once we do
+          getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00"),
+          // TODO (delta-io/delta#2462) once we skip for timestamps this should be a miss
+          getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00")
+        ),
+        misses = Seq(
+          equals(col("c1"), ofInt(10)),
+          equals(col("c2"), ofString("4")),
+          lessThan(col("c3"), ofFloat(0.5f)),
+          greaterThan(col("c4"), ofFloat(5.0f)),
+          equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
+          greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))
+        )
       )
-    )
+    }
   }
 
   test("data skipping - Data skipping with delta statistic column rename column") {
-    checkSkipping(
-      goldenTablePath("data-skipping-with-delta-statistic-column-rename-column"),
-      hits = Seq(
-        equals(col("cc1"), ofInt(1)),
-        equals(col("cc2"), ofString("2")),
-        lessThan(col("cc3"), ofFloat(1.5f)),
-        greaterThan(col("cc4"), ofFloat(1.0f)),
-        equals(col("cc6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2002-02-02")))),
-        // Binary Column doesn't support delta statistics.
-        equals(col("cc7"), ofBinary("1111".getBytes)),
-        equals(col("cc7"), ofBinary("3333".getBytes)),
-        equals(col("cc8"), ofBoolean(true)),
-        equals(col("cc8"), ofBoolean(false)),
-        greaterThan(col("cc9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
-        // We don't currently skip for timestamps but this will still be a hit once we do
-        getTimestampPredicate(">=", col("cc5"), "2001-01-01T01:00:00-07:00"),
-        // Once we skip for timestamps this should be a miss
-        getTimestampPredicate(">=", col("cc5"), "2003-01-01T01:00:00-07:00")
-      ),
-      misses = Seq(
-        equals(col("cc1"), ofInt(10)),
-        equals(col("cc2"), ofString("4")),
-        lessThan(col("cc3"), ofFloat(0.5f)),
-        greaterThan(col("cc4"), ofFloat(5.0f)),
-        equals(col("cc6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
-        greaterThan(col("cc9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      spark.sql(
+        s"""CREATE TABLE delta.`$tablePath`(
+           |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 DATE,
+           |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2)
+           |) USING delta
+           |TBLPROPERTIES(
+           |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9',
+           |'delta.columnMapping.mode' = 'name',
+           |'delta.minReaderVersion' = '2',
+           |'delta.minWriterVersion' = '5'
+           |)
+           |""".stripMargin)
+      (1 to 9).foreach { i =>
+        spark.sql(s"alter table delta.`$tablePath` RENAME COLUMN c$i to cc$i")
+      }
+      spark.sql(
+        s"""insert into delta.`$tablePath` values
+           |(1, '1', 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01', '1111', true, 1.0),
+           |(2, '2', 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', '2222', false, 2.0)
+           |""".stripMargin)
+
+      checkSkipping(
+        tablePath,
+        hits = Seq(
+          equals(col("cc1"), ofInt(1)),
+          equals(col("cc2"), ofString("2")),
+          lessThan(col("cc3"), ofFloat(1.5f)),
+          greaterThan(col("cc4"), ofFloat(1.0f)),
+          equals(col("cc6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2002-02-02")))),
+          // Binary Column doesn't support delta statistics.
+          equals(col("cc7"), ofBinary("1111".getBytes)),
+          equals(col("cc7"), ofBinary("3333".getBytes)),
+          equals(col("cc8"), ofBoolean(true)),
+          equals(col("cc8"), ofBoolean(false)),
+          greaterThan(col("cc9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
+          // We don't currently skip for timestamps but this will still be a hit once we do
+          getTimestampPredicate(">=", col("cc5"), "2001-01-01T01:00:00-07:00"),
+          // Once we skip for timestamps this should be a miss
+          getTimestampPredicate(">=", col("cc5"), "2003-01-01T01:00:00-07:00")
+        ),
+        misses = Seq(
+          equals(col("cc1"), ofInt(10)),
+          equals(col("cc2"), ofString("4")),
+          lessThan(col("cc3"), ofFloat(0.5f)),
+          greaterThan(col("cc4"), ofFloat(5.0f)),
+          equals(col("cc6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
+          greaterThan(col("cc9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))
+        )
       )
-    )
+    }
   }
 
   test("data skipping - Data skipping with delta statistic column drop column") {
-    checkSkipping(
-      goldenTablePath("data-skipping-with-delta-statistic-column-drop-column"),
-      hits = Seq(
-        equals(col("c1"), ofInt(1)),
-        lessThan(col("c3"), ofFloat(1.5f)),
-        greaterThan(col("c4"), ofFloat(1.0f)),
-        equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2002-02-02")))),
-        greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
-        // We don't currently skip for timestamps but this will still be a hit once we do
-        getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00"),
-        // Once we skip for timestamps this should be a miss
-        getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00")
-      ),
-      misses = Seq(
-        equals(col("c1"), ofInt(10)),
-        lessThan(col("c3"), ofFloat(0.5f)),
-        greaterThan(col("c4"), ofFloat(5.0f)),
-        equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
-        greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      spark.sql(
+        s"""CREATE TABLE delta.`$tablePath`(
+           |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 DATE,
+           |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2)
+           |) USING delta
+           |TBLPROPERTIES(
+           |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9',
+           |'delta.columnMapping.mode' = 'name',
+           |'delta.minReaderVersion' = '2',
+           |'delta.minWriterVersion' = '5'
+           |)
+           |""".stripMargin)
+      spark.sql(s"alter table delta.`$tablePath` drop COLUMN c2")
+      spark.sql(s"alter table delta.`$tablePath` drop COLUMN c7")
+      spark.sql(s"alter table delta.`$tablePath` drop COLUMN c8")
+      spark.sql(
+        s"""insert into delta.`$tablePath` values
+           |(1, 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01', 1.0),
+           |(2, 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', 2.0)
+           |""".stripMargin)
+      checkSkipping(
+        goldenTablePath("data-skipping-with-delta-statistic-column-drop-column"),
+        hits = Seq(
+          equals(col("c1"), ofInt(1)),
+          lessThan(col("c3"), ofFloat(1.5f)),
+          greaterThan(col("c4"), ofFloat(1.0f)),
+          equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2002-02-02")))),
+          greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
+          // We don't currently skip for timestamps but this will still be a hit once we do
+          getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00"),
+          // Once we skip for timestamps this should be a miss
+          getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00")
+        ),
+        misses = Seq(
+          equals(col("c1"), ofInt(10)),
+          lessThan(col("c3"), ofFloat(0.5f)),
+          greaterThan(col("c4"), ofFloat(5.0f)),
+          equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
+          greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))
+        )
       )
-    )
+    }
   }
 
   test("data skipping by partition and data values - nulls") {
@@ -875,15 +1065,24 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
   }
 
   test("data skipping - incompatible schema change doesn't break") {
-    checkSkipping(
-      goldenTablePath("data-skipping-incompatible-schema-change"),
-      hits = Seq(
-        equals(col("value"), ofString("1"))
-      ),
-      misses = Seq(
-        equals(col("value"), ofString("3"))
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getPath
+      // initially write with integer column value
+      Seq(0, 1, 2).toDF.repartition(1).write.format("delta").save(tablePath)
+      // overwrite with string column value
+      Seq("0", "1", "2").toDF.repartition(1).write
+        .format("delta").mode("overwrite").option("overwriteSchema", true).save(tablePath)
+
+      checkSkipping(
+        tablePath,
+        hits = Seq(
+          equals(col("value"), ofString("1"))
+        ),
+        misses = Seq(
+          equals(col("value"), ofString("3"))
+        )
       )
-    )
+    }
   }
 
   test("data skipping - filter on non-existent column") {
@@ -923,28 +1122,31 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
   }
 
   test("data skipping - range of ints") {
-    // to test where MIN != MAX
-    checkSkipping(
-      goldenTablePath("data-skipping-range-of-ints"),
-      hits = Seq(
-        equals(col("id"), ofInt(5)),
-        lessThan(col("id"), ofInt(7)),
-        lessThan(col("id"), ofInt(15)),
-        lessThanOrEqual(col("id"), ofInt(9)),
-        greaterThan(col("id"), ofInt(3)),
-        greaterThan(col("id"), ofInt(-1)),
-        greaterThanOrEqual(col("id"), ofInt(0))
-      ),
-      misses = Seq(
-        equals(col("id"), ofInt(10)),
-        lessThan(col("id"), ofInt(0)),
-        lessThan(col("id"), ofInt(-1)),
-        lessThanOrEqual(col("id"), ofInt(-1)),
-        greaterThan(col("id"), ofInt(10)),
-        greaterThan(col("id"), ofInt(11)),
-        greaterThanOrEqual(col("id"), ofInt(11))
+    withTempDir { tempDir =>
+      spark.range(10).repartition(1).write.format("delta").save(tempDir.getCanonicalPath)
+      // to test where MIN != MAX
+      checkSkipping(
+        tempDir.getCanonicalPath,
+        hits = Seq(
+          equals(col("id"), ofInt(5)),
+          lessThan(col("id"), ofInt(7)),
+          lessThan(col("id"), ofInt(15)),
+          lessThanOrEqual(col("id"), ofInt(9)),
+          greaterThan(col("id"), ofInt(3)),
+          greaterThan(col("id"), ofInt(-1)),
+          greaterThanOrEqual(col("id"), ofInt(0))
+        ),
+        misses = Seq(
+          equals(col("id"), ofInt(10)),
+          lessThan(col("id"), ofInt(0)),
+          lessThan(col("id"), ofInt(-1)),
+          lessThanOrEqual(col("id"), ofInt(-1)),
+          greaterThan(col("id"), ofInt(10)),
+          greaterThan(col("id"), ofInt(11)),
+          greaterThanOrEqual(col("id"), ofInt(11))
+        )
       )
-    )
+    }
   }
 
   test("data skipping - non-eligible data skipping types") {
