@@ -225,15 +225,15 @@ class OptimizeExecutor(
 
   private val isClusteredTable = ClusteredTableUtils.isSupported(txn.snapshot.protocol)
 
-  private val isZOrderBy = zOrderByColumns.nonEmpty
-
-  private val isMultiDimClustering = isClusteredTable || isZOrderBy
+  private val isMultiDimClustering = isClusteredTable || zOrderByColumns.nonEmpty
 
   private val (clusteringColumns, curve): (Seq[String], String) = {
     if (zOrderByColumns.nonEmpty) {
       (zOrderByColumns, "zorder")
-    } else {
+    } else if (isClusteredTable) {
       (ClusteringColumnInfo.extractLogicalNames(txn.snapshot), "hilbert")
+    } else {
+      Nil -> ""
     }
   }
 

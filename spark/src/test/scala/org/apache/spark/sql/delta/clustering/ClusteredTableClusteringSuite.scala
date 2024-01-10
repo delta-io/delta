@@ -52,6 +52,10 @@ class ClusteredTableClusteringSuite extends SparkFunSuite
     assert(files.forall(_.clusteringProvider.contains(ClusteredTableUtils.clusteringProvider)))
   }
 
+  private def assertNotClustered(files: Set[AddFile]): Unit = {
+    assert(files.forall(_.clusteringProvider.isEmpty))
+  }
+
   test("optimize clustered table") {
     withSQLConf(SQLConf.MAX_RECORDS_PER_FILE.key -> "2") {
       withClusteredTable(
@@ -61,6 +65,7 @@ class ClusteredTableClusteringSuite extends SparkFunSuite
         addFiles(table, numFiles = 4)
         val files0 = getFiles(table)
         assert(files0.size === 4)
+        assertNotClustered(files0)
 
         // Optimize should cluster the data into two 2 files since MAX_RECORDS_PER_FILE is 2.
         runOptimize(table) { metrics =>
