@@ -11,7 +11,6 @@ import org.apache.flink.core.fs.Path;
 import org.apache.hadoop.conf.Configuration;
 import static io.delta.flink.source.internal.DeltaSourceOptions.PARQUET_BATCH_SIZE;
 import static io.delta.flink.source.internal.DeltaSourceOptions.TIMESTAMP_AS_OF;
-import static io.delta.flink.source.internal.DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS;
 import static io.delta.flink.source.internal.DeltaSourceOptions.VERSION_AS_OF;
 
 /**
@@ -39,8 +38,7 @@ public abstract class BoundedDeltaSourceBuilder<T, SELF> extends DeltaSourceBuil
         Arrays.asList(
             VERSION_AS_OF.key(),
             TIMESTAMP_AS_OF.key(),
-            PARQUET_BATCH_SIZE.key(),
-            USE_KERNEL_FOR_SNAPSHOTS.key()
+            PARQUET_BATCH_SIZE.key()
         )
     );
 

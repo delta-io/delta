@@ -16,7 +16,6 @@ import static io.delta.flink.source.internal.DeltaSourceOptions.STARTING_TIMESTA
 import static io.delta.flink.source.internal.DeltaSourceOptions.STARTING_VERSION;
 import static io.delta.flink.source.internal.DeltaSourceOptions.UPDATE_CHECK_INITIAL_DELAY;
 import static io.delta.flink.source.internal.DeltaSourceOptions.UPDATE_CHECK_INTERVAL;
-import static io.delta.flink.source.internal.DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS;
 
 /**
  * A base class for Delta source builders that should create Delta source instance for {@link
@@ -48,8 +47,7 @@ public abstract class ContinuousDeltaSourceBuilder<T, SELF>
             IGNORE_DELETES.key(),
             UPDATE_CHECK_INTERVAL.key(),
             UPDATE_CHECK_INITIAL_DELAY.key(),
-            PARQUET_BATCH_SIZE.key(),
-            USE_KERNEL_FOR_SNAPSHOTS.key()
+            PARQUET_BATCH_SIZE.key()
         )
     );
 
@@ -87,11 +85,6 @@ public abstract class ContinuousDeltaSourceBuilder<T, SELF>
 
     public SELF ignoreChanges(boolean ignoreChanges) {
         this.option(IGNORE_CHANGES.key(), ignoreChanges);
-        return self();
-    }
-
-    public SELF useKernelForSnapshots(boolean useKernelForSnapshots) {
-        this.option(USE_KERNEL_FOR_SNAPSHOTS.key(), useKernelForSnapshots);
         return self();
     }
 

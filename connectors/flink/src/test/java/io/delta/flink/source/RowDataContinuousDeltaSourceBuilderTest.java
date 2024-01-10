@@ -37,7 +37,7 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
 
     @AfterEach
     public void afterEach() {
-        closeStaticLogs();
+        closeDeltaLogStatic();
     }
 
     ////////////////////////////////
@@ -54,7 +54,6 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
         DeltaSource<RowData> boundedSource = DeltaSource.forContinuousRowData(
                 new Path(TABLE_PATH),
                 DeltaTestUtils.getHadoopConf())
-            .option(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS.key(), false)
             .build();
 
         assertThat(boundedSource, notNullValue());
@@ -580,7 +579,7 @@ class RowDataContinuousDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderT
         return DeltaSource.forContinuousRowData(
             new Path(TABLE_PATH),
             DeltaTestUtils.getHadoopConf()
-        ).option(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS.key(), false);
+        );
     }
 
     @Override

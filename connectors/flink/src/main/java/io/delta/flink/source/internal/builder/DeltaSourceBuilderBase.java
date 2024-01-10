@@ -18,10 +18,6 @@ import io.delta.flink.source.internal.file.DeltaFileEnumerator;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
 import io.delta.flink.source.internal.utils.SourceSchema;
 import io.delta.flink.source.internal.utils.SourceUtils;
-import io.delta.kernel.Table;
-import io.delta.kernel.TableNotFoundException;
-import io.delta.kernel.client.TableClient;
-import io.delta.kernel.defaults.client.DefaultTableClient;
 import org.apache.flink.connector.file.src.assigners.FileSplitAssigner;
 import org.apache.flink.connector.file.src.assigners.LocalityAwareSplitAssigner;
 import org.apache.flink.core.fs.Path;
@@ -30,8 +26,6 @@ import org.apache.hadoop.conf.Configuration;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
-
-
 
 /**
  * The base class for {@link io.delta.flink.source.DeltaSource} builder.
@@ -282,31 +276,19 @@ public abstract class DeltaSourceBuilderBase<T, SELF> {
      * should be read from Delta table.
      */
     protected SourceSchema getSourceSchema() {
-        String stringPath = SourceUtils.pathToString(tablePath);
         DeltaLog deltaLog =
-            DeltaLog.forTable(hadoopConfiguration, stringPath);
-        TableClient tableClient = DefaultTableClient.create(hadoopConfiguration);
-        try {
-            Table table = Table.forPath(tableClient, stringPath);
-            SnapshotSupplier snapshotSupplier =
-                snapshotSupplierFactory.create(deltaLog, tableClient, table);
-            Snapshot snapshot = snapshotSupplier.getSnapshot(sourceConfiguration);
+            DeltaLog.forTable(hadoopConfiguration, SourceUtils.pathToString(tablePath));
+        SnapshotSupplier snapshotSupplier = snapshotSupplierFactory.create(deltaLog);
+        Snapshot snapshot = snapshotSupplier.getSnapshot(sourceConfiguration);
 
-            try {
-                return SourceSchema.fromSnapshot(userColumnNames, snapshot);
-            } catch (IllegalArgumentException e) {
-                throw DeltaSourceExceptions.generalSourceException(
-                    stringPath,
-                    snapshot.getVersion(),
-                    e
-                    );
-            }
-        } catch (TableNotFoundException e) {
+        try {
+            return SourceSchema.fromSnapshot(userColumnNames, snapshot);
+        } catch (IllegalArgumentException e) {
             throw DeltaSourceExceptions.generalSourceException(
-                stringPath,
-                0,
+                SourceUtils.pathToString(tablePath),
+                snapshot.getVersion(),
                 e
-                );
+            );
         }
     }
 
