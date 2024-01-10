@@ -919,7 +919,7 @@
     "subClass" : {
       "CHANGE_VERSION_NEED_REWRITE" : {
         "message" : [
-          "Changing to IcebergCompatV<newVersion> requires rewriting the table. Please run REORG TABLE APPLY (UPGRADE UNIFORM ('IcebergCompatVersion = <newVersion>'));",
+          "Changing to IcebergCompatV<newVersion> requires rewriting the table. Please run REORG TABLE APPLY (UPGRADE UNIFORM ('ICEBERG_COMPAT_VERSION = <newVersion>'));",
           "Note that REORG enables table feature IcebergCompatV<newVersion> and other Delta lake clients without that table feature support may not be able to write to the table."
         ]
       },
