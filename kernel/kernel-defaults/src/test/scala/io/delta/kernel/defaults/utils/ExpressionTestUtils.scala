@@ -56,6 +56,13 @@ trait ExpressionTestUtils {
 
   /* ---------- NOT-YET SUPPORTED EXPRESSIONS ----------- */
 
+  /*
+  These expressions are used in ScanSuite to test data skipping. For unsupported expressions
+  no skipping filter will be generated and they should just be returned as part of the remaining
+  predicate to evaluate. As we add support for these expressions we'll adjust the tests that use
+  them to expect skipped files. If they are ever actually evaluated they will throw an exception.
+   */
+
   def nullSafeEquals(e1: Expression, e2: Expression): Predicate = {
     new Predicate("<=>", e1, e2)
   }

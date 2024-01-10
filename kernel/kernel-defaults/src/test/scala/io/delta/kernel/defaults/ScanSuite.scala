@@ -550,8 +550,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     )
   }
 
-  // TODO JSON serialization truncates to milliseconds, to safely skip for timestamp stats we need
-  //   to add a millisecond to any max stat (requires time addition expression)
+  // TODO (delta-io/delta#2462) JSON serialization truncates to milliseconds, to safely skip for
+  //  timestamp stats we need to add a millisecond to any max stat (requires time add expression)
   ignore("data skipping - on TIMESTAMP type") {
     checkSkipping(
       goldenTablePath("data-skipping-on-TIMESTAMP"),
@@ -589,9 +589,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         equals(col("c8"), ofBoolean(true)),
         equals(col("c8"), ofBoolean(false)),
         greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
-        // TODO we don't currently skip for timestamps but this will still be a hit once we do
+        // TODO (delta-io/delta#2462) we don't currently skip for timestamps but this will still be
+        //  a hit once we do
         getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00"),
-        // TODO once we skip for timestamps this should be a miss
+        // TODO (delta-io/delta#2462) once we skip for timestamps this should be a miss
         getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00")
       ),
       misses = Seq(
@@ -822,7 +823,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       "as_date" -> (ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2000-01-01"))),
         ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("1999-01-01"))),
         ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2000-01-02")))),
-      // TODO add Timestamp once we support skipping for TimestampType
+      // TODO (delta-io/delta#2462) add Timestamp once we support skipping for TimestampType
       "as_big_decimal" -> (ofDecimal(JBigDecimal.valueOf(0), 1, 0),
         ofDecimal(JBigDecimal.valueOf(-1), 1, 0),
         ofDecimal(JBigDecimal.valueOf(1), 1, 0))

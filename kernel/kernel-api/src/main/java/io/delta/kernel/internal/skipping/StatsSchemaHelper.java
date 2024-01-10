@@ -152,9 +152,10 @@ public class StatsSchemaHelper {
     public boolean isSkippingEligibleMinMaxColumn(Column column) {
         return logicalToDataType.containsKey(column) &&
             isSkippingEligibleDataType(logicalToDataType.get(column)) &&
-            // TODO for now we block using min/max columns of timestamps. JSON serialization
-            //   truncates to milliseconds. To safely use timestamp min/max stats we need to add
-            //   a millisecond to max statistics which requires time addition expression
+            // TODO (delta-io/delta#2462) for now we block using min/max columns of timestamps.
+            //  JSON serialization truncates to milliseconds. To safely use timestamp min/max stats
+            //  we need to add a millisecond to max statistics which requires time addition
+            //  expression
             !(logicalToDataType.get(column) instanceof TimestampType);
     }
 
