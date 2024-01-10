@@ -12,7 +12,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
-import static org.hamcrest.core.IsInstanceOf.instanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
@@ -110,7 +109,10 @@ class ContinuousSourceSnapshotSupplierTest {
     public void shouldThrowIfNoSnapshotFound() {
         assertThrows(
             NoSuchElementException.class,
-            () -> supplier.getSnapshot(new DeltaConnectorConfiguration().addOption(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS, false))
+            () -> supplier.getSnapshot(
+                new DeltaConnectorConfiguration()
+                .addOption(DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS, false)
+            )
         );
     }
 }

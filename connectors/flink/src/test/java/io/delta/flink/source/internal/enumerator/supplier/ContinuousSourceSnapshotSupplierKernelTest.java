@@ -1,14 +1,16 @@
 package io.delta.flink.source.internal.enumerator.supplier;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.NoSuchElementException;
 import java.util.Optional;
 
 import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.KernelMetadataUtils;
+import io.delta.kernel.Table;
+import io.delta.kernel.TableNotFoundException;
+import io.delta.kernel.client.TableClient;
+import io.delta.kernel.internal.SnapshotImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,16 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
 import static org.hamcrest.core.IsInstanceOf.instanceOf;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-
-import io.delta.kernel.Table;
-import io.delta.kernel.TableNotFoundException;
-import io.delta.kernel.client.TableClient;
-import io.delta.kernel.internal.SnapshotImpl;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
@@ -49,7 +42,7 @@ class ContinuousSourceSnapshotSupplierKernelTest {
     private SnapshotImpl kernelSnapshot;
 
     private ContinuousSourceSnapshotSupplier supplier;
-    
+
     @BeforeEach
     public void setUp() {
         supplier = new ContinuousSourceSnapshotSupplier(deltaLog, tableClient, table);
@@ -110,10 +103,10 @@ class ContinuousSourceSnapshotSupplierKernelTest {
         assertThat(metadata.getCreatedTime(), equalTo(Optional.of(1234L)));
 
         // Types below are all standalone types
-        FieldMetadata fmeta = FieldMetadata.builder().
-            putString("key1", "value1").
-            putString("key2", "value2").
-            build();
+        FieldMetadata fmeta = FieldMetadata.builder()
+            .putString("key1", "value1")
+            .putString("key2", "value2")
+            .build();
         ArrayList<DataType> expectedTypes = new ArrayList<DataType>();
         ArrayType arrayType = new ArrayType(new IntegerType(), false);
         expectedTypes.add(arrayType);

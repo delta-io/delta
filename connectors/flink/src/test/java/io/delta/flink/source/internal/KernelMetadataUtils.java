@@ -13,9 +13,9 @@ import io.delta.kernel.types.*;
 
 public class KernelMetadataUtils {
     public static StructType getSchema() {
-        HashMap<String, String> metadata = new HashMap<>();
-        metadata.put("key1", "value1");
-        metadata.put("key2", "value2");
+        FieldMetadata.Builder builder = FieldMetadata.builder();
+        builder.putString("key1", "value1");
+        builder.putString("key2", "value2");
         ArrayList<DataType> typesToTest = new ArrayList<DataType>();
         ArrayType arrayType = new ArrayType(IntegerType.INTEGER, false);
         typesToTest.add(arrayType);
@@ -40,21 +40,21 @@ public class KernelMetadataUtils {
                     "Field " + fnum,
                     dt,
                     false,
-                    metadata
+                    builder.build()
                     )
-                );
+            );
             fnum++;
         }
         return new StructType(fields);
     }
-    
+
     public static Metadata getKernelMetadata() {
         StructType schema = getSchema();
         return new io.delta.kernel.internal.actions.Metadata(
             "id",
             Optional.ofNullable("name"),
             Optional.ofNullable("description"),
-            new io.delta.kernel.internal.actions.Format("parquet"),
+            new io.delta.kernel.internal.actions.Format("parquet", new HashMap<String, String>()),
             "schemaString",
             schema,
             new ArrayValue() { // paritionColumns
@@ -62,7 +62,7 @@ public class KernelMetadataUtils {
                 public int getSize() {
                     return 2;
                 }
-        
+
                 @Override
                 public ColumnVector getElements() {
                     return new ColumnVector() {
@@ -70,7 +70,7 @@ public class KernelMetadataUtils {
                         public DataType getDataType() {
                             return null;
                         }
-            
+
                         @Override
                         public int getSize() {
                             return 2;
@@ -78,7 +78,7 @@ public class KernelMetadataUtils {
 
                         @Override
                         public void close() {}
-                        
+
                         @Override
                         public boolean isNullAt(int rowId) {
                             return false;
@@ -99,11 +99,15 @@ public class KernelMetadataUtils {
                 }
                 @Override
                 public ColumnVector getKeys() {
-                    return new DefaultGenericVector(IntegerType.INTEGER, new Integer[]{new Integer(1)});
+                    return DefaultGenericVector.fromArray(
+                        IntegerType.INTEGER, new Integer[]{new Integer(1)}
+                    );
                 }
                 @Override
                 public ColumnVector getValues() {
-                    return new DefaultGenericVector(IntegerType.INTEGER, new Integer[]{new Integer(2)});
+                    return DefaultGenericVector.fromArray(
+                        IntegerType.INTEGER, new Integer[]{new Integer(2)}
+                    );
                 }
             }
         );

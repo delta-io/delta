@@ -5,13 +5,13 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-import io.delta.kernel.Table;
-import io.delta.kernel.client.TableClient;
 import io.delta.flink.internal.options.DeltaConfigOption;
 import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.internal.options.DeltaOptionValidationException;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.builder.DeltaSourceBuilderBase;
+import io.delta.kernel.Table;
+import io.delta.kernel.client.TableClient;
 import org.apache.hadoop.conf.Configuration;
 import org.codehaus.janino.util.Producer;
 import org.junit.jupiter.api.Test;

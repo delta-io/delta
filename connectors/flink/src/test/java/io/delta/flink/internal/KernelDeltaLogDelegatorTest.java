@@ -4,26 +4,25 @@ import java.io.IOException;
 import java.util.Iterator;
 
 import io.delta.flink.utils.DeltaTestUtils;
-import io.delta.standalone.VersionLog;
-import io.delta.standalone.internal.SnapshotImpl;
-import io.delta.standalone.internal.KernelDeltaLogDelegator;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.rules.TemporaryFolder;
 import org.mockito.junit.jupiter.MockitoExtension;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import io.delta.standalone.VersionLog;
+import io.delta.standalone.internal.KernelDeltaLogDelegator;
+import io.delta.standalone.internal.SnapshotImpl;
 
 @ExtendWith(MockitoExtension.class)
 class KernelDeltaLogDelegatorTest {
     private static final TemporaryFolder TEMPORARY_FOLDER = new TemporaryFolder();
     private KernelDeltaLogDelegator kernelDeltaLog;
-    
+
     @BeforeAll
     public static void beforeAll() throws IOException {
         TEMPORARY_FOLDER.create();
@@ -57,7 +56,7 @@ class KernelDeltaLogDelegatorTest {
             sourceTablePath
         );
         SnapshotImpl snapshot = kernelDeltaLog.snapshot();
-        assertEquals(snapshot.getVersion(), 0l);
+        assertEquals(snapshot.getVersion(), 0L);
     }
 
     @Test
