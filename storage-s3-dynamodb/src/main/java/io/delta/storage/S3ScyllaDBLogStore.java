@@ -16,7 +16,7 @@
 
 package io.delta.storage;
 
-import com.amazonaws.regions.Regions;
+import com.amazonaws.client.builder.AwsClientBuilder;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClientBuilder;
 import com.amazonaws.services.dynamodbv2.model.ProvisionedThroughput;
@@ -27,10 +27,10 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 
 /**
- * A concrete implementation of {@link BaseS3DynamoDBLogStore} that uses an external DynamoDB table
+ * A concrete implementation of {@link BaseS3DynamoDBLogStore} that uses an external ScyllaDB table
  * to provide the mutual exclusion during calls to `putExternalEntry`.
  * <p>
- * DynamoDB entries are of form
+ * ScyllaDB entries are of form
  * - key
  * -- tablePath (HASH, STRING)
  * -- filename (RANGE, STRING)
@@ -40,52 +40,49 @@ import java.io.IOException;
  * -- complete (STRING, representing boolean, "true" or "false")
  * -- commitTime (NUMBER, epoch seconds)
  */
-public class S3DynamoDBLogStore extends BaseS3DynamoDBLogStore {
-    private static final Logger LOG = LoggerFactory.getLogger(S3DynamoDBLogStore.class);
+public class S3ScyllaDBLogStore extends BaseS3DynamoDBLogStore {
+    private static final Logger LOG = LoggerFactory.getLogger(S3ScyllaDBLogStore.class);
 
     /**
-     * Configuration keys for the DynamoDB client.
+     * Configuration keys for the ScyllaDB client.
      */
-    public static final String DYNAMO_DB_CONF_PREFIX = "S3DynamoDBLogStore";
-    public static final String DDB_CLIENT_REGION = "ddb.region";
-    public static final String DDB_CREATE_TABLE_RCU = "provisionedThroughput.rcu";
-    public static final String DDB_CREATE_TABLE_WCU = "provisionedThroughput.wcu";
+    public static final String SCYLLA_DB_CONF_PREFIX = "S3ScyllaDBLogStore";
+    public static final String DDB_CLIENT_ENDPOINT = "ddb.endpoint";
+
 
     /**
      * Member fields
      */
-    private final String regionName;
+    private final String endpoint;
 
-
-    public S3DynamoDBLogStore(Configuration hadoopConf) throws IOException {
+    public S3ScyllaDBLogStore(Configuration hadoopConf) throws IOException {
         super(hadoopConf);
-        regionName = getParam(hadoopConf, DDB_CLIENT_REGION, "us-east-1");
-        LOG.info("using regionName {}", regionName);
+        endpoint = getParam(hadoopConf, DDB_CLIENT_ENDPOINT, null);
+        LOG.info("using endpoint {}", endpoint);
         initClient(hadoopConf);
     }
 
     @Override
-    protected AmazonDynamoDB getClient() throws java.io.IOException {
+    protected AmazonDynamoDB getClient() throws IOException {
         try {
-            return AmazonDynamoDBClientBuilder.standard()
-                    .withCredentials(getAwsCredentialsProvider())
-                    .withRegion(Regions.fromName(regionName))
+            return AmazonDynamoDBClientBuilder.standard().withCredentials(getAwsCredentialsProvider())
+                    .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(endpoint,""))
                     .build();
         } catch (ReflectiveOperationException e) {
-            throw new java.io.IOException(e);
+            throw new IOException(e);
         }
     }
 
     @Override
     protected ProvisionedThroughput getProvisionedThroughput(Configuration hadoopConf) {
-        final long rcu = Long.parseLong(getParam(hadoopConf, DDB_CREATE_TABLE_RCU, "5"));
-        final long wcu = Long.parseLong(getParam(hadoopConf, DDB_CREATE_TABLE_WCU, "5"));
-        return new ProvisionedThroughput(rcu,wcu);
+        //ScyllaDD ignores the ProvisionedThroughput setting,  yet we still require it for table creation through the DynamoDB API
+        //see: https://opensource.docs.scylladb.com/stable/alternator/compatibility.html#provisioning
+        return new ProvisionedThroughput();
     }
 
     @Override
     protected String getConfPrefix() {
-        return DYNAMO_DB_CONF_PREFIX;
+        return SCYLLA_DB_CONF_PREFIX;
     }
 
 }
