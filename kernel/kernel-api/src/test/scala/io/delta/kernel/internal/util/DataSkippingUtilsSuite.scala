@@ -21,10 +21,15 @@ import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.skipping.DataSkippingUtils
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.{DataType, StructField, StructType}
-import io.delta.kernel.utils.ExpressionTestUtils
 import org.scalatest.funsuite.AnyFunSuite
 
-class DataSkippingUtilsSuite extends AnyFunSuite with ExpressionTestUtils {
+class DataSkippingUtilsSuite extends AnyFunSuite {
+
+  def col(name: String): Column = new Column(name)
+
+  def nestedCol(name: String): Column = {
+    new Column(name.split("\\."))
+  }
 
   /* For struct type checks for equality based on field names & data type only */
   def compareDataTypeUnordered(type1: DataType, type2: DataType): Boolean = (type1, type2) match {

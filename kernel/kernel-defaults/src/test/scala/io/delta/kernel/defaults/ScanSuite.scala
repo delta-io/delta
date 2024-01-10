@@ -35,15 +35,15 @@ import io.delta.kernel.client.{JsonHandler, ParquetHandler, TableClient}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.types.{StructType}
+import io.delta.kernel.types.StructType
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.utils.{CloseableIterator, ExpressionTestUtils, FileStatus}
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.{Snapshot, Table}
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
-import io.delta.kernel.defaults.utils.TestUtils
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 
 class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
 
