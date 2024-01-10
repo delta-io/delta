@@ -11,7 +11,7 @@ import io.delta.kernel.internal.{SnapshotImpl => SnapshotImplKernel, TableImpl}
 import io.delta.kernel.internal.fs.{Path => KernelPath}
 import io.delta.standalone.VersionLog
 import io.delta.standalone.actions.{CommitInfo => CommitInfoJ}
-import io.delta.standalone.internal.{SnapshotImpl => StandaloneSnapshotImpl}
+import io.delta.standalone.internal.{SnapshotImpl => StandaloneSnapshotImpl, InitialSnapshotImpl => StandaloneInitialSnapshotImpl}
 import io.delta.standalone.internal.util.{Clock, SystemClock}
 
 /**
@@ -47,7 +47,7 @@ class KernelDeltaLogDelegator(
   var currKernelSnapshot: Option[KernelSnapshotDelegator] = None
 
   override def snapshot(): StandaloneSnapshotImpl = { // but is actually a KernelSnapshotDelegator
-    if (currKernelSnapshot.isEmpty) { update() }
+    if (currKernelSnapshot.isEmpty) { return update() }
     return currKernelSnapshot.get
   }
 
@@ -57,7 +57,7 @@ class KernelDeltaLogDelegator(
       table.getLatestSnapshot(tableClient).asInstanceOf[SnapshotImplKernel]
     } catch {
       case e: TableNotFoundException =>
-        new InitialKernelSnapshotImpl(logPath, dataPath, tableClient)
+        return new StandaloneInitialSnapshotImpl(hadoopConf, logPath, this)
     }
     currKernelSnapshot = Some(new KernelSnapshotDelegator(
       kernelSnapshot,
