@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.actions.AddFile
