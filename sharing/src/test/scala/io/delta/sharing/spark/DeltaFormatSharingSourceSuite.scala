@@ -88,12 +88,12 @@ class DeltaFormatSharingSourceSuite
 
   test("DeltaFormatSharingSource able to get schema") {
     withTempDir { tempDir =>
-      val tableName = "source_suite_table"
-      withTable(tableName) {
-        createTable(tableName)
-        val sharedTableName = "shared_table"
-        prepareMockedClientMetadata(tableName, sharedTableName)
-        prepareMockedClientGetTableVersion(tableName, sharedTableName)
+      val deltaTableName = "delta_table_schema"
+      withTable(deltaTableName) {
+        createTable(deltaTableName)
+        val sharedTableName = "shared_table_schema"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
         val profileFile = prepareProfileFile(tempDir)
         withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
@@ -127,7 +127,7 @@ class DeltaFormatSharingSourceSuite
 
   test("DeltaFormatSharingSource do not support cdc") {
     withTempDir { tempDir =>
-      val sharedTableName = "shared_streaming_table"
+      val sharedTableName = "shared_streaming_table_nocdc"
       val profileFile = prepareProfileFile(tempDir)
       withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
         val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
@@ -150,14 +150,14 @@ class DeltaFormatSharingSourceSuite
 
   test("DeltaFormatSharingSource simple query works") {
     withTempDir { tempDir =>
-      val deltaTableName = "source_suite_table"
+      val deltaTableName = "delta_table_simple"
       withTable(deltaTableName) {
         sql(s"""
                |CREATE TABLE $deltaTableName (value STRING)
                |USING DELTA
                |""".stripMargin)
 
-        val sharedTableName = "shared_streaming_table"
+        val sharedTableName = "shared_streaming_table_simple"
         prepareMockedClientMetadata(deltaTableName, sharedTableName)
 
         val profileFile = prepareProfileFile(tempDir)
@@ -192,10 +192,10 @@ class DeltaFormatSharingSourceSuite
 
   test("restart works sharing") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val deltaTableName = "basic_restart_table"
+      val deltaTableName = "delta_table_restart"
       withTable(deltaTableName) {
         createTableForStreaming(deltaTableName)
-        val sharedTableName = "shared_streaming_table"
+        val sharedTableName = "shared_streaming_table_restart"
         prepareMockedClientMetadata(deltaTableName, sharedTableName)
         val profileFile = prepareProfileFile(inputDir)
         val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
@@ -297,10 +297,10 @@ class DeltaFormatSharingSourceSuite
 
   test("streaming works with deletes on basic table") {
     withTempDir { inputDir =>
-      val deltaTableName = "basic_dv_table"
+      val deltaTableName = "delta_table_basic"
       withTable(deltaTableName) {
         createTableForStreaming(deltaTableName)
-        val sharedTableName = "shared_streaming_table"
+        val sharedTableName = "shared_streaming_table_deletes"
         prepareMockedClientMetadata(deltaTableName, sharedTableName)
         val profileFile = prepareProfileFile(inputDir)
         val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
@@ -411,13 +411,13 @@ class DeltaFormatSharingSourceSuite
 
   test("streaming works with DV") {
     withTempDir { inputDir =>
-      val deltaTableName = "basic_dv_table"
+      val deltaTableName = "delta_table_dv"
       withTable(deltaTableName) {
         createSimpleTable(deltaTableName, enableCdf = false)
         spark.sql(
           s"ALTER TABLE $deltaTableName SET TBLPROPERTIES('delta.enableDeletionVectors' = true)"
         )
-        val sharedTableName = "shared_streaming_table"
+        val sharedTableName = "shared_streaming_table_dv"
         prepareMockedClientMetadata(deltaTableName, sharedTableName)
         val profileFile = prepareProfileFile(inputDir)
         val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
@@ -531,10 +531,10 @@ class DeltaFormatSharingSourceSuite
 
   test("startingVersion works") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val deltaTableName = "basic_delta_table"
+      val deltaTableName = "delta_table_startVersion"
       withTable(deltaTableName) {
         createTableForStreaming(deltaTableName)
-        val sharedTableName = "shared_streaming_table"
+        val sharedTableName = "shared_streaming_table_startVersion"
         prepareMockedClientMetadata(deltaTableName, sharedTableName)
         val profileFile = prepareProfileFile(inputDir)
         val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
@@ -671,10 +671,10 @@ class DeltaFormatSharingSourceSuite
     // to be able to test this behavior.
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       withTempDirs { (_, outputDir2, checkpointDir2) =>
-        val deltaTableName = "basic_restart_table"
+        val deltaTableName = "delta_table_order"
         withTable(deltaTableName) {
           createSimpleTable(deltaTableName, enableCdf = false)
-          val sharedTableName = "shared_streaming_table"
+          val sharedTableName = "shared_streaming_table_order"
           prepareMockedClientMetadata(deltaTableName, sharedTableName)
           val profileFile = prepareProfileFile(inputDir)
           val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
@@ -765,7 +765,7 @@ class DeltaFormatSharingSourceSuite
 
   test("DeltaFormatSharingSource query with two delta sharing tables works") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      val deltaTableName = "source_suite_table"
+      val deltaTableName = "delta_table_two"
 
       def InsertToDeltaTable(values: String): Unit = {
         sql(s"INSERT INTO $deltaTableName VALUES $values")
@@ -773,7 +773,7 @@ class DeltaFormatSharingSourceSuite
 
       withTable(deltaTableName) {
         createSimpleTable(deltaTableName, enableCdf = false)
-        val sharedTableName = "shared_streaming_table"
+        val sharedTableName = "shared_streaming_table_two"
         prepareMockedClientMetadata(deltaTableName, sharedTableName)
 
         val profileFile = prepareProfileFile(inputDir)
