@@ -371,6 +371,10 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    *   -- Physically delete dropped rows and columns of target table
    *   REORG TABLE (delta.`/path/to/table` | delta_table_name)
    *    [WHERE partition_predicate] APPLY (PURGE)
+   *
+   *   -- Rewrite the files in UNIFORM(ICEBERG) compliant way.
+   *   REORG TABLE table_name (delta.`/path/to/table` | catalog.db.table)
+   *    APPLY (UPGRADE UNIFORM(ICEBERG_COMPAT_VERSION=version))
    * }}}
    */
   override def visitReorgTable(ctx: ReorgTableContext): AnyRef = withOrigin(ctx) {
@@ -386,7 +390,17 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     val tableNameParts = targetIdentifier.database.toSeq :+ targetIdentifier.table
     val targetTable = createUnresolvedTable(tableNameParts, "REORG")
 
-    DeltaReorgTable(targetTable)(Option(ctx.partitionPredicate).map(extractRawText(_)).toSeq)
+    val reorgTableSpec = if (ctx.PURGE != null) {
+      DeltaReorgTableSpec(DeltaReorgTableMode.PURGE, None)
+    } else if (ctx.ICEBERG_COMPAT_VERSION != null) {
+      DeltaReorgTableSpec(DeltaReorgTableMode.UNIFORM_ICEBERG, Option(ctx.version).map(_.getText.toInt))
+    } else {
+      throw new ParseException(
+        "Invalid syntax: REORG TABLE only support SURGE/UPGRADE UNIFORM.",
+        ctx)
+    }
+
+    DeltaReorgTable(targetTable, reorgTableSpec)(Option(ctx.partitionPredicate).map(extractRawText(_)).toSeq)
   }
 
   override def visitDescribeDeltaDetail(
