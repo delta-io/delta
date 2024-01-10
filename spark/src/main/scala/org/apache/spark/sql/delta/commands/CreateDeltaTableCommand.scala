@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.DomainMetadata
+import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.hooks.IcebergConverterHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -542,7 +543,7 @@ case class CreateDeltaTableCommand(
           validateLocation = false)
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
           if existingTableOpt.isDefined =>
-        spark.sessionState.catalog.alterTable(table)
+        UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
       case TableCreationModes.Replace =>
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
         throw DeltaErrors.cannotReplaceMissingTableException(ident)
@@ -566,13 +567,37 @@ case class CreateDeltaTableCommand(
       table.storage.copy(properties = Map.empty)
     }
 
-    table.copy(
-      schema = new StructType(),
-      properties = Map.empty,
-      partitionColumnNames = Nil,
-      // Remove write specific options when updating the catalog
-      storage = storageProps,
-      tracksPartitionsInCatalog = true)
+    // If we have to update the catalog, use the correct schema and table properties, otherwise
+    // empty out the schema and property information
+    if (conf.getConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED)) {
+      // In the case we're creating a Delta table on an existing path and adopting the schema
+      val schema = if (table.schema.isEmpty) snapshot.schema else table.schema
+      val truncatedSchema = UpdateCatalog.truncateSchemaIfNecessary(schema)
+      val additionalProperties = if (truncatedSchema.isEmpty) {
+        Map(UpdateCatalog.ERROR_KEY -> UpdateCatalog.LONG_SCHEMA_ERROR)
+      } else {
+        Map.empty
+      }
+
+      table.copy(
+        schema = truncatedSchema,
+        // Hive does not allow for the removal of partition columns once stored.
+        // To avoid returning the incorrect schema when the partition columns change,
+        // we store the partition columns as regular data columns.
+        partitionColumnNames = Nil,
+        properties = UpdateCatalog.updatedProperties(snapshot)
+          ++ additionalProperties,
+        storage = storageProps,
+        tracksPartitionsInCatalog = true)
+    } else {
+      table.copy(
+        schema = new StructType(),
+        properties = Map.empty,
+        partitionColumnNames = Nil,
+        // Remove write specific options when updating the catalog
+        storage = storageProps,
+        tracksPartitionsInCatalog = true)
+    }
   }
 
   /**

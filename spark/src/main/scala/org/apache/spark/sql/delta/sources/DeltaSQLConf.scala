@@ -357,6 +357,22 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_UPDATE_CATALOG_ENABLED =
+    buildConf("catalog.update.enabled")
+      .internal()
+      .doc("When enabled, we will cache the schema of the Delta table and the table properties " +
+        "in the external catalog, e.g. the Hive MetaStore.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_UPDATE_CATALOG_THREAD_POOL_SIZE =
+    buildStaticConf("catalog.update.threadPoolSize")
+      .internal()
+      .doc("The size of the thread pool for updating the external catalog.")
+      .intConf
+      .checkValue(_ > 0, "threadPoolSize must be positive")
+      .createWithDefault(20)
+
   val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
     buildConf("constraints.assumesDropIfExists.enabled")
       .doc("""If true, DROP CONSTRAINT quietly drops nonexistent constraints even without
