@@ -1,32 +1,24 @@
 package io.delta.standalone.internal
 
-import java.util.Optional
-
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.internal.{SnapshotImpl => SnapshotImplKernel, TableImpl}
-import io.delta.kernel.internal.fs.{Path => KernelPath}
 import io.delta.standalone.VersionLog
 import io.delta.standalone.actions.{CommitInfo => CommitInfoJ}
 import io.delta.standalone.internal.{SnapshotImpl => StandaloneSnapshotImpl, InitialSnapshotImpl => StandaloneInitialSnapshotImpl}
 import io.delta.standalone.internal.util.{Clock, SystemClock}
 
-/**
- *  Utility class to represent an "initial" snapshot as a kernel snapshot. This is equivalent to
- *  InitialSnapshotImpl in standalone land.
- */
-class InitialKernelSnapshotImpl(logPath: Path, dataPath: Path, tableClient: DefaultTableClient)
-    extends SnapshotImplKernel(
-      new KernelPath(logPath.toString()),
-      new KernelPath(dataPath.toString()),
-      -1,
-      io.delta.kernel.internal.snapshot.LogSegment.empty(new KernelPath(logPath.toString())),
-      tableClient,
-      -1,
-      Optional.empty())
+class KernelOptTxn(deltaLog: DeltaLogImpl, snapshot: KernelSnapshotDelegator)
+    extends OptimisticTransactionImpl(deltaLog, snapshot) {
+  override def txnVersion(applicationId: String): Long = {
+    readTxn += applicationId
+    snapshot.getLatestTransactionVersion(applicationId).getOrElse(-1L)
+  }
+}
+
 
 /**
  * We want to be able to construct an OptimisticTransactionImpl that uses a delta log and a snapshot
@@ -72,7 +64,11 @@ class KernelDeltaLogDelegator(
 
   override def startTransaction(): io.delta.standalone.OptimisticTransaction = {
     val snapshot = update()
-    new OptimisticTransactionImpl(this, snapshot)
+    if (snapshot.isInstanceOf[KernelSnapshotDelegator]) {
+      new KernelOptTxn(this, snapshot.asInstanceOf[KernelSnapshotDelegator])
+    } else {
+      new OptimisticTransactionImpl(this, snapshot)
+    }
   }
 
   override def tableExists: Boolean = snapshot.version >= 0

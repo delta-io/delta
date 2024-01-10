@@ -47,7 +47,7 @@ private[internal] class OptimisticTransactionImpl(
   private val txnId = UUID.randomUUID().toString
 
   /** Tracks the appIds that have been seen by this transaction. */
-  private val readTxn = new ArrayBuffer[String]
+  private[internal] val readTxn = new ArrayBuffer[String]
 
   /**
    * Tracks the data that could have been seen by recording the partition
