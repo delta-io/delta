@@ -1565,7 +1565,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   private def lockCommitIfEnabled[T](body: => T): T = {
     if (isCommitLockEnabled) {
-      deltaLog.lockInterruptibly(body)
+      // We are borrowing the `snapshotLock` even for commits. Ideally we should be
+      // using a separate lock for this purpose, because multiple threads fighting over
+      // a commit shouldn't interfere with normal snapshot updates by readers.
+      deltaLog.withSnapshotLockInterruptibly(body)
     } else {
       body
     }
