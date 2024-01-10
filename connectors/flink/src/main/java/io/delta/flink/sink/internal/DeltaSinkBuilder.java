@@ -50,6 +50,7 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
+import static io.delta.flink.source.internal.DeltaSourceOptions.USE_KERNEL_FOR_SNAPSHOTS;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
@@ -273,7 +274,12 @@ public class DeltaSinkBuilder<IN> implements Serializable {
     GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable>
         createGlobalCommitter() {
         return new DeltaGlobalCommitter(
-            serializableConfiguration.conf(), tableBasePath, rowType, mergeSchema);
+            serializableConfiguration.conf(),
+            tableBasePath,
+            rowType,
+            mergeSchema,
+            sinkConfiguration.getValue(USE_KERNEL_FOR_SNAPSHOTS)
+          );
     }
 
     protected Path getTableBasePath() {

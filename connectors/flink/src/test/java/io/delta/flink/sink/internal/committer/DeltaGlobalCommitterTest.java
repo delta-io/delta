@@ -93,7 +93,8 @@ public class DeltaGlobalCommitterTest {
             DeltaTestUtils.getHadoopConf(),
             tablePath,
             DeltaSinkTestUtils.TEST_ROW_TYPE,
-            false // mergeSchema
+            false,// mergeSchema
+            false // useKernel
         );
         // the order of below partition spec is different from the one used when initializing test
         // table
@@ -165,7 +166,8 @@ public class DeltaGlobalCommitterTest {
             DeltaTestUtils.getHadoopConf(),
             tablePath,
             updatedSchema,
-            true // mergeSchema
+            true, // mergeSchema
+            false // useKernel
         );
 
         // WHEN
@@ -219,7 +221,8 @@ public class DeltaGlobalCommitterTest {
                 DeltaTestUtils.getHadoopConf(),
                 tablePath,
                 newSchema,
-                true // mergeSchema
+                true, // mergeSchema
+                false // useKernel
             );
             // WHEN
             String errorMessage = assertThrows(
@@ -553,7 +556,8 @@ public class DeltaGlobalCommitterTest {
                 hadoopConfig,
                 tablePath,
                 DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE,
-                false // mergeSchema
+                false, // mergeSchema
+                false // useKernel
         );
 
         // WHEN
@@ -578,7 +582,8 @@ public class DeltaGlobalCommitterTest {
             DeltaTestUtils.getHadoopConf(),
             tablePath,
             schema,
-            false // mergeSchema
+            false, // mergeSchema
+            false // useKernel
         );
     }
 
