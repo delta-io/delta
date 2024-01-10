@@ -444,13 +444,6 @@ trait DeltaErrorsSuiteBase
         Some("Column c is not specified in INSERT"))
     }
     {
-      val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.missingColumnsInInsertInto("c")
-      }
-      checkErrorMessage(e, None, None,
-        Some("Column c is not specified in INSERT"))
-    }
-    {
       val table = DeltaTableIdentifier(Some("path"))
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.nonExistentDeltaTable(table)
