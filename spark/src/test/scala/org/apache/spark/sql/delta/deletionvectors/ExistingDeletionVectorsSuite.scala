@@ -50,8 +50,8 @@ class ExistingDeletionVectorsSuite extends QueryTest
   import testImplicits._
 
   override def beforeAll(): Unit = {
-    super.beforeAll()
     enableDeletionVectors(spark, delete = false, update = false)
+    super.beforeAll()
   }
 
   test(s"read Delta table with deletion vectors") {
