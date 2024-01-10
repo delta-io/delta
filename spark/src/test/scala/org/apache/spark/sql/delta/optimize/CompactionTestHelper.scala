@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.optimize
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.hooks.AutoCompact
