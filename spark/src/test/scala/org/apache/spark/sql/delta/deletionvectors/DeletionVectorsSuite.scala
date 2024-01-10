@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsT
 import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.{inlineInLog, EMPTY}
-import org.apache.spark.sql.delta.deletionvectors.ExistingDeletionVectorsSuite._
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -38,21 +38,12 @@ import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
-/**
- * This suite is to test reading from tables with existing DVs.
- * It does not test creating new DVs.
- * */
-class ExistingDeletionVectorsSuite extends QueryTest
+class DeletionVectorsSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews {
   import testImplicits._
-
-  override protected def beforeAll(): Unit = {
-    enableDeletionVectors(spark, delete = false, update = false)
-    super.beforeAll()
-  }
 
   test(s"read Delta table with deletion vectors") {
     def verifyVersion(version: Int, expectedData: Seq[Int]): Unit = {
@@ -746,7 +737,7 @@ class ExistingDeletionVectorsSuite extends QueryTest
   }
 }
 
-object ExistingDeletionVectorsSuite {
+object DeletionVectorsSuite {
   val table1Path = "src/test/resources/delta/table-with-dv-large"
   // Table at version 0: contains [0, 2000)
   val expectedTable1DataV0 = Seq.range(0, 2000)

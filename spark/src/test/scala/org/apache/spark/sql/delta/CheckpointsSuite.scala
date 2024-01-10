@@ -24,7 +24,7 @@ import scala.concurrent.duration._
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.deletionvectors.ExistingDeletionVectorsSuite
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -546,8 +546,7 @@ class CheckpointsSuite
   test("checkpoint with DVs") {
     for (v2Checkpoint <- Seq(true, false))
     withTempDir { tempDir =>
-      // this table has DVs in two versions
-      val source = new File(ExistingDeletionVectorsSuite.table1Path)
+      val source = new File(DeletionVectorsSuite.table1Path) // this table has DVs in two versions
       val target = new File(tempDir, "insertTest")
 
       // Copy the source2 DV table to a temporary directory, so that we do updates to it
@@ -581,7 +580,7 @@ class CheckpointsSuite
       import testImplicits._
       checkAnswer(
         spark.sql(s"SELECT * FROM delta.`${target.getAbsolutePath}`"),
-        (ExistingDeletionVectorsSuite.expectedTable1DataV4 ++ newData).toSeq.toDF())
+        (DeletionVectorsSuite.expectedTable1DataV4 ++ newData).toSeq.toDF())
     }
   }
 
