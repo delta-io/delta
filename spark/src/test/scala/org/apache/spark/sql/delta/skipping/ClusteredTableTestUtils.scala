@@ -38,7 +38,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
   }
 
   /**
-   * Runs optimize on the table and calls postHook on the metrics
+   * Runs optimize on the table and calls postHook on the metrics.
    * @param table the name of table
    * @param postHook callback triggered with OptimizeMetrics returned by the OPTIMIZE command
    */
