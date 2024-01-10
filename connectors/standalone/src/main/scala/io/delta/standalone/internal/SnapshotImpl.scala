@@ -342,7 +342,7 @@ private[internal] class SnapshotImpl(
   logInfo(s"[tableId=${deltaLog.tableId}] Created snapshot $this")
 
   /** Complete initialization by checking protocol version. */
-  //deltaLog.assertProtocolRead(protocolScala)
+  deltaLog.assertProtocolRead(protocolScala)
 }
 
 private[internal] object SnapshotImpl {
