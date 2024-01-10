@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.skipping;
 
+import java.util.Collections;
 import java.util.Set;
 
 import io.delta.kernel.expressions.Column;
@@ -26,16 +27,17 @@ import io.delta.kernel.expressions.Predicate;
  */
 public class DataSkippingPredicate {
 
-    private final Predicate expression;
+    private final Predicate predicate;
+    /** Set of {@link Column}s referenced by {@code predicate} or any of its child expressions */
     private final Set<Column> referencedCols;
 
-    DataSkippingPredicate(Predicate expression, Set<Column> referencedCols) {
-        this.expression = expression;
-        this.referencedCols = referencedCols;
+    DataSkippingPredicate(Predicate predicate, Set<Column> referencedCols) {
+        this.predicate = predicate;
+        this.referencedCols = Collections.unmodifiableSet(referencedCols);
     }
 
-    public Predicate getExpression() {
-        return expression;
+    public Predicate getPredicate() {
+        return predicate;
     }
 
     public Set<Column> getReferencedCols() {

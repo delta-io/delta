@@ -258,7 +258,7 @@ public class ScanImpl implements Scan {
             "=",
             new ScalarExpression(
                 "COALESCE",
-                Arrays.asList(dataSkippingFilter.getExpression(), Literal.ofBoolean(true))),
+                Arrays.asList(dataSkippingFilter.getPredicate(), Literal.ofBoolean(true))),
             AlwaysTrue.ALWAYS_TRUE);
 
         PredicateEvaluator predicateEvaluator = tableClient
@@ -295,7 +295,7 @@ public class ScanImpl implements Scan {
             String partitionColName = partitionColNameVector.getString(i);
             checkArgument(partitionColName != null && !partitionColName.isEmpty(),
                 "Expected non-null and non-empty partition column name");
-            partitionColumnNames.add(partitionColName.toLowerCase(Locale.ENGLISH));
+            partitionColumnNames.add(partitionColName.toLowerCase(Locale.ROOT));
         }
         return Collections.unmodifiableSet(partitionColumnNames);
     }
@@ -303,7 +303,7 @@ public class ScanImpl implements Scan {
     private StructType loadDataSchema() {
         return new StructType(metadata.getSchema().fields().stream()
             .filter(field ->
-                !partitionColumnNames.contains(field.getName().toLowerCase(Locale.ENGLISH)))
+                !partitionColumnNames.contains(field.getName().toLowerCase(Locale.ROOT)))
             .collect(Collectors.toList()));
     }
 }

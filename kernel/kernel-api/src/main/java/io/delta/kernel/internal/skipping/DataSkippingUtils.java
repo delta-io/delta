@@ -45,6 +45,8 @@ public class DataSkippingUtils {
 
     /**
      * Prunes the given schema to only include the referenced columns.
+     * @param schema the schema to prune
+     * @param referencedCols set of leaf columns in {@code schema}
      */
     public static StructType pruneStatsSchema(StructType schema, Set<Column> referencedCols) {
         return pruneSchema(schema, referencedCols, new String[0]);
@@ -282,8 +284,8 @@ public class DataSkippingUtils {
             DataSkippingPredicate left, DataSkippingPredicate right) {
         return new DataSkippingPredicate(
             new And(
-                left.getExpression(),
-                right.getExpression()
+                left.getPredicate(),
+                right.getPredicate()
             ),
             new HashSet<Column>() {
                 {
@@ -324,7 +326,7 @@ public class DataSkippingUtils {
     private static StructType pruneSchema(
             StructType schema, Set<Column> columnsToKeep, String[] parentPath) {
         List<StructField> prunedFields = new ArrayList<>();
-        for (StructField field: schema.fields()) {
+        for (StructField field : schema.fields()) {
             String[] colPath = appendArray(parentPath, field.getName());
             if (field.getDataType() instanceof StructType) {
                 StructType prunedNestedSchema = pruneSchema(
