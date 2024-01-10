@@ -30,12 +30,12 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.network.util.JavaUtils
-import org.apache.spark.sql.{DataFrame, QueryTest, Row}
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, OptimisticTransaction}
+import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Metadata, _}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils, Utils}
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
