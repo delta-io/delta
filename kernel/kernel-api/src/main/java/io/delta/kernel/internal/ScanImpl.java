@@ -18,7 +18,6 @@ package io.delta.kernel.internal;
 import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
-
 import static java.util.stream.Collectors.toMap;
 
 import org.slf4j.Logger;

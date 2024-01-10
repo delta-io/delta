@@ -43,7 +43,6 @@ public class DataSkippingUtils {
             .parseJson(statsVector, statsSchema, scanFileBatch.getSelectionVector());
     }
 
-    // Move this to a SchemaUtils? (not data skipping specific)
     /**
      * Prunes the given schema to only include the referenced columns.
      */
@@ -261,7 +260,7 @@ public class DataSkippingUtils {
      * Constructs a {@link DataSkippingPredicate} for a binary predicate expression with a left
      * expression of type {@link Column} and a right expression of type {@link Literal}.
      */
-    static private DataSkippingPredicate constructBinaryDataSkippingPredicate(
+    private static DataSkippingPredicate constructBinaryDataSkippingPredicate(
             String exprName,
             Column col,
             Literal lit) {
@@ -279,7 +278,7 @@ public class DataSkippingUtils {
      * Given two {@link DataSkippingPredicate}s constructs the {@link DataSkippingPredicate}
      * representing the AND expression of {@code left} and {@code right}.
      */
-    static private DataSkippingPredicate and(
+    private static DataSkippingPredicate and(
             DataSkippingPredicate left, DataSkippingPredicate right) {
         return new DataSkippingPredicate(
             new And(

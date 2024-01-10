@@ -38,14 +38,14 @@ import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.types.{DataType, StructField, StructType}
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+import io.delta.kernel.utils.{CloseableIterator, ExpressionTestUtils, FileStatus}
 import io.delta.kernel.{Snapshot, Table}
 import io.delta.kernel.internal.skipping.DataSkippingUtils
 import io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
+import io.delta.kernel.defaults.utils.TestUtils
 
 class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
 
@@ -1206,23 +1206,22 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         .getScanFiles(tableClient))
   }
 
-  // docs?
-  private def structTypeToLeafColumns(schema: StructType, parentPath: Seq[String]): Set[Column] = {
-    schema.fields().asScala.flatMap { field =>
-      field.getDataType() match {
-        case nestedSchema: StructType =>
-          assert(nestedSchema.fields().size() > 0,
-            "Schema should not have field of type StructType with no child fields")
-          structTypeToLeafColumns(nestedSchema, parentPath ++ Seq(field.getName()))
-        case _ =>
-          Seq(new Column(parentPath.toArray :+ field.getName()))
-      }
-    }.toSet
-  }
-
   test("data skipping - prune schema correctly for various predicates") {
+    def structTypeToLeafColumns(
+        schema: StructType, parentPath: Seq[String] = Seq()): Set[Column] = {
+      schema.fields().asScala.flatMap { field =>
+        field.getDataType() match {
+          case nestedSchema: StructType =>
+            assert(nestedSchema.fields().size() > 0,
+              "Schema should not have field of type StructType with no child fields")
+            structTypeToLeafColumns(nestedSchema, parentPath ++ Seq(field.getName()))
+          case _ =>
+            Seq(new Column(parentPath.toArray :+ field.getName()))
+        }
+      }.toSet
+    }
     def verifySchema(expectedReadCols: Set[Column]): StructType => Unit = { readSchema =>
-      assert(structTypeToLeafColumns(readSchema, Seq()) == expectedReadCols)
+      assert(structTypeToLeafColumns(readSchema) == expectedReadCols)
     }
     val path = goldenTablePath("data-skipping-basic-stats-all-types")
     Map(
@@ -1245,144 +1244,6 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           .build(),
         tableClient = tableClient)
     }
-  }
-
-  // only checks name and dataType
-  def compareDataTypeUnordered(type1: DataType, type2: DataType): Boolean = (type1, type2) match {
-    case (schema1: StructType, schema2: StructType) =>
-      val fields1 = schema1.fields().asScala.sortBy(_.getName)
-      val fields2 = schema2.fields().asScala.sortBy(_.getName)
-      if (fields1.length != fields2.length) {
-        false
-      } else {
-        fields1.zip(fields2).forall { case (field1: StructField, field2: StructField) =>
-          field1.getName == field2.getName &&
-            compareDataTypeUnordered(field1.getDataType, field2.getDataType)
-        }
-      }
-    case _ =>
-      type1 == type2
-  }
-
-  def checkPruneStatsSchema(
-      inputSchema: StructType, referencedCols: Set[Column], expectedSchema: StructType): Unit = {
-    val prunedSchema = DataSkippingUtils.pruneStatsSchema(inputSchema, referencedCols.asJava)
-    assert(compareDataTypeUnordered(expectedSchema, prunedSchema),
-      s"expected=$expectedSchema\nfound=$prunedSchema")
-  }
-
-  // TODO move this test elsewhere?
-  test("pruneStatsSchema - multiple basic cases one level of nesting") {
-    val nestedField = new StructField(
-      "nested",
-      new StructType()
-        .add("col1", INTEGER)
-        .add("col2", INTEGER),
-      true
-    )
-    val testSchema = new StructType()
-      .add(nestedField)
-      .add("top_level_col", INTEGER)
-    // no columns pruned
-    checkPruneStatsSchema(
-      testSchema,
-      Set(col("top_level_col"), nestedCol("nested.col1"), nestedCol("nested.col2")),
-      testSchema
-    )
-    // top level column pruned
-    checkPruneStatsSchema(
-      testSchema,
-      Set(nestedCol("nested.col1"), nestedCol("nested.col2")),
-      new StructType().add(nestedField)
-    )
-    // nested column only one field pruned
-    checkPruneStatsSchema(
-      testSchema,
-      Set(nestedCol("top_level_col"), nestedCol("nested.col1")),
-      new StructType()
-        .add("nested", new StructType().add("col1", INTEGER))
-        .add("top_level_col", INTEGER)
-    )
-    // nested column completely pruned
-    checkPruneStatsSchema(
-      testSchema,
-      Set(nestedCol("top_level_col")),
-      new StructType().add("top_level_col", INTEGER)
-    )
-    // prune all columns
-    checkPruneStatsSchema(
-      testSchema,
-      Set(),
-      new StructType()
-    )
-  }
-
-  test("pruneStatsSchema - 3 levels of nesting") {
-    /*
-    |--level1: struct
-    |   |--level2: struct
-    |       |--level3: struct
-    |           |--level_4_col: int
-    |       |--level_3_col: int
-    |   |--level_2_col: int
-     */
-    val testSchema = new StructType()
-      .add("level1",
-        new StructType()
-          .add(
-            "level2",
-            new StructType()
-              .add(
-                "level3",
-                new StructType().add("level_4_col", INTEGER))
-              .add("level_3_col", INTEGER)
-          )
-          .add("level_2_col", INTEGER)
-      )
-    // prune only 4th level col
-    checkPruneStatsSchema(
-      testSchema,
-      Set(nestedCol("level1.level2.level_3_col"), nestedCol("level1.level_2_col")),
-      new StructType()
-        .add(
-          "level1",
-          new StructType()
-            .add("level2", new StructType().add("level_3_col", INTEGER))
-            .add("level_2_col", INTEGER))
-    )
-    // prune only 3rd level column
-    checkPruneStatsSchema(
-      testSchema,
-      Set(nestedCol("level1.level2.level3.level_4_col"), nestedCol("level1.level_2_col")),
-      new StructType()
-        .add("level1",
-          new StructType()
-            .add(
-              "level2",
-              new StructType()
-                .add(
-                  "level3",
-                  new StructType().add("level_4_col", INTEGER))
-            )
-            .add("level_2_col", INTEGER)
-        )
-    )
-    // prune 4th and 3rd level column
-    checkPruneStatsSchema(
-      testSchema,
-      Set(nestedCol("level1.level_2_col")),
-      new StructType()
-        .add("level1",
-          new StructType()
-            .add("level_2_col", INTEGER)
-        )
-    )
-    // prune all columns
-    checkPruneStatsSchema(
-      testSchema,
-      Set(),
-      new StructType()
-    )
   }
 }
 
