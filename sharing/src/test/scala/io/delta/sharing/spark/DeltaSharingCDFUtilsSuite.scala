@@ -191,7 +191,7 @@ class DeltaSharingCDFUtilsSuite
         val dsTable = Table(share = shareName, schema = schemaName, name = sharedTableName)
 
         val options = new DeltaSharingOptions(Map("path" -> tablePath.toString))
-        DeltaSharingCDFUtils.prepareCDCRelation(
+        DeltaSharingCDFUtils.prepareCDFRelation(
           SparkSession.active.sqlContext,
           options,
           dsTable,

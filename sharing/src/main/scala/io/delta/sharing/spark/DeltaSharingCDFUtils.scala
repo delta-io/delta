@@ -36,7 +36,12 @@ object DeltaSharingCDFUtils extends Logging {
     (System.currentTimeMillis() - start) / 1000.0
   }
 
-  private[sharing] def prepareCDCRelation(
+  /**
+   * Prepares the BaseRelation for cdf queries on a delta sharing table. Since there's no limit
+   * pushdown or filter pushdown involved, it wiill firatly fetch all the files from the delta
+   * sharing server, prepare the local delta log, and leverage DeltaTableV2 to produce the relation.
+   */
+  private[sharing] def prepareCDFRelation(
       sqlContext: SQLContext,
       options: DeltaSharingOptions,
       table: DeltaSharingTable,
@@ -73,6 +78,8 @@ object DeltaSharingCDFUtils extends Logging {
       // CachedTableManager.
       tablePath = DeltaSharingUtils.getTablePathWithIdSuffix(path, queryParamsHashId),
       idToUrl = deltaLogMetadata.idToUrl,
+      // A weak reference is needed by the CachedTableManager to decide whether the query is done
+      // and it's ok to clean up the id to url mapping for this table.
       refs = Seq(new WeakReference(this)),
       profileProvider = client.getProfileProvider,
       refresher = DeltaSharingUtils.getRefresherForGetCDFFiles(

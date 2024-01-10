@@ -354,7 +354,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
 
   /**
-   * Construct local delta log based on lines returned from delta sharing server.
+   * Construct local delta log based on delta log actions returned from delta sharing server.
    *
    * @param lines           a list of delta actions, to be processed and put in the local delta log,
    *                        each action contains a version field to indicate the version of log to
