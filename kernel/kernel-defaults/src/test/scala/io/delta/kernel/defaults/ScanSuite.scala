@@ -828,7 +828,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
            |(2, 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', 2.0)
            |""".stripMargin)
       checkSkipping(
-        goldenTablePath("data-skipping-with-delta-statistic-column-drop-column"),
+        tablePath,
         hits = Seq(
           equals(col("c1"), ofInt(1)),
           lessThan(col("c3"), ofFloat(1.5f)),
