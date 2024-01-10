@@ -320,9 +320,10 @@ class OptimizeExecutor(
     }
 
     def shouldRewriteToBeIcebergCompat(file: AddFile): Boolean = {
-      val icebergCompatVersion =
-        file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
-      optimizeContext.icebergCompatVersion.exists(_.toString == icebergCompatVersion)
+      if (optimizeContext.icebergCompatVersion.isEmpty) return false
+      if (file.tags == null) return true
+      val icebergCompatVersion = file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
+      !optimizeContext.icebergCompatVersion.exists(_.toString == icebergCompatVersion)
     }
 
     // Select files that are small or have too many deleted rows
