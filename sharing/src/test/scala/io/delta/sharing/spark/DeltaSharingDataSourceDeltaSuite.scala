@@ -978,7 +978,6 @@ trait DeltaSharingDataSourceDeltaSuiteBase
             val sharingDf =
               spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
             val deltaDf = spark.read.format("delta").table(deltaTableName)
-
             val filteredSharingDf =
               spark.read
                 .format("deltaSharing")
@@ -990,6 +989,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
                 .format("delta")
                 .table(deltaTableName)
                 .filter(col("id").mod(10) > 5)
+
             if (!skippingEnabled) {
               def assertError(dataFrame: DataFrame): Unit = {
                 val ex = intercept[IllegalArgumentException] {
