@@ -59,7 +59,10 @@ class KernelSnapshotDelegator(
     standaloneDeltaLog: DeltaLogImpl)
   extends SnapshotImpl(hadoopConf, path, -1, LogSegment.empty(path), -1, standaloneDeltaLog, -1) {
 
-  val snapshotWrapper = new KernelSnapshotWrapper(kernelSnapshot)
+  // A KernelSnapshotWrapper holds a `SnapshotImplKernel` inside, and exposes the standalone
+  // snapshot interface. This allows us to return things (like metadata) as if they were being
+  // called on a standard standalone snapshot.
+  val kernelSnapshotWrapper = new KernelSnapshotWrapper(kernelSnapshot)
   lazy val standaloneSnapshot: SnapshotImpl = standaloneDeltaLog.getSnapshotForVersionAsOf(getVersion())
 
   /**
@@ -71,7 +74,7 @@ class KernelSnapshotDelegator(
   }
 
   override lazy val metadataScala: Metadata = {
-    val metadata = snapshotWrapper.getMetadata()
+    val metadata = kernelSnapshotWrapper.getMetadata()
     ConversionUtils.convertMetadataJ(metadata)
   }
 
@@ -86,8 +89,8 @@ class KernelSnapshotDelegator(
   }
 
   // Public APIS
-  override def getMetadata: MetadataJ = snapshotWrapper.getMetadata()
-  override def getVersion: Long = snapshotWrapper.getVersion()
+  override def getMetadata: MetadataJ = kernelSnapshotWrapper.getMetadata()
+  override def getVersion: Long = kernelSnapshotWrapper.getVersion()
 
   // Internal apis that we need to verify don't get used often
   override def scanScala(): DeltaScanImpl = {
