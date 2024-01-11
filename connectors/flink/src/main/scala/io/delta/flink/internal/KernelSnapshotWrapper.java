@@ -18,9 +18,13 @@
 
 package io.delta.standalone.internal;
 
+import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import io.delta.kernel.data.ColumnVector;
 
@@ -40,6 +44,8 @@ import io.delta.standalone.expressions.Expression;
  */
 
 public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
+
+    private static final Logger LOG = LoggerFactory.getLogger(KernelSnapshotWrapper.class);
 
     // Converting from kernelMetadata to metadata could be expensive, so don't do it until asked,
     // and cache the result.
@@ -83,12 +89,24 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
             new io.delta.standalone.types.StructField[kernelFields.size()];
         int index = 0;
         for (io.delta.kernel.types.StructField kernelField: kernelFields) {
-            io.delta.standalone.types.FieldMetadata.Builder metadataBuilder =
-                io.delta.standalone.types.FieldMetadata.builder();
-            // TODO: Don't use Object and toString here
-            for (java.util.Map.Entry<String, Object> entry :
-                     kernelField.getMetadata().getEntries().entrySet()) {
-                metadataBuilder.putString(entry.getKey(), entry.getValue().toString());
+            // default to an empty set of metadata to use in case we get an exception while
+            // converting
+            io.delta.standalone.types.FieldMetadata fieldMetadata =
+                io.delta.standalone.types.FieldMetadata.builder().build();
+            try {
+                Constructor<io.delta.standalone.types.FieldMetadata> fieldMetadataContructor =
+                    io.delta.standalone.types.FieldMetadata.class.getDeclaredConstructor(
+                        java.util.Map.class
+                    );
+                fieldMetadataContructor.setAccessible(true);
+                fieldMetadata = fieldMetadataContructor.newInstance(
+                    kernelField.getMetadata().getEntries()
+                );
+            } catch (Exception e) {
+                LOG.warn(
+                    "Failed to convert field metadata via private constructor. " +
+                    "Using empty metadata", e
+                );
             }
             fields[index] = new io.delta.standalone.types.StructField(
                 kernelField.getName(),
@@ -96,7 +114,7 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
                     kernelField.getDataType().toJson()
                 ),
                 kernelField.isNullable(),
-                metadataBuilder.build()
+                fieldMetadata
             );
             index++;
         }
