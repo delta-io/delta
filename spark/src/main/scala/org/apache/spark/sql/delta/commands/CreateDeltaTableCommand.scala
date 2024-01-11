@@ -235,7 +235,15 @@ case class CreateDeltaTableCommand(
       var actions = deltaWriter.write(
         txn,
         sparkSession,
-        ClusteredTableUtils.getClusterBySpecOptional(table)
+        ClusteredTableUtils.getClusterBySpecOptional(table),
+        // Pass this option to the writer so that it can differentiate between an INSERT and a
+        // REPLACE command. This is needed because the writer is shared between the two commands.
+        // But some options, such as dynamic partition overwrite, are only valid for INSERT.
+        // Only allow createOrReplace command which is not a V1 writer.
+        // saveAsTable() command uses this same code path and is marked as a V1 writer.
+        // We do not want saveAsTable() to be treated as a REPLACE command wrt dynamic partition
+        // overwrite.
+        isTableReplace = isReplace && !isV1Writer
       )
       // Metadata updates for creating table (with any writer) and replacing table
       // (only with V1 writer) will be handled inside WriteIntoDelta.
