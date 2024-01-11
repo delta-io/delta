@@ -56,6 +56,69 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
         this.kernelSnapshot = kernelSnapshot;
     }
 
+    /**
+     * @return the table metadata for this snapshot.
+     *
+     */
+    @Override
+    public Metadata getMetadata() {
+        if (!metadata.isPresent()) {
+            metadata = Optional.of(convertMetadata());
+        }
+        return metadata.get();
+    }
+
+    /**
+     * @return the version for this snapshot
+     */
+    @Override
+    public long getVersion() {
+        // WARNING: getVersion in SnapshotImpl currently doesn't use the table client, so we can
+        // pass null, but if this changes this code could break
+        return kernelSnapshot.getVersion(null);
+    }
+
+    /**
+     * NOT SUPPORTED
+     * @return a {@link DeltaScan} of the files in this snapshot.
+     */
+    @Override
+    public DeltaScan scan() {
+        throw new UnsupportedOperationException("not supported");
+    }
+
+    /**
+     * NOT SUPPORTED
+     * @param predicate  the predicate to be used to filter the files in this snapshot.
+     * @return a {@link DeltaScan} of the files in this snapshot matching the pushed portion of
+     *         {@code predicate}
+     */
+    @Override
+    public DeltaScan scan(Expression predicate) {
+        throw new UnsupportedOperationException("not supported");
+    }
+
+    /**
+     * NOT SUPPORTED
+     * @return all of the files present in this snapshot
+     */
+    @Override
+    public List<AddFile> getAllFiles() {
+        throw new UnsupportedOperationException("not supported");
+    }
+
+    /**
+     * NOT SUPPORTED
+     * Creates a {@link CloseableIterator} which can iterate over data belonging to this snapshot.
+     * It provides no iteration ordering guarantee among data.
+     *
+     * @return a {@link CloseableIterator} to iterate over data
+     */
+    @Override
+    public CloseableIterator<RowRecord> open() {
+        throw new UnsupportedOperationException("not supported");
+    }
+
     // Used for testing
     protected io.delta.kernel.internal.SnapshotImpl getKernelSnapshot() {
         return kernelSnapshot;
@@ -131,68 +194,5 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
             kernelMetadata.getCreatedTime(),
             schema
         );
-    }
-
-    /**
-     * @return the table metadata for this snapshot.
-     *
-     */
-    @Override
-    public Metadata getMetadata() {
-        if (!metadata.isPresent()) {
-            metadata = Optional.of(convertMetadata());
-        }
-        return metadata.get();
-    }
-
-    /**
-     * @return the version for this snapshot
-     */
-    @Override
-    public long getVersion() {
-        // WARNING: getVersion in SnapshotImpl currently doesn't use the table client, so we can
-        // pass null, but if this changes this code could break
-        return kernelSnapshot.getVersion(null);
-    }
-
-    /**
-     * NOT SUPPORTED
-     * @return a {@link DeltaScan} of the files in this snapshot.
-     */
-    @Override
-    public DeltaScan scan() {
-        throw new UnsupportedOperationException("not supported");
-    }
-
-    /**
-     * NOT SUPPORTED
-     * @param predicate  the predicate to be used to filter the files in this snapshot.
-     * @return a {@link DeltaScan} of the files in this snapshot matching the pushed portion of
-     *         {@code predicate}
-     */
-    @Override
-    public DeltaScan scan(Expression predicate) {
-        throw new UnsupportedOperationException("not supported");
-    }
-
-    /**
-     * NOT SUPPORTED
-     * @return all of the files present in this snapshot
-     */
-    @Override
-    public List<AddFile> getAllFiles() {
-        throw new UnsupportedOperationException("not supported");
-    }
-
-    /**
-     * NOT SUPPORTED
-     * Creates a {@link CloseableIterator} which can iterate over data belonging to this snapshot.
-     * It provides no iteration ordering guarantee among data.
-     *
-     * @return a {@link CloseableIterator} to iterate over data
-     */
-    @Override
-    public CloseableIterator<RowRecord> open() {
-        throw new UnsupportedOperationException("not supported");
     }
 }
