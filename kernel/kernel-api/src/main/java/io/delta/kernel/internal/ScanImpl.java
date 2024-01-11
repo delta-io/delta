@@ -63,10 +63,6 @@ public class ScanImpl implements Scan {
     private final LogReplay logReplay;
     private final Path dataPath;
     private final Optional<Tuple2<Predicate, Predicate>> partitionAndDataFilters;
-    // Partition column names in lower case.
-    private final Set<String> partitionColumnNames;
-    /** Logical data schema excluding partition columns */
-    private final StructType dataSchema;
     private boolean accessedScanFiles;
 
     public ScanImpl(
@@ -82,8 +78,6 @@ public class ScanImpl implements Scan {
         this.protocol = protocol;
         this.metadata = metadata;
         this.logReplay = logReplay;
-        this.partitionColumnNames = loadPartitionColNames(); // must be called before `splitFilters`
-        this.dataSchema = loadDataSchema();
         this.partitionAndDataFilters = splitFilters(filter);
         this.dataPath = dataPath;
     }
@@ -161,7 +155,8 @@ public class ScanImpl implements Scan {
 
     private Optional<Tuple2<Predicate, Predicate>> splitFilters(Optional<Predicate> filter) {
         return filter.map(predicate ->
-            PartitionUtils.splitMetadataAndDataPredicates(predicate, partitionColumnNames));
+            PartitionUtils.splitMetadataAndDataPredicates(
+                predicate, metadata.getPartitionColNames()));
     }
 
     private Optional<Predicate> getDataFilters() {
@@ -189,7 +184,7 @@ public class ScanImpl implements Scan {
             return scanFileIter;
         }
 
-        Set<String> partitionColNames = partitionColumnNames;
+        Set<String> partitionColNames = metadata.getPartitionColNames();
         Map<String, DataType> partitionColNameToTypeMap = metadata.getSchema().fields().stream()
             .filter(field -> partitionColNames.contains(field.getName()))
             .collect(toMap(
@@ -234,7 +229,7 @@ public class ScanImpl implements Scan {
 
     private Optional<DataSkippingPredicate> getDataSkippingFilter() {
         return getDataFilters().flatMap(dataFilters ->
-            DataSkippingUtils.constructDataSkippingFilter(dataFilters, dataSchema)
+            DataSkippingUtils.constructDataSkippingFilter(dataFilters, metadata.getDataSchema())
         );
     }
 
@@ -246,7 +241,7 @@ public class ScanImpl implements Scan {
         // It's possible to instead provide the referenced columns when building the schema but
         // pruning it after is much simpler
         StructType prunedStatsSchema = DataSkippingUtils.pruneStatsSchema(
-            getStatsSchema(dataSchema),
+            getStatsSchema(metadata.getDataSchema()),
             dataSkippingFilter.getReferencedCols());
 
         // Skipping happens in two steps:
@@ -280,30 +275,5 @@ public class ScanImpl implements Scan {
                 Optional.of(newSelectionVector));
             }
         );
-    }
-
-    /**
-     * Helper method to load the partition column names from the metadata.
-     */
-    private Set<String> loadPartitionColNames() {
-        ArrayValue partitionColValue = metadata.getPartitionColumns();
-        ColumnVector partitionColNameVector = partitionColValue.getElements();
-        Set<String> partitionColumnNames = new HashSet<>();
-        for (int i = 0; i < partitionColValue.getSize(); i++) {
-            checkArgument(!partitionColNameVector.isNullAt(i),
-                "Expected a non-null partition column name");
-            String partitionColName = partitionColNameVector.getString(i);
-            checkArgument(partitionColName != null && !partitionColName.isEmpty(),
-                "Expected non-null and non-empty partition column name");
-            partitionColumnNames.add(partitionColName.toLowerCase(Locale.ROOT));
-        }
-        return Collections.unmodifiableSet(partitionColumnNames);
-    }
-
-    private StructType loadDataSchema() {
-        return new StructType(metadata.getSchema().fields().stream()
-            .filter(field ->
-                !partitionColumnNames.contains(field.getName().toLowerCase(Locale.ROOT)))
-            .collect(Collectors.toList()));
     }
 }
