@@ -167,16 +167,39 @@ public class DataSkippingUtils {
             // NOTE: AND is special -- we can safely skip the file if one leg does not evaluate to
             // TRUE, even if we cannot construct a skipping filter for the other leg.
             case "AND":
-                Optional<Predicate> e1Filter = constructDataSkippingFilter(
+                Optional<Predicate> e1AndFilter = constructDataSkippingFilter(
                     asPredicate(getLeft(dataFilters)), schemaHelper);
-                Optional<Predicate> e2Filter = constructDataSkippingFilter(
+                Optional<Predicate> e2AndFilter = constructDataSkippingFilter(
                     asPredicate(getRight(dataFilters)), schemaHelper);
-                if (e1Filter.isPresent() && e2Filter.isPresent()) {
-                    return Optional.of(new And(e1Filter.get(), e2Filter.get()));
-                } else if (e1Filter.isPresent()) {
-                    return e1Filter;
+                if (e1AndFilter.isPresent() && e2AndFilter.isPresent()) {
+                    return Optional.of(new And(e1AndFilter.get(), e2AndFilter.get()));
+                } else if (e1AndFilter.isPresent()) {
+                    return e1AndFilter;
                 } else {
-                    return e2Filter; // possibly none
+                    return e2AndFilter; // possibly none
+                }
+
+            // Push skipping predicate generation through OR (similar to AND case).
+            //
+            // constructDataFilters(OR(a, b))
+            // ==> OR(constructDataFilters(a), constructDataFilters(b))
+            //
+            // Similar to AND case, if the rewritten predicate does not evaluate to TRUE, then it
+            // means that neither `constructDataFilters(a)` nor `constructDataFilters(b)` evaluated
+            // to TRUE, which in turn means that neither `a` nor `b` could evaluate to TRUE for any
+            // row the file might contain, which proves we have a valid data skipping predicate.
+            //
+            // Unlike AND, a single leg of an OR expression provides no filtering power -- we can
+            // only reject a file if both legs evaluate to false.
+            case "OR":
+                Optional<Predicate> e1OrFilter = constructDataSkippingFilter(
+                    asPredicate(getLeft(dataFilters)), schemaHelper);
+                Optional<Predicate> e2OrFilter = constructDataSkippingFilter(
+                    asPredicate(getRight(dataFilters)), schemaHelper);
+                if (e1OrFilter.isPresent() && e2OrFilter.isPresent()) {
+                    return Optional.of(new Or(e1OrFilter.get(), e2OrFilter.get()));
+                } else {
+                    return Optional.empty();
                 }
 
             case "=": case "<": case "<=": case ">": case ">=":
@@ -293,6 +316,16 @@ public class DataSkippingUtils {
             case "AND":
                 return constructDataSkippingFilter(
                     new Or(
+                        new Predicate("NOT", asPredicate(getLeft(childPredicate))),
+                        new Predicate("NOT", asPredicate(getRight(childPredicate)))
+                    ),
+                    schemaHelper
+                );
+
+            // Similar to AND, we can (and want to) push the NOT past the OR using deMorgan's law.
+            case "OR":
+                return constructDataSkippingFilter(
+                    new And(
                         new Predicate("NOT", asPredicate(getLeft(childPredicate))),
                         new Predicate("NOT", asPredicate(getRight(childPredicate)))
                     ),
