@@ -213,6 +213,21 @@ object IcebergCompat extends DeltaLogging {
       .map{ case (_, version) => version }
 
   /**
+   * Get the DeltaConfig for the given IcebergCompat version. If version is not valid,
+   * throw an exception.
+   * @return the DeltaConfig for the given version. E.g.,
+   *         [[DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED]] for version 1.
+   */
+  def getIcebergCompatVersionConfigForValidVersion(version: Int): DeltaConfig[Option[Boolean]] = {
+    if (version <= 0 || version > knownVersions.length) {
+      throw DeltaErrors.icebergCompatVersionNotSupportedException(
+        version, knownVersions.length
+      )
+    }
+    knownVersions(version - 1)._1
+  }
+
+  /**
    * @return true if any version of IcebergCompat is enabled
    */
   def isAnyEnabled(metadata: Metadata): Boolean =
