@@ -768,12 +768,12 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       nullSafeEquals(col("a"), ofInt(1)),
 
       // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
-      isNotNull(col("a")),
       // This can be optimized to `IsNotNull(a)` (done by NullPropagation in Spark)
       not(nullSafeEquals(col("a"), ofNull(INTEGER)))
     ),
     misses = Seq(
-      AlwaysFalse.ALWAYS_FALSE
+      AlwaysFalse.ALWAYS_FALSE,
+      isNotNull(col("a"))
     )
   )
 
@@ -1082,8 +1082,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
       checkResults(
         predicate = isNotNull(col("value")),
-        expNumPartitions = 3, // should be 2 once IS_NOT_NULL is supported for data skipping
-        expNumFiles = 5) // should be 5 once IS_NOT_NULL is supported for skipping
+        expNumPartitions = 2, // one of the partitions has no files left after data skipping
+        expNumFiles = 3) // files with all NULL values get skipped
 
       checkResults(
         predicate = nullSafeEquals(col("value"), ofNull(STRING)),
@@ -1131,8 +1131,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
       checkResults(
         predicate = new And(isNotNull(col("key")), isNotNull(col("value"))),
-        expNumPartitions = 2, // should be 1 once we do data skipping for IS_NOT_NULL
-        expNumFiles = 2) // should be 2 once we do data skipping for IS_NUT_NULL
+        expNumPartitions = 1,
+        expNumFiles = 1) // 1 file with (*, a)
 
       checkResults(
         predicate = new Or(
@@ -1295,19 +1295,90 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     }
   }
 
-  test("data skipping - non-eligible data skipping types") {
+  test("data skipping - non-eligible min/max data skipping types") {
     withTempDir { tempDir =>
       val schema = SparkStructType.fromDDL("`id` INT, `arr_col` ARRAY<INT>, " +
         "`map_col` MAP<STRING, INT>, `struct_col` STRUCT<`field1`: INT>")
       val data = SparkRow(0, Array(1, 2), Map("foo" -> 1), SparkRow(5)) :: Nil
       spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
         .write.format("delta").save(tempDir.getCanonicalPath)
-      // For now just filter on the one eligible column to ensure we can read stats from tables with
-      // these types. In the future we should be able to skip with null predicates on these columns
       checkSkipping(
         tempDir.getCanonicalPath,
-        hits = Seq(equals(col("id"), ofInt(0))),
+        hits = Seq(
+          equals(col("id"), ofInt(0)), // filter on the one eligible column
+          isNotNull(col("id")),
+          isNotNull(col("arr_col")),
+          isNotNull(col("map_col")),
+          isNotNull(col("struct_col")),
+          isNotNull(nestedCol("struct_col.field1")),
+          not(isNotNull(col("struct_col"))), // we don't skip on non-leaf columns
+            // MOVE BELOW EXPRESSIONS TO MISSES ONCE IS_NULL IS SUPPORTED BY DATA SKIPPING
+          // [not(is_not_null) is converted to is_null]
+          not(isNotNull(col("id"))),
+          not(isNotNull(col("arr_col"))),
+          not(isNotNull(col("map_col"))),
+          not(isNotNull(nestedCol("struct_col.field1")))
+        ),
         misses = Seq(equals(col("id"), ofInt(1)))
+      )
+    }
+  }
+
+  test("data skipping - non-eligible min/max data skipping types all nulls in file") {
+    withTempDir { tempDir =>
+      val schema = SparkStructType.fromDDL("`id` INT, `arr_col` ARRAY<INT>, " +
+        "`map_col` MAP<STRING, INT>, `struct_col` STRUCT<`field1`: INT>")
+      val data = SparkRow(null, null, null, null) :: Nil
+      spark.createDataFrame(spark.sparkContext.parallelize(data), schema).coalesce(1)
+        .write.format("delta").save(tempDir.getCanonicalPath)
+      checkSkipping(
+        tempDir.getCanonicalPath,
+        hits = Seq(
+          // note "is_null" is not supported yet [not(is_not_null) is converted to is_null] but
+          // these should still be hits once supported
+          not(isNotNull(col("id"))),
+          not(isNotNull(col("arr_col"))),
+          not(isNotNull(col("map_col"))),
+          not(isNotNull(col("struct_col"))),
+          not(isNotNull(nestedCol("struct_col.field1"))),
+          isNotNull(col("struct_col")) // we don't skip on non-leaf columns
+        ),
+        misses = Seq(
+          isNotNull(col("id")),
+          isNotNull(col("arr_col")),
+          isNotNull(col("map_col")),
+          isNotNull(nestedCol("struct_col.field1"))
+        )
+      )
+    }
+  }
+
+  test("data skipping - non-eligible min/max data skipping types null +" +
+    "non-null in same file") {
+    withTempDir { tempDir =>
+      val schema = SparkStructType.fromDDL("`id` INT, `arr_col` ARRAY<INT>, " +
+        "`map_col` MAP<STRING, INT>, `struct_col` STRUCT<`field1`: INT>")
+      val data = SparkRow(0, Array(1, 2), Map("foo" -> 1), SparkRow(5)) ::
+        SparkRow(null, null, null, null) :: Nil
+      spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+        .write.format("delta").save(tempDir.getCanonicalPath)
+      checkSkipping(
+        tempDir.getCanonicalPath,
+        hits = Seq(
+          // note "is_null" is not supported yet [not(is_not_null) is converted to is_null] but
+          // these should still be hits once supported
+          not(isNotNull(col("id"))),
+          not(isNotNull(col("arr_col"))),
+          not(isNotNull(col("map_col"))),
+          not(isNotNull(col("struct_col"))),
+          not(isNotNull(nestedCol("struct_col.field1"))),
+          isNotNull(col("id")),
+          isNotNull(col("arr_col")),
+          isNotNull(col("map_col")),
+          isNotNull(col("struct_col")),
+          isNotNull(nestedCol("struct_col.field1"))
+        ),
+        misses = Seq()
       )
     }
   }
