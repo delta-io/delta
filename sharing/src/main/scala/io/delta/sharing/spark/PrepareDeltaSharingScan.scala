@@ -16,11 +16,7 @@
 
 package io.delta.sharing.spark
 
-import scala.util.control.NonFatal
-
 import org.apache.spark.sql.delta.{DeltaTableUtils => SqlDeltaTableUtils}
-import org.apache.spark.sql.delta.RelationFileIndex
-import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{PreparedDeltaFileIndex, PrepareDeltaScan}
 import io.delta.sharing.client.util.ConfUtils
@@ -97,7 +93,7 @@ class PrepareDeltaSharingScan(override val spark: SparkSession) extends PrepareD
     // consider the spark config for delta limit pushdown.
     override def limitPushdownEnabled(plan: LogicalPlan): Boolean =
       ConfUtils.limitPushdownEnabled(plan.conf) &&
-      spark.conf.get(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED)
+        (spark.conf.get(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED.key) == "true")
 
     override def getPartitionColumns(fileIndex: DeltaSharingFileIndex): Seq[String] =
       fileIndex.partitionColumns
