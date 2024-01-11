@@ -196,9 +196,12 @@ public class DataSkippingUtils {
                         reverseComparatorFilter(dataFilters), schemaHelper);
                 }
                 break;
+
+            case "NOT":
+                return constructNotDataSkippingFilters(
+                    asPredicate(getUnaryChild(dataFilters)), schemaHelper);
+
             // TODO more expressions
-            default:
-                return Optional.empty();
         }
         return Optional.empty();
     }
@@ -259,5 +262,89 @@ public class DataSkippingUtils {
             getRight(predicate),
             getLeft(predicate)
         );
+    }
+
+    /** Construct the skipping predicate for a NOT expression child if possible */
+    private static Optional<Predicate> constructNotDataSkippingFilters(
+            Predicate childPredicate, StatsSchemaHelper schemaHelper) {
+        switch (childPredicate.getName().toUpperCase(Locale.ROOT)) {
+            // Use deMorgan's law to push the NOT past the AND. This is safe even with SQL
+            // tri-valued logic (see below), and is desirable because we cannot generally push
+            // predicate filters
+            // through NOT, but we *CAN* push predicate filters through AND and OR:
+            //
+            // constructDataFilters(NOT(AND(a, b)))
+            // ==> constructDataFilters(OR(NOT(a), NOT(b)))
+            // ==> OR(constructDataFilters(NOT(a)), constructDataFilters(NOT(b)))
+            //
+            // Assuming we can push the resulting NOT operations all the way down to some leaf
+            // operation it can fold into, the rewrite allows us to create a data skipping filter
+            // from the expression.
+            //
+            // a b AND(a, b)
+            // | | | NOT(AND(a, b))
+            // | | | | OR(NOT(a), NOT(b))
+            // T T T F F
+            // T F F T T
+            // T N N N N
+            // F F F T T
+            // F N F T T
+            // N N N N N
+            case "AND":
+                return constructDataSkippingFilter(
+                    new Or(
+                        new Predicate("NOT", asPredicate(getLeft(childPredicate))),
+                        new Predicate("NOT", asPredicate(getRight(childPredicate)))
+                    ),
+                    schemaHelper
+                );
+
+            case "=":
+                Expression left = getLeft(childPredicate);
+                Expression right = getRight(childPredicate);
+                if (left instanceof Column && right instanceof Literal) {
+                    Column leftCol = (Column) left;
+                    Literal rightLit = (Literal) right;
+                    if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol) &&
+                        schemaHelper.isSkippingEligibleLiteral(rightLit)) {
+                        // Match any file whose min/max range contains anything other than the
+                        // rejected point.
+                        // For example a = 1 --> minValue.a <= 1 AND 1 <= maxValue.a
+                        return Optional.of(
+                            new Or(
+                                new Predicate("<", schemaHelper.getMinColumn(leftCol), rightLit),
+                                new Predicate("<", rightLit, schemaHelper.getMaxColumn(leftCol))
+                            )
+                        );
+                    }
+                } else if (right instanceof Column && left instanceof Literal) {
+                    return constructDataSkippingFilter(
+                        new Predicate("NOT", new Predicate("=", right, left)),
+                        schemaHelper);
+                }
+                break;
+            case "<":
+                return constructDataSkippingFilter(
+                    new Predicate(">=", childPredicate.getChildren()),
+                    schemaHelper);
+            case "<=":
+                return constructDataSkippingFilter(
+                    new Predicate(">", childPredicate.getChildren()),
+                    schemaHelper);
+            case ">":
+                return constructDataSkippingFilter(
+                    new Predicate("<=", childPredicate.getChildren()),
+                    schemaHelper);
+            case ">=":
+                return constructDataSkippingFilter(
+                    new Predicate("<", childPredicate.getChildren()),
+                    schemaHelper);
+            case "NOT":
+                // Remove redundant pairs of NOT
+                return constructDataSkippingFilter(
+                    asPredicate(getUnaryChild(childPredicate)),
+                    schemaHelper);
+        }
+        return Optional.empty();
     }
 }
