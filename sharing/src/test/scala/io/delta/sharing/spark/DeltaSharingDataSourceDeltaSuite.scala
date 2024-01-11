@@ -978,8 +978,6 @@ trait DeltaSharingDataSourceDeltaSuiteBase
             val sharingDf =
               spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
             val deltaDf = spark.read.format("delta").table(deltaTableName)
-            checkAnswer(sharingDf, deltaDf)
-            assert(sharingDf.count() > 0)
 
             val filteredSharingDf =
               spark.read
@@ -992,8 +990,22 @@ trait DeltaSharingDataSourceDeltaSuiteBase
                 .format("delta")
                 .table(deltaTableName)
                 .filter(col("id").mod(10) > 5)
+            if (!skippingEnabled) {
+              def assertError(dataFrame: DataFrame): Unit = {
+                val ex = intercept[IllegalArgumentException] {
+                  dataFrame.collect()
+                }
+                assert(ex.getMessage contains
+                  "Cannot work with a non-pinned table snapshot of the TahoeFileIndex")
+              }
+              assertError(sharingDf)
+              assertError(filteredDeltaDf)
+            } else {
+            checkAnswer(sharingDf, deltaDf)
+            assert(sharingDf.count() > 0)
             checkAnswer(filteredSharingDf, filteredDeltaDf)
             assert(filteredSharingDf.count() > 0)
+            }
           }
 
           val additionalConfigs = Map(
