@@ -1491,10 +1491,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       tablePath,
       Row(0, 0) :: Nil,
       schema)
-  }>
-
-
-
+  }
 }
 
 case class TestStruct(f1: String, f2: Long)
