@@ -211,6 +211,7 @@ class DeltaFormatSharingSourceSuite
             sql(s"INSERT INTO $deltaTableName VALUES $values")
           }
 
+          // TODO: check testStream() function helper
           def processAllAvailableInStream(): Unit = {
             val q = spark.readStream
               .format("deltaSharing")
@@ -303,7 +304,7 @@ class DeltaFormatSharingSourceSuite
 
   test("streaming works with deletes on basic table") {
     withTempDir { inputDir =>
-      val deltaTableName = "delta_table_basic"
+      val deltaTableName = "delta_table_deletes"
       withTable(deltaTableName) {
         createTableForStreaming(deltaTableName)
         val sharedTableName = "shared_streaming_table_deletes"
