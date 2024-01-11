@@ -239,7 +239,6 @@ public class DeltaGlobalCommitter
      */
     @Override
     public List<DeltaGlobalCommittable> commit(List<DeltaGlobalCommittable> globalCommittables) {
-        LOG.info("Starting commit");
         long start = System.nanoTime();
         String appId = resolveAppId(globalCommittables);
         if (appId != null) { // means there are committables to process

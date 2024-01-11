@@ -29,14 +29,13 @@ import io.delta.standalone.actions.{CommitInfo => CommitInfoJ}
 import io.delta.standalone.internal.{SnapshotImpl => StandaloneSnapshotImpl, InitialSnapshotImpl => StandaloneInitialSnapshotImpl}
 import io.delta.standalone.internal.util.{Clock, SystemClock}
 
-class KernelOptTxn(deltaLog: DeltaLogImpl, snapshot: KernelSnapshotDelegator)
-    extends OptimisticTransactionImpl(deltaLog, snapshot) {
+class KernelOptTxn(kernelDeltaLog: KernelDeltaLogDelegator, kernelSnapshot: KernelSnapshotDelegator)
+    extends OptimisticTransactionImpl(kernelDeltaLog, kernelSnapshot) {
   override def txnVersion(applicationId: String): Long = {
     readTxn += applicationId
-    snapshot.getLatestTransactionVersion(applicationId).getOrElse(-1L)
+    kernelSnapshot.getLatestTransactionVersion(applicationId).getOrElse(-1L)
   }
 }
-
 
 /**
  * We want to be able to construct an OptimisticTransactionImpl that uses a delta log and a snapshot
@@ -61,12 +60,12 @@ class KernelDeltaLogDelegator(
 
   var currKernelSnapshot: Option[KernelSnapshotDelegator] = None
 
-  override def snapshot(): StandaloneSnapshotImpl = { // but is actually a KernelSnapshotDelegator
+  override def snapshot(): StandaloneSnapshotImpl = {
     if (currKernelSnapshot.isEmpty) { return update() }
     return currKernelSnapshot.get
   }
 
-  override def update(): StandaloneSnapshotImpl = { // but is actually a KernelSnapshotDelegator
+  override def update(): StandaloneSnapshotImpl = {
     // get latest snapshot via kernel
     val kernelSnapshot = try {
       table.getLatestSnapshot(tableClient).asInstanceOf[SnapshotImplKernel]
