@@ -30,6 +30,7 @@ import java.util.Random;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import io.delta.flink.internal.DeltaFlinkHadoopConf;
 import io.delta.flink.sink.internal.SchemaConverter;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
@@ -92,7 +93,7 @@ public class DeltaGlobalCommitterTestKernel {
         //GIVEN
         DeltaTestUtils.initTestForPartitionedTable(tablePath.getPath());
         Configuration hadoopConfig = DeltaTestUtils.getHadoopConf();
-        hadoopConfig.setBoolean("io.delta.flink.usekernel", true);
+        hadoopConfig.setBoolean(DeltaFlinkHadoopConf.DELTA_KERNEL_ENABLED, true);
         DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
             hadoopConfig,
             tablePath,
@@ -166,7 +167,7 @@ public class DeltaGlobalCommitterTestKernel {
         deltaLog.snapshot(); // force cache of current snapshot
 
         Configuration hadoopConfig = DeltaTestUtils.getHadoopConf();
-        hadoopConfig.setBoolean("io.delta.flink.usekernel", true);
+        hadoopConfig.setBoolean(DeltaFlinkHadoopConf.DELTA_KERNEL_ENABLED, true);
         DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
             hadoopConfig,
             tablePath,
@@ -220,7 +221,7 @@ public class DeltaGlobalCommitterTestKernel {
         RowType updatedSchema2 = DeltaSinkTestUtils
                 .addNewColumnToSchema(DeltaSinkTestUtils.TEST_ROW_TYPE, false);
         Configuration hadoopConfig = DeltaTestUtils.getHadoopConf();
-        hadoopConfig.setBoolean("io.delta.flink.usekernel", true);
+        hadoopConfig.setBoolean(DeltaFlinkHadoopConf.DELTA_KERNEL_ENABLED, true);
         for (RowType newSchema: new RowType[]{updatedSchema1, updatedSchema2}) {
             DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
                 hadoopConfig,
@@ -550,7 +551,7 @@ public class DeltaGlobalCommitterTestKernel {
         hadoopConfig.set("fs.defaultFS", "mockfs:///");
         hadoopConfig.setClass("fs.mockfs.impl",
                 FileSystemTestHelper.MockFileSystem.class, FileSystem.class);
-        hadoopConfig.setBoolean("io.delta.flink.usekernel", true);
+        hadoopConfig.setBoolean(DeltaFlinkHadoopConf.DELTA_KERNEL_ENABLED, true);
 
         // create a globalCommitter that points to a local FS path (file:/// scheme). If
         // the path were to use the default filesystem (mockfs:///), it would return
@@ -583,7 +584,7 @@ public class DeltaGlobalCommitterTestKernel {
 
     private DeltaGlobalCommitter getTestGlobalCommitter(RowType schema) {
         Configuration hadoopConfig = DeltaTestUtils.getHadoopConf();
-        hadoopConfig.setBoolean("io.delta.flink.usekernel", true);
+        hadoopConfig.setBoolean(DeltaFlinkHadoopConf.DELTA_KERNEL_ENABLED, true);
         return new DeltaGlobalCommitter(
             hadoopConfig,
             tablePath,

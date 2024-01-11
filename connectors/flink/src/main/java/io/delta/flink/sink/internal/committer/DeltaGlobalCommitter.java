@@ -38,6 +38,7 @@ import javax.annotation.Nullable;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.flink.internal.ConnectorUtils;
+import io.delta.flink.internal.DeltaFlinkHadoopConf;
 import io.delta.flink.internal.lang.Lazy;
 import io.delta.flink.sink.internal.SchemaConverter;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
@@ -126,7 +127,7 @@ public class DeltaGlobalCommitter
         this.conf = conf;
         this.rowType = rowType;
         this.mergeSchema = mergeSchema;
-        if (conf.getBoolean("io.delta.flink.usekernel", false)) {
+        if (conf.getBoolean(DeltaFlinkHadoopConf.DELTA_KERNEL_ENABLED, false)) {
             LOG.info("Using delta-kernel for commits");
             this.deltaLog = KernelDeltaLogDelegator.forTable(conf, basePath.toString());
         } else {
