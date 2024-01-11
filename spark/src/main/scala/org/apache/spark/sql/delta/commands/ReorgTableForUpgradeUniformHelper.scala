@@ -80,6 +80,15 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
       description = metadata.description,
       configuration = metadata.configuration ++ enableIcebergCompatConf)
     alterConfTxn.updateMetadata(newMetadata)
+
+    // Upgrade protocol if necessary; Any IcebergCompat table feature requires at least (3, 7)
+    val minReaderVersion = Math.max(3, alterConfTxn.protocol.minReaderVersion)
+    val minWriterVersion = Math.max(7, alterConfTxn.protocol.minWriterVersion)
+    alterConfTxn.updateProtocol(
+      alterConfTxn.protocol
+        .copy(minReaderVersion = minReaderVersion, minWriterVersion = minWriterVersion)
+    )
+
     alterConfTxn.commit(
       Nil,
       DeltaOperations.UpgradeUniformProperties(enableIcebergCompatConf)
