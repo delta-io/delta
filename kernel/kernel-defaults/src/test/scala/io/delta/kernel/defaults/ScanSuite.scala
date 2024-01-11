@@ -1383,6 +1383,83 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     }
   }
 
+  test("data skipping - is not null with DVs in file with non-nulls") {
+    withSQLConf(("spark.databricks.delta.properties.defaults.enableDeletionVectors", "true")) {
+      withTempDir { tempDir =>
+        def overwriteTableAndPerformDelete(deleteCondition: String): Unit = {
+          val data = SparkRow(0, 0) :: SparkRow(1, 1) :: SparkRow(2, null) ::
+            SparkRow(3, null) :: Nil
+          val schema = new SparkStructType()
+            .add("col1", SparkIntegerType)
+            .add("col2", SparkIntegerType)
+
+          spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+            .repartition(1)
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .save(tempDir.getCanonicalPath)
+          spark.sql(s"DELETE FROM delta.`${tempDir.getCanonicalPath}` WHERE $deleteCondition")
+        }
+        def checkNoSkipping(): Unit = {
+          checkSkipping(
+            tempDir.getCanonicalPath,
+            hits = Seq(
+              isNotNull(col("col2")),
+              isNotNull(col("col1"))
+            ),
+            misses = Seq()
+          )
+        }
+
+        // remove no rows
+        overwriteTableAndPerformDelete("false")
+        checkNoSkipping()
+        // remove all null rows
+        overwriteTableAndPerformDelete("col2 IS NULL")
+        checkNoSkipping()
+        // remove all non-null rows
+        overwriteTableAndPerformDelete("col2 IS NOT NULL")
+        checkNoSkipping()
+        // remove one null row
+        overwriteTableAndPerformDelete("col1 = 2")
+        checkNoSkipping()
+      }
+    }
+  }
+
+  test("data skipping - is not null with DVs in file with all nulls") {
+    withSQLConf(("spark.databricks.delta.properties.defaults.enableDeletionVectors", "true")) {
+      withTempDir { tempDir =>
+        def checkDoesSkipping(): Unit = {
+          checkSkipping(
+            tempDir.getCanonicalPath,
+            hits = Seq(
+              isNotNull(col("col1"))
+            ),
+            misses = Seq(
+              isNotNull(col("col2"))
+            )
+          )
+        }
+        // write initial table with all nulls for col2
+        val data = SparkRow(0, null) :: SparkRow(1, null) :: Nil
+        val schema = new SparkStructType()
+          .add("col1", SparkIntegerType)
+          .add("col2", SparkIntegerType)
+        spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+          .repartition(1)
+          .write
+          .format("delta")
+          .save(tempDir.getCanonicalPath)
+        checkDoesSkipping()
+        // delete one of the nulls
+        spark.sql(s"DELETE FROM delta.`${tempDir.getCanonicalPath}` WHERE col1 = 0")
+        checkDoesSkipping()
+      }
+    }
+  }
+
   test("don't read stats column when there is no usable data skipping filter") {
     val path = goldenTablePath("data-skipping-basic-stats-all-types")
     val tableClient = tableClientDisallowedStatsReads
