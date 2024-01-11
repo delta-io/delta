@@ -18,6 +18,8 @@ package io.delta.sharing.spark
 
 import java.io.File
 
+import org.apache.hadoop.fs.FileSystem
+
 import org.apache.spark.sql.delta.{
   BatchCDFSchemaEndVersion,
   BatchCDFSchemaLatest,
@@ -38,6 +40,11 @@ class DeltaSharingDataSourceCMSuite
     with DeltaSharingDataSourceDeltaTestUtils {
 
   import testImplicits._
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    FileSystem.closeAll()
+  }
 
   override def beforeEach(): Unit = {
     super.beforeEach()

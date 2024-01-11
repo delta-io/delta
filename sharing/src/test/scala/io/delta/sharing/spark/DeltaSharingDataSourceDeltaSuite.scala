@@ -16,6 +16,8 @@
 
 package io.delta.sharing.spark
 
+import org.apache.hadoop.fs.FileSystem
+
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
@@ -36,6 +38,11 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     with DeltaSharingTestSparkUtils
     with DeltaSharingDataSourceDeltaTestUtils {
 
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    FileSystem.closeAll()
+  }
+  
   /**
    * metadata tests
    */
