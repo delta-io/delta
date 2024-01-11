@@ -20,6 +20,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.optimizer.RangePartitionIdRewrite
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.PrepareDeltaScan
 import io.delta.sql.parser.DeltaSqlParser
 
@@ -27,7 +28,6 @@ import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.PreprocessTimeTravel
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.internal.SQLConf
 
 /**
