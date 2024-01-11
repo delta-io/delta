@@ -127,8 +127,10 @@ public class DeltaGlobalCommitter
         this.rowType = rowType;
         this.mergeSchema = mergeSchema;
         if (conf.getBoolean("io.delta.flink.usekernel", false)) {
+            LOG.info("Using delta-kernel for commits");
             this.deltaLog = KernelDeltaLogDelegator.forTable(conf, basePath.toString());
         } else {
+            LOG.info("Using delta-standalone for commits");
             this.deltaLog = DeltaLog.forTable(conf,
                 new org.apache.hadoop.fs.Path(basePath.toUri()));
         }
