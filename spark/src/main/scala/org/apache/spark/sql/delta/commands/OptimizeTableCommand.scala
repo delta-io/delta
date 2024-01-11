@@ -415,6 +415,7 @@ class OptimizeExecutor(
         bins.filter { bin =>
           bin.size > 1 || // bin has more than one file or
           (bin.size == 1 && bin(0).deletionVector != null) || // single file in the bin has a DV or
+          (bin.size == 1 && optimizeContext.icebergCompatVersion.isDefined) || // uniform reorg
           isMultiDimClustering // multi-clustering
         }.map(b => (partition, b))
     }
