@@ -16,12 +16,16 @@
 
 package io.delta.sql
 
+import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.optimizer.RangePartitionIdRewrite
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.stats.PrepareDeltaScan
 import io.delta.sql.parser.DeltaSqlParser
 
 import org.apache.spark.sql.SparkSessionExtensions
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.PreprocessTimeTravel
 import org.apache.spark.sql.internal.SQLConf
 
@@ -127,9 +131,46 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new PrepareDeltaScan(session)
     }
 
+    // Tries to load PrepareDeltaSharingScan class with class reflection, when delta-sharing-spark
+    // 3.1+ package is installed, this will be loaded and delta sharing batch queries with
+    // DeltaSharingFileIndex will be handled by the rule.
+    // When the package is not installed or upon any other issues, it should do nothing and not
+    // affect all the existing rules.
+    try {
+      // scalastyle:off classforname
+      val constructor = Class.forName("io.delta.sharing.spark.PrepareDeltaSharingScan")
+        .getConstructor(classOf[org.apache.spark.sql.SparkSession])
+      // scalastyle:on classforname
+      extensions.injectPreCBORule { session =>
+        try {
+          // Inject the PrepareDeltaSharingScan rule if enabled, otherwise, inject the no op
+          // rule. It can be disabled if there are any issues so all existing rules are not blocked.
+          if (session.conf.getOption("spark.sql.delta.sharing.enableDeltaFormatBatch")
+            .contains("true")) {
+            constructor.newInstance(session).asInstanceOf[Rule[LogicalPlan]]
+          } else {
+            new NoOpRule
+          }
+        } catch {
+          // Inject a no op rule which doesn't apply any changes to the logical plan.
+          case NonFatal(_) => new NoOpRule
+        }
+      }
+    } catch {
+      case NonFatal(_) => // Do nothing
+    }
+
     DeltaTableValueFunctions.supportedFnNames.foreach { fnName =>
       extensions.injectTableFunction(
         DeltaTableValueFunctions.getTableValueFunctionInjection(fnName))
     }
+  }
+
+  /**
+   * An no op rule which doesn't apply any changes to the LogicalPlan. Used to be injected upon
+   * exceptions.
+   */
+  class NoOpRule extends Rule[LogicalPlan] {
+    override def apply(plan: LogicalPlan): LogicalPlan = plan
   }
 }
