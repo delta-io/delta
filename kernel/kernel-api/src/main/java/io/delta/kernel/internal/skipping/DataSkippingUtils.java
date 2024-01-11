@@ -342,9 +342,8 @@ public class DataSkippingUtils {
      * </ol>
      *
      * @param schema schema to prune
-     * @param leafColumnsToKeep set of top-level leaf columns to keep
-     * @param parentPath parent path of the fields in {@code schema} relative to the top-level
-     *                   schema
+     * @param leafColumnsToKeep set of leaf columns relative to the schema root
+     * @param parentPath parent path of the fields in {@code schema} relative to the schema root
      */
     private static StructType pruneSchema(
             Set<Column> leafColumnsToKeep, StructType schema, String[] parentPath) {
