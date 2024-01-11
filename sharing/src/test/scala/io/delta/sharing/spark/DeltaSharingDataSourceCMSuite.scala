@@ -18,8 +18,6 @@ package io.delta.sharing.spark
 
 import java.io.File
 
-import org.apache.hadoop.fs.FileSystem
-
 import org.apache.spark.sql.delta.{
   BatchCDFSchemaEndVersion,
   BatchCDFSchemaLatest,
@@ -33,6 +31,7 @@ import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.streaming.{StreamingQueryException, StreamTest, Trigger}
 import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
 
+// Unit tests to verify that delta format sharing support column mapping (CM).
 class DeltaSharingDataSourceCMSuite
     extends StreamTest
     with DeltaSQLCommandTest
