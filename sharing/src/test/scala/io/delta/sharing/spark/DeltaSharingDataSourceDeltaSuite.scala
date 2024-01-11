@@ -42,7 +42,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     super.beforeAll()
     FileSystem.closeAll()
   }
-  
+
   /**
    * metadata tests
    */
