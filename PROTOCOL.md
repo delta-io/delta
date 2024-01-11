@@ -104,8 +104,6 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-<font color="red">THIS IS AN IN-PROGRESS DRAFT</font>
-
 # Overview
 This document is a specification for the Delta Transaction Protocol, which brings [ACID](https://en.wikipedia.org/wiki/ACID) properties to large collections of data, stored as files, in a distributed file system or object store. The protocol was designed with the following goals in mind:
 
