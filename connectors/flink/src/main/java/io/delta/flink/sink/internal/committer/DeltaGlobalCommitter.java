@@ -121,13 +121,12 @@ public class DeltaGlobalCommitter
             Configuration conf,
             Path basePath,
             RowType rowType,
-            boolean mergeSchema,
-            boolean useKernel) {
+            boolean mergeSchema) {
 
         this.conf = conf;
         this.rowType = rowType;
         this.mergeSchema = mergeSchema;
-        if (useKernel) {
+        if (conf.getBoolean("io.delta.flink.usekernel", false)) {
             this.deltaLog = KernelDeltaLogDelegator.forTable(conf, basePath.toString());
         } else {
             this.deltaLog = DeltaLog.forTable(conf,

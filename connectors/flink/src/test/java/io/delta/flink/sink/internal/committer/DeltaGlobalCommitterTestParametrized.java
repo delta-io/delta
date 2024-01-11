@@ -113,13 +113,11 @@ public class DeltaGlobalCommitterTestParametrized {
     @Test
     public void testCommitToDeltaTableInAppendMode() {
         //GIVEN
-        deltaLog.snapshot();
         DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
             DeltaTestUtils.getHadoopConf(),
             tablePath,
             rowTypeToCommit,
-            mergeSchema,
-            false); // useKernel
+            mergeSchema);
         int numAddedFiles = 3;
         List<DeltaGlobalCommittable> globalCommittables =
                 DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(numAddedFiles, partitionSpec);

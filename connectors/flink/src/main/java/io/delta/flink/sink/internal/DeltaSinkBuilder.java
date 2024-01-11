@@ -273,12 +273,7 @@ public class DeltaSinkBuilder<IN> implements Serializable {
     GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable>
         createGlobalCommitter() {
         return new DeltaGlobalCommitter(
-            serializableConfiguration.conf(),
-            tableBasePath,
-            rowType,
-            mergeSchema,
-            serializableConfiguration.conf().getBoolean("io.delta.flink.usekernel", false)
-          );
+            serializableConfiguration.conf(), tableBasePath, rowType, mergeSchema);
     }
 
     protected Path getTableBasePath() {

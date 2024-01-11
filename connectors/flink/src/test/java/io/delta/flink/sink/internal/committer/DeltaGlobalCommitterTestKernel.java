@@ -91,12 +91,13 @@ public class DeltaGlobalCommitterTestKernel {
     public void testWrongPartitionOrderWillFail() throws IOException {
         //GIVEN
         DeltaTestUtils.initTestForPartitionedTable(tablePath.getPath());
+        Configuration hadoopConfig = DeltaTestUtils.getHadoopConf();
+        hadoopConfig.setBoolean("io.delta.flink.usekernel", true);
         DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
-            DeltaTestUtils.getHadoopConf(),
+            hadoopConfig,
             tablePath,
             DeltaSinkTestUtils.TEST_ROW_TYPE,
-            false,// mergeSchema
-            true // useKernel
+            false // mergeSchema
         );
         // the order of below partition spec is different from the one used when initializing test
         // table
@@ -164,12 +165,13 @@ public class DeltaGlobalCommitterTestKernel {
 
         deltaLog.snapshot(); // force cache of current snapshot
 
+        Configuration hadoopConfig = DeltaTestUtils.getHadoopConf();
+        hadoopConfig.setBoolean("io.delta.flink.usekernel", true);
         DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
-            DeltaTestUtils.getHadoopConf(),
+            hadoopConfig,
             tablePath,
             updatedSchema,
-            true, // mergeSchema
-            true // useKernel
+            true // mergeSchema
         );
 
         // WHEN
@@ -217,14 +219,14 @@ public class DeltaGlobalCommitterTestKernel {
         // new schema adds a non-null column
         RowType updatedSchema2 = DeltaSinkTestUtils
                 .addNewColumnToSchema(DeltaSinkTestUtils.TEST_ROW_TYPE, false);
-
+        Configuration hadoopConfig = DeltaTestUtils.getHadoopConf();
+        hadoopConfig.setBoolean("io.delta.flink.usekernel", true);
         for (RowType newSchema: new RowType[]{updatedSchema1, updatedSchema2}) {
             DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
-                DeltaTestUtils.getHadoopConf(),
+                hadoopConfig,
                 tablePath,
                 newSchema,
-                true, // mergeSchema
-                true // useKernel
+                true // mergeSchema
             );
             // WHEN
             String errorMessage = assertThrows(
@@ -548,6 +550,7 @@ public class DeltaGlobalCommitterTestKernel {
         hadoopConfig.set("fs.defaultFS", "mockfs:///");
         hadoopConfig.setClass("fs.mockfs.impl",
                 FileSystemTestHelper.MockFileSystem.class, FileSystem.class);
+        hadoopConfig.setBoolean("io.delta.flink.usekernel", true);
 
         // create a globalCommitter that points to a local FS path (file:/// scheme). If
         // the path were to use the default filesystem (mockfs:///), it would return
@@ -558,8 +561,7 @@ public class DeltaGlobalCommitterTestKernel {
                 hadoopConfig,
                 tablePath,
                 DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE,
-                false, // mergeSchema
-                true // useKernel
+                false // mergeSchema
         );
 
         // WHEN
@@ -580,12 +582,13 @@ public class DeltaGlobalCommitterTestKernel {
     ///////////////////////////////////////////////////
 
     private DeltaGlobalCommitter getTestGlobalCommitter(RowType schema) {
+        Configuration hadoopConfig = DeltaTestUtils.getHadoopConf();
+        hadoopConfig.setBoolean("io.delta.flink.usekernel", true);
         return new DeltaGlobalCommitter(
-            DeltaTestUtils.getHadoopConf(),
+            hadoopConfig,
             tablePath,
             schema,
-            false, // mergeSchema
-            true // useKernel
+            false // mergeSchema
         );
     }
 
