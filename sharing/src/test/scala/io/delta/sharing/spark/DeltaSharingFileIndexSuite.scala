@@ -324,7 +324,7 @@ class DeltaSharingFileIndexSuite
                 1000
               )
               // sleep for expirationTimeMs to ensure that the urls are refreshed.
-              Thread.sleep(15000)
+              Thread.sleep(25000)
 
               // Verify that the url is refreshed as paths(1), not paths(0) anymore.
               assert(fetcher.getUrl == paths(1))
