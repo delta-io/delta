@@ -20,16 +20,5 @@ import com.typesafe.tools.mima.core._
  * The list of Mima errors to exclude in the Flink project.
  */
 object FlinkMimaExcludes {
-  val ignoredABIProblems = Seq(
-    // scalastyle:off line.size.limit
-
-    // Changes when adding kernel snapshots
-    ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.flink.source.internal.enumerator.supplier.BoundedSnapshotSupplierFactory.create"),
-    ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.flink.source.internal.enumerator.supplier.BoundedSourceSnapshotSupplier.this"),
-    ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.flink.source.internal.enumerator.supplier.ContinuousSnapshotSupplierFactory.create"),
-    ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.flink.source.internal.enumerator.supplier.ContinuousSourceSnapshotSupplier.this"),
-    ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.flink.source.internal.enumerator.supplier.SnapshotSupplierFactory.create"),
-    ProblemFilters.exclude[ReversedMissingMethodProblem]("io.delta.flink.source.internal.enumerator.supplier.SnapshotSupplierFactory.create"),
-    // scalastyle:on line.size.limit
-  )
+  val ignoredABIProblems = Seq()
 }
