@@ -153,36 +153,39 @@ class DeltaSharingDataSourceCMSuite
   private def testReadingSharedCMTable(
       tempDir: File,
       deltaTableName: String,
-      sharedTableName: String): Unit = {
+      sharedTableNameBase: String): Unit = {
+    val sharedTableNameBasic = sharedTableNameBase + "_one"
     prepareMockedClientAndFileSystemResult(
       deltaTable = deltaTableName,
-      sharedTable = sharedTableName
+      sharedTable = sharedTableNameBasic
     )
-    prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+    prepareMockedClientGetTableVersion(deltaTableName, sharedTableNameBasic)
 
     withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
       val profileFile = prepareProfileFile(tempDir)
       testReadCMTable(
         deltaTableName = deltaTableName,
-        sharedTablePath = s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName"
+        sharedTablePath = s"${profileFile.getCanonicalPath}#share1.default.$sharedTableNameBasic"
       )
     }
 
+    val sharedTableNameCdf = sharedTableNameBase + "_cdf"
     // Test CM and CDF
     // Error when reading cdf with startingVersion <= 2, matches delta behavior.
+    prepareMockedClientGetTableVersion(deltaTableName, sharedTableNameCdf)
     prepareMockedClientAndFileSystemResultForCdf(
       deltaTableName,
-      sharedTableName,
+      sharedTableNameCdf,
       startingVersion = 0
     )
     prepareMockedClientAndFileSystemResultForCdf(
       deltaTableName,
-      sharedTableName,
+      sharedTableNameCdf,
       startingVersion = 2
     )
     prepareMockedClientAndFileSystemResultForCdf(
       deltaTableName,
-      sharedTableName,
+      sharedTableNameCdf,
       startingVersion = 3
     )
 
@@ -190,33 +193,35 @@ class DeltaSharingDataSourceCMSuite
       val profileFile = prepareProfileFile(tempDir)
       testReadCMCdf(
         deltaTableName,
-        s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName",
+        s"${profileFile.getCanonicalPath}#share1.default.$sharedTableNameCdf",
         0
       )
       testReadCMCdf(
         deltaTableName,
-        s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName",
+        s"${profileFile.getCanonicalPath}#share1.default.$sharedTableNameCdf",
         2
       )
       testReadCMCdf(
         deltaTableName,
-        s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName",
+        s"${profileFile.getCanonicalPath}#share1.default.$sharedTableNameCdf",
         3
       )
     }
 
+    val sharedTableNameDrop = sharedTableNameBase + "_drop"
     // DROP COLUMN
     sql(s"ALTER TABLE $deltaTableName DROP COLUMN c1")
+    prepareMockedClientGetTableVersion(deltaTableName, sharedTableNameDrop)
     prepareMockedClientAndFileSystemResult(
       deltaTable = deltaTableName,
-      sharedTable = sharedTableName
+      sharedTable = sharedTableNameDrop
     )
-    prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+    prepareMockedClientGetTableVersion(deltaTableName, sharedTableNameDrop)
     withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
       val profileFile = prepareProfileFile(tempDir)
       testReadCMTable(
         deltaTableName = deltaTableName,
-        sharedTablePath = s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName",
+        sharedTablePath = s"${profileFile.getCanonicalPath}#share1.default.$sharedTableNameDrop",
         dropC1 = true
       )
     }
