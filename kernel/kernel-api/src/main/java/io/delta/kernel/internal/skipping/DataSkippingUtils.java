@@ -44,12 +44,13 @@ public class DataSkippingUtils {
     }
 
     /**
-     * Prunes the given schema to only include the referenced columns.
+     * Prunes the given schema to only include the referenced leaf columns. If a leaf column is a
+     * nested column it must be referenced using the full column path, e.g. "C_0.C_1.C_leaf"
      * @param schema the schema to prune
-     * @param referencedCols set of leaf columns in {@code schema}
+     * @param referencedLeafCols set of leaf columns in {@code schema}
      */
-    public static StructType pruneStatsSchema(StructType schema, Set<Column> referencedCols) {
-        return pruneSchema(schema, referencedCols, new String[0]);
+    public static StructType pruneStatsSchema(StructType schema, Set<Column> referencedLeafCols) {
+        return pruneSchema(schema, referencedLeafCols, new String[0]);
     }
 
     /**
@@ -315,23 +316,45 @@ public class DataSkippingUtils {
     }
 
     /**
-     * Prunes the given schema according to the provided set of top-level leaf columns to keep. The
-     * columns in {@code schema} are taken to be nested under {@code parentPath}.
+     * Prunes the given schema to include only the referenced leaf columns to keep. These leaf
+     * columns (possible nested) are relative to the root schema, not to the current level of
+     * recursion. {@code leafColumnsToKeep} is unchanged at any level of recursion.
+     * <p>
+     * For example consider the following schema:
+     * <pre>
+     * |--level1_struct: struct
+     * |   |--level2_struct: struct
+     * |       |--level3_struct: struct
+     * |           |--level_4_col: int
+     * |       |--level_3_col: int
+     * </pre>
+     * At the second level of recursion on field {@code level2_struct} we would have parameters
+     * <ol>
+     *     <li>leafColumnsToKeep=Set(Column(level1_struct.level2_struct.level_3_col))</li>
+     *     <li>schema:
+     *          <pre>
+     *          |--level3_struct: struct
+     *          |   |--level_4_col: int
+     *          |--level_3_col: int
+     *          </pre>
+     *     </li>
+     *     <li>parentPath=["level1_struct", "level2_struct"]</li>
+     * </ol>
      *
      * @param schema schema to prune
-     * @param columnsToKeep set of top-level leaf columns to keep
+     * @param leafColumnsToKeep set of top-level leaf columns to keep
      * @param parentPath parent path of the fields in {@code schema} relative to the top-level
      *                   schema
      */
     private static StructType pruneSchema(
-            StructType schema, Set<Column> columnsToKeep, String[] parentPath) {
+            Set<Column> leafColumnsToKeep, StructType schema, String[] parentPath) {
         List<StructField> prunedFields = new ArrayList<>();
         for (StructField field : schema.fields()) {
             String[] colPath = appendArray(parentPath, field.getName());
             if (field.getDataType() instanceof StructType) {
                 StructType prunedNestedSchema = pruneSchema(
+                    leafColumnsToKeep,
                     (StructType) field.getDataType(),
-                    columnsToKeep,
                     colPath
                 );
                 if (prunedNestedSchema.length() > 0) {
@@ -345,7 +368,7 @@ public class DataSkippingUtils {
                     );
                 }
             } else {
-                if (columnsToKeep.contains(new Column(colPath))) {
+                if (leafColumnsToKeep.contains(new Column(colPath))) {
                     prunedFields.add(field);
                 }
             }
