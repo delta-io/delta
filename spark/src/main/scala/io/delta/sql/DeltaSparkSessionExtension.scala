@@ -27,6 +27,7 @@ import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.PreprocessTimeTravel
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.internal.SQLConf
 
 /**
@@ -145,8 +146,9 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
         try {
           // Inject the PrepareDeltaSharingScan rule if enabled, otherwise, inject the no op
           // rule. It can be disabled if there are any issues so all existing rules are not blocked.
-          if (session.conf.getOption("spark.sql.delta.sharing.enableDeltaFormatBatch")
-            .contains("true")) {
+          if (
+            session.conf.get(DeltaSQLConf.DELTA_SHARING_ENABLE_DELTA_FORMAT_BATCH.key) == "true"
+          ) {
             constructor.newInstance(session).asInstanceOf[Rule[LogicalPlan]]
           } else {
             new NoOpRule

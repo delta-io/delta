@@ -1458,6 +1458,17 @@ trait DeltaSQLConfBase {
         "'clusteredTable.numClusteringColumnsLimit' must be positive."
       )
     .createWithDefault(4)
+
+  //////////////////
+  // Delta Sharing
+  //////////////////
+
+  val DELTA_SHARING_ENABLE_DELTA_FORMAT_BATCH =
+    buildConf("spark.sql.delta.sharing.enableDeltaFormatBatch")
+      .doc("Enable delta format sharing in case of issues.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
