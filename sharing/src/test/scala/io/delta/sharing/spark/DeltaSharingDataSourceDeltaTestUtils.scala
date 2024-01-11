@@ -48,13 +48,19 @@ import io.delta.sharing.spark.model.{
   DeltaSharingProtocol
 }
 import org.apache.commons.io.FileUtils
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 
 trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    // close DeltaSharingFileSystem to avoid impact from other unit tests.
+    FileSystem.closeAll()
+  }
 
   override protected def sparkConf: SparkConf = {
     super.sparkConf

@@ -25,7 +25,6 @@ import org.apache.spark.sql.delta.DeltaOptions.{
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.sharing.client.DeltaSharingRestClient
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
-import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkEnv
@@ -49,11 +48,6 @@ class DeltaFormatSharingSourceSuite
     with DeltaSharingDataSourceDeltaTestUtils {
 
   import testImplicits._
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    FileSystem.closeAll()
-  }
 
   private def getSource(parameters: Map[String, String]): DeltaFormatSharingSource = {
     val options = new DeltaSharingOptions(parameters)

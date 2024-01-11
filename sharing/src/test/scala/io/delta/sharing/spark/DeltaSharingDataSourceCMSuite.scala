@@ -26,7 +26,6 @@ import org.apache.spark.sql.delta.{
 }
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.hadoop.fs.FileSystem
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.streaming.{StreamingQueryException, StreamTest, Trigger}
@@ -40,11 +39,6 @@ class DeltaSharingDataSourceCMSuite
     with DeltaSharingDataSourceDeltaTestUtils {
 
   import testImplicits._
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    FileSystem.closeAll()
-  }
 
   override def beforeEach(): Unit = {
     super.beforeEach()
