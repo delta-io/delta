@@ -46,8 +46,6 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
  * Implementation of {@link Scan}
  */
 public class ScanImpl implements Scan {
-    private static final Logger logger = LoggerFactory.getLogger(ScanImpl.class);
-
     /**
      * Schema of the snapshot from the Delta log being scanned in this scan. It is a logical schema
      * with metadata properties to derive the physical schema.
