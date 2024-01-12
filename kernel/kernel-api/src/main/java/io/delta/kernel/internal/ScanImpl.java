@@ -19,9 +19,6 @@ import java.io.IOException;
 import java.util.*;
 import static java.util.stream.Collectors.toMap;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
@@ -46,8 +43,6 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
  * Implementation of {@link Scan}
  */
 public class ScanImpl implements Scan {
-    private static final Logger logger = LoggerFactory.getLogger(ScanImpl.class);
-
     /**
      * Schema of the snapshot from the Delta log being scanned in this scan. It is a logical schema
      * with metadata properties to derive the physical schema.
