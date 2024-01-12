@@ -15,29 +15,48 @@
  */
 package io.delta.kernel.internal.skipping;
 
-import java.util.Collections;
-import java.util.Set;
+import java.util.*;
 
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
 
 /**
- * Used to hold a pair of {@link Predicate} expression and {@link Set<Column>} of columns referenced
- * by the expression.
+ * A {@link Predicate} with a set of {@link Set<Column>} of columns referenced by the expression.
  */
-public class DataSkippingPredicate {
+public class DataSkippingPredicate extends Predicate {
 
-    private final Predicate predicate;
-    /** Set of {@link Column}s referenced by {@code predicate} or any of its child expressions */
+    /** Set of {@link Column}s referenced by the predicate or any of its child expressions */
     private final Set<Column> referencedCols;
 
-    DataSkippingPredicate(Predicate predicate, Set<Column> referencedCols) {
-        this.predicate = predicate;
+    /**
+     * @param name the predicate name
+     * @param children list of expressions that are input to this predicate.
+     * @param referencedCols set of columns referenced by this predicate or any of its child
+     *                       expressions
+     */
+    DataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols) {
+        super(name, children);
         this.referencedCols = Collections.unmodifiableSet(referencedCols);
     }
 
-    public Predicate getPredicate() {
-        return predicate;
+    /**
+     * Constructor for a binary {@link DataSkippingPredicate} where both children are instances of
+     * {@link DataSkippingPredicate}.
+     * @param name the predicate name
+     * @param left left input to this predicate
+     * @param right right input to this predicate
+     */
+    DataSkippingPredicate(String name, DataSkippingPredicate left, DataSkippingPredicate right) {
+        this(
+            name,
+            Arrays.asList(left, right),
+            new HashSet<Column>(){
+                {
+                    addAll(left.getReferencedCols());
+                    addAll(right.getReferencedCols());
+                }
+            });
     }
 
     public Set<Column> getReferencedCols() {

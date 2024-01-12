@@ -185,7 +185,8 @@ public class DataSkippingUtils {
                 Optional<DataSkippingPredicate> e2AndFilter = constructDataSkippingFilter(
                     asPredicate(getRight(dataFilters)), schemaHelper);
                 if (e1AndFilter.isPresent() && e2AndFilter.isPresent()) {
-                    return Optional.of(and(e1AndFilter.get(), e2AndFilter.get()));
+                    return Optional.of(
+                        new DataSkippingPredicate("AND", e1AndFilter.get(), e2AndFilter.get()));
                 } else if (e1AndFilter.isPresent()) {
                     return e1AndFilter;
                 } else {
@@ -210,7 +211,8 @@ public class DataSkippingUtils {
                 Optional<DataSkippingPredicate> e2OrFilter = constructDataSkippingFilter(
                     asPredicate(getRight(dataFilters)), schemaHelper);
                 if (e1OrFilter.isPresent() && e2OrFilter.isPresent()) {
-                    return Optional.of(or(e1OrFilter.get(), e2OrFilter.get()));
+                    return Optional.of(
+                        new DataSkippingPredicate("OR", e1OrFilter.get(), e2OrFilter.get()));
                 } else {
                     return Optional.empty();
                 }
@@ -251,7 +253,8 @@ public class DataSkippingUtils {
             // Match any file whose min/max range contains the requested point.
             case "=":
                 // For example a = 1 --> minValue.a <= 1 AND maxValue.a >= 1
-                return and(
+                return new DataSkippingPredicate(
+                    "AND",
                     constructBinaryDataSkippingPredicate(
                         "<=", schemaHelper.getMinColumn(leftCol), rightLit),
                     constructBinaryDataSkippingPredicate(
@@ -293,50 +296,11 @@ public class DataSkippingUtils {
             Column col,
             Literal lit) {
         return new DataSkippingPredicate(
-            new Predicate(exprName,  col, lit),
+            exprName,
+            Arrays.asList(col, lit),
             new HashSet<Column>(){
                 {
                     add(col);
-                }
-            }
-        );
-    }
-
-    /**
-     * Given two {@link DataSkippingPredicate}s constructs the {@link DataSkippingPredicate}
-     * representing the AND expression of {@code left} and {@code right}.
-     */
-    private static DataSkippingPredicate and(
-            DataSkippingPredicate left, DataSkippingPredicate right) {
-        return new DataSkippingPredicate(
-            new And(
-                left.getPredicate(),
-                right.getPredicate()
-            ),
-            new HashSet<Column>() {
-                {
-                    addAll(left.getReferencedCols());
-                    addAll(right.getReferencedCols());
-                }
-            }
-        );
-    }
-
-    /**
-     * Given two {@link DataSkippingPredicate}s constructs the {@link DataSkippingPredicate}
-     * representing the OR expression of {@code left} and {@code right}.
-     */
-    private static DataSkippingPredicate or(
-        DataSkippingPredicate left, DataSkippingPredicate right) {
-        return new DataSkippingPredicate(
-            new Or(
-                left.getPredicate(),
-                right.getPredicate()
-            ),
-            new HashSet<Column>() {
-                {
-                    addAll(left.getReferencedCols());
-                    addAll(right.getReferencedCols());
                 }
             }
         );
@@ -417,7 +381,8 @@ public class DataSkippingUtils {
                         // rejected point.
                         // For example a != 1 --> minValue.a < 1 OR maxValue.a > 1
                         return Optional.of(
-                            or(
+                            new DataSkippingPredicate(
+                                "OR",
                                 constructBinaryDataSkippingPredicate(
                                     "<", schemaHelper.getMinColumn(leftCol), rightLit),
                                 constructBinaryDataSkippingPredicate(
