@@ -17,7 +17,6 @@ package io.delta.kernel.internal.skipping;
 
 import java.util.*;
 
-
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;

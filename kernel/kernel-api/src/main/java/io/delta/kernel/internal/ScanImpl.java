@@ -17,7 +17,6 @@ package io.delta.kernel.internal;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.stream.Collectors;
 import static java.util.stream.Collectors.toMap;
 
 import org.slf4j.Logger;
@@ -42,7 +41,6 @@ import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
 import static io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * Implementation of {@link Scan}

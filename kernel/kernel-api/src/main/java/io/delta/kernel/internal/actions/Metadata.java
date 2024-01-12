@@ -110,7 +110,8 @@ public class Metadata {
         this.partitionColNames = new Lazy<>(() -> loadPartitionColNames());
         this.dataSchema = new Lazy<>(() ->
             new StructType(schema.fields().stream()
-                .filter(field -> !partitionColNames.get().contains(field.getName().toLowerCase(Locale.ROOT)))
+                .filter(field ->
+                    !partitionColNames.get().contains(field.getName().toLowerCase(Locale.ROOT)))
                 .collect(Collectors.toList())));
     }
 
