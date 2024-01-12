@@ -15,3 +15,6 @@ jobs:
       - name: Run tests
         run: |
           python run-tests.py --group kernel --coverage
+      - name: Run integration tests
+        run: |
+          cd kernel/examples && python run-kernel-examples.py --use-local
