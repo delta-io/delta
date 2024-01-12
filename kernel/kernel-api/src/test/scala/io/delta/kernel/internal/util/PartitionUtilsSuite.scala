@@ -29,15 +29,25 @@ class PartitionUtilsSuite extends AnyFunSuite {
   // Table schema
   // Data columns: data1: int, data2: string, date3: struct(data31: boolean, data32: long)
   // Partition columns: part1: int, part2: date, part3: string
-  private val partitionColsToType = new util.HashMap[String, DataType]() {
+  val tableSchema = new StructType()
+    .add("data1", IntegerType.INTEGER)
+    .add("data2", StringType.STRING)
+    .add("data3", new StructType()
+      .add("data31", BooleanType.BOOLEAN)
+      .add("data32", LongType.LONG))
+    .add("part1", IntegerType.INTEGER)
+    .add("part2", DateType.DATE)
+    .add("part3", StringType.STRING)
+
+  private val partitionColsMetadata = new util.HashMap[String, StructField]() {
     {
-      put("part1", IntegerType.INTEGER)
-      put("part2", DateType.DATE)
-      put("part3", StringType.STRING)
+      put("part1", tableSchema.get("part1"))
+      put("part2", tableSchema.get("part2"))
+      put("part3", tableSchema.get("part3"))
     }
   }
 
-  private val partitionCols: java.util.Set[String] = partitionColsToType.keySet()
+  private val partitionCols: java.util.Set[String] = partitionColsMetadata.keySet()
 
   // Test cases for verifying partition of predicate into data and partition predicates
   // Map entry format (predicate -> (partition predicate, data predicate)
@@ -169,7 +179,7 @@ class PartitionUtilsSuite extends AnyFunSuite {
     case (predicate, expRewrittenPredicate) =>
       test(s"rewrite partition predicate on scan file schema: $predicate") {
         val actRewrittenPredicate =
-          rewritePartitionPredicateOnScanFileSchema(predicate, partitionColsToType)
+          rewritePartitionPredicateOnScanFileSchema(predicate, partitionColsMetadata)
         assert(actRewrittenPredicate.toString === expRewrittenPredicate)
       }
   }
