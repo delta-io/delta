@@ -36,11 +36,11 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.skipping.DataSkippingPredicate;
 import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
 import static io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * Implementation of {@link Scan}
@@ -61,8 +61,6 @@ public class ScanImpl implements Scan {
     private final LogReplay logReplay;
     private final Path dataPath;
     private final Optional<Tuple2<Predicate, Predicate>> partitionAndDataFilters;
-    // Partition column names in lower case.
-    private final Set<String> partitionColumnNames;
     private boolean accessedScanFiles;
 
     public ScanImpl(
@@ -78,7 +76,6 @@ public class ScanImpl implements Scan {
         this.protocol = protocol;
         this.metadata = metadata;
         this.logReplay = logReplay;
-        this.partitionColumnNames = loadPartitionColNames(); // must be called before `splitFilters`
         this.partitionAndDataFilters = splitFilters(filter);
         this.dataPath = dataPath;
     }
@@ -96,7 +93,7 @@ public class ScanImpl implements Scan {
         accessedScanFiles = true;
 
         // Generate data skipping filter and decide if we should read the stats column
-        Optional<Predicate> dataSkippingFilter = getDataSkippingFilter();
+        Optional<DataSkippingPredicate> dataSkippingFilter = getDataSkippingFilter();
         boolean shouldReadStats = dataSkippingFilter.isPresent();
 
         // Get active AddFiles via log replay
@@ -156,7 +153,8 @@ public class ScanImpl implements Scan {
 
     private Optional<Tuple2<Predicate, Predicate>> splitFilters(Optional<Predicate> filter) {
         return filter.map(predicate ->
-            PartitionUtils.splitMetadataAndDataPredicates(predicate, partitionColumnNames));
+            PartitionUtils.splitMetadataAndDataPredicates(
+                predicate, metadata.getPartitionColNames()));
     }
 
     private Optional<Predicate> getDataFilters() {
@@ -184,7 +182,7 @@ public class ScanImpl implements Scan {
             return scanFileIter;
         }
 
-        Set<String> partitionColNames = partitionColumnNames;
+        Set<String> partitionColNames = metadata.getPartitionColNames();
         Map<String, DataType> partitionColNameToTypeMap = metadata.getSchema().fields().stream()
             .filter(field -> partitionColNames.contains(field.getName()))
             .collect(toMap(
@@ -227,19 +225,22 @@ public class ScanImpl implements Scan {
         };
     }
 
-    private Optional<Predicate> getDataSkippingFilter() {
+    private Optional<DataSkippingPredicate> getDataSkippingFilter() {
         return getDataFilters().flatMap(dataFilters ->
-            DataSkippingUtils.constructDataSkippingFilter(dataFilters, metadata.getSchema())
+            DataSkippingUtils.constructDataSkippingFilter(dataFilters, metadata.getDataSchema())
         );
     }
 
     private CloseableIterator<FilteredColumnarBatch> applyDataSkipping(
             TableClient tableClient,
             CloseableIterator<FilteredColumnarBatch> scanFileIter,
-            Predicate dataSkippingFilter) {
+            DataSkippingPredicate dataSkippingFilter) {
         // Get the stats schema
-        // TODO prune stats schema according to the data skipping filter delta-io/delta#2458
-        StructType statsSchema = getStatsSchema(metadata.getSchema());
+        // It's possible to instead provide the referenced columns when building the schema but
+        // pruning it after is much simpler
+        StructType prunedStatsSchema = DataSkippingUtils.pruneStatsSchema(
+            getStatsSchema(metadata.getDataSchema()),
+            dataSkippingFilter.getReferencedCols());
 
         // Skipping happens in two steps:
         // 1. The predicate produces false for any file whose stats prove we can safely skip it. A
@@ -255,7 +256,7 @@ public class ScanImpl implements Scan {
 
         PredicateEvaluator predicateEvaluator = tableClient
             .getExpressionHandler()
-            .getPredicateEvaluator(statsSchema, filterToEval);
+            .getPredicateEvaluator(prunedStatsSchema, filterToEval);
 
         return scanFileIter.map(filteredScanFileBatch -> {
 
@@ -263,7 +264,7 @@ public class ScanImpl implements Scan {
                 DataSkippingUtils.parseJsonStats(
                     tableClient,
                     filteredScanFileBatch,
-                    statsSchema
+                    prunedStatsSchema
                 ),
                 filteredScanFileBatch.getSelectionVector());
 
@@ -272,23 +273,5 @@ public class ScanImpl implements Scan {
                 Optional.of(newSelectionVector));
             }
         );
-    }
-
-    /**
-     * Helper method to load the partition column names from the metadata.
-     */
-    private Set<String> loadPartitionColNames() {
-        ArrayValue partitionColValue = metadata.getPartitionColumns();
-        ColumnVector partitionColNameVector = partitionColValue.getElements();
-        Set<String> partitionColumnNames = new HashSet<>();
-        for (int i = 0; i < partitionColValue.getSize(); i++) {
-            checkArgument(!partitionColNameVector.isNullAt(i),
-                "Expected a non-null partition column name");
-            String partitionColName = partitionColNameVector.getString(i);
-            checkArgument(partitionColName != null && !partitionColName.isEmpty(),
-                "Expected non-null and non-empty partition column name");
-            partitionColumnNames.add(partitionColName.toLowerCase(Locale.ENGLISH));
-        }
-        return Collections.unmodifiableSet(partitionColumnNames);
     }
 }
