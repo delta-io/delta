@@ -22,7 +22,7 @@ import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
 
 /**
- * A {@link Predicate} with a set of {@link Set<Column>} of columns referenced by the expression.
+ * A {@link Predicate} with a set of columns referenced by the expression.
  */
 public class DataSkippingPredicate extends Predicate {
 
