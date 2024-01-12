@@ -378,6 +378,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
     val commitInfoFile = CommitInfo(
       version = Some(0L),
+      None,
       timestamp = new Timestamp(1540415658000L),
       userId = Some("user_0"),
       userName = Some("username_0"),
