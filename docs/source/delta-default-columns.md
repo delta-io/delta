@@ -4,7 +4,7 @@ description: Learn about default column values in Delta.
 
 # Delta default column values
 
-.. note:: This feature is available in <Delta> 2.3.0 and above and is enabled using the `allowColumnDefaults` writer [table feature](#versioning).
+.. note:: This feature is available in <Delta> 3.1.0 and above and is enabled using the `allowColumnDefaults` writer [table feature](#versioning).
 
 Delta enables the specification of [default expressions](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#default-columns) for columns in Delta tables. When users write to these tables without explicitly providing values for certain columns, or when they explicitly use the DEFAULT SQL keyword for a column, Delta automatically generates default values for those columns.
 
@@ -12,7 +12,7 @@ This information is stored in the [StructField](https://github.com/delta-io/delt
 
 ## How to enable <Delta> default column values
 
-.. important:: Enabling default column values for a table upgrades the Delta [table version](versioning.md) as a byproduct of enabling [table features](#versioning). This protocol upgrade is irreversible. Tables with default column values enabled can only be read in <Delta> 2.3 and above.
+.. important:: Enabling default column values for a table upgrades the Delta [table version](versioning.md) as a byproduct of enabling [table features](#versioning). This protocol upgrade is irreversible. Tables with default column values enabled can only be read in <Delta> 3.1 and above.
 
 You can enable default column values for a table by setting `delta.feature.allowColumnDefaults` to `enabled`:
 
