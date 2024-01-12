@@ -117,7 +117,8 @@ case class WriteIntoDelta(
   override def write(
       txn: OptimisticTransaction,
       sparkSession: SparkSession,
-      clusterBySpecOpt: Option[ClusterBySpec] = None): Seq[Action] = {
+      clusterBySpecOpt: Option[ClusterBySpec] = None,
+      isTableReplace: Boolean = false): Seq[Action] = {
     import org.apache.spark.sql.delta.implicits._
     if (txn.readVersion > -1) {
       // This table already exists, check if the insert is valid.
@@ -175,6 +176,9 @@ case class WriteIntoDelta(
       if (txn.metadata.partitionColumns.isEmpty) {
         // We ignore dynamic partition overwrite mode for non-partitioned tables
         false
+      } else if (isTableReplace) {
+        // A replace table command should always replace the table, not just some partitions.
+        false
       } else if (options.replaceWhere.nonEmpty) {
         if (options.partitionOverwriteModeInOptions && options.isDynamicPartitionOverwriteMode) {
           // replaceWhere and dynamic partition overwrite conflict because they both specify which
@@ -188,7 +192,9 @@ case class WriteIntoDelta(
           // precedence over session configs
           false
         }
-      } else options.isDynamicPartitionOverwriteMode
+      } else {
+        options.isDynamicPartitionOverwriteMode
+      }
     }
 
     if (useDynamicPartitionOverwriteMode && canOverwriteSchema) {

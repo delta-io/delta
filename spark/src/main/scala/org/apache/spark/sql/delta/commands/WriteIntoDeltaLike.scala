@@ -61,7 +61,8 @@ trait WriteIntoDeltaLike {
   def write(
       txn: OptimisticTransaction,
       sparkSession: SparkSession,
-      clusterBySpecOpt: Option[ClusterBySpec] = None): Seq[Action]
+      clusterBySpecOpt: Option[ClusterBySpec] = None,
+      isTableReplace: Boolean = false): Seq[Action]
 
   val deltaLog: DeltaLog
 
