@@ -19,9 +19,6 @@ import java.io.IOException;
 import java.util.*;
 import static java.util.stream.Collectors.toMap;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
