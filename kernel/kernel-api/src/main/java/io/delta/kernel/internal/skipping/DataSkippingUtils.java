@@ -50,7 +50,7 @@ public class DataSkippingUtils {
      * @param referencedLeafCols set of leaf columns in {@code schema}
      */
     public static StructType pruneStatsSchema(StructType schema, Set<Column> referencedLeafCols) {
-        return pruneSchema(schema, referencedLeafCols, new String[0]);
+        return pruneSchema(referencedLeafCols, schema, new String[0]);
     }
 
     /**
@@ -181,16 +181,39 @@ public class DataSkippingUtils {
             // NOTE: AND is special -- we can safely skip the file if one leg does not evaluate to
             // TRUE, even if we cannot construct a skipping filter for the other leg.
             case "AND":
-                Optional<DataSkippingPredicate> e1Filter = constructDataSkippingFilter(
+                Optional<DataSkippingPredicate> e1AndFilter = constructDataSkippingFilter(
                     asPredicate(getLeft(dataFilters)), schemaHelper);
-                Optional<DataSkippingPredicate> e2Filter = constructDataSkippingFilter(
+                Optional<DataSkippingPredicate> e2AndFilter = constructDataSkippingFilter(
                     asPredicate(getRight(dataFilters)), schemaHelper);
-                if (e1Filter.isPresent() && e2Filter.isPresent()) {
-                    return Optional.of(and(e1Filter.get(), e2Filter.get()));
-                } else if (e1Filter.isPresent()) {
-                    return e1Filter;
+                if (e1AndFilter.isPresent() && e2AndFilter.isPresent()) {
+                    return Optional.of(and(e1AndFilter.get(), e2AndFilter.get()));
+                } else if (e1AndFilter.isPresent()) {
+                    return e1AndFilter;
                 } else {
-                    return e2Filter; // possibly none
+                    return e2AndFilter; // possibly none
+                }
+
+            // Push skipping predicate generation through OR (similar to AND case).
+            //
+            // constructDataFilters(OR(a, b))
+            // ==> OR(constructDataFilters(a), constructDataFilters(b))
+            //
+            // Similar to AND case, if the rewritten predicate does not evaluate to TRUE, then it
+            // means that neither `constructDataFilters(a)` nor `constructDataFilters(b)` evaluated
+            // to TRUE, which in turn means that neither `a` nor `b` could evaluate to TRUE for any
+            // row the file might contain, which proves we have a valid data skipping predicate.
+            //
+            // Unlike AND, a single leg of an OR expression provides no filtering power -- we can
+            // only reject a file if both legs evaluate to false.
+            case "OR":
+                Optional<DataSkippingPredicate> e1OrFilter = constructDataSkippingFilter(
+                    asPredicate(getLeft(dataFilters)), schemaHelper);
+                Optional<DataSkippingPredicate> e2OrFilter = constructDataSkippingFilter(
+                    asPredicate(getRight(dataFilters)), schemaHelper);
+                if (e1OrFilter.isPresent() && e2OrFilter.isPresent()) {
+                    return Optional.of(or(e1OrFilter.get(), e2OrFilter.get()));
+                } else {
+                    return Optional.empty();
                 }
 
             case "=": case "<": case "<=": case ">": case ">=":
@@ -210,9 +233,12 @@ public class DataSkippingUtils {
                         reverseComparatorFilter(dataFilters), schemaHelper);
                 }
                 break;
+
+            case "NOT":
+                return constructNotDataSkippingFilters(
+                    asPredicate(getUnaryChild(dataFilters)), schemaHelper);
+
             // TODO more expressions
-            default:
-                return Optional.empty();
         }
         return Optional.empty();
     }
@@ -297,6 +323,26 @@ public class DataSkippingUtils {
         );
     }
 
+    /**
+     * Given two {@link DataSkippingPredicate}s constructs the {@link DataSkippingPredicate}
+     * representing the OR expression of {@code left} and {@code right}.
+     */
+    private static DataSkippingPredicate or(
+        DataSkippingPredicate left, DataSkippingPredicate right) {
+        return new DataSkippingPredicate(
+            new Or(
+                left.getPredicate(),
+                right.getPredicate()
+            ),
+            new HashSet<Column>() {
+                {
+                    addAll(left.getReferencedCols());
+                    addAll(right.getReferencedCols());
+                }
+            }
+        );
+    }
+
     private static final Map<String, String> REVERSE_COMPARATORS = new HashMap<String, String>(){
         {
             put("=", "=");
@@ -313,6 +359,102 @@ public class DataSkippingUtils {
             getRight(predicate),
             getLeft(predicate)
         );
+    }
+
+    /** Construct the skipping predicate for a NOT expression child if possible */
+    private static Optional<DataSkippingPredicate> constructNotDataSkippingFilters(
+            Predicate childPredicate, StatsSchemaHelper schemaHelper) {
+        switch (childPredicate.getName().toUpperCase(Locale.ROOT)) {
+            // Use deMorgan's law to push the NOT past the AND. This is safe even with SQL
+            // tri-valued logic (see below), and is desirable because we cannot generally push
+            // predicate filters
+            // through NOT, but we *CAN* push predicate filters through AND and OR:
+            //
+            // constructDataFilters(NOT(AND(a, b)))
+            // ==> constructDataFilters(OR(NOT(a), NOT(b)))
+            // ==> OR(constructDataFilters(NOT(a)), constructDataFilters(NOT(b)))
+            //
+            // Assuming we can push the resulting NOT operations all the way down to some leaf
+            // operation it can fold into, the rewrite allows us to create a data skipping filter
+            // from the expression.
+            //
+            // a b AND(a, b)
+            // | | | NOT(AND(a, b))
+            // | | | | OR(NOT(a), NOT(b))
+            // T T T F F
+            // T F F T T
+            // T N N N N
+            // F F F T T
+            // F N F T T
+            // N N N N N
+            case "AND":
+                return constructDataSkippingFilter(
+                    new Or(
+                        new Predicate("NOT", asPredicate(getLeft(childPredicate))),
+                        new Predicate("NOT", asPredicate(getRight(childPredicate)))
+                    ),
+                    schemaHelper
+                );
+
+            // Similar to AND, we can (and want to) push the NOT past the OR using deMorgan's law.
+            case "OR":
+                return constructDataSkippingFilter(
+                    new And(
+                        new Predicate("NOT", asPredicate(getLeft(childPredicate))),
+                        new Predicate("NOT", asPredicate(getRight(childPredicate)))
+                    ),
+                    schemaHelper
+                );
+
+            case "=":
+                Expression left = getLeft(childPredicate);
+                Expression right = getRight(childPredicate);
+                if (left instanceof Column && right instanceof Literal) {
+                    Column leftCol = (Column) left;
+                    Literal rightLit = (Literal) right;
+                    if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol) &&
+                        schemaHelper.isSkippingEligibleLiteral(rightLit)) {
+                        // Match any file whose min/max range contains anything other than the
+                        // rejected point.
+                        // For example a != 1 --> minValue.a < 1 OR maxValue.a > 1
+                        return Optional.of(
+                            or(
+                                constructBinaryDataSkippingPredicate(
+                                    "<", schemaHelper.getMinColumn(leftCol), rightLit),
+                                constructBinaryDataSkippingPredicate(
+                                    ">", schemaHelper.getMaxColumn(leftCol), rightLit)
+                            )
+                        );
+                    }
+                } else if (right instanceof Column && left instanceof Literal) {
+                    return constructDataSkippingFilter(
+                        new Predicate("NOT", new Predicate("=", right, left)),
+                        schemaHelper);
+                }
+                break;
+            case "<":
+                return constructDataSkippingFilter(
+                    new Predicate(">=", childPredicate.getChildren()),
+                    schemaHelper);
+            case "<=":
+                return constructDataSkippingFilter(
+                    new Predicate(">", childPredicate.getChildren()),
+                    schemaHelper);
+            case ">":
+                return constructDataSkippingFilter(
+                    new Predicate("<=", childPredicate.getChildren()),
+                    schemaHelper);
+            case ">=":
+                return constructDataSkippingFilter(
+                    new Predicate("<", childPredicate.getChildren()),
+                    schemaHelper);
+            case "NOT":
+                // Remove redundant pairs of NOT
+                return constructDataSkippingFilter(
+                    asPredicate(getUnaryChild(childPredicate)),
+                    schemaHelper);
+        }
+        return Optional.empty();
     }
 
     /**
@@ -346,7 +488,7 @@ public class DataSkippingUtils {
      * @param parentPath parent path of the fields in {@code schema} relative to the schema root
      */
     private static StructType pruneSchema(
-            Set<Column> leafColumnsToKeep, StructType schema, String[] parentPath) {
+        Set<Column> leafColumnsToKeep, StructType schema, String[] parentPath) {
         List<StructField> prunedFields = new ArrayList<>();
         for (StructField field : schema.fields()) {
             String[] colPath = appendArray(parentPath, field.getName());
@@ -379,7 +521,7 @@ public class DataSkippingUtils {
      * Given an array {@code arr} and a string element {@code appendElem} return a new array with
      * {@code appendElem} inserted at the end
      */
-    private static String[] appendArray(String[] arr, String appendElem) {
+    private static String[] appendArray(String[] arr, String appendElem){
         String[] newNames = new String[arr.length + 1];
         System.arraycopy(arr, 0, newNames, 0, arr.length);
         newNames[arr.length] = appendElem;

@@ -53,4 +53,15 @@ public class ExpressionUtils {
             format("%s: expected two inputs, but got %s", expression, children.size()));
         return children.get(1);
     }
+
+    /**
+     * Utility method to return the single child of the unary input expression
+     */
+    public static Expression getUnaryChild(Expression expression) {
+        List<Expression> children = expression.getChildren();
+        checkArgument(
+            children.size() == 1,
+            format("%s: expected one inputs, but got %s", expression, children.size()));
+        return children.get(0);
+    }
 }

@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, DeltaInvariantCheckerExec}
+import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.perf.DeltaOptimizedWriterExec
 import org.apache.spark.sql.delta.schema._
@@ -451,7 +452,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       }
     }
 
-    val resultFiles =
+    var resultFiles =
       (if (optionalStatsTracker.isDefined) {
         committer.addedStatuses.map { a =>
           a.copy(stats = optionalStatsTracker.map(
@@ -472,6 +473,16 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       case _ => true
     }
 
+    // add [[AddFile.Tags.ICEBERG_COMPAT_VERSION.name]] tags to addFiles
+    if (IcebergCompatV2.isEnabled(metadata)) {
+      resultFiles = resultFiles.map { addFile =>
+        addFile.copy(tags = addFile.tags + (AddFile.Tags.ICEBERG_COMPAT_VERSION.name ->
+          "2"))
+      }
+    }
+
+
+    if (resultFiles.nonEmpty && !isOptimize) registerPostCommitHook(AutoCompact)
 
     resultFiles.toSeq ++ committer.changeFiles
   }
