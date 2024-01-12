@@ -16,17 +16,20 @@
 package io.delta.kernel.defaults
 
 import java.math.{BigDecimal => BigDecimalJ}
-
 import scala.collection.JavaConverters._
-
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.expressions.{Column, Expression, Predicate}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.types._
+import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.funsuite.AnyFunSuite
 
 class PartitionPruningSuite extends AnyFunSuite with TestUtils {
+
+  // scalastyle:off sparkimplicits
+  import spark.implicits._
+  // scalastyle:on sparkimplicits
 
   // Test golden table containing partition columns of all simple types
   val allTypesPartitionTable = goldenTablePath("data-reader-partition-values")
@@ -165,6 +168,32 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils {
           filter = predicate,
           expectedRemainingFilter = expRemainingFilter)
       }
+  }
+
+  Seq("name", "id").foreach { mode =>
+    test(s"partition pruning on a column mapping enabled table: mode = $mode") {
+      withTempDir { tempDir =>
+        val tablePath = tempDir.getCanonicalPath
+        spark.sql(
+          s"""CREATE TABLE delta.`$tablePath`(c1 long, c2 STRING, p1 STRING, p2 LONG)
+             | USING delta PARTITIONED BY (p1, p2)
+             | TBLPROPERTIES(
+             |'delta.columnMapping.mode' = '$mode',
+             |'delta.minReaderVersion' = '2',
+             |'delta.minWriterVersion' = '5')
+             |""".stripMargin)
+        Seq.range(0, 5).foreach { i =>
+          spark.sql(s"insert into delta.`$tablePath` values ($i, '$i', '$i', $i)")
+        }
+
+        checkTable(
+          tablePath,
+          expectedAnswer = Seq((3L, "3"), (4L, "4")).map(TestRow.fromTuple(_)),
+          readCols = Seq("p2", "c2"),
+          filter = predicate(">=", col("p2"), ofLong(3)),
+          expectedRemainingFilter = null)
+      }
+    }
   }
 
   private def col(names: String*): Column = new Column(names.toArray)
