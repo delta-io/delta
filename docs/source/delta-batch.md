@@ -407,6 +407,10 @@ You can use an [EXPLAIN](https://spark.apache.org/docs/latest/sql-ref-syntax-qry
 
 <a id="special-chars-in-col-name"></a>
 
+### Specify default values for columns
+
+Delta enables the specification of [default expressions](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#default-columns) for columns in Delta tables. When users write to these tables without explicitly providing values for certain columns, or when they explicitly use the DEFAULT SQL keyword for a column, Delta automatically generates default values for those columns. For more information, please refer to the [dedicated documentation page](#delta-default-columns).
+
 ### Use special characters in column names
 
 
