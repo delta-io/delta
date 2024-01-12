@@ -21,6 +21,7 @@ This is the documentation site for <Delta>.
     delta-utility
     delta-constraints
     versioning
+    delta-column-defaults
     delta-column-mapping
     delta-clustering
     delta-deletion-vectors
