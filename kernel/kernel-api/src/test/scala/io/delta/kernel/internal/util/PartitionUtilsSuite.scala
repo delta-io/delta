@@ -15,140 +15,188 @@
  */
 package io.delta.kernel.internal.util
 
+import io.delta.kernel.client.ExpressionHandler
+import io.delta.kernel.data.ColumnVector
+
 import java.util
-
 import scala.collection.JavaConverters._
-
 import io.delta.kernel.expressions._
 import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.internal.util.PartitionUtils.{rewritePartitionPredicateOnScanFileSchema, splitMetadataAndDataPredicates}
+import io.delta.kernel.internal.util.PartitionUtils.{rewritePartitionPredicateOnScanFileSchema, splitPredicates}
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
 class PartitionUtilsSuite extends AnyFunSuite {
   // Table schema
-  // Data columns: data1: int, data2: string, date3: struct(data31: boolean, data32: long)
-  // Partition columns: part1: int, part2: date, part3: string
+  // Data columns: d1: int, d2: string, date3: struct(d31: boolean, d32: long)
+  // Partition columns: p1: int, p2: date, p3: string
   val tableSchema = new StructType()
-    .add("data1", IntegerType.INTEGER)
-    .add("data2", StringType.STRING)
-    .add("data3", new StructType()
-      .add("data31", BooleanType.BOOLEAN)
-      .add("data32", LongType.LONG))
-    .add("part1", IntegerType.INTEGER)
-    .add("part2", DateType.DATE)
-    .add("part3", StringType.STRING)
+    .add("d1", IntegerType.INTEGER)
+    .add("d2", StringType.STRING)
+    .add("d3", new StructType()
+      .add("d31", BooleanType.BOOLEAN)
+      .add("d32", LongType.LONG))
+    .add("p1", IntegerType.INTEGER)
+    .add("p2", DateType.DATE)
+    .add("p3", StringType.STRING)
 
   private val partitionColsMetadata = new util.HashMap[String, StructField]() {
     {
-      put("part1", tableSchema.get("part1"))
-      put("part2", tableSchema.get("part2"))
-      put("part3", tableSchema.get("part3"))
+      put("p1", tableSchema.get("p1"))
+      put("p2", tableSchema.get("p2"))
+      put("p3", tableSchema.get("p3"))
     }
   }
 
   private val partitionCols: java.util.Set[String] = partitionColsMetadata.keySet()
 
-  // Test cases for verifying partition of predicate into data and partition predicates
-  // Map entry format (predicate -> (partition predicate, data predicate)
+  // Test cases for verifying query predicate is split into guaranteed and best effort predicates
+  // Map entry format (predicate -> (guaranteed predicate, best effort predicate)
   val partitionTestCases = Map[Predicate, (String, String)](
     // single predicate on a data column
-    predicate("=", col("data1"), ofInt(12)) ->
-      ("ALWAYS_TRUE()", "(column(`data1`) = 12)"),
+    eq(col("d1"), int(12)) -> ("ALWAYS_TRUE()", "(column(`d1`) = 12)"),
+
     // multiple predicates on data columns joined with AND
-    predicate("AND",
-      predicate("=", col("data1"), ofInt(12)),
-      predicate(">=", col("data2"), ofString("sss"))) ->
-      ("ALWAYS_TRUE()", "((column(`data1`) = 12) AND (column(`data2`) >= sss))"),
+    and(eq(col("d1"), int(12)), gte(col("d2"), str("sss"))) ->
+      ("ALWAYS_TRUE()", "((column(`d1`) = 12) AND (column(`d2`) >= sss))"),
+
     // multiple predicates on data columns joined with OR
-    predicate("OR",
-      predicate("<=", col("data2"), ofString("sss")),
-      predicate("=", col("data3", "data31"), ofBoolean(true))) ->
-      ("ALWAYS_TRUE()", "((column(`data2`) <= sss) OR (column(`data3`.`data31`) = true))"),
+    or(lte(col("d2"), str("sss")), eq(col("d3", "d31"), ofBoolean(true))) ->
+      ("ALWAYS_TRUE()", "((column(`d2`) <= sss) OR (column(`d3`.`d31`) = true))"),
+
     // single predicate on a partition column
-    predicate("=", col("part1"), ofInt(12)) ->
-      ("(column(`part1`) = 12)", "ALWAYS_TRUE()"),
+    eq(col("p1"), int(12)) -> ("(column(`p1`) = 12)", "ALWAYS_TRUE()"),
+
     // multiple predicates on partition columns joined with AND
-    predicate("AND",
-      predicate("=", col("part1"), ofInt(12)),
-      predicate(">=", col("part3"), ofString("sss"))) ->
-      ("((column(`part1`) = 12) AND (column(`part3`) >= sss))", "ALWAYS_TRUE()"),
+    and(eq(col("p1"), int(12)), gte(col("p3"), str("sss"))) ->
+      ("((column(`p1`) = 12) AND (column(`p3`) >= sss))", "ALWAYS_TRUE()"),
+
     // multiple predicates on partition columns joined with OR
-    predicate("OR",
-      predicate("<=", col("part3"), ofString("sss")),
-      predicate("=", col("part1"), ofInt(2781))) ->
-      ("((column(`part3`) <= sss) OR (column(`part1`) = 2781))", "ALWAYS_TRUE()"),
+    or(lte(col("p3"), str("sss")), eq(col("p1"), int(2781))) ->
+      ("((column(`p3`) <= sss) OR (column(`p1`) = 2781))", "ALWAYS_TRUE()"),
 
     // predicates (each on data and partition column) joined with AND
-    predicate("AND",
-      predicate("=", col("data1"), ofInt(12)),
-      predicate(">=", col("part3"), ofString("sss"))) ->
-      ("(column(`part3`) >= sss)", "(column(`data1`) = 12)"),
+    and(eq(col("d1"), int(12)), gte(col("p3"), str("sss"))) ->
+      ("(column(`p3`) >= sss)", "(column(`d1`) = 12)"),
 
     // predicates (each on data and partition column) joined with OR
-    predicate("OR",
-      predicate("=", col("data1"), ofInt(12)),
-      predicate(">=", col("part3"), ofString("sss"))) ->
-      ("ALWAYS_TRUE()", "((column(`data1`) = 12) OR (column(`part3`) >= sss))"),
+    or(eq(col("d1"), int(12)), gte(col("p3"), str("sss"))) ->
+      ("ALWAYS_TRUE()", "((column(`d1`) = 12) OR (column(`p3`) >= sss))"),
 
     // predicates (multiple on data and partition columns) joined with AND
-    predicate("AND",
-      predicate("AND",
-        predicate("=", col("data1"), ofInt(12)),
-        predicate(">=", col("data2"), ofString("sss"))),
-      predicate("AND",
-        predicate("=", col("part1"), ofInt(12)),
-        predicate(">=", col("part3"), ofString("sss")))) ->
+    and(
+      and(eq(col("d1"), int(12)), gte(col("d2"), str("sss"))),
+      and(eq(col("p1"), int(12)), gte(col("p3"), str("sss")))) ->
       (
-        "((column(`part1`) = 12) AND (column(`part3`) >= sss))",
-        "((column(`data1`) = 12) AND (column(`data2`) >= sss))"
+        "((column(`p1`) = 12) AND (column(`p3`) >= sss))",
+        "((column(`d1`) = 12) AND (column(`d2`) >= sss))"
       ),
 
     // predicates (multiple on data and partition columns joined with OR) joined with AND
-    predicate("AND",
-      predicate("OR",
-        predicate("=", col("data1"), ofInt(12)),
-        predicate(">=", col("data2"), ofString("sss"))),
-      predicate("OR",
-        predicate("=", col("part1"), ofInt(12)),
-        predicate(">=", col("part3"), ofString("sss")))) ->
+    and(
+      or(eq(col("d1"), int(12)), gte(col("d2"), str("sss"))),
+      or(eq(col("p1"), int(12)), gte(col("p3"), str("sss")))) ->
       (
-        "((column(`part1`) = 12) OR (column(`part3`) >= sss))",
-        "((column(`data1`) = 12) OR (column(`data2`) >= sss))"
+        "((column(`p1`) = 12) OR (column(`p3`) >= sss))",
+        "((column(`d1`) = 12) OR (column(`d2`) >= sss))"
       ),
 
     // predicates (multiple on data and partition columns joined with OR) joined with OR
-    predicate("OR",
-      predicate("OR",
-        predicate("=", col("data1"), ofInt(12)),
-        predicate(">=", col("data2"), ofString("sss"))),
-      predicate("OR",
-        predicate("=", col("part1"), ofInt(12)),
-        predicate(">=", col("part3"), ofString("sss")))) ->
+    or(
+      or(eq(col("d1"), int(12)), gte(col("d2"), str("sss"))),
+      or(eq(col("p1"), int(12)), gte(col("p3"), str("sss")))) ->
       (
         "ALWAYS_TRUE()",
-        "(((column(`data1`) = 12) OR (column(`data2`) >= sss)) OR " +
-          "((column(`part1`) = 12) OR (column(`part3`) >= sss)))"
+        "(((column(`d1`) = 12) OR (column(`d2`) >= sss)) OR " +
+          "((column(`p1`) = 12) OR (column(`p3`) >= sss)))"
       ),
 
     // predicates (data and partitions compared in the same expression)
-    predicate("AND",
-      predicate("=", col("data1"), col("part1")),
-      predicate(">=", col("part3"), ofString("sss"))) ->
+    and(eq(col("d1"), col("p1")), gte(col("p3"), str("sss"))) ->
       (
-        "(column(`part3`) >= sss)",
-        "(column(`data1`) = column(`part1`))"
+        "(column(`p3`) >= sss)",
+        "(column(`d1`) = column(`p1`))"
       ),
 
     // predicate only on data column but reverse order of literal and column
-    predicate("=", ofInt(12), col("data1")) ->
-      ("ALWAYS_TRUE()", "(12 = column(`data1`))")
+    eq(int(12), col("d1")) -> ("ALWAYS_TRUE()", "(12 = column(`d1`))"),
+
+    // just an unsupported predicate
+    unsupported("p1") -> ("ALWAYS_TRUE()", "UNSUPPORTED(column(`p1`))"),
+
+    // two unsupported predicates combined with AND and OR
+    and(unsupported("p1"), unsupported("d1")) ->
+      ("ALWAYS_TRUE()", "(UNSUPPORTED(column(`p1`)) AND UNSUPPORTED(column(`d1`)))"),
+    or(unsupported("p1"), unsupported("d1")) ->
+      ("ALWAYS_TRUE()", "(UNSUPPORTED(column(`p1`)) OR UNSUPPORTED(column(`d1`)))"),
+
+    // supported and unsupported predicates combined with a AND
+    and(unsupported("p1"), gte(col("p3"), str("sss"))) ->
+      ("(column(`p3`) >= sss)", "UNSUPPORTED(column(`p1`))"),
+    and(unsupported("p1"), gte(col("d3"), str("sss"))) ->
+      ("ALWAYS_TRUE()", "(UNSUPPORTED(column(`p1`)) AND (column(`d3`) >= sss))"),
+
+    // predicates (multiple supported and unsupported joined with AND) joined with AND
+    and(
+      and(eq(col("p1"), int(12)), gte(col("p3"), str("sss"))),
+      and(unsupported("p1"), unsupported("p3"))) ->
+      (
+        "((column(`p1`) = 12) AND (column(`p3`) >= sss))",
+        "(UNSUPPORTED(column(`p1`)) AND UNSUPPORTED(column(`p3`)))"
+      ),
+
+    // predicates (multiple supported and unsupported joined with AND) joined with AND
+    and(
+      and(eq(col("p1"), int(12)), gte(col("p3"), str("sss"))),
+      and(unsupported("d1"), unsupported("p3"))) ->
+      (
+        "((column(`p1`) = 12) AND (column(`p3`) >= sss))",
+        "(UNSUPPORTED(column(`d1`)) AND UNSUPPORTED(column(`p3`)))"
+      ),
+
+    // predicates (multiple supported and unsupported joined with AND) joined with AND
+    and(
+      and(eq(col("p1"), int(12)), gte(col("p3"), str("sss"))),
+      and(eq(col("p1"), int(12)), unsupported("p3"))) ->
+      (
+        "(((column(`p1`) = 12) AND (column(`p3`) >= sss)) AND (column(`p1`) = 12))",
+        "UNSUPPORTED(column(`p3`))"
+      ),
+
+    // predicates (multiple supported and unsupported joined with AND) joined with AND
+    and(
+      and(eq(col("p1"), int(14)), gte(col("p3"), str("sss"))),
+      and(eq(col("d1"), int(12)), unsupported("p3"))) ->
+      (
+        "((column(`p1`) = 14) AND (column(`p3`) >= sss))",
+        "((column(`d1`) = 12) AND UNSUPPORTED(column(`p3`)))"
+      ),
+
+    // predicates (multiple supported and unsupported joined with OR) joined with AND
+    and(
+      or(eq(col("p1"), int(12)), gte(col("p3"), str("sss"))),
+      or(unsupported("p1"), unsupported("p3"))) ->
+      (
+        "((column(`p1`) = 12) OR (column(`p3`) >= sss))",
+        "(UNSUPPORTED(column(`p1`)) OR UNSUPPORTED(column(`p3`)))"
+      ),
+
+    // predicates (multiple supported and unsupported joined with OR) joined with OR
+    or(
+      or(eq(col("p1"), int(12)), gte(col("p3"), str("sss"))),
+      or(unsupported("p1"), unsupported("p3"))) ->
+      (
+        "ALWAYS_TRUE()",
+        "(((column(`p1`) = 12) OR (column(`p3`) >= sss)) OR " +
+          "(UNSUPPORTED(column(`p1`)) OR UNSUPPORTED(column(`p3`))))"
+      )
   )
 
   partitionTestCases.foreach {
     case (predicate, (partitionPredicate, dataPredicate)) =>
-      test(s"split predicate into data and partition predicates: $predicate") {
-        val metadataAndDataPredicates = splitMetadataAndDataPredicates(predicate, partitionCols)
+      test(s"split predicate into guaranteed and best-effort predicates: $predicate") {
+        val metadataAndDataPredicates =
+          splitPredicates(defaultExprHandler, tableSchema, predicate, partitionCols)
         assert(metadataAndDataPredicates._1.toString === partitionPredicate)
         assert(metadataAndDataPredicates._2.toString === dataPredicate)
       }
@@ -157,21 +205,21 @@ class PartitionUtilsSuite extends AnyFunSuite {
   // Map entry format: (given predicate -> expected rewritten predicate)
   val rewriteTestCases = Map(
     // single predicate on a partition column
-    predicate("=", col("part2"), ofTimestamp(12)) ->
-      "(partition_value(ELEMENT_AT(column(`add`.`partitionValues`), part2), date) = 12)",
+    eq(col("p2"), ofTimestamp(12)) ->
+      "(partition_value(ELEMENT_AT(column(`add`.`partitionValues`), p2), date) = 12)",
     // multiple predicates on partition columns joined with AND
-    predicate("AND",
-      predicate("=", col("part1"), ofInt(12)),
-      predicate(">=", col("part3"), ofString("sss"))) ->
-      """((partition_value(ELEMENT_AT(column(`add`.`partitionValues`), part1), integer) = 12) AND
-        |(ELEMENT_AT(column(`add`.`partitionValues`), part3) >= sss))"""
+    and(
+      eq(col("p1"), int(12)),
+      gte(col("p3"), str("sss"))) ->
+      """((partition_value(ELEMENT_AT(column(`add`.`partitionValues`), p1), integer) = 12) AND
+        |(ELEMENT_AT(column(`add`.`partitionValues`), p3) >= sss))"""
         .stripMargin.replaceAll("\n", " "),
     // multiple predicates on partition columns joined with OR
-    predicate("OR",
-      predicate("<=", col("part3"), ofString("sss")),
-      predicate("=", col("part1"), ofInt(2781))) ->
-      """((ELEMENT_AT(column(`add`.`partitionValues`), part3) <= sss) OR
-        |(partition_value(ELEMENT_AT(column(`add`.`partitionValues`), part1), integer) = 2781))"""
+    or(
+      lte(col("p3"), str("sss")),
+      eq(col("p1"), int(2781))) ->
+      """((ELEMENT_AT(column(`add`.`partitionValues`), p3) <= sss) OR
+        |(partition_value(ELEMENT_AT(column(`add`.`partitionValues`), p1), integer) = 2781))"""
         .stripMargin.replaceAll("\n", " ")
   )
 
@@ -184,12 +232,47 @@ class PartitionUtilsSuite extends AnyFunSuite {
       }
   }
 
-  private def col(names: String*): Column = {
-    new Column(names.toArray)
+  val defaultExprHandler = new ExpressionHandler {
+    override def getEvaluator(inputSchema: StructType, expression: Expression, outputType: DataType)
+    : ExpressionEvaluator =
+      throw new UnsupportedOperationException("Not implemented")
+
+    override def isSupported(
+        inputSchema: StructType, expression: Expression, outputType: DataType): Boolean = {
+      hasSupportedExpr(expression)
+    }
+
+    override def getPredicateEvaluator(inputSchema: StructType, predicate: Predicate)
+    : PredicateEvaluator =
+      throw new UnsupportedOperationException("Not implemented")
+
+    override def createSelectionVector(values: Array[Boolean], from: Int, to: Int): ColumnVector =
+      throw new UnsupportedOperationException("Not implemented")
+
+    def hasSupportedExpr(expr: Expression): Boolean = {
+      expr match {
+        case _: Column | _: Literal => true
+        case pred: Predicate =>
+          pred.getName.toUpperCase() match {
+            case "AND" | "OR" | "=" | "!=" | ">" | ">=" | "<" | "<=" =>
+              !pred.getChildren.asScala.exists(!hasSupportedExpr(_))
+            case _ => false
+          }
+        case _ => false
+      }
+    }
   }
 
-  private def predicate(name: String, children: Expression*): Predicate = {
+  private def col(names: String*): Column = new Column(names.toArray)
+  private def predicate(name: String, children: Expression*): Predicate =
     new Predicate(name, children.asJava)
-  }
+  private def and(left: Predicate, right: Predicate): Predicate = predicate("AND", left, right)
+  private def or(left: Predicate, right: Predicate): Predicate = predicate("OR", left, right)
+  private def eq(left: Expression, right: Expression): Predicate = predicate("=", left, right)
+  private def gte(column: Column, literal: Literal): Predicate = predicate(">=", column, literal)
+  private def lte(column: Column, literal: Literal): Predicate = predicate("<=", column, literal)
+  private def int(value: Int): Literal = Literal.ofInt(value)
+  private def str(value: String): Literal = Literal.ofString(value)
+  private def unsupported(colName: String): Predicate = predicate("UNSUPPORTED", col(colName));
 }
 

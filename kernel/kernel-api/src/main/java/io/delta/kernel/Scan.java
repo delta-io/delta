@@ -93,9 +93,10 @@ public interface Scan {
      * Get the remaining filter that is not guaranteed to be satisfied for the data Delta Kernel
      * returns. This filter is used by Delta Kernel to do data skipping when possible.
      *
+     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @return the remaining filter as a {@link Predicate}.
      */
-    Optional<Predicate> getRemainingFilter();
+    Optional<Predicate> getRemainingFilter(TableClient tableClient);
 
     /**
      * Get the scan state associated with the current scan. This state is common across all

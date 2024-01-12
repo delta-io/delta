@@ -156,6 +156,58 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils {
     ) -> (
       predicate("=", col("as_value"), ofString("200")),
       Seq()
+    ),
+
+    (
+      "partition pruning: predicate with (unsupported expr OR data predicate)",
+      or(
+        predicate("=", col("as_value"), ofString("1")), // data col filter
+        predicate("unsupported") // unsupported expression
+      )
+    ) -> (
+      or(
+        predicate("=", col("as_value"), ofString("1")), // data col filter
+        predicate("unsupported") // unsupported expression
+      ),
+      Seq((18878, "0"), (18878, "1"), (null, "2"))
+    ),
+
+    (
+      "partition pruning: predicate with (unsupported expr OR partition predicate)",
+      or(
+        predicate("=", col("as_float"), ofFloat(1)), // partition col filter
+        predicate("unsupported") // unsupported expression
+      )
+    ) -> (
+      or(
+        predicate("=", col("as_float"), ofFloat(1)), // partition col filter
+        predicate("unsupported") // unsupported expression
+      ),
+      Seq((18878, "0"), (18878, "1"), (null, "2"))
+    ),
+    (
+      "partition pruning: predicate with (unsupported expr AND data predicate)",
+      and(
+        predicate("=", col("as_value"), ofString("1")), // data col filter
+        predicate("unsupported") // unsupported expression
+      )
+    ) -> (
+      and(
+        predicate("=", col("as_value"), ofString("1")), // data col filter
+        predicate("unsupported") // unsupported expression
+      ),
+      Seq((18878, "0"), (18878, "1"), (null, "2"))
+    ),
+
+    (
+      "partition pruning: predicate with (unsupported expr AND partition predicate)",
+      and(
+        predicate("=", col("as_float"), ofFloat(1)), // partition col filter
+        predicate("unsupported") // unsupported expression
+      )
+    ) -> (
+      predicate("unsupported"), // unsupported expression
+      Seq((18878, "1"))
     )
   )
 
