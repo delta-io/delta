@@ -72,6 +72,28 @@ For Scala, Java, and Python API syntax details, see the [_](delta-apidoc.md).\
 
 Readers of Delta tables use snapshot isolation, which means that they are not interrupted when `OPTIMIZE` removes unnecessary files from the transaction log. `OPTIMIZE` makes no data related changes to the table, so a read before and after an `OPTIMIZE` has the same results. Performing `OPTIMIZE` on a table that is a streaming source does not affect any current or future streams that treat this table as a source. `OPTIMIZE` returns the file statistics (min, max, total, and so on) for the files removed and the files added by the operation. Optimize stats also contains the number of batches, and partitions optimized.
 
+## Auto compaction
+
+.. note:: This feature is available in <Delta> 3.1.0 and above.
+
+Auto compaction combines small files within Delta table partitions to automatically reduce small file problems. Auto compaction occurs after a write to a table has succeeded and runs synchronously on the cluster that has performed the write. Auto compaction only compacts files that haven't been compacted previously.
+
+You can control the output file size by setting the configuration `spark.databricks.delta.autoCompact.maxFileSize`.
+
+Auto compaction is only triggered for partitions or tables that have at least a certain number of small files. You can optionally change the minimum number of files required to trigger auto compaction by setting `spark.databricks.delta.autoCompact.minNumFiles`.
+
+Auto compaction can be enabled at the table or session level using the following settings:
+
+- Table property: `delta.autoOptimize.autoCompact`
+- SparkSession setting: `spark.databricks.delta.autoCompact.enabled`
+
+These settings accept the following options:
+
+| Options | Behavior |
+| --- | --- |
+| `true` | Enable auto compaction. By default will use 128 MB as the target file size. |
+| `false` | Turns off auto compaction. Can be set at the session level to override auto compaction for all Delta tables modified in the workload. |
+
 ## Data skipping
 
 .. note:: This feature is available in <Delta> 1.2.0 and above.
