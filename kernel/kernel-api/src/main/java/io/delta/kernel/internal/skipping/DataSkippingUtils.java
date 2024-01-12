@@ -202,6 +202,23 @@ public class DataSkippingUtils {
                     return Optional.empty();
                 }
 
+            // Match any file whose null count is less than the row count.
+            case "IS_NOT_NULL":
+                Expression child = getUnaryChild(dataFilters);
+                if (child instanceof Column) {
+                    Column childColumn = (Column) child;
+                    if (schemaHelper.isSkippingEligibleNullCountColumn((Column) child)) {
+                        return Optional.of(
+                            new Predicate(
+                                "<",
+                                schemaHelper.getNullCountColumn(childColumn),
+                                schemaHelper.getNumRecordsColumn()
+                            )
+                        );
+                    }
+                }
+                break;
+
             case "=": case "<": case "<=": case ">": case ">=":
                 Expression left = getLeft(dataFilters);
                 Expression right = getRight(dataFilters);
@@ -331,6 +348,11 @@ public class DataSkippingUtils {
                     ),
                     schemaHelper
                 );
+
+            case "IS_NOT_NULL":
+                return constructDataSkippingFilter(
+                    new Predicate("IS_NULL", getUnaryChild(childPredicate)),
+                    schemaHelper);
 
             case "=":
                 Expression left = getLeft(childPredicate);
