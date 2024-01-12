@@ -138,11 +138,32 @@ public class StatsSchemaHelper {
         return getStatsColumn(column, MIN);
     }
 
-    /** Given a logical column returns corresponding the MAX column in the statistic schema */
+    /**
+     * Given a logical column in the data schema provided when creating {@code this}, return
+     * the corresponding MAX column in the statistic schema that stores the MAX values for the
+     * provided logical column.
+     */
     public Column getMaxColumn(Column column) {
         checkArgument(isSkippingEligibleMinMaxColumn(column),
             String.format("%s is not a valid min column for data schema %s", column, dataSchema));
         return getStatsColumn(column, MAX);
+    }
+
+    /**
+     * Given a logical column in the data schema provided when creating {@code this}, return
+     * the corresponding NULL_COUNT column in the statistic schema that stores the null count values
+     * for the provided logical column.
+     */
+    public Column getNullCountColumn(Column column) {
+        checkArgument(isSkippingEligibleNullCountColumn(column),
+            String.format(
+                "%s is not a valid null_count column for data schema %s", column, dataSchema));
+        return getStatsColumn(column, NULL_COUNT);
+    }
+
+    /** Returns the NUM_RECORDS column in the statistic schema */
+    public Column getNumRecordsColumn() {
+        return new Column(NUM_RECORDS);
     }
 
     /**
