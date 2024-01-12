@@ -48,7 +48,7 @@ import io.delta.sharing.spark.model.{
   DeltaSharingProtocol
 }
 import org.apache.commons.io.FileUtils
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -56,12 +56,18 @@ import org.apache.spark.sql.test.SharedSparkSession
 
 trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
 
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    // close DeltaSharingFileSystem to avoid impact from other unit tests.
+    FileSystem.closeAll()
+  }
+
   override protected def sparkConf: SparkConf = {
     super.sparkConf
-      .set("spark.delta.sharing.preSignedUrl.expirationMs", "15000")
-      .set("spark.delta.sharing.driver.refreshCheckIntervalMs", "5000")
+      .set("spark.delta.sharing.preSignedUrl.expirationMs", "30000")
+      .set("spark.delta.sharing.driver.refreshCheckIntervalMs", "3000")
       .set("spark.delta.sharing.driver.refreshThresholdMs", "10000")
-      .set("spark.delta.sharing.driver.accessThresholdToExpireMs", "120000")
+      .set("spark.delta.sharing.driver.accessThresholdToExpireMs", "300000")
   }
 
   private[spark] def removePartitionPrefix(filePath: String): String = {

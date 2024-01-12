@@ -393,9 +393,10 @@ class DeltaTable(object):
         cls, sparkSession: SparkSession, tableOrViewName: str
     ) -> "DeltaTable":
         """
-        Instantiate a :class:`DeltaTable` object using the given table or view name. If the given
+        Instantiate a :class:`DeltaTable` object using the given table name. If the given
         tableOrViewName is invalid (i.e. either no table exists or an existing table is not a
-        Delta table), it throws a `not a Delta table` error.
+        Delta table), it throws a `not a Delta table` error. Note: Passing a view name will
+        also result in this error as views are not supported.
 
         The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
         delta.`path`), If so, instantiate a :class:`DeltaTable` object representing the data at
