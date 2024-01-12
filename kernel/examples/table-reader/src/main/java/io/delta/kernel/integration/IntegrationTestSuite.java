@@ -100,16 +100,29 @@ public class IntegrationTestSuite {
                     Literal.ofDecimal(new BigDecimal("2342222.23454"), 12, 5)))),
             1 /* expected row count */);
 
-        // Partition pruning: filter on data and metadata columns
+        // Partition pruning: filter on data and metadata columns where
+        // data filter doesn't prune anything
         runAndVerifyRowCount(
-            "partition_pruning_filter_on_data_and_metadata_columns",
+            "partition_pruning_filter_on_data_and_metadata_columns_1",
             "dv-partitioned-with-checkpoint",
             Optional.of(asList("part", "col2")), /* read schema */
             Optional.of(
                 new And(
                     new Predicate(">=", asList(new Column("part"), Literal.ofInt(7))),
-                    new Predicate("=", asList(new Column("col1"), Literal.ofInt(0))))),
+                    new Predicate(">=", asList(new Column("col1"), Literal.ofInt(0))))),
             12 /* expected row count */);
+
+        // Partition pruning: filter on data and metadata columns where
+        // data filter also prunes few files based on the stats based skipping
+        runAndVerifyRowCount(
+            "partition_pruning_filter_on_data_and_metadata_columns_2",
+            "dv-partitioned-with-checkpoint",
+            Optional.of(asList("part", "col2")), /* read schema */
+            Optional.of(
+                new And(
+                    new Predicate(">=", asList(new Column("part"), Literal.ofInt(7))),
+                    new Predicate("=", asList(new Column("col1"), Literal.ofInt(28))))),
+            5 /* expected row count */);
     }
 
     private void runAndVerifyRowCount(
