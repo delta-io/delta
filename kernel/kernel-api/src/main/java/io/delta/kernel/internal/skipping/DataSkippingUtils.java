@@ -483,8 +483,8 @@ public class DataSkippingUtils {
      *     <li>parentPath=["level1_struct", "level2_struct"]</li>
      * </ol>
      *
-     * @param schema schema to prune
      * @param leafColumnsToKeep set of leaf columns relative to the schema root
+     * @param schema schema to prune
      * @param parentPath parent path of the fields in {@code schema} relative to the schema root
      */
     private static StructType pruneSchema(
