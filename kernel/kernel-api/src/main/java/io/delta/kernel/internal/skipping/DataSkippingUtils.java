@@ -223,11 +223,18 @@ public class DataSkippingUtils {
                 if (child instanceof Column) {
                     Column childColumn = (Column) child;
                     if (schemaHelper.isSkippingEligibleNullCountColumn((Column) child)) {
+                        Column nullCountCol = schemaHelper.getNullCountColumn(childColumn);
+                        Column numRecordsCol = schemaHelper.getNumRecordsColumn();
                         return Optional.of(
-                            new Predicate(
+                            new DataSkippingPredicate(
                                 "<",
-                                schemaHelper.getNullCountColumn(childColumn),
-                                schemaHelper.getNumRecordsColumn()
+                                Arrays.asList(nullCountCol, numRecordsCol),
+                                new HashSet<Column>(){
+                                    {
+                                        add(nullCountCol);
+                                        add(numRecordsCol);
+                                    }
+                                }
                             )
                         );
                     }
