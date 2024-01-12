@@ -16,7 +16,9 @@
 
 package io.delta.sharing.spark
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
@@ -35,6 +37,13 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     with DeltaSQLCommandTest
     with DeltaSharingTestSparkUtils
     with DeltaSharingDataSourceDeltaTestUtils {
+
+  override def beforeEach(): Unit = {
+    spark.sessionState.conf.setConfString(
+      "spark.delta.sharing.jsonPredicateV2Hints.enabled",
+      "false"
+    )
+  }
 
   /**
    * metadata tests
@@ -100,14 +109,20 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     }
   }
 
-  def assertLimit(tablePath: String, expectedLimit: Seq[Long]): Unit = {
+  def assertLimit(tableName: String, expectedLimit: Seq[Long]): Unit = {
     assert(expectedLimit ==
-      TestClientForDeltaFormatSharing.limits.filter(_._1.contains(tablePath)).map(_._2))
+      TestClientForDeltaFormatSharing.limits.filter(_._1.contains(tableName)).map(_._2))
   }
 
-  def assertRequestedFormat(tablePath: String, expectedFormat: Seq[String]): Unit = {
+  def assertRequestedFormat(tableName: String, expectedFormat: Seq[String]): Unit = {
     assert(expectedFormat ==
-      TestClientForDeltaFormatSharing.requestedFormat.filter(_._1.contains(tablePath)).map(_._2))
+      TestClientForDeltaFormatSharing.requestedFormat.filter(_._1.contains(tableName)).map(_._2))
+  }
+
+  def assertJsonPredicateHints(tableName: String, expectedHints: Seq[String]): Unit = {
+    assert(expectedHints ==
+      TestClientForDeltaFormatSharing.jsonPredicateHints.filter(_._1.contains(tableName)).map(_._2)
+    )
   }
   /**
    * snapshot queries
@@ -123,6 +138,10 @@ trait DeltaSharingDataSourceDeltaSuiteBase
               |(2, "two", "2023-02-02", "2023-02-02 00:00:00")""".stripMargin
         )
 
+        val sharedTableName = "shared_table_simple"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
         val expectedSchema: StructType = new StructType()
           .add("c1", IntegerType)
           .add("c2", StringType)
@@ -133,40 +152,47 @@ trait DeltaSharingDataSourceDeltaSuiteBase
           Row(2, "two", sqlDate("2023-02-02"), sqlTimestamp("2023-02-02 00:00:00"))
         )
 
-        Seq(true, false).foreach { enableLimitPushdown =>
-          val sharedTableName = s"shared_table_simple_$enableLimitPushdown"
-          prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
-          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        Seq(true, false).foreach { skippingEnabled =>
+          Seq(true, false).foreach { sharingConfig =>
+            Seq(true, false).foreach { deltaConfig =>
+              val sharedTableName = s"shared_table_simple_" +
+                s"${skippingEnabled}_${sharingConfig}_$deltaConfig"
+              prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+              prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
-          def test(tablePath: String, tableName: String): Unit = {
-            assert(
-              expectedSchema == spark.read
-                .format("deltaSharing")
-                .option("responseFormat", "delta")
-                .load(tablePath)
-                .schema
-            )
-            val df =
-              spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
-            checkAnswer(df, expected)
-            assert(df.count() > 0)
-            assertLimit(tableName, Seq.empty[Long])
-            val limitDf = spark.read
-              .format("deltaSharing")
-              .option("responseFormat", "delta")
-              .load(tablePath)
-              .limit(1)
-            assert(limitDf.collect().size == 1)
-            assertLimit(tableName, Some(1L).filter(_ => enableLimitPushdown).toSeq)
-          }
+              def test(tablePath: String, tableName: String): Unit = {
+                assert(
+                  expectedSchema == spark.read
+                    .format("deltaSharing")
+                    .option("responseFormat", "delta")
+                    .load(tablePath)
+                    .schema
+                )
+                val df =
+                  spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+                  checkAnswer(df, expected)
+                assert(df.count() > 0)
+                assertLimit(tableName, Seq.empty[Long])
+                val limitDf = spark.read
+                  .format("deltaSharing")
+                  .option("responseFormat", "delta")
+                  .load(tablePath)
+                  .limit(1)
+                assert(limitDf.collect().size == 1)
+                assertLimit(tableName, Some(1L).filter(_ => skippingEnabled && sharingConfig && deltaConfig).toSeq)
+              }
 
-          val limitPushdownConfig = Map(
-            "spark.delta.sharing.limitPushdown.enabled" -> enableLimitPushdown.toString
-          )
-          withSQLConf((limitPushdownConfig ++ getDeltaSharingClassesSQLConf).toSeq: _*) {
-            val profileFile = prepareProfileFile(tempDir)
-            val tableName = s"share1.default.$sharedTableName"
-            test(s"${profileFile.getCanonicalPath}#$tableName", tableName)
+              val limitPushdownConfigs = Map(
+                "spark.delta.sharing.limitPushdown.enabled" -> sharingConfig.toString,
+                DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED.key -> deltaConfig.toString,
+                DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString
+              )
+              withSQLConf((limitPushdownConfigs ++ getDeltaSharingClassesSQLConf).toSeq: _*) {
+                val profileFile = prepareProfileFile(tempDir)
+                val tableName = s"share1.default.$sharedTableName"
+                test(s"${profileFile.getCanonicalPath}#$tableName", tableName)
+              }
+            }
           }
         }
       }
@@ -272,75 +298,124 @@ trait DeltaSharingDataSourceDeltaSuiteBase
         sql(s"""INSERT INTO $deltaTableName VALUES (1, "second"), (2, "second")""")
         sql(s"""INSERT INTO $deltaTableName VALUES (1, "third"), (2, "third")""")
 
-        val sharedTableName = "shared_table_filters"
-        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
-        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        Seq("c1", "c2", "c1c2").foreach { filterColumn =>
+          val sharedTableName = s"shared_table_filters_$filterColumn"
+          prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
-        // The files returned from delta sharing client are the same for these queries.
-        // This is to test the filters are passed correctly to TahoeLogFileIndex for the local delta
-        // log.
-        def testFiltersAndSelect(tablePath: String): Unit = {
-          var expected = Seq(Row(1, "first"), Row(1, "second"), Row(1, "third"), Row(2, "second"))
-          var df = spark.read
-            .format("deltaSharing")
-            .option("responseFormat", "delta")
-            .load(tablePath)
-            .filter(col("c1") === 1 || col("c2") === "second")
-          checkAnswer(df, expected)
-
-          expected = Seq(Row(1, "first"), Row(1, "second"), Row(1, "third"))
-          df = spark.read
-            .format("deltaSharing")
-            .option("responseFormat", "delta")
-            .load(tablePath)
-            .filter(col("c1") === 1)
-          checkAnswer(df, expected)
-
-          expected = Seq(Row(1, "second"), Row(2, "second"))
-          df = spark.read
-            .format("deltaSharing")
-            .option("responseFormat", "delta")
-            .load(tablePath)
-            .filter(col("c2") === "second")
-          checkAnswer(df, expected)
-
-          // with select as well
-          expected = Seq(Row(1), Row(1), Row(1), Row(2), Row(2), Row(2))
-          df = spark.read
-            .format("deltaSharing")
-            .option("responseFormat", "delta")
-            .load(tablePath)
-            .select("c1")
-          checkAnswer(df, expected)
-
-          expected = Seq(
-            Row("first"),
-            Row("first"),
-            Row("second"),
-            Row("second"),
-            Row("third"),
-            Row("third")
+          spark.sessionState.conf.setConfString(
+            "spark.delta.sharing.jsonPredicateV2Hints.enabled",
+            "true"
           )
-          df = spark.read
-            .format("deltaSharing")
-            .option("responseFormat", "delta")
-            .load(tablePath)
-            .select("c2")
-          checkAnswer(df, expected)
 
-          expected = Seq(Row(1), Row(2))
-          df = spark.read
-            .format("deltaSharing")
-            .option("responseFormat", "delta")
-            .load(tablePath)
-            .filter(col("c2") === "second")
-            .select("c1")
-          checkAnswer(df, expected)
-        }
+          // The files returned from delta sharing client are the same for these queries.
+          // This is to test the filters are passed correctly to TahoeLogFileIndex for the local delta
+          // log.
+          def testFiltersAndSelect(tablePath: String, tableName: String): Unit = {
+            // select
+            var expected = Seq(Row(1), Row(1), Row(1), Row(2), Row(2), Row(2))
+            var df = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .load(tablePath)
+              .select("c1")
+            checkAnswer(df, expected)
+            assertJsonPredicateHints(tableName, Seq.empty[String])
 
-        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
-          val profileFile = prepareProfileFile(tempDir)
-          testFiltersAndSelect(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+            expected = Seq(
+              Row("first"),
+              Row("first"),
+              Row("second"),
+              Row("second"),
+              Row("third"),
+              Row("third")
+            )
+            df = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .load(tablePath)
+              .select("c2")
+            checkAnswer(df, expected)
+            assertJsonPredicateHints(tableName, Seq.empty[String])
+
+            // filter
+            var expectedJson = ""
+            if (filterColumn == "c1c2") {
+              expected = Seq(Row(1, "first"), Row(1, "second"), Row(1, "third"), Row(2, "second"))
+              df = spark.read
+                .format("deltaSharing")
+                .option("responseFormat", "delta")
+                .load(tablePath)
+                .filter(col("c1") === 1 || col("c2") === "second")
+              checkAnswer(df, expected)
+              expectedJson =
+                """{"op":"or","children":[
+                  |  {"op":"equal","children":[
+                  |    {"op":"column","name":"c1","valueType":"int"},
+                  |    {"op":"literal","value":"1","valueType":"int"}]},
+                  |  {"op":"equal","children":[
+                  |    {"op":"column","name":"c2","valueType":"string"},
+                  |    {"op":"literal","value":"second","valueType":"string"}]}
+                  |]}""".stripMargin.replaceAll("\n", "").replaceAll(" ", "")
+              assertJsonPredicateHints(tableName, Seq(expectedJson))
+            } else if (filterColumn == "c1") {
+              expected = Seq(Row(1, "first"), Row(1, "second"), Row(1, "third"))
+              df = spark.read
+                .format("deltaSharing")
+                .option("responseFormat", "delta")
+                .load(tablePath)
+                .filter(col("c1") === 1)
+              checkAnswer(df, expected)
+              expectedJson =
+                """{"op":"and","children":[
+                  |  {"op":"not","children":[
+                  |    {"op":"isNull","children":[
+                  |      {"op":"column","name":"c1","valueType":"int"}]}]},
+                  |  {"op":"equal","children":[
+                  |    {"op":"column","name":"c1","valueType":"int"},
+                  |    {"op":"literal","value":"1","valueType":"int"}]}
+                  |]}""".stripMargin.replaceAll("\n", "").replaceAll(" ", "")
+              assertJsonPredicateHints(tableName, Seq(expectedJson))
+            } else {
+              assert(filterColumn == "c2")
+              expected = Seq(Row(1, "second"), Row(2, "second"))
+              expectedJson =
+                """{"op":"and","children":[
+                  |  {"op":"not","children":[
+                  |    {"op":"isNull","children":[
+                  |      {"op":"column","name":"c2","valueType":"string"}]}]},
+                  |  {"op":"equal","children":[
+                  |    {"op":"column","name":"c2","valueType":"string"},
+                  |    {"op":"literal","value":"second","valueType":"string"}]}
+                  |]}""".stripMargin.replaceAll("\n", "").replaceAll(" ", "")
+              df = spark.read
+                .format("deltaSharing")
+                .option("responseFormat", "delta")
+                .load(tablePath)
+                .filter(col("c2") === "second")
+              checkAnswer(df, expected)
+              assertJsonPredicateHints(tableName, Seq(expectedJson))
+
+              // filters + select as well
+              expected = Seq(Row(1), Row(2))
+              df = spark.read
+                .format("deltaSharing")
+                .option("responseFormat", "delta")
+                .load(tablePath)
+                .filter(col("c2") === "second")
+                .select("c1")
+              checkAnswer(df, expected)
+              assertJsonPredicateHints(tableName, Seq(expectedJson))
+            }
+          }
+
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            testFiltersAndSelect(
+              s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName",
+              s"share1.default.$sharedTableName"
+            )
+          }
         }
       }
     }
@@ -576,7 +651,6 @@ trait DeltaSharingDataSourceDeltaSuiteBase
         prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
         def testEmpty(tablePath: String): Unit = {
-          // linzhou
           val deltaDf = spark.read.format("delta").table(deltaTableName)
           val sharingDf =
             spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
@@ -841,6 +915,272 @@ trait DeltaSharingDataSourceDeltaSuiteBase
           withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
             val profileFile = prepareProfileFile(tempDir)
             test(profileFile.getCanonicalPath + s"#share1.default.$sharedTableName")
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * deletion vector tests
+   */
+  test("DeltaSharingDataSource able to read data for dv table") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_dv"
+      withTable(deltaTableName) {
+        spark
+          .range(start = 0, end = 100)
+          .withColumn("partition", col("id").divide(10).cast("int"))
+          .write
+          .partitionBy("partition")
+          .format("delta")
+          .saveAsTable(deltaTableName)
+        spark
+          .range(start = 100, end = 200)
+          .withColumn("partition", col("id").mod(100).divide(10).cast("int"))
+          .write
+          .mode("append")
+          .partitionBy("partition")
+          .format("delta")
+          .saveAsTable(deltaTableName)
+        spark.sql(
+          s"ALTER TABLE $deltaTableName SET TBLPROPERTIES('delta.enableDeletionVectors' = true)"
+        )
+
+        // Delete 2 rows per partition.
+        sql(s"""DELETE FROM $deltaTableName where mod(id, 10) < 2""")
+        // Delete 1 more row per partition.
+        sql(s"""DELETE FROM $deltaTableName where mod(id, 10) = 3""")
+        // Delete 1 more row per partition.
+        sql(s"""DELETE FROM $deltaTableName where mod(id, 10) = 6""")
+
+        Seq(true, false).foreach { skippingEnabled =>
+          val sharedTableName = s"shared_table_dv_$skippingEnabled"
+          prepareMockedClientAndFileSystemResult(
+            deltaTable = deltaTableName,
+            sharedTable = sharedTableName,
+            assertMultipleDvsInOneFile = true
+          )
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+          def testReadDVTable(tablePath: String): Unit = {
+            val expectedSchema: StructType = new StructType()
+              .add("id", LongType)
+              .add("partition", IntegerType)
+            assert(
+              expectedSchema == spark.read
+                .format("deltaSharing")
+                .option("responseFormat", "delta")
+                .load(tablePath)
+                .schema
+            )
+
+            val sharingDf =
+              spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+            val deltaDf = spark.read.format("delta").table(deltaTableName)
+            val filteredSharingDf =
+              spark.read
+                .format("deltaSharing")
+                .option("responseFormat", "delta")
+                .load(tablePath)
+                .filter(col("id").mod(10) > 5)
+            val filteredDeltaDf =
+              spark.read
+                .format("delta")
+                .table(deltaTableName)
+                .filter(col("id").mod(10) > 5)
+
+            if (!skippingEnabled) {
+              def assertError(dataFrame: DataFrame): Unit = {
+                val ex = intercept[IllegalArgumentException] {
+                  dataFrame.collect()
+                }
+                assert(ex.getMessage contains
+                  "Cannot work with a non-pinned table snapshot of the TahoeFileIndex")
+              }
+              assertError(sharingDf)
+              assertError(filteredDeltaDf)
+            } else {
+            checkAnswer(sharingDf, deltaDf)
+            assert(sharingDf.count() > 0)
+            checkAnswer(filteredSharingDf, filteredDeltaDf)
+            assert(filteredSharingDf.count() > 0)
+            }
+          }
+
+          val additionalConfigs = Map(
+            DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString
+          )
+          withSQLConf((additionalConfigs ++ getDeltaSharingClassesSQLConf).toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            testReadDVTable(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+          }
+        }
+      }
+    }
+  }
+
+  test("DeltaSharingDataSource able to read data for dv and cdf") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_dv_cdf"
+      withTable(deltaTableName) {
+        createDVTableWithCdf(deltaTableName)
+        // version 1: 20 inserts
+        spark
+          .range(start = 0, end = 20)
+          .select(col("id").cast("int").as("c1"))
+          .withColumn("partition", col("c1").divide(10).cast("int"))
+          .write
+          .mode("append")
+          .format("delta")
+          .saveAsTable(deltaTableName)
+        // version 2: 20 inserts
+        spark
+          .range(start = 100, end = 120)
+          .select(col("id").cast("int").as("c1"))
+          .withColumn("partition", col("c1").mod(100).divide(10).cast("int"))
+          .write
+          .mode("append")
+          .format("delta")
+          .saveAsTable(deltaTableName)
+        // version 3: 20 updates
+        sql(s"""UPDATE $deltaTableName SET c1=c1+5 where partition=0""")
+        // This deletes will create one DV file used by AddFile from both version 1 and version 2.
+        // version 4: 14 deletes
+        sql(s"""DELETE FROM $deltaTableName WHERE mod(c1, 100)<=10""")
+
+        val sharedTableName = "shard_table_dv_cdf"
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        Seq(0, 1, 2, 3, 4).foreach { startingVersion =>
+          prepareMockedClientAndFileSystemResultForCdf(
+            deltaTableName,
+            sharedTableName,
+            startingVersion,
+            assertMultipleDvsInOneFile = true
+          )
+
+          def testReadDVCdf(tablePath: String): Unit = {
+            val schema = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .load(tablePath)
+              .schema
+            val expectedSchema: StructType = new StructType()
+              .add("c1", IntegerType)
+              .add("partition", IntegerType)
+              .add("_change_type", StringType)
+              .add("_commit_version", LongType)
+              .add("_commit_timestamp", TimestampType)
+            assert(expectedSchema == schema)
+
+            val deltaDf = spark.read
+              .format("delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .table(deltaTableName)
+            val sharingDf = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .load(tablePath)
+            checkAnswer(sharingDf, deltaDf)
+            assert(sharingDf.count() > 0)
+          }
+
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            testReadDVCdf(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+          }
+        }
+      }
+    }
+  }
+
+  test("DeltaSharingDataSource able to read data for inline dv") {
+    import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArrayFormat
+    Seq(RoaringBitmapArrayFormat.Portable, RoaringBitmapArrayFormat.Native).foreach { format =>
+      withTempDir { tempDir =>
+        val deltaTableName = s"delta_table_inline_dv_$format"
+        withTable(deltaTableName) {
+          createDVTableWithCdf(deltaTableName)
+          // Use divide 10 to set partition column to 0 for all values, then use repartition to
+          // ensure the 5 values are written in one file.
+          spark
+            .range(start = 0, end = 5)
+            .select(col("id").cast("int").as("c1"))
+            .withColumn("partition", col("c1").divide(10).cast("int"))
+            .repartition(1)
+            .write
+            .mode("append")
+            .format("delta")
+            .saveAsTable(deltaTableName)
+
+          val sharedTableName = s"shared_table_inline_dv_$format"
+          prepareMockedClientAndFileSystemResult(
+            deltaTable = deltaTableName,
+            sharedTable = sharedTableName,
+            inlineDvFormat = Some(format)
+          )
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          prepareMockedClientAndFileSystemResultForCdf(
+            deltaTableName,
+            sharedTableName,
+            startingVersion = 1,
+            inlineDvFormat = Some(format)
+          )
+
+          def testReadInlineDVCdf(tablePath: String): Unit = {
+            val deltaDf = spark.read
+              .format("delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", 1)
+              .table(deltaTableName)
+              .filter(col("c1") > 1)
+            val sharingDf = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", 1)
+              .load(tablePath)
+            checkAnswer(sharingDf, deltaDf)
+            assert(sharingDf.count() > 0)
+          }
+
+          def testReadInlineDV(tablePath: String): Unit = {
+            val expectedSchema: StructType = new StructType()
+              .add("c1", IntegerType)
+              .add("partition", IntegerType)
+            assert(
+              expectedSchema == spark.read
+                .format("deltaSharing")
+                .option("responseFormat", "delta")
+                .load(tablePath)
+                .schema
+            )
+
+            val sharingDf =
+              spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+            val expectedDf = Seq(Row(1, 0), Row(3, 0), Row(4, 0))
+            checkAnswer(sharingDf, expectedDf)
+
+            val filteredSharingDf =
+              spark.read
+                .format("deltaSharing")
+                .option("responseFormat", "delta")
+                .load(tablePath)
+                .filter(col("c1") < 4)
+            val expectedFilteredDf = Seq(Row(1, 0), Row(3, 0))
+            checkAnswer(filteredSharingDf, expectedFilteredDf)
+          }
+
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            testReadInlineDV(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+            testReadInlineDVCdf(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
           }
         }
       }

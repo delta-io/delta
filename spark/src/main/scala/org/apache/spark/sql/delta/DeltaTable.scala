@@ -42,15 +42,23 @@ import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
+ * Extractor Object for pulling out the file index of a logical relation.
+ */
+object RelationFileIndex {
+  def unapply(a: LogicalRelation): Option[FileIndex] = a match {
+    case LogicalRelation(hrel: HadoopFsRelation, _, _, _) => Some(hrel.location)
+    case _ => None
+  }
+}
+
+/**
  * Extractor Object for pulling out the table scan of a Delta table. It could be a full scan
  * or a partial scan.
  */
 object DeltaTable {
   def unapply(a: LogicalRelation): Option[TahoeFileIndex] = a match {
-    case LogicalRelation(HadoopFsRelation(index: TahoeFileIndex, _, _, _, _, _), _, _, _) =>
-      Some(index)
-    case _ =>
-      None
+    case RelationFileIndex(fileIndex: TahoeFileIndex) => Some(fileIndex)
+    case _ => None
   }
 }
 
