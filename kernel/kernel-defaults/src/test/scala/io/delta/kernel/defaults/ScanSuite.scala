@@ -49,13 +49,6 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
   import io.delta.kernel.defaults.ScanSuite._
 
-  private val spark = SparkSession
-    .builder()
-    .appName("Spark Test Writer for Delta Kernel")
-    .config("spark.master", "local")
-    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-    .getOrCreate()
   // scalastyle:off sparkimplicits
   import spark.implicits._
   // scalastyle:on sparkimplicits

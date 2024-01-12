@@ -17,6 +17,7 @@ package io.delta.kernel.internal;
 
 import java.io.IOException;
 import java.util.*;
+import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.toMap;
 
 import org.slf4j.Logger;
@@ -26,7 +27,6 @@ import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.*;
-import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -183,15 +183,16 @@ public class ScanImpl implements Scan {
         }
 
         Set<String> partitionColNames = metadata.getPartitionColNames();
-        Map<String, DataType> partitionColNameToTypeMap = metadata.getSchema().fields().stream()
-            .filter(field -> partitionColNames.contains(field.getName()))
-            .collect(toMap(
-                field -> field.getName().toLowerCase(Locale.ENGLISH),
-                field -> field.getDataType()));
+        Map<String, StructField> partitionColNameToStructFieldMap =
+            metadata.getSchema().fields().stream()
+                .filter(field -> partitionColNames.contains(field.getName()))
+                .collect(toMap(
+                    field -> field.getName().toLowerCase(Locale.ENGLISH),
+                    identity()));
 
         Predicate predicateOnScanFileBatch = rewritePartitionPredicateOnScanFileSchema(
             partitionPredicate.get(),
-            partitionColNameToTypeMap);
+            partitionColNameToStructFieldMap);
 
         return new CloseableIterator<FilteredColumnarBatch>() {
             PredicateEvaluator predicateEvaluator = null;
