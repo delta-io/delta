@@ -51,8 +51,181 @@ import org.apache.spark.sql.types.StructType
  */
 private[sharing] class DeltaSharingDataSource
     extends RelationProvider
+    with StreamSourceProvider
     with DataSourceRegister
     with DeltaLogging {
+
+  override def sourceSchema(
+      sqlContext: SQLContext,
+      schema: Option[StructType],
+      providerName: String,
+      parameters: Map[String, String]): (String, StructType) = {
+    DeltaSharingDataSource.setupFileSystem(sqlContext)
+    if (schema.nonEmpty && schema.get.nonEmpty) {
+      throw DeltaErrors.specifySchemaAtReadTimeException
+    }
+    val options = new DeltaSharingOptions(parameters)
+    if (options.isTimeTravel) {
+      throw DeltaErrors.timeTravelNotSupportedException
+    }
+    val path = options.options.getOrElse("path", throw DeltaSharingErrors.pathNotSpecifiedException)
+
+    if (options.responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET) {
+      logInfo(s"sourceSchema with parquet format for table path:$path, parameters:$parameters")
+      val deltaLog = RemoteDeltaLog(
+        path,
+        forStreaming = true,
+        responseFormat = options.responseFormat
+      )
+      val schemaToUse = deltaLog.snapshot().schema
+      if (schemaToUse.isEmpty) {
+        throw DeltaSharingErrors.schemaNotSetException
+      }
+
+      if (options.readChangeFeed) {
+        (shortName(), DeltaTableUtils.addCdcSchema(schemaToUse))
+      } else {
+        (shortName(), schemaToUse)
+      }
+    } else if (options.responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
+      logInfo(s"sourceSchema with delta format for table path:$path, parameters:$parameters")
+      if (options.readChangeFeed) {
+        throw new UnsupportedOperationException(
+          s"Delta sharing cdc streaming is not supported when responseforma=delta."
+        )
+      }
+      //  1. create delta sharing client
+      val parsedPath = DeltaSharingRestClient.parsePath(path)
+      val client = DeltaSharingRestClient(
+        profileFile = parsedPath.profileFile,
+        forStreaming = true,
+        responseFormat = options.responseFormat,
+        // comma separated delta reader features, used to tell delta sharing server what delta
+        // reader features the client is able to process.
+        readerFeatures = DeltaSharingUtils.STREAMING_SUPPORTED_READER_FEATURES.mkString(",")
+      )
+      val dsTable = DeltaSharingTable(
+        share = parsedPath.share,
+        schema = parsedPath.schema,
+        name = parsedPath.table
+      )
+
+      //  2. getMetadata for schema to be used in the file index.
+      val deltaSharingTableMetadata = DeltaSharingUtils.getDeltaSharingTableMetadata(
+        client = client,
+        table = dsTable
+      )
+      val customTablePathWithUUIDSuffix = DeltaSharingUtils.getTablePathWithIdSuffix(
+        client.getProfileProvider.getCustomTablePath(path),
+        DeltaSharingUtils.getFormattedTimestampWithUUID()
+      )
+      val deltaLogPath =
+        s"${DeltaSharingLogFileSystem.encode(customTablePathWithUUIDSuffix).toString}/_delta_log"
+      val (_, snapshotDescriptor) = DeltaSharingUtils.getDeltaLogAndSnapshotDescriptor(
+        sqlContext.sparkSession,
+        deltaSharingTableMetadata,
+        customTablePathWithUUIDSuffix
+      )
+
+      // This is the analyzed schema for Delta streaming
+      val readSchema = {
+        // Check if we would like to merge consecutive schema changes, this would allow customers
+        // to write queries based on their latest changes instead of an arbitrary schema in the
+        // past.
+        val shouldMergeConsecutiveSchemas = sqlContext.sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING_MERGE_CONSECUTIVE_CHANGES
+        )
+
+        // This method is invoked during the analysis phase and would determine the schema for the
+        // streaming dataframe. We only need to merge consecutive schema changes here because the
+        // process would create a new entry in the schema log such that when the schema log is
+        // looked up again in the execution phase, we would use the correct schema.
+        DeltaDataSource
+          .getMetadataTrackingLogForDeltaSource(
+            sqlContext.sparkSession,
+            snapshotDescriptor,
+            parameters,
+            mergeConsecutiveSchemaChanges = shouldMergeConsecutiveSchemas
+          )
+          .flatMap(_.getCurrentTrackedMetadata.map(_.dataSchema))
+          .getOrElse(snapshotDescriptor.schema)
+      }
+
+      val schemaToUse = TahoeDeltaTableUtils.removeInternalMetadata(
+        sqlContext.sparkSession,
+        readSchema
+      )
+      if (schemaToUse.isEmpty) {
+        throw DeltaErrors.schemaNotSetException
+      }
+
+      DeltaSharingLogFileSystem.tryToCleanUpDeltaLog(deltaLogPath)
+      (shortName(), schemaToUse)
+    } else {
+      throw new UnsupportedOperationException(
+        s"responseformat(${options.responseFormat}) is not " +
+        s"supported in delta sharing."
+      )
+    }
+  }
+
+  override def createSource(
+      sqlContext: SQLContext,
+      metadataPath: String,
+      schema: Option[StructType],
+      providerName: String,
+      parameters: Map[String, String]): Source = {
+    DeltaSharingDataSource.setupFileSystem(sqlContext)
+    if (schema.nonEmpty && schema.get.nonEmpty) {
+      throw DeltaSharingErrors.specifySchemaAtReadTimeException
+    }
+    val options = new DeltaSharingOptions(parameters)
+    val path = options.options.getOrElse("path", throw DeltaSharingErrors.pathNotSpecifiedException)
+
+    if (options.responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET) {
+      logInfo(s"createSource with parquet format for table path:$path, parameters:$parameters")
+      val deltaLog = RemoteDeltaLog(path, forStreaming = true, options.responseFormat)
+      DeltaSharingSource(SparkSession.active, deltaLog, options)
+    } else if (options.responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
+      logInfo(s"createSource with delta format for table path:$path, parameters:$parameters")
+      if (options.readChangeFeed) {
+        throw new UnsupportedOperationException(
+          s"Delta sharing cdc streaming is not supported when responseforma=delta."
+        )
+      }
+      //  1. create delta sharing client
+      val parsedPath = DeltaSharingRestClient.parsePath(path)
+      val client = DeltaSharingRestClient(
+        profileFile = parsedPath.profileFile,
+        forStreaming = true,
+        responseFormat = options.responseFormat,
+        // comma separated delta reader features, used to tell delta sharing server what delta
+        // reader features the client is able to process.
+        readerFeatures = DeltaSharingUtils.STREAMING_SUPPORTED_READER_FEATURES.mkString(",")
+      )
+      val dsTable = DeltaSharingTable(
+        share = parsedPath.share,
+        schema = parsedPath.schema,
+        name = parsedPath.table
+      )
+
+      DeltaFormatSharingSource(
+        spark = sqlContext.sparkSession,
+        client = client,
+        table = dsTable,
+        options = options,
+        parameters = parameters,
+        sqlConf = sqlContext.sparkSession.sessionState.conf,
+        metadataPath = metadataPath
+      )
+    } else {
+      throw new UnsupportedOperationException(
+        s"responseformat(${options.responseFormat}) is not " +
+        s"supported in delta sharing."
+      )
+    }
+  }
+
   override def createRelation(
       sqlContext: SQLContext,
       parameters: Map[String, String]): BaseRelation = {

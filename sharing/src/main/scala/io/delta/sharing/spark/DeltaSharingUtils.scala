@@ -44,6 +44,8 @@ import org.apache.spark.storage.{BlockId, StorageLevel}
 
 object DeltaSharingUtils extends Logging {
 
+  val STREAMING_SUPPORTED_READER_FEATURES: Seq[String] =
+    Seq(DeletionVectorsTableFeature.name, ColumnMappingTableFeature.name)
   val SUPPORTED_READER_FEATURES: Seq[String] =
     Seq(DeletionVectorsTableFeature.name, ColumnMappingTableFeature.name)
 
@@ -60,6 +62,15 @@ object DeltaSharingUtils extends Logging {
       protocol: model.DeltaSharingProtocol,
       metadata: model.DeltaSharingMetadata
   )
+
+  // A wrapper function for streaming query to get the latest version/protocol/metadata of the
+  // shared table.
+  def getDeltaSharingTableMetadata(
+      client: DeltaSharingClient,
+      table: Table): DeltaSharingTableMetadata = {
+    val deltaTableMetadata = client.getMetadata(table)
+    getDeltaSharingTableMetadata(table, deltaTableMetadata)
+  }
 
   def queryDeltaTableMetadata(
       client: DeltaSharingClient,
@@ -228,6 +239,34 @@ object DeltaSharingUtils extends Logging {
     )
   }
 
+  // A helper function used by DeltaSharingSource and DeltaSharingDataSource to get
+  // SnapshotDescriptor used for delta sharing streaming.
+  def getDeltaLogAndSnapshotDescriptor(
+      spark: SparkSession,
+      deltaSharingTableMetadata: DeltaSharingTableMetadata,
+      customTablePathWithUUIDSuffix: String): (DeltaLog, SnapshotDescriptor) = {
+    // Create a delta log with metadata at version 0.
+    // Used by DeltaSharingSource to initialize a DeltaLog class, which is then used to initialize
+    // a DeltaSource class, also the metadata id will be used for schemaTrackingLocation.
+    DeltaSharingLogFileSystem.constructDeltaLogWithMetadataAtVersionZero(
+      customTablePathWithUUIDSuffix,
+      deltaSharingTableMetadata
+    )
+    val tablePath = DeltaSharingLogFileSystem.encode(customTablePathWithUUIDSuffix).toString
+    val localDeltaLog = DeltaLog.forTable(spark, tablePath)
+    (
+      localDeltaLog,
+      new SnapshotDescriptor {
+        val deltaLog: DeltaLog = localDeltaLog
+        val metadata: Metadata = deltaSharingTableMetadata.metadata.deltaMetadata
+        val protocol: Protocol = deltaSharingTableMetadata.protocol.deltaProtocol
+        val version = deltaSharingTableMetadata.version
+        val numOfFilesIfKnown = None
+        val sizeInBytesIfKnown = None
+      }
+    )
+  }
+
   // Get a query hash id based on the query parameters: time travel options and filters.
   // The id concatenated with table name and used in local DeltaLog and CachedTableManager.
   // This is to uniquely identify the delta sharing table used twice in the same query but with
@@ -256,6 +295,18 @@ object DeltaSharingUtils extends Logging {
   // its corresponding delta log in a query.
   private[sharing] def getTablePathWithIdSuffix(customTablePath: String, id: String): String = {
     s"${customTablePath}_${id}"
+  }
+
+  // Get a unique string composed of a formatted timestamp and an uuid.
+  // Used as a suffix for the table name and its delta log path of a delta sharing table in a
+  // streaming job, to avoid overwriting the delta log from multiple references of the same delta
+  // sharing table in one streaming job.
+  private[sharing] def getFormattedTimestampWithUUID(): String = {
+    val dateFormat = new SimpleDateFormat("yyyyMMdd_HHmmss")
+    dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"))
+    val formattedDateTime = dateFormat.format(System.currentTimeMillis())
+    val uuid = UUID.randomUUID().toString().split('-').head
+    s"${formattedDateTime}_${uuid}"
   }
 
   private def removeBlockForJsonLogIfExists(blockId: BlockId): Unit = {
