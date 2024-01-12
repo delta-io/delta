@@ -32,7 +32,7 @@ import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField 
 import org.scalatest.funsuite.AnyFunSuite
 
 import io.delta.kernel.client.{JsonHandler, ParquetHandler, TableClient}
-import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.types.StructType
@@ -1497,6 +1497,47 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         .getScanBuilder(tableClient).withFilter(tableClient, nonEligibleFilter).build()
         .getScanFiles(tableClient))
   }
+
+  test("data skipping - prune schema correctly for various predicates") {
+    def structTypeToLeafColumns(
+        schema: StructType, parentPath: Seq[String] = Seq()): Set[Column] = {
+      schema.fields().asScala.flatMap { field =>
+        field.getDataType() match {
+          case nestedSchema: StructType =>
+            assert(nestedSchema.fields().size() > 0,
+              "Schema should not have field of type StructType with no child fields")
+            structTypeToLeafColumns(nestedSchema, parentPath ++ Seq(field.getName()))
+          case _ =>
+            Seq(new Column(parentPath.toArray :+ field.getName()))
+        }
+      }.toSet
+    }
+    def verifySchema(expectedReadCols: Set[Column]): StructType => Unit = { readSchema =>
+      assert(structTypeToLeafColumns(readSchema) == expectedReadCols)
+    }
+    val path = goldenTablePath("data-skipping-basic-stats-all-types")
+    // Map of expression -> expected read columns
+    Map(
+      equals(col("as_int"), ofInt(0)) ->
+        Set(nestedCol("minValues.as_int"), nestedCol("maxValues.as_int")),
+      lessThan(col("as_int"), ofInt(0)) -> Set(nestedCol("minValues.as_int")),
+      greaterThan(col("as_int"), ofInt(0)) -> Set(nestedCol("maxValues.as_int")),
+      greaterThanOrEqual(col("as_int"), ofInt(0)) -> Set(nestedCol("maxValues.as_int")),
+      lessThanOrEqual(col("as_int"), ofInt(0)) -> Set(nestedCol("minValues.as_int")),
+      new And(
+        lessThan(col("as_int"), ofInt(0)),
+        greaterThan(col("as_long"), ofInt(0))
+      ) -> Set(nestedCol("minValues.as_int"), nestedCol("maxValues.as_long"))
+    ).foreach { case (predicate, expectedCols) =>
+      val tableClient = tableClientVerifyJsonParseSchema(verifySchema(expectedCols))
+      collectScanFileRows(
+        Table.forPath(tableClient, path).getLatestSnapshot(tableClient)
+          .getScanBuilder(tableClient)
+          .withFilter(tableClient, predicate)
+          .build(),
+        tableClient = tableClient)
+    }
+  }
 }
 
 object ScanSuite {
@@ -1536,6 +1577,21 @@ object ScanSuite {
               predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
             throwErrorIfAddStatsInSchema(physicalSchema)
             super.readJsonFiles(fileIter, physicalSchema, predicate)
+          }
+        }
+      }
+    }
+  }
+
+  def tableClientVerifyJsonParseSchema(verifyFx: StructType => Unit): TableClient = {
+    val hadoopConf = new Configuration()
+    new DefaultTableClient(hadoopConf) {
+      override def getJsonHandler: JsonHandler = {
+        new DefaultJsonHandler(hadoopConf) {
+          override def parseJson(stringVector: ColumnVector, schema: StructType,
+              selectionVector: Optional[ColumnVector]): ColumnarBatch = {
+            verifyFx(schema)
+            super.parseJson(stringVector, schema, selectionVector)
           }
         }
       }

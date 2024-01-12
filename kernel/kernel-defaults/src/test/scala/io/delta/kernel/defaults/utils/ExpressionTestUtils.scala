@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.defaults.utils
 
-import io.delta.kernel.expressions.{Column, Expression, Literal, Predicate}
+import io.delta.kernel.expressions.{Column, Expression, Predicate}
 
 /** Useful helper functions for creating expressions in tests */
 trait ExpressionTestUtils {

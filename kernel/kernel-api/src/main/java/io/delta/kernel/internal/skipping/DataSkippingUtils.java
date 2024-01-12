@@ -17,7 +17,6 @@ package io.delta.kernel.internal.skipping;
 
 import java.util.*;
 
-
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -44,6 +43,16 @@ public class DataSkippingUtils {
     }
 
     /**
+     * Prunes the given schema to only include the referenced leaf columns. If a leaf column is a
+     * nested column it must be referenced using the full column path, e.g. "C_0.C_1.C_leaf"
+     * @param schema the schema to prune
+     * @param referencedLeafCols set of leaf columns in {@code schema}
+     */
+    public static StructType pruneStatsSchema(StructType schema, Set<Column> referencedLeafCols) {
+        return pruneSchema(referencedLeafCols, schema, new String[0]);
+    }
+
+    /**
      * Constructs a data skipping filter to prune files using column statistics given
      * a query data filter if possible. The returned filter will evaluate to FALSE for any files
      * that can be safely skipped. If the filter evaluates to NULL or TRUE, the file should not
@@ -51,13 +60,17 @@ public class DataSkippingUtils {
      *
      * @param dataFilters query filters on the data columns
      * @param dataSchema the data schema of the table
-     * @return data skipping filter to prune files if it exists
+     * @return data skipping filter to prune files if it exists as a {@link DataSkippingPredicate}
      */
-    public static Optional<Predicate> constructDataSkippingFilter(
+    public static Optional<DataSkippingPredicate> constructDataSkippingFilter(
             Predicate dataFilters, StructType dataSchema) {
         StatsSchemaHelper schemaHelper = new StatsSchemaHelper(dataSchema);
         return constructDataSkippingFilter(dataFilters, schemaHelper);
     }
+
+    //////////////////////////////////////////////////////////////////////////////////
+    // Helper functions
+    //////////////////////////////////////////////////////////////////////////////////
 
     /**
      * Returns a file skipping predicate expression, derived from the user query, which uses column
@@ -144,7 +157,7 @@ public class DataSkippingUtils {
      * we support -- IS [NOT] NULL -- is specifically NULL aware. The predicate evaluates to NULL
      * if any required statistics are missing.
      */
-    private static Optional<Predicate> constructDataSkippingFilter(
+    private static Optional<DataSkippingPredicate> constructDataSkippingFilter(
             Predicate dataFilters, StatsSchemaHelper schemaHelper) {
 
         switch (dataFilters.getName().toUpperCase(Locale.ROOT)) {
@@ -167,12 +180,13 @@ public class DataSkippingUtils {
             // NOTE: AND is special -- we can safely skip the file if one leg does not evaluate to
             // TRUE, even if we cannot construct a skipping filter for the other leg.
             case "AND":
-                Optional<Predicate> e1AndFilter = constructDataSkippingFilter(
+                Optional<DataSkippingPredicate> e1AndFilter = constructDataSkippingFilter(
                     asPredicate(getLeft(dataFilters)), schemaHelper);
-                Optional<Predicate> e2AndFilter = constructDataSkippingFilter(
+                Optional<DataSkippingPredicate> e2AndFilter = constructDataSkippingFilter(
                     asPredicate(getRight(dataFilters)), schemaHelper);
                 if (e1AndFilter.isPresent() && e2AndFilter.isPresent()) {
-                    return Optional.of(new And(e1AndFilter.get(), e2AndFilter.get()));
+                    return Optional.of(
+                        new DataSkippingPredicate("AND", e1AndFilter.get(), e2AndFilter.get()));
                 } else if (e1AndFilter.isPresent()) {
                     return e1AndFilter;
                 } else {
@@ -192,12 +206,13 @@ public class DataSkippingUtils {
             // Unlike AND, a single leg of an OR expression provides no filtering power -- we can
             // only reject a file if both legs evaluate to false.
             case "OR":
-                Optional<Predicate> e1OrFilter = constructDataSkippingFilter(
+                Optional<DataSkippingPredicate> e1OrFilter = constructDataSkippingFilter(
                     asPredicate(getLeft(dataFilters)), schemaHelper);
-                Optional<Predicate> e2OrFilter = constructDataSkippingFilter(
+                Optional<DataSkippingPredicate> e2OrFilter = constructDataSkippingFilter(
                     asPredicate(getRight(dataFilters)), schemaHelper);
                 if (e1OrFilter.isPresent() && e2OrFilter.isPresent()) {
-                    return Optional.of(new Or(e1OrFilter.get(), e2OrFilter.get()));
+                    return Optional.of(
+                        new DataSkippingPredicate("OR", e1OrFilter.get(), e2OrFilter.get()));
                 } else {
                     return Optional.empty();
                 }
@@ -208,11 +223,18 @@ public class DataSkippingUtils {
                 if (child instanceof Column) {
                     Column childColumn = (Column) child;
                     if (schemaHelper.isSkippingEligibleNullCountColumn((Column) child)) {
+                        Column nullCountCol = schemaHelper.getNullCountColumn(childColumn);
+                        Column numRecordsCol = schemaHelper.getNumRecordsColumn();
                         return Optional.of(
-                            new Predicate(
+                            new DataSkippingPredicate(
                                 "<",
-                                schemaHelper.getNullCountColumn(childColumn),
-                                schemaHelper.getNumRecordsColumn()
+                                Arrays.asList(nullCountCol, numRecordsCol),
+                                new HashSet<Column>(){
+                                    {
+                                        add(nullCountCol);
+                                        add(numRecordsCol);
+                                    }
+                                }
                             )
                         );
                     }
@@ -246,44 +268,66 @@ public class DataSkippingUtils {
         return Optional.empty();
     }
 
-    //////////////////////////////////////////////////////////////////////////////////
-    // Useful helper functions for dealing with expressions
-    //////////////////////////////////////////////////////////////////////////////////
-
     /** Construct the skipping predicate for a given comparator */
-    private static Predicate constructComparatorDataSkippingFilters(
+    private static DataSkippingPredicate constructComparatorDataSkippingFilters(
             String comparator, Column leftCol, Literal rightLit, StatsSchemaHelper schemaHelper) {
 
         switch (comparator.toUpperCase(Locale.ROOT)) {
 
             // Match any file whose min/max range contains the requested point.
             case "=":
-                // For example a = 1 --> minValue.a <= 1 AND 1 <= maxValue.a
-                return new And(
-                    new Predicate("<=", schemaHelper.getMinColumn(leftCol), rightLit),
-                    new Predicate("<=", rightLit, schemaHelper.getMaxColumn(leftCol))
+                // For example a = 1 --> minValue.a <= 1 AND maxValue.a >= 1
+                return new DataSkippingPredicate(
+                    "AND",
+                    constructBinaryDataSkippingPredicate(
+                        "<=", schemaHelper.getMinColumn(leftCol), rightLit),
+                    constructBinaryDataSkippingPredicate(
+                        ">=", schemaHelper.getMaxColumn(leftCol), rightLit)
                 );
 
             // Match any file whose min is less than the requested upper bound.
             case "<":
-                return new Predicate("<", schemaHelper.getMinColumn(leftCol), rightLit);
+                return constructBinaryDataSkippingPredicate(
+                    "<", schemaHelper.getMinColumn(leftCol), rightLit);
 
             // Match any file whose min is less than or equal to the requested upper bound
             case "<=":
-                return new Predicate("<=", schemaHelper.getMinColumn(leftCol), rightLit);
+                return constructBinaryDataSkippingPredicate(
+                    "<=", schemaHelper.getMinColumn(leftCol), rightLit);
 
             // Match any file whose max is larger than the requested lower bound.
             case ">":
-                return new Predicate(">", schemaHelper.getMaxColumn(leftCol), rightLit);
+                return constructBinaryDataSkippingPredicate(
+                    ">", schemaHelper.getMaxColumn(leftCol), rightLit);
 
             // Match any file whose max is larger than or equal to the requested lower bound.
             case ">=":
-                return new Predicate(">=", schemaHelper.getMaxColumn(leftCol), rightLit);
+                return constructBinaryDataSkippingPredicate(
+                    ">=", schemaHelper.getMaxColumn(leftCol), rightLit);
 
             default:
                 throw new IllegalArgumentException(
                     String.format("Unsupported comparator expression %s", comparator));
         }
+    }
+
+    /**
+     * Constructs a {@link DataSkippingPredicate} for a binary predicate expression with a left
+     * expression of type {@link Column} and a right expression of type {@link Literal}.
+     */
+    private static DataSkippingPredicate constructBinaryDataSkippingPredicate(
+            String exprName,
+            Column col,
+            Literal lit) {
+        return new DataSkippingPredicate(
+            exprName,
+            Arrays.asList(col, lit),
+            new HashSet<Column>(){
+                {
+                    add(col);
+                }
+            }
+        );
     }
 
     private static final Map<String, String> REVERSE_COMPARATORS = new HashMap<String, String>(){
@@ -305,7 +349,7 @@ public class DataSkippingUtils {
     }
 
     /** Construct the skipping predicate for a NOT expression child if possible */
-    private static Optional<Predicate> constructNotDataSkippingFilters(
+    private static Optional<DataSkippingPredicate> constructNotDataSkippingFilters(
             Predicate childPredicate, StatsSchemaHelper schemaHelper) {
         switch (childPredicate.getName().toUpperCase(Locale.ROOT)) {
             // Use deMorgan's law to push the NOT past the AND. This is safe even with SQL
@@ -364,11 +408,14 @@ public class DataSkippingUtils {
                         schemaHelper.isSkippingEligibleLiteral(rightLit)) {
                         // Match any file whose min/max range contains anything other than the
                         // rejected point.
-                        // For example a = 1 --> minValue.a <= 1 AND 1 <= maxValue.a
+                        // For example a != 1 --> minValue.a < 1 OR maxValue.a > 1
                         return Optional.of(
-                            new Or(
-                                new Predicate("<", schemaHelper.getMinColumn(leftCol), rightLit),
-                                new Predicate("<", rightLit, schemaHelper.getMaxColumn(leftCol))
+                            new DataSkippingPredicate(
+                                "OR",
+                                constructBinaryDataSkippingPredicate(
+                                    "<", schemaHelper.getMinColumn(leftCol), rightLit),
+                                constructBinaryDataSkippingPredicate(
+                                    ">", schemaHelper.getMaxColumn(leftCol), rightLit)
                             )
                         );
                     }
@@ -401,5 +448,76 @@ public class DataSkippingUtils {
                     schemaHelper);
         }
         return Optional.empty();
+    }
+
+    /**
+     * Prunes the given schema to include only the referenced leaf columns to keep. These leaf
+     * columns (possible nested) are relative to the root schema, not to the current level of
+     * recursion. {@code leafColumnsToKeep} is unchanged at any level of recursion.
+     * <p>
+     * For example consider the following schema:
+     * <pre>
+     * |--level1_struct: struct
+     * |   |--level2_struct: struct
+     * |       |--level3_struct: struct
+     * |           |--level_4_col: int
+     * |       |--level_3_col: int
+     * </pre>
+     * At the second level of recursion on field {@code level2_struct} we would have parameters
+     * <ol>
+     *     <li>leafColumnsToKeep=Set(Column(level1_struct.level2_struct.level_3_col))</li>
+     *     <li>schema:
+     *          <pre>
+     *          |--level3_struct: struct
+     *          |   |--level_4_col: int
+     *          |--level_3_col: int
+     *          </pre>
+     *     </li>
+     *     <li>parentPath=["level1_struct", "level2_struct"]</li>
+     * </ol>
+     *
+     * @param leafColumnsToKeep set of leaf columns relative to the schema root
+     * @param schema schema to prune
+     * @param parentPath parent path of the fields in {@code schema} relative to the schema root
+     */
+    private static StructType pruneSchema(
+        Set<Column> leafColumnsToKeep, StructType schema, String[] parentPath) {
+        List<StructField> prunedFields = new ArrayList<>();
+        for (StructField field : schema.fields()) {
+            String[] colPath = appendArray(parentPath, field.getName());
+            if (field.getDataType() instanceof StructType) {
+                StructType prunedNestedSchema = pruneSchema(
+                    leafColumnsToKeep,
+                    (StructType) field.getDataType(),
+                    colPath
+                );
+                if (prunedNestedSchema.length() > 0) {
+                    // Only add a struct field it has un-pruned nested columns
+                    prunedFields.add(
+                        new StructField(
+                            field.getName(),
+                            prunedNestedSchema,
+                            field.isNullable(),
+                            field.getMetadata())
+                    );
+                }
+            } else {
+                if (leafColumnsToKeep.contains(new Column(colPath))) {
+                    prunedFields.add(field);
+                }
+            }
+        }
+        return new StructType(prunedFields);
+    }
+
+    /**
+     * Given an array {@code arr} and a string element {@code appendElem} return a new array with
+     * {@code appendElem} inserted at the end
+     */
+    private static String[] appendArray(String[] arr, String appendElem){
+        String[] newNames = new String[arr.length + 1];
+        System.arraycopy(arr, 0, newNames, 0, arr.length);
+        newNames[arr.length] = appendElem;
+        return newNames;
     }
 }
