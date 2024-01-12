@@ -22,7 +22,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, DeltaErrors, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.IcebergCompat.{getEnabledVersion, getIcebergCompatVersionConfigForValidVersion}
 import org.apache.spark.sql.delta.UniversalFormat.{icebergEnabled, ICEBERG_FORMAT}
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.Utils.try_element_at
@@ -75,6 +75,14 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
     }
 
     val alterConfTxn = target.startTransaction()
+
+    if (alterConfTxn.protocol.minWriterVersion < 7) {
+      enableIcebergCompatConf += Protocol.MIN_WRITER_VERSION_PROP -> "7"
+    }
+    if (alterConfTxn.protocol.minReaderVersion < 3) {
+      enableIcebergCompatConf += Protocol.MIN_READER_VERSION_PROP -> "3"
+    }
+
     val metadata = alterConfTxn.metadata
     val newMetadata = metadata.copy(
       description = metadata.description,
