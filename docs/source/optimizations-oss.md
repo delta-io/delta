@@ -158,7 +158,6 @@ You can specify multiple columns for `ZORDER BY` as a comma-separated list. Howe
 
 The read support for the log compaction files is available in <Delta> 3.0.0 and above. It is enabled by default and can be disabled using the SQL conf `spark.databricks.delta.deltaLog.minorCompaction.useForReads=<value>` where `value` can be `true/false`. The write support for the log compaction will be added in a future version of Delta.
 
-.. include:: /shared/replacements.md
 
 ## Optimized Write
 
@@ -185,3 +184,6 @@ Besides the above, the following advanced SQL configurations can be used to furt
 * `spark.databricks.delta.optimizeWrite.binSize` (default=512MiB), which controls the target in-memory size of each output file;
 * `spark.databricks.delta.optimizeWrite.numShuffleBlocks` (default=50,000,000), which controls "maximum number of shuffle blocks to target";
 * `spark.databricks.delta.optimizeWrite.maxShufflePartitions` (default=2,000), which controls "max number of output buckets (reducers) that can be used by optimized writes".
+
+
+.. include:: /shared/replacements.md
