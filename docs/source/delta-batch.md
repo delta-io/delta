@@ -1196,6 +1196,13 @@ You can also set `delta.`-prefixed properties during the first commit to a Delta
 
 See also the [_](/table-properties.md).
 
+## Syncing table schema and properties to the Hive metastore
+
+You can enable asynchronous syncing of table schema and properties to the metastore by setting `spark.databricks.delta.catalog.update.enabled` to `true`. Whenever the Delta client detects that either of these two were changed due to an update, it will sync the changes to the metastore. The config `spark.databricks.delta.catalog.update.threadPoolSize` can be optionally used to control the size of the threadpool that is used for these asynchronous updates.
+
+.. note::
+  - Since partition columns are immutable in Hive metastore, Delta stores them as normal data columns to allow for schema changes that involve partition columns. However, for partitioned tables that were converted into Delta, the initial partition columns will always appear towards end of the returned schema due to this Hive metastore quirk.
+
 <a id="table-metadata"></a>
 
 ## Table metadata
