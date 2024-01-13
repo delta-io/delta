@@ -483,7 +483,6 @@ trait DeltaSQLConfBase {
 
   val DELTA_UPDATE_CATALOG_ENABLED =
     buildConf("catalog.update.enabled")
-      .internal()
       .doc("When enabled, we will cache the schema of the Delta table and the table properties " +
         "in the external catalog, e.g. the Hive MetaStore.")
       .booleanConf
