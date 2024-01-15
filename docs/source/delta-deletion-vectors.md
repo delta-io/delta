@@ -11,7 +11,7 @@ Deletion vectors are a storage optimization feature that can be enabled on <Delt
 
 ## Enable deletion vectors
 
-<Delta> 2.4 and above leverages deletion vectors to accelerate `DELETE` operations on a supported Delta table. <Delta> 3.0 adds deletion vectors support for `UPDATE` and <Delta> 3.1 adds deletion vectors support for `MERGE`.
+<Delta> 2.4 and above leverages deletion vectors to accelerate `DELETE` operations on a supported Delta table. <Delta> 3.0 adds support for deletion vectors in `UPDATE` and <Delta> 3.1 adds support for deletion vectors in `MERGE`.
 
 You enable support for deletion vectors on a <Delta> table by setting a <Delta> table property:
 
