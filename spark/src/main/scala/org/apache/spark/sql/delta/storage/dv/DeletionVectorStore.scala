@@ -97,6 +97,9 @@ trait DeletionVectorStoreUtils {
     DATA_SIZE_LEN + bitmapDataSize + CHECKSUM_LEN
   }
 
+  /** Convert the given String path to a Hadoop Path. Please make sure the path is not escaped. */
+  def unescapedStringToPath(path: String): Path = SparkPath.fromPathString(path).toPath
+
   /** Convert the given String path to a Hadoop Path, Please make sure the path is escaped. */
   def escapedStringToPath(path: String): Path = SparkPath.fromUrlString(path).toPath
 
