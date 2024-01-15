@@ -11,7 +11,7 @@ Deletion vectors are a storage optimization feature that can be enabled on <Delt
 
 ## Enable deletion vectors
 
-<Delta> 2.4 and above leverages deletion vectors to accelerate `DELETE` operations on a supported Delta table.
+<Delta> 2.4 and above leverages deletion vectors to accelerate `DELETE` operations on a supported Delta table. <Delta> 3.0 adds deletion vectors support for `UPDATE` and <Delta> 3.1 adds deletion vectors support for `MERGE`.
 
 You enable support for deletion vectors on a <Delta> table by setting a <Delta> table property:
 
@@ -27,7 +27,7 @@ ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.enableDeletionVectors' = true
 
 Deletion vectors indicate changes to rows as soft-deletes that logically modify existing Parquet data files in the <Delta> tables. These changes are applied physically when data files are rewritten, as triggered by one of the following events:
 
-* An `UPDATE` or `MERGE` command is run on the table.
+* An `UPDATE` or `MERGE` command with deletion vectors disabled is run on the table.
 * An `OPTIMIZE` command is run on the table.
 * `REORG TABLE ... APPLY (PURGE)` is run against the table.
 
@@ -64,5 +64,7 @@ REORG TABLE events
 - In <Delta> 2.3, users are only allowed to _read_ Delta tables that have Deletion vectors feature supported. Write operations to the table, such as `INSERT`, `UPDATE`, `MERGE`, and `ALTER TABLE`, are explicitly blocked. [Change data feed](/delta-change-data-feed.md) reads are also blocked on tables that support Deletion vectors. 
 
 - In <Delta> 2.4, users are allowed to _read_ and _write_ Delta tables that have Deletion vectors feature supported. `UPDATE` or `MERGE` operations may apply changes to Parquet files which contains updated or deleted rows, see [_](#apply-changes).
+
+- In <Delta> 3.0, deletion vectors support in `DELETE` is not enabled by default.
 
 .. include:: /shared/replacements.md
