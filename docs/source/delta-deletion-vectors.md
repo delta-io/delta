@@ -65,6 +65,6 @@ REORG TABLE events
 
 - In <Delta> 2.4, users are allowed to _read_ and _write_ Delta tables that have Deletion vectors feature supported. `UPDATE` or `MERGE` operations may apply changes to Parquet files which contains updated or deleted rows, see [_](#apply-changes).
 
-- In <Delta> 3.0, deletion vectors support in `DELETE` is not enabled by default.
+- In <Delta> 3.0, deletion vectors support in `UPDATE` is not enabled by default.
 
 .. include:: /shared/replacements.md
