@@ -391,14 +391,12 @@ object DeletionVectorBitmapGenerator {
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
 
       val joinExpr = filePathToDVDf("path") === matchedRowsDf(FILE_NAME_COL)
-      val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr)
-      assert(joinedDf.count() == matchedRowsDf.count(),
-        s"""
-           |The joined DataFrame should contain the same number of entries as the original
-           |DataFrame. It is likely that _metadata.file_path is not encoded by Spark as expected.
-           |Joined DataFrame count: ${joinedDf.count()}
-           |matchedRowsDf count: ${matchedRowsDf.count()}
-           |""".stripMargin)
+      // Perform leftOuter join to make sure we do not eliminate any rows because of path
+      // encoding issues. If there is such an issue we will detect it during the aggregation
+      // of the bitmaps.
+      val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr, "leftOuter")
+        .drop(FILE_NAME_COL)
+        .withColumnRenamed("path", FILE_NAME_COL)
       joinedDf
     } else {
       // When the table has no DVs, just add a column to indicate that the existing dv is null
@@ -631,6 +629,14 @@ object DeletionVectorWriter extends DeltaLogging {
    */
   def storeBitmapAndGenerateResult(ctx: DeletionVectorMapperContext, row: DeletionVectorData)
     : DeletionVectorResult = {
+    // If a group with null path exists it means there was an issue while joining with the log to
+    // fetch the DeletionVectorDescriptors.
+    assert(row.filePath != null,
+      s"""
+         |Encountered a non matched file path.
+         |It is likely that _metadata.file_path is not encoded by Spark as expected.
+         |""".stripMargin)
+
     val fileDvDescriptor = row.deletionVectorId.map(DeletionVectorDescriptor.fromJson(_))
     val finalDvDescriptor = fileDvDescriptor match {
       case Some(existingDvDescriptor) if row.deletedRowIndexCount > 0 =>
