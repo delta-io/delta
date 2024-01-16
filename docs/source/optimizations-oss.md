@@ -158,4 +158,32 @@ You can specify multiple columns for `ZORDER BY` as a comma-separated list. Howe
 
 The read support for the log compaction files is available in <Delta> 3.0.0 and above. It is enabled by default and can be disabled using the SQL conf `spark.databricks.delta.deltaLog.minorCompaction.useForReads=<value>` where `value` can be `true/false`. The write support for the log compaction will be added in a future version of Delta.
 
+
+## Optimized Write
+
+.. note:: This feature is available in <Delta> 3.1.0 and above.
+
+Optimized writes improve file size as data is written and benefit subsequent reads on the table.
+
+Optimized writes are most effective for partitioned tables, as they reduce the number of small files written to each partition. Writing fewer large files is more efficient than writing many small files, but you might still see an increase in write latency because data is shuffled before being written.
+
+The following image demonstrates how optimized writes works:
+
+![Optimized writes](/_static/images/delta/optimized-writes.png)
+
+.. note:: You might have code that runs coalesce(n) or repartition(n) just before you write out your data to control the number of files written. Optimized writes eliminates the need to use this pattern.
+
+The optimized write feature is **disabled** by default. It can be enabled at the table, SQL session, and/or DataFrameWriter level using the following settings (in order of precedence from low to high):
+
+* The `delta.autoOptimize.optimizeWrite` table property (default=None);
+* The `spark.databricks.delta.optimizeWrite.enabled` SQL configuration (default=None);
+* The DataFrameWriter option `optimizeWrite` (default=None).
+
+Besides the above, the following advanced SQL configurations can be used to further fine-tune the number and size of files written:
+
+* `spark.databricks.delta.optimizeWrite.binSize` (default=512MiB), which controls the target in-memory size of each output file;
+* `spark.databricks.delta.optimizeWrite.numShuffleBlocks` (default=50,000,000), which controls "maximum number of shuffle blocks to target";
+* `spark.databricks.delta.optimizeWrite.maxShufflePartitions` (default=2,000), which controls "max number of output buckets (reducers) that can be used by optimized writes".
+
+
 .. include:: /shared/replacements.md
