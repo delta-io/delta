@@ -23,6 +23,7 @@ The following <Delta> features break forward compatibility. Features are enabled
    Timestamp without Timezone,[Delta Lake 2.4.0](https://github.com/delta-io/delta/releases/tag/v2.4.0),[TimestampNTZType](https://spark.apache.org/docs/latest/sql-ref-datatypes.html)
    Iceberg Compatibility V1, [Delta Lake 3.0.0](https://github.com/delta-io/delta/releases/tag/v3.0.0),[IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1)
    V2 Checkpoints, [Delta Lake 3.0.0](https://github.com/delta-io/delta/releases/tag/v3.0.0),[V2 Checkpoint Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#v2-spec)
+   Clustering, [Delta Lake 3.1.0](https://github.com/delta-io/delta/releases/tag/v3.1.0),[_](/delta-clustering.md)
 
 <a id="table-protocol"></a>
 
