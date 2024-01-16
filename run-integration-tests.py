@@ -240,7 +240,7 @@ def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_vers
             raise
 
 
-def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo):
+def run_pip_installation_tests(root_dir, version, use_testpypi, use_localpypi, extra_maven_repo):
     print("\n\n##### Running pip installation tests on version %s #####" % str(version))
     clear_artifact_cache()
     delta_pip_name = "delta-spark"
@@ -253,6 +253,11 @@ def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo
         install_cmd = ["pip", "install",
                        "--extra-index-url", "https://test.pypi.org/simple/",
                        delta_pip_name_with_version]
+    elif use_localpypi:
+        pip_wheel_file_name = "%s-%s-py3-none-any.whl" % \
+                              (delta_pip_name.replace("-", "_"), str(version))
+        pip_wheel_file_path = os.path.join(use_localpypi, pip_wheel_file_name)
+        install_cmd = ["pip", "install", pip_wheel_file_path]
     else:
         install_cmd = ["pip", "install", delta_pip_name_with_version]
     print("pip install command: %s" % str(install_cmd))
@@ -393,6 +398,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Use testpypi for testing pip installation")
     parser.add_argument(
+        "--use-localpypiartifact",
+        required=False,
+        default=None,
+        help="Directory path where the downloaded pypi artifacts are present. " +
+            "It should have two files: e.g. delta-spark-3.1.0.tar.gz, delta_spark-3.1.0-py3-none-any.whl")
+    parser.add_argument(
         "--use-local",
         required=False,
         default=False,
@@ -474,4 +485,5 @@ if __name__ == "__main__":
         test_missing_delta_storage_jar(root_dir, args.version, args.use_local)
 
     if run_pip:
-        run_pip_installation_tests(root_dir, args.version, args.use_testpypi, args.maven_repo)
+        run_pip_installation_tests(root_dir, args.version, args.use_testpypi,
+                                   args.use_localpypiartifact, args.maven_repo)
