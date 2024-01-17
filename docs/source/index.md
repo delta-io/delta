@@ -22,6 +22,7 @@ This is the documentation site for <Delta>.
     delta-constraints
     versioning
     delta-column-mapping
+    delta-clustering
     delta-deletion-vectors
     delta-apidoc
     delta-storage
