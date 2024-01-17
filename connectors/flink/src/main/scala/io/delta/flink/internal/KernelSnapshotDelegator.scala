@@ -52,6 +52,9 @@ import io.delta.standalone.internal.util.ConversionUtils
  */
 class KernelSnapshotDelegator(
     kernelSnapshot: SnapshotImplKernel,
+    // This needs to be an argument to the constructor since the constructor of SnapshotImpl might call back
+    // into things like `metadataScala`, and this needs to be already initalized for that
+    kernelSnapshotWrapper: KernelSnapshotWrapper,
     hadoopConf: Configuration,
     path: Path,
     override val version: Long,
@@ -59,10 +62,6 @@ class KernelSnapshotDelegator(
     standaloneDeltaLog: DeltaLogImpl)
   extends SnapshotImpl(hadoopConf, path, -1, LogSegment.empty(path), -1, standaloneDeltaLog, -1) {
 
-  // A KernelSnapshotWrapper holds a `SnapshotImplKernel` inside, and exposes the standalone
-  // snapshot interface. This allows us to return things (like metadata) as if they were being
-  // called on a standard standalone snapshot.
-  val kernelSnapshotWrapper = new KernelSnapshotWrapper(kernelSnapshot)
   lazy val standaloneSnapshot: SnapshotImpl = standaloneDeltaLog.getSnapshotForVersionAsOf(getVersion())
 
   /**
