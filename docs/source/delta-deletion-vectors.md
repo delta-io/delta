@@ -34,7 +34,7 @@ ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.enableDeletionVectors' = true
 
 Deletion vectors indicate changes to rows as soft-deletes that logically modify existing Parquet data files in the <Delta> tables. These changes are applied physically when data files are rewritten, as triggered by one of the following events:
 
-* A DML command with deletion vectors disabled (by command flag or table property) is run on the table.
+* A DML command with deletion vectors disabled (by a command flag or a table property) is run on the table.
 * An `OPTIMIZE` command is run on the table.
 * `REORG TABLE ... APPLY (PURGE)` is run against the table.
 
