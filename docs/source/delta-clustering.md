@@ -77,7 +77,7 @@ The following limitations exist:
   - ZCube based incremental clustering
   - `ALTER TABLE ... CLUSTER BY` to change clustering columns
   - `DESCRIBE DETAIL` to inspect the current clustering columns
-- You can only specify columns with statistics collected for clustering keys. By default, the first 32 columns in a Delta table have statistics collected.
-- You can specify up to 4 columns as clustering keys.
+- You can only specify columns with statistics collected for clustering columns. By default, the first 32 columns in a Delta table have statistics collected.
+- You can specify up to 4 clustering columns.
 
 .. include:: /shared/replacements.md
