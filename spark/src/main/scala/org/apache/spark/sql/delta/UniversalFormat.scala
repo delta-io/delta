@@ -162,13 +162,14 @@ object UniversalFormat extends DeltaLogging {
   }
 
   /**
-   * This method should be called before CTAS writer writes the new table to disk.
+   * This method is used to build UniForm metadata dependencies closure.
+   * It checks configuration conflicts and adds missing properties.
    * It will call [[enforceIcebergInvariantsAndDependencies]] to perform the actual check.
-   * @param configuration of delta writer used to write CTAS data.
+   * @param configuration the original metadata configuration.
    * @return updated configuration if any changes are required,
    *         otherwise the original configuration.
    */
-  def enforceInvariantsAndDependenciesForCTAS(
+  def enforceDependenciesInConfiguration(
       configuration: Map[String, String],
       snapshot: Snapshot): Map[String, String] = {
     var metadata = Metadata(configuration = configuration)
@@ -176,7 +177,7 @@ object UniversalFormat extends DeltaLogging {
     // Check UniversalFormat related property dependencies
     val (_, universalMetadata) = UniversalFormat.enforceInvariantsAndDependencies(
       snapshot,
-      newestProtocol = Protocol(),
+      newestProtocol = snapshot.protocol,
       newestMetadata = metadata,
       isCreatingOrReorgTable = true,
       actions = Seq()
