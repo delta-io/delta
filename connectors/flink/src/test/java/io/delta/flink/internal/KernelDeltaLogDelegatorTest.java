@@ -34,6 +34,19 @@ class KernelDeltaLogDelegatorTest {
     }
 
     @Test
+    public void testKernelTableNotExists() throws Exception {
+        String sourceTableRoot = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
+        KernelDeltaLogDelegator kernelDeltaLog = KernelDeltaLogDelegator.forTable(
+            new Configuration(),
+            sourceTableRoot+"/not_exist"
+        );
+        assertThat(!kernelDeltaLog.tableExists())
+            .withFailMessage(
+                "There should not be Delta table files in test folder.")
+            .isTrue();
+    }
+
+    @Test
     public void testKernelDetectsTable() throws Exception {
         String sourceTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
         DeltaTestUtils.initTestForTableApiTable(sourceTablePath);
