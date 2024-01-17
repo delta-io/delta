@@ -21,7 +21,7 @@ The following are examples of scenarios that benefit from clustering:
 
 ## Enable liquid clustering
 
-You must enable liquid clustering when first creating a table. Clustering is not compatible with partitioning or `ZORDER`. Once enabled, run `OPTIMIZE` jobs as normal to incrementally cluster data. See [_](#optimize).
+You must enable liquid clustering when first creating a table. Clustering is not compatible with partitioning or `ZORDER`. Once enabled, run `OPTIMIZE` jobs as normal to cluster data. See [_](#optimize).
 
 To enable liquid clustering, add the `CLUSTER BY` phrase to a table creation statement, as in the examples below:
 
