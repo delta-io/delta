@@ -34,7 +34,7 @@ CREATE TABLE table2 CLUSTER BY (col0)  -- specify clustering after table name, n
 AS SELECT * FROM table1;
 ```
 
-.. warning:: Tables created with liquid clustering enabled have Clustering table feature enabled at creation and use Delta writer version 7 and reader version 3. Table protocol versions cannot be downgraded, and tables with clustering enabled are not readable by <Delta> clients that do not support all enabled Delta reader protocol table features. See [_](/versioning.md).
+.. warning:: Tables created with liquid clustering enabled have Clustering and Domain metadata table feature enabled at creation and use Delta writer version 7 and reader version 3. Table protocol versions cannot be downgraded. See [_](/versioning.md).
 
 ## Choose clustering keys
 
@@ -51,7 +51,7 @@ If you're converting an existing table, consider the following recommendations:
 
 ## Write data to a clustered table
 
-You must use a Delta writer client that supports Clustering table feature.
+You must use a Delta writer client that supports Clustering and Domain metadata table feature.
 
 ## <a id="optimize"></a> How to trigger clustering
 
@@ -61,7 +61,8 @@ Use the `OPTIMIZE` command on your table, as in the following example:
 OPTIMIZE table_name;
 ```
 
-Liquid clustering is incremental, meaning that data is only rewritten as necessary to accommodate data that needs to be clustered. Data files with clustering keys that do not match data to be clustered are not rewritten.
+<!-- Commenting out for now as it's not supported yet.
+Liquid clustering is incremental, meaning that data is only rewritten as necessary to accommodate data that needs to be clustered. Data files with clustering keys that do not match data to be clustered are not rewritten. -->
 
 ## Read data from a clustered table
 
@@ -71,6 +72,7 @@ You can read data in a clustered table using any <Delta> client. For best query 
 SELECT * FROM table_name WHERE cluster_key_column_name = "some_value";
 ```
 
+<!-- Commenting out for now as it's not supported yet.
 ## Change clustering keys
 
 You can change clustering keys for a table at any time by running an `ALTER TABLE` command, as in the following example:
@@ -95,7 +97,7 @@ You can use `DESCRIBE DETAIL` commands to see the clustering keys for a table, a
 
 ```sql
 DESCRIBE DETAIL table_name;
-```
+``` -->
 
 ## Limitations
 
