@@ -21,7 +21,7 @@ The following are examples of scenarios that benefit from clustering:
 
 ## Enable liquid clustering
 
-You must enable liquid clustering when first creating a table. Clustering is not compatible with partitioning or `ZORDER`. Once enabled, run `OPTIMIZE` jobs as normal to cluster data. See [_](#optimize).
+You must enable liquid clustering when creating a table. Clustering is not compatible with partitioning or `ZORDER`. Once enabled, run `OPTIMIZE` jobs as normal to cluster data. See [_](#optimize).
 
 To enable liquid clustering, add the `CLUSTER BY` phrase to a table creation statement, as in the examples below:
 
@@ -34,7 +34,7 @@ CREATE TABLE table2 CLUSTER BY (col0)  -- specify clustering after table name, n
 AS SELECT * FROM table1;
 ```
 
-.. warning:: Tables created with liquid clustering enabled have Clustering and Domain metadata table feature enabled at creation and use Delta writer version 7 and reader version 3. Table protocol versions cannot be downgraded. See [_](/versioning.md).
+.. warning:: Tables created with liquid clustering have `Clustering` and `DomainMetadata` table features enabled (both writer features) and use Delta writer version 7 and reader version 3. Table protocol versions cannot be downgraded. See [_](/versioning.md).
 
 ## Choose clustering keys
 
@@ -51,7 +51,7 @@ If you're converting an existing table, consider the following recommendations:
 
 ## Write data to a clustered table
 
-You must use a Delta writer client that supports Clustering and Domain metadata table feature.
+You must use a Delta writer client that supports `Clustering` and `DomainMetadata` table features.
 
 ## <a id="optimize"></a> How to trigger clustering
 
@@ -104,9 +104,9 @@ DESCRIBE DETAIL table_name;
 The following limitations exist:
 
 - In <Delta> 3.1, users needs to enable the feature flag `spark.databricks.delta.clusteredTable.enableClusteringTablePreview` to use liquid clustering. The following features are not supported in this preview:
-  - Incremental clustering
-  - ALTER TABLE ... CLUSTER BY
-  - DESCRIBE DETAIL
+  - Z-cube based incremental clustering
+  - `ALTER TABLE ... CLUSTER BY` to change clustering columns
+  - `DESCRIBE DETAIL` to inspect the current clustering columns
 - You can only specify columns with statistics collected for clustering keys. By default, the first 32 columns in a Delta table have statistics collected.
 - You can specify up to 4 columns as clustering keys.
 
