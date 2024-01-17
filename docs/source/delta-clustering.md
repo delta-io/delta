@@ -5,7 +5,7 @@ orphan: 1
 
 # Use liquid clustering for Delta tables
 
-liquid clustering replaces table partitioning and `ZORDER` to simplify data layout decisions and optimize query performance. Liquid clustering provides flexibility to redefine clustering keys without rewriting existing data, allowing data layout to evolve alongside analytic needs over time.
+Liquid clustering improves the existing partitioning and `ZORDER` techniques by simplifying data layout decisions in order to optimize query performance. Liquid clustering provides flexibility to redefine clustering keys without rewriting existing data, allowing data layout to evolve alongside analytic needs over time.
 
 .. note:: This feature is available in <Delta> 3.1.0 and above. This feature is in experimental support mode with [_](#limitations).
 
