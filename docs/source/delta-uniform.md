@@ -16,7 +16,7 @@ To enable UniForm, you must fulfill the following requirements:
 
 - The table must have column mapping enabled. See [_](delta-column-mapping.md).
 - The Delta table must have a `minReaderVersion` >= 2 and `minWriterVersion` >= 7.
-- Writes to the table must use <Delta> 3.0 or above.
+- Writes to the table must use <Delta> 3.1 or above.
 - Hive Metastore (HMS) must be configured as the catalog. See [the <AS> documentation](https://spark.apache.org/docs/latest/sql-data-sources-hive-tables.html) for how to configure <AS> to use Hive Metastore.
 
 
@@ -24,33 +24,33 @@ To enable UniForm, you must fulfill the following requirements:
 
 .. important::
 
-  Enabling Delta UniForm sets the Delta table feature `IcebergCompatV1`, a write protocol feature. Only clients that support this table feature can write to enabled tables. You must use <Delta> 3.0 or above to write to Delta tables with this feature enabled.
+  Enabling Delta UniForm sets the Delta table feature `IcebergCompatV2`, a write protocol feature. Only clients that support this table feature can write to enabled tables. You must use <Delta> 3.1 or above to write to Delta tables with this feature enabled.
 
-The following table property enables UniForm support for Iceberg. `iceberg` is the only valid value.
+The following table properties enable UniForm support for Iceberg. `iceberg` is the only valid value.
 
 ```
+'delta.enableIcebergCompatV2' = 'true'
 'delta.universalFormat.enabledFormats' = 'iceberg'
 ```
 
 
-You must also enable column mapping and `IcebergCompatV1` to use UniForm. These are set automatically during table creation if you enable UniForm. If you're altering an existing table, you must explicitly set these table properties. The following examples demonstrate these options:
-
+You must also enable column mapping to use UniForm. It is set automatically during table creation, as in the following example:
 ```sql
 CREATE TABLE T(c1 INT) USING DELTA TBLPROPERTIES(
-  'delta.universalFormat.enabledFormats' = 'iceberg');
-
-ALTER TABLE T SET TBLPROPERTIES(
-  'delta.columnMapping.mode' = 'name',
-  'delta.enableIcebergCompatV1' = 'true',
+  'delta.enableIcebergCompatV2' = 'true',
   'delta.universalFormat.enabledFormats' = 'iceberg');
 ```
 
+
+You can enable UniForm on an existing table using the following syntax:
+
+.. note:: This syntax also works to upgrade from the IcbergCompatV1. This syntax may rewrite existing files to make those Iceberg compatible. This syntax automatically disables and purges Deletion Vectors from the table
+```sql
+REORG TABLE table_name APPLY (UPGRADE UNIFORM(ICEBERG_COMPAT_VERSION=2));
+```
 .. important:: When you first enable UniForm, asynchronous metadata generation begins. This task must complete before external clients can query the table using Iceberg. See [_](#status).
 
 .. warning:: You can turn off UniForm by unsetting the `delta.universalFormat.enabledFormats` table property. You cannot turn off column mapping once enabled, and upgrades to <Delta> reader and writer protocol versions cannot be undone.
-
-.. note::
-  If you plan to use BigQuery as your Iceberg reader client, you must set `spark.databricks.delta.write.dataFilesToSubdir` to `true` on <Delta>.
 
 See [_](#limitations).
 
@@ -103,15 +103,14 @@ In general, Iceberg and Delta table versions do not align by either the commit t
 
 ## Limitations
 
-.. warning:: UniForm is read-only from an Iceberg perspective, though this cannot yet be enforced since UniForm uses file-system-based commits when writing Iceberg. If any external writer (not <Delta>) writes to this Iceberg table, this may destroy your Delta table and cause data loss, as the Iceberg writer may perform data cleanup or garbage collection that Delta is unaware of.
+.. warning:: UniForm is read-only from an Iceberg perspective, though this cannot yet be enforced since UniForm uses HMS as catalog. If any external writer (not <Delta>) writes to this Iceberg table, this may destroy your Delta table and cause data loss, as the Iceberg writer may perform data cleanup or garbage collection that Delta is unaware of.
 
 The following limitations exist:
 
 - UniForm does not work on tables with deletion vectors enabled. See [_](delta-deletion-vectors.md).
-- Delta tables with UniForm enabled do not support `LIST`, `MAP`, and `VOID` types.
+- Delta tables with UniForm enabled do not support `VOID` types.
 - Iceberg clients can only read from UniForm. Writes are not supported.
 - Iceberg reader clients might have individual limitations, regardless of UniForm. See documentation for your target client.
-- Iceberg reader clients version 1.2.0 and below do not support `INT96` timestamp type written by <AS>. Use the following code in notebooks that write to UniForm tables to avoid this limitation: `spark.conf.set(“spark.sql.parquet.outputTimestampType”, “TIMESTAMP_MICROS”)`
 
 The following <Delta> features work for Delta clients when UniForm is enabled, but do not have support in Iceberg:
 
