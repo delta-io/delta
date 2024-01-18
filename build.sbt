@@ -219,6 +219,7 @@ lazy val sharing = (project in file("sharing"))
     name := "delta-sharing-spark",
     commonSettings,
     scalaStyleSettings,
+    releaseSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
