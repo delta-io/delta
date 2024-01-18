@@ -485,5 +485,8 @@ if __name__ == "__main__":
         test_missing_delta_storage_jar(root_dir, args.version, args.use_local)
 
     if run_pip:
+        if args.use_testpypi and args.use_localpypiartifact is not None:
+            raise Exception("Cannot specify both --use-testpypi and --use-localpypiartifact.")
+
         run_pip_installation_tests(root_dir, args.version, args.use_testpypi,
                                    args.use_localpypiartifact, args.maven_repo)
