@@ -108,7 +108,7 @@ In general, Iceberg and Delta table versions do not align by either the commit t
 The following limitations exist:
 
 - UniForm does not work on tables with deletion vectors enabled. See [_](delta-deletion-vectors.md).
-- Delta tables with UniForm enabled do not support `VOID` types.
+- Delta tables with UniForm enabled do not support `VOID` type.
 - Iceberg clients can only read from UniForm. Writes are not supported.
 - Iceberg reader clients might have individual limitations, regardless of UniForm. See documentation for your target client.
 
