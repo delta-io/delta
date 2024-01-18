@@ -73,8 +73,13 @@ class KernelDeltaLogDelegator(
       case e: TableNotFoundException =>
         return new StandaloneInitialSnapshotImpl(hadoopConf, logPath, this)
     }
+    // A KernelSnapshotWrapper holds a `SnapshotImplKernel` inside, and exposes the standalone
+    // snapshot interface. This allows us to return things (like metadata) as if they were being
+    // called on a standard standalone snapshot.
+    val kernelSnapshotWrapper = new KernelSnapshotWrapper(kernelSnapshot)
     currKernelSnapshot = Some(new KernelSnapshotDelegator(
       kernelSnapshot,
+      kernelSnapshotWrapper,
       hadoopConf,
       logPath,
       kernelSnapshot.getVersion(tableClient), // note: tableClient isn't used
