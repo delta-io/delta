@@ -180,7 +180,20 @@ case class DeltaFormatSharingSource(
     val currentTimeMillis = System.currentTimeMillis()
     if ((currentTimeMillis - lastTimestampForGetVersionFromServer) >=
       QUERY_TABLE_VERSION_INTERVAL_MILLIS) {
-      latestTableVersionOnServer = client.getTableVersion(table)
+      val serverVersion = client.getTableVersion(table)
+      if (serverVersion < 0) {
+        throw new IllegalStateException(
+          s"Delta Sharing Server returning negative table version: " +
+          s"$serverVersion."
+        )
+      } else if (serverVersion < latestTableVersionOnServer) {
+        logWarning(
+          s"Delta Sharing Server returning smaller table version: $serverVersion < " +
+          s"$latestTableVersionOnServer."
+        )
+      }
+      logInfo(s"Delta Sharing Server returning $serverVersion for getTableVersion.")
+      latestTableVersionOnServer = serverVersion
       lastTimestampForGetVersionFromServer = currentTimeMillis
     }
     latestTableVersionOnServer
@@ -439,6 +452,7 @@ case class DeltaFormatSharingSource(
       s"Invalid table version in delta sharing response: ${tableFiles.lines}."
     )
     latestTableVersionInLocalDeltaLogOpt = Some(deltaLogMetadata.maxVersion)
+    logInfo(s"Setting latestTableVersionInLocalDeltaLogOpt to ${deltaLogMetadata.maxVersion}")
     assert(
       deltaLogMetadata.numFileActionsInMinVersionOpt.isDefined,
       "numFileActionsInMinVersionOpt missing after constructed delta log."
@@ -477,6 +491,7 @@ case class DeltaFormatSharingSource(
       (endOffset.reservoirVersion == latestProcessedEndOffsetOption.get.reservoirVersion &&
       endOffset.index > latestProcessedEndOffsetOption.get.index)) {
       latestProcessedEndOffsetOption = Some(endOffset)
+      logInfo(s"Setting latestProcessedEndOffsetOption to $endOffset")
     }
 
     deltaSource.getBatch(startOffsetOption, end)
@@ -518,6 +533,7 @@ case class DeltaFormatSharingSource(
 
   // Calls deltaSource.commit for checks related to column mapping.
   override def commit(end: Offset): Unit = {
+    logInfo(s"Commit end offset: $end.")
     deltaSource.commit(end)
 
     // Clean up previous blocks after commit.

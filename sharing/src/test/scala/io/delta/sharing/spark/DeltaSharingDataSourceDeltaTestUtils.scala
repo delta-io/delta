@@ -153,11 +153,11 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
   // version of the deltaTable, use BlockManager to store the result.
   private[spark] def prepareMockedClientGetTableVersion(
       deltaTable: String,
-      sharedTable: String): Unit = {
-    val snapshotToUse = getSnapshotToUse(deltaTable, None)
+      sharedTable: String,
+      inputVersion: Option[Long] = None): Unit = {
     DeltaSharingUtils.overrideSingleBlock[Long](
       blockId = TestClientForDeltaFormatSharing.getBlockId(sharedTable, "getTableVersion"),
-      value = snapshotToUse.version
+      value = inputVersion.getOrElse(getSnapshotToUse(deltaTable, None).version)
     )
   }
 
