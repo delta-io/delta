@@ -148,6 +148,38 @@ class DeltaFormatSharingSourceSuite
     }
   }
 
+  test("DeltaFormatSharingSource getTableVersion error") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_version_error"
+      withTable(deltaTableName) {
+        sql(
+          s"""
+             |CREATE TABLE $deltaTableName (value STRING)
+             |USING DELTA
+             |""".stripMargin)
+        val sharedTableName = "shared_streaming_table_version_error"
+        val profileFile = prepareProfileFile(tempDir)
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName, Some(-1L))
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+          val e = intercept[Exception] {
+            val df = spark.readStream
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .load(tablePath)
+            testStream(df)(
+              AssertOnQuery { q =>
+                q.processAllAvailable(); true
+              }
+            )
+          }
+          assert(e.getMessage.contains("Delta Sharing Server returning negative table version: -1."))
+        }
+      }
+    }
+  }
+
   test("DeltaFormatSharingSource simple query works") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_simple"
