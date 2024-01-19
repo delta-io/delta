@@ -174,7 +174,9 @@ class DeltaFormatSharingSourceSuite
               }
             )
           }
-          assert(e.getMessage.contains("Delta Sharing Server returning negative table version: -1."))
+          assert(
+            e.getMessage.contains("Delta Sharing Server returning negative table version: -1.")
+          )
         }
       }
     }
