@@ -483,7 +483,7 @@ This section describes the supported methods for querying older versions of tabl
 	
 .. note::
   The timestamp of each version N depends on the timestamp of the log file corresponding to the version N in Delta table log. Hence, time travel by timestamp can break if you copy the entire Delta table directory to a new location. Time travel by version will be unaffected.
-
+	
 ### Syntax
 
 This section shows how to query an older version of a Delta table.
