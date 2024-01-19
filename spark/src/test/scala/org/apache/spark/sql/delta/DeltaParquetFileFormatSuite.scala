@@ -21,7 +21,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
-import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.pathToString
+import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.pathToEscapedString
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.PathWithFileSystem
@@ -199,7 +199,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
       writer.write(serializedBitmap)
     }
     DeletionVectorDescriptor.onDiskWithAbsolutePath(
-      pathToString(dvPath.makeQualified().path),
+      pathToEscapedString(dvPath.makeQualified().path),
       dvRange.length,
       rowIndexes.size,
       Some(dvRange.offset))

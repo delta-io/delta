@@ -61,7 +61,7 @@ trait DeletionVectorStoreSuiteBase
   def withTempHadoopFileSystemPath[T](f: Path => T): T = {
     val dir: File = Utils.createTempDir()
     dir.delete()
-    val tempPath = DeletionVectorStore.stringToPath(dir.toString)
+    val tempPath = DeletionVectorStore.unescapedStringToPath(dir.toString)
     try f(tempPath) finally Utils.deleteRecursively(dir)
   }
 

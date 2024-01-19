@@ -547,14 +547,14 @@ object DeletionVectorWriter extends DeltaLogging {
     val broadcastHadoopConf = sparkSession.sparkContext.broadcast(
       new SerializableConfiguration(hadoopConf))
     // hadoop.fs.Path is not Serializable, so close over the String representation instead
-    val tablePathString = DeletionVectorStore.pathToString(table)
+    val tablePathString = DeletionVectorStore.pathToEscapedString(table)
     val packingTargetSize =
       sparkSession.conf.get(DeltaSQLConf.DELETION_VECTOR_PACKING_TARGET_SIZE)
 
     // This is the (partition) mapper function we are returning
     (rowIterator: Iterator[InputT]) => {
       val dvStore = DeletionVectorStore.createInstance(broadcastHadoopConf.value.value)
-      val tablePath = DeletionVectorStore.stringToPath(tablePathString)
+      val tablePath = DeletionVectorStore.escapedStringToPath(tablePathString)
       val tablePathWithFS = dvStore.pathWithFileSystem(tablePath)
 
       val perBinFunction: Seq[InputT] => Seq[OutputT] = (rows: Seq[InputT]) => {
