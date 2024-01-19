@@ -1600,6 +1600,12 @@ trait DeltaErrorsBase
       messageParameters = Array(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key))
   }
 
+  def metadataAbsentForExistingCatalogTable(tableName: String, tablePath: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE",
+      messageParameters = Array(tableName, tablePath, tableName))
+  }
+
   def updateSchemaMismatchExpression(from: StructType, to: StructType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION",

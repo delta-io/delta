@@ -354,6 +354,12 @@ case class CreateDeltaTableCommand(
         if (tableWithLocation.schema.isEmpty) {
           throw DeltaErrors.schemaNotProvidedException
         }
+        // This can happen if someone deleted files from the filesystem but
+        // the table still exists in the catalog.
+        if (txn.readVersion == -1 && tableExistsInCatalog) {
+          throw DeltaErrors.metadataAbsentForExistingCatalogTable(
+            tableWithLocation.identifier.toString, txn.deltaLog.logPath.toString)
+        }
         // We need to replace
         replaceMetadataIfNecessary(
           txn,

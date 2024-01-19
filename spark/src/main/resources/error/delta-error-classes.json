@@ -1329,6 +1329,13 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE" : {
+    "message" : [
+      "The table <tableName> already exists in the catalog but no metadata could be found for the table at the path <tablePath>.",
+      "Did you manually delete files from the _delta_log directory? If so, then you should be able to recreate it as follows. First, drop the table by running `DROP TABLE <tableNameForDropCmd>`. Then, recreate it by running the current command again."
+    ],
+    "sqlState" : "XXKDS"
+  },
   "DELTA_MISSING_CHANGE_DATA" : {
     "message" : [
       "Error getting change data for range [<startVersion> , <endVersion>] as change data was not",
