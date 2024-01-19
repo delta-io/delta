@@ -28,6 +28,7 @@ This is the documentation site for <Delta>.
     delta-apidoc
     delta-storage
     delta-uniform
+    delta-sharing
     concurrency-control
     integrations
     porting
