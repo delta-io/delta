@@ -17,8 +17,7 @@ To enable UniForm, you must fulfill the following requirements:
 - The table must have column mapping enabled. See [_](delta-column-mapping.md).
 - The Delta table must have a `minReaderVersion` >= 2 and `minWriterVersion` >= 7.
 - Writes to the table must use <Delta> 3.1 or above.
-- Hive Metastore (HMS) must be configured as the catalog. See [the <AS> documentation](https://spark.apache.org/docs/latest/sql-data-sources-hive-tables.html) for how to configure <AS> to use Hive Metastore.
-
+- Hive Metastore (HMS) must be configured as the catalog. See [the HMS documentation](https://spark.apache.org/docs/latest/sql-data-sources-hive-tables.html) for how to configure <AS> to use Hive Metastore.
 
 ## Enable <Delta> UniForm
 
@@ -35,16 +34,17 @@ The following table properties enable UniForm support for Iceberg. `iceberg` is 
 
 
 You must also enable column mapping to use UniForm. It is set automatically during table creation, as in the following example:
+
 ```sql
 CREATE TABLE T(c1 INT) USING DELTA TBLPROPERTIES(
   'delta.enableIcebergCompatV2' = 'true',
   'delta.universalFormat.enabledFormats' = 'iceberg');
 ```
 
-
 You can enable UniForm on an existing table using the following syntax:
 
-.. note:: This syntax also works to upgrade from the IcbergCompatV1. This syntax may rewrite existing files to make those Iceberg compatible. This syntax automatically disables and purges Deletion Vectors from the table
+.. note:: This syntax also works to upgrade from the IcbergCompatV1. It may rewrite existing files to make those Iceberg compatible, and it automatically disables and purges Deletion Vectors from the table
+
 ```sql
 REORG TABLE table_name APPLY (UPGRADE UNIFORM(ICEBERG_COMPAT_VERSION=2));
 ```
@@ -76,6 +76,7 @@ See documentation for your Iceberg reader client for how to review table propert
 ```sql
 SHOW TBLPROPERTIES <table-name>;
 ```
+
 ## Read UniForm tables as Iceberg tables in <AS>
 
 You are able to read UniForm tables as Iceberg tables in <AS> with the following steps:
