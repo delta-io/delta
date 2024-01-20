@@ -52,7 +52,7 @@ The Java API docs are available [here](https://delta-io.github.io/delta/snapshot
 
 Detailed user guide explaining the APIs and how to use them is available [here](https://github.com/delta-io/delta/blob/master/kernel/USER_GUIDE.md).
 
-Example Java programs that read Delta Lake tables using the Kernel APIs are avilable [here](https://github.com/delta-io/delta/tree/master/kernel/examples).
+Example Java programs that read Delta Lake tables using the Kernel APIs are available [here](https://github.com/delta-io/delta/tree/master/kernel/examples).
 
 # Providing feedback
 We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also contact the community for getting answers.
