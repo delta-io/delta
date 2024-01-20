@@ -107,6 +107,18 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   }
 
   /**
+   * Verify user didn't set clustering table feature in table properties.
+   *
+   * @param existingProperties Table properties set by the user when creating a clustered table.
+   */
+  def validateExistingTableFeatureProperties(existingProperties: Map[String, String]): Unit = {
+    if (existingProperties.contains(
+        TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature))) {
+      throw DeltaErrors.createTableSetClusteringTableFeatureException(ClusteringTableFeature.name)
+    }
+  }
+
+  /**
    * Validate the number of clustering columns doesn't exceed the limit.
    *
    * @param clusteringColumns clustering columns for the table.
