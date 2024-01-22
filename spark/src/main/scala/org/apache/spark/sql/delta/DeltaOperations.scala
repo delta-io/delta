@@ -552,6 +552,14 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
 
+  /** Recorded when clustering columns are changed on Liquid tables. */
+  case class ClusterBy(
+      oldClusteringColumns: String,
+      newClusteringColumns: String) extends Operation("CLUSTER BY") {
+    override val parameters: Map[String, Any] = Map(
+      "oldClusteringColumns" -> oldClusteringColumns,
+      "newClusteringColumns" -> newClusteringColumns)
+  }
 
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
     Map(

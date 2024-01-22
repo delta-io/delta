@@ -71,6 +71,12 @@
     ],
     "sqlState" : "42837"
   },
+  "DELTA_ALTER_TABLE_CLUSTER_BY_ON_PARTITIONED_TABLE_NOT_ALLOWED" : {
+    "message" : [
+      "ALTER TABLE CLUSTER BY cannot be applied to a partitioned table."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_AMBIGUOUS_DATA_TYPE_CHANGE" : {
     "message" : [
       "Cannot change data type of <column> from <from> to <to>. This change contains column removals and additions, therefore they are ambiguous. Please make these changes individually using ALTER TABLE [ADD | DROP | RENAME] COLUMN."

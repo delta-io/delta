@@ -3189,6 +3189,19 @@ trait DeltaErrorsBase
       messageParameters = Array(s"${zOrderBy.map(_.name).mkString(", ")}"))
   }
 
+  def alterClusterByNotOnDeltaTableException(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ONLY_OPERATION",
+      messageParameters = Array("ALTER TABLE CLUSTER BY")
+    )
+  }
+
+  def alterTableClusterByOnPartitionedTableException(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ALTER_TABLE_CLUSTER_BY_ON_PARTITIONED_TABLE_NOT_ALLOWED",
+      messageParameters = Array.empty)
+  }
+
   def clusteringTablePreviewDisabledException(): Throwable = {
     val msg = s"""
       |A clustered table is currently in preview and is disabled by default. Please set
