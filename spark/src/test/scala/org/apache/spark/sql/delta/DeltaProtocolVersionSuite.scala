@@ -422,6 +422,38 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("Vacuum checks the write protocol") {
+    withTempDir { path =>
+      spark.range(10).write.format("delta").save(path.getCanonicalPath)
+      val log = DeltaLog.forTable(spark, path)
+
+      sql(s"INSERT INTO delta.`${path.getCanonicalPath}` VALUES (10)")
+      val vacuumCommandsToTry = Seq(
+        s"vacuum delta.`${path.getCanonicalPath}` RETAIN 10000 HOURS",
+        s"vacuum delta.`${path.getCanonicalPath}` RETAIN 10000 HOURS DRY RUN"
+      )
+      // Both vacuum and vacuum dry run works as expected
+      vacuumCommandsToTry.foreach(spark.sql(_).collect())
+
+      val snapshot = log.update()
+      val newProtocol = Protocol(
+        TABLE_FEATURES_MIN_READER_VERSION,
+        TABLE_FEATURES_MIN_WRITER_VERSION).withWriterFeatures(Seq("newUnsupportedWriterFeature"))
+      log.store.write(
+        deltaFile(log.logPath, snapshot.version + 1),
+        Iterator(Metadata().json, newProtocol.json),
+        overwrite = false,
+        log.newDeltaHadoopConf())
+
+      // Both vacuum and vacuum dry run works as expected
+      vacuumCommandsToTry.foreach { command =>
+        intercept[DeltaUnsupportedTableFeatureException] {
+          spark.sql(command).collect()
+        }
+      }
+    }
+  }
+
   test("InvalidProtocolVersionException - error message with protocol too high - table path") {
     withTempDir { path =>
       spark.range(1).write.format("delta").save(path.getCanonicalPath)
