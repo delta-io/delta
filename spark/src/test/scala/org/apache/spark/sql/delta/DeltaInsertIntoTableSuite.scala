@@ -134,6 +134,35 @@ class DeltaInsertIntoSQLSuite
     }
   }
 
+  test("insertInto should throw an AnalysisError on name mismatch") {
+    def testInsertByNameError(targetSchema: String, expectedErrorClass: String): Unit = {
+      val sourceTableName = "source"
+      val targetTableName = "target"
+      val format = "delta"
+      withTable(sourceTableName, targetTableName) {
+        sql(s"CREATE TABLE $sourceTableName (a int, b int) USING $format")
+        sql(s"CREATE TABLE $targetTableName $targetSchema USING $format")
+        val e = intercept[AnalysisException] {
+          sql(s"INSERT INTO $targetTableName BY NAME SELECT * FROM $sourceTableName")
+        }
+        assert(e.getErrorClass === expectedErrorClass)
+      }
+    }
+
+    // NOTE: We use upper case in the target schema so that needsSchemaAdjustmentByName returns
+    // true (due to case sensitivity) so that we call resolveQueryColumnsByName and hit the right
+    // code path.
+
+    // when the number of columns does not match, throw an arity mismatch error.
+    testInsertByNameError(
+      targetSchema = "(A int)",
+      expectedErrorClass = "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS")
+
+    // when the number of columns matches, but the names do not, throw a missing column error.
+    testInsertByNameError(
+      targetSchema = "(A int, c int)", expectedErrorClass = "DELTA_MISSING_COLUMN")
+  }
+
   dynamicOverwriteTest("insertInto: dynamic overwrite by name") {
     import testImplicits._
     val t1 = "tbl"
