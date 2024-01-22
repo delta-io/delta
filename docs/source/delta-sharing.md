@@ -5,10 +5,18 @@ description: Learn how to perform reads on Delta Sharing tables.
 
 # Read Delta Sharing Tables
 
-Delta Sharing supports most of the options provided by <AS> DataFrame read for performing batch/streaming/cdf reads on tables.
-Delta Sharing doesn't support writing to a shared table. Please refer to the [delta sharing repo](https://github.com/delta-io/delta-sharing/blob/main/README.md) for more details. 
+[Delta Sharing](https://delta.io/sharing/) is an open protocol for secure real-time exchange of large datasets, which enables 
+organizations to share data in real time regardless of which computing platforms they use. 
+It is a simple REST protocol that securely shares access to part of a cloud dataset and leverages 
+modern cloud storage systems, such as S3, ADLS, or GCS, to reliably transfer data.
 
-For Delta Sharing reads on shared tables with advanced delta features such as DeletionVectors and ColumnMapping, 
+In Delta Sharing, data provider is the one who owns the original dataset or table, and share it with a broad range of consumers. 
+Each table can be configured to share with different options(history, filtering, etc.) We focus on consuming the shared table in this doc.
+
+Delta Sharing data source supports most of the options provided by <AS> DataFrame for performing reads through batch, streaming, or table changes (CDF) APIs on shared tables.
+Delta Sharing doesn't support writing to a shared table. Please refer to the [Delta Sharing repo](https://github.com/delta-io/delta-sharing/blob/main/README.md) for more details. 
+
+For Delta Sharing reads on shared tables with advanced <Delta> features such as DeletionVectors and ColumnMapping, 
 you enable integration with <AS> DataSourceV2 and Catalog APIs (since 3.1) by setting the same configurations as delta when you create a new `SparkSession`. See [_](delta-batch.md#sql-support).
 
 
@@ -17,7 +25,7 @@ you enable integration with <AS> DataSourceV2 and Catalog APIs (since 3.1) by se
   :depth: 2
 
 ## Read a snapshot
-After you save the profile file and launch Spark with the connector library, you can access shared tables.
+After you save the [Profile File](#profile-file) and launch Spark with the connector library, you can access shared tables.
 
 .. code-language-tabs::
 
@@ -52,7 +60,7 @@ Delta Sharing supports predicates pushdown to allow fetching only needed data fr
 
 ## Query an older snapshot of a shared table (time travel)
 
-Once the provider enables history sharing of the shared table, Delta Sharing time travel allows you to query an older snapshot of a shared table.
+Once the data provider enables history sharing of the shared table, Delta Sharing time travel allows you to query an older snapshot of a shared table.
 
 .. code-language-tabs::
 
@@ -61,21 +69,21 @@ Once the provider enables history sharing of the shared table, Delta Sharing tim
   SELECT * FROM mytable VERSION AS OF version
   ```
   ```python
-  spark.read.format("delta").option("timestampAsOf", timestamp_string).load(tablePath)
+  spark.read.format("deltaSharing").option("timestampAsOf", timestamp_string).load(tablePath)
 
-  spark.read.format("delta").option("versionAsOf", version).load(tablePath)
+  spark.read.format("deltaSharing").option("versionAsOf", version).load(tablePath)
   ```
   ```scala
-  spark.read.format("delta").option("timestampAsOf", timestamp_string).load(tablePath)
+  spark.read.format("deltaSharing").option("timestampAsOf", timestamp_string).load(tablePath)
 
-  spark.read.format("delta").option("versionAsOf", version).load(tablePath)
+  spark.read.format("deltaSharing").option("versionAsOf", version).load(tablePath)
   ```
 
-The `timestamp_expression` and `version` share the same syntax as [delta](delta-batch.md#timestamp-and-version-syntax).
+The `timestamp_expression` and `version` share the same syntax as [<Delta>](delta-batch.md#timestamp-and-version-syntax).
 
-## Read CDF
+## Read Table Changes (CDF)
 
-Once the provider turns on CDF on the original delta table and shares it with history through Delta Sharing, the recipient can query CDF of a Delta Sharing table similar to CDF of a delta table.
+Once the data provider turns on CDF on the original <Delta> table and shares it with history through Delta Sharing, the recipient can query CDF of a Delta Sharing table similar to CDF of a <Delta> table.
 
 TODO: check timestamp format.
 
@@ -146,7 +154,7 @@ TODO: check timestamp format.
 Delta Sharing Streaming is deeply integrated with [Spark Structured Streaming](https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html) through `readStream`, 
 and able to connect with any sink that is able to perform `writeStream`.
 
-Once the provider shares a table with history, the recipient can perform a streaming query on the table.
+Once the data provider shares a table with history, the recipient can perform a streaming query on the table.
 When you load a Delta Sharing table as a stream source and use it in a streaming query, the query processes all of the data present in the shared table as well as any new data that arrives after the stream is started.
 
 ```scala
@@ -158,18 +166,22 @@ spark.readStream.format("deltaSharing").load(tablePath)
 Delta Sharing Streaming supports the following functionalities in the same way as Delta Streaming: [Limit input rate](delta-streaming.md#limit-input-rate), 
 [Ignore updates and deletes](delta-streaming.md#ignore-updates-and-deletes), [Specify initial position](delta-streaming.md#specify-initial-position)
 
-In addition, `maxVersionsPerRpc` is provided to decide how many versions of files are requested from the server in every delta sharing rpc. This is to help
-reduce the per rpc workload and make the delta sharing streaming job more stable. 
+In addition, `maxVersionsPerRpc` is provided to decide how many versions of files are requested from the server in every Delta Sharing rpc. This is to help
+reduce the per rpc workload and make the Delta Sharing streaming job more stable. 
 Especially when the streaming resumes from a checkpoint and a lots of new versions are accumulated on the shared table on the server. The default is 100.
 
 .. note:: Trigger.AvailableNow is not supported in Delta Sharing Streaming.
 
-## Delta Format Sharing
-Delta Format Sharing is introduced since delta-sharing-client 1.0 and delta-sharing-spark 3.1, in order to support advanced delta features in Delta Sharing.
-DeletionVectors and ColumnMapping are supported.
-With "Delta Format Sharing", the actions of a shared table is returned in delta format, then the delta spark library is leveraged to read data.
+## Read Advanced <Delta> Features in Delta Sharing
+In order to support advanced <Delta> features in Delta Sharing, "Delta Format Sharing" is introduced since delta-sharing-client 1.0 and delta-sharing-spark 3.1, 
+in which the actions of a shared table is returned in <Delta> format, then a <Delta> library is leveraged to read data.
 
 Please do remember to set the spark configurations mentioned in [_](delta-batch.md#sql-support) in order to read shared tables with DeletionVectors and ColumnMapping. 
+
+| Read Table Feature | Available since version |
+| - | - |
+| Deletion Vectors(#delta-deletion-vectors.md) | 3.1.0 | 
+| ColumnMapping(#delta-column-mapping.md) | 3.1.0 |
 
 Batch queries can be performed as is, because it can automatically resolve the responseFormat based on the table features of the shared table.
 An additional option `responseFormat=delta` needs to be set for cdf and streaming queries when reading shared tables with DeletionVectors or ColumnMapping enabled.
@@ -199,6 +211,29 @@ spark.read.format("deltaSharing")
 
 // Streaming query
 spark.readStream.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+```
+
+<a id="profile-file"></a>
+
+## Profile File
+A profile file is a JSON file that contains the information for a recipient to access shared data on a Delta Sharing server. There are a few fields in this file as listed below.
+
+| Field Name | Descrption |
+| - | - |
+| shareCredentialsVersion | The file format version of the profile file. This version will be increased whenever non-forward-compatible changes are made to the profile format. When a client is running an unsupported profile file format version, it should show an error message instructing the user to upgrade to a newer version of their client. |
+| endpoint | The url of the sharing server. |
+| bearerToken | The [bearer token](https://tools.ietf.org/html/rfc6750) to access the server. |
+| expirationTime | The expiration time of the bearer token in [ISO 8601 format](https://www.w3.org/TR/NOTE-datetime). This field is optional and if it is not provided, the bearer token can be seen as never expire. |
+
+Example:
+
+```json
+{
+  "shareCredentialsVersion": 1,
+  "endpoint": "https://sharing.delta.io/delta-sharing/",
+  "bearerToken": "<token>",
+  "expirationTime": "2024-01-22T00:12:29.0Z"
+}
 ```
 
 .. include:: /shared/replacements.md
