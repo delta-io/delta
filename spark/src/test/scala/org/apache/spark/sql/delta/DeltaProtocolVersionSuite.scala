@@ -445,7 +445,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         overwrite = false,
         log.newDeltaHadoopConf())
 
-      // Both vacuum and vacuum dry run works as expected
+      // Both vacuum and vacuum dry run fails as expected
       vacuumCommandsToTry.foreach { command =>
         intercept[DeltaUnsupportedTableFeatureException] {
           spark.sql(command).collect()
