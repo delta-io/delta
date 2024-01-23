@@ -57,7 +57,7 @@ A profile file is provided by the data provider to the data recipient.
 
 The DataFrame returned automatically reads the most recent snapshot of the table for any query. 
 
-Delta Sharing supports predicate pushdown to efficiently fetch data from the Delta Sharing server when there are applicable predicates in the query.
+Delta Sharing supports [predicate pushdown](https://github.com/delta-io/delta-sharing/blob/main/PROTOCOL.md#json-predicates-for-filtering) to efficiently fetch data from the Delta Sharing server when there are applicable predicates in the query.
 
 ## Query an older snapshot of a shared table (time travel)
 
@@ -80,7 +80,7 @@ Once the data provider enables history sharing of the shared table, Delta Sharin
   spark.read.format("deltaSharing").option("versionAsOf", version).load(tablePath)
   ```
 
-The `timestamp_expression` and `version` share the same syntax as [<Delta>](delta-batch.md#timestamp-and-version-syntax).
+The `timestamp_expression` and `version` share the same syntax as [Delta](delta-batch.md#timestamp-and-version-syntax).
 
 ## Read Table Changes (CDF)
 
