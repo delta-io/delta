@@ -488,6 +488,8 @@ This section describes the supported methods for querying older versions of tabl
 
 This section shows how to query an older version of a Delta table.
 
+<a id="timestamp-and-version-syntax"></a>
+
 #### SQL `AS OF` syntax
 
 ```sql
