@@ -15,10 +15,10 @@ Each table can be configured to be shared with different options (history, filte
 
 Delta Sharing data source supports most of the options provided by <AS> DataFrame for performing reads through [batch](delta-batch.md), [streaming](delta-streaming.md), or [table changes (CDF)](delta-change-data-feed.md) APIs on shared tables.
 Delta Sharing doesn't support writing to a shared table. Please refer to the [Delta Sharing Repo](https://github.com/delta-io/delta-sharing/blob/main/README.md) for more details. 
-Please follow the [quick start](https://github.com/delta-io/delta-sharing?tab=readme-ov-file#quick-start) to leverage the delta sharing python connector to discover the shared tables.  
+Please follow the [quick start](https://github.com/delta-io/delta-sharing?tab=readme-ov-file#quick-start) to leverage the Delta Sharing python connector to discover the shared tables.  
 
 For Delta Sharing reads on shared tables with advanced <Delta> features such as [Deletion Vectors](delta-deletion-vectors.md) and [Column Mapping](delta-column-mapping.md), 
-you need to enable integration with <AS> DataSourceV2 and Catalog APIs (since delta-sharing-spark 3.1) by setting the same configurations as delta when you create a new `SparkSession`. See [_](delta-batch.md#sql-support).
+you need to enable integration with <AS> DataSourceV2 and Catalog APIs (since delta-sharing-spark 3.1) by setting the same configurations as <Delta> when you create a new `SparkSession`. See [_](delta-batch.md#sql-support).
 
 
 .. contents:: In this article:
