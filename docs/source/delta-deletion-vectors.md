@@ -29,7 +29,7 @@ ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.enableDeletionVectors' = true
 .. warning::
   When you enable deletion vectors, the table protocol version is upgraded. After upgrading, the table will not be readable by <Delta> clients that do not support deletion vectors. See [_](versioning.md).
 
-  In <Delta> 3.1 and above, you can drop the deletion vectors table feature to enable compatibility with other Delta clients. See [_](delta-drop-feature.md).
+  In <Delta> 3.0 and above, you can drop the deletion vectors table feature to enable compatibility with other Delta clients. See [_](delta-drop-feature.md).
 
 <a id="apply-changes"></a>
 
