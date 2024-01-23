@@ -5,7 +5,7 @@ oprhan: 1
 
 # Drop Delta table features
 
-.. note:: This feature is available in <Delta> 3.1.0 and above.
+.. note:: This feature is available in <Delta> 3.0.0 and above.
 
 <Delta> provides limited support for dropping table features. To drop a table feature, the following must occur:
 
@@ -18,7 +18,7 @@ Where supported, you should only use this functionality to support compatibility
 
 ## How can I drop a Delta table feature?
 
-To remove a Delta table feature, you run an `ALTER TABLE <table-name> DROP FEATURE <feature-name> [TRUNCATE HISTORY]` command. You must use <Delta> 3.1.0 or above.
+To remove a Delta table feature, you run an `ALTER TABLE <table-name> DROP FEATURE <feature-name> [TRUNCATE HISTORY]` command. You must use <Delta> 3.0.0 or above.
 
 ## What Delta table features can be dropped?
 
