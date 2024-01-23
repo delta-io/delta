@@ -157,6 +157,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       import org.apache.spark.sql.delta.implicits._
 
       val snapshot = deltaLog.update()
+      deltaLog.protocolWrite(snapshot.protocol)
+
       val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
       val retentionMillis = retentionHours.map(h => TimeUnit.HOURS.toMillis(math.round(h)))
       val deleteBeforeTimestamp = retentionMillis match {
