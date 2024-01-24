@@ -555,7 +555,8 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
               s"i boolean, s bigint, q int default 42) using $v2Format " +
               "partitioned by (i)")
           },
-          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED"
+          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          parameters = Map("commandType" -> "CREATE TABLE")
         )
       }
       withTable("alterTableSetDefaultFeatureNotEnabled") {
@@ -564,7 +565,8 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
           exception = intercept[DeltaAnalysisException] {
             sql("alter table alterTableSetDefaultFeatureNotEnabled alter column a set default 42")
           },
-          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED"
+          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          parameters = Map("commandType" -> "ALTER TABLE")
         )
       }
       // Adding a new column with a default value to an existing table is not allowed.
@@ -575,7 +577,8 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
           exception = intercept[DeltaAnalysisException] {
             sql("alter table alterTableTest add column z int default 42")
           },
-          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED")
+          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED"
+        )
       }
       // The default value fails to analyze.
       checkError(
