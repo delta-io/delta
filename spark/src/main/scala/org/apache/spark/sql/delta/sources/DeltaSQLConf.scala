@@ -1607,6 +1607,18 @@ trait DeltaSQLConfBase {
       )
     .createWithDefault(4)
 
+  val DELTA_LOG_CACHE_SIZE = buildConf("delta.log.cacheSize")
+    .internal()
+    .doc("The maximum number of DeltaLog instances to cache in memory.")
+    .longConf
+    .createWithDefault(10000)
+
+  val DELTA_LOG_CACHE_RETENTION_MINUTES = buildConf("delta.log.cacheRetentionMinutes")
+    .internal()
+    .doc("The rentention duration of DeltaLog instances in the cache")
+    .timeConf(TimeUnit.MINUTES)
+    .createWithDefault(60)
+
   //////////////////
   // Delta Sharing
   //////////////////

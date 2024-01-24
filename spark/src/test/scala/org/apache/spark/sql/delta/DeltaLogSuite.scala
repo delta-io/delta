@@ -643,4 +643,22 @@ class DeltaLogSuite extends QueryTest
       assert(e.getMessage.contains("FAILFAST"))
     }
   }
+
+  test("DeltaLog cache size should honor config limit") {
+    def assertCacheSize(expected: Long): Unit = {
+      for (_ <- 1 to 5) {
+        withTempDir(dir => {
+          val path = dir.getCanonicalPath
+          spark.range(10).write.format("delta").mode("append").save(path)
+        })
+      }
+      assert(DeltaLog.cacheSize === expected)
+    }
+    DeltaLog.unsetCache()
+    spark.sessionState.conf.setConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE, 2L)
+    assertCacheSize(2)
+    DeltaLog.unsetCache()
+    System.getProperties.setProperty("delta.log.cacheSize", "3")
+    assertCacheSize(3)
+  }
 }
