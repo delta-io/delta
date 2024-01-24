@@ -31,6 +31,10 @@ class DeltaAnalysisException(
     origin: Option[Origin] = None)
   extends AnalysisException(
     message = DeltaThrowableHelper.getMessage(errorClass, messageParameters),
+    messageParameters = DeltaThrowableHelper
+        .getParameterNames(errorClass, errorSubClass = null)
+        .zip(messageParameters)
+        .toMap,
     errorClass = Some(errorClass),
     line = origin.flatMap(_.line),
     startPosition = origin.flatMap(_.startPosition),
