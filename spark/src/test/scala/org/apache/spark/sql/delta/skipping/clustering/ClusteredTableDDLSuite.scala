@@ -158,7 +158,6 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
           .write.mode("append").format("delta").saveAsTable("srcTbl")
 
         val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, new TableIdentifier("srcTbl"))
-        val schemaStr = snapshot.statCollectionLogicalSchema.treeString
         // Test multiple data types.
         Seq("a", "d", "e").foreach { colName =>
           withTempDir { tmpDir =>
