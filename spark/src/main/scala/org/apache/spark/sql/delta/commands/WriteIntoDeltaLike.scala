@@ -32,7 +32,7 @@ import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -114,22 +114,32 @@ trait WriteIntoDeltaLike {
       case _ =>
     }
 
+    // Helper for creating a SQLMetric and setting its value, since it isn't valid to create a
+    // SQLMetric with a positive `initValue`.
+    def createSumMetricWithValue(name: String, value: Long): SQLMetric = {
+      val metric = new SQLMetric("sum")
+      metric.register(spark.sparkContext, Some(name))
+      metric.set(value)
+      metric
+    }
+
     var sqlMetrics = Map(
-      "numFiles" -> new SQLMetric("number of files written", numFiles),
-      "numOutputBytes" -> new SQLMetric("number of output bytes", numOutputBytes),
-      "numAddedChangeFiles" -> new SQLMetric(
+      "numFiles" -> createSumMetricWithValue("number of files written", numFiles),
+      "numOutputBytes" -> createSumMetricWithValue("number of output bytes", numOutputBytes),
+      "numAddedChangeFiles" -> createSumMetricWithValue(
         "number of change files added", numAddedChangedFiles)
     )
     if (hasRowLevelMetrics) {
       sqlMetrics ++= Map(
-        "numOutputRows" -> new SQLMetric("number of rows added", numNewRows + numCopiedRows),
-        "numCopiedRows" -> new SQLMetric("number of copied rows", numCopiedRows)
+        "numOutputRows" -> createSumMetricWithValue(
+          "number of rows added", numNewRows + numCopiedRows),
+        "numCopiedRows" -> createSumMetricWithValue("number of copied rows", numCopiedRows)
       )
     } else {
       // this will get filtered out in DeltaOperations.WRITE transformMetrics
       sqlMetrics ++= Map(
-        "numOutputRows" -> new SQLMetric("number of rows added", 0L),
-        "numCopiedRows" -> new SQLMetric("number of copied rows", 0L)
+        "numOutputRows" -> createSumMetricWithValue("number of rows added", 0L),
+        "numCopiedRows" -> createSumMetricWithValue("number of copied rows", 0L)
       )
     }
     txn.registerSQLMetrics(spark, sqlMetrics)
