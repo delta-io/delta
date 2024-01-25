@@ -155,14 +155,16 @@ trait DeltaCommand extends DeltaLogging {
    * Find the AddFile record corresponding to the file that was read as part of a
    * delete/update/merge operation.
    *
-   * @param filePath The path to a file. Can be either absolute or relative
+   * @param escapedFilePath The path to a file. Can be either absolute or relative, and
+   *                        must have been escaped.
    * @param nameToAddFileMap Map generated through `generateCandidateFileMap()`
    */
   def getTouchedFile(
       basePath: Path,
-      filePath: String,
+      escapedFilePath: String,
       nameToAddFileMap: Map[String, AddFile]): AddFile = {
-    val absolutePath = DeltaFileOperations.absolutePath(basePath.toString, filePath).toString
+    val absolutePath =
+      DeltaFileOperations.absolutePath(basePath.toString, escapedFilePath).toString
     nameToAddFileMap.getOrElse(absolutePath, {
       throw DeltaErrors.notFoundFileToBeRewritten(absolutePath, nameToAddFileMap.keys)
     })

@@ -128,8 +128,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
 
       // Check that DV exists.
       val dvPath = dv.absolutePath(tablePath)
-      val dvPathStr = DeletionVectorStore.pathToEscapedString(dvPath)
-      assert(new File(dvPathStr).exists(), s"DV not found $dvPath")
+      assert(new File(dvPath.toString).exists(), s"DV not found $dvPath")
 
       // Check that cardinality is correct.
       val bitmap = newDVStore.read(dvPath, dv.offset.get, dv.sizeInBytes)

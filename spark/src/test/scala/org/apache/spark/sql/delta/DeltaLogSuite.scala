@@ -452,7 +452,7 @@ class DeltaLogSuite extends QueryTest
               }.map(_.json)
             log.store.write(checkpointPath, filteredActions.toIterator, overwrite = true, conf)
           } else {
-            withTempDir(removeActionFromParquetCheckpoint)
+            withTempDir(f => removeActionFromParquetCheckpoint(f))
           }
         }
 

@@ -33,6 +33,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -103,15 +104,15 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     val relativizeIgnoreError =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
 
+    val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
     snapshot.stateDS.mapPartitions { actions =>
       val reservoirBase = new Path(basePath)
       val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
       actions.flatMap {
         _.unwrap match {
-          case fa: FileAction if checkAbsolutePathOnly && !fa.path.contains(basePath) =>
-            Nil
-          case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp =>
-            Nil
+          case fa: FileAction if checkAbsolutePathOnly &&
+            Seq(basePath, canonicalizedBasePath).forall(!fa.path.contains(_)) => Nil
+          case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp => Nil
           case fa: FileAction =>
             getValidRelativePathsAndSubdirs(
               fa,
