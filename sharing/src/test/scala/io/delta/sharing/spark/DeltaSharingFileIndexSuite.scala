@@ -224,7 +224,7 @@ class DeltaSharingFileIndexSuite
       DeltaSharingUtils.DeltaSharingTableMetadata(
         version = 0,
         protocol = JsonUtils.fromJson[model.DeltaSharingSingleAction](protocolStr).protocol,
-        metadata = getMockedDeltaSharingMetadata(metaData),
+        metadata = getMockedDeltaSharingMetadata(metaData)
       ),
       new DeltaSharingOptions(Map("path" -> tablePath.toString))
     )
