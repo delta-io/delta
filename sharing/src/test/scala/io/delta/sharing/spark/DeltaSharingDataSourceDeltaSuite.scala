@@ -203,7 +203,15 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_change"
 
-      def test(tablePath: String, expectedCount: Int): Unit = {
+      def test(tablePath: String, expectedCount: Int, expectedSchema: StructType): Unit = {
+        assert(
+          expectedSchema == spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+            .schema
+        )
+
         val deltaDf = spark.read.format("delta").table(deltaTableName)
         val sharingDf =
           spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
@@ -213,9 +221,9 @@ trait DeltaSharingDataSourceDeltaSuiteBase
 
       withTable(deltaTableName) {
         val sharedTableName = "shared_table_change"
-
         createTable(deltaTableName)
 
+        // test 1: insert 2 rows
         sql(
           s"INSERT INTO $deltaTableName" +
             """ VALUES (1, "one", "2023-01-01", "2023-01-01 00:00:00"),
@@ -223,25 +231,50 @@ trait DeltaSharingDataSourceDeltaSuiteBase
         )
         prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
         prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
-
+        val expectedSchema: StructType = new StructType()
+          .add("c1", IntegerType)
+          .add("c2", StringType)
+          .add("c3", DateType)
+          .add("c4", TimestampType)
         withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
           val profileFile = prepareProfileFile(tempDir)
           val tableName = s"share1.default.$sharedTableName"
-          test(s"${profileFile.getCanonicalPath}#$tableName", 2)
+          test(s"${profileFile.getCanonicalPath}#$tableName", 2, expectedSchema)
         }
 
+        // test 2: insert 2 more rows, and rename a column
+        spark.sql(
+          s"""ALTER TABLE $deltaTableName SET TBLPROPERTIES('delta.minReaderVersion' = '2',
+             |'delta.minWriterVersion' = '5',
+             |'delta.columnMapping.mode' = 'name', 'delta.enableDeletionVectors' = true)""".stripMargin
+        )
         sql(
           s"INSERT INTO $deltaTableName" +
             """ VALUES (3, "three", "2023-03-03", "2023-03-03 00:00:00"),
               |(4, "four", "2023-04-04", "2023-04-04 00:00:00")""".stripMargin
         )
+        sql(s"""ALTER TABLE $deltaTableName RENAME COLUMN c3 TO c3rename""")
         prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
         prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
-
+        val expectedNewSchema: StructType = new StructType()
+          .add("c1", IntegerType)
+          .add("c2", StringType)
+          .add("c3rename", DateType)
+          .add("c4", TimestampType)
         withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
           val profileFile = prepareProfileFile(tempDir)
           val tableName = s"share1.default.$sharedTableName"
-          test(s"${profileFile.getCanonicalPath}#$tableName", 4)
+          test(s"${profileFile.getCanonicalPath}#$tableName", 4, expectedNewSchema)
+        }
+
+        // test 3: delete 1 row
+        sql(s"DELETE FROM $deltaTableName WHERE c1 = 2")
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          val tableName = s"share1.default.$sharedTableName"
+          test(s"${profileFile.getCanonicalPath}#$tableName", 3, expectedNewSchema)
         }
       }
     }
