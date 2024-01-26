@@ -199,6 +199,54 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     }
   }
 
+  test("DeltaSharingDataSource able to read data with changes") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_change"
+
+      def test(tablePath: String, expectedCount: Int): Unit = {
+        val deltaDf = spark.read.format("delta").table(deltaTableName)
+        val sharingDf =
+          spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+        checkAnswer(deltaDf, sharingDf)
+        assert(sharingDf.count() == expectedCount)
+      }
+
+      withTable(deltaTableName) {
+        val sharedTableName = "shared_table_change"
+
+        createTable(deltaTableName)
+
+        sql(
+          s"INSERT INTO $deltaTableName" +
+            """ VALUES (1, "one", "2023-01-01", "2023-01-01 00:00:00"),
+              |(2, "two", "2023-02-02", "2023-02-02 00:00:00")""".stripMargin
+        )
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          val tableName = s"share1.default.$sharedTableName"
+          test(s"${profileFile.getCanonicalPath}#$tableName", 2)
+        }
+
+        sql(
+          s"INSERT INTO $deltaTableName" +
+            """ VALUES (3, "three", "2023-03-03", "2023-03-03 00:00:00"),
+              |(4, "four", "2023-04-04", "2023-04-04 00:00:00")""".stripMargin
+        )
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          val tableName = s"share1.default.$sharedTableName"
+          test(s"${profileFile.getCanonicalPath}#$tableName", 4)
+        }
+      }
+    }
+  }
+
   test("DeltaSharingDataSource able to auto resolve responseFormat") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_auto"
