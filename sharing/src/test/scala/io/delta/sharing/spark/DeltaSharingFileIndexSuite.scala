@@ -59,7 +59,8 @@ private object TestUtils {
   }
 
   // scalastyle:off line.size.limit
-  val protocolStr = """{"protocol":{"deltaProtocol":{"minReaderVersion": 1, "minWriterVersion": 1}}}"""
+  val protocolStr =
+    """{"protocol":{"deltaProtocol":{"minReaderVersion": 1, "minWriterVersion": 1}}}"""
   val metaDataStr =
     """{"metaData":{"size":809,"deltaMetadata":{"id":"testId","format":{"provider":"parquet","options":{}},"schemaString":"{\"type\":\"struct\",\"fields\":[{\"name\":\"c1\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}},{\"name\":\"c2\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]}","partitionColumns":["c2"],"configuration":{},"createdTime":1691734718560}}}"""
   val metaDataWithoutSizeStr =
