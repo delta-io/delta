@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.util
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include
+import com.fasterxml.jackson.core.StreamReadConstraints
 import com.fasterxml.jackson.databind.{DeserializationFeature, ObjectMapper}
 import com.fasterxml.jackson.module.scala.{DefaultScalaModule, ScalaObjectMapper}
 
@@ -28,6 +29,13 @@ object JsonUtils {
     _mapper.setSerializationInclusion(Include.NON_ABSENT)
     _mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     _mapper.registerModule(DefaultScalaModule)
+
+    val streamReadConstraints = StreamReadConstraints
+      .builder()
+      .maxStringLength(Int.MaxValue)
+      .build()
+    _mapper.getFactory.setStreamReadConstraints(streamReadConstraints)
+
     _mapper
   }
 
