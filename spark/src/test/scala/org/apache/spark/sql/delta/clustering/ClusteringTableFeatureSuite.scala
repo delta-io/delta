@@ -32,8 +32,7 @@ class ClusteringTableFeatureSuite extends SparkFunSuite with DeltaSQLCommandTest
       checkError(
         e,
         "DELTA_CREATE_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED",
-        parameters = Map("tableFeature" -> "clustering")
-      )
+        parameters = Map("tableFeature" -> "clustering"))
     }
   }
 
@@ -46,8 +45,7 @@ class ClusteringTableFeatureSuite extends SparkFunSuite with DeltaSQLCommandTest
       checkError(
         e,
         "DELTA_ALTER_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED",
-        parameters = Map("tableFeature" -> "clustering")
-      )
+        parameters = Map("tableFeature" -> "clustering"))
     }
   }
 }
