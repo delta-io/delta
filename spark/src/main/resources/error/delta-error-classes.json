@@ -71,6 +71,12 @@
     ],
     "sqlState" : "42837"
   },
+  "DELTA_ALTER_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED" : {
+    "message" : [
+      "Cannot enable <tableFeature> table feature using ALTER TABLE SET TBLPROPERTIES. Please use CREATE OR REPLACE TABLE CLUSTER BY to create a Delta table with clustering."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_AMBIGUOUS_DATA_TYPE_CHANGE" : {
     "message" : [
       "Cannot change data type of <column> from <from> to <to>. This change contains column removals and additions, therefore they are ambiguous. Please make these changes individually using ALTER TABLE [ADD | DROP | RENAME] COLUMN."
@@ -555,6 +561,12 @@
       "the schema matches."
     ],
     "sqlState" : "42KD7"
+  },
+  "DELTA_CREATE_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED" : {
+    "message" : [
+      "Cannot enable <tableFeature> table feature using TBLPROPERTIES. Please use CREATE OR REPLACE TABLE CLUSTER BY to create a Delta table with clustering."
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_CREATE_TABLE_WITH_DIFFERENT_PARTITIONING" : {
     "message" : [

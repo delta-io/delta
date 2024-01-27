@@ -3204,6 +3204,18 @@ trait DeltaErrorsBase
       |""".stripMargin.replace("\n", " ")
     new UnsupportedOperationException(msg)
   }
+
+  def alterTableSetClusteringTableFeatureException(tableFeature: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ALTER_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED",
+      messageParameters = Array(tableFeature))
+  }
+
+  def createTableSetClusteringTableFeatureException(tableFeature: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CREATE_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED",
+      messageParameters = Array(tableFeature))
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
