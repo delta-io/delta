@@ -36,7 +36,6 @@ master_doc = 'index'
 project = 'Delta Lake'
 author = 'Delta Lake Authors'
 
-# OSS version
 version = '3.0.0'   # Replaced by copybara
 release = '3.0.0'
 

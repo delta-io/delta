@@ -65,7 +65,7 @@ public class InternalScanFileUtils {
         // an absolute path. https://github.com/delta-io/delta/issues/2089
         .add(TABLE_ROOT_COL_NAME, TABLE_ROOT_DATA_TYPE);
 
-    private static final int ADD_FILE_ORDINAL = SCAN_FILE_SCHEMA.indexOf("add");
+    public static final int ADD_FILE_ORDINAL = SCAN_FILE_SCHEMA.indexOf("add");
 
     private static final StructType ADD_FILE_SCHEMA =
         (StructType) SCAN_FILE_SCHEMA.get("add").getDataType();
@@ -85,6 +85,8 @@ public class InternalScanFileUtils {
     private static final int ADD_FILE_DV_ORDINAL = ADD_FILE_SCHEMA.indexOf("deletionVector");
 
     private static final int TABLE_ROOT_ORDINAL = SCAN_FILE_SCHEMA.indexOf(TABLE_ROOT_COL_NAME);
+
+    public static final int ADD_FILE_STATS_ORDINAL = AddFile.SCHEMA_WITH_STATS.indexOf("stats");
 
     /**
      * Get the {@link FileStatus} of {@code AddFile} from given scan file {@link Row}. The

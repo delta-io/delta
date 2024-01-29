@@ -22,7 +22,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.FileDataReadResult;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
@@ -34,17 +34,17 @@ public class InternalUtils {
     private InternalUtils() {}
 
     /**
-     * Utility method to read at most one row from the given data {@link FileDataReadResult}
+     * Utility method to read at most one row from the given data {@link ColumnarBatch}
      * iterator. If there is more than one row, an exception will be thrown.
      *
      * @param dataIter
      * @return
      */
-    public static Optional<Row> getSingularRow(CloseableIterator<FileDataReadResult> dataIter)
+    public static Optional<Row> getSingularRow(CloseableIterator<ColumnarBatch> dataIter)
         throws IOException {
         Row row = null;
         while (dataIter.hasNext()) {
-            try (CloseableIterator<Row> rows = dataIter.next().getData().getRows()) {
+            try (CloseableIterator<Row> rows = dataIter.next().getRows()) {
                 while (rows.hasNext()) {
                     if (row != null) {
                         throw new IllegalArgumentException(

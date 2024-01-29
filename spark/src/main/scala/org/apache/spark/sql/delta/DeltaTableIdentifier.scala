@@ -89,10 +89,10 @@ object DeltaTableIdentifier extends DeltaLogging {
     }
 
     spark.sessionState.conf.runSQLonFile &&
+      new Path(identifier.table).isAbsolute &&
       DeltaSourceUtils.isDeltaTable(identifier.database) &&
       !tableIsTemporaryTable &&
-      !tableExists &&
-      new Path(identifier.table).isAbsolute
+      !tableExists
   }
 
   /**

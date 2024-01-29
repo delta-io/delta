@@ -24,17 +24,23 @@ import java.util.Locale
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
+import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaTableUtils}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.tablefeatures.DropFeature
+import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkException
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -99,9 +105,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case "option.path" => false
       case _ => true
     }.toMap
-    val (
-      partitionColumns, maybeBucketSpec
-      ) = convertTransforms(partitions)
+    val (partitionColumns, maybeBucketSpec, maybeClusterBySpec) = convertTransforms(partitions)
+    validateClusterBySpec(maybeClusterBySpec, schema)
     var newSchema = schema
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec
@@ -154,7 +159,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
     val withDb =
       verifyTableAndSolidify(
         tableDesc,
-        None
+        None,
+        maybeClusterBySpec
       )
 
     val writer = sourceQuery.map { df =>
@@ -248,6 +254,26 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
+  // Perform checks on ClusterBySpec.
+  def validateClusterBySpec(
+      maybeClusterBySpec: Option[ClusterBySpec], schema: StructType): Unit = {
+    // Validate that the preview is enabled if we are creating a clustered table.
+    ClusteredTableUtils.validatePreviewEnabled(maybeClusterBySpec)
+    maybeClusterBySpec.foreach { clusterBy =>
+      // Check if the specified cluster by columns exists in the table.
+      val resolver = spark.sessionState.conf.resolver
+      clusterBy.columnNames.foreach { column =>
+        // This is the same check as in rules.scala, to keep the behaviour consistent.
+        SchemaUtils.findColumnPosition(column.fieldNames(), schema, resolver)
+      }
+      // Check that columns are not duplicated in the cluster by statement.
+      PartitionUtils.checkColumnNameDuplication(
+        clusterBy.columnNames.map(_.toString), "in CLUSTER BY", resolver)
+      // Check number of clustering columns is within allowed range.
+      ClusteredTableUtils.validateNumClusteringColumns(
+        clusterBy.columnNames.map(_.fieldNames.toSeq))
+    }
+  }
 
   protected def newDeltaPathTable(ident: Identifier): DeltaTableV2 = {
     DeltaTableV2(spark, new Path(ident.name()))
@@ -372,11 +398,11 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
 
   // Copy of V2SessionCatalog.convertTransforms, which is private.
-  private def convertTransforms(partitions: Seq[Transform]): (
-    Seq[String], Option[BucketSpec]
-    ) = {
+  private def convertTransforms(
+      partitions: Seq[Transform]): (Seq[String], Option[BucketSpec], Option[ClusterBySpec]) = {
     val identityCols = new mutable.ArrayBuffer[String]
     var bucketSpec = Option.empty[BucketSpec]
+    var clusterBySpec = Option.empty[ClusterBySpec]
 
     partitions.map {
       case IdentityTransform(FieldReference(Seq(col))) =>
@@ -385,22 +411,29 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case BucketTransform(numBuckets, bucketCols, sortCols) =>
         bucketSpec = Some(BucketSpec(
           numBuckets, bucketCols.map(_.fieldNames.head), sortCols.map(_.fieldNames.head)))
+      case TempClusterByTransform(columnNames) =>
+        if (clusterBySpec.nonEmpty) {
+          // Parser guarantees that it only passes down one TempClusterByTransform.
+          throw SparkException.internalError("Cannot have multiple cluster by transforms.")
+        }
+        clusterBySpec = Some(ClusterBySpec(columnNames))
 
       case transform =>
         throw DeltaErrors.operationNotSupportedException(s"Partitioning by expressions")
     }
+    // Parser guarantees that partition and cluster by can't both exist.
+    assert(!(identityCols.toSeq.nonEmpty && clusterBySpec.nonEmpty))
+    // Parser guarantees that bucketing and cluster by can't both exist.
+    assert(!(bucketSpec.nonEmpty && clusterBySpec.nonEmpty))
 
-    (
-      identityCols.toSeq, bucketSpec
-    )
+    (identityCols.toSeq, bucketSpec, clusterBySpec)
   }
 
   /** Performs checks on the parameters provided for table creation for a Delta table. */
   def verifyTableAndSolidify(
       tableDesc: CatalogTable,
-      query: Option[LogicalPlan]
-      ): CatalogTable = {
-
+      query: Option[LogicalPlan],
+      maybeClusterBySpec: Option[ClusterBySpec] = None): CatalogTable = {
     if (tableDesc.bucketSpec.isDefined) {
       throw DeltaErrors.operationNotSupportedException("Bucketing", tableDesc.identifier)
     }
@@ -415,8 +448,15 @@ class DeltaCatalog extends DelegatingCatalogExtension
       tableDesc.partitionColumnNames,
       caseSensitive = false) // Delta is case insensitive
 
-    val validatedConfigurations =
+    var validatedConfigurations =
       DeltaConfigs.validateConfigurations(tableDesc.properties)
+    // Add needed configs for Clustered table.
+    if (maybeClusterBySpec.nonEmpty) {
+      validatedConfigurations =
+        validatedConfigurations ++
+          ClusteredTableUtils.getClusteringColumnsAsProperty(maybeClusterBySpec) ++
+          ClusteredTableUtils.getTableFeatureProperties(validatedConfigurations)
+    }
 
     val db = tableDesc.identifier.database.getOrElse(catalog.getCurrentDatabase)
     val tableIdentWithDB = tableDesc.identifier.copy(database = Some(db))
@@ -711,7 +751,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
         val dropFeatureTableChange = dropFeature.head.asInstanceOf[DropFeature]
         val featureName = dropFeatureTableChange.featureName
         val truncateHistory = dropFeatureTableChange.truncateHistory
-        AlterTableDropFeatureDeltaCommand(table, featureName, truncateHistory).run(spark)
+        AlterTableDropFeatureDeltaCommand(
+          table, featureName, truncateHistory = truncateHistory).run(spark)
 
     }
 

@@ -55,6 +55,13 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
   val notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause]
   val migratedSchema: Option[StructType]
 
+  protected def shouldWritePersistentDeletionVectors(
+      spark: SparkSession,
+      txn: OptimisticTransaction): Boolean = {
+    spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS) &&
+      DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
+  }
+
   override val (canMergeSchema, canOverwriteSchema) = {
     // Delta options can't be passed to MERGE INTO currently, so they'll always be empty.
     // The methods in options check if the auto migration flag is on, in which case schema evolution
@@ -173,7 +180,10 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     "scanTimeMs" ->
       createTimingMetric(sc, "time taken to scan the files for matches"),
     "rewriteTimeMs" ->
-      createTimingMetric(sc, "time taken to rewrite the matched files")
+      createTimingMetric(sc, "time taken to rewrite the matched files"),
+    "numTargetDeletionVectorsAdded" -> createMetric(sc, "number of deletion vectors added"),
+    "numTargetDeletionVectorsRemoved" -> createMetric(sc, "number of deletion vectors removed"),
+    "numTargetDeletionVectorsUpdated" -> createMetric(sc, "number of deletion vectors updated")
   )
 
   /**

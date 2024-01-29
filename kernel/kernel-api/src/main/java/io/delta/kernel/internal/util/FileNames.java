@@ -46,11 +46,23 @@ public final class FileNames {
         return Long.parseLong(path.getName().split("\\.")[0]);
     }
 
+    public static long deltaVersion(String path) {
+        final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
+        final String name = path.substring(slashIdx + 1);
+        return Long.parseLong(name.split("\\.")[0]);
+    }
+
     /**
      * Returns the version for the given checkpoint path.
      */
     public static long checkpointVersion(Path path) {
         return Long.parseLong(path.getName().split("\\.")[0]);
+    }
+
+    public static long checkpointVersion(String path) {
+        final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
+        final String name = path.substring(slashIdx + 1);
+        return Long.parseLong(name.split("\\.")[0]);
     }
 
     /**

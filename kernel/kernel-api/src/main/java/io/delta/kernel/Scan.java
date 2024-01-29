@@ -17,21 +17,15 @@
 package io.delta.kernel;
 
 import java.io.IOException;
-import java.util.HashSet;
-import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.client.FileReadContext;
-import io.delta.kernel.client.ParquetHandler;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
@@ -113,78 +107,68 @@ public interface Scan {
     Row getScanState(TableClient tableClient);
 
     /**
-     * Get the data from the given scan files using the connector provided {@link TableClient}.
+     * Transform the physical data read from the table data file into the logical data that expected
+     * out of the Delta table.
      *
-     * @param tableClient     Connector provided {@link TableClient} implementation.
-     * @param scanState       Scan state returned by {@link Scan#getScanState(TableClient)}
-     * @param scanFileRowIter an iterator of {@link Row}s. Each {@link Row} represents one scan file
-     *                        from the {@link FilteredColumnarBatch} returned by
-     *                        {@link Scan#getScanFiles(TableClient)}
-     * @param predicate       An optional predicate that can be used for data skipping while reading
-     *                        the scan files.
+     * @param tableClient      Connector provided {@link TableClient} implementation.
+     * @param scanState        Scan state returned by {@link Scan#getScanState(TableClient)}
+     * @param scanFile         Scan file from where the physical data {@code physicalDataIter} is
+     *                         read from.
+     * @param physicalDataIter Iterator of {@link ColumnarBatch}s containing the physical data read
+     *                         from the {@code scanFile}.
      * @return Data read from the input scan files as an iterator of {@link FilteredColumnarBatch}s.
      * Each {@link FilteredColumnarBatch} instance contains the data read and an optional selection
      * vector that indicates data rows as valid or invalid. It is the responsibility of the
      * caller to close this iterator.
      * @throws IOException when error occurs while reading the data.
      */
-    static CloseableIterator<FilteredColumnarBatch> readData(
-        TableClient tableClient,
-        Row scanState,
-        CloseableIterator<Row> scanFileRowIter,
-        Optional<Predicate> predicate) throws IOException {
-        StructType physicalSchema = ScanStateRow.getPhysicalSchema(tableClient, scanState);
-        StructType logicalSchema = ScanStateRow.getLogicalSchema(tableClient, scanState);
-        List<String> partitionColumns = ScanStateRow.getPartitionColumns(scanState);
-        Set<String> partitionColumnsSet = new HashSet<>(partitionColumns);
-
-        StructType readSchemaWithoutPartitionColumns =
-            PartitionUtils.physicalSchemaWithoutPartitionColumns(
-                logicalSchema,
-                physicalSchema,
-                partitionColumnsSet);
-
-        // request the row_index column for DV filtering
-        StructType readSchema = readSchemaWithoutPartitionColumns
-            // TODO: do we only want to request row_index_col when there is at least 1 DV?
-            .add(StructField.METADATA_ROW_INDEX_COLUMN);
-
-        ParquetHandler parquetHandler = tableClient.getParquetHandler();
-
-        CloseableIterator<FileReadContext> filesReadContextsIter =
-            parquetHandler.contextualizeFileReads(
-                scanFileRowIter,
-                predicate.orElse(ALWAYS_TRUE));
-
-        CloseableIterator<FileDataReadResult> data = parquetHandler.readParquetFiles(
-            filesReadContextsIter,
-            readSchema);
-
-        String tablePath = ScanStateRow.getTableRoot(scanState);
-
+    static CloseableIterator<FilteredColumnarBatch> transformPhysicalData(
+            TableClient tableClient,
+            Row scanState,
+            Row scanFile,
+            CloseableIterator<ColumnarBatch> physicalDataIter) throws IOException {
         return new CloseableIterator<FilteredColumnarBatch>() {
+            boolean inited = false;
+
+            // initialized as part of init()
+            StructType physicalReadSchema = null;
+            StructType logicalReadSchema = null;
+            String tablePath = null;
+
             RoaringBitmapArray currBitmap = null;
             DeletionVectorDescriptor currDV = null;
 
+            private void initIfRequired() {
+                if (inited) {
+                    return;
+                }
+                physicalReadSchema = ScanStateRow.getPhysicalSchema(tableClient, scanState);
+                logicalReadSchema = ScanStateRow.getLogicalSchema(tableClient, scanState);
+
+                tablePath = ScanStateRow.getTableRoot(scanState);
+                inited = true;
+            }
+
             @Override
             public void close() throws IOException {
-                data.close();
+                physicalDataIter.close();
             }
 
             @Override
             public boolean hasNext() {
-                return data.hasNext();
+                initIfRequired();
+                return physicalDataIter.hasNext();
             }
 
             @Override
             public FilteredColumnarBatch next() {
-                FileDataReadResult fileDataReadResult = data.next();
+                initIfRequired();
+                ColumnarBatch nextDataBatch = physicalDataIter.next();
 
-                Row scanFileRow = fileDataReadResult.getScanFileRow();
                 DeletionVectorDescriptor dv =
-                    InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFileRow);
+                    InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFile);
 
-                int rowIndexOrdinal = fileDataReadResult.getData().getSchema()
+                int rowIndexOrdinal = nextDataBatch.getSchema()
                     .indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME);
 
                 // Get the selectionVector if DV is present
@@ -192,31 +176,31 @@ public interface Scan {
                 if (dv == null) {
                     selectionVector = Optional.empty();
                 } else {
+                    if (rowIndexOrdinal == -1) {
+                        throw new IllegalArgumentException("Row index column is not " +
+                            "present in the data read from the Parquet file.");
+                    }
                     if (!dv.equals(currDV)) {
                         Tuple2<DeletionVectorDescriptor, RoaringBitmapArray> dvInfo =
                             DeletionVectorUtils.loadNewDvAndBitmap(tableClient, tablePath, dv);
                         this.currDV = dvInfo._1;
                         this.currBitmap = dvInfo._2;
                     }
-                    ColumnVector rowIndexVector =
-                        fileDataReadResult.getData().getColumnVector(rowIndexOrdinal);
-                    selectionVector = Optional.of(
-                        new SelectionColumnVector(currBitmap, rowIndexVector));
+                    ColumnVector rowIndexVector = nextDataBatch.getColumnVector(rowIndexOrdinal);
+                    selectionVector =
+                        Optional.of(new SelectionColumnVector(currBitmap, rowIndexVector));
+                }
+                if (rowIndexOrdinal != -1) {
+                    nextDataBatch = nextDataBatch.withDeletedColumnAt(rowIndexOrdinal);
                 }
 
-                // Remove the row_index columns
-                ColumnarBatch updatedBatch = fileDataReadResult.getData()
-                    .withDeletedColumnAt(rowIndexOrdinal);
-
                 // Add partition columns
-                updatedBatch =
+                nextDataBatch =
                     PartitionUtils.withPartitionColumns(
                         tableClient.getExpressionHandler(),
-                        updatedBatch,
-                        readSchemaWithoutPartitionColumns,
-                        InternalScanFileUtils
-                            .getPartitionValues(fileDataReadResult.getScanFileRow()),
-                        physicalSchema
+                        nextDataBatch,
+                        InternalScanFileUtils.getPartitionValues(scanFile),
+                        physicalReadSchema
                     );
 
                 // Change back to logical schema
@@ -224,7 +208,7 @@ public interface Scan {
                 switch (columnMappingMode) {
                     case ColumnMapping.COLUMN_MAPPING_MODE_NAME:
                     case ColumnMapping.COLUMN_MAPPING_MODE_ID:
-                        updatedBatch = updatedBatch.withNewSchema(logicalSchema);
+                        nextDataBatch = nextDataBatch.withNewSchema(logicalReadSchema);
                         break;
                     case ColumnMapping.COLUMN_MAPPING_MODE_NONE:
                         break;
@@ -233,7 +217,7 @@ public interface Scan {
                             "Column mapping mode is not yet supported: " + columnMappingMode);
                 }
 
-                return new FilteredColumnarBatch(updatedBatch, selectionVector);
+                return new FilteredColumnarBatch(nextDataBatch, selectionVector);
             }
         };
     }

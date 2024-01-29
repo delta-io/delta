@@ -1464,7 +1464,7 @@ trait DeltaTableCreationTests
     test(s"data source table:partition column name containing $specialChars") {
       // On Windows, it looks colon in the file name is illegal by default. See
       // https://support.microsoft.com/en-us/help/289627
-      // assume(!Utils.isWindows || specialChars != "a:b")
+      assume(!Utils.isWindows || specialChars != "a:b")
 
       withTable("t") {
         withTempDir { dir =>
@@ -1492,7 +1492,7 @@ trait DeltaTableCreationTests
     test(s"location uri contains $specialChars for datasource table") {
       // On Windows, it looks colon in the file name is illegal by default. See
       // https://support.microsoft.com/en-us/help/289627
-      // assume(!Utils.isWindows || specialChars != "a:b")
+      assume(!Utils.isWindows || specialChars != "a:b")
 
       withTable("t", "t1") {
         withTempDir { dir =>

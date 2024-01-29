@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.FileNotFoundException
 import java.util.Objects
 import java.util.concurrent.Future
+import java.util.concurrent.locks.ReentrantLock
 
 import scala.collection.mutable
 import scala.util.control.NonFatal
@@ -57,6 +58,22 @@ trait SnapshotManagement { self: DeltaLog =>
   @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
 
   @volatile protected var currentSnapshot: CapturedSnapshot = getSnapshotAtInit
+
+  /** Use ReentrantLock to allow us to call `lockInterruptibly` */
+  protected val snapshotLock = new ReentrantLock()
+
+  /**
+   * Run `body` inside `snapshotLock` lock using `lockInterruptibly` so that the thread
+   * can be interrupted when waiting for the lock.
+   */
+  def withSnapshotLockInterruptibly[T](body: => T): T = {
+    snapshotLock.lockInterruptibly()
+    try {
+      body
+    } finally {
+      snapshotLock.unlock()
+    }
+  }
 
   /**
    * Get the LogSegment that will help in computing the Snapshot of the table at DeltaLog
@@ -162,6 +179,7 @@ trait SnapshotManagement { self: DeltaLog =>
     getLogSegmentForVersion(
       versionToLoad,
       newFiles,
+      validateLogSegmentWithoutCompactedDeltas = true,
       oldCheckpointProviderOpt = oldCheckpointProviderOpt,
       lastCheckpointInfo = lastCheckpointInfo
     )
@@ -223,6 +241,7 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def getLogSegmentForVersion(
       versionToLoad: Option[Long],
       files: Option[Array[FileStatus]],
+      validateLogSegmentWithoutCompactedDeltas: Boolean,
       oldCheckpointProviderOpt: Option[UninitializedCheckpointProvider],
       lastCheckpointInfo: Option[LastCheckpointInfo]): Option[LogSegment] = {
     recordFrameProfile("Delta", "SnapshotManagement.getLogSegmentForVersion") {
@@ -286,7 +305,16 @@ trait SnapshotManagement { self: DeltaLog =>
       // Here we validate that we are able to create a valid LogSegment by just using commit deltas
       // and without considering minor-compacted deltas. We want to fail early if log is messed up
       // i.e. some commit deltas are missing (although compacted-deltas are present).
-      validateDeltaVersions(deltasAfterCheckpoint, newCheckpointVersion, versionToLoad)
+      // We should not do this validation when we want to update the logSegment after a conflict
+      // via the [[SnapshotManagement.getUpdatedLogSegment]] method. In that specific flow, we just
+      // list from the committed version and reuse existing pre-commit logsegment together with
+      // listing result to create the new pre-commit logsegment. Because of this, we don't have info
+      // about all the delta files (e.g. when minor compactions are used in existing preCommit log
+      // segment) and hence the validation if attempted will fail. So we need to set
+      // `validateLogSegmentWithoutCompactedDeltas` to false in that case.
+      if (validateLogSegmentWithoutCompactedDeltas) {
+        validateDeltaVersions(deltasAfterCheckpoint, newCheckpointVersion, versionToLoad)
+      }
 
       val newVersion =
         deltasAfterCheckpoint.lastOption.map(deltaVersion).getOrElse(newCheckpoint.get.version)
@@ -629,6 +657,40 @@ trait SnapshotManagement { self: DeltaLog =>
   }
 
   /**
+   * Get the newest logSegment, using the previous logSegment as a hint. This is faster than
+   * doing a full update, but it won't work if the table's log directory was replaced.
+   */
+  def getUpdatedLogSegment(oldLogSegment: LogSegment): (LogSegment, Seq[FileStatus]) = {
+    val newFilesOpt = listDeltaCompactedDeltaAndCheckpointFiles(
+      startVersion = oldLogSegment.version + 1,
+      versionToLoad = None,
+      includeMinorCompactions = spark.conf.get(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS)
+    )
+    val newFiles = newFilesOpt.getOrElse {
+      // An empty listing likely implies a list-after-write inconsistency or that somebody clobbered
+      // the Delta log.
+      return (oldLogSegment, Nil)
+    }
+    val allFiles = (
+      oldLogSegment.checkpointProvider.topLevelFiles ++
+        oldLogSegment.deltas ++
+        newFiles
+      ).toArray
+    val lastCheckpointInfo = Option.empty[LastCheckpointInfo]
+    val newLogSegment = getLogSegmentForVersion(
+      versionToLoad = None,
+      files = Some(allFiles),
+      validateLogSegmentWithoutCompactedDeltas = false,
+      lastCheckpointInfo = lastCheckpointInfo,
+      oldCheckpointProviderOpt = Some(oldLogSegment.checkpointProvider)
+    ).getOrElse(oldLogSegment)
+    val fileStatusesOfConflictingCommits = newFiles.collect {
+      case DeltaFile(f, v) if v <= newLogSegment.version => f
+    }
+    (newLogSegment, fileStatusesOfConflictingCommits)
+  }
+
+  /**
    * Returns the snapshot, if it has been updated since the specified timestamp.
    *
    * Note that this should be used differently from isSnapshotStale. Staleness is
@@ -693,7 +755,7 @@ trait SnapshotManagement { self: DeltaLog =>
     val doAsync = stalenessAcceptable && !isCurrentlyStale(capturedSnapshot.updateTimestamp)
     if (!doAsync) {
       recordFrameProfile("Delta", "SnapshotManagement.update") {
-        lockInterruptibly {
+        withSnapshotLockInterruptibly {
           val newSnapshot = updateInternal(isAsync = false)
           sendEvent(newSnapshot = capturedSnapshot.snapshot)
           newSnapshot
@@ -727,11 +789,11 @@ trait SnapshotManagement { self: DeltaLog =>
    * at once and return the current snapshot. The return snapshot may be stale.
    */
   private def tryUpdate(isAsync: Boolean): Snapshot = {
-    if (deltaLogLock.tryLock()) {
+    if (snapshotLock.tryLock()) {
       try {
         updateInternal(isAsync)
       } finally {
-        deltaLogLock.unlock()
+        snapshotLock.unlock()
       }
     } else {
       currentSnapshot.snapshot
@@ -740,7 +802,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
   /**
    * Queries the store for new delta files and applies them to the current state.
-   * Note: the caller should hold `deltaLogLock` before calling this method.
+   * Note: the caller should hold `snapshotLock` before calling this method.
    */
   protected def updateInternal(isAsync: Boolean): Snapshot =
     recordDeltaOperation(this, "delta.log.update", Map(TAG_ASYNC -> isAsync.toString)) {
@@ -779,7 +841,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
   /** Replace the given snapshot with the provided one. */
   protected def replaceSnapshot(newSnapshot: Snapshot, updateTimestamp: Long): Unit = {
-    if (!deltaLogLock.isHeldByCurrentThread) {
+    if (!snapshotLock.isHeldByCurrentThread) {
       recordDeltaEvent(this, "delta.update.unsafeReplace")
     }
     val oldSnapshot = currentSnapshot.snapshot
@@ -827,7 +889,7 @@ trait SnapshotManagement { self: DeltaLog =>
   def updateAfterCommit(
       committedVersion: Long,
       newChecksumOpt: Option[VersionChecksum],
-      preCommitLogSegment: LogSegment): Snapshot = lockInterruptibly {
+      preCommitLogSegment: LogSegment): Snapshot = withSnapshotLockInterruptibly {
     recordDeltaOperation(this, "delta.log.updateAfterCommit") {
       val updateTimestamp = clock.getTimeMillis()
       val previousSnapshot = currentSnapshot.snapshot

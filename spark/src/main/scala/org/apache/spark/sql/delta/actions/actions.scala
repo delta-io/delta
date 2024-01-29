@@ -528,7 +528,7 @@ object Protocol {
     }
     if (manifestGenerationEnabled) {
       // Only allow enabling this, if there are no DVs present.
-      if (!DeletionVectorUtils.isTableDVFree(spark, snapshot)) {
+      if (!DeletionVectorUtils.isTableDVFree(snapshot)) {
         throw new DeltaTablePropertyValidationFailedException(
           table = tableName,
           subClass = ExistingDeletionVectorsWithIncrementalManifestGeneration)
@@ -844,6 +844,9 @@ object AddFile {
     /** [[OPTIMIZE_TARGET_SIZE]]: target file size the file was optimized to. */
     object OPTIMIZE_TARGET_SIZE extends AddFile.Tags.KeyType("OPTIMIZE_TARGET_SIZE")
 
+
+    /** [[ICEBERG_COMPAT_VERSION]]: IcebergCompat version */
+    object ICEBERG_COMPAT_VERSION extends AddFile.Tags.KeyType("ICEBERG_COMPAT_VERSION")
   }
 
   /** Convert a [[Tags.KeyType]] to a string to be used in the AddMap.tags Map[String, String]. */

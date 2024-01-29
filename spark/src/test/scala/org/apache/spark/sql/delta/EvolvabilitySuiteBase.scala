@@ -73,8 +73,23 @@ abstract class EvolvabilitySuiteBase extends QueryTest with SharedSparkSession
       // copy the existing dir to the temp data dir.
       FileUtils.copyDirectory(
         new File("src/test/resources/delta/transaction_log_schema_evolvability"), tempDir)
+      makeWritable(tempDir)
       DeltaLog.clearCache()
       operation(tempDir.getAbsolutePath)
+    }
+  }
+
+  /**
+   * Recursively make all files in a directory writable.
+   */
+  private def makeWritable(directory: File): Unit = {
+    if (!directory.isDirectory) return
+    directory.listFiles().foreach { file =>
+      if (file.isDirectory) {
+        makeWritable(file)
+      } else {
+        file.setWritable(true)
+      }
     }
   }
 
