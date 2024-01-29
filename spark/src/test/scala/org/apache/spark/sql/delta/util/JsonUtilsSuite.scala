@@ -47,7 +47,7 @@ class JsonUtilsSuite
   }
 
   test("Serialize and de-serialize commit info with large message") {
-    val operationStringSize = 200000000 // 200 MB, way above the 20MB default limit
+    val operationStringSize = StreamReadConstraints.DEFAULT_MAX_STRING_LEN * 10
     assert(operationStringSize > StreamReadConstraints.DEFAULT_MAX_STRING_LEN)
 
     val operation = Random.alphanumeric.take(operationStringSize).toString()
