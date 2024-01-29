@@ -501,11 +501,9 @@ class DeletionVectorsSuite extends QueryTest
       for (ts <- tombstones) {
         assert(ts.deletionVector != null)
       }
-      // target log should not contain DVs
-      for (f <- allFiles) {
-        assert(f.deletionVector == null)
-        assert(f.tightBounds.get)
-      }
+      // target log should contain two files, one with and one without DV
+      assert(allFiles.count(_.deletionVector != null) === 1)
+      assert(allFiles.count(_.deletionVector == null) === 1)
     }
   }
 
@@ -573,13 +571,12 @@ class DeletionVectorsSuite extends QueryTest
       {
         sql(s"UPDATE delta.`$path` SET id = -1 WHERE id = 0")
         val (added, removed) = getFileActionsInLastVersion(deltaLog)
-        assert(added.length === 1)
+        assert(added.length === 2)
         assert(removed.length === 1)
-        // Removed files must contain DV, added files must not
-        for (a <- added) {
-          assert(a.deletionVector === null)
-          assert(a.tightBounds.get)
-        }
+        // Added files must be two, one containing DV and one not
+        assert(added.count(_.deletionVector != null) === 1)
+        assert(added.count(_.deletionVector == null) === 1)
+        // Removed files must contain DV
         for (r <- removed) {
           assert(r.deletionVector !== null)
         }
@@ -596,13 +593,13 @@ class DeletionVectorsSuite extends QueryTest
           .updateExpr(Map("id" -> "source.value"))
           .whenNotMatchedBySource().delete().execute()
         val (added, removed) = getFileActionsInLastVersion(deltaLog)
-        assert(removed.length === 2)
+        assert(removed.length === 3)
         for (a <- added) {
           assert(a.deletionVector === null)
           assert(a.tightBounds.get)
         }
-        // One of two removed files has DV
-        assert(removed.count(_.deletionVector != null) === 1)
+        // Two of three removed files have DV
+        assert(removed.count(_.deletionVector != null) === 2)
 
         // -1 and 9 are deleted by "when not matched by source"
         checkTableContents(Seq(2, 3, 4, 5, 6, 7).toDF())

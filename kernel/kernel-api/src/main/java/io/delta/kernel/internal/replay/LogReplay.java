@@ -18,23 +18,21 @@ package io.delta.kernel.internal.replay;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
-import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 
@@ -57,6 +55,10 @@ import io.delta.kernel.internal.util.Tuple2;
  */
 public class LogReplay {
 
+    //////////////////////////
+    // Static Schema Fields //
+    //////////////////////////
+
     /** Read schema when searching for the latest Protocol and Metadata. */
     public static final StructType PROTOCOL_METADATA_READ_SCHEMA = new StructType()
         .add("protocol", Protocol.READ_SCHEMA)
@@ -66,6 +68,10 @@ public class LogReplay {
     private static StructType REMOVE_FILE_SCHEMA = new StructType()
         .add("path", StringType.STRING, false /* nullable */)
         .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */);
+
+    /** Read schema when searching for just the transaction identifiers */
+    public static final StructType SET_TRANSACTION_READ_SCHEMA = new StructType()
+        .add("txn", SetTransaction.READ_SCHEMA);
 
     private static StructType getAddSchema(boolean shouldReadStats) {
         return shouldReadStats ? AddFile.SCHEMA_WITH_STATS :
@@ -89,23 +95,28 @@ public class LogReplay {
     public static int REMOVE_FILE_PATH_ORDINAL = REMOVE_FILE_SCHEMA.indexOf("path");
     public static int REMOVE_FILE_DV_ORDINAL = REMOVE_FILE_SCHEMA.indexOf("deletionVector");
 
+    ///////////////////////////////////
+    // Member fields and constructor //
+    ///////////////////////////////////
+
     private final Path dataPath;
     private final LogSegment logSegment;
     private final TableClient tableClient;
-
     private final Tuple2<Protocol, Metadata> protocolAndMetadata;
 
     public LogReplay(
             Path logPath,
             Path dataPath,
+            long snapshotVersion,
             TableClient tableClient,
-            LogSegment logSegment) {
+            LogSegment logSegment,
+            Optional<SnapshotHint> snapshotHint) {
         assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
         this.dataPath = dataPath;
         this.logSegment = logSegment;
         this.tableClient = tableClient;
-        this.protocolAndMetadata = loadTableProtocolAndMetadata();
+        this.protocolAndMetadata = loadTableProtocolAndMetadata(snapshotHint, snapshotVersion);
     }
 
     /////////////////
@@ -118,6 +129,10 @@ public class LogReplay {
 
     public Metadata getMetadata() {
         return this.protocolAndMetadata._2;
+    }
+
+    public Optional<Long> getLatestTransactionIdentifier(String applicationId) {
+        return loadLatestTransactionVersion(applicationId);
     }
 
     /**
@@ -136,8 +151,8 @@ public class LogReplay {
      * </ol>
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
-           boolean shouldReadStats) {
-        final CloseableIterator<Tuple2<FileDataReadResult, Boolean>> addRemoveIter =
+            boolean shouldReadStats) {
+        final CloseableIterator<ActionWrapper> addRemoveIter =
             new ActionsIterator(
                 tableClient,
                 logSegment.allLogFilesReversed(),
@@ -149,21 +164,45 @@ public class LogReplay {
     // Helper Methods //
     ////////////////////
 
-    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata() {
+    /**
+     * Returns the latest Protocol and Metadata from the delta files in the `logSegment`.
+     * Does *not* validate that this delta-kernel connector understands the table at that protocol.
+     *
+     * Uses the `snapshotHint` to bound how many delta files it reads. i.e. we only need to read
+     * delta files newer than the hint to search for any new P & M. If we don't find them, we can
+     * just use the P and/or M from the hint.
+     */
+    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
+            Optional<SnapshotHint> snapshotHint,
+            long snapshotVersion) {
+
+        // Exit early if the hint already has the info we need
+        if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
+            return new Tuple2<>(
+                snapshotHint.get().getProtocol(),
+                snapshotHint.get().getMetadata()
+            );
+        }
+
         Protocol protocol = null;
         Metadata metadata = null;
 
-        try (CloseableIterator<Tuple2<FileDataReadResult, Boolean>> reverseIter =
+        try (CloseableIterator<ActionWrapper> reverseIter =
                  new ActionsIterator(
                      tableClient,
                      logSegment.allLogFilesReversed(),
                      PROTOCOL_METADATA_READ_SCHEMA)) {
             while (reverseIter.hasNext()) {
-                final ColumnarBatch columnarBatch = reverseIter.next()._1.getData();
+                final ActionWrapper nextElem = reverseIter.next();
+                final long version = nextElem.getVersion();
 
-                assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
+                // Load this lazily (as needed). We may be able to just use the hint.
+                ColumnarBatch columnarBatch = null;
 
                 if (protocol == null) {
+                    columnarBatch = nextElem.getColumnarBatch();
+                    assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
+
                     final ColumnVector protocolVector = columnarBatch.getColumnVector(0);
 
                     for (int i = 0; i < protocolVector.getSize(); i++) {
@@ -172,15 +211,19 @@ public class LogReplay {
 
                             if (metadata != null) {
                                 // Stop since we have found the latest Protocol and Metadata.
-                                validateSupportedTable(protocol, metadata);
                                 return new Tuple2<>(protocol, metadata);
                             }
 
-                            break; // We already found the protocol, exit this for-loop
+                            break; // We just found the protocol, exit this for-loop
                         }
                     }
                 }
+
                 if (metadata == null) {
+                    if (columnarBatch == null) {
+                        columnarBatch = nextElem.getColumnarBatch();
+                        assert(columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
+                    }
                     final ColumnVector metadataVector = columnarBatch.getColumnVector(1);
 
                     for (int i = 0; i < metadataVector.getSize(); i++) {
@@ -193,9 +236,22 @@ public class LogReplay {
                                 return new Tuple2<>(protocol, metadata);
                             }
 
-                            break; // We already found the metadata, exit this for-loop
+                            break; // We just found the metadata, exit this for-loop
                         }
                     }
+                }
+
+                // Since we haven't returned, at least one of P or M is null.
+                // Note: Suppose the hint is at version N. We check the hint eagerly at N + 1 so
+                // that we don't read or open any files at version N.
+                if (snapshotHint.isPresent() && version == snapshotHint.get().getVersion() + 1) {
+                    if (protocol == null) {
+                        protocol = snapshotHint.get().getProtocol();
+                    }
+                    if (metadata == null) {
+                        metadata = snapshotHint.get().getMetadata();
+                    }
+                    return new Tuple2<>(protocol, metadata);
                 }
             }
         } catch (IOException ex) {
@@ -211,6 +267,34 @@ public class LogReplay {
         throw new IllegalStateException(
             String.format("No metadata found at version %s", logSegment.version)
         );
+    }
+
+    private Optional<Long> loadLatestTransactionVersion(String applicationId) {
+        try (CloseableIterator<ActionWrapper> reverseIter =
+                 new ActionsIterator(
+                     tableClient,
+                     logSegment.allLogFilesReversed(),
+                     SET_TRANSACTION_READ_SCHEMA)) {
+            while (reverseIter.hasNext()) {
+                final ColumnarBatch columnarBatch =
+                    reverseIter.next().getColumnarBatch();
+                assert(columnarBatch.getSchema().equals(SET_TRANSACTION_READ_SCHEMA));
+
+                final ColumnVector txnVector = columnarBatch.getColumnVector(0);
+                for (int rowId = 0; rowId < txnVector.getSize(); rowId++) {
+                    if (!txnVector.isNullAt(rowId)) {
+                        SetTransaction txn = SetTransaction.fromColumnVector(txnVector, rowId);
+                        if (txn != null && applicationId.equals(txn.getAppId())) {
+                            return Optional.of(txn.getVersion());
+                        }
+                    }
+                }
+            }
+        } catch (IOException ex) {
+            throw new RuntimeException("Failed to fetch the transaction identifier", ex);
+        }
+
+        return Optional.empty();
     }
 
     private void validateSupportedTable(Protocol protocol, Metadata metadata) {

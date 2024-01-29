@@ -9,9 +9,16 @@ orphan: 1
 
 Deletion vectors are a storage optimization feature that can be enabled on <Delta> tables. By default, when a single row in a data file is deleted, the entire Parquet file containing the record must be rewritten. With deletion vectors enabled for the table, some Delta operations use deletion vectors to mark existing rows as removed without rewriting the Parquet file. Subsequent reads on the table resolve current table state by applying the deletions noted by deletion vectors to the most recent table version.
 
-## Enable deletion vectors
+Support for deletion vectors was incrementally added with each <Delta> version. The table below depicts the supported operations for each <Delta> version.
 
-<Delta> 2.4 and above leverages deletion vectors to accelerate `DELETE` operations on a supported Delta table.
+| Operation | First available <Delta> version | Enabled by default since <Delta> version |
+|-----------|---------------------------------|------------------------------------------|
+| `SCAN`    | 2.3.0                           | 2.3.0                                    |
+| `DELETE`  | 2.4.0                           | 2.4.0                                    |
+| `UPDATE`  | 3.0.0                           | 3.1.0                                    |
+| `MERGE`   | 3.1.0                           | 3.1.0                                    |
+
+## Enable deletion vectors
 
 You enable support for deletion vectors on a <Delta> table by setting a <Delta> table property:
 
@@ -19,7 +26,10 @@ You enable support for deletion vectors on a <Delta> table by setting a <Delta> 
 ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.enableDeletionVectors' = true);
 ```
 
-.. warning:: When you enable deletion vectors, the table protocol version is upgraded. Table protocol version upgrades are not reversible. After upgrading, the table will not be readable by <Delta> clients that do not support deletion vectors. See [_](versioning.md).
+.. warning::
+  When you enable deletion vectors, the table protocol version is upgraded. After upgrading, the table will not be readable by <Delta> clients that do not support deletion vectors. See [_](versioning.md).
+
+  In <Delta> 3.0 and above, you can drop the deletion vectors table feature to enable compatibility with other Delta clients. See [_](delta-drop-feature.md).
 
 <a id="apply-changes"></a>
 
@@ -27,7 +37,7 @@ ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.enableDeletionVectors' = true
 
 Deletion vectors indicate changes to rows as soft-deletes that logically modify existing Parquet data files in the <Delta> tables. These changes are applied physically when data files are rewritten, as triggered by one of the following events:
 
-* An `UPDATE` or `MERGE` command is run on the table.
+* A DML command with deletion vectors disabled (by a command flag or a table property) is run on the table.
 * An `OPTIMIZE` command is run on the table.
 * `REORG TABLE ... APPLY (PURGE)` is run against the table.
 
@@ -56,13 +66,5 @@ REORG TABLE events
   - When resulting files of the purge are small, `REORG TABLE` will coalesce them into larger ones. See [OPTIMIZE](/optimizations-oss.html) for more info.
   - `REORG TABLE` is _idempotent_, meaning that if it is run twice on the same dataset, the second run has no effect.
   - After running `REORG TABLE`, the soft-deleted data may still exist in the old files. You can run [VACUUM](delta-utility.md#delta-vacuum) to physically delete the old files.
-
-<a id="limitations"></a>
-
-## Limitations
-
-- In <Delta> 2.3, users are only allowed to _read_ Delta tables that have Deletion vectors feature supported. Write operations to the table, such as `INSERT`, `UPDATE`, `MERGE`, and `ALTER TABLE`, are explicitly blocked. [Change data feed](/delta-change-data-feed.md) reads are also blocked on tables that support Deletion vectors. 
-
-- In <Delta> 2.4, users are allowed to _read_ and _write_ Delta tables that have Deletion vectors feature supported. `UPDATE` or `MERGE` operations may apply changes to Parquet files which contains updated or deleted rows, see [_](#apply-changes).
 
 .. include:: /shared/replacements.md

@@ -28,7 +28,6 @@ import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
-import io.delta.kernel.internal.types.TableSchemaSerDe;
 import io.delta.kernel.internal.util.VectorUtils;
 
 import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
@@ -49,7 +48,7 @@ public class RowSerDe {
         Map<String, Object> rowObject = convertRowToJsonObject(row);
         try {
             Map<String, Object> rowWithSchema = new HashMap<>();
-            rowWithSchema.put("schema", TableSchemaSerDe.toJson(row.getSchema()));
+            rowWithSchema.put("schema", row.getSchema().toJson());
             rowWithSchema.put("row", rowObject);
             return OBJECT_MAPPER.writeValueAsString(rowWithSchema);
         } catch (JsonProcessingException e) {
@@ -65,7 +64,7 @@ public class RowSerDe {
             JsonNode jsonNode = OBJECT_MAPPER.readTree(jsonRowWithSchema);
             JsonNode schemaNode = jsonNode.get("schema");
             StructType schema =
-                TableSchemaSerDe.fromJson(tableClient.getJsonHandler(), schemaNode.asText());
+                tableClient.getJsonHandler().deserializeStructType(schemaNode.asText());
             return parseRowFromJsonWithSchema((ObjectNode) jsonNode.get("row"), schema);
         } catch (JsonProcessingException ex) {
             throw new UncheckedIOException(ex);

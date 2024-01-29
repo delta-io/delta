@@ -24,6 +24,8 @@ import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.constraints.Constraints.Check
 import org.apache.spark.sql.delta.constraints.Invariants.ArbitraryExpression
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, InvariantViolationException, SchemaUtils}
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
@@ -72,18 +74,19 @@ import org.apache.spark.sql.types.{StringType, StructType}
  *                        when it is set (in CTAS code path), and otherwise use schema from `data`.
  */
 case class WriteIntoDelta(
-    deltaLog: DeltaLog,
+    override val deltaLog: DeltaLog,
     mode: SaveMode,
     options: DeltaOptions,
     partitionColumns: Seq[String],
-    configuration: Map[String, String],
-    data: DataFrame,
-    catalogTableOpt: Option[CatalogTable] = None,
+    override val configuration: Map[String, String],
+    override val data: DataFrame,
+    val catalogTableOpt: Option[CatalogTable] = None,
     schemaInCatalog: Option[StructType] = None
     )
   extends LeafRunnableCommand
   with ImplicitMetadataOperation
-  with DeltaCommand {
+  with DeltaCommand
+  with WriteIntoDeltaLike {
 
   override protected val canMergeSchema: Boolean = options.canMergeSchema
 
@@ -111,92 +114,11 @@ case class WriteIntoDelta(
     Seq.empty
   }
 
-  // TODO: replace the method below with `CharVarcharUtils.replaceCharWithVarchar`, when 3.3 is out.
-  import org.apache.spark.sql.types.{ArrayType, CharType, DataType, MapType, VarcharType}
-  private def replaceCharWithVarchar(dt: DataType): DataType = dt match {
-    case ArrayType(et, nullable) =>
-      ArrayType(replaceCharWithVarchar(et), nullable)
-    case MapType(kt, vt, nullable) =>
-      MapType(replaceCharWithVarchar(kt), replaceCharWithVarchar(vt), nullable)
-    case StructType(fields) =>
-      StructType(fields.map { field =>
-        field.copy(dataType = replaceCharWithVarchar(field.dataType))
-      })
-    case CharType(length) => VarcharType(length)
-    case _ => dt
-  }
-
-  /**
-   * Replace where operationMetrics need to be recorded separately.
-   * @param newFiles - AddFile and AddCDCFile added by write job
-   * @param deleteActions - AddFile, RemoveFile, AddCDCFile added by Delete job
-   */
-  private def registerReplaceWhereMetrics(
-      spark: SparkSession,
+  override def write(
       txn: OptimisticTransaction,
-      newFiles: Seq[Action],
-      deleteActions: Seq[Action]): Unit = {
-    var numFiles = 0L
-    var numCopiedRows = 0L
-    var numOutputBytes = 0L
-    var numNewRows = 0L
-    var numAddedChangedFiles = 0L
-    var hasRowLevelMetrics = true
-
-    newFiles.foreach {
-      case a: AddFile =>
-        numFiles += 1
-        numOutputBytes += a.size
-        if (a.numLogicalRecords.isEmpty) {
-          hasRowLevelMetrics = false
-        } else {
-          numNewRows += a.numLogicalRecords.get
-        }
-      case cdc: AddCDCFile =>
-        numAddedChangedFiles += 1
-      case _ =>
-    }
-
-    deleteActions.foreach {
-      case a: AddFile =>
-        numFiles += 1
-        numOutputBytes += a.size
-        if (a.numLogicalRecords.isEmpty) {
-          hasRowLevelMetrics = false
-        } else {
-          numCopiedRows += a.numLogicalRecords.get
-        }
-      case cdc: AddCDCFile =>
-        numAddedChangedFiles += 1
-      // Remove metrics will be handled by the delete command.
-      case _ =>
-    }
-
-    var sqlMetrics = Map(
-      "numFiles" -> new SQLMetric("number of files written", numFiles),
-      "numOutputBytes" -> new SQLMetric("number of output bytes", numOutputBytes),
-      "numAddedChangeFiles" -> new SQLMetric(
-        "number of change files added", numAddedChangedFiles)
-    )
-    if (hasRowLevelMetrics) {
-      sqlMetrics ++= Map(
-        "numOutputRows" -> new SQLMetric("number of rows added", numNewRows + numCopiedRows),
-        "numCopiedRows" -> new SQLMetric("number of copied rows", numCopiedRows)
-      )
-    } else {
-      // this will get filtered out in DeltaOperations.WRITE transformMetrics
-      sqlMetrics ++= Map(
-        "numOutputRows" -> new SQLMetric("number of rows added", 0L),
-        "numCopiedRows" -> new SQLMetric("number of copied rows", 0L)
-      )
-    }
-    txn.registerSQLMetrics(spark, sqlMetrics)
-  }
-
-  def write(
-      txn: OptimisticTransaction,
-      sparkSession: SparkSession
-    ): Seq[Action] = {
+      sparkSession: SparkSession,
+      clusterBySpecOpt: Option[ClusterBySpec] = None,
+      isTableReplace: Boolean = false): Seq[Action] = {
     import org.apache.spark.sql.delta.implicits._
     if (txn.readVersion > -1) {
       // This table already exists, check if the insert is valid.
@@ -208,6 +130,19 @@ case class WriteIntoDelta(
         DeltaLog.assertRemovable(txn.snapshot)
       }
     }
+    val isReplaceWhere = mode == SaveMode.Overwrite && options.replaceWhere.nonEmpty
+    // Validate that the preview is enabled if we are writing to a clustered table.
+    ClusteredTableUtils.validatePreviewEnabled(txn.snapshot.protocol)
+    val finalClusterBySpecOpt =
+      if (mode == SaveMode.Append || isReplaceWhere) {
+        clusterBySpecOpt.foreach { clusterBySpec =>
+          ClusteredTableUtils.validateClusteringColumnsInSnapshot(txn.snapshot, clusterBySpec)
+        }
+        // Append mode and replaceWhere cannot update the clustering columns.
+        None
+      } else {
+        clusterBySpecOpt
+      }
     val rearrangeOnly = options.rearrangeOnly
     val charPadding = sparkSession.conf.get(SQLConf.READ_SIDE_CHAR_PADDING.key, "false") == "true"
     val charAsVarchar = sparkSession.conf.get(SQLConf.CHAR_AS_VARCHAR)
@@ -230,7 +165,8 @@ case class WriteIntoDelta(
     val newDomainMetadata = getNewDomainMetadata(
       txn,
       canUpdateMetadata,
-      isReplacingTable = isOverwriteOperation && options.replaceWhere.isEmpty
+      isReplacingTable = isOverwriteOperation && options.replaceWhere.isEmpty,
+      finalClusterBySpecOpt
     )
 
     val replaceOnDataColsEnabled =
@@ -239,6 +175,9 @@ case class WriteIntoDelta(
     val useDynamicPartitionOverwriteMode = {
       if (txn.metadata.partitionColumns.isEmpty) {
         // We ignore dynamic partition overwrite mode for non-partitioned tables
+        false
+      } else if (isTableReplace) {
+        // A replace table command should always replace the table, not just some partitions.
         false
       } else if (options.replaceWhere.nonEmpty) {
         if (options.partitionOverwriteModeInOptions && options.isDynamicPartitionOverwriteMode) {
@@ -253,7 +192,9 @@ case class WriteIntoDelta(
           // precedence over session configs
           false
         }
-      } else options.isDynamicPartitionOverwriteMode
+      } else {
+        options.isDynamicPartitionOverwriteMode
+      }
     }
 
     if (useDynamicPartitionOverwriteMode && canOverwriteSchema) {
@@ -398,26 +339,6 @@ case class WriteIntoDelta(
     createSetTransaction(sparkSession, deltaLog, Some(options)).toSeq ++ fileActions
   }
 
-  private def extractConstraints(
-      sparkSession: SparkSession,
-      expr: Seq[Expression]): Seq[Constraint] = {
-    if (!sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_CONSTRAINT_CHECK_ENABLED)) {
-      Seq.empty
-    } else {
-      expr.flatMap { e =>
-        // While writing out the new data, we only want to enforce constraint on expressions
-        // with UnresolvedAttribute, that is, containing column name. Because we parse a
-        // predicate string without analyzing it, if there's a column name, it has to be
-        // unresolved.
-        e.collectFirst {
-          case _: UnresolvedAttribute =>
-            val arbitraryExpression = ArbitraryExpression(e)
-            Check(arbitraryExpression.name, arbitraryExpression.expression)
-        }
-      }
-    }
-  }
-
   private def writeFiles(
       txn: OptimisticTransaction,
       data: DataFrame,
@@ -439,4 +360,7 @@ case class WriteIntoDelta(
     spark.sessionState.analyzer.checkAnalysis(command)
     command.asInstanceOf[DeleteCommand].performDelete(spark, txn.deltaLog, txn)
   }
+
+  override def withNewWriterConfiguration(updatedConfiguration: Map[String, String])
+    : WriteIntoDeltaLike = this.copy(configuration = updatedConfiguration)
 }

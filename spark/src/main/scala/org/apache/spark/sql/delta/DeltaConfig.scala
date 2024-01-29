@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.util.{HashMap, Locale}
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
@@ -80,6 +81,11 @@ case class DeltaConfig[T](
  * Contains list of reservoir configs and validation checks.
  */
 trait DeltaConfigsBase extends DeltaLogging {
+
+  // Special properties stored in the Hive MetaStore that specifies which version last updated
+  // the entry in the MetaStore with the latest schema and table property information
+  val METASTORE_LAST_UPDATE_VERSION = "delta.lastUpdateVersion"
+  val METASTORE_LAST_COMMIT_TIMESTAMP = "delta.lastCommitTimestamp"
 
   /**
    * Convert a string to [[CalendarInterval]]. This method is case-insensitive and will throw
@@ -388,6 +394,21 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ > 0,
     "needs to be a positive integer.")
 
+  /**
+   * Enable auto compaction for a Delta table. When enabled, we will check if files already
+   * written to a Delta table can leverage compaction after a commit. If so, we run a post-commit
+   * hook to compact the files.
+   *  It can be enabled by setting the property to `true`
+   * Note that the behavior from table property can be overridden by the config:
+   * [[org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED]]
+   */
+  val AUTO_COMPACT = buildConfig[Option[String]](
+    "autoOptimize.autoCompact",
+    null,
+    v => Option(v).map(_.toLowerCase(Locale.ROOT)),
+    v => v.isEmpty || AutoCompactType.ALLOWED_VALUES.contains(v.get),
+      s""""needs to be one of: ${AutoCompactType.ALLOWED_VALUES.mkString(",")}""")
+
   /** Whether to clean up expired checkpoints and delta logs. */
   val ENABLE_EXPIRED_LOG_CLEANUP = buildConfig[Boolean](
     "enableExpiredLogCleanup",
@@ -681,6 +702,14 @@ trait DeltaConfigsBase extends DeltaLogging {
     v => Option(v).map(_.toBoolean),
     _ => true,
     "needs to be a boolean."
+  )
+
+  val ICEBERG_COMPAT_V2_ENABLED = buildConfig[Option[Boolean]](
+    key = "enableIcebergCompatV2",
+    defaultValue = null,
+    fromString = v => Option(v).map(_.toBoolean),
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean."
   )
 
   /**

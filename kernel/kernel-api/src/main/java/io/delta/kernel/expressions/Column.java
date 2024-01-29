@@ -70,4 +70,21 @@ public final class Column implements Expression {
             .map(s -> format("`%s`", s.replace("`", "``")))
             .collect(Collectors.joining("."));
     }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        Column other = (Column) o;
+        return Arrays.equals(names, other.getNames());
+    }
+
+    @Override
+    public int hashCode() {
+        return Arrays.hashCode(names);
+    }
 }

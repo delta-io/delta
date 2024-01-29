@@ -20,7 +20,6 @@ package org.apache.spark.sql.delta
 import java.lang.ref.WeakReference
 import java.net.URI
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.locks.ReentrantLock
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
@@ -120,9 +119,6 @@ class DeltaLog private(
   /** Used to read and write physical log files and checkpoints. */
   lazy val store = createLogStore(spark)
 
-  /** Use ReentrantLock to allow us to call `lockInterruptibly` */
-  protected val deltaLogLock = new ReentrantLock()
-
   /** Delta History Manager containing version and commit history. */
   lazy val history = new DeltaHistoryManager(
     this, spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_HISTORY_PAR_SEARCH_THRESHOLD))
@@ -154,19 +150,6 @@ class DeltaLog private(
    * composite id.
    */
   private[delta] def compositeId: (String, Path) = tableId -> dataPath
-
-  /**
-   * Run `body` inside `deltaLogLock` lock using `lockInterruptibly` so that the thread can be
-   * interrupted when waiting for the lock.
-   */
-  def lockInterruptibly[T](body: => T): T = {
-    deltaLogLock.lockInterruptibly()
-    try {
-      body
-    } finally {
-      deltaLogLock.unlock()
-    }
-  }
 
   /**
    * Creates a [[LogicalRelation]] for a given [[DeltaLogFileIndex]], with all necessary file source
@@ -454,11 +437,14 @@ class DeltaLog private(
   /** Creates the log directory if it does not exist. */
   def ensureLogDirectoryExist(): Unit = {
     val fs = logPath.getFileSystem(newDeltaHadoopConf())
-    if (!fs.exists(logPath)) {
-      if (!fs.mkdirs(logPath)) {
-        throw DeltaErrors.cannotCreateLogPathException(logPath.toString)
+    def createDirIfNotExists(path: Path): Unit = {
+      if (!fs.exists(path)) {
+        if (!fs.mkdirs(path)) {
+          throw DeltaErrors.cannotCreateLogPathException(logPath.toString)
+        }
       }
     }
+    createDirIfNotExists(logPath)
   }
 
   /**

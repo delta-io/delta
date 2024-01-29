@@ -15,7 +15,9 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
@@ -25,16 +27,16 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 
+import static io.delta.kernel.internal.util.ExpressionUtils.getLeft;
+import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.booleanWrapperVector;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.childAt;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.compare;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.evalNullability;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.getLeft;
-import static io.delta.kernel.defaults.internal.expressions.ExpressionUtils.getRight;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.booleanWrapperVector;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.childAt;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.compare;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.evalNullability;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**
@@ -227,6 +229,38 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             return new ExpressionTransformResult(
                 new Predicate(predicate.getName(), child),
                 BooleanType.BOOLEAN
+            );
+        }
+
+        @Override
+        ExpressionTransformResult visitCoalesce(ScalarExpression coalesce) {
+            List<ExpressionTransformResult> children = coalesce.getChildren().stream()
+                .map(this::visit)
+                .collect(Collectors.toList());
+            if (children.size() == 0) {
+                throw new UnsupportedOperationException(
+                    "Coalesce requires at least one expression");
+            }
+            // TODO support least-common-type resolution
+            long numDistinctTypes = children.stream().map(e -> e.outputType)
+                .distinct()
+                .count();
+            if (numDistinctTypes > 1) {
+                throw new UnsupportedOperationException(
+                    "Coalesce is only supported for arguments of the same type");
+            }
+            // TODO support other data types besides boolean (just needs tests)
+            if (!(children.get(0).outputType instanceof BooleanType)) {
+                throw new UnsupportedOperationException(
+                    "Coalesce is only supported for boolean type expressions");
+            }
+            return new ExpressionTransformResult(
+                new ScalarExpression(
+                    "COALESCE",
+                    children.stream()
+                        .map(e -> e.expression)
+                        .collect(Collectors.toList())),
+                children.get(0).outputType
             );
         }
 
@@ -476,6 +510,25 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 childResult,
                 rowId -> !childResult.isNullAt(rowId),
                 rowId -> false
+            );
+        }
+
+        @Override
+        ColumnVector visitCoalesce(ScalarExpression coalesce) {
+            List<ColumnVector> childResults = coalesce.getChildren()
+                .stream()
+                .map(this::visit)
+                .collect(Collectors.toList());
+            return DefaultExpressionUtils.combinationVector(
+                childResults,
+                rowId -> {
+                    for (int idx = 0; idx < childResults.size(); idx++) {
+                        if (!childResults.get(idx).isNullAt(rowId)) {
+                            return idx;
+                        }
+                    }
+                    return 0; // If all are null then any idx suffices
+                }
             );
         }
 

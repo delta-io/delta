@@ -16,13 +16,12 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.RowIndexFilterType
 import org.apache.spark.sql.delta.DeltaParquetFileFormat.DeletionVectorDescriptorWithFilterType
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
-import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.pathToString
+import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.pathToEscapedString
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.PathWithFileSystem
@@ -152,10 +151,23 @@ class DeltaParquetFileFormatSuite extends QueryTest
 
   /** Helper method to run the test with vectorized and non-vectorized Parquet readers */
   private def testWithBothParquetReaders(name: String)(f: => Any): Unit = {
-    for (enableVectorizedParquetReader <- BOOLEAN_DOMAIN) {
-      test(s"$name, with vectorized Parquet reader=$enableVectorizedParquetReader)") {
+    for {
+      enableVectorizedParquetReader <- BOOLEAN_DOMAIN
+      readColumnarBatchAsRows <- BOOLEAN_DOMAIN
+      // don't run for the combination (vectorizedReader=false, readColumnarBathAsRows = false)
+      // as the non-vectorized reader always generates and returns rows, unlike the vectorized
+      // reader which internally generates columnar batches but can returns either columnar batches
+      // or rows from the columnar batch depending upon the config.
+      if enableVectorizedParquetReader || readColumnarBatchAsRows
+    } {
+      test(s"$name, with vectorized Parquet reader=$enableVectorizedParquetReader, " +
+        s"with readColumnarBatchAsRows=$readColumnarBatchAsRows") {
+        // Set the max code gen fields to 0 to force the vectorized Parquet reader generate rows
+        // from columnar batches.
+        val codeGenMaxFields = if (readColumnarBatchAsRows) "0" else "100"
         withSQLConf(
-          "spark.sql.parquet.enableVectorizedReader" -> enableVectorizedParquetReader.toString) {
+          "spark.sql.parquet.enableVectorizedReader" -> enableVectorizedParquetReader.toString,
+          "spark.sql.codegen.maxFields" -> codeGenMaxFields) {
           f
         }
       }
@@ -187,7 +199,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
       writer.write(serializedBitmap)
     }
     DeletionVectorDescriptor.onDiskWithAbsolutePath(
-      pathToString(dvPath.makeQualified().path),
+      pathToEscapedString(dvPath.makeQualified().path),
       dvRange.length,
       rowIndexes.size,
       Some(dvRange.offset))

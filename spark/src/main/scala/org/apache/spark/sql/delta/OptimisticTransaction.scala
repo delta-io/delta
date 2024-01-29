@@ -33,13 +33,13 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, IcebergConverterHook, PostCommitHook}
+import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats._
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
@@ -321,6 +321,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   protected val postCommitHooks = new ArrayBuffer[PostCommitHook]()
+  catalogTable.foreach { ct =>
+    registerPostCommitHook(UpdateCatalogFactory.getUpdateCatalogHook(ct, spark))
+  }
   // The CheckpointHook will only checkpoint if necessary, so always register it to run.
   registerPostCommitHook(CheckpointHook)
   registerPostCommitHook(IcebergConverterHook)
@@ -350,6 +353,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     checkDeletionVectorFilesHaveWideBounds = false
   }
 
+  /** The set of distinct partitions that contain added files by current transaction. */
+  protected[delta] var partitionsAddedToOpt: Option[mutable.HashSet[Map[String, String]]] = None
+
+  /** True if this transaction is a blind append. This is only valid after commit. */
+  protected[delta] var isBlindAppend: Boolean = false
 
   /**
    * The logSegment of the snapshot prior to the commit.
@@ -860,6 +868,47 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
+  def reportAutoCompactStatsError(e: Throwable): Unit = {
+    recordDeltaEvent(deltaLog, "delta.collectStats", data = Map("message" -> e.getMessage))
+    logError(e.getMessage)
+  }
+
+  def collectAutoOptimizeStats(numAdd: Long, numRemove: Long, actions: Iterator[Action]): Unit = {
+    // Early exit if no files were added or removed.
+    if (numAdd == 0 && numRemove == 0) return
+    val collector = createAutoCompactStatsCollector()
+    if (collector.isInstanceOf[DisabledAutoCompactPartitionStatsCollector]) return
+    AutoCompactPartitionStats.instance(spark)
+      .collectPartitionStats(collector, deltaLog.tableId, actions)
+  }
+
+  /**
+   * A subclass of AutoCompactPartitionStatsCollector that's to be used if the config to collect
+   * auto compaction stats is turned off. This subclass intentionally does nothing.
+   */
+  class DisabledAutoCompactPartitionStatsCollector extends AutoCompactPartitionStatsCollector {
+    override def collectPartitionStatsForAdd(file: AddFile): Unit = {}
+    override def collectPartitionStatsForRemove(file: RemoveFile): Unit = {}
+    override def finalizeStats(tableId: String): Unit = {}
+  }
+
+  def createAutoCompactStatsCollector(): AutoCompactPartitionStatsCollector = {
+    try {
+      if (spark.conf.get(DeltaSQLConf.DELTA_AUTO_COMPACT_RECORD_PARTITION_STATS_ENABLED)) {
+        val minFileSize = spark.conf
+              .get(DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_FILE_SIZE)
+              .getOrElse(Long.MaxValue)
+        return AutoCompactPartitionStats.instance(spark)
+          .createStatsCollector(minFileSize, reportAutoCompactStatsError)
+      }
+    } catch {
+      case NonFatal(e) => reportAutoCompactStatsError(e)
+    }
+
+    // If config-disabled, or error caught, fall though and use a no-op stats collector.
+    new DisabledAutoCompactPartitionStatsCollector
+  }
+
   /**
    * Checks if the new schema contains any CDC columns (which is invalid) and throws the appropriate
    * error
@@ -1022,7 +1071,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val domainMetadata =
         DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(finalActions, protocol)
 
-      val isBlindAppend = {
+      isBlindAppend = {
         val dependsOnFiles = readPredicates.nonEmpty || readFiles.nonEmpty
         val onlyAddFiles =
           preparedActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
@@ -1152,6 +1201,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       var addFilesHistogram: Option[FileSizeHistogram] = None
       var removeFilesHistogram: Option[FileSizeHistogram] = None
       val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
+      // Initialize everything needed to maintain auto-compaction stats.
+      partitionsAddedToOpt = Some(new mutable.HashSet[Map[String, String]])
+      val acStatsCollector = createAutoCompactStatsCollector()
       var allActions = (extraActions.toIterator ++ actions).map { action =>
         commitSize += 1
         action match {
@@ -1159,10 +1211,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             numAddFiles += 1
             if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
             assertDeletionVectorWellFormed(a)
+            partitionsAddedToOpt.get += a.partitionValues
+            acStatsCollector.collectPartitionStatsForAdd(a)
             if (a.dataChange) bytesNew += a.size
             addFilesHistogram.foreach(_.insert(a.size))
           case r: RemoveFile =>
             numRemoveFiles += 1
+            acStatsCollector.collectPartitionStatsForRemove(r)
             removeFilesHistogram.foreach(_.insert(r.getFileSize))
           case _: SetTransaction =>
             numSetTransaction += 1
@@ -1204,6 +1259,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         overwrite = false,
         deltaLog.newDeltaHadoopConf())
 
+      acStatsCollector.finalizeStats(deltaLog.tableId)
       spark.sessionState.conf.setConf(
         DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
         Some(attemptVersion))
@@ -1357,26 +1413,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // Protocol change (stored in newProtocol)
 
     val (protocolUpdate1, metadataUpdate1) =
-      UniversalFormat.enforceIcebergInvariantsAndDependencies(
+      UniversalFormat.enforceInvariantsAndDependencies(
         // Note: if this txn has no protocol or metadata updates, then `prev` will equal `newest`.
-        prevProtocol = snapshot.protocol,
-        prevMetadata = snapshot.metadata,
+        snapshot,
         newestProtocol = protocol, // Note: this will try to use `newProtocol`
         newestMetadata = metadata, // Note: this will try to use `newMetadata`
-        isCreatingNewTable
+        isCreatingNewTable || op.isInstanceOf[DeltaOperations.UpgradeUniformProperties],
+        otherActions
       )
     newProtocol = protocolUpdate1.orElse(newProtocol)
     newMetadata = metadataUpdate1.orElse(newMetadata)
-
-    val (protocolUpdate2, metadataUpdate2) = IcebergCompatV1.enforceInvariantsAndDependencies(
-      snapshot,
-      newestProtocol = protocol, // Note: this will try to use `newProtocol`
-      newestMetadata = metadata, // Note: this will try to use `newMetadata`
-      isCreatingNewTable,
-      otherActions
-    )
-    newProtocol = protocolUpdate2.orElse(newProtocol)
-    newMetadata = metadataUpdate2.orElse(newMetadata)
 
     var finalActions = newMetadata.toSeq ++ newProtocol.toSeq ++ otherActions
 
@@ -1572,7 +1618,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   private def lockCommitIfEnabled[T](body: => T): T = {
     if (isCommitLockEnabled) {
-      deltaLog.lockInterruptibly(body)
+      // We are borrowing the `snapshotLock` even for commits. Ideally we should be
+      // using a separate lock for this purpose, because multiple threads fighting over
+      // a commit shouldn't interfere with normal snapshot updates by readers.
+      deltaLog.withSnapshotLockInterruptibly(body)
     } else {
       body
     }
@@ -1705,6 +1754,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         numOfDomainMetadatas += 1
       case _ =>
     }
+    collectAutoOptimizeStats(numAdd, numRemove, actions.iterator)
     val info = currentTransactionInfo.commitInfo
       .map(_.copy(readVersion = None, isolationLevel = None)).orNull
     setNeedsCheckpoint(attemptVersion, postCommitSnapshot)
@@ -1740,6 +1790,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       txnId = Some(txnId))
     recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
 
+    partitionsAddedToOpt = Some(distinctPartitions)
     postCommitSnapshot
   }
 
@@ -1772,8 +1823,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         tags = Map(TAG_LOG_STORE_CLASS -> deltaLog.store.getClass.getName)) {
 
     DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
+      val fileStatuses = getConflictingVersions(checkVersion)
+      val nextAttemptVersion = checkVersion + fileStatuses.size
 
-      val nextAttemptVersion = getNextAttemptVersion(checkVersion)
+      // validate that information about conflicting winning commit files is continuous and in the
+      // right order.
+      val expected = (checkVersion until nextAttemptVersion)
+      val found = fileStatuses.map(deltaVersion)
+      val mismatch = expected.zip(found).dropWhile{ case (v1, v2) => v1 == v2 }.take(10)
+      assert(mismatch.isEmpty,
+        s"Expected ${mismatch.map(_._1).mkString(",")} but got ${mismatch.map(_._2).mkString(",")}")
 
       val logPrefixStr = s"[attempt $attemptNumber]"
       val txnDetailsLogStr = {
@@ -1792,10 +1851,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         s"[$checkVersion, $nextAttemptVersion) with current txn having $txnDetailsLogStr")
 
       var updatedCurrentTransactionInfo = currentTransactionInfo
-      (checkVersion until nextAttemptVersion).foreach { otherCommitVersion =>
+      (checkVersion until nextAttemptVersion)
+        .zip(fileStatuses)
+        .foreach { case (otherCommitVersion, otherCommitFileStatus) =>
         updatedCurrentTransactionInfo = checkForConflictsAgainstVersion(
           updatedCurrentTransactionInfo,
-          otherCommitVersion,
+          otherCommitFileStatus,
           commitIsolationLevel)
         logInfo(s"$logPrefixStr No conflicts in version $otherCommitVersion, " +
           s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start")
@@ -1810,13 +1871,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   protected def checkForConflictsAgainstVersion(
       currentTransactionInfo: CurrentTransactionInfo,
-      otherCommitVersion: Long,
+      otherCommitFileStatus: FileStatus,
       commitIsolationLevel: IsolationLevel): CurrentTransactionInfo = {
 
     val conflictChecker = new ConflictChecker(
       spark,
       currentTransactionInfo,
-      otherCommitVersion,
+      otherCommitFileStatus,
       commitIsolationLevel)
     conflictChecker.checkConflicts()
   }
@@ -1824,11 +1885,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /** Returns the version that the first attempt will try to commit at. */
   protected def getFirstAttemptVersion: Long = readVersion + 1L
 
-  /** Returns the next attempt version given the last attempted version */
-  protected def getNextAttemptVersion(previousAttemptVersion: Long): Long = {
-    val latestSnapshot = deltaLog.update()
-    preCommitLogSegment = latestSnapshot.logSegment
-    latestSnapshot.version + 1
+  /** Returns the conflicting commit information */
+  protected def getConflictingVersions(previousAttemptVersion: Long): Seq[FileStatus] = {
+    assert(previousAttemptVersion == preCommitLogSegment.version + 1)
+    val (newPreCommitLogSegment, newCommitFileStatuses) =
+      deltaLog.getUpdatedLogSegment(preCommitLogSegment)
+    assert(preCommitLogSegment.version + newCommitFileStatuses.size ==
+      newPreCommitLogSegment.version)
+    preCommitLogSegment = newPreCommitLogSegment
+    newCommitFileStatuses
   }
 
   /** Register a hook that will be executed once a commit is successful. */

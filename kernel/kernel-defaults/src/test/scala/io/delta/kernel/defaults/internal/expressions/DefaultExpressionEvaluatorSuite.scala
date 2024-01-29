@@ -241,6 +241,58 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkBooleanVectors(actOutputVector, expOutputVector)
   }
 
+  test("evaluate expression: coalesce") {
+    val col1 = booleanVector(Seq[BooleanJ](true, null, null, null))
+    val col2 = booleanVector(Seq[BooleanJ](false, false, null, null))
+    val col3 = booleanVector(Seq[BooleanJ](true, true, true, null))
+
+    val schema = new StructType()
+      .add("col1", BooleanType.BOOLEAN)
+      .add("col2", BooleanType.BOOLEAN)
+      .add("col3", BooleanType.BOOLEAN)
+
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2, col3))
+
+    val coalesceEpxr1 = new ScalarExpression(
+      "COALESCE",
+      util.Arrays.asList(new Column("col1")))
+    val expOutputVector1 = booleanVector(Seq[BooleanJ](true, null, null, null))
+    val actOutputVector1 = evaluator(schema, coalesceEpxr1, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector1, expOutputVector1)
+
+    val coalesceEpxr3 = new ScalarExpression(
+      "COALESCE",
+      util.Arrays.asList(
+        new Column("col1"), new Column("col2"), new Column("col3")))
+    val expOutputVector3 = booleanVector(Seq[BooleanJ](true, false, true, null))
+    val actOutputVector3 = evaluator(schema, coalesceEpxr3, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector3, expOutputVector3)
+
+    def checkUnsupportedTypes(
+          col1Type: DataType, col2Type: DataType, messageContains: String): Unit = {
+      val schema = new StructType()
+        .add("col1", col1Type)
+        .add("col2", col2Type)
+      val batch = new DefaultColumnarBatch(5, schema,
+        Array(testColumnVector(5, col1Type), testColumnVector(5, col2Type)))
+      val e = intercept[UnsupportedOperationException] {
+        evaluator(
+          schema,
+          new ScalarExpression("COALESCE",
+            util.Arrays.asList(new Column("col1"), new Column("col2"))),
+          col1Type
+        ).eval(batch)
+      }
+      assert(e.getMessage.contains(messageContains))
+    }
+    // TODO support least-common-type resolution
+    checkUnsupportedTypes(LongType.LONG, IntegerType.INTEGER,
+      "Coalesce is only supported for arguments of the same type")
+    // TODO support other types besides boolean
+    checkUnsupportedTypes(IntegerType.INTEGER, IntegerType.INTEGER,
+      "Coalesce is only supported for boolean type expressions")
+  }
+
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
     // Literals for each data type from the data type value range, used as inputs to comparator
     // (small, big, small, null)

@@ -342,6 +342,44 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CLUSTERING_COLUMNS_MISMATCH" : {
+    "message" : [
+      "The provided clustering columns do not match the existing table's.",
+      "- provided: <providedClusteringColumns>",
+      "- existing: <existingClusteringColumns>"
+    ],
+    "sqlState" : "42P10"
+  },
+  "DELTA_CLUSTERING_COLUMN_MISSING_STATS" : {
+    "message" : [
+      "Clustering requires clustering columns to have stats. Couldn't find clustering column(s) '<columns>' in stats schema:\n<schema>"
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_CLUSTERING_REPLACE_TABLE_WITH_PARTITIONED_TABLE" : {
+    "message" : [
+      "Replacing a clustered Delta table with a partitioned table is not allowed."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CLUSTERING_WITH_PARTITION_PREDICATE" : {
+    "message" : [
+      "OPTIMIZE command for Delta table with clustering doesn't support partition predicates. Please remove the predicates: <predicates>."
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_CLUSTERING_WITH_ZORDER_BY" : {
+    "message" : [
+      "OPTIMIZE command for Delta table with clustering cannot specify ZORDER BY. Please remove ZORDER BY (<zOrderBy>)."
+    ],
+    "sqlState" : "42613"
+  },
+  "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS" : {
+    "message" : [
+      "CLUSTER BY supports up to <numColumnsLimit> clustering columns, but the table has <actualNumColumns> clustering columns. Please remove the extra clustering columns."
+    ],
+    "sqlState" : "54000"
+  },
   "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" : {
     "message" : [
       "Data skipping is not supported for partition column '<column>'."
@@ -886,52 +924,81 @@
     ],
     "sqlState" : "42K09"
   },
-  "DELTA_ICEBERG_COMPAT_V1_VIOLATION" : {
+  "DELTA_ICEBERG_COMPAT_VIOLATION" : {
     "message" : [
-      "The validation of IcebergCompatV1 has failed."
+      "The validation of IcebergCompatV<version> has failed."
     ],
     "subClass" : {
+      "CHANGE_VERSION_NEED_REWRITE" : {
+        "message" : [
+          "Changing to IcebergCompatV<newVersion> requires rewriting the table. Please run REORG TABLE APPLY (UPGRADE UNIFORM ('ICEBERG_COMPAT_VERSION = <newVersion>'));",
+          "Note that REORG enables table feature IcebergCompatV<newVersion> and other Delta lake clients without that table feature support may not be able to write to the table."
+        ]
+      },
+      "COMPAT_VERSION_NOT_SUPPORTED" : {
+        "message" : [
+          "IcebergCompatVersion = <version> is not supported. Supported versions are between 1 and <maxVersion> "
+        ]
+      },
       "DELETION_VECTORS_NOT_PURGED" : {
         "message" : [
-          "IcebergCompatV1 requires Deletion Vectors to be completely purged from the table. Please run the REORG TABLE APPLY (PURGE) command."
+          "IcebergCompatV<version> requires Deletion Vectors to be completely purged from the table. Please run the REORG TABLE APPLY (PURGE) command."
         ]
       },
       "DELETION_VECTORS_SHOULD_BE_DISABLED" : {
         "message" : [
-          "IcebergCompatV1 requires Deletion Vectors to be disabled on the table. Please use the ALTER TABLE DROP FEATURE command to disable Deletion Vectors and to remove the existing Deletion Vectors from the table."
+          "IcebergCompatV<version> requires Deletion Vectors to be disabled on the table. Please use the ALTER TABLE DROP FEATURE command to disable Deletion Vectors and to remove the existing Deletion Vectors from the table."
         ]
       },
       "DISABLING_REQUIRED_TABLE_FEATURE" : {
         "message" : [
-          "IcebergCompatV1 requires feature <feature> to be supported and enabled. You cannot drop it from the table. Instead, please disable IcebergCompatV1 first."
+          "IcebergCompatV<version> requires feature <feature> to be supported and enabled. You cannot drop it from the table. Instead, please disable IcebergCompatV<version> first."
+        ]
+      },
+      "FILES_NOT_ICEBERG_COMPAT" : {
+        "message" : [
+          "Enabling Uniform Iceberg with IcebergCompatV<version> requires all files to be iceberg compatible.",
+          "There are <addFilesCount> files in table version <tableVersion> and <addFilesWithoutTag> files are not iceberg compatible, which is usually a result of concurrent write.",
+          "Please run the REORG TABLE table APPLY (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION=<version>) command again."
         ]
       },
       "INCOMPATIBLE_TABLE_FEATURE" : {
         "message" : [
-          "IcebergCompatV1 is incompatible with feature <feature>."
+          "IcebergCompatV<version> is incompatible with feature <feature>."
         ]
       },
       "MISSING_REQUIRED_TABLE_FEATURE" : {
         "message" : [
-          "IcebergCompatV1 requires feature <feature> to be supported and enabled."
+          "IcebergCompatV<version> requires feature <feature> to be supported and enabled."
         ]
       },
       "REPLACE_TABLE_CHANGE_PARTITION_NAMES" : {
         "message" : [
-          "IcebergCompatV1 doesn't support replacing partitioned tables with a differently-named partition spec, because Iceberg-Spark 1.1.0 doesn't.",
+          "IcebergCompatV<version> doesn't support replacing partitioned tables with a differently-named partition spec, because Iceberg-Spark 1.1.0 doesn't.",
           "Prev Partition Spec: <prevPartitionSpec>",
           "New Partition Spec: <newPartitionSpec>"
         ]
       },
+      "REWRITE_DATA_FAILED" : {
+        "message" : [
+          "Rewriting data to IcebergCompatV<version> failed.",
+          "Please run the REORG TABLE table APPLY (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION=<version>) command again."
+        ]
+      },
       "UNSUPPORTED_DATA_TYPE" : {
         "message" : [
-          "IcebergCompatV1 doesn't support schema with MapType or ArrayType or NullType. Your schema:",
+          "IcebergCompatV<version> does not support the data type <dataType> in your schema. Your schema:",
           "<schema>"
+        ]
+      },
+      "VERSION_MUTUAL_EXCLUSIVE" : {
+        "message" : [
+          "Only one IcebergCompat version can be enabled."
         ]
       },
       "WRONG_REQUIRED_TABLE_PROPERTY" : {
         "message" : [
-          "IcebergCompatV1 requires table property '<key>' to be set to '<requiredValue>'. Current value: '<actualValue>'."
+          "IcebergCompatV<version> requires table property '<key>' to be set to '<requiredValue>'. Current value: '<actualValue>'."
         ]
       }
     },
@@ -1011,6 +1078,12 @@
       "Column <columnName> is not specified in INSERT"
     ],
     "sqlState" : "42802"
+  },
+  "DELTA_INVALID_AUTO_COMPACT_TYPE" : {
+    "message" : [
+      "Invalid auto-compact type: <value>. Allowed values are: <allowed>."
+    ],
+    "sqlState" : "22023"
   },
   "DELTA_INVALID_CALENDAR_INTERVAL_EMPTY" : {
     "message" : [
@@ -2239,6 +2312,12 @@
       "<view> is a view. DESCRIBE DETAIL is only supported for tables."
     ],
     "sqlState" : "42809"
+  },
+  "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN" : {
+    "message" : [
+      "Dropping clustering columns (<columnList>) is not allowed."
+    ],
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_DROP_COLUMN" : {
     "message" : [

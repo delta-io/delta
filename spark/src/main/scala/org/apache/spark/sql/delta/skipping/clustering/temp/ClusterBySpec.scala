@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.skipping.clustering.temp
 
 import scala.reflect.ClassTag
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.databind.{DeserializationFeature, ObjectMapper}
 import com.fasterxml.jackson.module.scala.{ClassTagExtensions, DefaultScalaModule}
@@ -60,6 +61,10 @@ object ClusterBySpec {
   // Convert from table property back to ClusterBySpec.
   def fromProperty(columns: String): ClusterBySpec = {
     ClusterBySpec(mapper.readValue[Seq[Seq[String]]](columns).map(FieldReference(_)))
+  }
+
+  def toProperty(clusterBySpec: ClusterBySpec): (String, String) = {
+    ClusteredTableUtils.PROP_CLUSTERING_COLUMNS -> clusterBySpec.toJson
   }
 }
 

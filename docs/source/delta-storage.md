@@ -66,11 +66,10 @@ In this default mode, <Delta> supports concurrent reads from multiple clusters, 
 
 This section explains how to quickly start reading and writing Delta tables on S3 using single-cluster mode. For a detailed explanation of the configuration, see [_](#setup-configuration-s3-multi-cluster).
 
-#. Use the following command to launch a Spark shell with <Delta> and S3 support (assuming you use Spark 3.2.1 which is pre-built for Hadoop 3.3.4):
-
    ```bash
    bin/spark-shell \
     --packages io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.4 \
+
     --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
     --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key>
    ```
@@ -91,7 +90,7 @@ For efficient listing of <Delta> metadata files on S3, set the configuration `de
 
   ```scala
   bin/spark-shell \
-    --packages io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.4 \
+    --packages io.delta:delta-spark_2.12:3.1.0,org.apache.hadoop:hadoop-aws:3.3.4 \
     --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
     --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key> \
     --conf "spark.hadoop.delta.enableFastS3AListFrom=true
@@ -143,7 +142,7 @@ This section explains how to quickly start reading and writing Delta tables on S
    **For DynamoDB:**
    ```bash
    bin/spark-shell \
-    --packages io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.4,io.delta:delta-storage-s3-dynamodb:3.0.0 \
+    --packages io.delta:delta-spark_2.12:3.1.0,org.apache.hadoop:hadoop-aws:3.3.4,io.delta:delta-storage-s3-dynamodb:3.1.0 \
     --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
     --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key> \
     --conf spark.delta.logStore.s3a.impl=io.delta.storage.S3DynamoDBLogStore \

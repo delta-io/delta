@@ -17,6 +17,7 @@ The following table lists <Delta> versions and their compatible <AS> versions.
 
 | <Delta> version | <AS> version |
 | --- | --- |
+| 3.1.x | 3.5.x |
 | 3.0.x | 3.5.x |
 | 2.4.x | 3.4.x |
 | 2.3.x | 3.3.x |
