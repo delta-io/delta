@@ -30,6 +30,8 @@ object JsonUtils {
     _mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     _mapper.registerModule(DefaultScalaModule)
 
+    // We do not want to limit the length of JSON strings in the Delta log or table data. Also note
+    // that not having a limit was the default behavior before Jackson 2.15.
     val streamReadConstraints = StreamReadConstraints
       .builder()
       .maxStringLength(Int.MaxValue)

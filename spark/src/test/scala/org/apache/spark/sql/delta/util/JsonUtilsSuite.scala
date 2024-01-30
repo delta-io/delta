@@ -36,7 +36,9 @@ class JsonUtilsSuite
       DataSize() -> """{}""",
       DataSize(bytesCompressed = Some(816L)) -> """{"bytesCompressed":816}""",
       DataSize(rows = Some(111L)) -> """{"rows":111}""",
+      DataSize(rows = Some(0)) -> """{"rows":0}""",
       DataSize(logicalRows = Some(111L)) -> """{"logicalRows":111}""",
+      DataSize(logicalRows = Some(-1L)) -> """{"logicalRows":-1}""",
       DataSize(bytesCompressed = Some(816L), rows = Some(111L), logicalRows = Some(111L)) ->
         """{"bytesCompressed":816,"rows":111,"logicalRows":111}"""
     )
