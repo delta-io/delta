@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.DomainMetadata
+import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.hooks.IcebergConverterHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -222,7 +223,7 @@ case class CreateDeltaTableCommand(
     //   - returning the Delta Operation type of this DataFrameWriter
     def doDeltaWrite(
         deltaWriter: WriteIntoDeltaLike,
-        schema: StructType): (Seq[Action], DeltaOperations.Operation) = {
+        schema: StructType): (TaggedCommitData[Action], DeltaOperations.Operation) = {
       // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
       // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
       if (!isV1Writer) {
@@ -232,7 +233,7 @@ case class CreateDeltaTableCommand(
           options,
           schema)
       }
-      var actions = deltaWriter.write(
+      var taggedCommitData = deltaWriter.writeAndReturnCommitData(
         txn,
         sparkSession,
         ClusteredTableUtils.getClusterBySpecOptional(table),
@@ -253,20 +254,22 @@ case class CreateDeltaTableCommand(
         val newDomainMetadata = Seq.empty[DomainMetadata] ++
           ClusteredTableUtils.getDomainMetadataOptional(table, txn)
         // Ensure to remove any domain metadata for REPLACE TABLE.
-        actions = actions ++ DomainMetadataUtils.handleDomainMetadataForReplaceTable(
-          txn.snapshot.domainMetadata, newDomainMetadata)
+        val newActions = taggedCommitData.actions ++
+          DomainMetadataUtils.handleDomainMetadataForReplaceTable(
+            txn.snapshot.domainMetadata, newDomainMetadata)
+        taggedCommitData = taggedCommitData.copy(actions = newActions)
       }
       val op = getOperation(txn.metadata, isManagedTable, Some(options)
       )
-      (actions, op)
+      (taggedCommitData, op)
     }
     val updatedConfiguration = UniversalFormat
       .enforceDependenciesInConfiguration(deltaWriter.configuration, txn.snapshot)
     val updatedWriter = deltaWriter.withNewWriterConfiguration(updatedConfiguration)
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
-      val (actions, op) = doDeltaWrite(updatedWriter, updatedWriter.data.schema.asNullable)
-      txn.commit(actions, op)
+      val (taggedCommitData, op) = doDeltaWrite(updatedWriter, updatedWriter.data.schema.asNullable)
+      txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
     }
   }
 

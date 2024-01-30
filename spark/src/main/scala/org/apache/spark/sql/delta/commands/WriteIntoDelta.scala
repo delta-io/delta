@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.constraints.Constraints.Check
@@ -102,30 +103,30 @@ case class WriteIntoDelta(
         return Seq.empty
       }
 
-      val actions = write(
+      val taggedCommitData = writeAndReturnCommitData(
         txn, sparkSession
       )
       val operation = DeltaOperations.Write(
         mode, Option(partitionColumns),
         options.replaceWhere, options.userMetadata
       )
-      txn.commitIfNeeded(actions, operation)
+      txn.commitIfNeeded(taggedCommitData.actions, operation, tags = taggedCommitData.stringTags)
     }
     Seq.empty
   }
 
-  override def write(
+  override def writeAndReturnCommitData(
       txn: OptimisticTransaction,
       sparkSession: SparkSession,
       clusterBySpecOpt: Option[ClusterBySpec] = None,
-      isTableReplace: Boolean = false): Seq[Action] = {
+      isTableReplace: Boolean = false): TaggedCommitData[Action] = {
     import org.apache.spark.sql.delta.implicits._
     if (txn.readVersion > -1) {
       // This table already exists, check if the insert is valid.
       if (mode == SaveMode.ErrorIfExists) {
         throw DeltaErrors.pathAlreadyExistsException(deltaLog.dataPath)
       } else if (mode == SaveMode.Ignore) {
-        return Nil
+        return TaggedCommitData.empty
       } else if (mode == SaveMode.Overwrite) {
         DeltaLog.assertRemovable(txn.snapshot)
       }
@@ -335,8 +336,11 @@ case class WriteIntoDelta(
     } else {
       newFiles ++ deletedFiles
     }
-    newDomainMetadata ++
-    createSetTransaction(sparkSession, deltaLog, Some(options)).toSeq ++ fileActions
+    val allActions =
+      newDomainMetadata ++
+        createSetTransaction(sparkSession, deltaLog, Some(options)).toSeq ++
+        fileActions
+    TaggedCommitData(allActions)
   }
 
   private def writeFiles(

@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.constraints.Constraints.Check
 import org.apache.spark.sql.delta.constraints.Invariants.ArbitraryExpression
@@ -58,11 +59,18 @@ trait WriteIntoDeltaLike {
   /**
    * Write [[data]] into Delta table as part of [[txn]] and @return the actions to be committed.
    */
+  def writeAndReturnCommitData(
+      txn: OptimisticTransaction,
+      sparkSession: SparkSession,
+      clusterBySpecOpt: Option[ClusterBySpec] = None,
+      isTableReplace: Boolean = false): TaggedCommitData[Action]
+
   def write(
       txn: OptimisticTransaction,
       sparkSession: SparkSession,
       clusterBySpecOpt: Option[ClusterBySpec] = None,
-      isTableReplace: Boolean = false): Seq[Action]
+      isTableReplace: Boolean = false): Seq[Action] = writeAndReturnCommitData(
+    txn, sparkSession, clusterBySpecOpt, isTableReplace).actions
 
   val deltaLog: DeltaLog
 
