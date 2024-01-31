@@ -762,8 +762,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
             val clusterBySpec = ClusterBySpec(c.clusteringColumns.toSeq)
             validateClusterBySpec(Some(clusterBySpec), table.schema())
           }
-          if (table.initialSnapshot.metadata.partitionColumns.nonEmpty) {
-            throw DeltaErrors.alterTableClusterByOnPartitionedTableException()
+          if (!ClusteredTableUtils.isSupported(table.initialSnapshot.protocol)) {
+            throw DeltaErrors.alterClusterByNotOnLiquidDeltaTableException()
           }
           AlterTableClusterByDeltaCommand(
             table, c.clusteringColumns.map(_.fieldNames().toSeq).toSeq).run(spark)

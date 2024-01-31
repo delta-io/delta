@@ -474,7 +474,10 @@ trait ClusteredTableDDLSuiteBase
       }
       checkError(
         e,
-        errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS"
+        errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+        parameters = Map(
+          "numColumnsLimit" -> "4",
+          "actualNumColumns" -> "5")
       )
     }
   }
@@ -571,7 +574,10 @@ trait ClusteredTableDDLSuiteBase
         val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTable))
         checkError(
           e,
-          "DELTA_CLUSTERING_COLUMN_MISSING_STATS"
+          "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+          parameters = Map(
+            "columns" -> "col1.col12",
+            "schema" -> snapshot.statCollectionLogicalSchema.treeString)
         )
       }
     }
@@ -635,7 +641,8 @@ trait ClusteredTableDDLWithV2Base
             }
             checkError(
               e,
-              "DELTA_CLUSTERING_REPLACE_TABLE_WITH_PARTITIONED_TABLE"
+              "DELTA_CLUSTERING_REPLACE_TABLE_WITH_PARTITIONED_TABLE",
+              parameters = Map.empty
             )
           }
         }

@@ -71,9 +71,9 @@
     ],
     "sqlState" : "42837"
   },
-  "DELTA_ALTER_TABLE_CLUSTER_BY_ON_PARTITIONED_TABLE_NOT_ALLOWED" : {
+  "DELTA_ALTER_TABLE_CLUSTER_BY_NOT_ALLOWED" : {
     "message" : [
-      "ALTER TABLE CLUSTER BY cannot be applied to a partitioned table."
+      "ALTER TABLE CLUSTER BY is supported only for Delta table with Liquid clustering."
     ],
     "sqlState" : "42000"
   },

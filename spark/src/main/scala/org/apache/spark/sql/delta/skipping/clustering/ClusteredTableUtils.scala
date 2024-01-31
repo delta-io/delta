@@ -203,7 +203,7 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
     val newClusteringColumns =
       newLogicalClusteringColumns.map(ClusteringColumn(txn.metadata.schema, _))
     val clusteringMetadataDomainOpt =
-      if (txn.snapshot.domainMetadata.exists(_.domain == ClusteringMetadataDomain.domainName)) {
+      if (isSupported(txn.protocol)) {
         Some(ClusteringMetadataDomain.fromClusteringColumns(newClusteringColumns).toDomainMetadata)
       } else {
         None

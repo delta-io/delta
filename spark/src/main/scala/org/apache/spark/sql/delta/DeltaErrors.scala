@@ -3192,13 +3192,12 @@ trait DeltaErrorsBase
   def alterClusterByNotOnDeltaTableException(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_ONLY_OPERATION",
-      messageParameters = Array("ALTER TABLE CLUSTER BY")
-    )
+      messageParameters = Array("ALTER TABLE CLUSTER BY"))
   }
 
-  def alterTableClusterByOnPartitionedTableException(): Throwable = {
+  def alterClusterByNotOnLiquidDeltaTableException(): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "DELTA_ALTER_TABLE_CLUSTER_BY_ON_PARTITIONED_TABLE_NOT_ALLOWED",
+      errorClass = "DELTA_ALTER_TABLE_CLUSTER_BY_NOT_ALLOWED",
       messageParameters = Array.empty)
   }
 
