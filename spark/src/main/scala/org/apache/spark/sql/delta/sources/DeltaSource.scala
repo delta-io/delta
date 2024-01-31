@@ -984,6 +984,7 @@ case class DeltaSource(
     var metadataAction: Option[Metadata] = None
     var protocolAction: Option[Protocol] = None
     var removeFileActionPath: Option[String] = None
+    var operation: Option[String] = None
     actions.foreach {
       case a: AddFile if a.dataChange =>
         seenFileAdd = true
@@ -1005,13 +1006,15 @@ case class DeltaSource(
         assert(protocolAction.isEmpty,
           "Should not encounter two protocol actions in the same commit")
         protocolAction = Some(protocol)
+      case commitInfo: CommitInfo =>
+        operation = Some(s"${commitInfo.operation} (${commitInfo.operationParameters})")
       case _ => ()
     }
     if (removeFileActionPath.isDefined) {
       if (seenFileAdd && !shouldAllowChanges) {
         throw DeltaErrors.deltaSourceIgnoreChangesError(
           version,
-          removeFileActionPath.get,
+          if (operation.nonEmpty) operation.get else removeFileActionPath.get,
           deltaLog.dataPath.toString
         )
       } else if (!seenFileAdd && !shouldAllowDeletes) {
