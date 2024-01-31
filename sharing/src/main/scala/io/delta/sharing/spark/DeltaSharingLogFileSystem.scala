@@ -352,6 +352,333 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     f1.id < f2.id
   }
 
+  /**
+   * Cleanup the delta log upon explicit stop of a query on a delta sharing table.
+   *
+   * @param deltaLogPath deltaLogPath is constructed per query with credential scope id as prefix
+   *                     and a uuid as suffix, which is very unique to the query and won't interfere
+   *                     with other queries.
+   */
+  def tryToCleanUpDeltaLog(deltaLogPath: String): Unit = {
+    def shouldCleanUp(blockId: BlockId): Boolean = {
+      if (!blockId.name.startsWith(DELTA_SHARING_LOG_BLOCK_ID_PREFIX)) {
+        return false
+      }
+      val blockName = blockId.name
+      // deltaLogPath is constructed per query with credential scope id as prefix and a uuid as
+      // suffix, which is very unique to the query and won't interfere with other queries.
+      blockName.startsWith(BLOCK_ID_TEST_PREFIX + deltaLogPath)
+    }
+
+    val blockManager = SparkEnv.get.blockManager
+    val matchingBlockIds = blockManager.getMatchingBlockIds(shouldCleanUp(_))
+    logInfo(
+      s"Trying to clean up ${matchingBlockIds.size} blocks for $deltaLogPath."
+    )
+
+    val problematicBlockIds = Seq.newBuilder[BlockId]
+    matchingBlockIds.foreach { b =>
+      try {
+        blockManager.removeBlock(b)
+      } catch {
+        case _: Throwable => problematicBlockIds += b
+      }
+    }
+
+    val problematicBlockIdsSeq = problematicBlockIds.result().toSeq
+    if (problematicBlockIdsSeq.size > 0) {
+      logWarning(
+        s"Done cleaning up ${matchingBlockIds.size} blocks for $deltaLogPath, but " +
+        s"failed to remove: ${problematicBlockIdsSeq}."
+      )
+    } else {
+      logInfo(
+        s"Done cleaning up ${matchingBlockIds.size} blocks for $deltaLogPath."
+      )
+    }
+  }
+
+  /**
+   * @param deltaLogPath The delta log directory to clean up. It is constructed per query with
+   *                     credential scope id as prefix and a uuid as suffix, which is very unique
+   *                     to the query and won't interfere with other queries.
+   * @param maxVersion maxVersion of any checkpoint or delta file that needs clean up, inclusive.
+   */
+  def tryToCleanUpPreviousBlocks(deltaLogPath: String, maxVersion: Long): Unit = {
+    if (maxVersion < 0) {
+      logInfo(
+        s"Skipping clean up previous blocks for $deltaLogPath because maxVersion(" +
+        s"$maxVersion) < 0."
+      )
+      return
+    }
+
+    def shouldCleanUp(blockId: BlockId): Boolean = {
+      if (!blockId.name.startsWith(DELTA_SHARING_LOG_BLOCK_ID_PREFIX)) {
+        return false
+      }
+      val blockName = blockId.name
+      blockName.startsWith(BLOCK_ID_TEST_PREFIX + deltaLogPath) && FileNames
+        .getFileVersionOpt(new Path(blockName.stripPrefix(BLOCK_ID_TEST_PREFIX)))
+        .exists(_ <= maxVersion)
+    }
+
+    val blockManager = SparkEnv.get.blockManager
+    val matchingBlockIds = blockManager.getMatchingBlockIds(shouldCleanUp(_))
+    logInfo(
+      s"Trying to clean up ${matchingBlockIds.size} previous blocks for $deltaLogPath " +
+      s"before version: $maxVersion."
+    )
+
+    val problematicBlockIds = Seq.newBuilder[BlockId]
+    matchingBlockIds.foreach { b =>
+      try {
+        blockManager.removeBlock(b)
+      } catch {
+        case _: Throwable => problematicBlockIds += b
+      }
+    }
+
+    val problematicBlockIdsSeq = problematicBlockIds.result().toSeq
+    if (problematicBlockIdsSeq.size > 0) {
+      logWarning(
+        s"Done cleaning up ${matchingBlockIds.size} previous blocks for $deltaLogPath " +
+        s"before version: $maxVersion, but failed to remove: ${problematicBlockIdsSeq}."
+      )
+    } else {
+      logInfo(
+        s"Done cleaning up ${matchingBlockIds.size} previous blocks for $deltaLogPath " +
+        s"before version: $maxVersion."
+      )
+    }
+  }
+
+  /**
+   * Construct local delta log based on delta log actions returned from delta sharing server.
+   *
+   * @param lines           a list of delta actions, to be processed and put in the local delta log,
+   *                        each action contains a version field to indicate the version of log to
+   *                        put it in.
+   * @param customTablePath query customized table path, used to construct action.path field for
+   *                        DeltaSharingFileSystem
+   * @param startingVersionOpt If set, used to construct the delta file (.json log file) from the
+   *                           given startingVersion. This is needed by DeltaSharingSource to
+   *                           construct the delta log for the rpc no matter if there are files in
+   *                           that version or not, so DeltaSource can read delta actions from the
+   *                           starting version (instead from checkpoint).
+   * @param endingVersionOpt If set, used to construct the delta file (.json log file) until the
+   *                         given endingVersion. This is needed by DeltaSharingSource to construct
+   *                         the delta log for the rpc no matter if there are files in that version
+   *                         or not.
+   *                         NOTE: DeltaSource will not advance the offset if there are no files in
+   *                         a version of the delta log, but we still create the delta log file for
+   *                         that version to avoid missing delta log (json) files.
+   * @return ConstructedDeltaLogMetadata, which contains 3 fields:
+   *          - idToUrl: mapping from file id to pre-signed url
+   *          - minUrlExpirationTimestamp timestamp indicating the when to refresh pre-signed urls.
+   *            Both are used to register to CachedTableManager.
+   *          - maxVersion: the max version returned in the http response, used by
+   *            DeltaSharingSource to quickly understand the progress of rpcs from the server.
+   */
+  def constructLocalDeltaLogAcrossVersions(
+      lines: Seq[String],
+      customTablePath: String,
+      startingVersionOpt: Option[Long],
+      endingVersionOpt: Option[Long]): ConstructedDeltaLogMetadata = {
+    val startTime = System.currentTimeMillis()
+    assert(
+      startingVersionOpt.isDefined == endingVersionOpt.isDefined,
+      s"startingVersionOpt($startingVersionOpt) and endingVersionOpt($endingVersionOpt) should be" +
+      " both defined or not."
+    )
+    if (startingVersionOpt.isDefined) {
+      assert(
+        startingVersionOpt.get <= endingVersionOpt.get,
+        s"startingVersionOpt($startingVersionOpt) must be smaller than " +
+        s"endingVersionOpt($endingVersionOpt)."
+      )
+    }
+    var minVersion = Long.MaxValue
+    var maxVersion = 0L
+    var minUrlExpirationTimestamp: Option[Long] = None
+    val idToUrl = scala.collection.mutable.Map[String, String]()
+    val versionToDeltaSharingFileActions =
+      scala.collection.mutable.Map[Long, ArrayBuffer[model.DeltaSharingFileAction]]()
+    val versionToMetadata = scala.collection.mutable.Map[Long, model.DeltaSharingMetadata]()
+    val versionToJsonLogBuilderMap = scala.collection.mutable.Map[Long, ArrayBuffer[String]]()
+    val versionToJsonLogSize = scala.collection.mutable.Map[Long, Long]().withDefaultValue(0L)
+    var numFileActionsInMinVersion = 0
+    val versionToTimestampMap = scala.collection.mutable.Map[Long, Long]()
+    var startingMetadataLineOpt: Option[String] = None
+    var startingProtocolLineOpt: Option[String] = None
+
+    lines.foreach { line =>
+      val action = JsonUtils.fromJson[model.DeltaSharingSingleAction](line).unwrap
+      action match {
+        case fileAction: model.DeltaSharingFileAction =>
+          minVersion = minVersion.min(fileAction.version)
+          maxVersion = maxVersion.max(fileAction.version)
+          // Store file actions in an array to sort them based on id later.
+          versionToDeltaSharingFileActions.getOrElseUpdate(
+            fileAction.version,
+            ArrayBuffer[model.DeltaSharingFileAction]()
+          ) += fileAction
+        case metadata: model.DeltaSharingMetadata =>
+          if (metadata.version != null) {
+            // This is to handle the cdf and streaming query result.
+            minVersion = minVersion.min(metadata.version)
+            maxVersion = maxVersion.max(metadata.version)
+            versionToMetadata(metadata.version) = metadata
+            if (metadata.version == minVersion) {
+              startingMetadataLineOpt = Some(metadata.deltaMetadata.json + "\n")
+            }
+          } else {
+            // This is to handle the snapshot query result from DeltaSharingSource.
+            startingMetadataLineOpt = Some(metadata.deltaMetadata.json + "\n")
+          }
+        case protocol: model.DeltaSharingProtocol =>
+          startingProtocolLineOpt = Some(protocol.deltaProtocol.json + "\n")
+        case _ => // do nothing, ignore the line.
+      }
+    }
+
+    if (startingVersionOpt.isDefined) {
+      minVersion = minVersion.min(startingVersionOpt.get)
+    } else if (minVersion == Long.MaxValue) {
+      // This means there are no files returned from server for this cdf request.
+      // A 0.json file will be prepared with metadata and protocol only.
+      minVersion = 0
+    }
+    if (endingVersionOpt.isDefined) {
+      maxVersion = maxVersion.max(endingVersionOpt.get)
+    }
+    // Store the starting protocol and metadata in the minVersion.json.
+    val protocolAndMetadataStr = startingMetadataLineOpt.getOrElse("") + startingProtocolLineOpt
+        .getOrElse("")
+    versionToJsonLogBuilderMap.getOrElseUpdate(
+      minVersion,
+      ArrayBuffer[String]()
+    ) += protocolAndMetadataStr
+    versionToJsonLogSize(minVersion) += protocolAndMetadataStr.length
+    numFileActionsInMinVersion = versionToDeltaSharingFileActions
+      .getOrElseUpdate(minVersion, ArrayBuffer[model.DeltaSharingFileAction]())
+      .size
+
+    // Write metadata to the delta log json file.
+    versionToMetadata.foreach {
+      case (version, metadata) =>
+        if (version != minVersion) {
+          val metadataStr = metadata.deltaMetadata.json + "\n"
+          versionToJsonLogBuilderMap.getOrElseUpdate(
+            version,
+            ArrayBuffer[String]()
+          ) += metadataStr
+          versionToJsonLogSize(version) += metadataStr.length
+        }
+    }
+    // Write file actions to the delta log json file.
+    var previousIdOpt: Option[String] = None
+    versionToDeltaSharingFileActions.foreach {
+      case (version, actions) =>
+        previousIdOpt = None
+        actions.toSeq.sortWith(deltaSharingFileActionIncreaseOrderFunc).foreach { fileAction =>
+          assert(
+            // Using > instead of >= because there can be a removeFile and addFile pointing to the
+            // same parquet file which result in the same file id, since id is a hash of file path.
+            // This is ok because eventually it can read data out of the correct parquet file.
+            !previousIdOpt.exists(_ > fileAction.id),
+            s"fileActions must be in increasing order by id: ${previousIdOpt} is not smaller than" +
+            s" ${fileAction.id}, in version:$version."
+          )
+          previousIdOpt = Some(fileAction.id)
+
+          // 1. build it to url mapping
+          idToUrl(fileAction.id) = fileAction.path
+          if (requiresIdToUrlForDV(fileAction.getDeletionVectorOpt)) {
+            idToUrl(fileAction.deletionVectorFileId) =
+              fileAction.getDeletionVectorOpt.get.pathOrInlineDv
+          }
+
+          // 2. prepare json log content.
+          versionToTimestampMap.getOrElseUpdate(version, fileAction.timestamp)
+          val actionJsonStr = getActionWithDeltaSharingPath(fileAction, customTablePath) + "\n"
+          versionToJsonLogBuilderMap.getOrElseUpdate(
+            version,
+            ArrayBuffer[String]()
+          ) += actionJsonStr
+          versionToJsonLogSize(version) += actionJsonStr.length
+
+          // 3. process expiration timestamp
+          if (fileAction.expirationTimestamp != null) {
+            minUrlExpirationTimestamp = minUrlExpirationTimestamp
+              .filter(_ < fileAction.expirationTimestamp)
+              .orElse(Some(fileAction.expirationTimestamp))
+          }
+        }
+    }
+
+    val encodedTablePath = DeltaSharingLogFileSystem.encode(customTablePath)
+    val deltaLogPath = s"${encodedTablePath.toString}/_delta_log"
+    val fileSizeTsSeq = Seq.newBuilder[DeltaSharingLogFileStatus]
+
+    if (minVersion > 0) {
+      // If the minVersion is not 0 in the response, then prepare checkpoint at minVersion - 1:
+      // need to prepare two files: 1) (minVersion-1).checkpoint.parquet 2) _last_checkpoint
+      val checkpointVersion = minVersion - 1
+
+      // 1) store the checkpoint byte array in BlockManager for future read.
+      val checkpointParquetFileName =
+        FileNames.checkpointFileSingular(new Path(deltaLogPath), checkpointVersion).toString
+      fileSizeTsSeq += DeltaSharingLogFileStatus(
+        path = checkpointParquetFileName,
+        size = FAKE_CHECKPOINT_BYTE_ARRAY.size,
+        modificationTime = 0L
+      )
+
+      // 2) Prepare the content for _last_checkpoint
+      val lastCheckpointContent =
+        s"""{"version":${checkpointVersion},"size":${FAKE_CHECKPOINT_BYTE_ARRAY.size}}"""
+      val lastCheckpointPath = new Path(deltaLogPath, "_last_checkpoint").toString
+      fileSizeTsSeq += DeltaSharingLogFileStatus(
+        path = lastCheckpointPath,
+        size = lastCheckpointContent.length,
+        modificationTime = 0L
+      )
+      DeltaSharingUtils.overrideSingleBlock[String](
+        blockId = getDeltaSharingLogBlockId(lastCheckpointPath),
+        value = lastCheckpointContent
+      )
+    }
+
+    for (version <- minVersion to maxVersion) {
+      val jsonFilePath = FileNames.deltaFile(new Path(deltaLogPath), version).toString
+      DeltaSharingUtils.overrideIteratorBlock[String](
+        getDeltaSharingLogBlockId(jsonFilePath),
+        versionToJsonLogBuilderMap.getOrElse(version, Seq.empty).toIterator
+      )
+      fileSizeTsSeq += DeltaSharingLogFileStatus(
+        path = jsonFilePath,
+        size = versionToJsonLogSize.getOrElse(version, 0),
+        modificationTime = versionToTimestampMap.get(version).getOrElse(0L)
+      )
+    }
+
+    DeltaSharingUtils.overrideIteratorBlock[DeltaSharingLogFileStatus](
+      getDeltaSharingLogBlockId(deltaLogPath),
+      fileSizeTsSeq.result().toIterator
+    )
+    logInfo(
+      s"It takes ${(System.currentTimeMillis() - startTime) / 1000.0}s to construct delta log" +
+      s"for $customTablePath from $minVersion to $maxVersion, with ${idToUrl.toMap.size} urls."
+    )
+    ConstructedDeltaLogMetadata(
+      idToUrl = idToUrl.toMap,
+      minUrlExpirationTimestamp = minUrlExpirationTimestamp,
+      numFileActionsInMinVersionOpt = Some(numFileActionsInMinVersion),
+      minVersion = minVersion,
+      maxVersion = maxVersion
+    )
+  }
 
   /** Set the modificationTime to zero, this is to align with the time returned from
    * DeltaSharingFileSystem.getFileStatus
@@ -477,6 +804,39 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     )
   }
 
+  // Create a delta log directory with protocol and metadata at version 0.
+  // Used by DeltaSharingSource to initialize a DeltaLog class, which is then used to initialize
+  // a DeltaSource class, also the metadata id will be used for schemaTrackingLocation.
+  // There are no data files in the delta log because the DeltaSource class is initialized before
+  // any rpcs to the delta sharing server, so no data files are available yet.
+  def constructDeltaLogWithMetadataAtVersionZero(
+      customTablePath: String,
+      deltaSharingTableMetadata: DeltaSharingTableMetadata): Unit = {
+    val encodedTablePath = DeltaSharingLogFileSystem.encode(customTablePath)
+    val deltaLogPath = s"${encodedTablePath.toString}/_delta_log"
+
+    // Always use 0.json for snapshot queries.
+    val jsonLogStr = deltaSharingTableMetadata.protocol.deltaProtocol.json + "\n" +
+      deltaSharingTableMetadata.metadata.deltaMetadata.json + "\n"
+
+    val jsonFilePath = FileNames.deltaFile(new Path(deltaLogPath), 0).toString
+    DeltaSharingUtils.overrideIteratorBlock[String](
+      getDeltaSharingLogBlockId(jsonFilePath),
+      Seq(jsonLogStr).toIterator
+    )
+
+    val fileStatusSeq = Seq(
+      DeltaSharingLogFileStatus(
+        path = jsonFilePath,
+        size = jsonLogStr.length,
+        modificationTime = 0L
+      )
+    )
+    DeltaSharingUtils.overrideIteratorBlock[DeltaSharingLogFileStatus](
+      getDeltaSharingLogBlockId(deltaLogPath),
+      fileStatusSeq.toIterator
+    )
+  }
 }
 
 /**

@@ -24,6 +24,8 @@ import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.constraints.Constraints.Check
 import org.apache.spark.sql.delta.constraints.Invariants.ArbitraryExpression
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, InvariantViolationException, SchemaUtils}
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
@@ -114,8 +116,9 @@ case class WriteIntoDelta(
 
   override def write(
       txn: OptimisticTransaction,
-      sparkSession: SparkSession
-  ): Seq[Action] = {
+      sparkSession: SparkSession,
+      clusterBySpecOpt: Option[ClusterBySpec] = None,
+      isTableReplace: Boolean = false): Seq[Action] = {
     import org.apache.spark.sql.delta.implicits._
     if (txn.readVersion > -1) {
       // This table already exists, check if the insert is valid.
@@ -127,6 +130,19 @@ case class WriteIntoDelta(
         DeltaLog.assertRemovable(txn.snapshot)
       }
     }
+    val isReplaceWhere = mode == SaveMode.Overwrite && options.replaceWhere.nonEmpty
+    // Validate that the preview is enabled if we are writing to a clustered table.
+    ClusteredTableUtils.validatePreviewEnabled(txn.snapshot.protocol)
+    val finalClusterBySpecOpt =
+      if (mode == SaveMode.Append || isReplaceWhere) {
+        clusterBySpecOpt.foreach { clusterBySpec =>
+          ClusteredTableUtils.validateClusteringColumnsInSnapshot(txn.snapshot, clusterBySpec)
+        }
+        // Append mode and replaceWhere cannot update the clustering columns.
+        None
+      } else {
+        clusterBySpecOpt
+      }
     val rearrangeOnly = options.rearrangeOnly
     val charPadding = sparkSession.conf.get(SQLConf.READ_SIDE_CHAR_PADDING.key, "false") == "true"
     val charAsVarchar = sparkSession.conf.get(SQLConf.CHAR_AS_VARCHAR)
@@ -149,7 +165,8 @@ case class WriteIntoDelta(
     val newDomainMetadata = getNewDomainMetadata(
       txn,
       canUpdateMetadata,
-      isReplacingTable = isOverwriteOperation && options.replaceWhere.isEmpty
+      isReplacingTable = isOverwriteOperation && options.replaceWhere.isEmpty,
+      finalClusterBySpecOpt
     )
 
     val replaceOnDataColsEnabled =
@@ -158,6 +175,9 @@ case class WriteIntoDelta(
     val useDynamicPartitionOverwriteMode = {
       if (txn.metadata.partitionColumns.isEmpty) {
         // We ignore dynamic partition overwrite mode for non-partitioned tables
+        false
+      } else if (isTableReplace) {
+        // A replace table command should always replace the table, not just some partitions.
         false
       } else if (options.replaceWhere.nonEmpty) {
         if (options.partitionOverwriteModeInOptions && options.isDynamicPartitionOverwriteMode) {
@@ -172,7 +192,9 @@ case class WriteIntoDelta(
           // precedence over session configs
           false
         }
-      } else options.isDynamicPartitionOverwriteMode
+      } else {
+        options.isDynamicPartitionOverwriteMode
+      }
     }
 
     if (useDynamicPartitionOverwriteMode && canOverwriteSchema) {

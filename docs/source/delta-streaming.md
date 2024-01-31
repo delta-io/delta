@@ -34,6 +34,8 @@ spark.readStream.delta("/tmp/delta/events")
   :local:
   :depth: 1
 
+<a id="limit-input-rate"></a>
+
 ### Limit input rate
 
 The following options are available to control micro-batches:
@@ -46,6 +48,8 @@ If you use `maxBytesPerTrigger` in conjunction with `maxFilesPerTrigger`, the mi
 .. note::
 
   In cases when the source table transactions are cleaned up due to the `logRetentionDuration` [configuration](delta-batch.md#data-retention) and the stream lags in processing, <Delta> processes the data corresponding to the latest available transaction history of the source table but does not fail the stream. This can result in data being dropped.
+
+<a id="ignore-updates-and-deletes"></a>
 
 ### Ignore updates and deletes
 
@@ -77,6 +81,8 @@ spark.readStream.format("delta")
 ```
 
 If you update a `user_email` with the `UPDATE` statement, the file containing the `user_email` in question is rewritten. When you use `ignoreChanges`, the new record is propagated downstream with all other unchanged records that were in the same file. Your logic should be able to handle these incoming duplicate records.
+
+<a id="specify-initial-position"></a>
 
 ### Specify initial position
 

@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, Table
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
 import org.apache.spark.sql.delta.constraints.Constraints
+import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
@@ -3013,6 +3014,50 @@ trait DeltaErrorsBase
     )
   }
 
+  def icebergCompatVersionNotSupportedException(
+      currVersion: Int,
+      maxVersion: Int): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.COMPAT_VERSION_NOT_SUPPORTED",
+      messageParameters = Array(
+        currVersion.toString,
+        currVersion.toString,
+        maxVersion.toString
+      )
+    )
+  }
+
+  def icebergCompatReorgAddFileTagsMissingException(
+      tableVersion: Long,
+      icebergCompatVersion: Int,
+      addFilesCount: Long,
+      addFilesWithTagsCount: Long): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.FILES_NOT_ICEBERG_COMPAT",
+      messageParameters = Array(
+        icebergCompatVersion.toString,
+        icebergCompatVersion.toString,
+        addFilesCount.toString,
+        tableVersion.toString,
+        (addFilesCount - addFilesWithTagsCount).toString,
+        icebergCompatVersion.toString
+      )
+    )
+  }
+
+  def icebergCompatDataFileRewriteFailedException(
+      icebergCompatVersion: Int,
+      cause: Throwable): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "",
+      messageParameters = Array(
+        icebergCompatVersion.toString,
+        icebergCompatVersion.toString
+      ),
+      cause
+    )
+  }
+
   def icebergCompatReplacePartitionedTableException(
       version: Int,
       prevPartitionCols: Seq[String],
@@ -3084,6 +3129,74 @@ trait DeltaErrorsBase
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.WRONG_REQUIRED_TABLE_PROPERTY",
       messageParameters = Array(version.toString, version.toString, key, requiredValue, actualValue)
     )
+  }
+
+  def invalidAutoCompactType(value: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_AUTO_COMPACT_TYPE",
+      messageParameters = Array(value, AutoCompactType.ALLOWED_VALUES.mkString("(", ",", ")"))
+    )
+  }
+
+  def clusterByInvalidNumColumnsException(
+      numColumnsLimit: Int,
+      actualNumColumns: Int): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+      messageParameters = Array(numColumnsLimit.toString, actualNumColumns.toString)
+    )
+  }
+
+  def clusteringColumnMissingStats(
+      clusteringColumnWithoutStats: String,
+      statsSchema: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+      messageParameters = Array(clusteringColumnWithoutStats, statsSchema)
+    )
+  }
+
+  def clusteringColumnsMismatchException(
+      providedClusteringColumns: String,
+      existingClusteringColumns: String): Throwable = {
+    new DeltaAnalysisException(
+      "DELTA_CLUSTERING_COLUMNS_MISMATCH",
+      Array(providedClusteringColumns, existingClusteringColumns)
+    )
+  }
+
+  def dropClusteringColumnNotSupported(droppingClusteringCols: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+      Array(droppingClusteringCols.mkString(",")))
+  }
+
+  def replacingClusteredTableWithPartitionedTableNotAllowed(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTERING_REPLACE_TABLE_WITH_PARTITIONED_TABLE",
+      messageParameters = Array.empty)
+  }
+
+  def clusteringWithPartitionPredicatesException(predicates: Seq[String]): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CLUSTERING_WITH_PARTITION_PREDICATE",
+      messageParameters = Array(s"${predicates.mkString(" ")}"))
+  }
+
+  def clusteringWithZOrderByException(zOrderBy: Seq[UnresolvedAttribute]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTERING_WITH_ZORDER_BY",
+      messageParameters = Array(s"${zOrderBy.map(_.name).mkString(", ")}"))
+  }
+
+  def clusteringTablePreviewDisabledException(): Throwable = {
+    val msg = s"""
+      |A clustered table is currently in preview and is disabled by default. Please set
+      |${DeltaSQLConf.DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED.key} to true to enable it.
+      |Note that a clustered table is not recommended for production use (e.g., unsupported
+      |incremental clustering).
+      |""".stripMargin.replace("\n", " ")
+    new UnsupportedOperationException(msg)
   }
 }
 

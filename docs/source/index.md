@@ -21,11 +21,15 @@ This is the documentation site for <Delta>.
     delta-utility
     delta-constraints
     versioning
+    delta-default-columns
     delta-column-mapping
+    delta-clustering
     delta-deletion-vectors
+    delta-drop-feature
     delta-apidoc
     delta-storage
     delta-uniform
+    delta-sharing
     concurrency-control
     integrations
     porting

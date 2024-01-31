@@ -34,12 +34,22 @@ import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.Assertions
 
-trait TestUtils extends Assertions {
+trait TestUtils extends Assertions with SQLHelper {
 
   lazy val configuration = new Configuration()
   lazy val defaultTableClient = DefaultTableClient.create(configuration)
+
+  lazy val spark = SparkSession
+    .builder()
+    .appName("Spark Test Writer for Delta Kernel")
+    .config("spark.master", "local")
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .getOrCreate()
 
   implicit class CloseableIteratorOps[T](private val iter: CloseableIterator[T]) {
 

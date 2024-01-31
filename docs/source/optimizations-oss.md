@@ -72,6 +72,28 @@ For Scala, Java, and Python API syntax details, see the [_](delta-apidoc.md).\
 
 Readers of Delta tables use snapshot isolation, which means that they are not interrupted when `OPTIMIZE` removes unnecessary files from the transaction log. `OPTIMIZE` makes no data related changes to the table, so a read before and after an `OPTIMIZE` has the same results. Performing `OPTIMIZE` on a table that is a streaming source does not affect any current or future streams that treat this table as a source. `OPTIMIZE` returns the file statistics (min, max, total, and so on) for the files removed and the files added by the operation. Optimize stats also contains the number of batches, and partitions optimized.
 
+## Auto compaction
+
+.. note:: This feature is available in <Delta> 3.1.0 and above.
+
+Auto compaction combines small files within Delta table partitions to automatically reduce small file problems. Auto compaction occurs after a write to a table has succeeded and runs synchronously on the cluster that has performed the write. Auto compaction only compacts files that haven't been compacted previously.
+
+You can control the output file size by setting the configuration `spark.databricks.delta.autoCompact.maxFileSize`.
+
+Auto compaction is only triggered for partitions or tables that have at least a certain number of small files. You can optionally change the minimum number of files required to trigger auto compaction by setting `spark.databricks.delta.autoCompact.minNumFiles`.
+
+Auto compaction can be enabled at the table or session level using the following settings:
+
+- Table property: `delta.autoOptimize.autoCompact`
+- SparkSession setting: `spark.databricks.delta.autoCompact.enabled`
+
+These settings accept the following options:
+
+| Options | Behavior |
+| --- | --- |
+| `true` | Enable auto compaction. By default will use 128 MB as the target file size. |
+| `false` | Turns off auto compaction. Can be set at the session level to override auto compaction for all Delta tables modified in the workload. |
+
 ## Data skipping
 
 .. note:: This feature is available in <Delta> 1.2.0 and above.
@@ -157,5 +179,33 @@ You can specify multiple columns for `ZORDER BY` as a comma-separated list. Howe
 <Delta> protocol allows new log compaction files with the format `<x>.<y>.compact.json`. These files contain the aggregated actions for commit range `[x, y]`. Log compactions reduce the need for frequent checkpoints and minimize the latency spikes caused by them.
 
 The read support for the log compaction files is available in <Delta> 3.0.0 and above. It is enabled by default and can be disabled using the SQL conf `spark.databricks.delta.deltaLog.minorCompaction.useForReads=<value>` where `value` can be `true/false`. The write support for the log compaction will be added in a future version of Delta.
+
+
+## Optimized Write
+
+.. note:: This feature is available in <Delta> 3.1.0 and above.
+
+Optimized writes improve file size as data is written and benefit subsequent reads on the table.
+
+Optimized writes are most effective for partitioned tables, as they reduce the number of small files written to each partition. Writing fewer large files is more efficient than writing many small files, but you might still see an increase in write latency because data is shuffled before being written.
+
+The following image demonstrates how optimized writes works:
+
+![Optimized writes](/_static/images/delta/optimized-writes.png)
+
+.. note:: You might have code that runs coalesce(n) or repartition(n) just before you write out your data to control the number of files written. Optimized writes eliminates the need to use this pattern.
+
+The optimized write feature is **disabled** by default. It can be enabled at the table, SQL session, and/or DataFrameWriter level using the following settings (in order of precedence from low to high):
+
+* The `delta.autoOptimize.optimizeWrite` table property (default=None);
+* The `spark.databricks.delta.optimizeWrite.enabled` SQL configuration (default=None);
+* The DataFrameWriter option `optimizeWrite` (default=None).
+
+Besides the above, the following advanced SQL configurations can be used to further fine-tune the number and size of files written:
+
+* `spark.databricks.delta.optimizeWrite.binSize` (default=512MiB), which controls the target in-memory size of each output file;
+* `spark.databricks.delta.optimizeWrite.numShuffleBlocks` (default=50,000,000), which controls "maximum number of shuffle blocks to target";
+* `spark.databricks.delta.optimizeWrite.maxShufflePartitions` (default=2,000), which controls "max number of output buckets (reducers) that can be used by optimized writes".
+
 
 .. include:: /shared/replacements.md

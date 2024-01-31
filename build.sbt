@@ -219,6 +219,7 @@ lazy val sharing = (project in file("sharing"))
     name := "delta-sharing-spark",
     commonSettings,
     scalaStyleSettings,
+    releaseSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
@@ -246,13 +247,13 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
-      "org.slf4j" % "slf4j-api" % "2.0.9",
+      "org.slf4j" % "slf4j-api" % "1.7.36",
 
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.slf4j" % "slf4j-log4j12" % "2.0.9" % "test"
+      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test"
     ),
     javaCheckstyleSettings("kernel/dev/checkstyle.xml"),
     // Unidoc settings
@@ -278,7 +279,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "junit" % "junit" % "4.13" % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.slf4j" % "slf4j-log4j12" % "2.0.9" % "test",
+      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
 
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",

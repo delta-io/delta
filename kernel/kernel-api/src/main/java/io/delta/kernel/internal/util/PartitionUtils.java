@@ -149,34 +149,37 @@ public class PartitionUtils {
      * `partition_value` deserializes the string value into the given partition column type value.
      * String type partition values don't need any deserialization.
      *
-     * @param predicate             Predicate containing filters only on partition columns.
-     * @param partitionColNameTypes Map of partition column name (in lower case) to its type.
+     * @param predicate            Predicate containing filters only on partition columns.
+     * @param partitionColMetadata Map of partition column name (in lower case) to its type.
      * @return
      */
     public static Predicate rewritePartitionPredicateOnScanFileSchema(
-        Predicate predicate, Map<String, DataType> partitionColNameTypes) {
+        Predicate predicate, Map<String, StructField> partitionColMetadata) {
         return new Predicate(
             predicate.getName(),
             predicate.getChildren().stream()
-                .map(child -> rewritePartitionColumnRef(child, partitionColNameTypes))
+                .map(child -> rewritePartitionColumnRef(child, partitionColMetadata))
                 .collect(Collectors.toList()));
     }
 
     private static Expression rewritePartitionColumnRef(
-        Expression expression, Map<String, DataType> partitionColNameTypes) {
+        Expression expression, Map<String, StructField> partitionColMetadata) {
         Column scanFilePartitionValuesRef = InternalScanFileUtils.ADD_FILE_PARTITION_COL_REF;
         if (expression instanceof Column) {
             Column column = (Column) expression;
             String partColName = column.getNames()[0];
-            DataType partColType = partitionColNameTypes.get(partColName.toLowerCase(Locale.ROOT));
-            if (partColType == null) {
-                throw new IllegalArgumentException(partColName + " has no data type in metadata");
+            StructField partColField =
+                partitionColMetadata.get(partColName.toLowerCase(Locale.ROOT));
+            if (partColField == null) {
+                throw new IllegalArgumentException(partColName + " is not present in metadata");
             }
+            DataType partColType = partColField.getDataType();
+            String partColPhysicalName = ColumnMapping.getPhysicalName(partColField);
 
             Expression elementAt =
                 new ScalarExpression(
                     "element_at",
-                    asList(scanFilePartitionValuesRef, Literal.ofString(partColName)));
+                    asList(scanFilePartitionValuesRef, Literal.ofString(partColPhysicalName)));
 
             if (partColType instanceof StringType) {
                 return elementAt;
@@ -186,7 +189,7 @@ public class PartitionUtils {
             return new PartitionValueExpression(elementAt, partColType);
         } else if (expression instanceof Predicate) {
             return rewritePartitionPredicateOnScanFileSchema(
-                (Predicate) expression, partitionColNameTypes);
+                (Predicate) expression, partitionColMetadata);
         }
 
         return expression;

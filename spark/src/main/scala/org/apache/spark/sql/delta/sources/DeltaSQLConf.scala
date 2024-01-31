@@ -181,7 +181,7 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-    val DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE =
+  val DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE =
     buildConf("createEmptySchemaTable.enabled")
       .internal()
       .doc(
@@ -193,6 +193,130 @@ trait DeltaSQLConfBase {
            |`df.save()` with `mergeSchema = true`.
            |Reading the empty schema table using DataframeReader or `SELECT` is not allowed.
            |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val AUTO_COMPACT_ALLOWED_VALUES = Seq(
+    "false",
+    "true"
+  )
+
+  val DELTA_AUTO_COMPACT_ENABLED =
+    buildConf("autoCompact.enabled")
+      .doc(s"""Whether to compact files after writes made into Delta tables from this session. This
+        | conf can be set to "true" to enable Auto Compaction, OR "false" to disable Auto Compaction
+        | on all writes across all delta tables in this session.
+        | """.stripMargin)
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValue(AUTO_COMPACT_ALLOWED_VALUES.contains(_),
+        """"spark.databricks.delta.autoCompact.enabled" must be one of: """ +
+          s"""${AUTO_COMPACT_ALLOWED_VALUES.mkString("(", ",", ")")}""")
+      .createOptional
+
+  val DELTA_AUTO_COMPACT_RECORD_PARTITION_STATS_ENABLED =
+    buildConf("autoCompact.recordPartitionStats.enabled")
+      .internal()
+      .doc(s"""When enabled, each committed write delta transaction records the number of qualified
+              |files of each partition of the target table for Auto Compact in driver's
+              |memory.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_AUTO_COMPACT_EARLY_SKIP_PARTITION_TABLE_ENABLED =
+    buildConf("autoCompact.earlySkipPartitionTable.enabled")
+      .internal()
+      .doc(s"""Auto Compaction will be skipped if there is no partition with
+              |sufficient number of small files.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_AUTO_COMPACT_MAX_TABLE_PARTITION_STATS =
+    buildConf("autoCompact.maxTablePartitionStats")
+      .internal()
+      .doc(
+        s"""The maximum number of Auto Compaction partition statistics of each table. This controls
+           |the maximum number of partitions statistics each delta table can have. Increasing
+           |this value reduces the hash conflict and makes partitions statistics more accurate with
+           |the cost of more memory consumption.
+           |""".stripMargin)
+      .intConf
+      .checkValue(_ > 0, "The value of maxTablePartitionStats should be positive.")
+      .createWithDefault(16 * 1024)
+
+  val DELTA_AUTO_COMPACT_PARTITION_STATS_SIZE =
+    buildConf("autoCompact.partitionStatsSize")
+      .internal()
+      .doc(
+        s"""The total number of partitions statistics entries can be kept in memory for all
+           |tables in each driver. If this threshold is reached, the partitions statistics of
+           |least recently accessed tables will be evicted out.""".stripMargin)
+      .intConf
+      .checkValue(_ > 0, "The value of partitionStatsSize should be positive.")
+      .createWithDefault(64 * 1024)
+
+  val DELTA_AUTO_COMPACT_MAX_FILE_SIZE =
+    buildConf("autoCompact.maxFileSize")
+      .internal()
+      .doc(s"Target file size produced by auto compaction. The default value of this config" +
+        " is 128 MB.")
+      .longConf
+      .checkValue(_ >= 0, "maxFileSize has to be positive")
+      .createWithDefault(128 * 1024 * 1024)
+
+  val DELTA_AUTO_COMPACT_MIN_NUM_FILES =
+    buildConf("autoCompact.minNumFiles")
+      .internal()
+      .doc("Number of small files that need to be in a directory before it can be optimized.")
+      .intConf
+      .checkValue(_ >= 0, "minNumFiles has to be positive")
+      .createWithDefault(50)
+
+  val DELTA_AUTO_COMPACT_MIN_FILE_SIZE =
+    buildConf("autoCompact.minFileSize")
+      .internal()
+      .doc("Files which are smaller than this threshold (in bytes) will be grouped together and " +
+        "rewritten as larger files by the Auto Compaction. The default value of this config " +
+        s"is set to half of the config ${DELTA_AUTO_COMPACT_MAX_FILE_SIZE.key}")
+      .longConf
+      .checkValue(_ >= 0, "minFileSize has to be positive")
+      .createOptional
+
+  val DELTA_AUTO_COMPACT_MODIFIED_PARTITIONS_ONLY_ENABLED =
+    buildConf("autoCompact.modifiedPartitionsOnly.enabled")
+      .internal()
+      .doc(
+        s"""When enabled, Auto Compaction only works on the modified partitions of the delta
+           |transaction that triggers compaction.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_AUTO_COMPACT_NON_BLIND_APPEND_ENABLED =
+    buildConf("autoCompact.nonBlindAppend.enabled")
+      .internal()
+      .doc(
+        s"""When enabled, Auto Compaction is only triggered by non-blind-append write
+           |transaction.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_AUTO_COMPACT_MAX_NUM_MODIFIED_PARTITIONS =
+    buildConf("autoCompact.maxNumModifiedPartitions")
+      .internal()
+      .doc(
+        s"""The maximum number of partition can be selected for Auto Compaction when
+           | Auto Compaction runs on modified partition is enabled.""".stripMargin)
+      .intConf
+      .checkValue(_ > 0, "The value of maxNumModifiedPartitions should be positive.")
+      .createWithDefault(128)
+
+  val DELTA_AUTO_COMPACT_RESERVE_PARTITIONS_ENABLED =
+    buildConf("autoCompact.reservePartitions.enabled")
+      .internal()
+      .doc(
+        s"""When enabled, each Auto Compact thread reserves its target partitions and skips the
+           |partitions that are under Auto Compaction by another thread
+           |concurrently.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 
@@ -356,6 +480,22 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_UPDATE_CATALOG_ENABLED =
+    buildConf("catalog.update.enabled")
+      .internal()
+      .doc("When enabled, we will cache the schema of the Delta table and the table properties " +
+        "in the external catalog, e.g. the Hive MetaStore.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_UPDATE_CATALOG_THREAD_POOL_SIZE =
+    buildStaticConf("catalog.update.threadPoolSize")
+      .internal()
+      .doc("The size of the thread pool for updating the external catalog.")
+      .intConf
+      .checkValue(_ > 0, "threadPoolSize must be positive")
+      .createWithDefault(20)
 
   val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
     buildConf("constraints.assumesDropIfExists.enabled")
@@ -905,6 +1045,30 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  final object NonDeterministicPredicateWidening {
+    final val OFF = "off"
+    final val LOGGING = "logging"
+    final val ON = "on"
+
+    final val list = Set(OFF, LOGGING, ON)
+  }
+
+  val DELTA_CONFLICT_DETECTION_WIDEN_NONDETERMINISTIC_PREDICATES =
+    buildConf("conflictDetection.partitionLevelConcurrency.widenNonDeterministicPredicates")
+      .doc("Whether to widen non-deterministic predicates during partition-level concurrency. " +
+        "Widening can lead to additional conflicts." +
+        "When the value is 'off', non-deterministic predicates are not widened during conflict " +
+        "resolution." +
+        "The value 'logging' will log whether the widening of non-deterministic predicates lead " +
+        "to additional conflicts. The conflict resolution is still done without widening. " +
+        "When the value is 'on', non-deterministic predicates are widened during conflict " +
+        "resolution.")
+      .internal()
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(NonDeterministicPredicateWidening.list)
+      .createWithDefault(NonDeterministicPredicateWidening.ON)
+
   val DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED =
     buildConf("uniform.iceberg.sync.convert.enabled")
       .doc("If enabled, iceberg conversion will be done synchronously. " +
@@ -1281,7 +1445,7 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("Enable persistent Deletion Vectors in the Update command.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELETION_VECTOR_PACKING_TARGET_SIZE =
     buildConf("deletionVectors.packing.targetSize")
@@ -1424,12 +1588,35 @@ trait DeltaSQLConfBase {
   // Clustered Table
   //////////////////
 
-  val DELTA_ENABLE_CLUSTERING_TABLE_FEATURE =
-    buildConf("clusteringTable.enableClusteringTableFeature")
+  val DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED =
+    buildConf("clusteredTable.enableClusteringTablePreview")
       .internal()
-      .doc("If true, enable ClusteringTableFeature when the table is a clustered table.")
-    .booleanConf
-    .createWithDefault(false)
+      .doc("Whether to enable the clustering table preview.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_NUM_CLUSTERING_COLUMNS_LIMIT =
+    buildStaticConf("clusteredTable.numClusteringColumnsLimit")
+      .internal()
+      .doc("""The maximum number of clustering columns allowed for a clustered table.
+        """.stripMargin)
+      .intConf
+      .checkValue(
+        _ > 0,
+        "'clusteredTable.numClusteringColumnsLimit' must be positive."
+      )
+    .createWithDefault(4)
+
+  //////////////////
+  // Delta Sharing
+  //////////////////
+
+  val DELTA_SHARING_ENABLE_DELTA_FORMAT_BATCH =
+    buildConf("spark.sql.delta.sharing.enableDeltaFormatBatch")
+      .doc("Enable delta format sharing in case of issues.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

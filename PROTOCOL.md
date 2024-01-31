@@ -46,6 +46,8 @@
   - [Writer Requirement for Deletion Vectors](#writer-requirement-for-deletion-vectors)
 - [Iceberg Compatibility V1](#iceberg-compatibility-v1)
   - [Writer Requirements for IcebergCompatV1](#writer-requirements-for-icebergcompatv1)
+- [Iceberg Compatibility V2](#iceberg-compatibility-v2)
+  - [Writer Requirement for IcebergCompatV2](#iceberg-compatibility-v2)
 - [Timestamp without timezone (TimestampNtz)](#timestamp-without-timezone-timestampntz)
 - [V2 Checkpoint Table Feature](#v2-checkpoint-table-feature)
 - [Row Tracking](#row-tracking)
@@ -101,8 +103,6 @@
       - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
-
-<font color="red">THIS IS AN IN-PROGRESS DRAFT</font>
 
 # Overview
 This document is a specification for the Delta Transaction Protocol, which brings [ACID](https://en.wikipedia.org/wiki/ACID) properties to large collections of data, stored as files, in a distributed file system or object store. The protocol was designed with the following goals in mind:
@@ -905,9 +905,7 @@ To support this feature:
 - The table must be on Writer Version 7.
 - The feature `icebergCompatV1` must exist in the table `protocol`'s `writerFeatures`.
 
-Activation: Set table property `delta.enableIcebergCompatV1` to `true`.
-
-Deactivation: Unset table property `delta.enableIcebergCompatV1`, or set it to `false`.
+This table feature is enabled when the table property `delta.enableIcebergCompatV1` is set to `true`.
 
 ## Writer Requirements for IcebergCompatV1
 
@@ -921,6 +919,109 @@ When supported and active, writers must:
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
 
+# Iceberg Compatibility V2
+
+This table feature (`icebergCompatV2`) ensures that Delta tables can be converted to Apache Iceberg™ format, though this table feature does not implement or specify that conversion.
+
+To support this feature:
+- Since this table feature depends on Column Mapping, the table must be on Reader Version = 2, or it must be on Reader Version >= 3 and the feature `columnMapping` must exist in the `protocol`'s `readerFeatures`.
+- The table must be on Writer Version 7.
+- The feature `icebergCompatV2` must exist in the table protocol's `writerFeatures`.
+
+This table feature is enabled when the table property `delta.enableIcebergCompatV2` is set to `true`. 
+
+## Writer Requirements for IcebergCompatV2
+
+When this feature is supported and enabled, writers must:
+- Require that Column Mapping be enabled and set to either `name` or `id` mode
+- Require that the nested `element` field of ArrayTypes and the nested `key` and `value` fields of MapTypes be assigned 32 bit integer identifiers. These identifiers must be unique and different from those used in [Column Mapping](#column-mapping), and must be stored in the metadata of their nearest ancestor [StructField](#struct-field) of the Delta table schema. Identifiers belonging to the same `StructField` must be organized as a `Map[String, Long]` and stored in metadata with key `parquet.field.nested.ids`. The keys of the map are "element", "key", or "value", prefixed by the name of the nearest ancestor StructField, separated by dots. The values are the identifiers. The keys for fields in nested arrays or nested maps are prefixed by their parents' key, separated by dots. An [example](#example-of-storing-identifiers-for-nested-fields-in-arraytype-and-maptype) is provided below to demonstrate how the identifiers are stored. These identifiers must be also written to the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift) when writing parquet files.
+- Require that IcebergCompatV1 is not active, which means either the `icebergCompatV1` table feature is not present in the table protocol or the table property `delta.enableIcebergCompatV1` is not set to `true`
+- Require that Deletion Vectors are not active, which means either the `deletionVectors` table feature is not present in the table protocol or the table property `delta.enableDeletionVectors` is not set to `true`
+- Require that partition column values be materialized when writing Parquet data files
+- Require that all new `AddFile`s committed to the table have the `numRecords` statistic populated in their `stats` field
+- Require writing timestamp columns as int64
+- Require that the table schema contains only data types in the following allow-list: [`byte`, `short`, `integer`, `long`, `float`, `double`, `decimal`, `string`, `binary`, `boolean`, `timestamp`, `timestampNTZ`, `date`, `array`, `map`, `struct`].
+- Block replacing partitioned tables with a differently-named partition spec
+  - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
+  - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
+
+### Example of storing identifiers for nested fields in ArrayType and MapType
+The following is an example of storing the identifiers for nested fields in `ArrayType` and `MapType`, of a table with the following schema,
+```
+|-- col1: array[array[int]] 
+|-- col2: map[int, array[int]]    
+|-- col3: map[int, struct]
+                     |-- subcol1: array[int]
+```
+The identifiers for the nested fields are stored in the metadata as follows: 
+```json
+[
+  {
+    "name": "col1",
+    "type": {
+      "type": "array",
+      "elementType": {
+        "type": "array",
+        "elementType": "int"
+      }
+    },
+    "metadata": {
+      "parquet.field.nested.ids": {
+        "col1.element": 100,
+        "col1.element.element": 101
+      }
+    }
+  },
+  {
+    "name": "col2",
+    "type": {
+      "type": "map",
+      "keyType": "int",
+      "valueType": {
+        "type": "array",
+        "elementType": "int"
+      }
+    },
+    "metadata": {
+      "parquet.field.nested.ids": {
+        "col2.key": 102,
+        "col2.value": 103,
+        "col2.value.element": 104
+      }
+    }
+  },
+  {
+    "name": "col3",
+    "type": {
+      "type": "map",
+      "keyType": "int",
+      "valueType": {
+        "type": "struct",
+        "fields": [
+          {
+            "name": "subcol1",
+            "type": {
+              "type": "array",
+              "elementType": "int"
+            },
+            "metadata": {
+              "parquet.field.nested.ids": {
+                "subcol1.element": 107
+              }
+            }
+          }
+        ]
+      }
+    },
+    "metadata": {
+      "parquet.field.nested.ids": {
+        "col3.key": 105,
+        "col3.value": 106
+      }
+    }
+  }
+]
+```
 # Timestamp without timezone (TimestampNtz)
 This feature introduces a new data type to support timestamps without timezone information. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`.
 The serialization method is described in Sections [Partition Value Serialization](#partition-value-serialization) and [Schema Serialization Format](#schema-serialization-format).
