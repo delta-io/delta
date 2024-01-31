@@ -157,6 +157,10 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
       } catch {
         case e: Throwable =>
           logError("Auto Compaction failed with: " + e.getMessage)
+          recordDeltaEvent(
+            txn.deltaLog,
+            opType = "delta.autoCompaction.error",
+            data = getErrorData(e))
           throw e
       } finally {
         if (AutoCompactUtils.reservePartitionEnabled(spark)) {
