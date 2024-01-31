@@ -2541,7 +2541,7 @@ trait DeltaErrorsSuiteBase
           "10. This is currently not supported. If this is going to happen regularly and you are" +
           " okay to skip changes, set the option 'skipChangeCommits' to 'true'. If you would like" +
           " the data update to be reflected, please restart this query with a fresh checkpoint" +
-          " directory"
+          " directory" +
           ". The source table can be found at path tablePath."))
     }
     {
