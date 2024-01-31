@@ -612,7 +612,7 @@ A table that is using table features for both readers and writers:
 ### Commit Provenance Information
 A delta file can optionally contain additional provenance information about what higher-level operation was being performed as well as who executed it.
 
-Implementations are free to store any valid JSON-formatted data via the `commitInfo` action.
+Implementations are free to store any valid JSON-formatted data via the `commitInfo` action as long as any table feature (see [In-Commit Timestamps](#in-commit-timestamps)) does not impose additional requirements on the data.
 
 An example of storing provenance information related to an `INSERT` operation:
 ```json
@@ -1225,6 +1225,31 @@ The example above converts `configuration` field into JSON format, including esc
   ]
 }
 ```
+
+# In-Commit Timestamps
+
+The In-Commit Timestamps writer feature strongly associates a monotonically increasing timestamp with each commit by storing it in the commit's metadata.
+
+Enablement:
+- The table must be on Writer Version 7.
+- The feature `inCommitTimestamps` must exist in the table `protocol`'s `writerFeatures`.
+- The table property `delta.enableInCommitTimestamps` must be set to `true`.
+
+## Writer Requirements for In-Commit Timestamps
+
+When In-Commit Timestamps is enabled, then:
+1. Writers must write the `commitInfo` (see [Commit Provenance Information](#commit-provenance-information)) action in the commit.
+2. The `commitInfo` action must be the first action in the commits.
+3. The `commitInfo` action must have a field named `commitTimestamp` of type Long which must store the UTC time in milliseconds at which the writer attempted the successful commit write.
+4. The `commitTimestamp` field must be monotonically increasing across commits. The writer must ensure that this condition is satisfied by performing appropriate conflict resolution if needed.
+5. Provenance information around when this feature was enabled must be tracked in table properties:
+    - The property `delta.inCommitTimestampEnablementVersion` must be used to track the version of the table when this feature was enabled.
+    - The property `delta.inCommitTimestampEnablementTimestamp` must be the same as the `commitTimestamp` of the commit when this feature was enabled.
+6. The `commitTimestamp` of the commit that enables this feature must be greater than the file modification time of the immediately preceding commit.
+
+## Recommendations for Readers of Tables with In-Commit Timestamps
+
+When reading a table with In-Commit Timestamps enabled, readers should use the `commitTimestamp` field of the `commitInfo` action to determine the commit timestamp. Whenever available, readers should use this timestamp for read operations that rely on it (e.g. `DESCRIBE HISTORY` and Time Travel).
 
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
