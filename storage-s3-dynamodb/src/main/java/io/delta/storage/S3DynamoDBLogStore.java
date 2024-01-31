@@ -30,6 +30,7 @@ import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
 
+import com.amazonaws.services.dynamodbv2.model.*;
 import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import com.amazonaws.services.dynamodbv2.model.AttributeDefinition;
@@ -292,6 +293,9 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
                         ),
                         new ProvisionedThroughput(rcu, wcu)
                     );
+                    client.updateTimeToLive(new UpdateTimeToLiveRequest()
+                            .withTableName(tableName)
+                            .withTimeToLiveSpecification(new TimeToLiveSpecification().withEnabled(true).withAttributeName(ATTR_EXPIRE_TIME)));
                     created = true;
                 } catch (ResourceInUseException e3) {
                     // race condition - table just created by concurrent process
