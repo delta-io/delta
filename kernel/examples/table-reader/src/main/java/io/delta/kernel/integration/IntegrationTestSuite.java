@@ -80,13 +80,22 @@ public class IntegrationTestSuite {
             Optional.empty(), /* predicate */
             35 /* expected row count */);
 
-        // Basic reads: Table with DVs and column mapping
+        // Basic reads: Table with DVs and column mapping name
         runAndVerifyRowCount(
             "basic_read_table_with_columnmapping_deletionvectors",
             "dv-with-columnmapping",
             Optional.of(asList("col1", "col2")), /* read schema */
             Optional.empty(), /* predicate */
             35 /* expected row count */);
+
+        // Basic read: table with column mapping mode id
+        runAndVerifyRowCount(
+            "basic_read_table_columnmapping_id",
+            "table-with-columnmapping-mode-id",
+            Optional.of(
+                asList("ByteType", "decimal", "nested_struct", "array_of_prims", "map_of_prims")),
+            Optional.empty(), /* predicate */
+            6 /* expected row count */);
 
         // Partition pruning: simple expression
         runAndVerifyRowCount(
@@ -100,7 +109,22 @@ public class IntegrationTestSuite {
                     Literal.ofDecimal(new BigDecimal("2342222.23454"), 12, 5)))),
             1 /* expected row count */);
 
-        // Partition pruning: filter on data and metadata columns where
+        // Partition pruning: simple expression where nothing is pruned
+        runAndVerifyRowCount(
+            "partition_pruning_simple_filter_no_pruning",
+            "basic-decimal-table",
+            Optional.empty(), /* read schema - read all columns */
+            Optional.of(
+                new Predicate(
+                    "NOT",
+                    asList(
+                        new Predicate(
+                            "=",
+                            asList(new Column("part"), Literal.ofDecimal(new BigDecimal(0), 12, 5)))
+                    ))),
+            4 /* expected row count */);
+
+        // Partition pruning + data skipping: filter on data and metadata columns where
         // data filter doesn't prune anything
         runAndVerifyRowCount(
             "partition_pruning_filter_on_data_and_metadata_columns_1",
@@ -112,7 +136,7 @@ public class IntegrationTestSuite {
                     new Predicate(">=", asList(new Column("col1"), Literal.ofInt(0))))),
             12 /* expected row count */);
 
-        // Partition pruning: filter on data and metadata columns where
+        // Partition pruning + data skipping: filter on data and metadata columns where
         // data filter also prunes few files based on the stats based skipping
         runAndVerifyRowCount(
             "partition_pruning_filter_on_data_and_metadata_columns_2",
@@ -123,6 +147,42 @@ public class IntegrationTestSuite {
                     new Predicate(">=", asList(new Column("part"), Literal.ofInt(7))),
                     new Predicate("=", asList(new Column("col1"), Literal.ofInt(28))))),
             5 /* expected row count */);
+
+        // Data skipping: filter on a table with checkpoint
+        runAndVerifyRowCount(
+            "data_skipping_table_with_checkpoint",
+            "data-skipping-basic-stats-all-types-checkpoint",
+            Optional.empty(), /* read schema - read all columns */
+            Optional.of(
+                new Predicate(
+                    ">",
+                    asList(new Column("as_int"), Literal.ofInt(0))
+                )),
+            0 /* expected row count */);
+
+        // Partition pruning: table with column mapping mode name
+        runAndVerifyRowCount(
+            "partition_pruning_columnmapping_name",
+            "dv-with-columnmapping",
+            Optional.empty(),
+            Optional.of(
+                new Predicate(
+                    "=",
+                    asList(new Column("part"), Literal.ofInt(0))
+                )),
+            2 /* expected row count */);
+
+        // Data skipping: table with column mapping mode id
+        runAndVerifyRowCount(
+            "data_skipping_columnmapping_id",
+            "data-skipping-basic-stats-all-types-columnmapping-id",
+            Optional.empty(),
+            Optional.of(
+                new Predicate(
+                    "=",
+                    asList(new Column("as_int"), Literal.ofInt(1))
+                )),
+            0 /* expected row count */);
     }
 
     private void runAndVerifyRowCount(

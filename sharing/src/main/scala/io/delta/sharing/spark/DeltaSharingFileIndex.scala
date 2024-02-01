@@ -36,7 +36,7 @@ import org.apache.spark.sql.types.StructType
 private[sharing] case class DeltaSharingFileIndexParams(
     path: Path,
     spark: SparkSession,
-    metadata: model.DeltaSharingMetadata,
+    deltaSharingTableMetadata: DeltaSharingUtils.DeltaSharingTableMetadata,
     options: DeltaSharingOptions)
 
 /**
@@ -62,18 +62,20 @@ case class DeltaSharingFileIndex(
   override def refresh(): Unit = {}
 
   override def sizeInBytes: Long =
-    Option(params.metadata.size).getOrElse {
+    Option(params.deltaSharingTableMetadata.metadata.size).getOrElse {
       // Throw error if metadata.size is not returned, to urge the server to respond a table size.
       throw new IllegalStateException(
         "size is null in the metadata returned from the delta " +
-        s"sharing server: ${params.metadata}."
+        s"sharing server: ${params.deltaSharingTableMetadata.metadata}."
       )
     }
 
-  override def partitionSchema: StructType = params.metadata.partitionSchema
+  override def partitionSchema: StructType =
+    params.deltaSharingTableMetadata.metadata.partitionSchema
 
   // Returns the partition columns of the shared delta table based on the returned metadata.
-  def partitionColumns: Seq[String] = params.metadata.deltaMetadata.partitionColumns
+  def partitionColumns: Seq[String] =
+    params.deltaSharingTableMetadata.metadata.deltaMetadata.partitionColumns
 
   override def rootPaths: Seq[Path] = params.path :: Nil
 
@@ -98,7 +100,8 @@ case class DeltaSharingFileIndex(
       // keeps the string the same for the same filters.
       partitionFilters.map(_.sql).mkString(";"),
       dataFilters.map(_.sql).mkString(";"),
-      jsonPredicateHints.getOrElse("")
+      jsonPredicateHints.getOrElse(""),
+      params.deltaSharingTableMetadata.version
     )
     val tablePathWithHashIdSuffix = DeltaSharingUtils.getTablePathWithIdSuffix(
       queryCustomTablePath,

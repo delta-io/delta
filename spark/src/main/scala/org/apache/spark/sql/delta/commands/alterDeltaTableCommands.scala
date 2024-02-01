@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.ClusteringColumnInfo
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -123,6 +124,9 @@ case class AlterTableSetPropertiesDeltaCommand(
           false
         case k if k == TableCatalog.PROP_PROVIDER =>
           throw DeltaErrors.cannotChangeProvider()
+        case k if k == TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature) =>
+          throw DeltaErrors.alterTableSetClusteringTableFeatureException(
+            ClusteringTableFeature.name)
         case _ =>
           true
       }

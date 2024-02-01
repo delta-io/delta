@@ -37,7 +37,7 @@ Global / default_scala_version := scala212
 // Dependent library versions
 val sparkVersion = "3.5.0"
 val flinkVersion = "1.16.1"
-val hadoopVersion = "3.3.1"
+val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -219,11 +219,12 @@ lazy val sharing = (project in file("sharing"))
     name := "delta-sharing-spark",
     commonSettings,
     scalaStyleSettings,
+    releaseSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.0.3",
+      "io.delta" %% "delta-sharing-client" % "1.0.4",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -246,13 +247,13 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
-      "org.slf4j" % "slf4j-api" % "2.0.9",
+      "org.slf4j" % "slf4j-api" % "1.7.36",
 
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.slf4j" % "slf4j-log4j12" % "2.0.9" % "test"
+      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test"
     ),
     javaCheckstyleSettings("kernel/dev/checkstyle.xml"),
     // Unidoc settings
@@ -278,7 +279,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "junit" % "junit" % "4.13" % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.slf4j" % "slf4j-log4j12" % "2.0.9" % "test",
+      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
 
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
@@ -328,7 +329,7 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     // Test / publishArtifact := true,
 
     libraryDependencies ++= Seq(
-      "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided",
+      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
 
       // Test Deps
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException
@@ -724,7 +725,7 @@ lazy val standaloneCosmetic = project
     Compile / packageSrc := (standalone / Compile / packageSrc).value,
     libraryDependencies ++= scalaCollectionPar(scalaVersion.value) ++ Seq(
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
-      "org.apache.parquet" % "parquet-hadoop" % "1.12.0" % "provided",
+      "org.apache.parquet" % "parquet-hadoop" % "1.12.3" % "provided",
       // parquet4s-core dependencies that are not shaded are added with compile scope.
       "com.chuusai" %% "shapeless" % "2.3.4",
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.4.3"
@@ -756,7 +757,7 @@ lazy val testParquetUtilsWithStandaloneCosmetic = project.dependsOn(standaloneCo
     skipReleaseSettings,
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion,
-      "org.apache.parquet" % "parquet-hadoop" % "1.12.0" % "provided",
+      "org.apache.parquet" % "parquet-hadoop" % "1.12.3" % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test",
     )
   )
@@ -779,7 +780,7 @@ lazy val standaloneParquet = (project in file("connectors/standalone-parquet"))
     commonSettings,
     skipReleaseSettings,
     libraryDependencies ++= Seq(
-      "org.apache.parquet" % "parquet-hadoop" % "1.12.0" % "provided",
+      "org.apache.parquet" % "parquet-hadoop" % "1.12.3" % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test"
     ),
     assemblyPackageScala / assembleArtifact := false
@@ -978,6 +979,8 @@ def flinkScalaVersion(scalaBinaryVersion: String): String = {
 
 lazy val flink = (project in file("connectors/flink"))
   .dependsOn(standaloneCosmetic % "provided")
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
   .settings (
     name := "delta-flink",
     commonSettings,

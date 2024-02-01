@@ -450,6 +450,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
     var validatedConfigurations =
       DeltaConfigs.validateConfigurations(tableDesc.properties)
+    ClusteredTableUtils.validateExistingTableFeatureProperties(validatedConfigurations)
     // Add needed configs for Clustered table.
     if (maybeClusterBySpec.nonEmpty) {
       validatedConfigurations =

@@ -1939,7 +1939,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           "version" -> version,
           "exception" -> e.toString
         ))
-        hook.handleError(e, version)
+        hook.handleError(spark, e, version)
     }
   }
 

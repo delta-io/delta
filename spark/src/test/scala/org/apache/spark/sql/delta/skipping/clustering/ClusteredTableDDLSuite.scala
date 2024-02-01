@@ -157,7 +157,6 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
           .write.mode("append").format("delta").saveAsTable("srcTbl")
 
         val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, new TableIdentifier("srcTbl"))
-        val schemaStr = snapshot.statCollectionLogicalSchema.treeString
         // Test multiple data types.
         Seq("a", "d", "e").foreach { colName =>
           withTempDir { tmpDir =>
@@ -184,8 +183,19 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
                   f()
                 }
                 checkError(
-                  e,
-                  "DELTA_CLUSTERING_COLUMN_MISSING_STATS"
+                  exception = e,
+                  errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+                  parameters = Map(
+                    "columns" -> colName,
+                    "schema" -> """root
+                      | |-- a: struct (nullable = true)
+                      | |    |-- b: integer (nullable = true)
+                      | |    |-- c: integer (nullable = true)
+                      | |-- d: boolean (nullable = true)
+                      | |-- e: map (nullable = true)
+                      | |    |-- key: integer
+                      | |    |-- value: integer (valueContainsNull = true)
+                      |""".stripMargin)
                 )
               }
           }
@@ -202,8 +212,9 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
           "CREATE", testTable, "a INT, b INT, c INT, d INT, e INT", "a, b, c, d, e")
       }
       checkError(
-        e,
-        errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS"
+        exception = e,
+        errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+        parameters = Map("numColumnsLimit" -> "4", "actualNumColumns" -> "5")
       )
     }
   }
@@ -219,8 +230,9 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
             "CREATE", testTable, sourceTable, "a, b, c, d, e", location = location)
         }
         checkError(
-          e,
-          errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS"
+          exception = e,
+          errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+          parameters = Map("numColumnsLimit" -> "4", "actualNumColumns" -> "5")
         )
       }
     }
@@ -267,8 +279,15 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
                 indexedColumns,
                 Some(tableSchema)))
             checkError(
-              e,
-              "DELTA_CLUSTERING_COLUMN_MISSING_STATS"
+              exception = e,
+              errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+              parameters = Map(
+                "columns" -> "col1.col12, col2",
+                "schema" -> """root
+                    | |-- col0: integer (nullable = true)
+                    | |-- col1: struct (nullable = true)
+                    | |    |-- col11: integer (nullable = true)
+                    |""".stripMargin)
             )
             // Validate the first two columns can be clustering columns.
             createTableWithStatsColumns(
@@ -317,8 +336,15 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
                   None,
                   location = Some(dir.getPath)))
               checkError(
-                e,
-                "DELTA_CLUSTERING_COLUMN_MISSING_STATS"
+                exception = e,
+                errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+                parameters = Map(
+                  "columns" -> "col1.col12, col2",
+                  "schema" -> """root
+                    | |-- col0: integer (nullable = true)
+                    | |-- col1: struct (nullable = true)
+                    | |    |-- col11: integer (nullable = true)
+                    |""".stripMargin)
               )
 
               // Validate the first two columns can be clustering columns.
@@ -355,8 +381,17 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
             indexedColumns,
             Some(nonEligibleTableSchema)))
         checkError(
-          e,
-          "DELTA_CLUSTERING_COLUMN_MISSING_STATS"
+          exception = e,
+          errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+          parameters = Map(
+            "columns" -> "col1.col11",
+            "schema" -> """root
+              | |-- col0: integer (nullable = true)
+              | |-- col1: struct (nullable = true)
+              | |    |-- col11: array (nullable = true)
+              | |    |    |-- element: integer (containsNull = true)
+              | |    |-- col12: string (nullable = true)
+              |""".stripMargin)
         )
       }
     }
@@ -390,8 +425,9 @@ trait ClusteredTableDDLWithColumnMapping
         sql(s"ALTER TABLE $testTable DROP COLUMNS (col1)")
       }
       checkError(
-        e,
-        "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN"
+        exception = e,
+        errorClass = "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+        parameters = Map("columnList" -> "col1")
       )
       // Drop non-clustering columns are allowed.
       sql(s"ALTER TABLE $testTable DROP COLUMNS (col2)")
@@ -404,8 +440,9 @@ trait ClusteredTableDDLWithColumnMapping
         sql(s"ALTER TABLE $testTable DROP COLUMNS (col1, col2)")
       }
       checkError(
-        e,
-        "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN"
+        exception = e,
+        errorClass = "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+        parameters = Map("columnList" -> "col1,col2")
       )
     }
   }
@@ -417,8 +454,9 @@ trait ClusteredTableDDLWithColumnMapping
         sql(s"ALTER TABLE $testTable DROP COLUMNS (col1, col3)")
       }
       checkError(
-        e,
-        "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN"
+        exception = e,
+        errorClass = "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+        parameters = Map("columnList" -> "col1")
       )
     }
   }
@@ -543,8 +581,9 @@ trait ClusteredTableDDLSuiteBase
         sql(s"OPTIMIZE $testTable ZORDER BY (a)")
       }
       checkError(
-        e2,
-        "DELTA_CLUSTERING_WITH_ZORDER_BY"
+        exception = e2,
+        errorClass = "DELTA_CLUSTERING_WITH_ZORDER_BY",
+        parameters = Map("zOrderBy" -> "a")
       )
     }
   }

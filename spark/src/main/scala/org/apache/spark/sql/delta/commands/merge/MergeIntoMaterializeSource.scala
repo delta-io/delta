@@ -239,6 +239,8 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     val forceMaterializationWithUnreadableFiles =
       spark.conf.get(DeltaSQLConf.MERGE_FORCE_SOURCE_MATERIALIZATION_WITH_UNREADABLE_FILES)
     import DeltaSQLConf.MergeMaterializeSource._
+    val checkDeterministicOptions =
+      DeltaSparkPlanUtils.CheckDeterministicOptions(allowDeterministicUdf = true)
     materializeType match {
       case ALL =>
         (true, MergeIntoMaterializeSourceReason.MATERIALIZE_ALL)
@@ -249,7 +251,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
           (false, MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO_INSERT_ONLY)
         } else if (!planContainsOnlyDeltaScans(source)) {
           (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA)
-        } else if (!planIsDeterministic(source)) {
+        } else if (!planIsDeterministic(source, checkDeterministicOptions)) {
           (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_OPERATORS)
           // Force source materialization if Spark configs IGNORE_CORRUPT_FILES,
           // IGNORE_MISSING_FILES or file source read options FileSourceOptions.IGNORE_CORRUPT_FILES
