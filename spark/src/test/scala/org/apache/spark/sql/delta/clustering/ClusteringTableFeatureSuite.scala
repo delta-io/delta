@@ -48,4 +48,25 @@ class ClusteringTableFeatureSuite extends SparkFunSuite with DeltaSQLCommandTest
         parameters = Map("tableFeature" -> "clustering"))
     }
   }
+
+  test("alter table cluster by non-clustered tables is not allowed.") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(a INT, b STRING) USING DELTA")
+      val e1 = intercept[DeltaAnalysisException] {
+        sql("ALTER TABLE tbl CLUSTER BY (a)")
+      }
+      checkError(
+        e1,
+        "DELTA_ALTER_TABLE_CLUSTER_BY_NOT_ALLOWED",
+        parameters = Map.empty)
+
+      val e2 = intercept[DeltaAnalysisException] {
+        sql("ALTER TABLE tbl CLUSTER BY NONE")
+      }
+      checkError(
+        e2,
+        "DELTA_ALTER_TABLE_CLUSTER_BY_NOT_ALLOWED",
+        parameters = Map.empty)
+    }
+  }
 }
