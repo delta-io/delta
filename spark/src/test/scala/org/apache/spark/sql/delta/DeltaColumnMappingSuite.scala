@@ -1919,25 +1919,31 @@ class DeltaColumnMappingSuite extends QueryTest
   test("DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES exception should include column names") {
     val testTableName = "columnMappingTestTable"
     withTable(testTableName) {
-      val illegalColName1 = colName("col1")
-      val illegalColName2 = colName("col2")
-      val allColumns = Seq("a", illegalColName1, "b", illegalColName2)
-        .mkString("(`", "` int, `", "` int)")
-      val e = intercept[DeltaAnalysisException] {
-        sql(
-          s"""CREATE TABLE $testTableName $allColumns
-             |USING DELTA
-             |TBLPROPERTIES('${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='none')
-             |""".stripMargin)
+      val invalidColName1 = colName("col1")
+      val invalidColName2 = colName("col2")
+      // Make sure the error class stays the same for a single and multiple columns.
+      testWithInvalidColumns(Seq(invalidColName1))
+      testWithInvalidColumns(Seq(invalidColName1, invalidColName2))
+
+      def testWithInvalidColumns(invalidColumns: Seq[String]): Unit = {
+        val allColumns = (Seq("a", "b") ++ invalidColumns)
+          .mkString("(`", "` int, `", "` int)")
+        val e = intercept[DeltaAnalysisException] {
+          sql(
+            s"""CREATE TABLE $testTableName $allColumns
+               |USING DELTA
+               |TBLPROPERTIES('${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='none')
+               |""".stripMargin)
+        }
+        val errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES"
+        checkError(
+          exception = e,
+          errorClass = errorClass,
+          parameters = DeltaThrowableHelper
+            .getParameterNames(errorClass, errorSubClass = null)
+            .zip(invalidColumns).toMap
+        )
       }
-      val errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES"
-      checkError(
-        exception = e,
-        errorClass = errorClass,
-        parameters = DeltaThrowableHelper
-          .getParameterNames(errorClass, errorSubClass = null)
-          .zip(Array(illegalColName1, illegalColName2)).toMap
-      )
     }
   }
 }
