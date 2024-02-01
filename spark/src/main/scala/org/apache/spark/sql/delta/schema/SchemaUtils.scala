@@ -1028,8 +1028,8 @@ object SchemaUtils extends DeltaLogging {
    * Finds columns with illegal names, i.e. names containing any of the ' ,;{}()\n\t=' characters.
    */
   private def findInvalidColumnNames(columnNames: Seq[String]): Seq[String] = {
-    val badChars = Seq(' ', ',', ';', '{', '}', '(', ')', '\n', '\t', '=').map(_.toString)
-    columnNames.filter(colName => badChars.exists(colName.contains))
+    val badChars = Seq(' ', ',', ';', '{', '}', '(', ')', '\n', '\t', '=')
+    columnNames.filter(colName => badChars.map(_.toString).exists(colName.contains))
   }
 
   /**
