@@ -35,7 +35,6 @@ import org.apache.parquet.format.converter.ParquetMetadataConverter
 import org.apache.parquet.hadoop.ParquetFileReader
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.SparkThrowableHelper
 import org.apache.spark.sql.{DataFrame, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions._
@@ -1935,8 +1934,8 @@ class DeltaColumnMappingSuite extends QueryTest
       checkError(
         exception = e,
         errorClass = errorClass,
-        parameters = SparkThrowableHelper
-          .getParameterNames(errorClass)
+        parameters = DeltaThrowableHelper
+          .getParameterNames(errorClass, errorSubClass = null)
           .zip(Array(illegalColName1, illegalColName2)).toMap
       )
     }
