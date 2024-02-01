@@ -764,7 +764,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
             validateClusterBySpec(Some(clusterBySpec), table.schema())
           }
           if (!ClusteredTableUtils.isSupported(table.initialSnapshot.protocol)) {
-            throw DeltaErrors.alterClusterByNotOnLiquidDeltaTableException()
+            throw DeltaErrors.alterClusterByNotAllowedException()
           }
           AlterTableClusterByDeltaCommand(
             table, c.clusteringColumns.map(_.fieldNames().toSeq).toSeq).run(spark)

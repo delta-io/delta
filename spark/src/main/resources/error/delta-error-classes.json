@@ -73,7 +73,7 @@
   },
   "DELTA_ALTER_TABLE_CLUSTER_BY_NOT_ALLOWED" : {
     "message" : [
-      "ALTER TABLE CLUSTER BY is supported only for Delta table with Liquid clustering."
+      "ALTER TABLE CLUSTER BY is supported only for Delta table with clustering."
     ],
     "sqlState" : "42000"
   },

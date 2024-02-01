@@ -3201,7 +3201,7 @@ trait DeltaErrorsBase
       messageParameters = Array("ALTER TABLE CLUSTER BY"))
   }
 
-  def alterClusterByNotOnLiquidDeltaTableException(): Throwable = {
+  def alterClusterByNotAllowedException(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_ALTER_TABLE_CLUSTER_BY_NOT_ALLOWED",
       messageParameters = Array.empty)

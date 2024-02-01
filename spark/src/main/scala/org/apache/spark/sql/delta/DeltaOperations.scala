@@ -552,7 +552,7 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
 
-  /** Recorded when clustering columns are changed on Liquid tables. */
+  /** Recorded when clustering columns are changed on clustered tables. */
   case class ClusterBy(
       oldClusteringColumns: String,
       newClusteringColumns: String) extends Operation("CLUSTER BY") {
