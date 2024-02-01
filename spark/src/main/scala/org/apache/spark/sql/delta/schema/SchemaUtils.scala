@@ -21,7 +21,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TimestampNTZTableFeature}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -30,9 +30,9 @@ import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
-import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -1002,12 +1002,13 @@ object SchemaUtils extends DeltaLogging {
    * Check if the schema contains invalid char in the column names depending on the mode.
    */
   def checkSchemaFieldNames(schema: StructType, columnMappingMode: DeltaColumnMappingMode): Unit = {
-    if (columnMappingMode != NoMapping) return
-    try {
-      checkFieldNames(SchemaMergingUtils.explodeNestedFieldNames(schema))
-    } catch {
-      case NonFatal(e) =>
-        throw DeltaErrors.foundInvalidCharsInColumnNames(e)
+    if (columnMappingMode != NoMapping) {
+      return
+    }
+    val invalidColumnNames =
+      findInvalidColumnNames(SchemaMergingUtils.explodeNestedFieldNames(schema))
+    if (invalidColumnNames.nonEmpty) {
+      throw DeltaErrors.foundInvalidCharsInColumnNames(invalidColumnNames)
     }
   }
 
@@ -1017,15 +1018,18 @@ object SchemaUtils extends DeltaLogging {
    * columns have these characters.
    */
   def checkFieldNames(names: Seq[String]): Unit = {
-    names.foreach { name =>
-      // ,;{}()\n\t= and space are special characters in Delta schema
-      if (name.matches(".*[ ,;{}()\n\t=].*")) {
-        throw QueryCompilationErrors.invalidColumnNameAsPathError("delta", name)
-      }
+    val invalidColumnNames = findInvalidColumnNames(names)
+    if (invalidColumnNames.nonEmpty) {
+      throw DeltaErrors.invalidColumnName(invalidColumnNames.head)
     }
-    // The method checkFieldNames doesn't have a valid regex to search for '\n'. That should be
-    // fixed in Apache Spark, and we can remove this additional check here.
-    names.find(_.contains("\n")).foreach(col => throw DeltaErrors.invalidColumnName(col))
+  }
+
+  /**
+   * Finds columns with illegal names, i.e. names containing any of the ' ,;{}()\n\t=' characters.
+   */
+  private def findInvalidColumnNames(columnNames: Seq[String]): Seq[String] = {
+    val badChars = Seq(' ', ',', ';', '{', '}', '(', ')', '\n', '\t', '=').map(_.toString)
+    columnNames.filter(colName => badChars.exists(colName.contains))
   }
 
   /**

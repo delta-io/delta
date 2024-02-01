@@ -2025,11 +2025,10 @@ trait DeltaErrorsBase
         formatSchema(oldSchema),
         formatSchema(newSchema)))
 
-  def foundInvalidCharsInColumnNames(cause: Throwable): Throwable =
+  def foundInvalidCharsInColumnNames(invalidColumnNames: Seq[String]): Throwable =
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES",
-      messageParameters = Array.empty,
-      cause = Some(cause))
+      messageParameters = invalidColumnNames.toArray)
 
   def foundViolatingConstraintsForColumnChange(
       operation: String,

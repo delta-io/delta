@@ -35,6 +35,7 @@ import org.apache.parquet.format.converter.ParquetMetadataConverter
 import org.apache.parquet.hadoop.ParquetFileReader
 import org.scalatest.GivenWhenThen
 
+import org.apache.spark.SparkThrowableHelper
 import org.apache.spark.sql.{DataFrame, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions._
@@ -1913,6 +1914,31 @@ class DeltaColumnMappingSuite extends QueryTest
         s"""ALTER TABLE $testTableName SET TBLPROPERTIES(
            |'$columnMappingMode'='name'
            |)""".stripMargin)
+    }
+  }
+
+  test("DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES exception should include column names") {
+    val testTableName = "columnMappingTestTable"
+    withTable(testTableName) {
+      val illegalColName1 = colName("col1")
+      val illegalColName2 = colName("col2")
+      val allColumns = Seq("a", illegalColName1, "b", illegalColName2)
+        .mkString("(`", "` int, `", "` int)")
+      val e = intercept[DeltaAnalysisException] {
+        sql(
+          s"""CREATE TABLE $testTableName $allColumns
+             |USING DELTA
+             |TBLPROPERTIES('${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='none')
+             |""".stripMargin)
+      }
+      val errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES"
+      checkError(
+        exception = e,
+        errorClass = errorClass,
+        parameters = SparkThrowableHelper
+          .getParameterNames(errorClass)
+          .zip(Array(illegalColName1, illegalColName2)).toMap
+      )
     }
   }
 }
