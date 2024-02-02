@@ -50,6 +50,7 @@ trait MergeIntoSchemaEvolutionMixin {
    * schema evolution disabled then with schema evolution enabled. Tests must provide for each case
    * either the expected result or the expected error message but not both.
    */
+  // scalastyle:off argcount
   protected def testEvolution(name: String)(
       targetData: => DataFrame,
       sourceData: => DataFrame,
@@ -112,6 +113,7 @@ trait MergeIntoSchemaEvolutionMixin {
       }
     }
   }
+  // scalastyle:on argcount
 
    /**
    * Test runner used by most nested schema evolution tests. Similar to `testEvolution()` except
@@ -154,6 +156,7 @@ trait MergeIntoSchemaEvolutionMixin {
       confs = confs
     )
   }
+  // scalastyle:on argcount
 }
 
 /**
