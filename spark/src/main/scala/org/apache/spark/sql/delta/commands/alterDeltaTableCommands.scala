@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit
 
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.ClusteringColumnInfo
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
@@ -42,6 +43,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, QualifiedC
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
+import org.apache.spark.sql.connector.expressions.FieldReference
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types._
 
@@ -930,3 +932,58 @@ case class AlterTableDropConstraintDeltaCommand(
   }
 }
 
+/**
+ * Command for altering clustering columns for clustered tables.
+ * - ALTER TABLE .. CLUSTER BY (col1, col2, ...)
+ * - ALTER TABLE .. CLUSTER BY NONE
+ *
+ * Note that the given `clusteringColumns` are empty when CLUSTER BY NONE is specified.
+ * Also, `clusteringColumns` are validated (e.g., duplication / existence check) in
+ * DeltaCatalog.alterTable().
+ */
+case class AlterTableClusterByDeltaCommand(
+    table: DeltaTableV2,
+    clusteringColumns: Seq[Seq[String]])
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    val deltaLog = table.deltaLog
+    ClusteredTableUtils.validateNumClusteringColumns(clusteringColumns, Some(deltaLog))
+    recordDeltaOperation(deltaLog, "delta.ddl.alter.clusterBy") {
+      val txn = startTransaction()
+
+      val clusteringColsLogicalNames = ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
+      val oldLogicalClusteringColumnsString = clusteringColsLogicalNames.mkString(",")
+      val oldColumnsCount = clusteringColsLogicalNames.size
+
+      val newLogicalClusteringColumns = clusteringColumns.map(FieldReference(_).toString)
+      ClusteredTableUtils.validateClusteringColumnsInStatsSchema(
+        txn.snapshot, newLogicalClusteringColumns)
+
+      val newDomainMetadata =
+        ClusteredTableUtils
+          .getClusteringDomainMetadataForAlterTableClusterBy(newLogicalClusteringColumns, txn)
+
+      recordDeltaEvent(
+        deltaLog,
+        "delta.ddl.alter.clusterBy",
+        data = Map(
+          "isNewClusteredTable" -> !ClusteredTableUtils.isSupported(txn.protocol),
+          "oldColumnsCount" -> oldColumnsCount, "newColumnsCount" -> clusteringColumns.size))
+      // Add clustered table properties if the current table is not clustered.
+      // [[DeltaCatalog.alterTable]] already ensures that the table is not partitioned.
+      if (!ClusteredTableUtils.isSupported(txn.protocol)) {
+        txn.updateMetadata(
+          txn.metadata.copy(
+            configuration = txn.metadata.configuration ++
+              ClusteredTableUtils.getTableFeatureProperties(txn.metadata.configuration)
+          ))
+      }
+      txn.commit(
+        newDomainMetadata,
+        DeltaOperations.ClusterBy(
+          oldLogicalClusteringColumnsString,
+          newLogicalClusteringColumns.mkString(",")))
+    }
+    Seq.empty[Row]
+  }
+}

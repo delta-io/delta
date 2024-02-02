@@ -88,6 +88,8 @@ statement
         DROP CONSTRAINT (IF EXISTS)? name=identifier                    #dropTableConstraint
     | ALTER TABLE table=qualifiedName
         DROP FEATURE featureName=featureNameValue (TRUNCATE HISTORY)?   #alterTableDropFeature
+    | ALTER TABLE table=qualifiedName
+        (clusterBySpec | CLUSTER BY NONE)                               #alterTableClusterBy
     | OPTIMIZE (path=STRING | table=qualifiedName)
         (WHERE partitionPredicate=predicateToken)?
         (zorderSpec)?                                                   #optimizeTable
@@ -231,7 +233,7 @@ nonReserved
     | NO | STATISTICS
     | CLONE | SHALLOW
     | FEATURE | TRUNCATE
-    | CLUSTER
+    | CLUSTER | NONE
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -269,6 +271,7 @@ LIMIT: 'LIMIT';
 LOCATION: 'LOCATION';
 MINUS: '-';
 NO: 'NO';
+NONE: 'NONE';
 NOT: 'NOT' | '!';
 NULL: 'NULL';
 OF: 'OF';

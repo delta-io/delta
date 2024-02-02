@@ -25,7 +25,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
-import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
+import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaTableUtils}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
@@ -589,6 +589,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
     val table = loadTable(ident) match {
       case deltaTable: DeltaTableV2 => deltaTable
+      case _ if changes.exists(_.isInstanceOf[ClusterBy]) =>
+        throw DeltaErrors.alterClusterByNotOnDeltaTableException()
       case _ => return super.alterTable(ident, changes: _*)
     }
 
@@ -755,6 +757,18 @@ class DeltaCatalog extends DelegatingCatalogExtension
         AlterTableDropFeatureDeltaCommand(
           table, featureName, truncateHistory = truncateHistory).run(spark)
 
+      case (t, clusterBy) if t == classOf[ClusterBy] =>
+        clusterBy.asInstanceOf[Seq[ClusterBy]].foreach { c =>
+          if (c.clusteringColumns.nonEmpty) {
+            val clusterBySpec = ClusterBySpec(c.clusteringColumns.toSeq)
+            validateClusterBySpec(Some(clusterBySpec), table.schema())
+          }
+          if (!ClusteredTableUtils.isSupported(table.initialSnapshot.protocol)) {
+            throw DeltaErrors.alterClusterByNotAllowedException()
+          }
+          AlterTableClusterByDeltaCommand(
+            table, c.clusteringColumns.map(_.fieldNames().toSeq).toSeq).run(spark)
+        }
     }
 
     columnUpdates.foreach { case (fieldNames, (newField, newPositionOpt)) =>

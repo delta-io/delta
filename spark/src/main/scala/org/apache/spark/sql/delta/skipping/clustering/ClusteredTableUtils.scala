@@ -206,6 +206,20 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   }
 
   /**
+   * Create new clustering [[DomainMetadata]] actions given updated column names for
+   * 'ALTER TABLE ... CLUSTER BY'.
+   */
+  def getClusteringDomainMetadataForAlterTableClusterBy(
+      newLogicalClusteringColumns: Seq[String],
+      txn: OptimisticTransaction): Seq[DomainMetadata] = {
+    val newClusteringColumns =
+      newLogicalClusteringColumns.map(ClusteringColumn(txn.metadata.schema, _))
+    val clusteringMetadataDomainOpt =
+      Some(ClusteringMetadataDomain.fromClusteringColumns(newClusteringColumns).toDomainMetadata)
+    clusteringMetadataDomainOpt.toSeq
+  }
+
+  /**
    * Validate stats will be collected for all clustering columns.
    */
   def validateClusteringColumnsInStatsSchema(

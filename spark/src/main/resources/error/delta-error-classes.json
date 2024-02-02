@@ -71,6 +71,12 @@
     ],
     "sqlState" : "42837"
   },
+  "DELTA_ALTER_TABLE_CLUSTER_BY_NOT_ALLOWED" : {
+    "message" : [
+      "ALTER TABLE CLUSTER BY is supported only for Delta table with clustering."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_ALTER_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED" : {
     "message" : [
       "Cannot enable <tableFeature> table feature using ALTER TABLE SET TBLPROPERTIES. Please use CREATE OR REPLACE TABLE CLUSTER BY to create a Delta table with clustering."
