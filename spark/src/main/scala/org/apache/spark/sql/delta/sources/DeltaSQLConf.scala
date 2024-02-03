@@ -1617,6 +1617,17 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(true)
+
+
+  ///////////
+  // TESTING
+  ///////////
+  val DELTA_POST_COMMIT_HOOK_THROW_ON_ERROR =
+    buildConf("postCommitHook.throwOnError")
+      .internal()
+      .doc("If true, post-commit hooks will by default throw an exception when they fail.")
+      .booleanConf
+      .createWithDefault(Utils.isTesting)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

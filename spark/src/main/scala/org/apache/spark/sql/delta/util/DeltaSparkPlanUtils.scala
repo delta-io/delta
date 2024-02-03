@@ -16,14 +16,16 @@
 
 package org.apache.spark.sql.delta.util
 
-import org.apache.spark.sql.delta.DeltaTable
+import org.apache.spark.sql.delta.{DeltaTable, DeltaTableReadPredicate}
 
-import org.apache.spark.sql.catalyst.expressions.{Exists, Expression, InSubquery, LateralSubquery, ScalarSubquery}
+import org.apache.spark.sql.catalyst.expressions.{Exists, Expression, InSubquery, LateralSubquery, ScalarSubquery, UserDefinedExpression}
 import org.apache.spark.sql.catalyst.plans.logical.{Distinct, Filter, LeafNode, LogicalPlan, OneRowRelation, Project, SubqueryAlias, Union}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 
 
 trait DeltaSparkPlanUtils {
+  import DeltaSparkPlanUtils._
+
   protected def planContainsOnlyDeltaScans(source: LogicalPlan): Boolean =
     findFirstNonDeltaScan(source).isEmpty
 
@@ -43,9 +45,12 @@ trait DeltaSparkPlanUtils {
   /**
    * Returns `true` if `plan` has a safe level of determinism. This is a conservative
    * approximation of `plan` being a truly deterministic query.
+   *
    */
-  protected def planIsDeterministic(plan: LogicalPlan): Boolean =
-    findFirstNonDeterministicNode(plan).isEmpty
+  protected def planIsDeterministic(
+      plan: LogicalPlan,
+      checkDeterministicOptions: CheckDeterministicOptions): Boolean =
+    findFirstNonDeterministicNode(plan, checkDeterministicOptions).isEmpty
 
   type PlanOrExpression = Either[LogicalPlan, Expression]
 
@@ -53,23 +58,26 @@ trait DeltaSparkPlanUtils {
    * Returns a part of the `plan` that does not have a safe level of determinism.
    * This is a conservative approximation of `plan` being a truly deterministic query.
    */
-  protected def findFirstNonDeterministicNode(plan: LogicalPlan): Option[PlanOrExpression] = {
+  protected def findFirstNonDeterministicNode(
+      plan: LogicalPlan,
+      checkDeterministicOptions: CheckDeterministicOptions): Option[PlanOrExpression] = {
     plan match {
       // This is very restrictive, allowing only deterministic filters and projections directly
       // on top of a Delta Table.
-      case Distinct(child) => findFirstNonDeterministicNode(child)
+      case Distinct(child) => findFirstNonDeterministicNode(child, checkDeterministicOptions)
       case Project(projectList, child) =>
-        findFirstNonDeterministicChildNode(projectList) orElse {
-            findFirstNonDeterministicNode(child)
+        findFirstNonDeterministicChildNode(projectList, checkDeterministicOptions) orElse {
+            findFirstNonDeterministicNode(child, checkDeterministicOptions)
         }
       case Filter(cond, child) =>
-        findFirstNonDeterministicNode(cond) orElse {
-          findFirstNonDeterministicNode(child)
+        findFirstNonDeterministicNode(cond, checkDeterministicOptions) orElse {
+          findFirstNonDeterministicNode(child, checkDeterministicOptions)
         }
       case Union(children, _, _) => collectFirst[LogicalPlan, PlanOrExpression](
         children,
-        findFirstNonDeterministicNode)
-      case SubqueryAlias(_, child) => findFirstNonDeterministicNode(child)
+        c => findFirstNonDeterministicNode(c, checkDeterministicOptions))
+      case SubqueryAlias(_, child) =>
+        findFirstNonDeterministicNode(child, checkDeterministicOptions)
       case DeltaTable(_) => None
       case OneRowRelation() => None
       case node => Some(Left(node))
@@ -77,19 +85,25 @@ trait DeltaSparkPlanUtils {
   }
 
   protected def findFirstNonDeterministicChildNode(
-      children: Seq[Expression]): Option[PlanOrExpression] =
+      children: Seq[Expression],
+      checkDeterministicOptions: CheckDeterministicOptions): Option[PlanOrExpression] =
     collectFirst[Expression, PlanOrExpression](
       children,
-      findFirstNonDeterministicNode)
+      c => findFirstNonDeterministicNode(c, checkDeterministicOptions))
 
-  protected def findFirstNonDeterministicNode(child: Expression): Option[PlanOrExpression] = {
+  protected def findFirstNonDeterministicNode(
+      child: Expression,
+      checkDeterministicOptions: CheckDeterministicOptions): Option[PlanOrExpression] = {
     child match {
       case SubqueryExpression(plan) =>
-        findFirstNonDeltaScan(plan).map(Left(_)).orElse(findFirstNonDeterministicNode(plan))
+        findFirstNonDeltaScan(plan).map(Left(_))
+          .orElse(findFirstNonDeterministicNode(plan, checkDeterministicOptions))
+      case _: UserDefinedExpression if !checkDeterministicOptions.allowDeterministicUdf =>
+        Some(Right(child))
       case p =>
         collectFirst[Expression, PlanOrExpression](
           p.children,
-          findFirstNonDeterministicNode) orElse {
+          c => findFirstNonDeterministicNode(c, checkDeterministicOptions)) orElse {
           if (p.deterministic) None else Some(Right(p))
         }
     }
@@ -113,4 +127,39 @@ trait DeltaSparkPlanUtils {
       case _ => None
     }
   }
+
+  /** Returns whether the read predicates of a transaction contain any deterministic UDFs. */
+  def containsDeterministicUDF(
+      predicates: Seq[DeltaTableReadPredicate], partitionedOnly: Boolean): Boolean = {
+    if (partitionedOnly) {
+      predicates.exists {
+        _.partitionPredicates.exists(containsDeterministicUDF)
+      }
+    } else {
+      predicates.exists { p =>
+        p.dataPredicates.exists(containsDeterministicUDF) ||
+          p.partitionPredicates.exists(containsDeterministicUDF)
+      }
+    }
+  }
+
+  /** Returns whether an expression contains any deterministic UDFs. */
+  def containsDeterministicUDF(expr: Expression): Boolean = expr.exists {
+    case udf: UserDefinedExpression => udf.deterministic
+    case _ => false
+  }
+}
+
+
+object DeltaSparkPlanUtils {
+  /**
+   * Options for deciding whether plans contain non-deterministic nodes and expressions.
+   *
+   * @param allowDeterministicUdf If true, allow UDFs that are marked by users as deterministic.
+   *                              If false, always treat them as non-deterministic to be more
+   *                              defensive against user bugs.
+   */
+  case class CheckDeterministicOptions(
+    allowDeterministicUdf: Boolean
+  )
 }

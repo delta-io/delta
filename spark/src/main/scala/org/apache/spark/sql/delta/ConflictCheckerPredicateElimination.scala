@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
+import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 
 import org.apache.spark.sql.catalyst.expressions.{And, EmptyRow, Expression, Literal, Or}
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
@@ -86,13 +87,14 @@ private[delta] trait ConflictCheckerPredicateElimination extends DeltaSparkPlanU
    * files when these predicates are used for file skipping.
    */
   protected def eliminateNonDeterministicPredicates(
-      predicates: Seq[Expression]): PredicateElimination = {
+      predicates: Seq[Expression],
+      checkDeterministicOptions: CheckDeterministicOptions): PredicateElimination = {
     eliminateUnsupportedPredicates(predicates) {
       case p @ SubqueryExpression(plan) =>
         findFirstNonDeltaScan(plan) match {
           case Some(plan) => PredicateElimination.eliminate(p, eliminated = Some(plan.nodeName))
           case None =>
-            findFirstNonDeterministicNode(plan) match {
+            findFirstNonDeterministicNode(plan, checkDeterministicOptions) match {
               case Some(node) =>
                 PredicateElimination.eliminate(p, eliminated = Some(planOrExpressionName(node)))
               case None => PredicateElimination.keep(p)
@@ -100,8 +102,10 @@ private[delta] trait ConflictCheckerPredicateElimination extends DeltaSparkPlanU
         }
       // And and Or can safely be recursed through. Replacing any non-deterministic sub-tree
       // with `True` will lead us to at most select more files than necessary later.
-      case p: And => PredicateElimination.recurse(p, eliminateNonDeterministicPredicates)
-      case p: Or => PredicateElimination.recurse(p, eliminateNonDeterministicPredicates)
+      case p: And => PredicateElimination.recurse(p,
+        p => eliminateNonDeterministicPredicates(p, checkDeterministicOptions))
+      case p: Or => PredicateElimination.recurse(p,
+        p => eliminateNonDeterministicPredicates(p, checkDeterministicOptions))
       // All other expressions must either be completely deterministic,
       // or must be replaced entirely, since replacing only their non-deterministic children
       // may lead to files wrongly being deselected (e.g. `NOT True`).
@@ -110,7 +114,7 @@ private[delta] trait ConflictCheckerPredicateElimination extends DeltaSparkPlanU
         // deterministic. This gives us better feedback on what caused the non-determinism in
         // cases where `p` itself it deterministic but `p.deterministic = false` due to correctly
         // detected non-deterministic child nodes.
-        findFirstNonDeterministicChildNode(p.children) match {
+        findFirstNonDeterministicChildNode(p.children, checkDeterministicOptions) match {
           case Some(node) =>
             PredicateElimination.eliminate(p, eliminated = Some(planOrExpressionName(node)))
           case None => if (p.deterministic) {

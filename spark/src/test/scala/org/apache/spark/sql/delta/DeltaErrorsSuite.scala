@@ -2620,6 +2620,20 @@ trait DeltaErrorsSuiteBase
         Some(s"Can't set location multiple times. Found ${locations}"))
     }
     {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.metadataAbsentForExistingCatalogTable("tblName", "file://path/to/table")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE"),
+        Some("XXKDS"),
+        Some(
+          "The table tblName already exists in the catalog but no metadata could be found for the table at the path file://path/to/table.\n" +
+            "Did you manually delete files from the _delta_log directory? If so, then you should be able to recreate it as follows. First, drop the table by running `DROP TABLE tblName`. Then, recreate it by running the current command again."
+        )
+      )
+    }
+    {
       val e = intercept[DeltaStreamingColumnMappingSchemaIncompatibleException] {
         throw DeltaErrors.blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges(
           spark,

@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.hooks
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.SparkSession
 
@@ -51,5 +52,9 @@ trait PostCommitHook {
    * Handle any error caused while running the hook. By default, all errors are ignored as
    * default policy should be to not let post-commit hooks to cause failures in the operation.
    */
-  def handleError(error: Throwable, version: Long): Unit = {}
+  def handleError(spark: SparkSession, error: Throwable, version: Long): Unit = {
+    if (spark.conf.get(DeltaSQLConf.DELTA_POST_COMMIT_HOOK_THROW_ON_ERROR)) {
+      throw DeltaErrors.postCommitHookFailedException(this, version, name, error)
+    }
+  }
 }

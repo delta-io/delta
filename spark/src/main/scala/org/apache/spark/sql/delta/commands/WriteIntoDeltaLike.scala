@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.constraints.Constraints.Check
 import org.apache.spark.sql.delta.constraints.Invariants.ArbitraryExpression
@@ -32,7 +33,7 @@ import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -58,11 +59,18 @@ trait WriteIntoDeltaLike {
   /**
    * Write [[data]] into Delta table as part of [[txn]] and @return the actions to be committed.
    */
+  def writeAndReturnCommitData(
+      txn: OptimisticTransaction,
+      sparkSession: SparkSession,
+      clusterBySpecOpt: Option[ClusterBySpec] = None,
+      isTableReplace: Boolean = false): TaggedCommitData[Action]
+
   def write(
       txn: OptimisticTransaction,
       sparkSession: SparkSession,
       clusterBySpecOpt: Option[ClusterBySpec] = None,
-      isTableReplace: Boolean = false): Seq[Action]
+      isTableReplace: Boolean = false): Seq[Action] = writeAndReturnCommitData(
+    txn, sparkSession, clusterBySpecOpt, isTableReplace).actions
 
   val deltaLog: DeltaLog
 
@@ -114,22 +122,32 @@ trait WriteIntoDeltaLike {
       case _ =>
     }
 
+    // Helper for creating a SQLMetric and setting its value, since it isn't valid to create a
+    // SQLMetric with a positive `initValue`.
+    def createSumMetricWithValue(name: String, value: Long): SQLMetric = {
+      val metric = new SQLMetric("sum")
+      metric.register(spark.sparkContext, Some(name))
+      metric.set(value)
+      metric
+    }
+
     var sqlMetrics = Map(
-      "numFiles" -> new SQLMetric("number of files written", numFiles),
-      "numOutputBytes" -> new SQLMetric("number of output bytes", numOutputBytes),
-      "numAddedChangeFiles" -> new SQLMetric(
+      "numFiles" -> createSumMetricWithValue("number of files written", numFiles),
+      "numOutputBytes" -> createSumMetricWithValue("number of output bytes", numOutputBytes),
+      "numAddedChangeFiles" -> createSumMetricWithValue(
         "number of change files added", numAddedChangedFiles)
     )
     if (hasRowLevelMetrics) {
       sqlMetrics ++= Map(
-        "numOutputRows" -> new SQLMetric("number of rows added", numNewRows + numCopiedRows),
-        "numCopiedRows" -> new SQLMetric("number of copied rows", numCopiedRows)
+        "numOutputRows" -> createSumMetricWithValue(
+          "number of rows added", numNewRows + numCopiedRows),
+        "numCopiedRows" -> createSumMetricWithValue("number of copied rows", numCopiedRows)
       )
     } else {
       // this will get filtered out in DeltaOperations.WRITE transformMetrics
       sqlMetrics ++= Map(
-        "numOutputRows" -> new SQLMetric("number of rows added", 0L),
-        "numCopiedRows" -> new SQLMetric("number of copied rows", 0L)
+        "numOutputRows" -> createSumMetricWithValue("number of rows added", 0L),
+        "numCopiedRows" -> createSumMetricWithValue("number of copied rows", 0L)
       )
     }
     txn.registerSQLMetrics(spark, sqlMetrics)

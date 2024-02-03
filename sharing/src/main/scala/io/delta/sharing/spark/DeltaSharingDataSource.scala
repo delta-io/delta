@@ -391,7 +391,7 @@ private[sharing] class DeltaSharingDataSource
     val params = new DeltaSharingFileIndexParams(
       new Path(path),
       spark,
-      deltaSharingTableMetadata.metadata,
+      deltaSharingTableMetadata,
       options
     )
     if (ConfUtils.limitPushdownEnabled(spark.sessionState.conf)) {

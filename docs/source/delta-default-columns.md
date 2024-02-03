@@ -34,8 +34,4 @@ You can enable default column values for a table by setting `delta.feature.allow
 
 - It is permissible, however, to assign or update default values for columns that were created in previous commands. For example, the following SQL command is valid: `ALTER TABLE t ALTER COLUMN c SET DEFAULT 16;`
 
-
-
-
-
-
+ .. include:: /shared/replacements.md

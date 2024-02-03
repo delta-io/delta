@@ -43,11 +43,12 @@ CREATE TABLE T(c1 INT) USING DELTA TBLPROPERTIES(
 
 You can enable UniForm on an existing table using the following syntax:
 
-.. note:: This syntax also works to upgrade from the IcbergCompatV1. It may rewrite existing files to make those Iceberg compatible, and it automatically disables and purges Deletion Vectors from the table
 
 ```sql
 REORG TABLE table_name APPLY (UPGRADE UNIFORM(ICEBERG_COMPAT_VERSION=2));
 ```
+.. note:: This syntax requires [_](delta-column-mapping.md) to be enabled on the table prior to running on Delta 3.1. This syntax also works to upgrade from the IcbergCompatV1. It may rewrite existing files to make those Iceberg compatible, and it automatically disables and purges Deletion Vectors from the table.
+
 .. important:: When you first enable UniForm, asynchronous metadata generation begins. This task must complete before external clients can query the table using Iceberg. See [_](#status).
 
 .. warning:: You can turn off UniForm by unsetting the `delta.universalFormat.enabledFormats` table property. You cannot turn off column mapping once enabled, and upgrades to <Delta> reader and writer protocol versions cannot be undone.

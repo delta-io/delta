@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.FileStatus
 
@@ -138,15 +139,26 @@ private[delta] class ConflictChecker(
    * the transaction as if it had started while reading the `winningCommitVersion`.
    */
   def checkConflicts(): CurrentTransactionInfo = {
+    // Check early the protocol and metadata compatibility that is required for subsequent
+    // file-level checks.
     checkProtocolCompatibility()
     checkNoMetadataUpdates()
+    checkIfDomainMetadataConflict()
+
+    // Perform cheap check for transaction dependencies before we start checks files.
+    checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
+
+    // Row Tracking reconciliation. We perform this before the file checks to ensure that
+    // no files have duplicate row IDs and avoid interacting with files that don't comply with
+    // the protocol.
+    reassignOverlappingRowIds()
+    reassignRowCommitVersions()
+
+    // Data file checks.
     checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn()
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
-    checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
-    reassignOverlappingRowIds()
-    reassignRowCommitVersions()
-    checkIfDomainMetadataConflict()
+
     logMetrics()
     currentTransactionInfo
   }
@@ -244,15 +256,15 @@ private[delta] class ConflictChecker(
     spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_WIDEN_NONDETERMINISTIC_PREDICATES) match {
       case DeltaSQLConf.NonDeterministicPredicateWidening.OFF =>
         getFirstFileMatchingPartitionPredicatesInternal(
-          filesDf, shouldWidenNonDeterministicPredicates = false)
+          filesDf, shouldWidenNonDeterministicPredicates = false, shouldWidenAllUdf = false)
       case wideningMode =>
         val fileWithWidening = getFirstFileMatchingPartitionPredicatesInternal(
-          filesDf, shouldWidenNonDeterministicPredicates = true)
+          filesDf, shouldWidenNonDeterministicPredicates = true, shouldWidenAllUdf = true)
 
         fileWithWidening.flatMap { fileWithWidening =>
           val fileWithoutWidening =
             getFirstFileMatchingPartitionPredicatesInternal(
-              filesDf, shouldWidenNonDeterministicPredicates = false)
+              filesDf, shouldWidenNonDeterministicPredicates = false, shouldWidenAllUdf = false)
           if (fileWithoutWidening.isEmpty) {
             // Conflict due to widening of non-deterministic predicate.
             recordDeltaEvent(deltaLog,
@@ -261,7 +273,10 @@ private[delta] class ConflictChecker(
               data = Map(
                 "wideningMode" -> wideningMode,
                 "predicate" ->
-                  currentTransactionInfo.readPredicates.map(_.partitionPredicate.toString)))
+                  currentTransactionInfo.readPredicates.map(_.partitionPredicate.toString),
+                "deterministicUDFs" -> containsDeterministicUDF(
+                  currentTransactionInfo.readPredicates, partitionedOnly = true))
+            )
           }
           if (wideningMode == DeltaSQLConf.NonDeterministicPredicateWidening.ON) {
             Some(fileWithWidening)
@@ -274,13 +289,16 @@ private[delta] class ConflictChecker(
 
   private def getFirstFileMatchingPartitionPredicatesInternal(
       filesDf: DataFrame,
-      shouldWidenNonDeterministicPredicates: Boolean): Option[AddFile] = {
+      shouldWidenNonDeterministicPredicates: Boolean,
+      shouldWidenAllUdf: Boolean): Option[AddFile] = {
 
     def rewritePredicateFn(
         predicate: Expression,
         shouldRewriteFilter: Boolean): DeltaTableReadPredicate = {
       val rewrittenPredicate = if (shouldWidenNonDeterministicPredicates) {
-        eliminateNonDeterministicPredicates(Seq(predicate)).newPredicates
+        val checkDeterministicOptions =
+          CheckDeterministicOptions(allowDeterministicUdf = !shouldWidenAllUdf)
+        eliminateNonDeterministicPredicates(Seq(predicate), checkDeterministicOptions).newPredicates
       } else {
         Seq(predicate)
       }
