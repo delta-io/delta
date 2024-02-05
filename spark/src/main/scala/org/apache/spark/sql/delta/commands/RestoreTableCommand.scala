@@ -207,7 +207,8 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
 
         txn.commitLarge(
           spark,
-          Iterator.single(newProtocol) ++ addActions ++ removeActions,
+          addActions ++ removeActions,
+          Some(newProtocol),
           DeltaOperations.Restore(version, timestamp),
           Map.empty,
           metrics.mapValues(_.toString).toMap)
