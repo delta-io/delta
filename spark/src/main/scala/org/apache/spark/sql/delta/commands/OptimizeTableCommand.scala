@@ -187,30 +187,24 @@ case class OptimizeTableCommand(
 /**
  * Stored all runtime context information that can control the execution of optimize.
  *
- * @param isPurge Whether the rewriting task is only for purging soft-deleted data instead of
- *                for compaction. If [[isPurge]] is true, only files with DVs will be selected
- *                for compaction.
+ * @param reorg The REORG operation that triggered the rewriting task, if any.
  * @param minFileSize Files which are smaller than this threshold will be selected for compaction.
  *                    If not specified, [[DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE]] will be used.
- *                    This parameter must be set to `0` when [[isPurge]] is true.
+ *                    This parameter must be set to `0` when [[reorg]] is set.
  * @param maxDeletedRowsRatio Files with a ratio of soft-deleted rows to the total rows larger than
  *                            this threshold will be rewritten by the OPTIMIZE command. If not
  *                            specified, [[DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO]]
- *                            will be used. This parameter must be set to `0` when [[isPurge]] is
- *                            true.
- * @param icebergCompatVersion The iceberg compatibility version used to rewrite data for
- *                             uniform tables.
+ *                            will be used. This parameter must be set to `0` when [[reorg]] is set.
  */
 case class DeltaOptimizeContext(
-    isPurge: Boolean = false,
+    reorg: Option[DeltaReorgOperation] = None,
     minFileSize: Option[Long] = None,
     maxFileSize: Option[Long] = None,
-    maxDeletedRowsRatio: Option[Double] = None,
-    icebergCompatVersion: Option[Int] = None) {
-  if (isPurge || icebergCompatVersion.isDefined) {
+    maxDeletedRowsRatio: Option[Double] = None) {
+  if (reorg.nonEmpty) {
     require(
       minFileSize.contains(0L) && maxDeletedRowsRatio.contains(0d),
-      "minFileSize and maxDeletedRowsRatio must be 0 when running PURGE.")
+      "minFileSize and maxDeletedRowsRatio must be 0 when running REORG TABLE.")
   }
 }
 
@@ -269,7 +263,10 @@ class OptimizeExecutor(
       val candidateFiles = txn.filterFiles(partitionPredicate, keepNumRecords = true)
       val partitionSchema = txn.metadata.partitionSchema
 
-      val filesToProcess = pruneCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
+      val filesToProcess = optimizeContext.reorg match {
+        case Some(reorgOperation) => reorgOperation.filterFilesToReorg(candidateFiles)
+        case None => pruneCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
+      }
       val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
 
       val jobs = groupFilesIntoBins(partitionsToCompact, maxFileSize)
@@ -358,18 +355,9 @@ class OptimizeExecutor(
           file.deletedToPhysicalRecordsRatio.getOrElse(0d) > maxDeletedRowsRatio
     }
 
-    def shouldRewriteToBeIcebergCompatible(file: AddFile): Boolean = {
-      if (optimizeContext.icebergCompatVersion.isEmpty) return false
-      if (file.tags == null) return true
-      val icebergCompatVersion = file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
-      !optimizeContext.icebergCompatVersion.exists(_.toString == icebergCompatVersion)
-    }
-
-    // Select files that are small, have too many deleted rows,
-    // or need to be made iceberg compatible
+    // Select files that are small or have too many deleted rows
     files.filter(
-      addFile => addFile.size < minFileSize || shouldCompactBecauseOfDeletedRows(addFile) ||
-        shouldRewriteToBeIcebergCompatible(addFile))
+      addFile => addFile.size < minFileSize || shouldCompactBecauseOfDeletedRows(addFile))
   }
 
   /**
@@ -414,8 +402,7 @@ class OptimizeExecutor(
 
         bins.filter { bin =>
           bin.size > 1 || // bin has more than one file or
-          (bin.size == 1 && bin(0).deletionVector != null) || // single file in the bin has a DV or
-          (bin.size == 1 && optimizeContext.icebergCompatVersion.isDefined) || // uniform reorg
+          bin.size == 1 && optimizeContext.reorg.nonEmpty || // always rewrite files during reorg
           isMultiDimClustering // multi-clustering
         }.map(b => (partition, b))
     }
@@ -511,7 +498,7 @@ class OptimizeExecutor(
 
   /** Create the appropriate [[Operation]] object for txn commit history */
   private def getOperation(): Operation = {
-    if (optimizeContext.isPurge) {
+    if (optimizeContext.reorg.nonEmpty) {
       DeltaOperations.Reorg(partitionPredicate)
     } else {
       DeltaOperations.Optimize(partitionPredicate, clusteringColumns, auto = isAutoCompact)

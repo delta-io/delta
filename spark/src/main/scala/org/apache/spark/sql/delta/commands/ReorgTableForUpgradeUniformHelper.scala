@@ -49,10 +49,7 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
   /**
    * Helper function to rewrite the table. Implemented by Reorg Table Command.
    */
-  def optimizeByReorg(
-     sparkSession: SparkSession,
-     isPurge: Boolean,
-     icebergCompatVersion: Option[Int]): Seq[Row]
+  def optimizeByReorg(sparkSession: SparkSession): Seq[Row]
 
   /**
    * Helper function to update the table icebergCompat properties.
@@ -172,11 +169,7 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
       logInfo(s"Reorg Table ${target.tableIdentifier} to iceberg compat version = " +
         s"$targetIcebergCompatVersion need rewrite data files.")
       val metrics = try {
-        optimizeByReorg(
-          sparkSession,
-          isPurge = false,
-          icebergCompatVersion = Some(targetIcebergCompatVersion)
-        )
+        optimizeByReorg(sparkSession)
       } catch {
         case NonFatal(e) =>
           throw DeltaErrors.icebergCompatDataFileRewriteFailedException(
