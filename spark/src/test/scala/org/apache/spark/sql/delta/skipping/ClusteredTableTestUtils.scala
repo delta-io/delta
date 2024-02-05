@@ -16,8 +16,9 @@
 
 package org.apache.spark.sql.delta.skipping
 
-import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumn}
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumn, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.DeltaOperations.CLUSTERING_PARAMETER_KEY
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 
 import org.apache.spark.SparkFunSuite
@@ -58,6 +59,33 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     val actualClusteringColumns =
       ClusteredTableUtils.getClusteringColumnsOptional(snapshot).getOrElse(Seq.empty)
     assert(expectedClusteringColumns == actualClusteringColumns)
+  }
+
+  // Verify the operation parameters of the last history event contains `clusterBy`.
+  protected def verifyDescribeHistoryOperationParameters(
+      table: String
+  ): Unit = {
+    val deltaLog = if (table.startsWith("tahoe.") || table.startsWith("delta.")) {
+      // Path based table.
+      DeltaLog.forTable(spark, table.drop(6).replace("`", ""))
+    } else {
+      DeltaLog.forTable(spark, TableIdentifier(table))
+    }
+    val clusteringColumns =
+      ClusteringColumnInfo.extractLogicalNames(deltaLog.unsafeVolatileSnapshot)
+    val lastEvent = deltaLog.history.getHistory(Some(1)).head
+    lastEvent.operation match {
+      case "CLUSTER BY" =>
+        // Operation is [[DeltaOperations.ClusterBy]] - ALTER TABLE CLUSTER BY
+        assert(
+          lastEvent.operationParameters("newClusteringColumns") === clusteringColumns.mkString(",")
+        )
+      case "CREATE TABLE" | "REPLACE TABLE" | "CREATE OR REPLACE TABLE" | "CREATE TABLE AS SELECT" |
+          "REPLACE TABLE AS SELECT" | "CREATE OR REPLACE TABLE AS SELECT" =>
+        val expectedClusterBy = clusteringColumns.mkString("""["""", """","""", """"]""")
+        assert(lastEvent.operationParameters(CLUSTERING_PARAMETER_KEY) === expectedClusterBy)
+      case _ =>
+    }
   }
 
   def withClusteredTable[T](
@@ -113,35 +141,42 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
 
   def verifyClusteringColumns(
       tableIdentifier: TableIdentifier,
-      expectedLogicalClusteringColumns: String
-    ): Unit = {
+      expectedLogicalClusteringColumns: String,
+      verifyDescribeHistory: Boolean = true): Unit = {
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
     verifyClusteringColumnsInternal(
       snapshot,
       tableIdentifier.table,
-      expectedLogicalClusteringColumns
+      expectedLogicalClusteringColumns,
+      verifyDescribeHistory
     )
   }
 
   def verifyClusteringColumns(
       dataPath: String,
-      expectedLogicalClusteringColumns: String
-    ): Unit = {
+      expectedLogicalClusteringColumns: String,
+      verifyDescribeHistory: Boolean): Unit = {
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, dataPath)
     verifyClusteringColumnsInternal(
       snapshot,
       s"delta.`$dataPath`",
-      expectedLogicalClusteringColumns
+      expectedLogicalClusteringColumns,
+      verifyDescribeHistory
     )
   }
 
   def verifyClusteringColumnsInternal(
       snapshot: Snapshot,
       tableNameOrPath: String,
-      expectedLogicalClusteringColumns: String
-    ): Unit = {
+      expectedLogicalClusteringColumns: String,
+      verifyDescribeHistory: Boolean): Unit = {
     assert(ClusteredTableUtils.isSupported(snapshot.protocol) === true)
     verifyClusteringColumnsInDomainMetadata(snapshot, expectedLogicalClusteringColumns)
+
+    // Verify Delta history operation parameters' clusterBy
+    if (verifyDescribeHistory) {
+      verifyDescribeHistoryOperationParameters(tableNameOrPath)
+    }
   }
 }
 

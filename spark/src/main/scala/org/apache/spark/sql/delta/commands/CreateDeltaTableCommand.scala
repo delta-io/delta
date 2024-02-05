@@ -519,7 +519,9 @@ case class CreateDeltaTableCommand(
     // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Create =>
       DeltaOperations.CreateTable(
-        metadata, isManagedTable, query.isDefined
+        metadata, isManagedTable, query.isDefined,
+        clusterBy =
+          ClusteredTableUtils.getClusterBySpecOptional(table).map(_.columnNames.map(_.toString))
       )
 
     // DataSourceV2 table replace
@@ -527,7 +529,9 @@ case class CreateDeltaTableCommand(
     // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Replace =>
       DeltaOperations.ReplaceTable(
-        metadata, isManagedTable, orCreate = false, query.isDefined
+        metadata, isManagedTable, orCreate = false, query.isDefined,
+        clusterBy =
+          ClusteredTableUtils.getClusterBySpecOptional(table).map(_.columnNames.map(_.toString))
       )
 
     // Legacy saveAsTable with Overwrite mode
@@ -539,7 +543,9 @@ case class CreateDeltaTableCommand(
     // New DataSourceV2 saveAsTable with overwrite mode behavior
     case TableCreationModes.CreateOrReplace =>
       DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = true, query.isDefined,
-        options.flatMap(_.userMetadata)
+        options.flatMap(_.userMetadata),
+        clusterBy =
+          ClusteredTableUtils.getClusterBySpecOptional(table).map(_.columnNames.map(_.toString))
       )
   }
 

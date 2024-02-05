@@ -294,14 +294,15 @@ object DeltaOperations {
   case class CreateTable(
       metadata: Metadata,
       isManaged: Boolean,
-      asSelect: Boolean = false
+      asSelect: Boolean = false,
+      clusterBy: Option[Seq[String]] = None
   ) extends Operation("CREATE TABLE" + s"${if (asSelect) " AS SELECT" else ""}") {
     override val parameters: Map[String, Any] = Map(
       "isManaged" -> isManaged.toString,
       "description" -> Option(metadata.description),
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
       "properties" -> JsonUtils.toJson(metadata.configuration)
-    )
+    ) ++ (clusterBy.map(CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(_)))
     override val operationMetrics: Set[String] = if (!asSelect) {
       Set()
     } else {
@@ -315,7 +316,8 @@ object DeltaOperations {
       isManaged: Boolean,
       orCreate: Boolean,
       asSelect: Boolean = false,
-      override val userMetadata: Option[String] = None
+      override val userMetadata: Option[String] = None,
+      clusterBy: Option[Seq[String]] = None
   ) extends Operation(s"${if (orCreate) "CREATE OR " else ""}REPLACE TABLE" +
       s"${if (asSelect) " AS SELECT" else ""}") {
     override val parameters: Map[String, Any] = Map(
@@ -323,7 +325,7 @@ object DeltaOperations {
       "description" -> Option(metadata.description),
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
       "properties" -> JsonUtils.toJson(metadata.configuration)
-  )
+    ) ++ (clusterBy.map(CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(_)))
     override val operationMetrics: Set[String] = if (!asSelect) {
       Set()
     } else {
@@ -484,6 +486,8 @@ object DeltaOperations {
   val OPTIMIZE_OPERATION_NAME = "OPTIMIZE"
   /** parameter key to indicate which columns to z-order by */
   val ZORDER_PARAMETER_KEY = "zOrderBy"
+  /** parameter key to indicate clustering columns */
+  val CLUSTERING_PARAMETER_KEY = "clusterBy"
 
   /** Recorded when optimizing the table. */
   case class Optimize(
