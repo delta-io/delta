@@ -264,36 +264,36 @@ These files reside in the `_delta_log/_sidecars` directory.
 ### Log Compaction Files
 
 Log compaction files reside in the `_delta_log` directory. A log compaction file from a start version `x` to an end version `y` will have the following name:
-`<x>.<y>.compact.json`. This contains the aggregated
+`<x>.<y>.compacted.json`. This contains the aggregated
 actions for commit range `[x, y]`. Similar to commits, each row in the log
 compaction file represents an [action](#actions).
 The commit files for a given range are created by doing [Action Reconciliation](#action-reconciliation)
 of the corresponding commits.
 Instead of reading the individual commit files in range `[x, y]`, an implementation could choose to read
-the log compaction file `<x>.<y>.compact.json` to speed up the snapshot construction.
+the log compaction file `<x>.<y>.compacted.json` to speed up the snapshot construction.
 
 Example:
-Suppose we have `4.json` as:
+Suppose we have `00000000000000000004.json` as:
 ```
 {"commitInfo":{...}}
 {"add":{"path":"f2",...}}
 {"remove":{"path":"f1",...}}
 ```
-`5.json` as:
+`00000000000000000005.json` as:
 ```
 {"commitInfo":{...}}
 {"add":{"path":"f3",...}}
 {"add":{"path":"f4",...}}
 {"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4389}}
 ```
-`6.json` as:
+`00000000000000000006.json` as:
 ```
 {"commitInfo":{...}}
 {"remove":{"path":"f3",...}}
 {"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4390}}
 ```
 
-Then `4.6.compact.json` will have the following content:
+Then `00000000000000000004.00000000000000000006.compacted.json` will have the following content:
 ```
 {"add":{"path":"f2",...}}
 {"add":{"path":"f4",...}}
