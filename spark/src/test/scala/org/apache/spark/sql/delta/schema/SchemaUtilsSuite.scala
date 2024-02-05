@@ -1907,8 +1907,8 @@ class SchemaUtilsSuite extends QueryTest
           exception = intercept[AnalysisException] {
             SchemaUtils.checkFieldNames(Seq(name))
           },
-          errorClass = "INVALID_COLUMN_NAME_AS_PATH",
-          parameters = Map("datasource" -> "delta", "columnName" -> s"`$name`")
+          errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
+          parameters = Map("columnName" -> s"$name")
         )
       }
     }
