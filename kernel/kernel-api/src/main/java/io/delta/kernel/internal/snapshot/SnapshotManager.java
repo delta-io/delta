@@ -538,9 +538,12 @@ public class SnapshotManager {
 
         versionToLoadOpt.filter(v -> v != newVersion).ifPresent(v -> {
             // TODO this should be a public exception
-            // add what version is available? (newVersion?)
             throw new RuntimeException(
-                String.format("Trying to load a non-existent version %s", v));
+                String.format(
+                    "Trying to load a non-existent version %s. Latest version available is %s",
+                    v,
+                    newVersion
+                ));
         });
 
         // We may just be getting a checkpoint file after the filtering

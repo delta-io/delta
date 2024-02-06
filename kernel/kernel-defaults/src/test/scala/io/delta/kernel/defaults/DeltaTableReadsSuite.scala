@@ -503,7 +503,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         Table.forPath(defaultTableClient, path)
           .getSnapshotAtVersion(defaultTableClient, 11)
       }
-      assert(e.getMessage.contains("Trying to load a non-existent version 11"))
+      assert(e.getMessage.contains(
+        "Trying to load a non-existent version 11. Latest version available is 10"))
     }
   }
 
