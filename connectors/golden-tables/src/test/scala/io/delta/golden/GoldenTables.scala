@@ -31,7 +31,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkConf
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.{QueryTest, Row}
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, OptimisticTransaction}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Metadata, _}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -1491,6 +1491,29 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       tablePath,
       Row(0, 0) :: Nil,
       schema)
+  }
+
+  generateGoldenTable("truncated-delta-log") { tablePath =>
+    withSQLConf(
+      "spark.databricks.delta.retentionDurationCheck.enabled" -> "false",
+      DeltaConfigs.LOG_RETENTION.defaultTablePropertyKey -> "interval 0 seconds"
+    ) {
+      (0 to 10).foreach { i =>
+        spark.range(i*10, i*10 + 10).write
+          .format("delta")
+          .mode("append")
+          .save(tablePath)
+      }
+      val log = DeltaLog.forTable(spark, new Path(tablePath))
+      (0 to 9).foreach { i =>
+        val jsonFile = FileNames.deltaFile(log.logPath, i)
+        new File(new Path(log.logPath, jsonFile).toUri).delete()
+      }
+    }
+    spark.range(50).write
+      .format("delta")
+      .mode("overwrite")
+      .save(tablePath)
   }
 }
 

@@ -341,6 +341,12 @@ class SnapshotManagerSuite extends AnyFunSuite {
     testWithSingularAndMultipartCheckpoint(
       deltaVersions = (0L to 20L),
       checkpointVersions = Seq(10, 20),
+      startCheckpoint = Optional.of(10),
+      versionToLoad = Optional.of(15)
+    )
+    testWithSingularAndMultipartCheckpoint(
+      deltaVersions = (0L to 20L),
+      checkpointVersions = Seq(10, 20),
       startCheckpoint = Optional.of(20),
       versionToLoad = Optional.of(15)
     )
@@ -393,24 +399,29 @@ class SnapshotManagerSuite extends AnyFunSuite {
       .map(FileStatus.of(_, 10, 10))
     testExpectedError[RuntimeException](
       files,
-      // TODO error message is misleading (delta-io/delta#2283)
-      expectedErrorMessageContains = "Empty directory: /fake/path/to/table/_delta_log"
+      expectedErrorMessageContains =
+        "No delta files found in the directory: /fake/path/to/table/_delta_log"
+    )
+    testExpectedError[RuntimeException](
+      files,
+      versionToLoad = Optional.of(5),
+      expectedErrorMessageContains =
+        "No delta files found in the directory: /fake/path/to/table/_delta_log"
     )
   }
 
   test("getLogSegmentForVersion: versionToLoad higher than possible") {
-    // TODO throw more informative error message (delta-io/delta#2283)
-    testExpectedError[IllegalArgumentException](
+    testExpectedError[RuntimeException](
       files = deltaFileStatuses(Seq(0)),
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains =
-        "Did not get the last delta file version 15 to compute Snapshot"
+        "Trying to load a non-existent version 15"
     )
-    testExpectedError[IllegalArgumentException](
+    testExpectedError[RuntimeException](
       files = deltaFileStatuses((10L until 13L)) ++ singularCheckpointFileStatuses(Seq(10)),
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains =
-        "Did not get the last delta file version 15 to compute Snapshot"
+        "Trying to load a non-existent version 15"
     )
   }
 
@@ -460,18 +471,21 @@ class SnapshotManagerSuite extends AnyFunSuite {
 
   test("getLogSegmentForVersion: versionToLoad not constructable from history") {
     val files = deltaFileStatuses(20L until 25L) ++ singularCheckpointFileStatuses(Seq(20))
-    // TODO this error message is misleading (delta-io/delta#2283)
     testExpectedError[RuntimeException](
       files,
       versionToLoad = Optional.of(15),
-      expectedErrorMessageContains = "Empty directory: /fake/path/to/table/_delta_log"
+      expectedErrorMessageContains = "Unable to reconstruct state at version 15"
     )
     testExpectedError[RuntimeException](
       files,
       startCheckpoint = Optional.of(20),
       versionToLoad = Optional.of(15),
-      expectedErrorMessageContains = "Empty directory: /fake/path/to/table/_delta_log"
+      expectedErrorMessageContains = "Unable to reconstruct state at version 15"
     )
+    // what about the corrupt listing of 20.json, ..., 22.checkpoint when requesting 20.json?
+    //  - confirm that this is corrupt
+    // we test this below in
+    // "getLogSegmentForVersion: corrupted log missing json files / no way to construct history"
   }
 
   /* ------------------- CORRUPT DELTA LOG FILE LISTINGS ------------------ */
@@ -498,7 +512,7 @@ class SnapshotManagerSuite extends AnyFunSuite {
 
     /* ----------  version to load is 15 (greater than latest checkpoint/delta file) ---------- */
     // (?) different error messages
-    testExpectedError[IllegalStateException](
+    testExpectedError[RuntimeException](
       fileList,
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains = "Trying to load a non-existent version 15"

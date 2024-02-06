@@ -110,6 +110,29 @@ public class SnapshotManager {
         return getSnapshotAtInit(tableClient);
     }
 
+    /**
+     * Construct the snapshot for the given table at the version provided.
+     * TODO add details about what errors it throws w.r.t. the version provided?
+     *
+     * @param tableClient Instance of {@link TableClient} to use.
+     * @param version     The snapshot version to construct
+     * @return
+     * @throws TableNotFoundException
+     */
+    public Snapshot getSnapshotAt(
+            TableClient tableClient,
+            Long version) throws TableNotFoundException {
+
+        Optional<LogSegment> logSegmentOpt = getLogSegmentForVersion(
+            tableClient,
+            Optional.empty(), /* startCheckpointOpt */
+            Optional.of(version) /* versionToLoadOpt */);
+
+        return logSegmentOpt
+            .map(logSegment -> createSnapshot(logSegment, tableClient))
+            .orElseThrow(() -> new TableNotFoundException(dataPath.toString()));
+    }
+
     ////////////////////
     // Helper Methods //
     ////////////////////
@@ -182,10 +205,12 @@ public class SnapshotManager {
      * Returns the delta files and checkpoint files starting from the given `startVersion`.
      * `versionToLoad` is an optional parameter to set the max bound. It's usually used to load a
      * table snapshot for a specific version.
+     * If no delta files exist below the max bound versionToLoad and at least one delta file exists,
+     * throws an exception that the state is not reconstructable.
      *
      * @param startVersion  the version to start. Inclusive.
      * @param versionToLoad the optional parameter to set the max version we should return.
-     *                      Inclusive.
+     *                      Inclusive. Must be >= startVersion if provided.
      * @return Some array of files found (possibly empty, if no usable commit files are present), or
      * None if the listing returned no files at all.
      */
@@ -193,6 +218,13 @@ public class SnapshotManager {
         TableClient tableClient,
         long startVersion,
         Optional<Long> versionToLoad) {
+        versionToLoad.ifPresent(v ->
+            checkArgument(v >= startVersion,
+                String.format(
+                    "versionToLoad=%s provided is less than startVersion=%s",
+                    versionToLoad.get(),
+                    startVersion)
+            ));
         logger.debug("startVersion: {}, versionToLoad: {}", startVersion, versionToLoad);
 
         return listFromOrNone(
@@ -221,6 +253,25 @@ public class SnapshotManager {
                         .orElse(true);
 
                     if (!versionWithinRange) {
+                        // If we haven't taken any files yet and the first file we see is greater
+                        // than the versionToLoad then the versionToLoad is not reconstructable
+                        // from the existing logs
+                        if (output.isEmpty()) {
+                            // TODO this should be a public exception
+                            // We can include the log retention and checkpoint retention confs
+                            // to provide more information
+                            // (see logFileNotFoundException in DeltaErrors)
+                            throw new RuntimeException(
+                                String.format(
+                                    "Unable to reconstruct state at version %s as the " +
+                                        "transaction log has been truncated due to manual " +
+                                        "deletion or the log retention policy and checkpoint " +
+                                        "retention policy.",
+                                    versionToLoad.get()));
+                            // TODO: if we want we can retrieve the earliest recreatable commit here
+                            //  to include in the error message
+                        }
+
                         break;
                     }
 
@@ -314,18 +365,17 @@ public class SnapshotManager {
         TableClient tableClient,
         Optional<Long> startCheckpoint,
         Optional<Long> versionToLoad) {
-        // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
-        // deltaVersion=0.
-        // TODO when implementing time-travel don't list from startCheckpoint if
-        //  startCheckpoint > versionToLoad
+        // Only use startCheckpoint if it is <= versionToLoad
+        Optional<Long> startCheckpointToUse = startCheckpoint
+            .filter(v -> !versionToLoad.isPresent() || v <= versionToLoad.get());
         final Optional<List<FileStatus>> newFiles =
             listDeltaAndCheckpointFiles(
                 tableClient,
-                startCheckpoint.orElse(0L),
+                startCheckpointToUse.orElse(0L), // List from 0 if no starting checkpoint
                 versionToLoad);
         return getLogSegmentForVersion(
             tableClient,
-            startCheckpoint,
+            startCheckpointToUse,
             versionToLoad,
             newFiles);
     }
@@ -369,7 +419,7 @@ public class SnapshotManager {
             // We can't construct a snapshot because the directory contained no usable commit
             // files... but we can't return Optional.empty either, because it was not truly empty.
             throw new RuntimeException(
-                String.format("Empty directory: %s", logPath)
+                String.format("No delta files found in the directory: %s", logPath)
             );
         } else if (newFiles.isEmpty()) {
             // The directory may be deleted and recreated and we may have stale state in our
@@ -475,6 +525,24 @@ public class SnapshotManager {
                 Arrays.toString(deltaVersionsAfterCheckpoint.toArray())
             ));
 
+        final long newVersion = deltaVersionsAfterCheckpoint.isEmpty() ?
+            newCheckpointOpt.get().version : deltaVersionsAfterCheckpoint.getLast();
+
+        // In the case where `deltasAfterCheckpoint` is empty, `deltas` should still not be empty,
+        // they may just be before the checkpoint version unless we have a bug in log cleanup.
+        if (deltas.isEmpty()) {
+            throw new IllegalStateException(
+                String.format("Could not find any delta files for version %s", newVersion)
+            );
+        }
+
+        versionToLoadOpt.filter(v -> v != newVersion).ifPresent(v -> {
+            // TODO this should be a public exception
+            // add what version is available? (newVersion?)
+            throw new RuntimeException(
+                String.format("Trying to load a non-existent version %s", v));
+        });
+
         // We may just be getting a checkpoint file after the filtering
         if (!deltaVersionsAfterCheckpoint.isEmpty()) {
             if (deltaVersionsAfterCheckpoint.getFirst() != newCheckpointVersion + 1) {
@@ -490,26 +558,6 @@ public class SnapshotManager {
                 deltaVersionsAfterCheckpoint,
                 Optional.of(newCheckpointVersion + 1),
                 versionToLoadOpt);
-        }
-
-        // TODO: double check newCheckpointOpt.get() won't error out
-
-        final long newVersion = deltaVersionsAfterCheckpoint.isEmpty() ?
-            newCheckpointOpt.get().version : deltaVersionsAfterCheckpoint.getLast();
-
-        // In the case where `deltasAfterCheckpoint` is empty, `deltas` should still not be empty,
-        // they may just be before the checkpoint version unless we have a bug in log cleanup.
-        if (deltas.isEmpty()) {
-            throw new IllegalStateException(
-                String.format("Could not find any delta files for version %s", newVersion)
-            );
-        }
-
-        if (versionToLoadOpt.map(v -> v != newVersion).orElse(false)) {
-            throw new IllegalStateException(
-                String.format("Trying to load a non-existent version %s",
-                    versionToLoadOpt.get())
-            );
         }
 
         final long lastCommitTimestamp = deltas.get(deltas.size() - 1).getModificationTime();

@@ -463,4 +463,71 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     }
     assert(e.getMessage.contains("Unsupported reader protocol version"))
   }
+
+  //////////////////////////////////////////////////////////////////////////////////
+  // getSnapshotAtVersion end-to-end tests (log segment tests in SnapshotManagerSuite)
+  //////////////////////////////////////////////////////////////////////////////////
+
+  test("getSnapshotAtVersion: basic end-to-end read") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      (0 to 10).foreach { i =>
+        spark.range(i*10, i*10 + 10).write
+          .format("delta")
+          .mode("append")
+          .save(path)
+      }
+      // Read a checkpoint version
+      checkTable(
+        path = path,
+        expectedAnswer = (0L to 99L).map(TestRow(_)),
+        version = Some(9),
+        expectedVersion = Some(9)
+      )
+      // Read a JSON version
+      checkTable(
+        path = path,
+        expectedAnswer = (0L to 89L).map(TestRow(_)),
+        version = Some(8),
+        expectedVersion = Some(8)
+      )
+      // Read the current version
+      checkTable(
+        path = path,
+        expectedAnswer = (0L to 109L).map(TestRow(_)),
+        version = Some(10),
+        expectedVersion = Some(10)
+      )
+      // Cannot read a version that does not exist
+      val e = intercept[RuntimeException] {
+        Table.forPath(defaultTableClient, path)
+          .getSnapshotAtVersion(defaultTableClient, 11)
+      }
+      assert(e.getMessage.contains("Trying to load a non-existent version 11"))
+    }
+  }
+
+  test("getSnapshotAtVersion: end-to-end test with truncated delta log") {
+    val path = goldenTablePath("truncated-delta-log")
+    // Cannot read a version that has been truncated
+    val e = intercept[RuntimeException] {
+      Table.forPath(defaultTableClient, path)
+        .getSnapshotAtVersion(defaultTableClient, 9)
+    }
+    assert(e.getMessage.contains("Unable to reconstruct state at version 9"))
+    // Can read version 10
+    checkTable(
+      path = path,
+      expectedAnswer = (0L to 109L).map(TestRow(_)),
+      version = Some(10),
+      expectedVersion = Some(10)
+    )
+    // Can read version 11
+    checkTable(
+      path = path,
+      expectedAnswer = (0L until 50L).map(TestRow(_)),
+      version = Some(11),
+      expectedVersion = Some(11)
+    )
+  }
 }
