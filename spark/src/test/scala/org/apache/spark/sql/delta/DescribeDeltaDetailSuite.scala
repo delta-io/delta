@@ -284,15 +284,15 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     }
   }
 
-  private def withTempTableOrDir(useTable: Boolean = true)(table: String => Unit): Unit = {
+  private def withTempTableOrDir(useTable: Boolean = true)(f: String => Unit): Unit = {
     if (useTable) {
       val testTable = "test_table"
       withTable(testTable) {
-        table(testTable)
+        f(testTable)
       }
     } else {
       withTempDir { dir =>
-        table(s"delta.`$dir`")
+        f(s"delta.`$dir`")
       }
     }
   }
