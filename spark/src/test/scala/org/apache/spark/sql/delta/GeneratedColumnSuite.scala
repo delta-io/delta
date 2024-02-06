@@ -1029,10 +1029,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       )
       // Verify schema
       val f1 = StructField("c1", IntegerType, nullable = true)
-      val fieldMetadata = new MetadataBuilder()
-        .putString(GENERATION_EXPRESSION_METADATA_KEY, "c1 + 10")
-        .putString("comment", "foo")
-        .build()
+      val fieldMetadata = withGenerationExpression(f1.withComment("foo"), "c1 + 10").metadata
       val f2 = StructField("c2", IntegerType, nullable = true, metadata = fieldMetadata)
       val f3 = StructField("c3", IntegerType, nullable = false, metadata = fieldMetadata)
       val expectedSchema = StructType(f1 :: f2 :: f3 :: Nil)

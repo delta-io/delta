@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION
 
 import org.apache.spark.annotation._
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.util.GeneratedColumn
 import org.apache.spark.sql.types.{DataType, MetadataBuilder, StructField}
 
 /**
@@ -121,6 +122,11 @@ class DeltaColumnBuilder private[tables](
   def build(): StructField = {
     val metadataBuilder = new MetadataBuilder()
     if (generationExpr.nonEmpty) {
+      metadataBuilder.putString(
+        GeneratedColumn.GENERATION_EXPRESSION_METADATA_KEY,
+        generationExpr.get
+      )
+      // Still set the legacy Delta key for backward compatibility.
       metadataBuilder.putString(GENERATION_EXPRESSION_METADATA_KEY, generationExpr.get)
     }
     if (comment.nonEmpty) {

@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, GeneratedColumn => SparkGeneratedColumn}
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns._
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.streaming.{IncrementalExecution, StreamExecution}
@@ -175,6 +175,8 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
         updated = true
         val newMetadata = new MetadataBuilder()
           .withMetadata(field.metadata)
+          .remove(SparkGeneratedColumn.GENERATION_EXPRESSION_METADATA_KEY)
+          // Also remove the legacy Delta key.
           .remove(DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY)
           .build()
         field.copy(metadata = newMetadata)
