@@ -300,13 +300,13 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
   private def checkResultForClusteredTable(
       table: String,
       clusteringColumns: Array[String]): Unit = {
-    // Check SQL details
+    // Check SQL API.
     checkResult(
       sql(s"DESCRIBE DETAIL $table"),
       Seq("delta", Array.empty, clusteringColumns, 0),
       Seq("format", "partitionColumns", "clusteringColumns", "numFiles"))
 
-    // Check Scala details
+    // Check DeltaTable APIs.
     val isPathBased = table.startsWith("delta.")
     val deltaTable = if (isPathBased) {
       val path = table.replace("delta.`", "").dropRight(1)
