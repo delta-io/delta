@@ -1164,13 +1164,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * In addition, the expectation is that the list of actions performed by the transaction
    * remains an iterator and is never materialized, given the nature of a large commit potentially
    * touching many files.
+   * The `nonProtocolMetadataActions` parameter should only contain non-{protocol, metadata}
+   * actions only. If the protocol of table needs to be updated, it should be passed in the
+   * `newProtocolOpt` parameter.
    */
   def commitLarge(
-    spark: SparkSession,
-    actions: Iterator[Action],
-    op: DeltaOperations.Operation,
-    context: Map[String, String],
-    metrics: Map[String, String]): (Long, Snapshot) = {
+      spark: SparkSession,
+      nonProtocolMetadataActions: Iterator[Action],
+      newProtocolOpt: Option[Protocol],
+      op: DeltaOperations.Operation,
+      context: Map[String, String],
+      metrics: Map[String, String]): (Long, Snapshot) = {
     assert(!committed, "Transaction already committed.")
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
@@ -1189,7 +1193,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
-      val extraActions = Seq(commitInfo, metadata)
       // We don't expect commits to have more than 2 billion actions
       var commitSize: Int = 0
       var numAbsolutePaths: Int = 0
@@ -1204,7 +1207,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Initialize everything needed to maintain auto-compaction stats.
       partitionsAddedToOpt = Some(new mutable.HashSet[Map[String, String]])
       val acStatsCollector = createAutoCompactStatsCollector()
-      var allActions = (extraActions.toIterator ++ actions).map { action =>
+      var allActions =
+        Seq(commitInfo, metadata).toIterator ++
+          nonProtocolMetadataActions ++
+          newProtocolOpt.toIterator
+      allActions = allActions.map { action =>
         commitSize += 1
         action match {
           case a: AddFile =>
