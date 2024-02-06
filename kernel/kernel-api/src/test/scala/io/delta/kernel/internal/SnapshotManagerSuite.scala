@@ -482,10 +482,6 @@ class SnapshotManagerSuite extends AnyFunSuite {
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains = "Unable to reconstruct state at version 15"
     )
-    // what about the corrupt listing of 20.json, ..., 22.checkpoint when requesting 20.json?
-    //  - confirm that this is corrupt
-    // we test this below in
-    // "getLogSegmentForVersion: corrupted log missing json files / no way to construct history"
   }
 
   /* ------------------- CORRUPT DELTA LOG FILE LISTINGS ------------------ */
