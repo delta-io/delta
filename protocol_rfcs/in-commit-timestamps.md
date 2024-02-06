@@ -1,22 +1,34 @@
 # In-Commit Timestamps
 
-This RFC proposes a new Writer feature called In-Commit Timestamps which strongly associates a monotonically increasing timestamp with each commit by storing it in the commit's metadata. By storing the timestamp inside the commit, we get a more reliable commit timestamp which is robust against operations that can inadvertantly change the file modification timestamp. This makes the operations that rely on commit timestamps (e.g. Time Travel queries) more reliable.
+This RFC proposes a new Writer table feature called In-Commit Timestamps. When enabled, commit metadata includes a monotonically increasing timestamp that allows for reliable TIMESTAMP AS OF time travel even if filesystem operations change a commit file's modification timestamp.
 
 **For further discussions about this protocol change, please refer to the Github issue - https://github.com/delta-io/delta/issues/2532**
 
 --------
 
 
-> ***Change to existing section***
 ### Commit Provenance Information
+> ***Change to existing section***
+
 A delta file can optionally contain additional provenance information about what higher-level operation was being performed as well as who executed it.
 
-Implementations are free to store any valid JSON-formatted data via the `commitInfo` action ~~.~~ **as long as any table feature (see [In-Commit Timestamps](#in-commit-timestamps)) does not impose additional requirements on the data.**
+Implementations are free to store any valid JSON [object literal](https://www.w3schools.com/js/js_json_objects.asp) as the `commitInfo` action <ins>unless some table feature (e.g. [In-Commit Timestamps](#in-commit-timestamps)) imposes additional requirements on the data</ins>.
 
 When In-Commit Timestamp are enabled, writers are required to include a commitInfo action with every commit, which must include the `inCommitTimestamp` field.
 
-> ***New Section***
+#### Reader Requirements for AddCDCFile
+> ***Change to existing section***
+
+...
+3. Change data readers should return the following extra columns:
+
+    Field Name | Data Type | Description
+    -|-|-
+    _commit_version|`Long`| The table version containing the change. This can be derived from the name of the Delta log file that contains actions.
+    _commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. ~~This can be derived from the file modification time of the Delta log file that contains actions.~~ <ins> Depending on whether [In-Commit Timestamps](#in-commit-timestamps) are enabled, this is either the file modification time or the `inCommitTimestamp` stored in the `CommitInfo` action of the Delta log file with the version `__commit_version`.</ins>
+
 # In-Commit Timestamps
+> ***New Section***
 
 The In-Commit Timestamps writer feature strongly associates a monotonically increasing timestamp with each commit by storing it in the commit's metadata.
 
@@ -29,7 +41,7 @@ Enablement:
 
 When In-Commit Timestamps is enabled, then:
 1. Writers must write the `commitInfo` (see [Commit Provenance Information](#commit-provenance-information)) action in the commit.
-2. The `commitInfo` action must be the first action in the commits.
+2. The `commitInfo` action must be the first action in the commit.
 3. The `commitInfo` action must include a field named `inCommitTimestamp`, of type `timestamp` (see [Primitive Types](#primitive-types)), which represents the UTC time when the commit is considered to have succeeded. It is the larger of two values:
    - The UTC wall clock time at which the writer attempted the commit
    - One millisecond later than the previous commit's `inCommitTimestamp`
@@ -46,4 +58,6 @@ To correctly determine the commit timestamp for these tables, readers can use th
 1. For commits with version >= `delta.inCommitTimestampEnablementVersion`, readers should use the `inCommitTimestamp` field of the `commitInfo` action.
 2. For commits with version < `delta.inCommitTimestampEnablementVersion`, readers should use the file modification timestamp.
 
-
+Furthermore, for queries that need the state of the table as of timestamp X, readers should use the following rules:
+1. If timestamp X >= `delta.inCommitTimestampEnablementTimestamp`, only table versions >= `delta.inCommitTimestampEnablementVersion` should be considered for the query.
+2. Otherwise, only table versions less than `delta.inCommitTimestampEnablementVersion` should be considered for the query.
