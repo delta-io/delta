@@ -88,7 +88,7 @@ trait MergeIntoSchemaEvolutionMixin {
       }
     }
 
-    test(s"schema evolution - $name - enabled") {
+    test(s"schema evolution - $name") {
       withSQLConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
         append(targetData, partitionCols)
         withTempView("source") {
@@ -242,7 +242,7 @@ trait MergeIntoSchemaEvolutionBaseTests {
   /**
    * Helper method similar to [[testEvolution()]] but without aliasing the target and source tables
    * as 't' and 's'. Used to check that attribute resolution works correctly with schema evolution
-   * when using column name qualified with the actual table name: `target.column`.
+   * when using column name qualified with the actual table name: `table_name.column`.
    */
   def testEvolutionWithoutTableAliases(name: String)(
       targetData: => DataFrame,
@@ -1024,7 +1024,6 @@ trait MergeIntoSchemaEvolutionBaseTests {
 
   testNestedStructsEvolution("nested field assignment qualified with source alias")(
     target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
-    // target = Seq("""{ "a": 1 }"""),
     source = Seq("""{ "a": 3, "t": { "a": 5 } }"""),
     targetSchema = new StructType()
       .add("a", IntegerType)
@@ -1046,7 +1045,6 @@ trait MergeIntoSchemaEvolutionBaseTests {
 
   testNestedStructsEvolution("existing top-level column assignment qualified with target alias")(
     target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
-    // target = Seq("""{ "a": 1 }"""),
     source = Seq("""{ "a": 3, "t": { "a": 5 } }"""),
     targetSchema = new StructType()
       .add("a", IntegerType)
