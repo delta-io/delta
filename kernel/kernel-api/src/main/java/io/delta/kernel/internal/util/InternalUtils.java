@@ -17,7 +17,10 @@ package io.delta.kernel.internal.util;
 
 import java.io.IOException;
 import java.sql.Date;
+import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
@@ -29,7 +32,9 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.utils.CloseableIterator;
 
 public class InternalUtils {
-    private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
+    private static final LocalDate EPOCH_DAY = LocalDate.ofEpochDay(0);
+    private static final LocalDateTime EPOCH_DATETIME =
+        LocalDateTime.ofEpochSecond(0, 0, ZoneOffset.UTC);
 
     private InternalUtils() {}
 
@@ -83,7 +88,16 @@ public class InternalUtils {
      */
     public static int daysSinceEpoch(Date date) {
         LocalDate localDate = date.toLocalDate();
-        return (int) ChronoUnit.DAYS.between(EPOCH, localDate);
+        return (int) ChronoUnit.DAYS.between(EPOCH_DAY, localDate);
+    }
+
+    /**
+     * Utility method to get the number of microseconds since the unix epoch for the given timestamp
+     * interpreted in UTC.
+     */
+    public static long microsSinceEpoch(Timestamp timestamp) {
+        LocalDateTime localTimestamp = timestamp.toLocalDateTime();
+        return ChronoUnit.MICROS.between(EPOCH_DATETIME, localTimestamp);
     }
 
     /**
