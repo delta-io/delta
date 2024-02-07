@@ -116,7 +116,7 @@ public class SnapshotManager {
      *
      * @param tableClient Instance of {@link TableClient} to use.
      * @param version     The snapshot version to construct
-     * @return
+     * @return a {@link Snapshot} of the table at version {@code version}
      * @throws TableNotFoundException
      */
     public Snapshot getSnapshotAt(
@@ -205,8 +205,8 @@ public class SnapshotManager {
      * Returns the delta files and checkpoint files starting from the given `startVersion`.
      * `versionToLoad` is an optional parameter to set the max bound. It's usually used to load a
      * table snapshot for a specific version.
-     * If no delta files exist below the max bound versionToLoad and at least one delta file exists,
-     * throws an exception that the state is not reconstructable.
+     * If no delta or checkpoint files exist below the versionToLoad and at least one delta file
+     * exists, throws an exception that the state is not reconstructable.
      *
      * @param startVersion  the version to start. Inclusive.
      * @param versionToLoad the optional parameter to set the max version we should return.
@@ -222,7 +222,7 @@ public class SnapshotManager {
             checkArgument(v >= startVersion,
                 String.format(
                     "versionToLoad=%s provided is less than startVersion=%s",
-                    versionToLoad.get(),
+                    v,
                     startVersion)
             ));
         logger.debug("startVersion: {}, versionToLoad: {}", startVersion, versionToLoad);
