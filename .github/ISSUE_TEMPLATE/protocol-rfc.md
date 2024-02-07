@@ -20,7 +20,7 @@ For the next steps on how to proceed with the request, see the protocol RFC proc
 
 ### Willingness to contribute
 
-The Delta Lake Community encourages bug fix contributions. Would you or another member of your organization be willing to contribute a fix for this bug to the Delta Lake code base?
+The Delta Lake Community encourages protocol innovations. Would you or another member of your organization be willing to contribute this feature to the Delta Lake code base?
 
 - [ ] Yes. I can contribute.
 - [ ] Yes. I would be willing to contribute with guidance from the Delta Lake community.
