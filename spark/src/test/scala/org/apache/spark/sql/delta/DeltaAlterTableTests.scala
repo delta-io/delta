@@ -918,6 +918,37 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     }
   }
 
+  ddlTest("CHANGE COLUMN - add a comment to key of a MapType") {
+    withDeltaTable(Seq((1, "a"), (2, "b")).toDF("v1", "v2")
+      .withColumn("a", map('v1, 'v2))) { tableName =>
+    assertNotSupported(
+      s"ALTER TABLE $tableName CHANGE COLUMN a.key key int COMMENT 'a comment'",
+      "changing column 'a.key'",
+        "'key' with metadata '{\"comment\":\"a comment\"}'")
+    }
+  }
+
+  ddlTest("CHANGE COLUMN - add a comment to value of a MapType") {
+    withDeltaTable(Seq((1, "a"), (2, "b")).toDF("v1", "v2")
+      .withColumn("a", map('v1, 'v2))) { tableName =>
+    assertNotSupported(
+      s"ALTER TABLE $tableName CHANGE COLUMN a.value value string COMMENT 'a comment'",
+      "changing column 'a.value'",
+      "'value' with metadata '{\"comment\":\"a comment\"}'")
+    }
+  }
+
+  ddlTest("CHANGE COLUMN - add a comment to element of an array") {
+    withDeltaTable(Seq((1), (2)).toDF("v1")
+      .withColumn("a", array('v1))) { tableName =>
+    assertNotSupported(
+      s"ALTER TABLE $tableName CHANGE COLUMN a.element element string COMMENT 'a comment'",
+      "changing column 'a.element'",
+      "'element' with metadata '{\"comment\":\"a comment\"}'")
+
+    }
+  }
+
   ddlTest("CHANGE COLUMN - change name") {
     withDeltaTable(Seq((1, "a"), (2, "b")).toDF("v1", "v2")) { tableName =>
 
@@ -944,6 +975,37 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         s"ALTER TABLE $tableName CHANGE COLUMN struct.v1 v1 long",
         "'struct.v1' with type 'IntegerType (nullable = true)'",
         "'v1' with type 'LongType (nullable = true)'")
+    }
+  }
+
+  ddlTest("CHANGE COLUMN - change type of key of a MapType") {
+    withDeltaTable(Seq((1, 1), (2, 2)).toDF("v1", "v2")
+      .withColumn("a", map('v1, 'v2))) { tableName =>
+    assertNotSupported(
+      s"ALTER TABLE $tableName CHANGE COLUMN a.key key long",
+      "'a.key' with type 'IntegerType (nullable = false)'",
+      "'key' with type 'LongType (nullable = false)'")
+    }
+  }
+
+  ddlTest("CHANGE COLUMN - change type of value of a MapType") {
+    withDeltaTable(Seq((1, 1), (2, 2)).toDF("v1", "v2")
+      .withColumn("a", map('v1, 'v2))) { tableName =>
+    assertNotSupported(
+      s"ALTER TABLE $tableName CHANGE COLUMN a.value value long",
+      "'a.value' with type 'IntegerType (nullable = true)'",
+      "'value' with type 'LongType (nullable = true)'")
+    }
+  }
+
+
+  ddlTest("CHANGE COLUMN - change type of element of an ArrayType") {
+    withDeltaTable(Seq(1).toDF("v1")
+      .withColumn("a", array('v1))) { tableName =>
+    assertNotSupported(
+      s"ALTER TABLE $tableName CHANGE COLUMN a.element element long",
+      "'a.element' with type 'IntegerType (nullable = true)'",
+      "'element' with type 'LongType (nullable = true)'")
     }
   }
 
@@ -1377,6 +1439,30 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql("CREATE TABLE t(i STRING, c CHAR(4)) USING delta")
       sql("ALTER TABLE t CHANGE COLUMN c TYPE STRING")
       assert(spark.table("t").schema(1).dataType === StringType)
+    }
+  }
+
+  test("CHANGE COLUMN: allow to change map key from char to string type") {
+    withTable("t") {
+      sql("CREATE TABLE t(i STRING, m map<CHAR(4), INT>) USING delta")
+      sql("ALTER TABLE t CHANGE COLUMN m.key TYPE STRING")
+      assert(spark.table("t").schema(1).dataType === MapType(StringType, IntegerType))
+    }
+  }
+
+  test("CHANGE COLUMN: allow to change map value from char to string type") {
+    withTable("t") {
+      sql("CREATE TABLE t(i STRING, m map<INT, CHAR(4)>) USING delta")
+      sql("ALTER TABLE t CHANGE COLUMN m.value TYPE STRING")
+      assert(spark.table("t").schema(1).dataType === MapType(IntegerType, StringType))
+    }
+  }
+
+  test("CHANGE COLUMN: allow to change array element from char to string type") {
+    withTable("t") {
+      sql("CREATE TABLE t(i STRING, a array<CHAR(4)>) USING delta")
+      sql("ALTER TABLE t CHANGE COLUMN a.element TYPE STRING")
+      assert(spark.table("t").schema(1).dataType === ArrayType(StringType))
     }
   }
 

@@ -2260,6 +2260,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP" : {
+    "message" : [
+      "ALTER TABLE CHANGE COLUMN is not supported for changing column <oldColumns> to <newColumns>"
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP" : {
     "message" : [
       "Unsupported ALTER TABLE REPLACE COLUMNS operation. Reason: <details>",

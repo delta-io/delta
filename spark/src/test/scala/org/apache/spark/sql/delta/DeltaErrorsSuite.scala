@@ -1007,6 +1007,15 @@ trait DeltaErrorsSuiteBase
         ))
     }
     {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.alterTableChangeColumnException("oldColumns", "newColumns")
+      }
+      checkErrorMessage(e, Some("DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP"), Some("0AKDC"),
+        Some("ALTER TABLE CHANGE COLUMN is not supported for changing column oldColumns to " +
+          "newColumns"
+      ))
+    }
+    {
       val s1 = StructType(Seq(StructField("c0", IntegerType)))
       val s2 = StructType(Seq(StructField("c0", StringType)))
       val e = intercept[DeltaAnalysisException] {
