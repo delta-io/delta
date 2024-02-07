@@ -49,7 +49,7 @@ After creating the issue and discussing with the community, if a basic consensus
 
 Note:
 - For table features, it is strongly recommended that any experimental support for the feature uses a temporary feature name with a suffix like `-dev`. This will communicate to the users that are about to use experimental feature with no future compatibility guarantee.
-- Code related to a proposed feature should be merged into the main branch after the RFC PR has been opened for public review. However, until the RFC PR has been merged (that is, the proposal has been accepted), any code changes should be isolated from production code behind feature flags, etc. so that existing users are not affected in any way.
+- Code related to a proposed feature should not be merged into the main branch until the RFC attains "proposed" status (that is, the RFC PR has been through public review and merged). Until the RFC has been accepted (that is, the proposed changes have been merged into the Delta specification), any code changes should be isolated from production code behind feature flags, etc. so that existing users are not affected in any way.
 
 ###  **3. Finally, accept or reject the RFC** 
 For a RFC to be accepted, it must satisfy the following criteria:
