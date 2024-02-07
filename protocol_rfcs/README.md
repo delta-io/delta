@@ -2,11 +2,17 @@
 
 This directory contains information about the process of making Delta protocol changes via RFCs and all the RFCs that have been proposed since
  this process was adopted.
+ 
+ - [Table of RFCs](#table-of-rfcs)
+    - [Proposed RFCs](#proposed) 
+    - [Accepted RFCs](#accepted)
+    - [Rejected RFCs](#rejected)
+ - [RFC Process](#rfc-process)
 
 
 ## Table of RFCs
 
-This file contains the list of all the protocol RFCs that have been proposed. The details of each RFC are present in the associated .md file. 
+Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024, when this process was introduced.
 
 ### Proposed
 
@@ -52,12 +58,13 @@ For a RFC to be accepted, it must satisfy the following criteria:
 
 When the success criteria are met, then the protocol can be finalized by making a PR to make the following changes:
 -  Closely validate that the protocol spec changes are actually consistent with the production implementation.
--  Cross-link the PR with the original issue with "closes #xxx" as now we are ready to close the issue. 
+-  Cross-link the PR with the original issue with "closes #xxx" as now we are ready to close the issue. In addition, update the title of the issue to say `[ACCEPTED]` to make it obvious how the proposal was resolved.
 -  Update `protocol.md`.
 -  Move the RFC doc to the `accepted` subdirectory, and update the state in index.md.
 -  Remove the temporary/preview suffix like `-dev` in the table feature name from all the code. 
 
 However, if the RFC is to be rejected, then make a PR to do the following changes:
+- Cross-link the PR with the original issue with "closes #xxx" as now we are ready to close the issue. In addition, update the title of the issue to say `[REJECTED]` to make it obvious how the proposal was resolved.
  - Move the RFC doc to the `rejected` subdirectory.
  - Update the state in `index.md`.
  - Remove any experimental/preview code related to the feature.
