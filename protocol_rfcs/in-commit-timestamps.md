@@ -42,8 +42,8 @@ Enablement:
 When In-Commit Timestamps is enabled, then:
 1. Writers must write the `commitInfo` (see [Commit Provenance Information](#commit-provenance-information)) action in the commit.
 2. The `commitInfo` action must be the first action in the commit.
-3. The `commitInfo` action must include a field named `inCommitTimestamp`, of type `long` (see [Primitive Types](#primitive-types)), which represents the UTC time in milliseconds when the commit is considered to have succeeded. It is the larger of two values:
-   - The UTC wall clock time at which the writer attempted the commit
+3. The `commitInfo` action must include a field named `inCommitTimestamp`, of type `long` (see [Primitive Types](#primitive-types)), which represents the Unix time in milliseconds when the commit is considered to have succeeded. It is the larger of two values:
+   - The Unix wall clock time at which the writer attempted the commit
    - One millisecond later than the previous commit's `inCommitTimestamp`
 4. If the table has commits from a period when this feature was not enabled, provenance information around when this feature was enabled must be tracked in table properties:
    - The property `delta.inCommitTimestampEnablementVersion` must be used to track the version of the table when this feature was enabled.
