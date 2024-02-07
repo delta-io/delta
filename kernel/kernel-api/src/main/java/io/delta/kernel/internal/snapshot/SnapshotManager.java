@@ -154,7 +154,8 @@ public class SnapshotManager {
     }
 
     /**
-     * Returns an iterator containing a list of files found from the provided path
+     * Returns an iterator containing a list of files found in the _delta_log directory starting
+     * with the startVersion. Returns None if no files are found or the directory is missing.
      */
     private Optional<CloseableIterator<FileStatus>> listFromOrNone(
         TableClient tableClient,
@@ -307,7 +308,7 @@ public class SnapshotManager {
      *                        latest
      *                        version of the table.
      * @return Some LogSegment to build a Snapshot if files do exist after the given
-     * startCheckpoint. None, if the directory was missing or empty.
+     * startCheckpoint. None, if the delta log directory was missing or empty.
      */
     public Optional<LogSegment> getLogSegmentForVersion(
         TableClient tableClient,
