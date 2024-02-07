@@ -51,9 +51,13 @@ public class SnapshotManager {
      * is `null`.
      */
     private AtomicReference<SnapshotHint> latestSnapshotHint;
+    private final Path logPath;
+    private final Path dataPath;
 
-    public SnapshotManager() {
+    public SnapshotManager(Path logPath, Path dataPath) {
         this.latestSnapshotHint = new AtomicReference<>();
+        this.logPath = logPath;
+        this.dataPath = dataPath;
     }
 
     private static final Logger logger = LoggerFactory.getLogger(SnapshotManager.class);
@@ -98,14 +102,12 @@ public class SnapshotManager {
      * Construct the latest snapshot for given table.
      *
      * @param tableClient Instance of {@link TableClient} to use.
-     * @param logPath     Where the Delta log files are located.
-     * @param dataPath    Where the Delta data files are located.
      * @return
      * @throws TableNotFoundException
      */
-    public Snapshot buildLatestSnapshot(TableClient tableClient, Path logPath, Path dataPath)
+    public Snapshot buildLatestSnapshot(TableClient tableClient)
         throws TableNotFoundException {
-        return getSnapshotAtInit(tableClient, logPath, dataPath);
+        return getSnapshotAtInit(tableClient);
     }
 
     ////////////////////
@@ -237,7 +239,7 @@ public class SnapshotManager {
      * Load the Snapshot for this Delta table at initialization. This method uses the
      * `lastCheckpoint` file as a hint on where to start listing the transaction log directory.
      */
-    private SnapshotImpl getSnapshotAtInit(TableClient tableClient, Path logPath, Path dataPath)
+    private SnapshotImpl getSnapshotAtInit(TableClient tableClient)
         throws TableNotFoundException {
         Checkpointer checkpointer = new Checkpointer(logPath);
         Optional<CheckpointMetaData> lastCheckpointOpt =
