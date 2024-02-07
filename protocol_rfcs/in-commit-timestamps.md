@@ -42,7 +42,7 @@ Enablement:
 When In-Commit Timestamps is enabled, then:
 1. Writers must write the `commitInfo` (see [Commit Provenance Information](#commit-provenance-information)) action in the commit.
 2. The `commitInfo` action must be the first action in the commit.
-3. The `commitInfo` action must include a field named `inCommitTimestamp`, of type `timestamp` (see [Primitive Types](#primitive-types)), which represents the UTC time when the commit is considered to have succeeded. It is the larger of two values:
+3. The `commitInfo` action must include a field named `inCommitTimestamp`, of type `long` (see [Primitive Types](#primitive-types)), which represents the UTC time in milliseconds when the commit is considered to have succeeded. It is the larger of two values:
    - The UTC wall clock time at which the writer attempted the commit
    - One millisecond later than the previous commit's `inCommitTimestamp`
 4. If the table has commits from a period when this feature was not enabled, provenance information around when this feature was enabled must be tracked in table properties:
@@ -53,11 +53,11 @@ When In-Commit Timestamps is enabled, then:
 ## Recommendations for Readers of Tables with In-Commit Timestamps
 
 For tables with In-Commit timestamps enabled, readers should use the `inCommitTimestamp` as the commit timestamp for operations like time travel.
-If a table has commits from a period before In-Commit timestamps were enabled, the table property `delta.inCommitTimestampEnablementVersion` would be set and can be used to identify commits that don't have `inCommitTimestamp`.
+If a table has commits from a period before In-Commit timestamps were enabled, the table properties `delta.inCommitTimestampEnablementVersion` and `delta.inCommitTimestampEnablementTimestamp` would be set and can be used to identify commits that don't have `inCommitTimestamp`.
 To correctly determine the commit timestamp for these tables, readers can use the following rules:
 1. For commits with version >= `delta.inCommitTimestampEnablementVersion`, readers should use the `inCommitTimestamp` field of the `commitInfo` action.
 2. For commits with version < `delta.inCommitTimestampEnablementVersion`, readers should use the file modification timestamp.
 
-Furthermore, for queries that need the state of the table as of timestamp X, readers should use the following rules:
-1. If timestamp X >= `delta.inCommitTimestampEnablementTimestamp`, only table versions >= `delta.inCommitTimestampEnablementVersion` should be considered for the query.
+Furthermore, when attempting timestamp-based time travel where table state must be fetched as of `timestamp X`, readers should use the following rules:
+1. If `timestamp X` >= `delta.inCommitTimestampEnablementTimestamp`, only table versions >= `delta.inCommitTimestampEnablementVersion` should be considered for the query.
 2. Otherwise, only table versions less than `delta.inCommitTimestampEnablementVersion` should be considered for the query.
