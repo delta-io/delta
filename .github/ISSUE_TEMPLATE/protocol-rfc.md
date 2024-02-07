@@ -1,7 +1,7 @@
 
 ---
 name: Protocol Change Request
-about: Use this template for reporting a bug
+about: Use this template to propose a new feature that impacts the Delta protocol specification
 labels: 'protocol'
 title: '[PROTOCOL RFC]'
 
