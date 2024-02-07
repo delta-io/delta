@@ -4,9 +4,9 @@ This directory contains information about the process of making Delta protocol c
  this process was adopted.
  
  - [Table of RFCs](#table-of-rfcs)
-    - [Proposed RFCs](#proposed) 
-    - [Accepted RFCs](#accepted)
-    - [Rejected RFCs](#rejected)
+    - [Proposed RFCs](#proposed-rfcs)
+    - [Accepted RFCs](#accepted-rfcs)
+    - [Rejected RFCs](#rejected-rfcs)
  - [RFC Process](#rfc-process)
 
 
@@ -14,22 +14,22 @@ This directory contains information about the process of making Delta protocol c
 
 Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024, when this process was introduced.
 
-### Proposed
+### Proposed RFCs
 
-| RFC name | RFC file | Github issue | Date proposed |
+| Date proposed | RFC file | Github issue | RFC title |
 |:-|:-|:-|:-|
-| My Table Feature | my_table_feature.md | https://github.com/delta-io/delta/issues/XXXX | 2023-02-05 | <!-- remove this when adding the first RFC -->
+| 2023-02-05 | [my_table_feature.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/my_table_feature.md) | https://github.com/delta-io/delta/issues/XXXX | My Table Feature | <!-- remove this when adding the first RFC -->
 |...|||||
 
-### Accepted
+### Accepted RFCs
 
-| RFC name | RFC file | Github issue | Date proposed | Date accepted |
+| Date proposed | Date accepted | RFC file | Github issue | RFC title |
 |:-|:-|:-|:-|:-|
 |...|||||
 
-### Rejected
+### Rejected RFCs
 
-| RFC name | RFC file | Github issue | Date proposed | Date rejected |
+| Date proposed | Date rejected | RFC file | Github issue | RFC title |
 |:-|:-|:-|:-|:-|
 |...|||||
 
