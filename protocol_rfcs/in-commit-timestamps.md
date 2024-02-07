@@ -22,13 +22,13 @@ When In-Commit Timestamp are enabled, writers are required to include a commitIn
 ...
 3. Change data readers should return the following extra columns:
 
-    Field Name | Data Type | Description
-    -|-|-
-    _commit_version|`Long`| The table version containing the change. This can be derived from the name of the Delta log file that contains actions.
-    _commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. ~~This can be derived from the file modification time of the Delta log file that contains actions.~~ <ins> Depending on whether [In-Commit Timestamps](#in-commit-timestamps) are enabled, this is either the file modification time or the `inCommitTimestamp` stored in the `CommitInfo` action of the Delta log file with the version `__commit_version`.</ins>
+Field Name | Data Type | Description
+-|-|-
+_commit_version|`Long`| The table version containing the change. This can be derived from the name of the Delta log file that contains actions.
+_commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. ~~This can be derived from the file modification time of the Delta log file that contains actions.~~ <ins> Depending on whether [In-Commit Timestamps](#in-commit-timestamps) are enabled, this is either the file modification time or the `inCommitTimestamp` stored in the `CommitInfo` action of the Delta log file with the version `__commit_version`.</ins>
 
 # In-Commit Timestamps
-> ***New Section***
+> ***New Section after the [Clustered Table](#clustered-table) section***
 
 The In-Commit Timestamps writer feature strongly associates a monotonically increasing timestamp with each commit by storing it in the commit's metadata.
 
