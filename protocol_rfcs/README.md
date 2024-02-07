@@ -18,8 +18,7 @@ Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024,
 
 | Date proposed | RFC file | Github issue | RFC title |
 |:-|:-|:-|:-|
-| 2023-02-05 | [my_table_feature.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/my_table_feature.md) | https://github.com/delta-io/delta/issues/XXXX | My Table Feature | <!-- remove this when adding the first RFC -->
-|...|||||
+| 2023-02-02 | [in-commit-timestamps.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/in-commit-timestamps.md) | https://github.com/delta-io/delta/issues/2532 | In-Commit Timestamps |
 
 ### Accepted RFCs
 
