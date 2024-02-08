@@ -152,7 +152,7 @@ interface CommitStore {
    *
    * @return a list of `Commit` which are tracked by commit-owner.
    * 
-   */	
+   */ 
     def getCommits(startVersion: Long): Seq[Commit]
 
   /**
@@ -297,7 +297,6 @@ E.g.
 }
 ```
 
-
 ## Writer Requirements for Managed Commits
 
 When supported and active:
@@ -305,6 +304,7 @@ When supported and active:
 - Writer must do commits via the commit-owner's commit protocol and it must not write the backfilled commit files directly.
 - Writer must not write checkpoints or log compaction files for the commits that are not backfilled.
 - Metadata cleanup must always preserve the newest k >= 1 backfilled commits.
+
 ## Reader Requirements for Managed Commits
 Managed commits is a writer feature. So it doesn't put any restrictions on the reader.
 
