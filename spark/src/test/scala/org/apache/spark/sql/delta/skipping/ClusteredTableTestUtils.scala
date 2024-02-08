@@ -65,14 +65,13 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
   protected def verifyDescribeHistoryOperationParameters(
       table: String
   ): Unit = {
-    val deltaLog = if (table.startsWith("tahoe.") || table.startsWith("delta.")) {
+    val (deltaLog, snapshot) = if (table.startsWith("tahoe.") || table.startsWith("delta.")) {
       // Path based table.
-      DeltaLog.forTable(spark, table.drop(6).replace("`", ""))
+      DeltaLog.forTableWithSnapshot(spark, table.drop(6).replace("`", ""))
     } else {
-      DeltaLog.forTable(spark, TableIdentifier(table))
+      DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))
     }
-    val clusteringColumns =
-      ClusteringColumnInfo.extractLogicalNames(deltaLog.unsafeVolatileSnapshot)
+    val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshot)
     val lastEvent = deltaLog.history.getHistory(Some(1)).head
     lastEvent.operation match {
       case "CLUSTER BY" =>
