@@ -249,8 +249,7 @@ object SchemaUtils extends DeltaLogging {
   def isPartitionCompatible(
       newPartitionColumns: Seq[String] = Seq.empty,
       oldPartitionColumns: Seq[String] = Seq.empty): Boolean = {
-    (newPartitionColumns.isEmpty && oldPartitionColumns.isEmpty) ||
-      (newPartitionColumns == oldPartitionColumns)
+    newPartitionColumns == oldPartitionColumns
   }
 
   /**

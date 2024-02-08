@@ -124,6 +124,11 @@ trait DeltaSourceBase extends Source
     unsafeFlagEnabled
   }
 
+  protected lazy val allowUnsafeStreamingReadOnPartitionColumnChanges: Boolean =
+    spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_PARTITION_COLUMN_CHANGE
+    )
+
   /**
    * Flag that allows user to disable the read-compatibility check during stream start which
    * protects against an corner case in which verifyStreamHygiene could not detect.
@@ -601,7 +606,8 @@ trait DeltaSourceBase extends Source
     if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
       assert(!trackingMetadataChange, "should not check schema change while tracking it")
 
-      if (!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata)) {
+      if (!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
+        allowUnsafeStreamingReadOnPartitionColumnChanges)) {
         throw DeltaErrors.blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges(
           spark,
           oldMetadata.schema,
@@ -642,8 +648,11 @@ trait DeltaSourceBase extends Source
             isStreamingFromColumnMappingTable &&
               allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
               backfilling,
-          newPartitionColumns = newMetadata.partitionColumns,
-          oldPartitionColumns = oldMetadata.partitionColumns
+            // Partition column change will be ignored if user enable the unsafe flag
+            newPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
+              else newMetadata.partitionColumns,
+            oldPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
+              else oldMetadata.partitionColumns
         )) {
         // Only schema change later than the current read snapshot/schema can be retried, in other
         // words, backfills could never be retryable, because we have no way to refresh
