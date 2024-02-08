@@ -3154,6 +3154,37 @@ abstract class MergeIntoSuiteBase
     expectedErrorMsgForDataSetTempView = null
   )
 
+  test("merge correctly handle field metadata") {
+    withTable("source", "target") {
+      // Create a target table with user metadata (comments) and internal metadata (column mapping
+      // information) on both a top-level column and a nested field.
+      sql(
+        """
+          |CREATE TABLE target(
+          |  key int not null COMMENT 'data column',
+          |  value int not null,
+          |  cstruct struct<foo int COMMENT 'foo field'>)
+          |USING DELTA
+          |TBLPROPERTIES (
+          |  'delta.minReaderVersion' = '2',
+          |  'delta.minWriterVersion' = '5',
+          |  'delta.columnMapping.mode' = 'name')
+        """.stripMargin
+      )
+      sql(s"INSERT INTO target VALUES (0, 0, null)")
+
+      sql("CREATE TABLE source (key int not null, value int not null) USING DELTA")
+      sql(s"INSERT INTO source VALUES (1, 1)")
+
+      executeMerge(
+        tgt = "target",
+        src = "source",
+        cond = "source.key = target.key",
+        update(condition = "target.key = 1", set = "target.value = 42"),
+        updateNotMatched(condition = "target.key = 100", set = "target.value = 22"))
+    }
+  }
+
   test("UDT Data Types - simple and nested") {
     withTable("source") {
       withTable("target") {
