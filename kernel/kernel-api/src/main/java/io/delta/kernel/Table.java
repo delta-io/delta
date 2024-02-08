@@ -49,4 +49,11 @@ public interface Table {
      */
     Snapshot getLatestSnapshot(TableClient tableClient)
         throws TableNotFoundException;
+
+    /**
+     * The fully qualified path of this {@link Table} instance.
+     *
+     * @return the table path
+     */
+    String getPath();
 }
