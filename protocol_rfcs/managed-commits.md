@@ -12,7 +12,7 @@ the filesystem (s3, abfs etc). This allows us to deal with various limitations o
 2. No way to tie commit ownership to a table.
     - In general, Delta tables have no way to advertise that they are managed by catalog or LogStore X (at endpoint Y)
     - There is no central entity that needs to be contacted in order to commit to the table. So if the underlying file system is missing _putIfAbsent_ semantics, then there is no way to ensure that a commit is atomic, which could lead
-       to lost writes when concurrent writers are writing to the table.
+      to lost writes when concurrent writers are writing to the table.
 
 --------
 
@@ -131,33 +131,33 @@ The following is an example of a possible commit-owner API which some Java-based
 ```java
 
 interface CommitStore {
-  /**
-   * Commits the given set of `actions` to the given commit `version`.
-   *
-   * @param version The version we want to commit.
-   * @param actions Actions that need to be committed.
-   *
-   * returns CommitResponse which has details around the new committed delta file.
-   */
-   def commit(
-     version: Long,
-     actions: Iterator[String]): CommitResponse
+    /**
+     * Commits the given set of `actions` to the given commit `version`.
+     *
+     * @param version The version we want to commit.
+     * @param actions Actions that need to be committed.
+     *
+     * returns CommitResponse which has details around the new committed delta file.
+     */
+    def commit(
+        version: Long,
+        actions: Iterator[String]): CommitResponse
 
-  /**
-   * API to get the un-backfilled commits for the table represented by the given `tablePath` after
-   * the given `startVersion`. The returned commits are contiguous and in ascending version order.
-   * Note that the first version returned by this API may not be equal to the `startVersion`. This
-   * happens when few versions starting from `startVersion` are already backfilled and so
-   * CommitStore may have stopped tracking them.
-   *
-   * @return a list of `Commit` which are tracked by commit-owner.
-   * 
-   */ 
+    /**
+     * API to get the un-backfilled commits for the table represented by the given `tablePath` after
+     * the given `startVersion`. The returned commits are contiguous and in ascending version order.
+     * Note that the first version returned by this API may not be equal to the `startVersion`. This
+     * happens when few versions starting from `startVersion` are already backfilled and so
+     * CommitStore may have stopped tracking them.
+     *
+     * @return a list of `Commit` which are tracked by commit-owner.
+     *
+     */
     def getCommits(startVersion: Long): Seq[Commit]
 
-  /**
-   * API to ask the commit-owner to backfill all commits <= given `version`.
-   */
+    /**
+     * API to ask the commit-owner to backfill all commits <= given `version`.
+     */
     def backfillToVersion(version: Long): Unit
 }
 ```
@@ -291,7 +291,7 @@ E.g.
     "configuration":{
       "appendOnly": "true",
       "delta.managedCommitOwnerName": "commit-owner-1",
-      "delta.managedCommitOwnerConf": ""
+      "delta.managedCommitOwnerConf": "{\"batchSize\":\"10\",\"endpoint\":\"http://sample-url.com/commit\"}"
     }
   }
 }
