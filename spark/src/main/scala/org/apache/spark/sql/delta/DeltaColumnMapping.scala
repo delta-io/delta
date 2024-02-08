@@ -628,7 +628,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * As of now, `newMetadata` is column mapping read compatible with `oldMetadata` if
    * no rename column or drop column has happened in-between.
    */
-  def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata
+  def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata,
     allowUnsafeReadOnPartitionChanges: Boolean = false): Boolean = {
     // Helper function to check no column mapping schema change and no repartition
     def hasNoColMappingAndRepartitionSchemaChange(
