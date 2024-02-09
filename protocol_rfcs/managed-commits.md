@@ -109,9 +109,9 @@ A commit file is a [delta file](#delta-log-entries) that contains the actions wh
 There are two types of commit files:
 1. **Un-backfilled commit files**: These reside in the `_delta_log/_commits` directory.
     - The filename must follow the pattern: `<version>.<uuid>.json`. Here the `uuid` is a random UUID that is generated for each commit and `version` is the version `v` which is being committed, zero-padded to 20 digits.
-    - The commit-owner must track these files until they are backfilled to the `_delta_log` directory.
     - Mere existence of these files does not mean that the file is a _valid_ commit. It might correspond to a failed or in-progress commit.
       The commit-owner is the source of truth around which un-backfilled commits are valid.
+    - The commit-owner must track these files until they are backfilled to the `_delta_log` directory.
 
 2. **Backfilled commit files**: These reside in the `_delta_log` directory.
     - The filename must follow the pattern: `<version>.json`. Here the `version` is the version `v` which is being committed, zero-padded to 20 digits.
