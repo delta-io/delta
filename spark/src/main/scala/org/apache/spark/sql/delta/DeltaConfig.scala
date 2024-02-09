@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -723,6 +724,27 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "needs to be a boolean."
   )
+
+  val MANAGED_COMMIT_OWNER_NAME = buildConfig[Option[String]](
+    "managedCommits.commitOwner-dev",
+    null,
+    v => Option(v),
+    _ => true,
+    """The managed commit provider name for this table. This is used to determine which
+      |implementation of CommitStore to use when committing to this table. This must be present
+      |for tables where managed-commits are enabled.
+      |""".stripMargin)
+
+  val MANAGED_COMMIT_OWNER_CONF = buildConfig[Map[String, String]](
+    "managedCommits.commitOwnerConf-dev",
+    null,
+    v => JsonUtils.fromJson[Map[String, String]](Option(v).getOrElse("{}")),
+    _ => true,
+    """The managed commit provider name for this table. This is used to determine which
+      |implementation of CommitStore to use when committing to this table. This must be present
+      |for tables where managed-commits are enabled.
+      |""".stripMargin)
+
 }
 
 object DeltaConfigs extends DeltaConfigsBase
