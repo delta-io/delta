@@ -77,7 +77,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
    * @param fileIndex the new file index
    */
   private def replaceFileIndex(target: LogicalPlan, fileIndex: TahoeFileIndex): LogicalPlan = {
-    val rowIndexCol = AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FILED.dataType)();
+    val rowIndexCol = AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FIELD.dataType)();
     var fileMetadataCol: AttributeReference = null
 
     val newTarget = target.transformUp {
@@ -85,11 +85,11 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         hfsr @ HadoopFsRelation(_, _, _, _, format: DeltaParquetFileFormat, _), _, _, _) =>
         fileMetadataCol = format.createFileMetadataCol()
         // Take the existing schema and add additional metadata columns
-        val newDataSchema = StructType(hfsr.dataSchema).add(ROW_INDEX_STRUCT_FILED)
+        val newDataSchema =
+          StructType(hfsr.dataSchema).add(ROW_INDEX_STRUCT_FIELD)
         val finalOutput = l.output ++ Seq(rowIndexCol, fileMetadataCol)
         // Disable splitting and filter pushdown in order to generate the row-indexes
         val newFormat = format.copy(isSplittable = false, disablePushDowns = true)
-
         val newBaseRelation = hfsr.copy(
           location = fileIndex,
           dataSchema = newDataSchema,
