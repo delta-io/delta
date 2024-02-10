@@ -48,7 +48,7 @@ object FileNames {
    */
   def uuidDeltaFile(logPath: Path, version: Long): Path = {
     val basePath = commitDirPath(logPath)
-    val uuid = UUID.randomUUID.toString
+    val uuid = UUID.randomUUID
     new Path(basePath, f"$version%020d.$uuid.commit.json")
   }
 
@@ -175,13 +175,9 @@ object FileNames {
       unapply(f.getPath).map { case (_, version) => (f, version) }
     def unapply(path: Path): Option[(Path, Long)] = {
       val parentDirName = path.getParent.getName
-      parentDirName match {
-        case COMMIT_SUBDIR =>
-          // If parent is _commits dir, then match against uuid commit file.
-          uuidDeltaFileRegex.unapplySeq(path.getName).map(path -> _.head.toLong)
-        case _ =>
-          deltaFileRegex.unapplySeq(path.getName).map(path -> _.head.toLong)
-      }
+      // If parent is _commits dir, then match against uuid commit file.
+      val regex = if (parentDirName == COMMIT_SUBDIR) uuidDeltaFileRegex else deltaFileRegex
+      regex.unapplySeq(path.getName).map(path -> _.head.toLong)
     }
   }
   object ChecksumFile {

@@ -77,9 +77,9 @@ trait CommitStore {
     updatedActions: UpdatedActions): CommitResponse
 
   /**
-   * API to get the un-backfilled commits for the table represented by the given `tablePath` after
-   * the given `startVersion`. The returned commits are contiguous and in ascending version order.
-   * version.
+   * API to get the un-backfilled commits for the table represented by the given `tablePath`.
+   * Commits older than `startVersion`, or newer than `endVersion` (if given), are ignored. The
+   * returned commits are contiguous and in ascending version order.
    * Note that the first version returned by this API may not be equal to the `startVersion`. This
    * happens when few versions starting from `startVersion` are already backfilled and so
    * CommitStore may have stopped tracking them.
