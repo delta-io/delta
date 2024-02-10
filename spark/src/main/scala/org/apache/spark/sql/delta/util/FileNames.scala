@@ -39,7 +39,13 @@ object FileNames {
   /** Returns the delta (json format) path for a given delta file. */
   def deltaFile(path: Path, version: Long): Path = new Path(path, f"$version%020d.json")
 
-  /** Returns the delta (json format) path for a given delta file. */
+  /**
+   * Returns the un-backfilled uuid formatted delta (json format) path for a given version.
+   *
+   * @param logPath The root path of the delta log.
+   * @param version The version of the delta file.
+   * @return The path to the un-backfilled delta file: <logPath>/_commits/<version>.<uuid>.json
+   */
   def uuidDeltaFile(logPath: Path, version: Long): Path = {
     val basePath = commitDirPath(logPath)
     val uuid = UUID.randomUUID.toString
