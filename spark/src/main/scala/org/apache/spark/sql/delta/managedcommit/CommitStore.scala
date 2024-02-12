@@ -108,14 +108,14 @@ object CommitStoreProvider {
   private val nameToBuilderMapping = mutable.Map.empty[String, CommitStoreBuilder]
 
   /** Returns a [[CommitStore]] for the given `name` and `conf` */
-  def getCommitStore(name: String, conf: Map[String, String]): CommitStore = {
+  def getCommitStore(name: String, conf: Map[String, String]): CommitStore = synchronized {
     nameToBuilderMapping.get(name).map(_.build(conf)).getOrElse {
       throw new IllegalArgumentException(s"Unknown commit store: $name")
     }
   }
 
   /** Registers a new [[CommitStoreBuilder]] with the [[CommitStoreProvider]] */
-  def registerBuilder(commitStoreBuilder: CommitStoreBuilder): Unit = {
+  def registerBuilder(commitStoreBuilder: CommitStoreBuilder): Unit = synchronized {
     nameToBuilderMapping.get(commitStoreBuilder.name) match {
       case Some(commitStoreBuilder: CommitStoreBuilder) =>
         throw new IllegalArgumentException(s"commit store: ${commitStoreBuilder.name} already" +
@@ -142,8 +142,7 @@ object CommitStoreProvider {
   // Visible only for UTs
   private[delta] def clearNonDefaultBuilders(): Unit = synchronized {
     val initialCommitStoreBuilderNames = initialCommitStoreBuilders.map(_.name).toSet
-    val extraKeys = nameToBuilderMapping.keys.filterNot(initialCommitStoreBuilderNames.contains)
-    nameToBuilderMapping --= extraKeys
+    nameToBuilderMapping.retain((k, _) => initialCommitStoreBuilderNames.contains(k))
   }
 
   val initialCommitStoreBuilders = Seq[CommitStoreBuilder](
