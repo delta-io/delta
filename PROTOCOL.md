@@ -883,7 +883,7 @@ Assuming that this DV is stored relative to an `s3://mytable/` directory, the ab
 ```json
 {
   "storageType" : "i",
-  "pathOrInlineDv" : "^Bg9^0rr910000000000iXQKl0rr91000935c8X    g000621onSa",
+  "pathOrInlineDv" : "^Bg9^0rr910000000000iXQKl0rr91000935c8Xg000621onSa",
   "sizeInBytes" : 40,
   "cardinality" : 4
 }
