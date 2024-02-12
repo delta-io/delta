@@ -1175,13 +1175,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def nestedFieldsNeedRename(columns : Set[String], baseSchema : StructType): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_NESTED_FIELDS_NEED_RENAME",
-      messageParameters = Array(columns.mkString("[", ", ", "]"), formatSchema(baseSchema))
-    )
-  }
-
   def inSubqueryNotSupportedException(operation: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_IN_SUBQUERY",
