@@ -883,12 +883,12 @@ Assuming that this DV is stored relative to an `s3://mytable/` directory, the ab
 ```json
 {
   "storageType" : "i",
-  "pathOrInlineDv" : "wi5b=000010000siXQKl0rr91000f55c8Xg0@@D72lkbi5=-{L",
+  "pathOrInlineDv" : "^Bg9^0rr910000000000iXQKl0rr91000935c8X    g000621onSa",
   "sizeInBytes" : 40,
-  "cardinality" : 6
+  "cardinality" : 4
 }
 ```
-The row indexes encoded in this DV are: 3, 4, 7, 11, 18, 29.
+The row indexes encoded in this DV are: 0, 2, 4, 6
 
 ## Reader Requirements for Deletion Vectors
 If a snapshot contains logical files with records that are invalidated by a DV, then these records *must not* be returned in the output.
