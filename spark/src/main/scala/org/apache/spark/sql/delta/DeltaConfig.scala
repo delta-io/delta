@@ -730,9 +730,10 @@ trait DeltaConfigsBase extends DeltaLogging {
     null,
     v => Option(v),
     _ => true,
-    """The managed commit provider name for this table. This is used to determine which
-      |implementation of CommitStore to use when committing to this table. This must be present
-      |for tables where managed-commits are enabled.
+    """The managed commit owner name for this table. This is used to determine which
+      |implementation of CommitStore to use when committing to this table. If this property is not
+      |set, the table will be considered as file system table and commits will be done via
+      |atomically publishing the commit file.
       |""".stripMargin)
 
   val MANAGED_COMMIT_OWNER_CONF = buildConfig[Map[String, String]](
@@ -740,10 +741,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     null,
     v => JsonUtils.fromJson[Map[String, String]](Option(v).getOrElse("{}")),
     _ => true,
-    """The managed commit provider name for this table. This is used to determine which
-      |implementation of CommitStore to use when committing to this table. This must be present
-      |for tables where managed-commits are enabled.
-      |""".stripMargin)
+    "A string-to-string map of configuration properties for the managed commit owner.")
 
 }
 
