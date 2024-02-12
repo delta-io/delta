@@ -1,16 +1,17 @@
 # Managed Commits
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/2598**
 
-This RFC proposes a new table feature `managedCommits` which changes the way Delta Lake manages commits.
+This RFC proposes a new table feature `managedCommits` which changes the way Delta Lake performs commits.
 
-Today’s Delta commit protocol relies on the filesystem to provide commit atomicity. This feature request is to allow delta tables which gets commit atomicity using an external commit-owner and not
-the filesystem (s3, abfs etc). This allows us to deal with various limitations of delta:
+Today’s Delta commit protocol relies on the filesystem to provide commit atomicity. This feature request is to allow Delta tables which gets commit atomicity using an external commit-owner and not
+the filesystem (s3, abfs etc). This allows us to deal with various limitations of Delta:
 
 1. No reliable way for the table's owner to participate in commits.
     - The table's owner (such as a catalog) cannot reliably stay in sync with the table state, nor reject commit attempts it wouldn’t like, because it doesn’t even know about writes until they are already durable (and visible to readers).
     - No clear path to transactions that could span multiple tables and/or involve catalog updates, because filesystem commits cannot be made conditionally or atomically.
 2. No way to tie commit ownership to a table.
-    - In general, Delta tables have no way to advertise that they are managed by catalog or LogStore X (at endpoint Y)
+    - In general, Delta tables have no way to advertise that they are managed by catalog or LogStore X (at endpoint Y).
+    - No way to express different commit owners for different tables. For example, Delta spark supports a notion of a "[log store](https://delta.io/blog/2022-05-18-multi-cluster-writes-to-delta-lake-storage-in-s3/)" or commit service for enforcing commit atomicity in S3, but it's a cluster-level setting that affects all tables indiscriminately, with no way to validate whether the mapping is even correct.
     - There is no central entity that needs to be contacted in order to commit to the table. So if the underlying file system is missing _putIfAbsent_ semantics, then there is no way to ensure that a commit is atomic, which could lead
       to lost writes when concurrent writers are writing to the table.
 
@@ -21,12 +22,13 @@ the filesystem (s3, abfs etc). This allows us to deal with various limitations o
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#delta-log-entries)***
 
-Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and together with checkpoints make up the log of all changes that have occurred to a table. They are the unit of atomicity for a table.
+Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and together with checkpoints make up the log of all changes that have occurred to a table.
+~~Delta files are the unit of atomicity for a table, and are named using the next available version number, zero-padded to 20 digits.~~
+<ins>They are the unit of atomicity for a table.</ins>
 
-**Note:** If [managed commits](#managed-commits) table feature is enabled on the table, recently committed delta files may reside in the `_delta_log/_commits` directory. Delta clients have to contact
-the corresponding commit-owner of the table in order to find the information about the [un-backfilled commits](#commit-backfills).
-
-The delta files in `_delta_log` directory are named using the next available version number, zero-padded to 20 digits.
+<ins>**Note:** If [managed commits](#managed-commits) table feature is enabled on the table, recently committed delta files may reside in the `_delta_log/_commits` directory. Delta clients have to contact
+the corresponding commit-owner of the table in order to find the information about the [un-backfilled commits](#commit-backfills).</ins>
+<ins>The delta files in `_delta_log` directory are named using the next available version number, zero-padded to 20 digits.</ins>
 
 For example:
 
@@ -34,7 +36,7 @@ For example:
 ./_delta_log/00000000000000000000.json
 ```
 
-The delta files in the `_delta_log/_commits` directory have a UUID embedded into them and follow the pattern `<version>.<uuid>.json`, where the version corresponds to the next attempt version zero-padded to 20 digits.
+<ins>The delta files in the `_delta_log/_commits` directory have a UUID embedded into them and follow the pattern `<version>.<uuid>.json`, where the version corresponds to the next attempt version zero-padded to 20 digits.</ins>
 
 For example:
 
@@ -48,32 +50,26 @@ For example:
 The `_delta_log/_commits` directory may contain uncommitted delta files. The [commit-owner](#commit-owner) is the source of truth about which of those delta
 files map to committed versions. Refer to [managed commits](#managed-commits) for more details.
 
-Delta files use newline-delimited JSON format, where every action is stored as a single line JSON document.
+~~Delta files use new-line delimited JSON format, where every action is stored as a single line JSON document.
+A delta file, `n.json`, contains an atomic set of [_actions_](#Actions) that should be applied to the previous table state, `n-1.json`, in order to the construct `n`th snapshot of the table.
+An action changes one aspect of the table's state, for example, adding or removing a file.~~
+
+<ins>Delta files use newline-delimited JSON format, where every action is stored as a single line JSON document.
 A delta file, corresponding to version `n`, contains an atomic set of [_actions_](#Actions) that should be applied to the previous table state, corresponding to `n-1`, in order to construct the `n`th snapshot of the table.
-An action changes one aspect of the table's state, for example, adding or removing a file.
+An action changes one aspect of the table's state, for example, adding or removing a file.</ins>
 
 ### Metadata Cleanup
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#metadata-cleanup)***
 
-The _delta_log directory grows over time as more and more commits and checkpoints are accumulated.
-Implementations are recommended to delete expired commits and checkpoints in order to reduce the directory size.
-The following steps could be used to do cleanup of the DeltaLog directory:
-1. Identify a threshold (in days) uptil which we want to preserve the deltaLog. Let's refer to
-   midnight UTC of that day as `cutOffTimestamp`. The newest commit not newer than the `cutOffTimestamp` is
-   the `cutoffCommit`, because a commit exactly at midnight is an acceptable cutoff. We want to retain everything including and after the `cutoffCommit`.
 2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`.
    We need to preserve the `cutOffCheckpoint` and all commits after it, because we need them to enable
    time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
-   - **If no checkpoint can be found, do not proceed with metadata cleanup as there is nothing to cleanup.**
-3. Delete all [delta log entries](#delta-log-entries and [checkpoint files](#checkpoints) before the
+    - <ins>If no `cutOffCheckpoint` can be found, do not proceed with metadata cleanup as there is nothing to cleanup.</ins>
+3. Delete all [delta log entries](#delta-log-entries) and [checkpoint files](#checkpoints) before the
    `cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files) having
    startVersion <= `cutOffCheckpoint`'s version.
-4. Now read all the available [checkpoints](#checkpoints-1) in the _delta_log directory and identify
-   the corresponding [sidecar files](#sidecar-files). These sidecar files need to be protected.
-5. List all the files in `_delta_log/_sidecars` directory, preserve files that are less than a day
-   old (as of midnight UTC), to not break in-progress checkpoints. Also preserve the referenced sidecar files
-   identified in Step-4 above. Delete everything else.
+    - <ins>Also delete all the [un-backfilled commit files](#commit-files) having version <= `cutOffCheckpoint`'s version from the `_delta_log/_commits` directory.</ins>
 
 
 
@@ -199,7 +195,7 @@ Backfilling is the process of copying the un-backfilled commits i.e. `_delta_log
 With the help of backfilling, the [delta files](#delta-log-entries) are visible even to the filesystem based Delta clients that do not
 understand `managed-commits`. Backfill also allows the commit-owner to reduce the number of commits it must track internally.
 
-Backfill must be sequential. In other words, a commit-owner must ensure that backfill of commit `v-1` is complete before initiating backfill of commit 'v'.
+Backfill must be sequential. In other words, a commit-owner must ensure that backfill of commit `v-1` is complete before initiating backfill of commit `v`.
 
 `commit-owner`s are encouraged to backfill the commits frequently. This has several advantages:
 1. Filesystem-based Delta implementations may only understand backfilled commits, and frequent backfill allows them to access the most recent table snapshots.
@@ -207,6 +203,8 @@ Backfill must be sequential. In other words, a commit-owner must ensure that bac
 3. Some maintenance operations (such as checkpoints, log compaction, and metadata cleanup) can be performed only on the backfilled part of the table. Refer to the [Maintenance operations on managed-commit tables](#maintenance-operations-on-managed-commit-tables) section for more details.
 
 The commit-owner also needs to expose an API to backfill the commits. This will allow clients to ask the commit-owner to backfill the commits if needed in order to do some maintenance operations.
+
+Since commit backfills may happen at a later point in time, so the `file modification timestamp` of the backfilled file might be very different than the time of actual commit. For this reason, the `managed-commit` feature depends on another writer feature called [in-commit-timestamps](#TODO-Put-Relevant-Link) to make the commit timestamps more reliable. Refer to [Writer Requirements for Managed Commits](#writer-requirements-for-managed-commits) section for more details.
 
 ## Converting an existing filesystem based table to managed-commit table
 In order for a commit-owner to successfully take over an existing filesystem-based Delta table, the following invariants must hold:
@@ -290,7 +288,7 @@ Delta clients have two choices to read such tables:
     - In the above example, such delta implementation will see version 7 as the latest snapshot.
 2. A client that understands managed commits can supplement the file listing result by contacting the commit-owner for information about un-backfilled commits, in order to get the most
    recent snapshot of the table.
-    - In the above example, a delta implementation could get information about versions 0 through 7 from _delta_log directory and get information about un-backfilled commits (v8, v9) from the commit-owner.
+    - In the above example, a delta implementation could get information about versions 0 through 7 from `_delta_log` directory and get information about un-backfilled commits (v8, v9) from the commit-owner.
 
 ## Maintenance operations on managed-commit tables
 
@@ -308,22 +306,23 @@ The managed-commit feature is supported and active when:
     - A commit-owner can store additional information (e.g. configuration information such as service endpoints) in this field, for use by the commit-owner client (it is opaque to the Delta client).
     - This field should never include secrets such as auth tokens or credentials, because any reader with access to the table's storage location can see them.
 
-Note that a table is in invalid state if the change-metadata contains the `delta.managedCommits.commitOwner` property but the table does not have the `managedCommits` feature in the `protocol` action or vice versa.
+Note that a table is in invalid state if the change-metadata contains the `delta.managedCommits.commitOwner` property but the table does not have the `managedCommits` feature in the `protocol` action (or vice versa).
 
 E.g.
 ```json
 {
-  "metaData":{
-    "id":"af23c9d7-fff1-4a5a-a2c8-55c59bd782aa",
-    "format":{"provider":"parquet","options":{}},
-    "schemaString":"...",
-    "partitionColumns":[],
-    "configuration":{
-      "appendOnly": "true",
-      "delta.managedCommits.commitOwner": "commit-owner-1",
-       "delta.managedCommits.commitOwnerConf": "{\"endpoint\":\"http://sample-url.com/commit\", \"authenticationMode\":\"oauth2\"}"
-    }
-  }
+   "metaData":{
+      "id":"af23c9d7-fff1-4a5a-a2c8-55c59bd782aa",
+      "format":{"provider":"parquet","options":{}},
+      "schemaString":"...",
+      "partitionColumns":[],
+      "configuration":{
+         "appendOnly": "true",
+         "delta.managedCommits.commitOwner": "commit-owner-1",
+         "delta.managedCommits.commitOwnerConf":
+             "{\"endpoint\":\"http://sample-url.com/commit\", \"authenticationMode\":\"oauth2\"}"
+      }
+   }
 }
 ```
 
