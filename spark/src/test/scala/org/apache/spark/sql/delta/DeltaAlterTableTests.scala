@@ -1351,7 +1351,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
           },
           errorClass = "_LEGACY_ERROR_TEMP_2330",
           parameters = Map(
-            "fieldName" -> fieldName,
+            "fieldName" -> fieldName
           )
         )
       }
