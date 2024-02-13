@@ -1342,24 +1342,38 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN m.value DROP NOT NULL")
       sql(s"ALTER TABLE $tableName CHANGE COLUMN a.element DROP NOT NULL")
 
-      def assertChangeNullabilityFails(fieldName: String, dropNotNull: Boolean): Unit = {
-        val setOrDrop = if (dropNotNull) "DROP" else "SET"
-        val statement = s"ALTER TABLE $tableName CHANGE COLUMN $fieldName $setOrDrop NOT NULL"
-        checkError(
-          exception = intercept[AnalysisException] {
-            sql(statement)
-          },
-          errorClass = "_LEGACY_ERROR_TEMP_2330",
-          parameters = Map(
-            "fieldName" -> fieldName
-          )
-        )
-      }
-
       // Changing the nullability of map/array fields is not allowed.
-      assertChangeNullabilityFails("m.key", dropNotNull = true)
-      assertChangeNullabilityFails("m.value", dropNotNull = false)
-      assertChangeNullabilityFails("a.element", dropNotNull = false)
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN m.key DROP NOT NULL")
+        },
+        errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        parameters = Map(
+          "fieldPath" -> "m.key",
+          "oldType" -> "integer",
+          "oldNullability" -> "true",
+          "newType" -> "integer",
+          "newNullability" -> "false"
+        )
+      )
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN m.value SET NOT NULL")
+        },
+        errorClass = "_LEGACY_ERROR_TEMP_2330",
+        parameters = Map(
+          "fieldName" -> "m.value"
+        )
+      )
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.element SET NOT NULL")
+        },
+        errorClass = "_LEGACY_ERROR_TEMP_2330",
+        parameters = Map(
+          "fieldName" -> "a.element"
+        )
+      )
     }
   }
 
