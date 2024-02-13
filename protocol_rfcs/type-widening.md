@@ -130,7 +130,7 @@ The last two requirements related to `defaultRowCommitVersion` are a subset of t
 
 ## Reader Requirements for Type Widening
 When Type Widening is supported (when the `readerFeatures` field of a table's `protocol` action contains `enableTypeWidening`), then:
-- Readers must allow reading data files written before the table underwent any allowed type change and convert the values to the current, wider type.
+- Readers must allow reading data files written before the table underwent any allowed type change, and must convert such values to the current, wider type.
 
 ### Column Metadata
 > ***Change to existing section (underlined)***
