@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import static java.util.Objects.requireNonNull;
 
 import org.apache.parquet.io.api.Binary;
@@ -31,6 +32,7 @@ import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.DefaultKernelUtils;
+import static io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.MAX_BYTES_PER_PRECISION;
 
 /**
  * Parquet column writers for writing columnar vectors to Parquet files using the
@@ -60,7 +62,7 @@ class ParquetColumnWriters {
 
     /**
      * Create column vector writers for the given struct column vector.
-     * TODO: Having the ColumnarBatch as separate method complicates the code. ColumnarBatch is
+     * TODO: Having the ColumnarBatch as separate interface complicates the code. ColumnarBatch is
      * also a ColumnVector of type STRUCT.
      *
      * @param structColumnVector the column vector
@@ -128,6 +130,7 @@ class ParquetColumnWriters {
             } else if (precision <= ParquetSchemaUtils.DECIMAL_MAX_DIGITS_IN_LONG) {
                 return new DecimalLongWriter(colName, fieldIndex, columnVector);
             }
+            // TODO: Need to support legacy mode where all decimals are written as binary
             return new DecimalFixedBinaryWriter(colName, fieldIndex, columnVector);
         } else if (dataType instanceof DateType) {
             return new DateWriter(colName, fieldIndex, columnVector);
@@ -284,17 +287,39 @@ class ParquetColumnWriters {
     static class DecimalFixedBinaryWriter extends ColumnWriter {
         private final int precision;
         private final int scale;
+        private final int numBytes;
+        private final byte[] reusedBuffer;
 
         DecimalFixedBinaryWriter(String name, int fieldId, ColumnVector columnVector) {
             super(name, fieldId, columnVector);
             DecimalType decimalType = (DecimalType) columnVector.getDataType();
             this.precision = decimalType.getPrecision();
             this.scale = decimalType.getScale();
+            this.numBytes = MAX_BYTES_PER_PRECISION.get(precision);
+            this.reusedBuffer = new byte[numBytes];
         }
 
         @Override
         void writeNonNullRowValue(RecordConsumer recordConsumer, int rowId) {
-            throw new UnsupportedOperationException("TODO: Implement DecimalFixedBinaryWriter");
+            byte[] bytes = columnVector.getDecimal(rowId).unscaledValue().toByteArray();
+
+            Binary binary;
+            if (bytes.length == numBytes) {
+                // If the length of the underlying byte array of the unscaled `BigInteger`
+                // happens to be `numBytes`, just reuse it, so that we don't bother
+                // copying it to `reusedBuffer`.
+                binary = Binary.fromReusedByteArray(bytes);
+            } else {
+                // Otherwise, the length must be less than `numBytes`.  In this case we copy
+                // contents of the underlying bytes with padding sign bytes to `decimalBuffer`
+                // to form the result fixed-length byte array.
+                byte signByte = (bytes[0] < 0) ? (byte) -1 : (byte) 0;
+                Arrays.fill(reusedBuffer, 0, numBytes - bytes.length, signByte);
+                System.arraycopy(bytes, 0, reusedBuffer, numBytes - bytes.length, bytes.length);
+                binary = Binary.fromReusedByteArray(reusedBuffer);
+            }
+
+            recordConsumer.addBinary(binary);
         }
     }
 

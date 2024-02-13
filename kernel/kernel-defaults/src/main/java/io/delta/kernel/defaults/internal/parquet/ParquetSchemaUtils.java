@@ -44,6 +44,24 @@ class ParquetSchemaUtils {
     public static final int DECIMAL_MAX_DIGITS_IN_INT = 9;
     public static final int DECIMAL_MAX_DIGITS_IN_LONG = 18;
 
+    /**
+     * Maximum number of bytes required to store a decimal of a given precision as
+     * FIXED_LEN_BYTE_ARRAY in Parquet.
+     */
+    public static final List<Integer> MAX_BYTES_PER_PRECISION;
+
+    static {
+        List<Integer> maxBytesPerPrecision = new ArrayList<>();
+        for (int i = 1; i <= 38; i++) {
+            int numBytes = 1;
+            while (Math.pow(2.0, 8 * numBytes - 1) < Math.pow(10.0, i)) {
+                numBytes += 1;
+            }
+            maxBytesPerPrecision.add(numBytes);
+        }
+        MAX_BYTES_PER_PRECISION = Collections.unmodifiableList(maxBytesPerPrecision);
+    }
+
     private ParquetSchemaUtils() {
     }
 
@@ -197,6 +215,7 @@ class ParquetSchemaUtils {
             } else {
                 type = primitive(FIXED_LEN_BYTE_ARRAY, repetition)
                         .as(LogicalTypeAnnotation.decimalType(scale, precision))
+                        .length(MAX_BYTES_PER_PRECISION.get(precision))
                         .named(name);
             }
         } else if (dataType instanceof StringType) {

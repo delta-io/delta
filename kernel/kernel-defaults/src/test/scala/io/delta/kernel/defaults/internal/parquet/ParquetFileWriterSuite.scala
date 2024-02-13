@@ -18,7 +18,7 @@ package io.delta.kernel.defaults.internal.parquet;
 import io.delta.golden.GoldenTableUtils.goldenTableFile
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.expressions.Column
+import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types._
 import io.delta.kernel.utils.{DataFileStatus, FileStatus}
@@ -54,55 +54,18 @@ import scala.collection.JavaConverters._
  * 4.3) verify the stats returned in (3) are correct using the Spark Parquet reader
  */
 class ParquetFileWriterSuite extends AnyFunSuite with TestUtils {
-  val ALL_TYPES_DATA = goldenTableFile("parquet-all-types").toString
-
-  private val ALL_TYPES_FILE_SCHEMA = new StructType()
-    .add("byteType", ByteType.BYTE)
-    .add("shortType", ShortType.SHORT)
-    .add("integerType", IntegerType.INTEGER)
-    .add("longType", LongType.LONG)
-    .add("floatType", FloatType.FLOAT)
-    .add("doubleType", DoubleType.DOUBLE)
-    .add("decimal", new DecimalType(10, 2))
-    .add("booleanType", BooleanType.BOOLEAN)
-    .add("stringType", StringType.STRING)
-    .add("binaryType", BinaryType.BINARY)
-    .add("dateType", DateType.DATE)
-    .add("timestampType", TimestampType.TIMESTAMP)
-    .add("nested_struct",
-      new StructType()
-        .add("aa", StringType.STRING)
-        .add("ac",
-          new StructType()
-            .add("aca", IntegerType.INTEGER)))
-    .add("array_of_prims", new ArrayType(IntegerType.INTEGER, true))
-    .add("array_of_arrays", new ArrayType(new ArrayType(IntegerType.INTEGER, true), true))
-    .add("array_of_structs",
-      new ArrayType(
-        new StructType()
-          .add("ab", LongType.LONG), true))
-    .add("map_of_prims", new MapType(IntegerType.INTEGER, LongType.LONG, true))
-    .add("map_of_rows",
-      new MapType(
-        IntegerType.INTEGER,
-        new StructType().add("ab", LongType.LONG),
-        true))
-    .add("map_of_arrays",
-      new MapType(
-        LongType.LONG,
-        new ArrayType(IntegerType.INTEGER, true),
-        true))
+  import ParquetFileWriterSuite._
 
   Seq(200, 1000, 1048576).foreach { targetFileSize =>
-    test(s"write all types - no stats collected - targetFileSize: $targetFileSize") {
+    test(s"write all types - no stats - targetFileSize: $targetFileSize") {
       withTempDir { tempPath =>
         val targetDir = tempPath.getAbsolutePath
 
-        val columnarBatches = readParquetFilesUsingKernelAsColumnarBatches(
-          ALL_TYPES_DATA, ALL_TYPES_FILE_SCHEMA)
+        val dataToWrite =
+          readParquetUsingKernelAsColumnarBatches(ALL_TYPES_DATA, ALL_TYPES_FILE_SCHEMA)
+            .map(_.toFiltered)
 
-        writeParquetFilesUsingKernel(
-          columnarBatches, targetDir, targetFileSize, Seq.empty)
+        writeToParquetUsingKernel(dataToWrite, targetDir, targetFileSize)
 
         val expectedNumParquetFiles = targetFileSize match {
           case 200 => 100
@@ -112,15 +75,82 @@ class ParquetFileWriterSuite extends AnyFunSuite with TestUtils {
         }
         assert(parquetFileCount(targetDir) === expectedNumParquetFiles)
 
-        verify(targetDir, columnarBatches)
+        verify(targetDir, dataToWrite)
       }
     }
   }
 
-  def verify(actualFileDir: String, expected: Seq[ColumnarBatch]): Unit = {
-    val filteredBatches = expected.map(_.toFiltered)
-    verifyUsingKernelReader(actualFileDir, filteredBatches)
-    verifyUsingSparkReader(actualFileDir, filteredBatches)
+  Seq(1048576, 2048576).foreach { targetFileSize =>
+    test(s"decimal all types - no stats - targetFileSize: $targetFileSize") {
+      withTempDir { tempPath =>
+        val targetDir = tempPath.getAbsolutePath
+
+        val dataToWrite =
+          readParquetUsingKernelAsColumnarBatches(DECIMAL_TYPES_DATA, DECIMAL_TYPES_FILE_SCHEMA)
+            .map(_.toFiltered)
+
+        writeToParquetUsingKernel(dataToWrite, targetDir, targetFileSize)
+
+        val expectedNumParquetFiles = targetFileSize match {
+          case 1048576 => 3
+          case 2048576 => 2
+          case _ => throw new IllegalArgumentException(s"Invalid targetFileSize: $targetFileSize")
+        }
+        assert(parquetFileCount(targetDir) === expectedNumParquetFiles)
+
+        verify(targetDir, dataToWrite)
+      }
+    }
+  }
+
+  Seq(200, 1000, 1048576).foreach { targetFileSize =>
+    test(s"write all types - filtered dataset, targetFileSize: $targetFileSize") {
+      withTempDir { tempPath =>
+        val targetDir = tempPath.getAbsolutePath
+
+        // byteValue is in the range [-72, 127] with null at every (value % 72 == 0) row
+        // File has total of 200 rows.
+        val predicate = new Predicate(">=", new Column("byteType"), Literal.ofInt(50))
+        val expectedRowCount = 128 /* no. of positive values */ - 1 /* one */ - 50 /* val < 50 */
+        val dataToWrite =
+          readParquetUsingKernelAsColumnarBatches(ALL_TYPES_DATA, ALL_TYPES_FILE_SCHEMA)
+            .map(_.toFiltered(predicate))
+
+        writeToParquetUsingKernel(dataToWrite, targetDir, targetFileSize = targetFileSize)
+
+        val expectedNumParquetFiles = targetFileSize match {
+          case 200 => 39
+          case 1000 => 11
+          case 1048576 => 1
+          case _ => throw new IllegalArgumentException(s"Invalid targetFileSize: $targetFileSize")
+        }
+        assert(parquetFileCount(targetDir) === expectedNumParquetFiles)
+        assert(parquetFileRowCount(targetDir) === expectedRowCount)
+
+        verify(targetDir, dataToWrite)
+      }
+    }
+  }
+
+  test(s"invalid target file size") {
+    withTempDir { tempPath =>
+      val targetDir = tempPath.getAbsolutePath
+      val dataToWrite =
+        readParquetUsingKernelAsColumnarBatches(DECIMAL_TYPES_DATA, DECIMAL_TYPES_FILE_SCHEMA)
+          .map(_.toFiltered)
+
+      Seq(-1, 0).foreach { targetFileSize =>
+        val e = intercept[IllegalArgumentException] {
+          writeToParquetUsingKernel(dataToWrite, targetDir, targetFileSize)
+        }
+        assert(e.getMessage.contains("Invalid target Parquet file size: " + targetFileSize))
+      }
+    }
+  }
+
+  def verify(actualFileDir: String, expected: Seq[FilteredColumnarBatch]): Unit = {
+    verifyUsingKernelReader(actualFileDir, expected)
+    verifyUsingSparkReader(actualFileDir, expected)
   }
 
   /**
@@ -164,22 +194,19 @@ class ParquetFileWriterSuite extends AnyFunSuite with TestUtils {
   }
 
   /**
-   * Write the [[ColumnarBatch]]es to Parquet files using the ParquetFileWriter and verify the
-   * data using the Kernel Parquet reader and Spark Parquet reader.
+   * Write the [[FilteredColumnarBatch]]es to Parquet files using the ParquetFileWriter and
+   * verify the data using the Kernel Parquet reader and Spark Parquet reader.
    */
-  def writeParquetFilesUsingKernel(
-    data: Seq[ColumnarBatch],
-    location: String,
-    targetFileSize: Long,
-    statsColumns: Seq[Column]): Seq[DataFileStatus] = {
+  def writeToParquetUsingKernel(
+      filteredData: Seq[FilteredColumnarBatch],
+      location: String,
+      targetFileSize: Long = 1024 * 1024,
+      statsColumns: Seq[Column] = Seq.empty): Seq[DataFileStatus] = {
     val parquetWriter = new ParquetFileWriter(
       configuration,
       new Path(location),
       targetFileSize,
       statsColumns.asJava)
-
-    val filteredData = data
-      .map(new FilteredColumnarBatch(_, Optional.empty()))
 
     parquetWriter
       .write(toCloseableIterator(filteredData.asJava.iterator()))
@@ -188,11 +215,11 @@ class ParquetFileWriterSuite extends AnyFunSuite with TestUtils {
 
   def readParquetFilesUsingKernel(
     actualFileDir: String, readSchema: StructType): Seq[TestRow] = {
-    val columnarBatches = readParquetFilesUsingKernelAsColumnarBatches(actualFileDir, readSchema)
+    val columnarBatches = readParquetUsingKernelAsColumnarBatches(actualFileDir, readSchema)
     columnarBatches.map(_.getRows).flatMap(_.toSeq).map(TestRow(_))
   }
 
-  def readParquetFilesUsingKernelAsColumnarBatches(
+  def readParquetUsingKernelAsColumnarBatches(
     actualFileDir: String, readSchema: StructType): Seq[ColumnarBatch] = {
     val parquetFiles = Files.list(Paths.get(actualFileDir))
       .iterator().asScala
@@ -220,10 +247,76 @@ class ParquetFileWriterSuite extends AnyFunSuite with TestUtils {
   }
 
   def parquetFileCount(path: String): Long = {
+    getParquetFiles(path).size
+  }
+
+  def parquetFileRowCount(path: String): Long = {
+    val files = getParquetFiles(path)
+
+    var rowCount = 0L
+    files.foreach { file =>
+      // read parquet file using spark and count.
+      rowCount = rowCount + spark.read.parquet(file).count()
+    }
+    rowCount
+  }
+
+  def getParquetFiles(path: String): Seq[String] = {
     Files.list(Paths.get(path))
       .iterator().asScala
       .map(_.toString)
       .filter(path => path.endsWith(".parquet"))
-      .toSeq.size
+      .toSeq
   }
+}
+
+object ParquetFileWriterSuite {
+  // Parquet file containing data of all supported types and variations
+  val ALL_TYPES_DATA = goldenTableFile("parquet-all-types").toString
+  // Schema of the data in `ALL_TYPES_DATA`
+  val ALL_TYPES_FILE_SCHEMA = new StructType()
+    .add("byteType", ByteType.BYTE)
+    .add("shortType", ShortType.SHORT)
+    .add("integerType", IntegerType.INTEGER)
+    .add("longType", LongType.LONG)
+    .add("floatType", FloatType.FLOAT)
+    .add("doubleType", DoubleType.DOUBLE)
+    .add("decimal", new DecimalType(10, 2))
+    .add("booleanType", BooleanType.BOOLEAN)
+    .add("stringType", StringType.STRING)
+    .add("binaryType", BinaryType.BINARY)
+    .add("dateType", DateType.DATE)
+    .add("timestampType", TimestampType.TIMESTAMP)
+    .add("nested_struct",
+      new StructType()
+        .add("aa", StringType.STRING)
+        .add("ac",
+          new StructType()
+            .add("aca", IntegerType.INTEGER)))
+    .add("array_of_prims", new ArrayType(IntegerType.INTEGER, true))
+    .add("array_of_arrays", new ArrayType(new ArrayType(IntegerType.INTEGER, true), true))
+    .add("array_of_structs",
+      new ArrayType(
+        new StructType()
+          .add("ab", LongType.LONG), true))
+    .add("map_of_prims", new MapType(IntegerType.INTEGER, LongType.LONG, true))
+    .add("map_of_rows",
+      new MapType(
+        IntegerType.INTEGER,
+        new StructType().add("ab", LongType.LONG),
+        true))
+    .add("map_of_arrays",
+      new MapType(
+        LongType.LONG,
+        new ArrayType(IntegerType.INTEGER, true),
+        true))
+
+  // Parquet file containing all variations (int, long and fixed binary) Decimal type data
+  val DECIMAL_TYPES_DATA = goldenTableFile("parquet-decimal-type").toString
+  // Schema of the data in `DECIMAL_TYPES_DATA`
+  val DECIMAL_TYPES_FILE_SCHEMA = new StructType()
+    .add("id", IntegerType.INTEGER)
+    .add("col1", new DecimalType(5, 1)) // stored as int
+    .add("col2", new DecimalType(10, 5)) // stored as long
+    .add("col3", new DecimalType(20, 5)) // stored as fixed binary
 }

@@ -68,7 +68,7 @@ public class ParquetFileWriter {
         this.configuration = requireNonNull(configuration, "configuration is null");
         this.location = requireNonNull(location, "directory is null");
         checkArgument(
-                targetMaxFileSize > 0, "invalid target Parquet file size: " + targetMaxFileSize);
+                targetMaxFileSize > 0, "Invalid target Parquet file size: " + targetMaxFileSize);
         this.targetMaxFileSize = targetMaxFileSize;
         this.statsColumns = requireNonNull(statsColumns, "statsColumns is null");
     }

@@ -93,6 +93,13 @@ trait TestUtils extends Assertions with SQLHelper {
     def toFiltered: FilteredColumnarBatch = {
       new FilteredColumnarBatch(batch, Optional.empty())
     }
+
+    def toFiltered(predicate: Predicate): FilteredColumnarBatch = {
+      val predicateEvaluator = defaultTableClient.getExpressionHandler
+        .getPredicateEvaluator(batch.getSchema, predicate)
+      val selVector = predicateEvaluator.eval(batch, Optional.empty())
+      new FilteredColumnarBatch(batch, Optional.of(selVector))
+    }
   }
 
   def withGoldenTable(tableName: String)(testFunc: String => Unit): Unit = {
