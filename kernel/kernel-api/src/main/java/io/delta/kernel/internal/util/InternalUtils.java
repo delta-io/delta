@@ -88,7 +88,7 @@ public class InternalUtils {
      */
     public static int daysSinceEpoch(Date date) {
         LocalDate localDate = date.toLocalDate();
-        return (int) ChronoUnit.DAYS.between(EPOCH_DAY, localDate);
+        return (int) localDate.toEpochDay();
     }
 
     /**

@@ -117,20 +117,6 @@ public abstract class BaseIntegration {
         return dataBatches;
     }
 
-    /**
-     * Remove unsupported top level delta types in Kernel from the schema. Unsupported data types
-     * include `TIMESTAMP`.
-     */
-    protected StructType removeUnsupportedType(StructType schema) {
-        List<StructField> filterList =
-            schema.fields().stream()
-                .filter(
-                    field -> !(field.getDataType() instanceof TimestampType)
-                ).collect(Collectors.toList());
-
-        return new StructType(filterList);
-    }
-
     protected void compareEqualUnorderd(ColumnarBatch expDataBatch,
         List<ColumnarBatch> actDataBatches) {
         Set<Integer> expDataRowsMatched = new HashSet<>();
