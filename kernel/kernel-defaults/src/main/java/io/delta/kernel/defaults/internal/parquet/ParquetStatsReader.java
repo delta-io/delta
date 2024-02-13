@@ -1,4 +1,4 @@
-package io.delta.kernel.defaults.internal.parquet;/*
+/*
  * Copyright (2023) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +13,7 @@ package io.delta.kernel.defaults.internal.parquet;/*
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package io.delta.kernel.defaults.internal.parquet;
 
 import java.io.IOException;
 import java.math.BigDecimal;
