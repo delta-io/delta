@@ -2262,7 +2262,7 @@
   },
   "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP" : {
     "message" : [
-      "ALTER TABLE CHANGE COLUMN is not supported for changing column <fieldPath> from <oldType> (nullable = <oldNullability>) to <newType> (nullable = <newNullability>)"
+      "ALTER TABLE CHANGE COLUMN is not supported for changing column <fieldPath> from <oldField> to <newField>"
     ],
     "sqlState" : "0AKDC"
   },

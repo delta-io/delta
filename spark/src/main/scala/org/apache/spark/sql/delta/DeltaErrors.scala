@@ -625,10 +625,8 @@ trait DeltaErrorsBase
       errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
       messageParameters = Array(
         fieldPath,
-        oldField.dataType.typeName,
-        oldField.nullable.toString,
-        newField.dataType.typeName,
-        newField.nullable.toString)
+        oldField.sql,
+        newField.sql)
     )
   }
 

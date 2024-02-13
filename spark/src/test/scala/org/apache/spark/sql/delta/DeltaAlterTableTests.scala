@@ -924,14 +924,14 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     withDeltaTable(df) { tableName =>
       checkError(
         exception = intercept[DeltaAnalysisException] {
-          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.key key int COMMENT 'a comment'")
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.key COMMENT 'a comment'")
         },
         errorClass = "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
         parameters = Map("fieldPath" -> "a.key")
       )
       checkError(
         exception = intercept[DeltaAnalysisException] {
-          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.value value int COMMENT 'a comment'")
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.value COMMENT 'a comment'")
         },
         errorClass = "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
         parameters = Map("fieldPath" -> "a.value")
@@ -945,10 +945,54 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     withDeltaTable(df) { tableName =>
       checkError(
         exception = intercept[DeltaAnalysisException] {
-          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.element element int COMMENT 'a comment'")
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.element COMMENT 'a comment'")
         },
         errorClass = "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
         parameters = Map("fieldPath" -> "a.element")
+      )
+    }
+  }
+
+  ddlTest("RENAME COLUMN - (unsupported) rename key/value of a MapType") {
+    val df = Seq((1, 1), (2, 2)).toDF("v1", "v2")
+      .withColumn("a", map('v1, 'v2))
+    withDeltaTable(df) { tableName =>
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"ALTER TABLE $tableName RENAME COLUMN a.key TO key2")
+        },
+        errorClass = "INVALID_FIELD_NAME",
+        parameters = Map(
+          "fieldName" -> "`a`.`key2`",
+          "path" -> "`a`"
+        )
+      )
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"ALTER TABLE $tableName RENAME COLUMN a.value TO value2")
+        },
+        errorClass = "INVALID_FIELD_NAME",
+        parameters = Map(
+          "fieldName" -> "`a`.`value2`",
+          "path" -> "`a`"
+        )
+      )
+    }
+  }
+
+  ddlTest("RENAME COLUMN - (unsupported) rename element of an array") {
+    val df = Seq(1, 2).toDF("v1")
+      .withColumn("a", array('v1))
+    withDeltaTable(df) { tableName =>
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"ALTER TABLE $tableName RENAME COLUMN a.element TO element2")
+        },
+        errorClass = "INVALID_FIELD_NAME",
+        parameters = Map(
+          "fieldName" -> "`a`.`element2`",
+          "path" -> "`a`"
+        )
       )
     }
   }
@@ -969,10 +1013,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "v1",
-          "oldType" -> "integer",
-          "oldNullability" -> "true",
-          "newType" -> "long",
-          "newNullability" -> "true"
+          "oldField" -> "v1: INT",
+          "newField" -> "v1: BIGINT"
         )
       )
     }
@@ -989,10 +1031,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "struct.v1",
-          "oldType" -> "integer",
-          "oldNullability" -> "true",
-          "newType" -> "long",
-          "newNullability" -> "true"
+          "oldField" -> "v1: INT",
+          "newField" -> "v1: BIGINT"
         )
       )
     }
@@ -1009,10 +1049,9 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "a.key",
-          "oldType" -> "integer",
-          "oldNullability" -> "false",
-          "newType" -> "long",
-          "newNullability" -> "false")
+          "oldField" -> "key: INT NOT NULL",
+          "newField" -> "key: BIGINT NOT NULL"
+        )
       )
     }
   }
@@ -1028,10 +1067,9 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "a.value",
-          "oldType" -> "integer",
-          "oldNullability" -> "true",
-          "newType" -> "long",
-          "newNullability" -> "true")
+          "oldField" -> "value: INT",
+          "newField" -> "value: BIGINT"
+        )
       )
     }
   }
@@ -1047,10 +1085,9 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "a.element",
-          "oldType" -> "integer",
-          "oldNullability" -> "true",
-          "newType" -> "long",
-          "newNullability" -> "true")
+          "oldField" -> "element: INT",
+          "newField" -> "element: BIGINT"
+        )
       )
     }
   }
@@ -1349,10 +1386,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "m.key",
-          "oldType" -> "integer",
-          "oldNullability" -> "false",
-          "newType" -> "integer",
-          "newNullability" -> "true"
+          "oldField" -> "key: INT NOT NULL",
+          "newField" -> "key: INT"
         )
       )
 
