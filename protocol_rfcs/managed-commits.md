@@ -71,7 +71,23 @@ An action changes one aspect of the table's state, for example, adding or removi
    startVersion <= `cutOffCheckpoint`'s version.
     - <ins>Also delete all the [un-backfilled commit files](#commit-files) having version <= `cutOffCheckpoint`'s version from the `_delta_log/_commits` directory.</ins>
 
+### Checkpoints
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#checkpoints)***
 
+Checkpoints are also stored in the `_delta_log` directory, and can be created at any time, for any committed version of the table.
+For performance reasons, readers should prefer to use the newest complete checkpoint possible.
+
+<ins>**Note:** If [managed commits](#managed-commits) table feature is enabled on the table, a checkpoint can be created only for commit
+versions which are backfilled. Refer to [maintenance operations on managed-commit tables](#maintenance-operations-on-managed-commit-tables) section
+for more details</ins>
+
+### Log Compaction Files
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#log-compaction-files)***
+
+<ins>**Note:** If [managed commits](#managed-commits) table feature is enabled on the table, a log compaction file for commit
+range `[x, y]` i.e. `x.y.compacted.json` can be created only when commit `y` is already backfilled i.e. `_delta_log/<y>.json` must exist.
+Refer to [maintenance operations on managed-commit tables](#maintenance-operations-on-managed-commit-tables) section
+for more details.</ins>
 
 > ***The next set of sections will be added to the existing spec just before [Iceberg Compatibility V1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1) section***
 
