@@ -122,7 +122,7 @@ When Type Widening is enabled (when the table property `delta.enableTypeWidening
 
 When Type Widening is supported (when the `writerFeatures` field of a table's `protocol` action contains `enableTypeWidening`), then:
 - Writers must preserve the `delta.typeChanges` field in the metadata fields in the schema when a schema is updated.
-- Writers can remove an element from a `delta.typeChanges` field in the metadata fields in the schema when all active `add` actions in the latest version of the table have a `defaultRowCommitVersion` value greater or equal to the `tableVersion` value of that `delta.typeChanges` element.
+- Writers can remove an element from a `delta.typeChanges` field in the metadata fields in the schema when all active `add` actions in the latest version of the table have a `defaultRowCommitVersion` value that is not NULL and that is greater or equal to the `tableVersion` value of that `delta.typeChanges` element.
 - Writers must set the `defaultRowCommitVersion` field in new `add` actions to the version number of the log enty containing the `add` action.
 - Writers must set the `defaultRowCommitVersion` field in recommitted and checkpointed `add` actions and `remove` actions to the `defaultRowCommitVersion` of the last committed `add` action with the same `path`.
 
