@@ -1460,12 +1460,6 @@
     ],
     "sqlState" : "21506"
   },
-  "DELTA_NESTED_FIELDS_NEED_RENAME" : {
-    "message" : [
-      "Nested fields need renaming to avoid data loss. Fields:\n<fields>.\nOriginal schema:\n<schema>"
-    ],
-    "sqlState" : "42K05"
-  },
   "DELTA_NESTED_NOT_NULL_CONSTRAINT" : {
     "message" : [
       "The <nestType> type of the field <parent> contains a NOT NULL constraint. Delta does not support NOT NULL constraints nested within arrays or maps. To suppress this error and silently ignore the specified constraints, set <configKey> = true.",

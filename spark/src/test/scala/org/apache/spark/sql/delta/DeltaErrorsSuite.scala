@@ -2603,16 +2603,6 @@ trait DeltaErrorsSuiteBase
         Some(s"Can only drop nested columns from StructType. Found $StringType"))
     }
     {
-      val columnsThatNeedRename = Set("c0", "c1")
-      val schema = StructType(Seq(StructField("schema1", StringType)))
-      val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.nestedFieldsNeedRename(columnsThatNeedRename, schema)
-      }
-      checkErrorMessage(e, Some("DELTA_NESTED_FIELDS_NEED_RENAME"), Some("42K05"),
-        Some("Nested fields need renaming to avoid data loss. Fields:\n[c0, c1].\n" +
-          s"Original schema:\n${schema.treeString}"))
-    }
-    {
       val locations = Seq("location1", "location2")
       val e = intercept[DeltaIllegalArgumentException] {
         throw DeltaErrors.cannotSetLocationMultipleTimes(locations)
