@@ -610,10 +610,25 @@ trait DeltaErrorsBase
     )
   }
 
-  def alterTableChangeColumnException(oldColumns: String, newColumns: String): Throwable = {
+  def addCommentToMapArrayException(fieldPath: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
+      messageParameters = Array(fieldPath)
+    )
+  }
+
+  def alterTableChangeColumnException(
+      fieldPath: String,
+      oldField: StructField,
+      newField: StructField): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
-      messageParameters = Array(oldColumns, newColumns)
+      messageParameters = Array(
+        fieldPath,
+        oldField.dataType.typeName,
+        oldField.nullable.toString,
+        newField.dataType.typeName,
+        newField.nullable.toString)
     )
   }
 

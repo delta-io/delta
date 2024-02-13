@@ -581,7 +581,7 @@ case class AlterTableChangeColumnDeltaCommand(
           a.copy(elementType =
             SchemaUtils.changeDataType(a.elementType, newColumn.dataType, resolver))
 
-        case (_, other, _) => other
+        case (_, other @ (_: StructType | _: ArrayType | _: MapType), _) => other
       }
 
       // update `partitionColumns` if the changed column is a partition column
@@ -709,12 +709,10 @@ case class AlterTableChangeColumnDeltaCommand(
         columnPath :+ originalField.name
       ).nonEmpty) {
       throw DeltaErrors.alterTableChangeColumnException(
-        s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
-          s"'${originalField.dataType}" +
-          s" (nullable = ${originalField.nullable})'",
-        s"'${UnresolvedAttribute(Seq(newColumn.name)).name}' with type " +
-          s"'$newType" +
-          s" (nullable = ${newColumn.nullable})'")
+        fieldPath = UnresolvedAttribute(columnPath :+ originalField.name).name,
+        oldField = originalField,
+        newField = newColumn
+      )
     }
 
     if (columnName != newColumn.name) {
@@ -725,12 +723,10 @@ case class AlterTableChangeColumnDeltaCommand(
 
     if (originalField.nullable && !newColumn.nullable) {
       throw DeltaErrors.alterTableChangeColumnException(
-        s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
-          s"'${originalField.dataType}" +
-          s" (nullable = ${originalField.nullable})'",
-        s"'${UnresolvedAttribute(Seq(newColumn.name)).name}' with type " +
-          s"'${newColumn.dataType}" +
-          s" (nullable = ${newColumn.nullable})'")
+        fieldPath = UnresolvedAttribute(columnPath :+ originalField.name).name,
+        oldField = originalField,
+        newField = newColumn
+      )
     }
   }
 
@@ -742,12 +738,18 @@ case class AlterTableChangeColumnDeltaCommand(
    */
   private def verifyMapArrayChange(spark: SparkSession, originalField: StructField,
       resolver: Resolver, txn: OptimisticTransaction): Unit = {
-    // Map key/value and array element can't have metadata.
-    if (newColumn.metadata != Metadata.empty) {
+    // Map key/value and array element can't have comments.
+    if (newColumn.getComment().nonEmpty) {
+      throw DeltaErrors.addCommentToMapArrayException(
+        fieldPath = UnresolvedAttribute(columnPath :+ columnName).name
+      )
+    }
+    // Changing the nullability of map key/value or array element isn't supported.
+    if (originalField.nullable != newColumn.nullable) {
       throw DeltaErrors.alterTableChangeColumnException(
-        s"'${UnresolvedAttribute(columnPath :+ columnName).name}'",
-        s"'${UnresolvedAttribute(Seq(newColumn.name)).name}' with metadata " +
-          s"'${newColumn.metadata}'"
+        fieldPath = UnresolvedAttribute(columnPath :+ originalField.name).name,
+        oldField = originalField,
+        newField = newColumn
       )
     }
     verifyColumnChange(spark, originalField, resolver, txn)
