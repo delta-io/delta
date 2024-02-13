@@ -17,12 +17,10 @@ package io.delta.kernel.defaults.internal.expressions;
 
 import java.math.BigDecimal;
 import java.sql.Date;
+import java.sql.Timestamp;
 
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.DateType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.util.InternalUtils;
 
@@ -85,8 +83,10 @@ class PartitionValueEvaluator {
             public long getLong(int rowId) {
                 if (partitionType.equivalent(LongType.LONG)) {
                     return Long.parseLong(input.getString(rowId));
+                } else if (partitionType.equivalent(TimestampType.TIMESTAMP)) {
+                    return InternalUtils.microsSinceEpoch(
+                        Timestamp.valueOf(input.getString(rowId)));
                 }
-                // TODO: partition value of timestamp type are not yet supported
                 throw new UnsupportedOperationException("Invalid value request for data type");
             }
 

@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults.integration;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 import org.apache.hadoop.conf.Configuration;
 import static org.junit.Assert.assertEquals;
@@ -115,20 +114,6 @@ public abstract class BaseIntegration {
         }
 
         return dataBatches;
-    }
-
-    /**
-     * Remove unsupported top level delta types in Kernel from the schema. Unsupported data types
-     * include `TIMESTAMP`.
-     */
-    protected StructType removeUnsupportedType(StructType schema) {
-        List<StructField> filterList =
-            schema.fields().stream()
-                .filter(
-                    field -> !(field.getDataType() instanceof TimestampType)
-                ).collect(Collectors.toList());
-
-        return new StructType(filterList);
     }
 
     protected void compareEqualUnorderd(ColumnarBatch expDataBatch,
