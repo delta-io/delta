@@ -1343,10 +1343,9 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       sql(s"ALTER TABLE $tableName CHANGE COLUMN a.element DROP NOT NULL")
 
       // Changing the nullability of map/array fields is not allowed.
+      var statement = s"ALTER TABLE $tableName CHANGE COLUMN m.key DROP NOT NULL"
       checkError(
-        exception = intercept[AnalysisException] {
-          sql(s"ALTER TABLE $tableName CHANGE COLUMN m.key DROP NOT NULL")
-        },
+        exception = intercept[AnalysisException] { sql(statement) },
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "m.key",
@@ -1356,23 +1355,25 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
           "newNullability" -> "true"
         )
       )
+
+      statement = s"ALTER TABLE $tableName CHANGE COLUMN m.value SET NOT NULL"
       checkError(
-        exception = intercept[AnalysisException] {
-          sql(s"ALTER TABLE $tableName CHANGE COLUMN m.value SET NOT NULL")
-        },
+        exception = intercept[AnalysisException] { sql(statement) },
         errorClass = "_LEGACY_ERROR_TEMP_2330",
         parameters = Map(
           "fieldName" -> "m.value"
-        )
+        ),
+        context = ExpectedContext(statement, 0, statement.length - 1)
       )
+
+      statement = s"ALTER TABLE $tableName CHANGE COLUMN a.element SET NOT NULL"
       checkError(
-        exception = intercept[AnalysisException] {
-          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.element SET NOT NULL")
-        },
+        exception = intercept[AnalysisException] { sql(statement) },
         errorClass = "_LEGACY_ERROR_TEMP_2330",
         parameters = Map(
           "fieldName" -> "a.element"
-        )
+        ),
+        context = ExpectedContext(statement, 0, statement.length - 1)
       )
     }
   }
