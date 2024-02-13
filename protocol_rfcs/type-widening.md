@@ -14,7 +14,7 @@ to a wider type.
 The **allowed type changes** are:
 - Integer widening: `Byte` -> `Short` -> `Int` -> `Long`
 - Floating-point widening: `Float` -> `Double`
-- Decimal widening: `Decimal(p, s)` -> `Decimal(p', s')` where `p' >= p` and `p' - s' >= p - s`. `p` and `p'` denote the decimal precision and `s` and `s'` denote the decimal scale.
+- Decimal widening: `Decimal(p, s)` -> `Decimal(p + k1, s + k2)` where `k1 >= k2 >= 0`. `p` and `s` denote the decimal precision and scale respectively.
 - Date widening: `Date` -> `Timestamp without timezone`
 
 To support this feature:
@@ -121,16 +121,18 @@ When Type Widening is enabled (when the table property `delta.enableTypeWidening
 - Writers must record type change information in the `metadata` of the nearest ancestor [StructField](#struct-field). See [Type Change Metadata](#type-change-metadata).
 
 When Type Widening is supported (when the `writerFeatures` field of a table's `protocol` action contains `enableTypeWidening`), then:
+- Writers must preserve the `delta.typeChanges` field in the metadata fields in the schema when a schema is updated.
 - Writers must set the `defaultRowCommitVersion` field in new `add` actions to the version number of the log enty containing the `add` action.
-  This is a subset of the requirements from [Writer Requirements for Row Tracking](writer-requirements-for-row-tracking) that may be implemented separately without introducing a dependency on the [Row Tracking](#row-tracking) table feature.
+- Writers must set the `defaultRowCommitVersion` field in recommitted and checkpointed `add` actions and `remove` actions to the `defaultRowCommitVersion` of the last committed `add` action with the same `path`.
+
+The two requirements related to `defaultRowCommitVersion` are a subset of the requirements from [Writer Requirements for Row Tracking](writer-requirements-for-row-tracking) that may be implemented separately without introducing a dependency on the [Row Tracking](#row-tracking) table feature.
 
 ## Reader Requirements for Type Widening
 When Type Widening is supported (when the `readerFeatures` field of a table's `protocol` action contains `enableTypeWidening`), then:
-- Readers must allow reading data files written before the table underwent any allowed type change.
-
+- Readers must allow reading data files written before the table underwent any allowed type change and convert the values to the current, wider type.
 
 ### Column Metadata
-> ***Change to existing section***
+> ***Change to existing section (underlined)***
 
 A column metadata stores various information about the column.
 For example, this MAY contain some keys like [`delta.columnMapping`](#column-mapping) or [`delta.generationExpression`](#generated-columns) or [`CURRENT_DEFAULT`](#default-columns).  
@@ -140,4 +142,4 @@ delta.columnMapping.*| These keys are used to store information about the mappin
 delta.identity.*| These keys are for defining identity columns. See [Identity Columns](#identity-columns) for details.
 delta.invariants| JSON string contains SQL expression information. See [Column Invariants](#column-invariants) for details.
 delta.generationExpression| SQL expression string. See [Generated Columns](#generated-columns) for details.
-delta.typeChanges| JSON string containing information about previous type changes applied to this column. See [Type Change Metadata](#type-change-metadata) for details.
+<ins>delta.typeChanges</ins>| <ins>JSON string containing information about previous type changes applied to this column. See [Type Change Metadata](#type-change-metadata) for details.</ins>
