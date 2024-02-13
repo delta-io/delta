@@ -1351,9 +1351,9 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         parameters = Map(
           "fieldPath" -> "m.key",
           "oldType" -> "integer",
-          "oldNullability" -> "true",
+          "oldNullability" -> "false",
           "newType" -> "integer",
-          "newNullability" -> "false"
+          "newNullability" -> "true"
         )
       )
       checkError(
