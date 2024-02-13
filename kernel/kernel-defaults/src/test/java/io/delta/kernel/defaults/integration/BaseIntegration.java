@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults.integration;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 import org.apache.hadoop.conf.Configuration;
 import static org.junit.Assert.assertEquals;
