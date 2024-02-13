@@ -161,7 +161,7 @@ Even after a commit succeeds, Delta clients can only discover the commit through
 have no way to determine which file in `_delta_log/_commits` directory corresponds to the actual commit `v`.
 
 The commit-owner is responsible to implement an API (defined by the Delta client) that Delta clients can use to retrieve information about un-backfilled commits maintained
-by the commit-owner. Delta clients who are unaware of the commit-owner (or unwilling to talk to it), will fall back to working only with backfilled commits and may encounter stale reads.
+by the commit-owner. Delta clients who are unaware of the commit-owner (or unwilling to talk to it), may not see recent un-backfilled commits and thus may encounter stale reads.
 
 ## Sample Commit Owner API
 
@@ -299,11 +299,9 @@ Suppose the commit-owner is tracking:
 
 Delta clients have two choices to read such tables:
 1. Any Delta client can read such table by listing the `_delta_log` directory and reading the delta/checkpoint/log-compaction files.
-   They cannot use the un-backfilled commits in `_delta_log/_commits` directory as they are not aware of the external commit-owner. Because of this, they may see a stale snapshot
-   of the table if the recent commits are not backfilled.
+   Without contacting the commit owner, they cannot access recent un-backfilled commits in the `_delta_log/_commits` directory, and may construct a stale snapshot.
     - In the above example, such delta implementation will see version 7 as the latest snapshot.
-2. A client that understands managed commits can supplement the file listing result by contacting the commit-owner for information about un-backfilled commits, in order to get the most
-   recent snapshot of the table.
+2. A client can guarantee freshness by additionally requesting the set of recent un-backfilled commits from the commit-owner.
     - In the above example, a delta implementation could get information about versions 0 through 7 from `_delta_log` directory and get information about un-backfilled commits (v8, v9) from the commit-owner.
 
 ## Maintenance operations on managed-commit tables
