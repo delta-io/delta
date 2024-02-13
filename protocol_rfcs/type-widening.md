@@ -122,10 +122,11 @@ When Type Widening is enabled (when the table property `delta.enableTypeWidening
 
 When Type Widening is supported (when the `writerFeatures` field of a table's `protocol` action contains `enableTypeWidening`), then:
 - Writers must preserve the `delta.typeChanges` field in the metadata fields in the schema when a schema is updated.
+- Writers can remove an element from a `delta.typeChanges` field in the metadata fields in the schema when all active `add` actions in the latest version of the table have a `defaultRowCommitVersion` value greater or equal to the `tableVersion` value of that `delta.typeChanges` element.
 - Writers must set the `defaultRowCommitVersion` field in new `add` actions to the version number of the log enty containing the `add` action.
 - Writers must set the `defaultRowCommitVersion` field in recommitted and checkpointed `add` actions and `remove` actions to the `defaultRowCommitVersion` of the last committed `add` action with the same `path`.
 
-The two requirements related to `defaultRowCommitVersion` are a subset of the requirements from [Writer Requirements for Row Tracking](writer-requirements-for-row-tracking) that may be implemented separately without introducing a dependency on the [Row Tracking](#row-tracking) table feature.
+The last two requirements related to `defaultRowCommitVersion` are a subset of the requirements from [Writer Requirements for Row Tracking](writer-requirements-for-row-tracking) that may be implemented separately without introducing a dependency on the [Row Tracking](#row-tracking) table feature.
 
 ## Reader Requirements for Type Widening
 When Type Widening is supported (when the `readerFeatures` field of a table's `protocol` action contains `enableTypeWidening`), then:
