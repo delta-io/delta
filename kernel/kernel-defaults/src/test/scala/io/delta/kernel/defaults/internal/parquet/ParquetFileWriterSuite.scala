@@ -132,6 +132,19 @@ class ParquetFileWriterSuite extends AnyFunSuite with TestUtils {
     }
   }
 
+  test(s"columnar batches containing different schema") {
+    withTempDir { tempPath =>
+      val targetDir = tempPath.getAbsolutePath
+
+      val dataToWrite =
+        readParquetUsingKernelAsColumnarBatches(DECIMAL_TYPES_DATA, DECIMAL_TYPES_FILE_SCHEMA)
+          .map(_.toFiltered)
+
+      writeToParquetUsingKernel(dataToWrite, targetDir)
+      verify(targetDir, dataToWrite)
+    }
+  }
+
   test(s"invalid target file size") {
     withTempDir { tempPath =>
       val targetDir = tempPath.getAbsolutePath
