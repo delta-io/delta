@@ -1931,7 +1931,6 @@ class SchemaUtilsSuite extends QueryTest
     )
     verifyColumnsWithCasts(normalized, Seq("s"))
     assert(normalized.schema === tableSchema)
-
   }
 
   test("normalize column names - can normalize CDC type column") {
