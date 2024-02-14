@@ -928,8 +928,10 @@ object SchemaUtils extends DeltaLogging {
   /**
    * Runs the transform function `tf` on all nested StructTypes, MapTypes and ArrayTypes in the
    * schema.
-   * If `colName` is defined, the transform function is only applied to the fields with the given
-   * name.
+   * If `colName` is defined, the transform function is only applied to all the fields with the
+   * given name. There may be multiple matches if nested fields with the same name exist in the
+   * schema, it is the responsibility of the caller to check the full field path before transforming
+   * a field.
    * @param schema to transform.
    * @param colName Optional name to match for
    * @param tf function to apply on the StructType.
