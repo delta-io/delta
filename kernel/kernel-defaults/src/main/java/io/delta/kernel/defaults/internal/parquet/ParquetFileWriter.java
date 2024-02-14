@@ -41,7 +41,6 @@ import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.parquet.ParquetColumnWriters.ColumnWriter;
-import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.readDataFileStatistics;
 
 /**
  * Implements writing data given as {@link FilteredColumnarBatch} to Parquet files.
@@ -357,12 +356,8 @@ public class ParquetFileWriter {
             long fileSize = fileStatus.getLen();
             long modTime = fileStatus.getModificationTime();
 
-            DataFileStatistics stats = null;
-            if (!statsColumns.isEmpty()) {
-                stats = readDataFileStatistics(hadoopPath, configuration, dataSchema, statsColumns);
-            }
-
-            return new DataFileStatus(path, fileSize, modTime, Optional.ofNullable(stats));
+            // TODO: Stats computation is coming next.
+            return new DataFileStatus(path, fileSize, modTime, Optional.empty());
         } catch (IOException ioe) {
             throw new UncheckedIOException("Failed to read the stats for: " + path, ioe);
         }
