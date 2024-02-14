@@ -265,7 +265,7 @@ class OptimizeExecutor(
 
       val filesToProcess = optimizeContext.reorg match {
         case Some(reorgOperation) => reorgOperation.filterFilesToReorg(candidateFiles)
-        case None => pruneCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
+        case None => filterCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
       }
       val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
 
@@ -341,7 +341,7 @@ class OptimizeExecutor(
    * Helper method to prune the list of selected files based on fileSize and ratio of
    * deleted rows according to the deletion vector in [[AddFile]].
    */
-  private def pruneCandidateFileList(
+  private def filterCandidateFileList(
       minFileSize: Long, maxDeletedRowsRatio: Double, files: Seq[AddFile]): Seq[AddFile] = {
 
     // Select all files in case of multi-dimensional clustering
