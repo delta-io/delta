@@ -16,18 +16,25 @@
 package io.delta.kernel.defaults.internal.parquet;
 
 import io.delta.golden.GoldenTableUtils.goldenTableFile
+import io.delta.kernel.Table
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
+import io.delta.kernel.internal.util.ColumnMapping
+import io.delta.kernel.internal.util.ColumnMapping.convertToPhysicalSchema
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types._
 import io.delta.kernel.utils.{DataFileStatus, FileStatus}
 import org.apache.hadoop.fs.Path
+import org.apache.parquet.hadoop.ParquetFileReader
+import org.apache.parquet.hadoop.metadata.ParquetMetadata
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.nio.file.{Files, Paths}
 import java.util.Optional
 import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
 
 /**
  * Test strategy for [[ParquetFileWriter]]
@@ -132,15 +139,61 @@ class ParquetFileWriterSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test(s"columnar batches containing different schema") {
+  test("columnar batches containing different schema") {
     withTempDir { tempPath =>
       val targetDir = tempPath.getAbsolutePath
 
+      // First batch with one column
+      val batch1 = new DefaultColumnarBatch(
+        /* size */ 10,
+        new StructType().add("col1", IntegerType.INTEGER),
+        Array(testColumnVector(10, IntegerType.INTEGER)))
+
+      // Batch with two columns
+      val batch2 = new DefaultColumnarBatch(
+        /* size */ 10,
+        new StructType()
+          .add("col1", IntegerType.INTEGER)
+          .add("col2", LongType.LONG),
+        Array(testColumnVector(10, IntegerType.INTEGER), testColumnVector(10, LongType.LONG)))
+
+      // Batch with one column as first batch but different data type
+      val batch3 = new DefaultColumnarBatch(
+        /* size */ 10,
+        new StructType().add("col1", LongType.LONG),
+        Array(testColumnVector(10, LongType.LONG)))
+
+      Seq(Seq(batch1, batch2), Seq(batch1, batch3)).foreach {
+        dataToWrite =>
+          val e = intercept[IllegalArgumentException] {
+            writeToParquetUsingKernel(dataToWrite.map(_.toFiltered), targetDir)
+          }
+          assert(e.getMessage.contains("Input data has columnar batches with different schemas:"))
+      }
+    }
+  }
+
+  test("write data with field ids") {
+    withTempDir { tempPath =>
+      val targetDir = tempPath.getAbsolutePath
+
+      val cmGoldenTable = goldenTableFile("table-with-columnmapping-mode-id").toString
+      val schema = tableSchema(cmGoldenTable)
+
       val dataToWrite =
-        readParquetUsingKernelAsColumnarBatches(DECIMAL_TYPES_DATA, DECIMAL_TYPES_FILE_SCHEMA)
+        readParquetUsingKernelAsColumnarBatches(cmGoldenTable, schema)
           .map(_.toFiltered)
 
-      writeToParquetUsingKernel(dataToWrite, targetDir)
+      // From the Delta schema, generate the physical schema that has field ids.
+      val physicalSchema =
+        convertToPhysicalSchema(schema, schema, ColumnMapping.COLUMN_MAPPING_MODE_ID)
+
+      writeToParquetUsingKernel(
+        // Convert the schema of the data to the physical schema with field ids
+        dataToWrite.map(_.getData).map(_.withNewSchema(physicalSchema)).map(_.toFiltered),
+        targetDir)
+
+      verifyFieldIds(targetDir, schema)
       verify(targetDir, dataToWrite)
     }
   }
@@ -162,6 +215,7 @@ class ParquetFileWriterSuite extends AnyFunSuite with TestUtils {
   }
 
   def verify(actualFileDir: String, expected: Seq[FilteredColumnarBatch]): Unit = {
+    verifyFileMetadata(actualFileDir)
     verifyUsingKernelReader(actualFileDir, expected)
     verifyUsingSparkReader(actualFileDir, expected)
   }
@@ -187,7 +241,7 @@ class ParquetFileWriterSuite extends AnyFunSuite with TestUtils {
   }
 
   /**
-   * Verify the data in the Parquet files located in `actualFileDir`` matches the expected data.
+   * Verify the data in the Parquet files located in `actualFileDir` matches the expected data.
    * Use Spark Parquet reader to read the data from the Parquet files.
    */
   def verifyUsingSparkReader(
@@ -207,6 +261,69 @@ class ParquetFileWriterSuite extends AnyFunSuite with TestUtils {
   }
 
   /**
+   * Verify the metadata of the Parquet files in `targetDir` matches says it is written by Kernel.
+   */
+  def verifyFileMetadata(targetDir: String): Unit = {
+    parquetFiles(targetDir).foreach { file =>
+      footer(file).getFileMetaData
+        .getKeyValueMetaData.containsKey("io.delta.kernel.default-parquet-writer")
+    }
+  }
+
+  /** Verify the field ids in Parquet files match the corresponding field ids in the Delta schema */
+  def verifyFieldIds(targetDir: String, deltaSchema: StructType): Unit = {
+    parquetFiles(targetDir).map(footer(_)).foreach {
+      footer =>
+        val parquetSchema = footer.getFileMetaData.getSchema
+
+        def verifyFieldId(deltaFieldId: Long, columnPath: Array[String]): Unit = {
+          val parquetFieldId = parquetSchema.getType(columnPath: _*).getId
+          assert(parquetFieldId != null)
+          assert(deltaFieldId === parquetFieldId.intValue())
+        }
+
+        def visitDeltaType(basePath: Array[String], deltaType: DataType): Unit = {
+          deltaType match {
+            case struct: StructType =>
+              visitStructType(basePath, struct)
+            case array: ArrayType =>
+              // Arrays are stored as three-level structure in Parquet. There are two elements
+              // between the array element and array itself. So in order to
+              // search for  the array element field id, we need to append "list, element"
+              // to the path.
+              // optional group col-b89fd303-7352-4044-842e-87f428ee80be (LIST) = 19 {
+              //  repeated group list {
+              //   optional group element {
+              //    optional int64 col-e983d1fc-d588-46a7-a0ad-2f63a6834ea6 = 20;
+              //   }
+              //  }
+              // }
+              visitDeltaType(basePath :+ "list" :+ "element", array.getElementType)
+            case map: MapType =>
+              // reason for appending the "key_value" is same as the array type (see above)
+              visitDeltaType(basePath :+ "key_value" :+ "key", map.getKeyType)
+              visitDeltaType(basePath :+ "key_value" :+ "value", map.getValueType)
+            case _ => // Primitive type - continue
+          }
+        }
+
+        def visitStructType(basePath: Array[String], structType: StructType): Unit = {
+          structType.fields.forEach { field =>
+            val deltaFieldId = field.getMetadata
+              .get(ColumnMapping.COLUMN_MAPPING_ID_KEY).asInstanceOf[Long]
+            val physicalName = field.getMetadata
+              .get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY).asInstanceOf[String]
+
+            verifyFieldId(deltaFieldId, basePath :+ physicalName)
+            visitDeltaType(basePath :+ physicalName, field.getDataType)
+          }
+        }
+
+        visitStructType(Array.empty, deltaSchema)
+    }
+  }
+
+  /**
    * Write the [[FilteredColumnarBatch]]es to Parquet files using the ParquetFileWriter and
    * verify the data using the Kernel Parquet reader and Spark Parquet reader.
    */
@@ -216,14 +333,9 @@ class ParquetFileWriterSuite extends AnyFunSuite with TestUtils {
       targetFileSize: Long = 1024 * 1024,
       statsColumns: Seq[Column] = Seq.empty): Seq[DataFileStatus] = {
     val parquetWriter = new ParquetFileWriter(
-      configuration,
-      new Path(location),
-      targetFileSize,
-      statsColumns.asJava)
+      configuration, new Path(location), targetFileSize, statsColumns.asJava)
 
-    parquetWriter
-      .write(toCloseableIterator(filteredData.asJava.iterator()))
-      .toSeq
+    parquetWriter.write(toCloseableIterator(filteredData.asJava.iterator())).toSeq
   }
 
   def readParquetFilesUsingKernel(
@@ -259,12 +371,10 @@ class ParquetFileWriterSuite extends AnyFunSuite with TestUtils {
       .map(TestRow(_))
   }
 
-  def parquetFileCount(path: String): Long = {
-    getParquetFiles(path).size
-  }
+  def parquetFileCount(path: String): Long = parquetFiles(path).size
 
   def parquetFileRowCount(path: String): Long = {
-    val files = getParquetFiles(path)
+    val files = parquetFiles(path)
 
     var rowCount = 0L
     files.foreach { file =>
@@ -274,12 +384,26 @@ class ParquetFileWriterSuite extends AnyFunSuite with TestUtils {
     rowCount
   }
 
-  def getParquetFiles(path: String): Seq[String] = {
+  def parquetFiles(path: String): Seq[String] = {
     Files.list(Paths.get(path))
       .iterator().asScala
       .map(_.toString)
       .filter(path => path.endsWith(".parquet"))
       .toSeq
+  }
+
+  def footer(path: String): ParquetMetadata = {
+    try {
+      ParquetFileReader.readFooter(configuration, new Path(path))
+    } catch {
+      case NonFatal(e) => fail(s"Failed to read footer for file: $path", e)
+    }
+  }
+
+  def tableSchema(path: String): StructType = {
+    Table.forPath(defaultTableClient, path)
+      .getLatestSnapshot(defaultTableClient)
+      .getSchema(defaultTableClient)
   }
 }
 

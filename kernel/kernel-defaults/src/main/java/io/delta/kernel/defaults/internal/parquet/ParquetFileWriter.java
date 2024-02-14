@@ -261,8 +261,8 @@ public class ParquetFileWriter {
         @Override
         public WriteContext init(Configuration configuration) {
             // TODO: figure out a way to dynamically fetch the Kernel version.
-            Map<String, String> extraProps =
-                    Collections.singletonMap("io.delta.kernel.defaults", "3.2.0-SNAPSHOT");
+            Map<String, String> extraProps = Collections.singletonMap(
+                    "io.delta.kernel.default-parquet-writer", "3.2.0-SNAPSHOT");
             return new WriteContext(parquetSchema, extraProps);
         }
 

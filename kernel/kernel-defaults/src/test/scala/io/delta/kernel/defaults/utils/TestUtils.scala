@@ -406,7 +406,6 @@ trait TestUtils extends Assertions with SQLHelper {
     DefaultGenericVector.fromArray(dataType, mapValues.map(getMapValue).toArray)
   }
 
-
   /**
    * Utility method to generate a [[dataType]] column vector of given size.
    * The nullability of rows is determined by the [[testIsNullValue(dataType, rowId)]].
