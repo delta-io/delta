@@ -605,7 +605,7 @@ object DeltaLog extends DeltaLogging {
   private type DeltaLogCacheKey = (Path, Map[String, String])
 
   /** The name of the subdirectory that holds Delta metadata files */
-  private val LOG_DIR_NAME = "_delta_log"
+  private[delta] val LOG_DIR_NAME = "_delta_log"
 
   private[delta] def logPathFor(dataPath: String): Path = logPathFor(new Path(dataPath))
   private[delta] def logPathFor(dataPath: Path): Path =

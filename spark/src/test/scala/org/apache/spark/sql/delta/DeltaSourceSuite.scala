@@ -1910,8 +1910,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       assert(e.getCause.isInstanceOf[UnsupportedOperationException])
       assert(e.getCause.getMessage.contains(
-        "This is currently not supported. If you'd like to ignore updates, set the option " +
-          "'skipChangeCommits' to 'true'."))
+        "This is currently not supported. If this is going to happen regularly and you are okay" +
+          " to skip changes, set the option 'skipChangeCommits' to 'true'."
+      ))
       assert(e.getCause.getMessage.contains("for example"))
       assert(e.getCause.getMessage.contains("version"))
       assert(e.getCause.getMessage.matches(s".*$inputDir.*"))

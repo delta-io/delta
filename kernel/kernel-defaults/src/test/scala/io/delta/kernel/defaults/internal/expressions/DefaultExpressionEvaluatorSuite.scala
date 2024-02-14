@@ -17,7 +17,7 @@ package io.delta.kernel.defaults.internal.expressions
 
 import java.lang.{Boolean => BooleanJ}
 import java.math.{BigDecimal => BigDecimalJ}
-import java.sql.Date
+import java.sql.{Date, Timestamp}
 import java.util
 import java.util.Optional
 
@@ -572,9 +572,11 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       ("null", BinaryType.BINARY, null),
       ("2021-11-18", DateType.DATE, InternalUtils.daysSinceEpoch(Date.valueOf("2021-11-18"))),
       ("null", DateType.DATE, null),
-      ("2021-11-18", DateType.DATE, InternalUtils.daysSinceEpoch(Date.valueOf("2021-11-18"))),
-      ("null", DateType.DATE, null)
-      // TODO: timestamp partition value types are not yet supported in reading
+      ("2020-02-18 22:00:10", TimestampType.TIMESTAMP,
+        InternalUtils.microsSinceEpoch(Timestamp.valueOf("2020-02-18 22:00:10"))),
+      ("2020-02-18 00:00:10.023", TimestampType.TIMESTAMP,
+        InternalUtils.microsSinceEpoch(Timestamp.valueOf("2020-02-18 00:00:10.023"))),
+      ("null", TimestampType.TIMESTAMP, null)
     )
 
     val inputBatch = zeroColumnBatch(rowCount = 1)

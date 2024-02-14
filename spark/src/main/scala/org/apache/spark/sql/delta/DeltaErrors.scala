@@ -1175,13 +1175,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def nestedFieldsNeedRename(columns : Set[String], baseSchema : StructType): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_NESTED_FIELDS_NEED_RENAME",
-      messageParameters = Array(columns.mkString("[", ", ", "]"), formatSchema(baseSchema))
-    )
-  }
-
   def inSubqueryNotSupportedException(operation: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_IN_SUBQUERY",
@@ -3091,7 +3084,7 @@ trait DeltaErrorsBase
       version: Int, tf: TableFeature): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.MISSING_REQUIRED_TABLE_FEATURE",
-      messageParameters = Array(version.toString, version.toString, tf.toString)
+      messageParameters = Array(version.toString, version.toString, tf.name)
     )
   }
 
@@ -3099,7 +3092,7 @@ trait DeltaErrorsBase
       version: Int, tf: TableFeature): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.DISABLING_REQUIRED_TABLE_FEATURE",
-      messageParameters = Array(version.toString, version.toString, tf.toString, version.toString)
+      messageParameters = Array(version.toString, version.toString, tf.name, version.toString)
     )
   }
 
@@ -3107,7 +3100,7 @@ trait DeltaErrorsBase
       version: Int, tf: TableFeature): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.INCOMPATIBLE_TABLE_FEATURE",
-      messageParameters = Array(version.toString, version.toString, tf.toString)
+      messageParameters = Array(version.toString, version.toString, tf.name)
     )
   }
 

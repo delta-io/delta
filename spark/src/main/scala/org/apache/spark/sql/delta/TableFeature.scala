@@ -352,6 +352,8 @@ object TableFeature {
         TestFeatureWithDependency,
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency,
+        // managed-commits are under development and only available in testing.
+        ManagedCommitTableFeature,
         // Row IDs are still under development and only available in testing.
         RowTrackingFeature)
     }
@@ -607,6 +609,20 @@ object V2CheckpointTableFeature
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     V2CheckpointPreDowngradeCommand(table)
+}
+
+/** Table feature to represent tables whose commits are managed by separate commit-store */
+object ManagedCommitTableFeature
+  extends ReaderWriterFeature(name = "managed-commit-dev")
+    with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(metadata).nonEmpty
+  }
 }
 
 /**

@@ -2538,10 +2538,11 @@ trait DeltaErrorsSuiteBase
       }
       checkErrorMessage(e, Some("DELTA_SOURCE_TABLE_IGNORE_CHANGES"), Some("0A000"),
         Some("Detected a data update (for example removedFile) in the source table at version " +
-          "10. This is currently not supported. If you'd like to ignore updates, set the " +
-          "option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, " +
-          "please restart this query with a fresh checkpoint directory. The source table can be " +
-          "found at path tablePath."))
+          "10. This is currently not supported. If this is going to happen regularly and you are" +
+          " okay to skip changes, set the option 'skipChangeCommits' to 'true'. If you would like" +
+          " the data update to be reflected, please restart this query with a fresh checkpoint" +
+          " directory" +
+          ". The source table can be found at path tablePath."))
     }
     {
       val limit = "limit"
@@ -2600,16 +2601,6 @@ trait DeltaErrorsSuiteBase
       }
       checkErrorMessage(e, Some("DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE"), Some("0AKDC"),
         Some(s"Can only drop nested columns from StructType. Found $StringType"))
-    }
-    {
-      val columnsThatNeedRename = Set("c0", "c1")
-      val schema = StructType(Seq(StructField("schema1", StringType)))
-      val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.nestedFieldsNeedRename(columnsThatNeedRename, schema)
-      }
-      checkErrorMessage(e, Some("DELTA_NESTED_FIELDS_NEED_RENAME"), Some("42K05"),
-        Some("Nested fields need renaming to avoid data loss. Fields:\n[c0, c1].\n" +
-          s"Original schema:\n${schema.treeString}"))
     }
     {
       val locations = Seq("location1", "location2")

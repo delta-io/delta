@@ -1,4 +1,3 @@
-
 ---
 name: Protocol Change Request
 about: Use this template to propose a new feature that impacts the Delta protocol specification

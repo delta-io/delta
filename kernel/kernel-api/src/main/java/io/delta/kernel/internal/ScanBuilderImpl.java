@@ -16,7 +16,6 @@
 
 package io.delta.kernel.internal;
 
-import java.util.List;
 import java.util.Optional;
 
 import io.delta.kernel.Scan;
@@ -24,13 +23,11 @@ import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.types.TimestampType;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
-import io.delta.kernel.internal.util.VectorUtils;
 
 /**
  * Implementation of {@link ScanBuilder}.
@@ -83,23 +80,6 @@ public class ScanBuilderImpl
 
     @Override
     public Scan build() {
-        // TODO: support timestamp type partition columns
-        // Timestamp partition columns have complicated semantics related to timezones so block this
-        // for now
-        List<String> partitionCols = VectorUtils.toJavaList(
-            metadata.getPartitionColumns());
-        for (String colName : partitionCols) {
-            if (readSchema.indexOf(colName) >= 0 &&
-                readSchema.get(colName).getDataType() instanceof TimestampType) {
-                throw new UnsupportedOperationException(String.format(
-                    "Reading partition columns of TimestampType is unsupported.\n" +
-                        "readSchema: %s\npartitionColumns: %s",
-                    readSchema,
-                    partitionCols
-                ));
-            }
-        }
-
         return new ScanImpl(
             snapshotSchema,
             readSchema,
