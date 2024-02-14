@@ -142,7 +142,7 @@ object SchemaMergingUtils {
    * applied:
    *  - The name of the current field is used.
    *  - The data types are merged by calling this function.
-   *  - We respect the current field's nullability.
+   *  - We respect the current field's nullability (unless type coercion is enabled).
    *  - The metadata is current field's metadata.
    *
    * Schema merging occurs in a case insensitive manner. Hence, column names that only differ
@@ -161,6 +161,10 @@ object SchemaMergingUtils {
    * @param fixedTypeColumns The set of columns whose type should not be changed in any case.
    * @param caseSensitive Whether we should keep field mapping case-sensitively.
    *                      This should default to false for Delta, which is case insensitive.
+   * @param allowTypeCoercion Whether to allow type coersion using Spark's TypeCoercion when
+   *                          merging fields. This can be used to resolve different types for a new
+   *                          field being added, such as in a merge, before combining the new type
+   *                          with the existing table schema using implicit casting.
    */
   def mergeSchemas(
       tableSchema: StructType,
@@ -168,7 +172,8 @@ object SchemaMergingUtils {
       allowImplicitConversions: Boolean = false,
       keepExistingType: Boolean = false,
       fixedTypeColumns: Set[String] = Set.empty,
-      caseSensitive: Boolean = false): StructType = {
+      caseSensitive: Boolean = false,
+      allowTypeCoercion: Boolean = false): StructType = {
     checkColumnNameDuplication(dataSchema, "in the data to save", caseSensitive)
     def merge(
         current: DataType,
@@ -194,7 +199,7 @@ object SchemaMergingUtils {
                   StructField(
                     currentField.name,
                     merge(currentField.dataType, updateField.dataType),
-                    currentField.nullable,
+                    currentField.nullable || allowTypeCoercion && updateField.nullable,
                     currentField.metadata)
                 } catch {
                   case NonFatal(e) =>
@@ -214,19 +219,23 @@ object SchemaMergingUtils {
           // Create the merged struct, the new fields are appended at the end of the struct.
           StructType(updatedCurrentFields ++ newFields)
         case (ArrayType(currentElementType, currentContainsNull),
-              ArrayType(updateElementType, _)) =>
+              ArrayType(updateElementType, updateContainsNull)) =>
           ArrayType(
             merge(currentElementType, updateElementType),
-            currentContainsNull)
+            currentContainsNull || allowTypeCoercion && updateContainsNull)
         case (MapType(currentKeyType, currentElementType, currentContainsNull),
-              MapType(updateKeyType, updateElementType, _)) =>
+              MapType(updateKeyType, updateElementType, updateContainsNull)) =>
           MapType(
             merge(currentKeyType, updateKeyType),
             merge(currentElementType, updateElementType),
-            currentContainsNull)
+            currentContainsNull || allowTypeCoercion && updateContainsNull)
 
         // Simply keeps the existing type for primitive types
         case (current, update) if keepExistingType => current
+
+        case (current, update) if allowTypeCoercion &&
+            TypeCoercion.findWiderTypeForTwo(current, update).isDefined =>
+          TypeCoercion.findWiderTypeForTwo(current, update).get
 
         // If implicit conversions are allowed, that means we can use any valid implicit cast to
         // perform the merge.

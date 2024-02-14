@@ -358,19 +358,21 @@ trait MergeIntoSchemaEvolutionBaseTests {
       .asInstanceOf[List[(Integer, Integer)]]
       .toDF("key", "value"))
 
-  // Column doesn't exist with UPDATE/INSERT alone.
   testEvolution("update set nonexistent column")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
     clauses = update(set = "nonexistent = s.extra") :: Nil,
-    expectErrorContains = "cannot resolve nonexistent in UPDATE clause",
+    expected = ((0, 0, null) +: (1, 10, "extra1") +: (3, 30, null) +: Nil)
+      .toDF("key", "value", "nonexistent"),
     expectErrorWithoutEvolutionContains = "cannot resolve nonexistent in UPDATE clause")
 
   testEvolution("insert values nonexistent column")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
     clauses = insert(values = "(nonexistent) VALUES (s.extra)") :: Nil,
-    expectErrorContains = "cannot resolve nonexistent in INSERT clause",
+    expected = ((0, 0, null) +: (1, 10, null) +: (3, 30, null) +: (null, null, "extra2") +: Nil)
+      .asInstanceOf[List[(Integer, Integer, String)]]
+      .toDF("key", "value", "nonexistent"),
     expectErrorWithoutEvolutionContains = "cannot resolve nonexistent in INSERT clause")
 
   testEvolution("new column with update set and update *")(
@@ -951,6 +953,111 @@ trait MergeIntoSchemaEvolutionBaseTests {
     expectErrorContains = "Cannot add column 'extra' with type 'void'",
     expectedWithoutEvolution = Seq((1, 100), (2, 200)).toDF("key", "value")
   )
+
+  // scalastyle:off line.size.limit
+  testEvolution("existing columns use current type - string and bool")(
+    targetData = Seq((1, "false")).toDF("key", "value"),
+    sourceData = Seq((1, "true", false)).toDF("key", "value1", "value2"),
+    clauses = update(condition = "s.key < 2", set = "value = s.value1") :: update(set = "value = s.value2") :: Nil,
+    expected = Seq((1, "true")).toDF("key", "value"),
+    expectedWithoutEvolution = Seq((1, "true")).toDF("key", "value"),
+  )
+
+  testEvolution("new column type reconciliation - int and string resolves to string")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, 2, "val")).toDF("key", "value1", "value2"),
+    clauses = update(condition = "s.key < 2", set = "value = s.value1") :: update(set = "value = s.value2") :: Nil,
+    expected = Seq((1, "2")).toDF("key", "value"),
+    expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
+  )
+
+  testEvolution("new column type reconciliation - string and int resolves to string")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, 2, "val")).toDF("key", "value1", "value2"),
+    clauses = update(condition = "s.key < 2", set = "value = s.value2") :: update(set = "value = s.value1") :: Nil,
+    expected = Seq((1, "val")).toDF("key", "value"),
+    expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
+  )
+
+  testEvolution("new column type reconciliation - double and string resolves to string")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, 2.0, "val")).toDF("key", "value1", "value2"),
+    clauses = update(condition = "s.key < 2", set = "value = s.value1") :: update(set = "value = s.value2") :: Nil,
+    expected = Seq((1, "2.0")).toDF("key", "value"),
+    expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
+  )
+
+  testEvolution("new column type reconciliation - int and long resolves to long")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, 2, 3L)).toDF("key", "value1", "value2"),
+    clauses = update(condition = "s.key < 2", set = "value = s.value1") :: update(set = "value = s.value2") :: Nil,
+    expected = Seq((1, 2L)).toDF("key", "value"),
+    expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
+  )
+
+  testEvolution("new column type reconciliation - long and int resolves to long")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, 2, 3L)).toDF("key", "value1", "value2"),
+    clauses = update(condition = "s.key < 2", set = "value = s.value2") :: update(set = "value = s.value1") :: Nil,
+    expected = Seq((1, 3L)).toDF("key", "value"),
+    expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
+  )
+
+  testEvolution("new column type reconciliation - array and int fails")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, Seq(2), 3)).toDF("key", "value1", "value2"),
+    clauses = update(condition = "s.key < 2", set = "value = s.value1") :: update(set = "value = s.value2") :: Nil,
+    expectErrorContains = "Failed to merge incompatible data types",
+    expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
+  )
+
+  testEvolution("new column type reconciliation - timestamp and timestamp_ntz resolves to timestamp")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, "2000-01-01 00:00:00", "2000-01-02 00:00:00"))
+      .toDF("key", "value1", "value2")
+      .withColumns(Seq("value1", "value2"), Seq('value1.cast("timestamp"), 'value2.cast("timestamp_ntz"))),
+    clauses = update(condition = "s.key < 2", set = "value = s.value1") :: update(set = "value = s.value2") :: Nil,
+    expected = Seq((1, "2000-01-01 00:00:00")).toDF("key", "value").withColumn("value", 'value.cast("timestamp")),
+    expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
+  )
+
+  testEvolution("new column type reconciliation - timestamp_ntz and timestamp resolves to timestamp")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, "2000-01-01 00:00:00", "2000-01-02 00:00:00"))
+      .toDF("key", "value1", "value2")
+      .withColumns(Seq("value1", "value2"), Seq('value1.cast("timestamp"), 'value2.cast("timestamp_ntz"))),
+    clauses = update(condition = "s.key < 2", set = "value = s.value2") :: update(set = "value = s.value1") :: Nil,
+    expected = Seq((1, "2000-01-02 00:00:00"))
+      .toDF("key", "value")
+      .withColumn("value", 'value.cast("timestamp")),
+    expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
+  )
+
+  testEvolution("new column type reconciliation in array - int and string resolves to string")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, Seq(2), Seq("val"))).toDF("key", "value1", "value2"),
+    clauses = update(condition = "s.key < 2", set = "value = s.value1") :: update(set = "value = s.value2") :: Nil,
+    expected = Seq((1, Seq("2"))).toDF("key", "value"),
+    expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
+  )
+
+  testEvolution("new column type reconciliation in map - int and string resolves to string")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, Map(2 -> 2), Map("2" -> "2"))).toDF("key", "value1", "value2"),
+    clauses = update(condition = "s.key < 2", set = "value = s.value1") :: update(set = "value = s.value2") :: Nil,
+    expected = Seq((1, Map("2" -> "2"))).toDF("key", "value"),
+    expectErrorWithoutEvolutionContains = "cannot resolve value in UPDATE clause"
+  )
+
+  testEvolution("new column type reconciliation in struct - int and string resolves to string")(
+    targetData = Seq((1)).toDF("key"),
+    sourceData = Seq((1, 2, "val")).toDF("key", "value1", "value2")
+      .select('key, struct('value1.alias("value")).alias("nested1"), struct('value2.alias("value")).alias("nested2")),
+    clauses = update(condition = "s.key < 2", set = "nested = s.nested1") :: update(set = "nested = s.nested2") :: Nil,
+    expected = Seq((1, "2")).toDF("key", "value").select('key, struct("value").alias("nested")),
+    expectErrorWithoutEvolutionContains = "cannot resolve nested in UPDATE clause"
+  )
+  // scalastyle:on line.size.limit
 }
 
 /**
@@ -1109,6 +1216,28 @@ trait MergeIntoNestedStructEvolutionTests {
         .add("c", IntegerType)),
     clauses = insert("(value.b) VALUES (s.value.b)") :: Nil,
     expectErrorContains = "Nested field is not supported in the INSERT clause of MERGE operation",
+    expectErrorWithoutEvolutionContains = "No such struct field")
+
+  // Nested schema evolution with nonexistent field
+  testNestedStructsEvolution("new nested update field not in source schema")(
+    target = """{ "key": "A", "value": { "a": 1 } }""",
+    source = """{ "key": "A", "value": { "a": 2, "b": 3 } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)),
+    clauses = update("value.c = s.value.b") :: Nil,
+    result = """{ "key": "A", "value": { "a": 1, "c": 3 } }""",
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)
+        .add("c", IntegerType)),
     expectErrorWithoutEvolutionContains = "No such struct field")
 
   // scalastyle:off line.size.limit
@@ -1622,6 +1751,34 @@ trait MergeIntoNestedStructEvolutionTests {
       """{ "key": "A", "map": { "key": [ { "a": 5, "b": 6, "c": 7 } ] } }
          { "key": "B", "map": { "key": [ { "a": 8, "b": 9, "c": 10 } ] } }
          { "key": "C", "map": { "key": [ { "a": 3, "b": 4, "c": null } ] } }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("new column type reconciliation in map struct value")(
+    target =
+      """{ "key": "A", "map": { "key": { "a": 1 } } }""",
+    source =
+      """{ "key": "A", "map1": { "key": { "a": 2, "b": 2 } }, "map2": { "key": { "a": 2, "b": "2" } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("map1", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", IntegerType)))
+      .add("map2", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", StringType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("map", MapType(
+          StringType,
+          new StructType().add("a", IntegerType).add("b", StringType))),
+    clauses = update(condition = "s.key = 'A'", set = "map = s.map1") :: update("map = s.map2") :: Nil,
+    result =
+      """{ "key": "A", "map": { "key": { "a": 2, "b": "2" } } }""",
     expectErrorWithoutEvolutionContains = "Cannot cast")
 
   // Struct evolution inside of map keys.
@@ -2898,4 +3055,34 @@ trait MergeIntoNestedStructEvolutionTests {
     confs = Seq(
       SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
       DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false"))
+
+  // scalastyle:off line.size.limit
+  testNestedStructsEvolution("new column type reconciliation in array struct value")(
+    target = """{ "key": "A", "value": [ { "a": 1 } ] }""",
+    source = """{ "key": "A", "value1": [ { "a": 2, "b": 2 } ], "value2": [ { "a": 2, "b": "2" } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value1", ArrayType(
+        new StructType()
+          .add("a", IntegerType)
+          .add("b", IntegerType)))
+      .add("value2", ArrayType(
+        new StructType()
+          .add("a", IntegerType)
+          .add("b", StringType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", IntegerType)
+          .add("b", StringType))),
+    clauses = update(condition = "s.key = 'A'", set = "value = s.value1") :: update("value = s.value2") :: Nil,
+    result = """{ "key": "A", "value": [ { "a": 2, "b": "2" } ] }""",
+    expectErrorWithoutEvolutionContains = "cannot cast")
+  // scalastyle:on line.size.limit
 }
