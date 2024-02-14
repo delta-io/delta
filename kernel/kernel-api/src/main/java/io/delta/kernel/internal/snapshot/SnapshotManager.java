@@ -24,6 +24,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 
+import io.delta.kernel.internal.DeltaErrors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -112,7 +113,6 @@ public class SnapshotManager {
 
     /**
      * Construct the snapshot for the given table at the version provided.
-     * TODO add details about what errors it throws w.r.t. the version provided?
      *
      * @param tableClient Instance of {@link TableClient} to use.
      * @param version     The snapshot version to construct
@@ -257,21 +257,9 @@ public class SnapshotManager {
                         // than the versionToLoad then the versionToLoad is not reconstructable
                         // from the existing logs
                         if (output.isEmpty()) {
-                            // TODO this should be a public exception
-                            // We can include the log retention and checkpoint retention confs
-                            // to provide more information
-                            // (see logFileNotFoundException in DeltaErrors)
-                            throw new RuntimeException(
-                                String.format(
-                                    "Unable to reconstruct state at version %s as the " +
-                                        "transaction log has been truncated due to manual " +
-                                        "deletion or the log retention policy and checkpoint " +
-                                        "retention policy.",
-                                    versionToLoad.get()));
-                            // TODO: if we want we can retrieve the earliest recreatable commit here
-                            //  to include in the error message
+                            throw DeltaErrors.nonReconstructableStateException(
+                                dataPath.toString(), versionToLoad.get());
                         }
-
                         break;
                     }
 
@@ -537,13 +525,7 @@ public class SnapshotManager {
         }
 
         versionToLoadOpt.filter(v -> v != newVersion).ifPresent(v -> {
-            // TODO this should be a public exception
-            throw new RuntimeException(
-                String.format(
-                    "Trying to load a non-existent version %s. Latest version available is %s",
-                    v,
-                    newVersion
-                ));
+            throw DeltaErrors.nonExistentVersionException(dataPath.toString(), v, newVersion);
         });
 
         // We may just be getting a checkpoint file after the filtering

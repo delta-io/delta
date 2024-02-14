@@ -59,7 +59,6 @@ public interface Table {
 
     /**
      * Get the snapshot at the given {@code versionId}.
-     * TODO: add information about which errors it throws?
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @param versionId snapshot version to retrieve
