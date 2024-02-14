@@ -88,6 +88,7 @@ public class ParquetFileWriter {
 
             // Current batch of data that is being written, updated in {@link #hasNextRow()}.
             private FilteredColumnarBatch currentBatch = null;
+
             // Which record in the `currentBatch` is being written,
             // initialized in {@link #hasNextRow()} and updated in {@link #consumeNextRow}.
             private int currentBatchCursor = 0;
@@ -144,7 +145,7 @@ public class ParquetFileWriter {
                             "Failed to write the Parquet file: " + filePath, e);
                 }
 
-                return Optional.of(constructOutput(filePath.toString(), dataSchema));
+                return Optional.of(constructDataFileStatus(filePath.toString(), dataSchema));
             }
 
             /**
@@ -155,11 +156,11 @@ public class ParquetFileWriter {
              * in `batchWriteSupport`.
              */
             boolean hasNextRow() {
-                boolean hasNextRow = currentBatch != null &&
+                boolean hasNextRowInCurrentBatch = currentBatch != null &&
                         // Is current batch is fully read?
                         currentBatchCursor < currentBatch.getData().getSize();
 
-                if (hasNextRow) {
+                if (hasNextRowInCurrentBatch) {
                     return true;
                 }
 
@@ -170,7 +171,7 @@ public class ParquetFileWriter {
                     }
                     currentBatch = dataIter.next();
                     currentBatchCursor = 0;
-                } while (currentBatchCursor >= currentBatch.getData().getSize());
+                } while (currentBatch.getData().getSize() == 0); // skip empty batches
 
                 // Initialize the batch support and create writers for each column
                 ColumnarBatch inputBatch = currentBatch.getData();
@@ -347,7 +348,7 @@ public class ParquetFileWriter {
      * Potential improvement in future to directly compute the statistics while writing the file if
      * this becomes a sufficiently large part of the write operation time.
      */
-    private DataFileStatus constructOutput(String path, StructType dataSchema) {
+    private DataFileStatus constructDataFileStatus(String path, StructType dataSchema) {
         try {
             // Get the FileStatus to figure out the file size and modification time
             Path hadoopPath = new Path(path);

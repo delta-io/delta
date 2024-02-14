@@ -76,6 +76,10 @@ public class ParquetStatsReader {
         return mergeStats(metadataForColumn.build(), dataSchema, statsColumns, rowCount);
     }
 
+    /**
+     * Merge statistics from multiple rowgroups into a single set of statistics for each column.
+     * @return
+     */
     private static DataFileStatistics mergeStats(
             Multimap<Column, ColumnChunkMetaData> metadataForColumn,
             StructType dataSchema,
@@ -136,7 +140,7 @@ public class ParquetStatsReader {
             LogicalTypeAnnotation logicalType = statistics.type().getLogicalTypeAnnotation();
             checkArgument(
                     logicalType instanceof DecimalLogicalTypeAnnotation,
-                    "DECIMAL column had invalid Parquet Logical Type: %s", logicalType);
+                    "Physical decimal column has invalid Parquet Logical Type: %s", logicalType);
             int scale = ((DecimalLogicalTypeAnnotation) logicalType).getScale();
 
             DecimalType decimalType = (DecimalType) dataType;
@@ -144,7 +148,7 @@ public class ParquetStatsReader {
             // Check the scale is same in both the Delta data type and the Parquet Logical Type
             checkArgument(
                     scale == decimalType.getScale(),
-                    "DECIMAL column has different scale compared to the input data: %s", scale);
+                    "Physical decimal type has different scale than the logical type : %s", scale);
 
             // Decimal is stored either as int, long or binary. Decode the stats accordingly.
             BigDecimal decimalStatValue;

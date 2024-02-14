@@ -43,7 +43,7 @@ public class DefaultKernelUtils {
     }
 
     /**
-     * Returns Julian day and nanoseconds in a day from the number of microseconds
+     * Returns Julian day and remaining nanoseconds from the number of microseconds
      *
      * Note: support timestamp since 4717 BC (without negative nanoseconds, compatible with Hive).
      */
