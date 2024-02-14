@@ -1049,8 +1049,10 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "a.key",
-          "oldField" -> "key: INT NOT NULL",
-          "newField" -> "key: BIGINT NOT NULL"
+          // This should be `INT NOT NULL` and `BIGINT NOT NULL` but Spark 3.5 doesn't display
+          // nullability correctly. This is fixed in recent Spark by SPARK-46629.
+          "oldField" -> "key: INT",
+          "newField" -> "key: BIGINT"
         )
       )
     }
@@ -1386,7 +1388,9 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "m.key",
-          "oldField" -> "key: INT NOT NULL",
+          // This should be `INT NOT NULL` but Spark 3.5 doesn't display
+          // nullability correctly. This is fixed in recent Spark by SPARK-46629.
+          "oldField" -> "key: INT",
           "newField" -> "key: INT"
         )
       )
