@@ -118,6 +118,72 @@ class RowIdCreateReplaceTableSuite extends QueryTest
     }
   }
 
+  test("Replacing a table without row IDs with row IDs enabled assigns new row IDs") {
+    withTable("source", "target") {
+      writeTargetTestData(withRowIds = false)
+      writeSourceTestData(withRowIds = true)
+
+      val beforeCommandLog = DeltaLog.forTable(spark, TableIdentifier("target"))
+      assertRowIdsAreNotSet(beforeCommandLog)
+
+      withRowTrackingEnabled(enabled = true) {
+        createReplaceTargetTable(
+          commandName = "REPLACE",
+          query = "SELECT * FROM source",
+          tblProperties = s"'$rowTrackingFeatureName' = 'supported'" ::
+            s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION" :: Nil)
+      }
+
+      val afterCommandLog = DeltaLog.forTable(spark, TableIdentifier("target"))
+      assertRowIdsAreValid(afterCommandLog)
+    }
+  }
+
+  test("CREATE OR REPLACE on existing table without row IDs assigns new row IDs when enabling " +
+    "row IDs") {
+    withTable("target") {
+      writeTargetTestData(withRowIds = false)
+
+      val beforeCommandLog = DeltaLog.forTable(spark, TableIdentifier("target"))
+      assertRowIdsAreNotSet(beforeCommandLog)
+
+      withRowTrackingEnabled(enabled = true) {
+        createReplaceTargetTable(
+          commandName = "CREATE OR REPLACE",
+          query = "SELECT * FROM VALUES (0), (1)",
+          tblProperties = s"${DeltaConfigs.ROW_TRACKING_ENABLED.key} = 'true'" :: Nil)
+      }
+
+      val afterCommandLog = DeltaLog.forTable(spark, TableIdentifier("target"))
+      assertRowIdsAreValid(afterCommandLog)
+    }
+  }
+
+  test("CTAS assigns new row IDs when immediately enabling row IDs") {
+    withTable("target") {
+      createReplaceTargetTable(
+        commandName = "CREATE",
+        query = "SELECT * FROM VALUES (0), (1)",
+        tblProperties = s"${DeltaConfigs.ROW_TRACKING_ENABLED.key} = 'true'" :: Nil)
+
+      val log = DeltaLog.forTable(spark, TableIdentifier("target"))
+      assertRowIdsAreValid(log)
+    }
+  }
+
+  test("CTAS assigns new row IDs when row IDs are by default enabled") {
+    withTable("target") {
+      withSQLConf(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> "true") {
+        createReplaceTargetTable(
+          commandName = "CREATE",
+          query = "SELECT * FROM VALUES (0), (1)")
+
+        val log = DeltaLog.forTable(spark, TableIdentifier("target"))
+        assertRowIdsAreValid(log)
+      }
+    }
+  }
+
   def createReplaceTargetTable(
       commandName: String, query: String, tblProperties: Seq[String] = Seq.empty): Unit = {
     val tblPropertiesStr = if (tblProperties.nonEmpty) {
