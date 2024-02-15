@@ -1017,8 +1017,8 @@ trait DeltaErrorsSuiteBase
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "a.b.c",
-          "oldField" -> "c: INT",
-          "newField" -> "c: BIGINT"
+          "oldField" -> "INT",
+          "newField" -> "BIGINT"
         )
       )
     }

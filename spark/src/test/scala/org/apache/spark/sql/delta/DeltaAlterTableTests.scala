@@ -1013,8 +1013,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "v1",
-          "oldField" -> "v1: INT",
-          "newField" -> "v1: BIGINT"
+          "oldField" -> "INT",
+          "newField" -> "BIGINT"
         )
       )
     }
@@ -1031,8 +1031,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "struct.v1",
-          "oldField" -> "v1: INT",
-          "newField" -> "v1: BIGINT"
+          "oldField" -> "INT",
+          "newField" -> "BIGINT"
         )
       )
     }
@@ -1051,8 +1051,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
           "fieldPath" -> "a.key",
           // This should be `INT NOT NULL` and `BIGINT NOT NULL` but Spark 3.5 doesn't display
           // nullability correctly. This is fixed in recent Spark by SPARK-46629.
-          "oldField" -> "key: INT",
-          "newField" -> "key: BIGINT"
+          "oldField" -> "INT",
+          "newField" -> "BIGINT"
         )
       )
     }
@@ -1069,8 +1069,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "a.value",
-          "oldField" -> "value: INT",
-          "newField" -> "value: BIGINT"
+          "oldField" -> "INT",
+          "newField" -> "BIGINT"
         )
       )
     }
@@ -1087,8 +1087,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "a.element",
-          "oldField" -> "element: INT",
-          "newField" -> "element: BIGINT"
+          "oldField" -> "INT",
+          "newField" -> "BIGINT"
         )
       )
     }
@@ -1390,8 +1390,8 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
           "fieldPath" -> "m.key",
           // This should be `INT NOT NULL` but Spark 3.5 doesn't display
           // nullability correctly. This is fixed in recent Spark by SPARK-46629.
-          "oldField" -> "key: INT",
-          "newField" -> "key: INT"
+          "oldField" -> "INT",
+          "newField" -> "INT"
         )
       )
 

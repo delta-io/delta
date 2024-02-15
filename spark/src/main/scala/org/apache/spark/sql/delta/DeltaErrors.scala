@@ -621,12 +621,15 @@ trait DeltaErrorsBase
       fieldPath: String,
       oldField: StructField,
       newField: StructField): Throwable = {
+    def fieldToString(field: StructField): String =
+      field.dataType.sql + (if (!field.nullable) " NOT NULL" else "")
+
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
       messageParameters = Array(
         fieldPath,
-        oldField.sql,
-        newField.sql)
+        fieldToString(oldField),
+        fieldToString(newField))
     )
   }
 
