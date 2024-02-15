@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 /**
  * A base class for implementing a preparation command for removing table features.
@@ -45,7 +46,10 @@ case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     // Make sure feature data/metadata exist before proceeding.
     if (TestRemovableWriterFeature.validateRemoval(table.initialSnapshot)) return false
 
-    recordDeltaEvent(table.deltaLog, "delta.test.TestWriterFeaturePreDowngradeCommand")
+    if (DeltaUtils.isTesting) {
+      recordDeltaEvent(table.deltaLog, "delta.test.TestWriterFeaturePreDowngradeCommand")
+    }
+
     val properties = Seq(TestRemovableWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
     true
@@ -60,7 +64,10 @@ case class TestReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     // Make sure feature data/metadata exist before proceeding.
     if (TestRemovableReaderWriterFeature.validateRemoval(table.initialSnapshot)) return false
 
-    recordDeltaEvent(table.deltaLog, "delta.test.TestReaderWriterFeaturePreDowngradeCommand")
+    if (DeltaUtils.isTesting) {
+      recordDeltaEvent(table.deltaLog, "delta.test.TestReaderWriterFeaturePreDowngradeCommand")
+    }
+
     val properties = Seq(TestRemovableReaderWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
     true
