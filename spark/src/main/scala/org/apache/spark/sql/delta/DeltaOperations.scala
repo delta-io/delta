@@ -327,7 +327,7 @@ object DeltaOperations {
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
       CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       "properties" -> JsonUtils.toJson(metadata.configuration)
-    )
+  )
     override val operationMetrics: Set[String] = if (!asSelect) {
       Set()
     } else {
