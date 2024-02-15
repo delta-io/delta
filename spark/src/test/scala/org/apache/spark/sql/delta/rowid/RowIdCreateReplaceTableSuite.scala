@@ -16,10 +16,13 @@
 
 package org.apache.spark.sql.delta.rowid
 
+import org.apache.spark.sql.delta.DeltaConfigs
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.RowId.extractHighWatermark
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 
