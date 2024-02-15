@@ -56,7 +56,7 @@ import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, StringType, StructField, StructType, TimestampNTZType}
+import org.apache.spark.sql.types._
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
@@ -1005,6 +1005,22 @@ trait DeltaErrorsSuiteBase
          | |-- c0: string (nullable = true)
          |""".stripMargin
         ))
+    }
+    {
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          throw DeltaErrors.alterTableChangeColumnException(
+            fieldPath = "a.b.c",
+            oldField = StructField("c", IntegerType),
+            newField = StructField("c", LongType))
+        },
+        errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        parameters = Map(
+          "fieldPath" -> "a.b.c",
+          "oldField" -> "INT",
+          "newField" -> "BIGINT"
+        )
+      )
     }
     {
       val s1 = StructType(Seq(StructField("c0", IntegerType)))
