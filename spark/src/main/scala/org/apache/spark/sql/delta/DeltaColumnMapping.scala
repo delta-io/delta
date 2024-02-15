@@ -632,15 +632,13 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     allowUnsafeReadOnPartitionChanges: Boolean = false): Boolean = {
     // Helper function to check no column mapping schema change and no repartition
     def hasNoColMappingAndRepartitionSchemaChange(
-       newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
+        newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
       isRenameColumnOperation(newMetadata, oldMetadata) ||
         isDropColumnOperation(newMetadata, oldMetadata) ||
         !SchemaUtils.isPartitionCompatible(
           // if allow unsafe row read for partition change, ignore the check
-          if (allowUnsafeReadOnPartitionChanges) Seq.empty
-            else newMetadata.partitionColumns,
-          if (allowUnsafeReadOnPartitionChanges) Seq.empty
-            else oldMetadata.partitionColumns)
+          if (allowUnsafeReadOnPartitionChanges) Seq.empty else newMetadata.partitionColumns,
+          if (allowUnsafeReadOnPartitionChanges) Seq.empty else oldMetadata.partitionColumns)
     }
 
     val (oldMode, newMode) = (oldMetadata.columnMappingMode, newMetadata.columnMappingMode)

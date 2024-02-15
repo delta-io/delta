@@ -649,10 +649,10 @@ trait DeltaSourceBase extends Source
               allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
               backfilling,
             // Partition column change will be ignored if user enable the unsafe flag
-            newPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
-              else newMetadata.partitionColumns,
-            oldPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
-              else oldMetadata.partitionColumns
+          newPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
+            else newMetadata.partitionColumns,
+          oldPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
+            else oldMetadata.partitionColumns
         )) {
         // Only schema change later than the current read snapshot/schema can be retried, in other
         // words, backfills could never be retryable, because we have no way to refresh

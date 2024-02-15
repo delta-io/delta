@@ -1183,9 +1183,9 @@ trait DeltaSQLConfBase {
     buildConf("streaming.unsafeReadOnPartitionColumnChanges.enabled")
       .doc(
         "Streaming read on Delta table with partition column overwrite " +
-        "(e.g. changing partition column) is currently blocked due to potential data loss. " +
-        "However, existing users may use this flag to force unblock " +
-        "if they'd like to take the risk.")
+          "(e.g. changing partition column) is currently blocked due to potential data loss. " +
+          "However, existing users may use this flag to force unblock " +
+          "if they'd like to take the risk.")
       .internal()
       .booleanConf
       .createWithDefault(false)
