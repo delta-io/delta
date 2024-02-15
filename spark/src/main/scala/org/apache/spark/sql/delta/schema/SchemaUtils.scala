@@ -256,6 +256,10 @@ def normalizeColumnNamesInDataType(
           keyType = normalizedKeyType,
           valueType = normalizedValueType
         )
+      case (_: NullType, _) =>
+        // When schema evolution adds a new column during MERGE, it can be represented with
+        // a NullType in the schema of the data written by the MERGE.
+        sourceDataType
       case _ =>
         if (Utils.isTesting) {
           assert(sourceDataType == tableDataType,
