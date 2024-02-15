@@ -122,9 +122,9 @@ class DeleteMetricsSuite extends QueryTest
         operationMetrics = DeltaMetricsUtils.getLastOperationMetrics(tableName)
 
         // Check operation metrics against commit actions.
-        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
         DeltaMetricsUtils.checkOperationMetricsAgainstCommitActions(
-          deltaLog, deltaLog.update().version, operationMetrics)
+          deltaLog, snapshot.version, operationMetrics)
 
       }
     }

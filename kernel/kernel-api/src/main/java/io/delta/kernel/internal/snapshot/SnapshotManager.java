@@ -17,24 +17,21 @@
 package io.delta.kernel.internal.snapshot;
 
 import java.io.FileNotFoundException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.io.IOException;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableNotFoundException;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
+import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
@@ -43,13 +40,31 @@ import io.delta.kernel.internal.checkpoints.Checkpointer;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.internal.util.Logging;
+import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.fs.Path.getName;
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-public class SnapshotManager
-    implements Logging {
-    public SnapshotManager() {}
+public class SnapshotManager {
+
+    /**
+     * The latest {@link SnapshotHint} for this table. The initial value inside the AtomicReference
+     * is `null`.
+     */
+    private AtomicReference<SnapshotHint> latestSnapshotHint;
+    private final Path logPath;
+    private final Path dataPath;
+
+    public SnapshotManager(Path logPath, Path dataPath) {
+        this.latestSnapshotHint = new AtomicReference<>();
+        this.logPath = logPath;
+        this.dataPath = dataPath;
+    }
+
+    private static final Logger logger = LoggerFactory.getLogger(SnapshotManager.class);
+
+    /////////////////
+    // Public APIs //
+    /////////////////
 
     /**
      * - Verify the versions are contiguous.
@@ -57,9 +72,9 @@ public class SnapshotManager
      * - Verify the versions end with `expectedEndVersion` if it's specified.
      */
     public static void verifyDeltaVersions(
-        List<Long> versions,
-        Optional<Long> expectedStartVersion,
-        Optional<Long> expectedEndVersion) {
+            List<Long> versions,
+            Optional<Long> expectedStartVersion,
+            Optional<Long> expectedEndVersion) {
         if (!versions.isEmpty()) {
             List<Long> contVersions = LongStream
                     .rangeClosed(versions.get(0), versions.get(versions.size() -1))
@@ -87,25 +102,40 @@ public class SnapshotManager
      * Construct the latest snapshot for given table.
      *
      * @param tableClient Instance of {@link TableClient} to use.
-     * @param logPath     Where the Delta log files are located.
-     * @param dataPath    Where the Delta data files are located.
      * @return
      * @throws TableNotFoundException
      */
-    public Snapshot buildLatestSnapshot(TableClient tableClient, Path logPath, Path dataPath)
+    public Snapshot buildLatestSnapshot(TableClient tableClient)
         throws TableNotFoundException {
-        return getSnapshotAtInit(tableClient, logPath, dataPath);
+        return getSnapshotAtInit(tableClient);
+    }
+
+    ////////////////////
+    // Helper Methods //
+    ////////////////////
+
+    /**
+     * Updates the current `latestSnapshotHint` with the `newHint` if and only if the newHint is
+     * newer (i.e. has a later table version).
+     *
+     * Must be thread-safe.
+     */
+    private void registerHint(SnapshotHint newHint) {
+        latestSnapshotHint.updateAndGet(currHint -> {
+            if (currHint == null) return newHint; // the initial reference value is null
+            if (newHint.getVersion() > currHint.getVersion()) return newHint;
+            return currHint;
+        });
     }
 
     /**
      * Get an iterator of files in the _delta_log directory starting with the startVersion.
      */
     private CloseableIterator<FileStatus> listFrom(
-        Path logPath,
         TableClient tableClient,
         long startVersion)
-        throws FileNotFoundException {
-        logDebug(String.format("startVersion: %s", startVersion));
+        throws IOException {
+        logger.debug("startVersion: {}", startVersion);
         return tableClient
             .getFileSystemClient()
             .listFrom(FileNames.listingPrefix(logPath, startVersion));
@@ -124,17 +154,16 @@ public class SnapshotManager
     }
 
     /**
-     * Returns an iterator containing a list of files found from the provided path
+     * Returns an iterator containing a list of files found in the _delta_log directory starting
+     * with the startVersion. Returns None if no files are found or the directory is missing.
      */
     private Optional<CloseableIterator<FileStatus>> listFromOrNone(
-        Path logPath,
         TableClient tableClient,
         long startVersion) {
         // LIST the directory, starting from the provided lower bound (treat missing dir as empty).
         // NOTE: "empty/missing" is _NOT_ equivalent to "contains no useful commit files."
         try {
             CloseableIterator<FileStatus> results = listFrom(
-                logPath,
                 tableClient,
                 startVersion);
             if (results.hasNext()) {
@@ -144,6 +173,8 @@ public class SnapshotManager
             }
         } catch (FileNotFoundException e) {
             return Optional.empty();
+        } catch (IOException io) {
+            throw new RuntimeException("Failed to list the files in delta log", io);
         }
     }
 
@@ -159,14 +190,12 @@ public class SnapshotManager
      * None if the listing returned no files at all.
      */
     protected final Optional<List<FileStatus>> listDeltaAndCheckpointFiles(
-        Path logPath,
         TableClient tableClient,
         long startVersion,
         Optional<Long> versionToLoad) {
-        logDebug(String.format("startVersion: %s, versionToLoad: %s", startVersion, versionToLoad));
+        logger.debug("startVersion: {}, versionToLoad: {}", startVersion, versionToLoad);
 
         return listFromOrNone(
-            logPath,
             tableClient,
             startVersion).map(fileStatusesIter -> {
                 final List<FileStatus> output = new ArrayList<>();
@@ -206,42 +235,48 @@ public class SnapshotManager
      * Load the Snapshot for this Delta table at initialization. This method uses the
      * `lastCheckpoint` file as a hint on where to start listing the transaction log directory.
      */
-    private SnapshotImpl getSnapshotAtInit(TableClient tableClient, Path logPath, Path dataPath)
+    private SnapshotImpl getSnapshotAtInit(TableClient tableClient)
         throws TableNotFoundException {
         Checkpointer checkpointer = new Checkpointer(logPath);
         Optional<CheckpointMetaData> lastCheckpointOpt =
             checkpointer.readLastCheckpointFile(tableClient);
         Optional<LogSegment> logSegmentOpt =
-            getLogSegmentFrom(logPath, tableClient, lastCheckpointOpt);
+            getLogSegmentFrom(tableClient, lastCheckpointOpt);
 
         return logSegmentOpt
             .map(logSegment -> createSnapshot(
                 logSegment,
-                logPath,
-                dataPath,
                 tableClient))
-            .orElseThrow(TableNotFoundException::new);
+            .orElseThrow(() -> new TableNotFoundException(dataPath.toString()));
     }
 
     private SnapshotImpl createSnapshot(
-        LogSegment initSegment,
-        Path logPath,
-        Path dataPath,
-        TableClient tableClient) {
+            LogSegment initSegment,
+            TableClient tableClient) {
         final String startingFromStr = initSegment
             .checkpointVersionOpt
-            .map(v -> String.format(" starting from checkpoint version %s.", v))
+            .map(v -> String.format("starting from checkpoint version %s.", v))
             .orElse(".");
-        logInfo(() -> String.format("Loading version %s%s", initSegment.version, startingFromStr));
+        logger.info("Loading version {} {}", initSegment.version, startingFromStr);
 
-        return new SnapshotImpl(
+        final SnapshotImpl snapshot = new SnapshotImpl(
             logPath,
             dataPath,
             initSegment.version,
             initSegment,
             tableClient,
-            initSegment.lastCommitTimestamp
+            initSegment.lastCommitTimestamp,
+            Optional.ofNullable(latestSnapshotHint.get())
         );
+
+        final SnapshotHint hint = new SnapshotHint(
+            snapshot.getVersion(tableClient),
+            snapshot.getProtocol(),
+            snapshot.getMetadata());
+
+        registerHint(hint);
+
+        return snapshot;
     }
 
     /**
@@ -251,11 +286,9 @@ public class SnapshotManager
      * @param startingCheckpoint A checkpoint that we can start our listing from
      */
     private Optional<LogSegment> getLogSegmentFrom(
-        Path logPath,
         TableClient tableClient,
         Optional<CheckpointMetaData> startingCheckpoint) {
         return getLogSegmentForVersion(
-            logPath,
             tableClient,
             startingCheckpoint.map(x -> x.version),
             Optional.empty());
@@ -275,23 +308,22 @@ public class SnapshotManager
      *                        latest
      *                        version of the table.
      * @return Some LogSegment to build a Snapshot if files do exist after the given
-     * startCheckpoint. None, if the directory was missing or empty.
+     * startCheckpoint. None, if the delta log directory was missing or empty.
      */
-    private Optional<LogSegment> getLogSegmentForVersion(
-        Path logPath,
+    public Optional<LogSegment> getLogSegmentForVersion(
         TableClient tableClient,
         Optional<Long> startCheckpoint,
         Optional<Long> versionToLoad) {
         // List from the starting checkpoint. If a checkpoint doesn't exist, this will still return
         // deltaVersion=0.
+        // TODO when implementing time-travel don't list from startCheckpoint if
+        //  startCheckpoint > versionToLoad
         final Optional<List<FileStatus>> newFiles =
             listDeltaAndCheckpointFiles(
-                logPath,
                 tableClient,
                 startCheckpoint.orElse(0L),
                 versionToLoad);
         return getLogSegmentForVersion(
-            logPath,
             tableClient,
             startCheckpoint,
             versionToLoad,
@@ -302,8 +334,7 @@ public class SnapshotManager
      * Helper function for the getLogSegmentForVersion above. Called with a provided files list,
      * and will then try to construct a new LogSegment using that.
      */
-    private Optional<LogSegment> getLogSegmentForVersion(
-        Path logPath,
+    protected Optional<LogSegment> getLogSegmentForVersion(
         TableClient tableClient,
         Optional<Long> startCheckpointOpt,
         Optional<Long> versionToLoadOpt,
@@ -330,10 +361,9 @@ public class SnapshotManager
         logDebug(() ->
             String.format(
                 "newFiles: %s",
-                Arrays.toString(newFiles.stream()
-                    .map(x -> new Path(x.getPath()).getName()).toArray())
-            )
-        );
+                Arrays.toString(
+                    newFiles.stream().map(x -> new Path(x.getPath()).getName()).toArray())
+            ));
 
         if (newFiles.isEmpty() && !startCheckpointOpt.isPresent()) {
             // We can't construct a snapshot because the directory contained no usable commit
@@ -345,7 +375,6 @@ public class SnapshotManager
             // The directory may be deleted and recreated and we may have stale state in our
             // DeltaLog singleton, so try listing from the first version
             return getLogSegmentForVersion(
-                logPath,
                 tableClient,
                 Optional.empty(),
                 versionToLoadOpt);
@@ -366,13 +395,12 @@ public class SnapshotManager
                     x -> new Path(x.getPath()).getName()).toArray()),
                 Arrays.toString(deltas.stream().map(
                     x -> new Path(x.getPath()).getName()).toArray())
-            )
-        );
+            ));
 
         // Find the latest checkpoint in the listing that is not older than the versionToLoad
-        final CheckpointInstance lastCheckpoint = versionToLoadOpt.map(CheckpointInstance::new)
+        final CheckpointInstance maxCheckpoint = versionToLoadOpt.map(CheckpointInstance::new)
             .orElse(CheckpointInstance.MAX_VALUE);
-        logDebug(String.format("lastCheckpoint: %s", lastCheckpoint));
+        logger.debug("lastCheckpoint: {}", maxCheckpoint);
 
         final List<CheckpointInstance> checkpointFiles = checkpoints
             .stream()
@@ -382,8 +410,8 @@ public class SnapshotManager
             String.format("checkpointFiles: %s", Arrays.toString(checkpointFiles.toArray())));
 
         final Optional<CheckpointInstance> newCheckpointOpt =
-            Checkpointer.getLatestCompleteCheckpointFromList(checkpointFiles, lastCheckpoint);
-        logDebug(String.format("newCheckpointOpt: %s", newCheckpointOpt));
+            Checkpointer.getLatestCompleteCheckpointFromList(checkpointFiles, maxCheckpoint);
+        logger.debug("newCheckpointOpt: {}", newCheckpointOpt);
 
         final long newCheckpointVersion = newCheckpointOpt
             .map(c -> c.version)
@@ -418,7 +446,7 @@ public class SnapshotManager
 
                 return -1L;
             });
-        logDebug(String.format("newCheckpointVersion: %s", newCheckpointVersion));
+        logger.debug("newCheckpointVersion: {}", newCheckpointVersion);
 
         // TODO: we can calculate deltasAfterCheckpoint and deltaVersions more efficiently
         // If there is a new checkpoint, start new lineage there. If `newCheckpointVersion` is -1,
@@ -434,37 +462,40 @@ public class SnapshotManager
             String.format(
                 "deltasAfterCheckpoint: %s",
                 Arrays.toString(deltasAfterCheckpoint.stream().map(
-                    x -> new Path(x.getPath()).getName()).toArray())
-            )
-        );
+                    x -> new Path(x.getPath()).getName()).toArray())));
 
-        final LinkedList<Long> deltaVersions = deltasAfterCheckpoint
+        final LinkedList<Long> deltaVersionsAfterCheckpoint = deltasAfterCheckpoint
             .stream()
             .map(fileStatus -> FileNames.deltaVersion(new Path(fileStatus.getPath())))
             .collect(Collectors.toCollection(LinkedList::new));
 
         logDebug(() ->
-            String.format("deltaVersions: %s", Arrays.toString(deltaVersions.toArray())));
+            String.format(
+                "deltaVersions: %s",
+                Arrays.toString(deltaVersionsAfterCheckpoint.toArray())
+            ));
 
         // We may just be getting a checkpoint file after the filtering
-        if (!deltaVersions.isEmpty()) {
-            if (deltaVersions.getFirst() != newCheckpointVersion + 1) {
+        if (!deltaVersionsAfterCheckpoint.isEmpty()) {
+            if (deltaVersionsAfterCheckpoint.getFirst() != newCheckpointVersion + 1) {
                 throw new RuntimeException(
                     String.format(
-                        "Log file not found.\nExpected: %s\nFound:%s",
+                        "Log file not found.\nExpected: %s\nFound: %s",
                         FileNames.deltaFile(logPath, newCheckpointVersion + 1),
-                        FileNames.deltaFile(logPath, deltaVersions.get(0))
+                        FileNames.deltaFile(logPath, deltaVersionsAfterCheckpoint.get(0))
                     )
                 );
             }
             verifyDeltaVersions(
-                deltaVersions, Optional.of(newCheckpointVersion + 1), versionToLoadOpt);
+                deltaVersionsAfterCheckpoint,
+                Optional.of(newCheckpointVersion + 1),
+                versionToLoadOpt);
         }
 
         // TODO: double check newCheckpointOpt.get() won't error out
 
-        final long newVersion = deltaVersions.isEmpty() ?
-            newCheckpointOpt.get().version : deltaVersions.getLast();
+        final long newVersion = deltaVersionsAfterCheckpoint.isEmpty() ?
+            newCheckpointOpt.get().version : deltaVersionsAfterCheckpoint.getLast();
 
         // In the case where `deltasAfterCheckpoint` is empty, `deltas` should still not be empty,
         // they may just be before the checkpoint version unless we have a bug in log cleanup.
@@ -531,5 +562,12 @@ public class SnapshotManager
         long maxExclusiveCheckpointVersion) {
         // TODO
         return Optional.empty();
+    }
+
+    // TODO logger interface to support this across kernel-api module
+    private void logDebug(Supplier<String> message) {
+        if (logger.isDebugEnabled()) {
+            logger.debug(message.get());
+        }
     }
 }

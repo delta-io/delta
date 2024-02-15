@@ -30,14 +30,20 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{DataType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
 trait DeltaColumnMappingBase extends DeltaLogging {
   val PARQUET_FIELD_ID_METADATA_KEY = "parquet.field.id"
+  val PARQUET_FIELD_NESTED_IDS_METADATA_KEY = "parquet.field.nested.ids"
   val COLUMN_MAPPING_METADATA_PREFIX = "delta.columnMapping."
   val COLUMN_MAPPING_METADATA_ID_KEY = COLUMN_MAPPING_METADATA_PREFIX + "id"
   val COLUMN_MAPPING_PHYSICAL_NAME_KEY = COLUMN_MAPPING_METADATA_PREFIX + "physicalName"
+  val COLUMN_MAPPING_METADATA_NESTED_IDS_KEY = COLUMN_MAPPING_METADATA_PREFIX + "nested.ids"
+  val PARQUET_LIST_ELEMENT_FIELD_NAME = "element"
+  val PARQUET_MAP_KEY_FIELD_NAME = "key"
+  val PARQUET_MAP_VALUE_FIELD_NAME = "value"
 
   /**
    * This list of internal columns (and only this list) is allowed to have missing
@@ -56,6 +62,15 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     (CDCReader.CDC_COLUMNS_IN_DATA ++ Seq(
       CDCReader.CDC_COMMIT_VERSION,
       CDCReader.CDC_COMMIT_TIMESTAMP,
+      /**
+       * Whenever `_metadata` column is selected, Spark adds the format generated metadata
+       * columns to `ParquetFileFormat`'s required output schema. Column `_metadata` contains
+       * constant value subfields metadata such as `file_path` and format specific custom metadata
+       * subfields such as `row_index` in Parquet. Spark creates the file format object with
+       * data schema plus additional custom metadata columns required from file format to fill up
+       * the `_metadata` column.
+       */
+      ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME,
       DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME,
       DeltaParquetFileFormat.ROW_INDEX_COLUMN_NAME)
     ).map(_.toLowerCase(Locale.ROOT)).toSet
@@ -158,6 +173,12 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   def getColumnId(field: StructField): Int =
     field.metadata.getLong(COLUMN_MAPPING_METADATA_ID_KEY).toInt
 
+  def hasNestedColumnIds(field: StructField): Boolean =
+    field.metadata.contains(COLUMN_MAPPING_METADATA_NESTED_IDS_KEY)
+
+  def getNestedColumnIds(field: StructField): SparkMetadata =
+    field.metadata.getMetadata(COLUMN_MAPPING_METADATA_NESTED_IDS_KEY)
+
   def hasPhysicalName(field: StructField): Boolean =
     field.metadata.contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
 
@@ -171,7 +192,9 @@ trait DeltaColumnMappingBase extends DeltaLogging {
         new MetadataBuilder()
           .withMetadata(field.metadata)
           .remove(COLUMN_MAPPING_METADATA_ID_KEY)
+          .remove(COLUMN_MAPPING_METADATA_NESTED_IDS_KEY)
           .remove(PARQUET_FIELD_ID_METADATA_KEY)
+          .remove(PARQUET_FIELD_NESTED_IDS_METADATA_KEY)
           .remove(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
           .build()
 
@@ -185,10 +208,17 @@ trait DeltaColumnMappingBase extends DeltaLogging {
         // Delta spec requires writer to always write field_id in parquet schema for column mapping
         // Reader strips PARQUET_FIELD_ID_METADATA_KEY in
         // DeltaParquetFileFormat:prepareSchemaForRead
-        new MetadataBuilder()
+        val builder = new MetadataBuilder()
           .withMetadata(field.metadata)
           .putLong(PARQUET_FIELD_ID_METADATA_KEY, getColumnId(field))
-          .build()
+
+        // Nested field IDs for the 'element' and 'key'/'value' fields of Arrays
+        // and Maps are written when Uniform with IcebergCompatV2 is enabled on a table.
+        if (hasNestedColumnIds(field)) {
+          builder.putMetadata(PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(field))
+        }
+
+        builder.build()
 
       case mode =>
         throw DeltaErrors.unsupportedColumnMappingMode(mode.name)
@@ -341,6 +371,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     val rawSchema = newMetadata.schema
     var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(newMetadata) max
                 findMaxColumnId(rawSchema)
+    val startId = maxId
     val newSchema =
       SchemaMergingUtils.transformColumns(rawSchema)((path, field, _) => {
         val builder = new MetadataBuilder().withMetadata(field.metadata)
@@ -408,10 +439,16 @@ trait DeltaColumnMappingBase extends DeltaLogging {
         field.copy(metadata = builder.build())
       })
 
+    val (finalSchema, newMaxId) = if (IcebergCompatV2.isEnabled(newMetadata)) {
+      rewriteFieldIdsForIceberg(newSchema, maxId)
+    } else {
+      (newSchema, maxId)
+    }
+
     newMetadata.copy(
-      schemaString = newSchema.json,
-      configuration =
-        newMetadata.configuration ++ Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> maxId.toString)
+      schemaString = finalSchema.json,
+      configuration = newMetadata.configuration
+        ++ Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> newMaxId.toString)
     )
   }
 
@@ -421,8 +458,10 @@ trait DeltaColumnMappingBase extends DeltaLogging {
         metadata = new MetadataBuilder()
           .withMetadata(field.metadata)
           .remove(COLUMN_MAPPING_METADATA_ID_KEY)
+          .remove(COLUMN_MAPPING_METADATA_NESTED_IDS_KEY)
           .remove(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
           .remove(PARQUET_FIELD_ID_METADATA_KEY)
+          .remove(PARQUET_FIELD_NESTED_IDS_METADATA_KEY)
           .build()
       )
     }
@@ -581,6 +620,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
 
   /**
    * Compare the old metadata's schema with new metadata's schema for column mapping schema changes.
+   * Also check for repartition because we need to fail fast when repartition detected.
    *
    * newMetadata's snapshot version must be >= oldMetadata's snapshot version so we could reliably
    * detect the difference between ADD COLUMN and DROP COLUMN.
@@ -589,12 +629,20 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * no rename column or drop column has happened in-between.
    */
   def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
+    // Helper function to check no column mapping schema change and no repartition
+    def hasNoColMappingAndRepartitionSchemaChange(
+       newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
+      isRenameColumnOperation(newMetadata, oldMetadata) ||
+        isDropColumnOperation(newMetadata, oldMetadata) ||
+        !SchemaUtils.isPartitionCompatible(
+          newMetadata.partitionColumns, oldMetadata.partitionColumns)
+    }
+
     val (oldMode, newMode) = (oldMetadata.columnMappingMode, newMetadata.columnMappingMode)
     if (oldMode != NoMapping && newMode != NoMapping) {
       require(oldMode == newMode, "changing mode is not supported")
       // Both changes are post column mapping enabled
-      !isRenameColumnOperation(newMetadata, oldMetadata) &&
-        !isDropColumnOperation(newMetadata, oldMetadata)
+      !hasNoColMappingAndRepartitionSchemaChange(newMetadata, oldMetadata)
     } else if (oldMode == NoMapping && newMode != NoMapping) {
       // The old metadata does not have column mapping while the new metadata does, in this case
       // we assume an upgrade has happened in between.
@@ -611,13 +659,109 @@ trait DeltaColumnMappingBase extends DeltaLogging {
           Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> newMetadata.columnMappingMode.name)
       )
       // use the same check
-      !isRenameColumnOperation(newMetadata, upgradedMetadata) &&
-        !isDropColumnOperation(newMetadata, upgradedMetadata)
+      !hasNoColMappingAndRepartitionSchemaChange(newMetadata, upgradedMetadata)
     } else {
       // Not column mapping, don't block
       // TODO: support column mapping downgrade check once that's rolled out.
       true
     }
+  }
+
+  /**
+   * Adds the nested field IDs required by Iceberg.
+   *
+   * In parquet, list-type columns have a nested, implicitly defined [[element]] field and
+   * map-type columns have implicitly defined [[key]] and [[value]] fields. By default,
+   * Spark does not write field IDs for these fields in the parquet files. However, Iceberg
+   * requires these *nested* field IDs to be present. This method rewrites the specified
+   * Spark schema to add those nested field IDs.
+   *
+   * As list and map types are not [[StructField]]s themselves, nested field IDs are stored in
+   * a map as part of the metadata of the *nearest* parent [[StructField]]. For example, consider
+   * the following schema:
+   *
+   * col1 ARRAY(INT)
+   * col2 MAP(INT, INT)
+   * col3 STRUCT(a INT, b ARRAY(STRUCT(c INT, d MAP(INT, INT))))
+   *
+   * col1 is a list and so requires one nested field ID for the [[element]] field in parquet.
+   * This nested field ID will be stored in a map that is part of col1's [[StructField.metadata]].
+   * The same applies to the nested field IDs for col2's implicit [[key]] and [[value]] fields.
+   * col3 itself is a Struct, consisting of an integer field and a list field named 'b'. The
+   * nested field ID for the list of 'b' is stored in b's StructField metadata. Finally, the
+   * list type itself is again a struct consisting of an integer field and a map field named 'd'.
+   * The nested field IDs for the map of 'd' are stored in d's StructField metadata.
+   *
+   * @param schema  The schema to which nested field IDs should be added
+   * @param startId The first field ID to use for the nested field IDs
+   */
+  def rewriteFieldIdsForIceberg(schema: StructType, startId: Long): (StructType, Long) = {
+    var currFieldId = startId
+
+    def initNestedIdsMetadata(field: StructField): MetadataBuilder = {
+      if (hasNestedColumnIds(field)) {
+        new MetadataBuilder().withMetadata(getNestedColumnIds(field))
+      } else {
+        new MetadataBuilder()
+      }
+    }
+
+    /*
+     * Helper to add the next field ID to the specified [[MetadataBuilder]] under
+     * the specified key. This method first checks whether this is an existing nested
+     * field or a newly added nested field. New field IDs are only assigned to newly
+     * added nested fields.
+     */
+    def updateFieldId(metadata: MetadataBuilder, key: String): Unit = {
+      if (!metadata.build().contains(key)) {
+        currFieldId += 1
+        metadata.putLong(key, currFieldId)
+      }
+    }
+
+    /*
+     * Recursively adds nested field IDs for the passed data type in pre-order,
+     * ensuring uniqueness of field IDs.
+     *
+     * @param dt The data type that should be transformed
+     * @param nestedIds A MetadataBuilder that keeps track of the nested field ID
+     *                  assignment. This metadata is added to the parent field.
+     * @param path The current field path relative to the parent field
+     */
+    def transform[E <: DataType](dt: E, nestedIds: MetadataBuilder, path: Seq[String]): E = {
+      val newDt = dt match {
+        case StructType(fields) =>
+          StructType(fields.map { field =>
+            val newNestedIds = initNestedIdsMetadata(field)
+            val newDt = transform(field.dataType, newNestedIds, Seq(getPhysicalName(field)))
+            val newFieldMetadata = new MetadataBuilder().withMetadata(field.metadata).putMetadata(
+              COLUMN_MAPPING_METADATA_NESTED_IDS_KEY, newNestedIds.build()).build()
+            field.copy(dataType = newDt, metadata = newFieldMetadata)
+          })
+        case ArrayType(elementType, containsNull) =>
+          // update element type metadata and recurse into element type
+          val elemPath = path :+ PARQUET_LIST_ELEMENT_FIELD_NAME
+          updateFieldId(nestedIds, elemPath.mkString("."))
+          val elementDt = transform(elementType, nestedIds, elemPath)
+          // return new array type with updated metadata
+          ArrayType(elementDt, containsNull)
+        case MapType(keyType, valType, valueContainsNull) =>
+          // update key type metadata and recurse into key type
+          val keyPath = path :+ PARQUET_MAP_KEY_FIELD_NAME
+          updateFieldId(nestedIds, keyPath.mkString("."))
+          val keyDt = transform(keyType, nestedIds, keyPath)
+          // update value type metadata and recurse into value type
+          val valPath = path :+ PARQUET_MAP_VALUE_FIELD_NAME
+          updateFieldId(nestedIds, valPath.mkString("."))
+          val valDt = transform(valType, nestedIds, valPath)
+          // return new map type with updated metadata
+          MapType(keyDt, valDt, valueContainsNull)
+        case other => other
+      }
+      newDt.asInstanceOf[E]
+    }
+
+    (transform(schema, new MetadataBuilder(), Seq.empty), currFieldId)
   }
 }
 

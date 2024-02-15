@@ -408,4 +408,33 @@ class DeltaDropColumnSuite extends QueryTest
     fieldToDrop = "element.b",
     updatedColumnType = "array<struct<a: int>>")
 
+  testDropNestedField("struct in nested map keys")(
+    initialColumnType = "map<map<struct<a: int, b: string>, int>, int>",
+    fieldToDrop = "key.key.b",
+    updatedColumnType = "map<map<struct<a: int>, int>, int>")
+
+  testDropNestedField("struct in nested map values")(
+    initialColumnType = "map<int, map<int, struct<a: int, b: string>>>",
+    fieldToDrop = "value.value.b",
+    updatedColumnType = "map<int, map<int, struct<a: int>>>")
+
+  testDropNestedField("struct in nested arrays")(
+    initialColumnType = "array<array<struct<a: int, b: string>>>",
+    fieldToDrop = "element.element.b",
+    updatedColumnType = "array<array<struct<a: int>>>")
+
+  testDropNestedField("struct in nested array and map")(
+    initialColumnType = "array<map<int, struct<a: int, b: string>>>",
+    fieldToDrop = "element.value.b",
+    updatedColumnType = "array<map<int, struct<a: int>>>")
+
+  testDropNestedField("struct in nested map key and array")(
+    initialColumnType = "map<array<struct<a: int, b: string>>, int>",
+    fieldToDrop = "key.element.b",
+    updatedColumnType = "map<array<struct<a: int>>, int>")
+
+  testDropNestedField("struct in nested map value and array")(
+    initialColumnType = "map<int, array<struct<a: int, b: string>>>",
+    fieldToDrop = "value.element.b",
+    updatedColumnType = "map<int, array<struct<a: int>>>")
 }

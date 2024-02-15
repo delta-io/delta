@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
 
 import org.apache.spark.SparkConf
@@ -270,44 +271,57 @@ class DeltaTableFeatureSuite
   test("protocol downgrade compatibility") {
     val tableFeatureProtocol =
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-    // Cannot downgrade when at a minimum writer features are not supported.
-    assert(!Protocol(1, 6).canDowngradeTo(Protocol(1, 6)))
-    // Downgrading from 3 with no features to 1 is from a functionality perspective no-op.
-    // However, version downgrade is not possible.
-    assert(!Protocol(3, 7).canDowngradeTo(Protocol(1, 7)))
-    // Downgrading from 3 with no features to 2 from a functionality perspective is an upgrade.
-    assert(!Protocol(3, 7).canDowngradeTo(Protocol(2, 7)))
-    // Valid case.
-    assert(Protocol(3, 7).withFeature(TestWriterFeature).canDowngradeTo(Protocol(3, 7)))
-    // Try downgrading the writer version.
-    assert(!Protocol(2, 7).withFeature(TestWriterFeature).canDowngradeTo(Protocol(2, 1)))
-    assert(!Protocol(2, 7).withFeature(TestWriterFeature).canDowngradeTo(Protocol(2, 5)))
-    assert(!tableFeatureProtocol.canDowngradeTo(Protocol(1, TABLE_FEATURES_MIN_WRITER_VERSION)))
-    // Only one writer feature per time.
-    assert(
-      !tableFeatureProtocol
-        .withFeatures(Seq(
-          TestWriterFeature,
-          AppendOnlyTableFeature))
-        .canDowngradeTo(tableFeatureProtocol))
+    // Cannot downgrade when the original protocol does not support at a minimum writer features.
+    assert(!Protocol(1, 6).canDowngradeTo(Protocol(1, 6), droppedFeatureName = ""))
+    assert(tableFeatureProtocol.withFeature(TestWriterFeature)
+      .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestWriterFeature.name))
+    assert(Protocol(1, 7).withFeature(TestWriterFeature)
+      .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestWriterFeature.name))
+    for (n <- 1 to 3) {
+      assert(
+        !Protocol(n, 7)
+          .withFeatures(Seq(TestWriterFeature, AppendOnlyTableFeature))
+          .canDowngradeTo(Protocol(1, 2), droppedFeatureName = TestWriterFeature.name))
+      assert(
+        Protocol(n, 7)
+          .withFeatures(Seq(TestWriterFeature, AppendOnlyTableFeature, InvariantsTableFeature))
+          .canDowngradeTo(Protocol(1, 2), droppedFeatureName = TestWriterFeature.name))
+    }
+    // When there are no explicit features the protocol versions need to be downgraded
+    // below table features.
+    assert(!tableFeatureProtocol.withFeature(TestWriterFeature)
+      .canDowngradeTo(tableFeatureProtocol, droppedFeatureName = TestWriterFeature.name))
+    assert(!tableFeatureProtocol.withFeature(TestWriterFeature)
+      .canDowngradeTo(Protocol(2, 7), droppedFeatureName = TestWriterFeature.name))
+    // Only one non-legacy writer feature per time.
+    assert(!tableFeatureProtocol.withFeatures(Seq(TestWriterFeature, TestRemovableWriterFeature))
+      .canDowngradeTo(tableFeatureProtocol, droppedFeatureName = TestWriterFeature.name))
     // Remove reader+writer feature.
     assert(tableFeatureProtocol.withFeatures(Seq(TestReaderWriterFeature))
-      .canDowngradeTo(tableFeatureProtocol))
-    // Only one feature at a time.
+      .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestReaderWriterFeature.name))
+    // Only one non-legacy feature at a time - multiple reader+writer features.
     assert(
       !tableFeatureProtocol
         .withFeatures(Seq(TestReaderWriterFeature, TestReaderWriterMetadataAutoUpdateFeature))
-        .canDowngradeTo(tableFeatureProtocol))
-    // Only one feature at a time - multiple reader+writer features.
+        .canDowngradeTo(tableFeatureProtocol, droppedFeatureName = ""))
     assert(
-      !tableFeatureProtocol
-        .withFeatures(Seq(TestReaderWriterFeature, TestReaderWriterMetadataAutoUpdateFeature))
-        .canDowngradeTo(tableFeatureProtocol))
+      tableFeatureProtocol
+        .merge(Protocol(2, 5))
+        .withFeatures(Seq(TestReaderWriterFeature, TestRemovableLegacyReaderWriterFeature))
+        .canDowngradeTo(Protocol(2, 5), droppedFeatureName = TestReaderWriterFeature.name))
     // Only one feature at a time - mix of reader+writer and writer features.
+    assert(!tableFeatureProtocol.withFeatures(Seq(TestWriterFeature, TestReaderWriterFeature))
+      .canDowngradeTo(tableFeatureProtocol, droppedFeatureName = TestWriterFeature.name))
+    // Downgraded protocol must be able to support all legacy table features.
     assert(
       !tableFeatureProtocol
-        .withFeatures(Seq(TestWriterFeature, TestReaderWriterFeature))
-        .canDowngradeTo(tableFeatureProtocol))
+        .withFeatures(Seq(TestWriterFeature, AppendOnlyTableFeature, ColumnMappingTableFeature))
+        .canDowngradeTo(Protocol(2, 4), droppedFeatureName = TestWriterFeature.name))
+    assert(
+      tableFeatureProtocol
+        .merge(Protocol(2, 5))
+        .withFeatures(Seq(TestWriterFeature, AppendOnlyTableFeature, ColumnMappingTableFeature))
+        .canDowngradeTo(Protocol(2, 5), droppedFeatureName = TestWriterFeature.name))
   }
 
   test("add reader and writer feature descriptors") {

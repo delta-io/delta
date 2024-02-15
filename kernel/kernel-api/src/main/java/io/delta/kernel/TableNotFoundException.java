@@ -26,4 +26,20 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public class TableNotFoundException
     extends Exception {
+
+    private final String tablePath;
+
+    public TableNotFoundException(String tablePath) {
+        this.tablePath = tablePath;
+    }
+
+    public TableNotFoundException(String tablePath, Throwable cause) {
+        super(cause);
+        this.tablePath = tablePath;
+    }
+
+    @Override
+    public String getMessage() {
+        return String.format("Delta table at path `%s` is not found", tablePath);
+    }
 }

@@ -149,7 +149,7 @@ class CloneDeltaSource(
   sourceTable: DeltaTableV2) extends CloneSource {
 
   private val deltaLog = sourceTable.deltaLog
-  private val sourceSnapshot = sourceTable.snapshot
+  private val sourceSnapshot = sourceTable.initialSnapshot
 
   def format: String = CloneSourceFormat.DELTA
 

@@ -18,14 +18,12 @@ package io.delta.kernel.defaults
 import java.io.File
 import java.math.BigDecimal
 
-import org.scalatest.funsuite.AnyFunSuite
-
-import org.apache.hadoop.conf.Configuration
 import io.delta.golden.GoldenTableUtils.goldenTableFile
-
-import io.delta.kernel.types.{DecimalType, IntegerType, StructType}
-
 import io.delta.kernel.defaults.internal.parquet.ParquetBatchReader
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.types.{DecimalType, IntegerType, StructType}
+import org.apache.hadoop.conf.Configuration
+import org.scalatest.funsuite.AnyFunSuite
 
 class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
 
@@ -47,11 +45,11 @@ class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
 
   test("decimals encoded using dictionary encoding ") {
     val expectedResult = (0 until 1000000).map { i =>
-      (i, BigDecimal.valueOf(i%5), BigDecimal.valueOf(i%6), BigDecimal.valueOf(i%2))
-    }.toSet
+      TestRow(i, BigDecimal.valueOf(i%5), BigDecimal.valueOf(i%6), BigDecimal.valueOf(i%2))
+    }
 
     val readSchema = new StructType()
-      .add("id", IntegerType.INSTANCE)
+      .add("id", IntegerType.INTEGER)
       .add("col1", new DecimalType(9, 0)) // INT32: 1 <= precision <= 9
       .add("col2", new DecimalType(12, 0)) // INT64: 10 <= precision <= 18
       .add("col3", new DecimalType(25, 0)) // FIXED_LEN_BYTE_ARRAY
@@ -59,12 +57,8 @@ class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
     val batchReader = new ParquetBatchReader(new Configuration())
     for (file <- Seq(DECIMAL_TYPES_DICT_FILE_V1, DECIMAL_TYPES_DICT_FILE_V2)) {
       val batches = batchReader.read(file, readSchema)
-
-      val result = batches.toSeq.flatMap(_.getRows.toSeq).map { row =>
-        (row.getInt(0), row.getDecimal(1), row.getDecimal(2), row.getDecimal(3))
-      }
-
-      assert(expectedResult == result.toSet)
+      val result = batches.toSeq.flatMap(_.getRows.toSeq)
+      checkAnswer(result, expectedResult)
     }
   }
 
@@ -80,7 +74,7 @@ class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
     val expectedResult = (0 until 99998).map { i =>
       if (i % 85 == 0) {
         val n = BigDecimal.valueOf(i)
-        (i, n.movePointLeft(1).setScale(1), n.setScale(5), n.setScale(5))
+        TestRow(i, n.movePointLeft(1).setScale(1), n.setScale(5), n.setScale(5))
       } else {
         val negation = if (i % 33 == 0) {
           -1
@@ -88,17 +82,17 @@ class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
           1
         }
         val n = BigDecimal.valueOf(i*negation)
-        (
+        TestRow(
           i,
           n.movePointLeft(1),
           expand(n).movePointLeft(5),
           expand(expand(expand(n))).movePointLeft(5)
         )
       }
-    }.toSet
+    }
 
     val readSchema = new StructType()
-      .add("id", IntegerType.INSTANCE)
+      .add("id", IntegerType.INTEGER)
       .add("col1", new DecimalType(5, 1)) // INT32: 1 <= precision <= 9
       .add("col2", new DecimalType(10, 5)) // INT64: 10 <= precision <= 18
       .add("col3", new DecimalType(20, 5)) // FIXED_LEN_BYTE_ARRAY
@@ -106,11 +100,8 @@ class ParquetBatchReaderSuite extends AnyFunSuite with TestUtils {
     val batchReader = new ParquetBatchReader(new Configuration())
     val batches = batchReader.read(LARGE_SCALE_DECIMAL_TYPES_FILE, readSchema)
 
-    val result = batches.toSeq.flatMap(_.getRows.toSeq).map { row =>
-      (row.getInt(0), row.getDecimal(1), row.getDecimal(2), row.getDecimal(3))
-    }
-
-    assert(expectedResult == result.toSet)
+    val result = batches.toSeq.flatMap(_.getRows.toSeq)
+    checkAnswer(result, expectedResult)
   }
 
   //////////////////////////////////////////////////////////////////////////////////

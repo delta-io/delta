@@ -105,7 +105,7 @@ class TPCDSDataLoadSpec(BenchmarkSpec):
 
 class TPCDSBenchmarkSpec(BenchmarkSpec):
     """
-    Specifications of TPC-DS benchmark
+    Specifications of TPC-DS benchmark.
     """
     def __init__(self, scale_in_gb, **kwargs):
         # forward all keyword args to next constructor
@@ -117,13 +117,42 @@ class TPCDSBenchmarkSpec(BenchmarkSpec):
         ])
 
 
+class MergeDataLoadSpec(BenchmarkSpec):
+    """
+    Specifications of Merge data load process.
+    Always mixin in this first before the base benchmark class.
+    """
+    def __init__(self, scale_in_gb, exclude_nulls=True, **kwargs):
+        # forward all keyword args to next constructor
+        super().__init__(benchmark_main_class="benchmark.MergeDataLoad", **kwargs)
+        self.benchmark_main_class_args.extend([
+            "--scale-in-gb", str(scale_in_gb),
+        ])
+        # To access the public TPCDS parquet files on S3
+        self.spark_confs.extend(["spark.hadoop.fs.s3.useRequesterPaysHeader=true"])
+
+
+class MergeBenchmarkSpec(BenchmarkSpec):
+    """
+    Specifications of Merge benchmark.
+    """
+    def __init__(self, scale_in_gb, **kwargs):
+        # forward all keyword args to next constructor
+        super().__init__(benchmark_main_class="benchmark.MergeBenchmark", **kwargs)
+        # after init of super class, use the format to add main class args
+        self.benchmark_main_class_args.extend([
+            "--scale-in-gb", str(scale_in_gb)
+        ])
+
+
+
 
 # ============== Delta benchmark specifications ==============
 
 
 class DeltaBenchmarkSpec(BenchmarkSpec):
     """
-    Specification of a benchmark using the Delta format
+    Specification of a benchmark using the Delta format.
     """
     def __init__(self, delta_version, benchmark_main_class, main_class_args=None, scala_version="2.12", **kwargs):
         delta_spark_confs = [
@@ -164,12 +193,23 @@ class DeltaTPCDSBenchmarkSpec(TPCDSBenchmarkSpec, DeltaBenchmarkSpec):
         super().__init__(delta_version=delta_version, scale_in_gb=scale_in_gb)
 
 
+class DeltaMergeDataLoadSpec(MergeDataLoadSpec, DeltaBenchmarkSpec):
+    def __init__(self, delta_version, scale_in_gb=1):
+        super().__init__(delta_version=delta_version, scale_in_gb=scale_in_gb)
+
+
+class DeltaMergeBenchmarkSpec(MergeBenchmarkSpec, DeltaBenchmarkSpec):
+    def __init__(self, delta_version, scale_in_gb=1):
+        super().__init__(delta_version=delta_version, scale_in_gb=scale_in_gb)
+
+
+
 # ============== Parquet benchmark specifications ==============
 
 
 class ParquetBenchmarkSpec(BenchmarkSpec):
     """
-    Specification of a benchmark using the Parquet format
+    Specification of a benchmark using the Parquet format.
     """
     def __init__(self, benchmark_main_class, main_class_args=None, **kwargs):
         super().__init__(

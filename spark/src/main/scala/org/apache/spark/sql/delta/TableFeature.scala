@@ -216,13 +216,20 @@ sealed trait RemovableFeature { self: TableFeature =>
       downgradeTxnReadSnapshot: Snapshot): Boolean = {
     require(isReaderWriterFeature)
     val deltaLog = downgradeTxnReadSnapshot.deltaLog
-    val earliestCheckpointVersion = deltaLog.findEarliestReliableCheckpoint().getOrElse(0L)
+    val earliestCheckpointVersion = deltaLog.findEarliestReliableCheckpoint.getOrElse(0L)
     val toVersion = downgradeTxnReadSnapshot.version
 
     // Use the snapshot at earliestCheckpointVersion to validate the checkpoint identified by
     // findEarliestReliableCheckpoint.
     val earliestSnapshot = deltaLog.getSnapshotAt(earliestCheckpointVersion)
-    if (containsFeatureTraces(earliestSnapshot.stateDS)) {
+
+    // Tombstones may contain traces of the removed feature. The earliest snapshot will include
+    // all tombstones within the tombstoneRetentionPeriod. This may disallow protocol downgrade
+    // because the log retention period is not aligned with the tombstoneRetentionPeriod.
+    // To resolve this issue, we filter out all tombstones from the earliest checkpoint.
+    // Tombstones at the earliest checkpoint should be irrelevant and should not be an
+    // issue for readers that do not support the feature.
+    if (containsFeatureTraces(earliestSnapshot.stateDS.filter("remove is null"))) {
       return true
     }
 
@@ -315,15 +322,18 @@ object TableFeature {
    */
   private[delta] val allSupportedFeaturesMap: Map[String, TableFeature] = {
     var features: Set[TableFeature] = Set(
+      AllowColumnDefaultsTableFeature,
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
       CheckConstraintsTableFeature,
+      ClusteringTableFeature,
       DomainMetadataTableFeature,
       GeneratedColumnsTableFeature,
       InvariantsTableFeature,
       ColumnMappingTableFeature,
       TimestampNTZTableFeature,
       IcebergCompatV1TableFeature,
+      IcebergCompatV2TableFeature,
       DeletionVectorsTableFeature,
       V2CheckpointTableFeature)
     if (DeltaUtils.isTesting) {
@@ -342,6 +352,8 @@ object TableFeature {
         TestFeatureWithDependency,
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency,
+        // managed-commits are under development and only available in testing.
+        ManagedCommitTableFeature,
         // Row IDs are still under development and only available in testing.
         RowTrackingFeature)
     }
@@ -513,14 +525,55 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }
 
+object IcebergCompatV2TableFeature extends WriterFeature(name = "icebergCompatV2")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = IcebergCompatV2.isEnabled(metadata)
+
+  override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
+}
+
+/**
+ * Clustering table feature is enabled when a table is created with CLUSTER BY clause.
+ */
+object ClusteringTableFeature extends WriterFeature("clustering") {
+  override val requiredFeatures: Set[TableFeature] = Set(DomainMetadataTableFeature)
+}
+
+/**
+ * This table feature represents support for column DEFAULT values for Delta Lake. With this
+ * feature, it is possible to assign default values to columns either at table creation time or
+ * later by using commands of the form: ALTER TABLE t ALTER COLUMN c SET DEFAULT v. Thereafter,
+ * queries from the table will return the specified default value instead of NULL when the
+ * corresponding field is not present in storage.
+ *
+ * We create this as a writer-only feature rather than a reader/writer feature in order to simplify
+ * the query execution implementation for scanning Delta tables. This means that commands of the
+ * following form are not allowed: ALTER TABLE t ADD COLUMN c DEFAULT v. The reason is that when
+ * commands of that form execute (such as for other data sources like CSV or JSON), then the data
+ * source scan implementation must take responsibility to return the supplied default value for all
+ * rows, including those previously present in the table before the command executed. We choose to
+ * avoid this complexity for Delta table scans, so we make this a writer-only feature instead.
+ * Therefore, the analyzer can take care of the entire job when processing commands that introduce
+ * new rows into the table by injecting the column default value (if present) into the corresponding
+ * query plan. This comes at the expense of preventing ourselves from easily adding a default value
+ * to an existing non-empty table, because all data files would need to be rewritten to include the
+ * new column value in an expensive backfill.
+ */
+object AllowColumnDefaultsTableFeature extends WriterFeature(name = "allowColumnDefaults")
+
 
 /**
  * V2 Checkpoint table feature is for checkpoints with sidecars and the new format and
  * file naming scheme.
- * This is still WIP feature.
  */
 object V2CheckpointTableFeature
-  extends ReaderWriterFeature(name = "v2Checkpoint-under-development")
+  extends ReaderWriterFeature(name = "v2Checkpoint")
+  with RemovableFeature
   with FeatureAutomaticallyEnabledByMetadata {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
@@ -531,6 +584,45 @@ object V2CheckpointTableFeature
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
       spark: SparkSession): Boolean = isV2CheckpointSupportNeededByMetadata(metadata)
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    // Fail validation if v2 checkpoints are still enabled in the current snapshot
+    if (isV2CheckpointSupportNeededByMetadata(snapshot.metadata)) return false
+
+    // Validation also fails if the current snapshot might depend on a v2 checkpoint.
+    // NOTE: Empty and preloaded checkpoint providers never reference v2 checkpoints.
+    snapshot.checkpointProvider match {
+      case p if p.isEmpty => true
+      case _: PreloadedCheckpointProvider => true
+      case lazyProvider: LazyCompleteCheckpointProvider =>
+        lazyProvider.underlyingCheckpointProvider.isInstanceOf[PreloadedCheckpointProvider]
+      case _ => false
+    }
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = action match {
+    case m: Metadata => isV2CheckpointSupportNeededByMetadata(m)
+    case _: CheckpointMetadata => true
+    case _: SidecarFile => true
+    case _ => false
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    V2CheckpointPreDowngradeCommand(table)
+}
+
+/** Table feature to represent tables whose commits are managed by separate commit-store */
+object ManagedCommitTableFeature
+  extends ReaderWriterFeature(name = "managed-commit-dev")
+    with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(metadata).nonEmpty
+  }
 }
 
 /**

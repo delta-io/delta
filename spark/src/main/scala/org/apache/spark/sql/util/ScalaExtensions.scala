@@ -45,4 +45,11 @@ object ScalaExtensions {
     def sum[N : Numeric](default: N)(options: Option[N]*): N =
       options.map(_.getOrElse(default)).sum
   }
+
+  implicit class AnyExt(any: Any) {
+    /**
+     * Applies the partial function to any if it is defined and ignores the result if any.
+     */
+    def condDo(pf: PartialFunction[Any, Unit]): Unit = scala.PartialFunction.condOpt(any)(pf)
+  }
 }

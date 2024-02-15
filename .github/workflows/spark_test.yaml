@@ -6,7 +6,7 @@ jobs:
     strategy:
       matrix:
         # These Scala versions must match those in the build.sbt
-        scala: [2.12.15, 2.13.5]
+        scala: [2.12.17, 2.13.8]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
     steps:
@@ -46,17 +46,21 @@ jobs:
           export PATH="~/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
           eval "$(pyenv virtualenv-init -)"
-          pyenv install 3.7.4
-          pyenv global system 3.7.4
-          pipenv --python 3.7 install
-          pipenv run pip install pyspark==3.4.0
+          pyenv install 3.8.18
+          pyenv global system 3.8.18
+          pipenv --python 3.8 install
+          pipenv run pip install pyspark==3.5.0
           pipenv run pip install flake8==3.5.0 pypandoc==1.3.3
           pipenv run pip install importlib_metadata==3.10.0
-          pipenv run pip install mypy==0.910
+          pipenv run pip install mypy==0.982
           pipenv run pip install cryptography==37.0.4
           pipenv run pip install twine==4.0.1
           pipenv run pip install wheel==0.33.4
           pipenv run pip install setuptools==41.0.1
+          pipenv run pip install pydocstyle==3.0.0
+          pipenv run pip install pandas==1.0.5
+          pipenv run pip install pyarrow==8.0.0
+          pipenv run pip install numpy==1.20.3
         if: steps.git-diff.outputs.diff
       - name: Run Scala/Java and Python tests
         run: |

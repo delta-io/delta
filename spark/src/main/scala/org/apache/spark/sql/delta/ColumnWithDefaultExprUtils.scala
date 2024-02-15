@@ -27,11 +27,13 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder}
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns._
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.streaming.{IncrementalExecution, StreamExecution}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 
 /**
@@ -66,6 +68,8 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       protocol: Protocol,
       col: StructField,
       nullAsDefault: Boolean): Boolean = {
+    col.metadata.contains(CURRENT_DEFAULT_COLUMN_METADATA_KEY) ||
+    (col.nullable && nullAsDefault) ||
     GeneratedColumn.isGeneratedColumn(protocol, col)
   }
 
@@ -80,6 +84,10 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       protocol: Protocol,
       metadata: Metadata,
       nullAsDefault: Boolean): Boolean = {
+    metadata.schema.exists { f =>
+      f.metadata.contains(CURRENT_DEFAULT_COLUMN_METADATA_KEY) ||
+        (f.nullable && nullAsDefault)
+    } ||
     GeneratedColumn.enforcesGeneratedColumns(protocol, metadata)
   }
 
@@ -127,7 +135,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
               // we only want to consider columns that are in the data's schema or are generated
               // to allow DataFrame with null columns to be written.
               // The actual check for nullability on data is done in the DeltaInvariantCheckerExec
-              None
+              getDefaultValueExprOrNullLit(f, nullAsDefault).map(new Column(_))
             }
       }
     }
@@ -211,7 +219,8 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       incrementalExecution.runId,
       incrementalExecution.currentBatchId,
       incrementalExecution.prevOffsetSeqMetadata,
-      incrementalExecution.offsetSeqMetadata
+      incrementalExecution.offsetSeqMetadata,
+      incrementalExecution.watermarkPropagator
     )
     newIncrementalExecution.executedPlan // Force the lazy generation of execution plan
 
@@ -221,6 +230,6 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       classOf[Dataset[_]].getConstructor(classOf[QueryExecution], classOf[Encoder[_]])
     constructor.newInstance(
       newIncrementalExecution,
-      RowEncoder(newIncrementalExecution.analyzed.schema)).asInstanceOf[DataFrame]
+      ExpressionEncoder(newIncrementalExecution.analyzed.schema)).asInstanceOf[DataFrame]
   }
 }

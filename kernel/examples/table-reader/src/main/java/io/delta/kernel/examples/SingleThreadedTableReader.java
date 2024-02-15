@@ -21,15 +21,18 @@ import java.util.Optional;
 
 import org.apache.commons.cli.CommandLine;
 
-import io.delta.kernel.Scan;
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.Table;
-import io.delta.kernel.TableNotFoundException;
+import io.delta.kernel.*;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.DataReadResult;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
+
+import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.data.ScanStateRow;
+import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 /**
  * Single threaded Delta Lake table reader using the Delta Kernel APIs.
@@ -51,13 +54,20 @@ public class SingleThreadedTableReader
     }
 
     @Override
-    public void show(int limit, Optional<List<String>> columnsOpt)
+    public int show(int limit, Optional<List<String>> columnsOpt, Optional<Predicate> predicate)
         throws TableNotFoundException, IOException {
-        Table table = Table.forPath(tablePath);
+        Table table = Table.forPath(tableClient, tablePath);
         Snapshot snapshot = table.getLatestSnapshot(tableClient);
         StructType readSchema = pruneSchema(snapshot.getSchema(tableClient), columnsOpt);
 
-        readData(readSchema, snapshot, limit);
+        ScanBuilder scanBuilder = snapshot.getScanBuilder(tableClient)
+            .withReadSchema(tableClient, readSchema);
+
+        if (predicate.isPresent()) {
+            scanBuilder = scanBuilder.withFilter(tableClient, predicate.get());
+        }
+
+        return readData(readSchema, scanBuilder.build(), limit);
     }
 
     public static void main(String[] args)
@@ -69,46 +79,56 @@ public class SingleThreadedTableReader
         Optional<List<String>> columns = parseColumnList(commandLine, "columns");
 
         new SingleThreadedTableReader(tablePath)
-            .show(limit, columns);
+            .show(limit, columns, Optional.empty());
     }
 
     /**
      * Utility method to read and print the data from the given {@code snapshot}.
      *
      * @param readSchema  Subset of columns to read from the snapshot.
-     * @param snapshot    Table snapshot object
+     * @param scan        Table scan object
      * @param maxRowCount Not a hard limit but use this limit to stop reading more columnar batches
      *                    once the already read columnar batches have at least these many rows.
-     * @return
+     * @return Number of rows read.
      * @throws Exception
      */
-    private void readData(
-        StructType readSchema,
-        Snapshot snapshot,
-        int maxRowCount) throws IOException {
-        Scan scan = snapshot.getScanBuilder(tableClient)
-            .withReadSchema(tableClient, readSchema)
-            .build();
-
+    private int readData(StructType readSchema, Scan scan, int maxRowCount) throws IOException {
         printSchema(readSchema);
 
         Row scanState = scan.getScanState(tableClient);
-        CloseableIterator<ColumnarBatch> scanFileIter = scan.getScanFiles(tableClient);
+        CloseableIterator<FilteredColumnarBatch> scanFileIter = scan.getScanFiles(tableClient);
 
         int readRecordCount = 0;
         try {
+            StructType physicalReadSchema =
+                ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState);
             while (scanFileIter.hasNext()) {
-                try (CloseableIterator<DataReadResult> data =
-                    Scan.readData(
-                        tableClient,
-                        scanState,
-                        scanFileIter.next().getRows(),
-                        Optional.empty())) {
-                    while (data.hasNext()) {
-                        DataReadResult dataReadResult = data.next();
-                        readRecordCount += printData(dataReadResult, maxRowCount - readRecordCount);
-                        if (readRecordCount >= maxRowCount) {
-                            return;
+                FilteredColumnarBatch scanFilesBatch = scanFileIter.next();
+                try (CloseableIterator<Row> scanFileRows = scanFilesBatch.getRows()) {
+                    while (scanFileRows.hasNext()) {
+                        Row scanFileRow = scanFileRows.next();
+                        FileStatus fileStatus =
+                            InternalScanFileUtils.getAddFileStatus(scanFileRow);
+                        CloseableIterator<ColumnarBatch> physicalDataIter =
+                            tableClient.getParquetHandler().readParquetFiles(
+                                singletonCloseableIterator(fileStatus),
+                                physicalReadSchema,
+                                Optional.empty());
+                        try (
+                            CloseableIterator<FilteredColumnarBatch> transformedData =
+                                Scan.transformPhysicalData(
+                                    tableClient,
+                                    scanState,
+                                    scanFileRow,
+                                    physicalDataIter)) {
+                            while (transformedData.hasNext()) {
+                                FilteredColumnarBatch filteredData = transformedData.next();
+                                readRecordCount +=
+                                    printData(filteredData, maxRowCount - readRecordCount);
+                                if (readRecordCount >= maxRowCount) {
+                                    return readRecordCount;
+                                }
+                            }
                         }
                     }
                 }
@@ -116,5 +136,7 @@ public class SingleThreadedTableReader
         } finally {
             scanFileIter.close();
         }
+
+        return readRecordCount;
     }
 }

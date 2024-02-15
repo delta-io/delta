@@ -15,29 +15,27 @@
  */
 package io.delta.kernel.defaults.client;
 
+import java.io.IOException;
 import java.util.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
-import io.delta.kernel.client.FileReadContext;
 import io.delta.kernel.client.FileSystemClient;
 import io.delta.kernel.client.JsonHandler;
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FileDataReadResult;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Utils;
-import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
+import io.delta.kernel.utils.FileStatus;
+
+import io.delta.kernel.internal.util.VectorUtils;
+import static io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector;
 
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
-
-import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 
 public class TestDefaultJsonHandler {
     private static final JsonHandler JSON_HANDLER = new DefaultJsonHandler(new Configuration() {
@@ -49,39 +47,23 @@ public class TestDefaultJsonHandler {
         new DefaultFileSystemClient(new Configuration());
 
     @Test
-    public void contextualizeFiles()
-        throws Exception {
-        try (CloseableIterator<Row> inputScanFiles = testFiles();
-            CloseableIterator<FileReadContext> fileReadContexts =
-                JSON_HANDLER.contextualizeFileReads(testFiles(), ALWAYS_TRUE)) {
-            while (inputScanFiles.hasNext() || fileReadContexts.hasNext()) {
-                assertEquals(inputScanFiles.hasNext(), fileReadContexts.hasNext());
-                Row inputScanFile = inputScanFiles.next();
-                FileReadContext outputScanContext = fileReadContexts.next();
-                compareScanFileRows(inputScanFile, outputScanContext.getScanFileRow());
-            }
-        }
-    }
-
-    @Test
     public void readJsonFiles()
         throws Exception {
         try (
-            CloseableIterator<FileDataReadResult> data =
+            CloseableIterator<ColumnarBatch> data =
                 JSON_HANDLER.readJsonFiles(
-                    JSON_HANDLER.contextualizeFileReads(testFiles(), ALWAYS_TRUE),
+                    testFiles(),
                     new StructType()
-                        .add("path", StringType.INSTANCE)
-                        .add("size", LongType.INSTANCE)
-                        .add("dataChange", BooleanType.INSTANCE)
-                )
-        ) {
+                        .add("path", StringType.STRING)
+                        .add("size", LongType.LONG)
+                        .add("dataChange", BooleanType.BOOLEAN),
+                    Optional.empty())) {
 
             List<String> actPaths = new ArrayList<>();
             List<Long> actSizes = new ArrayList<>();
             List<Boolean> actDataChanges = new ArrayList<>();
             while (data.hasNext() && data.hasNext()) {
-                ColumnarBatch dataBatch = data.next().getData();
+                ColumnarBatch dataBatch = data.next();
                 try (CloseableIterator<Row> dataBatchRows = dataBatch.getRows()) {
                     while (dataBatchRows.hasNext()) {
                         Row row = dataBatchRows.next();
@@ -123,14 +105,14 @@ public class TestDefaultJsonHandler {
                 "   \"dataChange\":true" +
                 "   }";
         StructType readSchema = new StructType()
-            .add("path", StringType.INSTANCE)
+            .add("path", StringType.STRING)
             .add("partitionValues",
-                new MapType(StringType.INSTANCE, StringType.INSTANCE, false))
-            .add("size", LongType.INSTANCE)
-            .add("dataChange", BooleanType.INSTANCE);
+                new MapType(StringType.STRING, StringType.STRING, false))
+            .add("size", LongType.LONG)
+            .add("dataChange", BooleanType.BOOLEAN);
 
-        ColumnarBatch batch =
-            JSON_HANDLER.parseJson(Utils.singletonColumnVector(input), readSchema);
+        ColumnarBatch batch = JSON_HANDLER.parseJson(
+            singletonStringColumnVector(input), readSchema, Optional.empty());
         assertEquals(1, batch.getSize());
 
         try (CloseableIterator<Row> rows = batch.getRows()) {
@@ -146,38 +128,88 @@ public class TestDefaultJsonHandler {
                     put("p2", "str");
                 }
             };
-            assertEquals(expPartitionValues, row.getMap(1));
+            Map<String, String> actualPartitionValues = VectorUtils.toJavaMap(row.getMap(1));
+            assertEquals(expPartitionValues, actualPartitionValues);
             assertEquals(348L, row.getLong(2));
             assertEquals(true, row.getBoolean(3));
         }
     }
 
-    private static CloseableIterator<Row> testFiles()
-        throws Exception {
+    @Test
+    public void parseNestedComplexTypes() throws IOException {
+        String json = "{" +
+                "  \"array\": [0, 1, null]," +
+                "  \"nested_array\": [[\"a\", \"b\"], [\"c\"], []]," +
+                "  \"map\": {\"a\":  true, \"b\":  false},\n" +
+                "  \"nested_map\": {\"a\":  {\"one\":  [], \"two\":  [1, 2, 3]}, \"b\":  {}},\n" +
+                "  \"array_of_struct\": " +
+                "[{\"field1\": \"foo\", \"field2\": 3}, {\"field1\": null}]\n" +
+                "}";
+        StructType schema = new StructType()
+                .add("array", new ArrayType(IntegerType.INTEGER, true))
+                .add("nested_array", new ArrayType(new ArrayType(StringType.STRING, true), true))
+                .add("map", new MapType(StringType.STRING, BooleanType.BOOLEAN, true))
+                .add("nested_map",
+                        new MapType(
+                                StringType.STRING,
+                                new MapType(
+                                        StringType.STRING,
+                                        new ArrayType(IntegerType.INTEGER, true),
+                                        true
+                                ),
+                                true
+                        )
+                ).add("array_of_struct",
+                        new ArrayType(
+                                new StructType()
+                                        .add("field1", StringType.STRING, true)
+                                        .add("field2", IntegerType.INTEGER, true),
+                                true
+                        )
+                );
+        ColumnarBatch batch = JSON_HANDLER.parseJson(
+            singletonStringColumnVector(json), schema, Optional.empty());
+
+        try (CloseableIterator<Row> rows = batch.getRows()) {
+            Row result = rows.next();
+            List<Integer> exp0 = Arrays.asList(0, 1, null);
+            assertEquals(exp0, VectorUtils.toJavaList(result.getArray(0)));
+            List<List<String>> exp1 = Arrays.asList(Arrays.asList("a", "b"), Arrays.asList("c"),
+                    Collections.emptyList());
+            assertEquals(exp1, VectorUtils.toJavaList(result.getArray(1)));
+            Map<String, Boolean> exp2 = new HashMap<String, Boolean>() {
+                {
+                    put("a", true);
+                    put("b", false);
+                }
+            };
+            assertEquals(exp2, VectorUtils.toJavaMap(result.getMap(2)));
+            Map<String, List<Integer>> nestedMap = new HashMap<String, List<Integer>>() {
+                {
+                    put("one", Collections.emptyList());
+                    put("two", Arrays.asList(1, 2, 3));
+                }
+            };
+            Map<String, Map<String, List<Integer>>> exp3 =
+                    new HashMap<String, Map<String, List<Integer>>>()  {
+                        {
+                            put("a", nestedMap);
+                            put("b", Collections.emptyMap());
+                        }
+                    };
+            assertEquals(exp3, VectorUtils.toJavaMap(result.getMap(3)));
+            ArrayValue arrayOfStruct = result.getArray(4);
+            assertEquals(arrayOfStruct.getSize(), 2);
+            assertEquals("foo", arrayOfStruct.getElements().getChild(0).getString(0));
+            assertEquals(3, arrayOfStruct.getElements().getChild(1).getInt(0));
+            assertTrue(arrayOfStruct.getElements().getChild(0).isNullAt(1));
+            assertTrue(arrayOfStruct.getElements().getChild(1).isNullAt(1));
+        }
+    }
+
+    private static CloseableIterator<FileStatus> testFiles()
+            throws Exception {
         String listFrom = DefaultKernelTestUtils.getTestResourceFilePath("json-files/1.json");
-        CloseableIterator<FileStatus> list = FS_CLIENT.listFrom(listFrom);
-        return list.map(fileStatus ->
-            new DefaultJsonRow(
-                addFileJsonFromPath(fileStatus.getPath()),
-                new StructType()
-                    .add("path", StringType.INSTANCE)
-                    .add("dataChange", BooleanType.INSTANCE)
-                    .add("size", LongType.INSTANCE)
-            )
-        );
-    }
-
-    private static ObjectNode addFileJsonFromPath(String path) {
-        ObjectMapper objectMapper = new ObjectMapper();
-        ObjectNode object = objectMapper.createObjectNode();
-        object.put("path", path);
-        object.put("dataChange", true);
-        object.put("size", 234L);
-        return object;
-    }
-
-    private static void compareScanFileRows(Row expected, Row actual) {
-        // basically compare the paths
-        assertEquals(expected.getString(0), actual.getString(0));
+        return FS_CLIENT.listFrom(listFrom);
     }
 }

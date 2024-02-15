@@ -16,10 +16,7 @@
 
 package io.delta.kernel.types;
 
-import java.util.Collections;
-import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 import io.delta.kernel.annotation.Evolving;
 
@@ -35,7 +32,6 @@ public class StructField {
     // Static Fields / Methods
     ////////////////////////////////////////////////////////////////////////////////
 
-    // TODO: for now we introduce isMetadataColumn as a field in the column metadata
     /**
      * Indicates a metadata column when present in the field metadata and the value is true
      */
@@ -45,12 +41,12 @@ public class StructField {
      * The name of a row index metadata column. When present this column must be populated with
      * row index of each row when reading from parquet.
      */
-    public static String ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
-    public static StructField ROW_INDEX_COLUMN = new StructField(
-        ROW_INDEX_COLUMN_NAME,
-        LongType.INSTANCE,
+    public static String METADATA_ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
+    public static StructField METADATA_ROW_INDEX_COLUMN = new StructField(
+        METADATA_ROW_INDEX_COLUMN_NAME,
+        LongType.LONG,
         false,
-        Collections.singletonMap(IS_METADATA_COLUMN_KEY, "true"));
+        FieldMetadata.builder().putBoolean(IS_METADATA_COLUMN_KEY, true).build());
 
 
     ////////////////////////////////////////////////////////////////////////////////
@@ -60,13 +56,20 @@ public class StructField {
     private final String name;
     private final DataType dataType;
     private final boolean nullable;
-    private final Map<String, String> metadata;
+    private final FieldMetadata metadata;
 
     public StructField(
-        String name,
-        DataType dataType,
-        boolean nullable,
-        Map<String, String> metadata) {
+            String name,
+            DataType dataType,
+            boolean nullable) {
+        this(name, dataType, nullable, FieldMetadata.empty());
+    }
+
+    public StructField(
+            String name,
+            DataType dataType,
+            boolean nullable,
+            FieldMetadata metadata) {
         this.name = name;
         this.dataType = dataType;
         this.nullable = nullable;
@@ -90,7 +93,7 @@ public class StructField {
     /**
      * @return the metadata for this field
      */
-    public Map<String, String> getMetadata() {
+    public FieldMetadata getMetadata() {
         return metadata;
     }
 
@@ -102,8 +105,8 @@ public class StructField {
     }
 
     public boolean isMetadataColumn() {
-        return metadata.containsKey(IS_METADATA_COLUMN_KEY) &&
-            Boolean.parseBoolean(metadata.get(IS_METADATA_COLUMN_KEY));
+        return metadata.contains(IS_METADATA_COLUMN_KEY) &&
+            (boolean) metadata.get(IS_METADATA_COLUMN_KEY);
     }
 
     public boolean isDataColumn() {
@@ -113,21 +116,17 @@ public class StructField {
     @Override
     public String toString() {
         return String.format("StructField(name=%s,type=%s,nullable=%s,metadata=%s)",
-            name, dataType, nullable, "empty(fix - this)");
+            name, dataType, nullable, metadata.toJson());
     }
 
     public String toJson() {
-        String metadataAsJson = metadata.entrySet().stream()
-            .map(e -> String.format("\"%s\" : \"%s\"", e.getKey(), e.getValue()))
-            .collect(Collectors.joining(",\n"));
-
         return String.format(
             "{\n" +
                 "  \"name\" : \"%s\",\n" +
                 "  \"type\" : %s,\n" +
                 "  \"nullable\" : %s, \n" +
-                "  \"metadata\" : { %s }\n" +
-                "}", name, dataType.toJson(), nullable, metadataAsJson);
+                "  \"metadata\" : %s\n" +
+                "}", name, dataType.toJson(), nullable, metadata.toJson());
     }
 
     @Override

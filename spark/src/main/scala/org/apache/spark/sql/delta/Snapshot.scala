@@ -94,6 +94,12 @@ class Snapshot(
   override def columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
 
 
+  private[delta] lazy val nonFileActions: Seq[Action] = {
+    Seq(protocol, metadata) ++
+      setTransactions ++
+      domainMetadata
+  }
+
   @volatile private[delta] var stateReconstructionTriggered = false
 
   /**
@@ -201,12 +207,22 @@ class Snapshot(
    * Pulls the protocol and metadata of the table from the files that are used to compute the
    * Snapshot directly--without triggering a full state reconstruction. This is important, because
    * state reconstruction depends on protocol and metadata for correctness.
+   *
+   * Also this method should only access methods defined in [[UninitializedCheckpointProvider]]
+   * which are not present in [[CheckpointProvider]]. This is because initialization of
+   * [[Snapshot.checkpointProvider]] depends on [[Snapshot.protocolAndMetadataReconstruction()]]
+   * and so if [[Snapshot.protocolAndMetadataReconstruction()]] starts depending on
+   * [[Snapshot.checkpointProvider]] then there will be cyclic dependency.
    */
   protected def protocolAndMetadataReconstruction(): Array[(Protocol, Metadata)] = {
     import implicits._
 
     val schemaToUse = Action.logSchema(Set("protocol", "metaData"))
-    fileIndices.map(deltaLog.loadIndex(_, schemaToUse))
+    val checkpointOpt = checkpointProvider.topLevelFileIndex.map { index =>
+      deltaLog.loadIndex(index, schemaToUse)
+        .withColumn(COMMIT_VERSION_COLUMN, lit(checkpointProvider.version))
+    }
+    (checkpointOpt ++ deltaFileIndexOpt.map(deltaLog.loadIndex(_, schemaToUse)).toSeq)
       .reduceOption(_.union(_)).getOrElse(emptyDF)
       .select("protocol", "metaData", COMMIT_VERSION_COLUMN)
       .where("protocol.minReaderVersion is not null or metaData.id is not null")
@@ -257,7 +273,8 @@ class Snapshot(
             col("add.tags"),
             col("add.deletionVector"),
             col("add.baseRowId"),
-            col("add.defaultRowCommitVersion")
+            col("add.defaultRowCommitVersion"),
+            col("add.clusteringProvider")
           )))
         .withColumn("remove", when(
           col("remove.path").isNotNull,
@@ -362,6 +379,8 @@ class Snapshot(
   /** The [[CheckpointProvider]] for the underlying checkpoint */
   lazy val checkpointProvider: CheckpointProvider = logSegment.checkpointProvider match {
     case cp: CheckpointProvider => cp
+    case uninitializedProvider: UninitializedCheckpointProvider =>
+      CheckpointProvider(spark, this, checksumOpt, uninitializedProvider)
     case o => throw new IllegalStateException(s"Unknown checkpoint provider: ${o.getClass.getName}")
   }
 
@@ -414,7 +433,7 @@ object Snapshot extends DeltaLogging {
       if (new Path(filePath.toUri).getParent != new Path(logBasePath.toUri)) {
         // scalastyle:off throwerror
         throw new AssertionError(s"File ($filePath) doesn't belong in the " +
-          s"transaction log at $logBasePath. Please contact Databricks Support.")
+          s"transaction log at $logBasePath.")
         // scalastyle:on throwerror
       }
     }

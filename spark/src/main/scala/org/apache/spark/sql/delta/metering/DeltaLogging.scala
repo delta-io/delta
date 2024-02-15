@@ -31,9 +31,11 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.util.DeltaProgressReporter
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkThrowable
 
 /**
  * Convenience wrappers for logging that include delta specific options and
@@ -152,6 +154,26 @@ trait DeltaLogging
         TAG_TAHOE_PATH -> Try(deltaLog.dataPath.toString).getOrElse(null)
       )
     )
+  }
+
+  /*
+   * Returns error data suitable for logging.
+   *
+   * It will recursively look for the error class and sql state in the cause of the exception.
+   */
+  def getErrorData(e: Throwable): Map[String, Any] = {
+    var data = Map[String, Any]("exceptionMessage" -> e.getMessage)
+    e condDo {
+      case sparkEx: SparkThrowable
+        if sparkEx.getErrorClass != null && sparkEx.getErrorClass.nonEmpty =>
+        data ++= Map(
+          "errorClass" -> sparkEx.getErrorClass,
+          "sqlState" -> sparkEx.getSqlState
+        )
+      case NonFatal(e) if e.getCause != null =>
+        data = getErrorData(e.getCause)
+    }
+    data
   }
 }
 

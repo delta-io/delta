@@ -15,6 +15,9 @@
  */
 package io.delta.kernel.internal;
 
+import java.io.FileNotFoundException;
+import java.io.IOException;
+
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.Table;
 import io.delta.kernel.TableNotFoundException;
@@ -22,27 +25,39 @@ import io.delta.kernel.client.TableClient;
 
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
-import io.delta.kernel.internal.util.Logging;
 
-public class TableImpl implements Table, Logging {
-    public static Table forPath(String path) {
-        final Path dataPath = new Path(path);
-        final Path logPath = new Path(dataPath, "_delta_log");
-
-        return new TableImpl(logPath, dataPath);
+public class TableImpl implements Table {
+    public static Table forPath(TableClient tableClient, String path)
+        throws TableNotFoundException {
+        // Resolve the path to fully qualified table path using the `TableClient` APIs
+        String resolvedPath;
+        try {
+            resolvedPath = tableClient.getFileSystemClient().resolvePath(path);
+        } catch (FileNotFoundException fnf) {
+            throw new TableNotFoundException(path, fnf);
+        } catch (IOException io) {
+            throw new RuntimeException(io);
+        }
+        return new TableImpl(resolvedPath);
     }
 
-    private final Path logPath;
-    private final Path dataPath;
+    private final SnapshotManager snapshotManager;
+    private final String tablePath;
 
-    public TableImpl(Path logPath, Path dataPath) {
-        this.logPath = logPath;
-        this.dataPath = dataPath;
+    public TableImpl(String tablePath) {
+        this.tablePath = tablePath;
+        final Path dataPath = new Path(tablePath);
+        final Path logPath = new Path(dataPath, "_delta_log");
+        this.snapshotManager = new SnapshotManager(logPath, dataPath);
     }
 
     @Override
-    public Snapshot getLatestSnapshot(TableClient tableClient)
-        throws TableNotFoundException {
-        return new SnapshotManager().buildLatestSnapshot(tableClient, logPath, dataPath);
+    public Snapshot getLatestSnapshot(TableClient tableClient) throws TableNotFoundException {
+        return snapshotManager.buildLatestSnapshot(tableClient);
+    }
+
+    @Override
+    public String getPath() {
+        return tablePath;
     }
 }

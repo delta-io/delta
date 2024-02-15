@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSource, MergeIntoMaterializeSourceReason, MergeStats}
-import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
+import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex, TransactionalWrite}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -39,7 +39,7 @@ import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StructType
 
-abstract class MergeIntoCommandBase extends LeafRunnableCommand
+trait MergeIntoCommandBase extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging
   with PredicateHelper
@@ -54,6 +54,13 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   val notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause]
   val notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause]
   val migratedSchema: Option[StructType]
+
+  protected def shouldWritePersistentDeletionVectors(
+      spark: SparkSession,
+      txn: OptimisticTransaction): Boolean = {
+    spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS) &&
+      DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
+  }
 
   override val (canMergeSchema, canOverwriteSchema) = {
     // Delta options can't be passed to MERGE INTO currently, so they'll always be empty.
@@ -173,7 +180,10 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
     "scanTimeMs" ->
       createTimingMetric(sc, "time taken to scan the files for matches"),
     "rewriteTimeMs" ->
-      createTimingMetric(sc, "time taken to rewrite the matched files")
+      createTimingMetric(sc, "time taken to rewrite the matched files"),
+    "numTargetDeletionVectorsAdded" -> createMetric(sc, "number of deletion vectors added"),
+    "numTargetDeletionVectorsRemoved" -> createMetric(sc, "number of deletion vectors removed"),
+    "numTargetDeletionVectorsUpdated" -> createMetric(sc, "number of deletion vectors updated")
   )
 
   /**
@@ -191,7 +201,8 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       matchedClauses,
       notMatchedClauses,
       notMatchedBySourceClauses,
-      isPartitioned = deltaTxn.metadata.partitionColumns.nonEmpty)
+      isPartitioned = deltaTxn.metadata.partitionColumns.nonEmpty,
+      performedSecondSourceScan = performedSecondSourceScan)
     stats.copy(
       materializeSourceReason = Some(materializeSourceReason.toString),
       materializeSourceAttempts = Some(attempt))
@@ -228,7 +239,11 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       txn: OptimisticTransaction,
       outputDF: DataFrame): Seq[FileAction] = {
     val partitionColumns = txn.metadata.partitionColumns
-    if (partitionColumns.nonEmpty && spark.conf.get(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE)) {
+    // If the write will be an optimized write, which shuffles the data anyway, then don't
+    // repartition. Optimized writes can handle both splitting very large tasks and coalescing
+    // very small ones.
+    if (partitionColumns.nonEmpty && spark.conf.get(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE)
+      && !TransactionalWrite.shouldOptimizeWrite(txn.metadata, spark.sessionState.conf)) {
       txn.writeFiles(outputDF.repartition(partitionColumns.map(col): _*))
     } else {
       txn.writeFiles(outputDF)
@@ -236,7 +251,7 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   }
 
   /**
-   * Build a new logical plan to read the given `files` instead of the whole target table.
+   * Builds a new logical plan to read the given `files` instead of the whole target table.
    * The plan returned has the same output columns (exprIds) as the `target` logical plan, so that
    * existing update/insert expressions can be applied on this new plan. Unneeded non-partition
    * columns may be dropped.
@@ -264,10 +279,11 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
   }
 
   /**
-   * Build a new logical plan to read the target table using the given `fileIndex`.
+   * Builds a new logical plan to read the target table using the given `fileIndex`.
    * The plan returned has the same output columns (exprIds) as the `target` logical plan, so that
-   * existing update/insert expressions can be applied on this new plan. Unneeded non-partition
-   * columns may be dropped.
+   * existing update/insert expressions can be applied on this new plan.
+   *
+   * @param columnsToDrop unneeded non-partition columns to be dropped
    */
   protected def buildTargetPlanWithIndex(
     spark: SparkSession,
@@ -275,7 +291,7 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
     fileIndex: TahoeFileIndex,
     columnsToDrop: Seq[String]): LogicalPlan = {
 
-    val targetOutputCols = getTargetOutputCols(deltaTxn)
+    val targetOutputCols = getTargetOutputCols(spark, deltaTxn)
 
     val plan = {
 
@@ -323,8 +339,16 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
    *    this transaction, since new columns will have a value of null for all existing rows.
    */
   protected def getTargetOutputCols(
-      txn: OptimisticTransaction, makeNullable: Boolean = false): Seq[NamedExpression] = {
-    txn.metadata.schema.map { col =>
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      makeNullable: Boolean = false)
+    : Seq[NamedExpression] = {
+    // Internal metadata attached to the table schema must not leak into the the target plan to
+    // prevent inconsistencies - e.p. metadata matters when comparing data type of struct with
+    // nested fields.
+    val schema = DeltaColumnMapping.dropColumnMappingMetadata(
+        DeltaTableUtils.removeInternalMetadata(spark, txn.metadata.schema))
+    schema.map { col =>
       targetOutputAttributesMap
         .get(col.name)
         .map { a =>
@@ -334,9 +358,22 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
     }
   }
 
-  /** Expressions to increment SQL metrics */
-  protected def incrementMetricAndReturnBool(name: String, valueToReturn: Boolean): Expression =
+  /** @return An `Expression` to increment a SQL metric */
+  protected def incrementMetricAndReturnBool(
+      name: String,
+      valueToReturn: Boolean): Expression = {
     IncrementMetric(Literal(valueToReturn), metrics(name))
+  }
+
+  /** @return An `Expression` to increment SQL metrics */
+  protected def incrementMetricsAndReturnBool(
+      names: Seq[String],
+      valueToReturn: Boolean): Expression = {
+    val incExpr = incrementMetricAndReturnBool(names.head, valueToReturn)
+    names.tail.foldLeft(incExpr) { case (expr, name) =>
+      IncrementMetric(expr, metrics(name))
+    }
+  }
 
   protected def getTargetOnlyPredicates(spark: SparkSession): Seq[Expression] = {
     val targetOnlyPredicatesOnCondition =
@@ -346,12 +383,12 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
       targetOnlyPredicatesOnCondition
     } else {
       val targetOnlyMatchedPredicate = matchedClauses
-        .map(clause => clause.condition.getOrElse(Literal(true)))
+        .map(_.condition.getOrElse(Literal.TrueLiteral))
         .map { condition =>
           splitConjunctivePredicates(condition)
             .filter(_.references.subsetOf(target.outputSet))
             .reduceOption(And)
-            .getOrElse(Literal(true))
+            .getOrElse(Literal.TrueLiteral)
         }
         .reduceOption(Or)
       targetOnlyPredicatesOnCondition ++ targetOnlyMatchedPredicate
@@ -413,6 +450,10 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
     }
   }
 
+  // Whether we actually scanned the source twice or the value in numSourceRowsInSecondScan is
+  // uninitialised.
+  protected var performedSecondSourceScan: Boolean = true
+
   /**
    * Throws an exception if merge metrics indicate that the source table changed between the first
    * and the second source table scans.
@@ -423,8 +464,8 @@ abstract class MergeIntoCommandBase extends LeafRunnableCommand
     // in both jobs.
     // If numSourceRowsInSecondScan is < 0 then it hasn't run, e.g. for insert-only merges.
     // In that case we have only read the source table once.
-    if (metrics("numSourceRowsInSecondScan").value >= 0 &&
-      metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
+    if (performedSecondSourceScan &&
+        metrics("numSourceRows").value != metrics("numSourceRowsInSecondScan").value) {
       log.warn(s"Merge source has ${metrics("numSourceRows")} rows in initial scan but " +
         s"${metrics("numSourceRowsInSecondScan")} rows in second scan")
       if (conf.getConf(DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED)) {

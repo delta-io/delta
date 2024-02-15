@@ -19,6 +19,7 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableSetPropertiesDeltaCommand
@@ -530,15 +531,16 @@ class DeltaTable private[tables](
    *
    * @since 0.8.0
    */
-  def upgradeTableProtocol(readerVersion: Int, writerVersion: Int): Unit = {
-    val alterTableCmd = AlterTableSetPropertiesDeltaCommand(
-      table,
-      DeltaConfigs.validateConfigurations(
-        Map(
-          "delta.minReaderVersion" -> readerVersion.toString,
-          "delta.minWriterVersion" -> writerVersion.toString)))
-    toDataset(sparkSession, alterTableCmd)
-  }
+  def upgradeTableProtocol(readerVersion: Int, writerVersion: Int): Unit =
+    withActiveSession(sparkSession) {
+      val alterTableCmd = AlterTableSetPropertiesDeltaCommand(
+        table,
+        DeltaConfigs.validateConfigurations(
+          Map(
+            "delta.minReaderVersion" -> readerVersion.toString,
+            "delta.minWriterVersion" -> writerVersion.toString)))
+      toDataset(sparkSession, alterTableCmd)
+    }
 
   /**
    * Modify the protocol to add a supported feature, and if the table does not support table
@@ -550,7 +552,7 @@ class DeltaTable private[tables](
    *
    * @since 2.3.0
    */
-  def addFeatureSupport(featureName: String): Unit = {
+  def addFeatureSupport(featureName: String): Unit = withActiveSession(sparkSession) {
     // Do not check for the correctness of the provided feature name. The ALTER TABLE command will
     // do that in a transaction.
     val alterTableCmd = AlterTableSetPropertiesDeltaCommand(
@@ -749,9 +751,10 @@ object DeltaTable {
   }
 
   /**
-   * Instantiate a [[DeltaTable]] object using the given table or view name. If the given
+   * Instantiate a [[DeltaTable]] object using the given table name. If the given
    * tableOrViewName is invalid (i.e. either no table exists or an existing table is not a
-   * Delta table), it throws a `not a Delta table` error.
+   * Delta table), it throws a `not a Delta table` error. Note: Passing a view name will also
+   * result in this error as views are not supported.
    *
    * The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
    * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
@@ -769,11 +772,12 @@ object DeltaTable {
   }
 
   /**
-   * Instantiate a [[DeltaTable]] object using the given table or view name using the given
-   * SparkSession. If the given tableOrViewName is invalid (i.e. either no table exists or an
-   * existing table is not a Delta table), it throws a `not a Delta table` error.
+   * Instantiate a [[DeltaTable]] object using the given table name using the given
+   * SparkSession. If the given tableName is invalid (i.e. either no table exists or an
+   * existing table is not a Delta table), it throws a `not a Delta table` error. Note:
+   * Passing a view name will also result in this error as views are not supported.
    *
-   * The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
+   * The given tableName can also be the absolute path of a delta datasource (i.e.
    * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
    * the given path (consistent with the [[forPath]]).
    */

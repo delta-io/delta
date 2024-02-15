@@ -18,16 +18,21 @@ package io.delta.sql.parser
 
 import io.delta.tables.execution.VacuumTableCommand
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterByTransform
+
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
-import org.apache.spark.sql.delta.UnresolvedPathBasedDeltaTable
-import org.apache.spark.sql.delta.commands.{OptimizeTableCommand, DeltaReorgTable}
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.{UnresolvedPathBasedDeltaTable, UnresolvedPathBasedTable}
+import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, DescribeDeltaHistory, OptimizeTableCommand, DeltaReorgTable}
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
-import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
+import org.apache.spark.sql.catalyst.plans.logical.{AlterTableDropFeature, CloneTableStatement, CreateTable, CreateTableAsSelect, LogicalPlan, ReplaceTable, ReplaceTableAsSelect, RestoreTableStatement}
+import org.apache.spark.sql.execution.SparkSqlParser
 
 class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
@@ -35,17 +40,46 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     // Setting `delegate` to `null` is fine. The following tests don't need to touch `delegate`.
     val parser = new DeltaSqlParser(null)
     assert(parser.parsePlan("vacuum 123_") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123_")), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("123_"), "VACUUM", None), None, false))
     assert(parser.parsePlan("vacuum 1a.123_") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123_", Some("1a"))), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("1a", "123_"), "VACUUM", None), None, false))
     assert(parser.parsePlan("vacuum a.123A") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123A", Some("a"))), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("a", "123A"), "VACUUM", None), None, false))
     assert(parser.parsePlan("vacuum a.123E3_column") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123E3_column", Some("a"))), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("a", "123E3_column"), "VACUUM", None), None, false))
     assert(parser.parsePlan("vacuum a.123D_column") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123D_column", Some("a"))), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("a", "123D_column"), "VACUUM", None),
+        None, false))
     assert(parser.parsePlan("vacuum a.123BD_column") ===
-      VacuumTableCommand(None, Some(TableIdentifier("123BD_column", Some("a"))), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("a", "123BD_column"), "VACUUM", None),
+        None, false))
+
+    assert(parser.parsePlan("vacuum delta.`/tmp/table`") ===
+      VacuumTableCommand(UnresolvedTable(Seq("delta", "/tmp/table"), "VACUUM", None),
+        None, false))
+
+    assert(parser.parsePlan("vacuum \"/tmp/table\"") ===
+      VacuumTableCommand(
+        UnresolvedPathBasedDeltaTable("/tmp/table", Map.empty, "VACUUM"), None, false))
+  }
+
+  test("Restore command is parsed as expected") {
+    val parser = new DeltaSqlParser(null)
+    var parsedCmd = parser.parsePlan("RESTORE catalog_foo.db.tbl TO VERSION AS OF 1;")
+    assert(parsedCmd ===
+      RestoreTableStatement(TimeTravel(
+        UnresolvedRelation(Seq("catalog_foo", "db", "tbl")),
+        None,
+        Some(1),
+        Some("sql"))))
+
+    parsedCmd = parser.parsePlan("RESTORE delta.`/tmp` TO VERSION AS OF 1;")
+    assert(parsedCmd ===
+      RestoreTableStatement(TimeTravel(
+        UnresolvedRelation(Seq("delta", "/tmp")),
+        None,
+        Some(1),
+        Some("sql"))))
   }
 
   test("OPTIMIZE command is parsed as expected") {
@@ -92,7 +126,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     assert(parsedCmd ===
       OptimizeTableCommand(Some("/path/to/tbl"), None, Nil)(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
-      UnresolvedPathBasedDeltaTable("/path/to/tbl", "OPTIMIZE"))
+      UnresolvedPathBasedDeltaTable("/path/to/tbl", Map.empty, "OPTIMIZE"))
 
     parsedCmd = parser.parsePlan("OPTIMIZE delta.`/path/to/tbl`")
     assert(parsedCmd ===
@@ -136,6 +170,41 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (optimize, zorder)") ===
       OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(
         Seq(unresolvedAttr("optimize"), unresolvedAttr("zorder"))))
+  }
+
+  test("DESCRIBE DETAIL command is parsed as expected") {
+    val parser = new DeltaSqlParser(null)
+
+    // Desc detail on a table
+    assert(parser.parsePlan("DESCRIBE DETAIL catalog_foo.db.tbl") ===
+      DescribeDeltaDetailCommand(
+        UnresolvedTable(Seq("catalog_foo", "db", "tbl"), DescribeDeltaDetailCommand.CMD_NAME, None),
+        Map.empty))
+
+    // Desc detail on a raw path
+    assert(parser.parsePlan("DESCRIBE DETAIL \"/tmp/table\"") ===
+      DescribeDeltaDetailCommand(
+        UnresolvedPathBasedTable("/tmp/table", Map.empty, DescribeDeltaDetailCommand.CMD_NAME),
+        Map.empty))
+
+    // Desc detail on a delta raw path
+    assert(parser.parsePlan("DESCRIBE DETAIL delta.`dummy_raw_path`") ===
+      DescribeDeltaDetailCommand(
+        UnresolvedTable(Seq("delta", "dummy_raw_path"), DescribeDeltaDetailCommand.CMD_NAME, None),
+        Map.empty))
+  }
+
+  test("DESCRIBE HISTORY command is parsed as expected") {
+    val parser = new DeltaSqlParser(null)
+    var parsedCmd = parser.parsePlan("DESCRIBE HISTORY catalog_foo.db.tbl")
+    assert(parsedCmd.asInstanceOf[DescribeDeltaHistory].child ===
+        UnresolvedTable(Seq("catalog_foo", "db", "tbl"), DescribeDeltaHistory.COMMAND_NAME, None))
+    parsedCmd = parser.parsePlan("DESCRIBE HISTORY delta.`/path/to/tbl`")
+    assert(parsedCmd.asInstanceOf[DescribeDeltaHistory].child ===
+      UnresolvedTable(Seq("delta", "/path/to/tbl"), DescribeDeltaHistory.COMMAND_NAME, None))
+    parsedCmd = parser.parsePlan("DESCRIBE HISTORY '/path/to/tbl'")
+    assert(parsedCmd.asInstanceOf[DescribeDeltaHistory].child ===
+      UnresolvedPathBasedDeltaTable("/path/to/tbl", Map.empty, DescribeDeltaHistory.COMMAND_NAME))
   }
 
   private def targetPlanForTable(tableParts: String*): UnresolvedTable =
@@ -271,6 +340,28 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     // Custom source format with path
     checkCloneStmt(parser, source = "/path/to/iceberg", target = "t1", sourceFormat = "iceberg",
       sourceIsTable = false)
+
+    // Target table with 3L name
+    checkCloneStmt(parser, source = "/path/to/iceberg", target = "a.b.t1", sourceFormat = "iceberg",
+      sourceIsTable = false)
+    checkCloneStmt(
+      parser, source = "spark_catalog.tmp.table", target = "a.b.t1", sourceIs3LTable = true)
+    checkCloneStmt(parser, source = "t2", target = "a.b.t1")
+  }
+
+  for (truncateHistory <- Seq(true, false))
+  test(s"DROP FEATURE command is parsed as expected - truncateHistory: $truncateHistory") {
+    val parser = new DeltaSqlParser(null)
+    val table = "tbl"
+    val featureName = "feature_name"
+    val sql = s"ALTER TABLE $table DROP FEATURE $featureName " +
+      (if (truncateHistory) "TRUNCATE HISTORY" else "")
+    val parsedCmd = parser.parsePlan(sql)
+    assert(parsedCmd ===
+      AlterTableDropFeature(
+        UnresolvedTable(Seq(table), "ALTER TABLE ... DROP FEATURE", None),
+        featureName,
+        truncateHistory))
   }
 
   private def unresolvedAttr(colName: String*): UnresolvedAttribute = {
@@ -287,6 +378,140 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     } else {
       assert(schema != null)
       new TableIdentifier(tblName, Some(schema), Some(catalog))
+    }
+  }
+
+  private def clusterByStatement(
+      createOrReplaceClause: String,
+      asSelect: Boolean,
+      schema: String,
+      clusterByClause: String): String = {
+    val tableSchema = if (asSelect) {
+      ""
+    } else {
+      s"($schema)"
+    }
+    val select = if (asSelect) {
+      "AS SELECT * FROM tbl2"
+    } else {
+      ""
+    }
+    s"$createOrReplaceClause TABLE tbl $tableSchema USING DELTA $clusterByClause $select"
+  }
+
+  private def validateClusterByTransform(
+      clause: String,
+      asSelect: Boolean,
+      plan: LogicalPlan,
+      expectedColumns: Seq[Seq[String]]): Unit = {
+    val partitioning = if (clause == "CREATE") {
+      if (asSelect) {
+        plan.asInstanceOf[CreateTableAsSelect].partitioning
+      } else {
+        plan.asInstanceOf[CreateTable].partitioning
+      }
+    } else {
+      if (asSelect) {
+        plan.asInstanceOf[ReplaceTableAsSelect].partitioning
+      } else {
+        plan.asInstanceOf[ReplaceTable].partitioning
+      }
+    }
+    assert(partitioning.size === 1)
+    val transform = partitioning.head
+    val actualColumns = transform match {
+      case ClusterByTransform(columnNames) => columnNames.map(_.fieldNames.toSeq)
+      case _ => assert(false, "Should not reach here")
+    }
+    assert(actualColumns === expectedColumns)
+  }
+
+  for (asSelect <- BOOLEAN_DOMAIN) {
+    Seq("CREATE", "REPLACE").foreach { clause =>
+      test(s"CLUSTER BY - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql = clusterByStatement(clause, asSelect, "a int, b string", "CLUSTER BY (a)")
+        val parsedPlan = parser.parsePlan(sql)
+        validateClusterByTransform(clause, asSelect, parsedPlan, Seq(Seq("a")))
+      }
+
+      test(s"CLUSTER BY nested column - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(clause, asSelect, "a struct<b int, c string>", "CLUSTER BY (a.b, a.c)")
+        val parsedPlan = parser.parsePlan(sql)
+        validateClusterByTransform(clause, asSelect, parsedPlan, Seq(Seq("a", "b"), Seq("a", "c")))
+      }
+
+      test(s"CLUSTER BY backquoted column - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(clause, asSelect, "`a.b.c` int", "CLUSTER BY (`a.b.c`)")
+        val parsedPlan = parser.parsePlan(sql)
+        validateClusterByTransform(clause, asSelect, parsedPlan, Seq(Seq("a.b.c")))
+      }
+
+      test(s"CLUSTER BY comma column - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(clause, asSelect, "`a,b` int", "CLUSTER BY (`a,b`)")
+        val parsedPlan = parser.parsePlan(sql)
+        validateClusterByTransform(clause, asSelect, parsedPlan, Seq(Seq("a,b")))
+      }
+
+      test(s"CLUSTER BY duplicated clauses - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(clause, asSelect, "a int, b string", "CLUSTER BY (a) CLUSTER BY (b)")
+        checkError(exception = intercept[ParseException] {
+          parser.parsePlan(sql)
+        }, errorClass = "DUPLICATE_CLAUSES", parameters = Map("clauseName" -> "CLUSTER BY"))
+      }
+
+      test("CLUSTER BY set clustering column property is ignored - " +
+        s"$clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(
+            clause,
+            asSelect,
+            "a int, b string",
+            "CLUSTER BY (a) " +
+            s"TBLPROPERTIES ('${ClusteredTableUtils.PROP_CLUSTERING_COLUMNS}' = 'b')")
+        val parsedPlan = parser.parsePlan(sql)
+        validateClusterByTransform(clause, asSelect, parsedPlan, Seq(Seq("a")))
+      }
+
+      test(s"CLUSTER BY with PARTITIONED BY - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(
+            clause,
+            asSelect,
+            "a int, b string",
+            "CLUSTER BY (a) PARTITIONED BY (b)")
+        val errorMsg = "Clustering and partitioning cannot both be specified. " +
+          "Please remove PARTITIONED BY if you want to create a Delta table with clustering"
+        checkError(exception = intercept[ParseException] {
+          parser.parsePlan(sql)
+        }, errorClass = "_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
+      }
+
+      test(s"CLUSTER BY with bucketing - $clause TABLE asSelect = $asSelect") {
+        val parser = new DeltaSqlParser(new SparkSqlParser())
+        val sql =
+          clusterByStatement(
+            clause,
+            asSelect,
+            "a int, b string",
+            "CLUSTER BY (a) CLUSTERED BY (b) INTO 2 BUCKETS")
+        val errorMsg = "Clustering and bucketing cannot both be specified. " +
+          "Please remove CLUSTERED BY INTO BUCKETS if you " +
+          "want to create a Delta table with clustering"
+        checkError(exception = intercept[ParseException] {
+          parser.parsePlan(sql)
+        }, errorClass = "_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
+      }
     }
   }
 }

@@ -101,7 +101,7 @@ object Action {
     JsonUtils.mapper.readValue[SingleAction](json).unwrap
   }
 
-  lazy val logSchema = ExpressionEncoder[SingleAction].schema
+  lazy val logSchema = ExpressionEncoder[SingleAction]().schema
   lazy val addFileSchema = logSchema("add").dataType.asInstanceOf[StructType]
 }
 
@@ -528,7 +528,7 @@ object Protocol {
     }
     if (manifestGenerationEnabled) {
       // Only allow enabling this, if there are no DVs present.
-      if (!DeletionVectorUtils.isTableDVFree(spark, snapshot)) {
+      if (!DeletionVectorUtils.isTableDVFree(snapshot)) {
         throw new DeltaTablePropertyValidationFailedException(
           table = tableName,
           subClass = ExistingDeletionVectorsWithIncrementalManifestGeneration)
@@ -682,7 +682,8 @@ case class AddFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    defaultRowCommitVersion: Option[Long] = None
+    defaultRowCommitVersion: Option[Long] = None,
+    clusteringProvider: Option[String] = None
 ) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 
@@ -737,7 +738,9 @@ case class AddFile(
     val removeFileWithOldDv = this.removeWithTimestamp(dataChange = dataChange)
 
     // Sanity check for incremental DV updates.
-    require(addFileWithNewDv.numDeletedRecords >= removeFileWithOldDv.numDeletedRecords)
+    if (addFileWithNewDv.numDeletedRecords < removeFileWithOldDv.numDeletedRecords) {
+      throw DeltaErrors.deletionVectorSizeMismatch()
+    }
 
     (addFileWithNewDv, removeFileWithOldDv)
   }
@@ -841,6 +844,9 @@ object AddFile {
     /** [[OPTIMIZE_TARGET_SIZE]]: target file size the file was optimized to. */
     object OPTIMIZE_TARGET_SIZE extends AddFile.Tags.KeyType("OPTIMIZE_TARGET_SIZE")
 
+
+    /** [[ICEBERG_COMPAT_VERSION]]: IcebergCompat version */
+    object ICEBERG_COMPAT_VERSION extends AddFile.Tags.KeyType("ICEBERG_COMPAT_VERSION")
   }
 
   /** Convert a [[Tags.KeyType]] to a string to be used in the AddMap.tags Map[String, String]. */

@@ -19,10 +19,9 @@ package org.apache.spark.sql.delta.commands
 import java.util.ConcurrentModificationException
 
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.parallel.ForkJoinTaskSupport
-import scala.collection.parallel.immutable.ParVector
 
 import org.apache.spark.sql.delta.skipping.MultiDimClustering
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, FileAction, RemoveFile}
@@ -37,8 +36,7 @@ import org.apache.spark.sql.{AnalysisException, Encoders, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedTable}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.trees.UnaryLike
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -134,7 +132,7 @@ case class OptimizeTableCommand(
     userPartitionPredicates: Seq[String],
     optimizeContext: DeltaOptimizeContext
 )(val zOrderBy: Seq[UnresolvedAttribute])
-  extends OptimizeTableCommandBase with RunnableCommand with UnaryLike[LogicalPlan] {
+  extends OptimizeTableCommandBase with RunnableCommand with UnaryNode {
 
   override val otherCopyArgs: Seq[AnyRef] = zOrderBy :: Nil
 
@@ -142,11 +140,21 @@ case class OptimizeTableCommand(
     copy(child = newChild)(zOrderBy)
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val deltaLog = getDeltaTable(child, "OPTIMIZE").deltaLog
-
-    val txn = deltaLog.startTransaction()
+    val table = getDeltaTable(child, "OPTIMIZE")
+    val txn = table.startTransaction()
     if (txn.readVersion == -1) {
-      throw DeltaErrors.notADeltaTableException(deltaLog.dataPath.toString)
+      throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
+    }
+
+    if (ClusteredTableUtils.isSupported(txn.protocol)) {
+      // Validate that the preview is enabled if we are optimizing a clustered table.
+      ClusteredTableUtils.validatePreviewEnabled(txn.snapshot.protocol)
+      if (userPartitionPredicates.nonEmpty) {
+        throw DeltaErrors.clusteringWithPartitionPredicatesException(userPartitionPredicates)
+      }
+      if (zOrderBy.nonEmpty) {
+        throw DeltaErrors.clusteringWithZOrderByException(zOrderBy)
+      }
     }
 
     val partitionColumns = txn.snapshot.metadata.partitionColumns
@@ -165,8 +173,14 @@ case class OptimizeTableCommand(
     validateZorderByColumns(sparkSession, txn, zOrderBy)
     val zOrderByColumns = zOrderBy.map(_.name).toSeq
 
-    new OptimizeExecutor(sparkSession, txn, partitionPredicates, zOrderByColumns, optimizeContext)
-      .optimize()
+    new OptimizeExecutor(
+      sparkSession,
+      txn,
+      partitionPredicates,
+      zOrderByColumns,
+      isAutoCompact = false,
+      optimizeContext
+    ).optimize()
   }
 }
 
@@ -184,12 +198,16 @@ case class OptimizeTableCommand(
  *                            specified, [[DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO]]
  *                            will be used. This parameter must be set to `0` when [[isPurge]] is
  *                            true.
+ * @param icebergCompatVersion The iceberg compatibility version used to rewrite data for
+ *                             uniform tables.
  */
 case class DeltaOptimizeContext(
     isPurge: Boolean = false,
     minFileSize: Option[Long] = None,
-    maxDeletedRowsRatio: Option[Double] = None) {
-  if (isPurge) {
+    maxFileSize: Option[Long] = None,
+    maxDeletedRowsRatio: Option[Double] = None,
+    icebergCompatVersion: Option[Int] = None) {
+  if (isPurge || icebergCompatVersion.isDefined) {
     require(
       minFileSize.contains(0L) && maxDeletedRowsRatio.contains(0d),
       "minFileSize and maxDeletedRowsRatio must be 0 when running PURGE.")
@@ -209,20 +227,42 @@ class OptimizeExecutor(
     txn: OptimisticTransaction,
     partitionPredicate: Seq[Expression],
     zOrderByColumns: Seq[String],
+    isAutoCompact: Boolean,
     optimizeContext: DeltaOptimizeContext)
   extends DeltaCommand with SQLMetricsReporting with Serializable {
 
   /** Timestamp to use in [[FileAction]] */
   private val operationTimestamp = new SystemClock().getTimeMillis()
 
-  private val isMultiDimClustering = zOrderByColumns.nonEmpty
+  private val isClusteredTable = ClusteredTableUtils.isSupported(txn.snapshot.protocol)
+
+  private val isMultiDimClustering = isClusteredTable || zOrderByColumns.nonEmpty
+
+  private val clusteringColumns: Seq[String] = {
+    if (zOrderByColumns.nonEmpty) {
+      zOrderByColumns
+    } else if (isClusteredTable) {
+      ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
+    } else {
+      Nil
+    }
+  }
+
+  private lazy val curve: String = {
+    if (zOrderByColumns.nonEmpty) {
+      "zorder"
+    } else {
+      assert(isClusteredTable)
+      "hilbert"
+    }
+  }
 
   def optimize(): Seq[Row] = {
     recordDeltaOperation(txn.deltaLog, "delta.optimize") {
       val minFileSize = optimizeContext.minFileSize.getOrElse(
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE))
-      val maxFileSize =
-        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE)
+      val maxFileSize = optimizeContext.maxFileSize.getOrElse(
+        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE))
       val maxDeletedRowsRatio = optimizeContext.maxDeletedRowsRatio.getOrElse(
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO))
 
@@ -245,7 +285,7 @@ class OptimizeExecutor(
       val removedDVs = filesToProcess.filter(_.deletionVector != null).map(_.deletionVector).toSeq
       if (addedFiles.size > 0) {
         val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles, removedDVs)
-        commitAndRetry(txn, getOperation, updates, metrics) { newTxn =>
+        commitAndRetry(txn, getOperation(), updates, metrics) { newTxn =>
           val newPartitionSchema = newTxn.metadata.partitionSchema
           val candidateSetOld = candidateFiles.map(_.path).toSet
           val candidateSetNew = newTxn.filterFiles(partitionPredicate).map(_.path).toSet
@@ -318,9 +358,18 @@ class OptimizeExecutor(
           file.deletedToPhysicalRecordsRatio.getOrElse(0d) > maxDeletedRowsRatio
     }
 
-    // Select files that are small or have too many deleted rows
+    def shouldRewriteToBeIcebergCompatible(file: AddFile): Boolean = {
+      if (optimizeContext.icebergCompatVersion.isEmpty) return false
+      if (file.tags == null) return true
+      val icebergCompatVersion = file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
+      !optimizeContext.icebergCompatVersion.exists(_.toString == icebergCompatVersion)
+    }
+
+    // Select files that are small, have too many deleted rows,
+    // or need to be made iceberg compatible
     files.filter(
-      addFile => addFile.size < minFileSize || shouldCompactBecauseOfDeletedRows(addFile))
+      addFile => addFile.size < minFileSize || shouldCompactBecauseOfDeletedRows(addFile) ||
+        shouldRewriteToBeIcebergCompatible(addFile))
   }
 
   /**
@@ -366,6 +415,7 @@ class OptimizeExecutor(
         bins.filter { bin =>
           bin.size > 1 || // bin has more than one file or
           (bin.size == 1 && bin(0).deletionVector != null) || // single file in the bin has a DV or
+          (bin.size == 1 && optimizeContext.icebergCompatVersion.isDefined) || // uniform reorg
           isMultiDimClustering // multi-clustering
         }.map(b => (partition, b))
     }
@@ -393,7 +443,8 @@ class OptimizeExecutor(
       MultiDimClustering.cluster(
         input,
         approxNumFiles,
-        zOrderByColumns)
+        clusteringColumns,
+        curve)
     } else {
       val useRepartition = sparkSession.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_OPTIMIZE_REPARTITION_ENABLED)
@@ -412,9 +463,13 @@ class OptimizeExecutor(
       sparkSession.sparkContext.getLocalProperty(SPARK_JOB_GROUP_ID),
       description)
 
-    val addFiles = txn.writeFiles(repartitionDF).collect {
+    val addFiles = txn.writeFiles(repartitionDF, None, isOptimize = true, Nil).collect {
       case a: AddFile =>
-        a.copy(dataChange = false)
+        (if (isClusteredTable) {
+          a.copy(clusteringProvider = Some(ClusteredTableUtils.clusteringProvider))
+        } else {
+          a
+        }).copy(dataChange = false)
       case other =>
         throw new IllegalStateException(
           s"Unexpected action $other with type ${other.getClass}. File compaction job output" +
@@ -443,7 +498,7 @@ class OptimizeExecutor(
       txn.commit(actions, optimizeOperation)
     } catch {
       case e: ConcurrentModificationException =>
-        val newTxn = txn.deltaLog.startTransaction()
+        val newTxn = txn.deltaLog.startTransaction(txn.catalogTable)
         if (f(newTxn)) {
           logInfo("Retrying commit after checking for semantic conflicts with concurrent updates.")
           commitAndRetry(newTxn, optimizeOperation, actions, metrics)(f)
@@ -459,7 +514,7 @@ class OptimizeExecutor(
     if (optimizeContext.isPurge) {
       DeltaOperations.Reorg(partitionPredicate)
     } else {
-      DeltaOperations.Optimize(partitionPredicate, zOrderByColumns)
+      DeltaOperations.Optimize(partitionPredicate, clusteringColumns, auto = isAutoCompact)
     }
   }
 

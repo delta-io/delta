@@ -86,7 +86,7 @@ class DeltaSourceSnapshot(
   }
 
   def iterator(): Iterator[IndexedFile] = {
-    cachedState.getDS.toLocalIterator.asScala
+    cachedState.getDS.toLocalIterator().asScala
   }
 
   def close(unpersistSnapshot: Boolean): Unit = {

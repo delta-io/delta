@@ -26,7 +26,8 @@ import io.delta.kernel.annotation.Evolving;
  * <p><ul>
  *     <li>Logical {@code expr1} OR {@code expr2} on two inputs.</li>
  *     <li>Requires both left and right input expressions of type {@link Predicate}.</li>
- *     <li>Result is null at least one of the inputs is null.</li>
+ *     <li>Result is null when both inputs are null, or when one input is null and the other
+ *     is {@code false}.</li>
  * </ul>
  *
  * @since 3.0.0
@@ -49,10 +50,5 @@ public final class Or extends Predicate {
      */
     public Predicate getRight() {
         return (Predicate) getChildren().get(1);
-    }
-
-    @Override
-    public String toString() {
-        return "(" + getLeft() + " OR " + getRight() + ")";
     }
 }

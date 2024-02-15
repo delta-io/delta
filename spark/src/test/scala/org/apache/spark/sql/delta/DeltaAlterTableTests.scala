@@ -146,7 +146,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
             |)""".stripMargin)
       }
       assert(e.getMessage.contains("expects a table. Please use ALTER VIEW instead.") ||
-        e.getMessage.contains("'v' is a view not a table."))
+        e.getMessage.contains("EXPECT_TABLE_NOT_VIEW.USE_ALTER_VIEW"))
     }
   }
 
@@ -1450,8 +1450,8 @@ trait DeltaAlterTableByNameTests extends DeltaAlterTableTests {
 
         sql("ALTER TABLE delta_test ADD COLUMNS (v3 long, v4 double)")
 
-        val deltaLog = DeltaLog.forTable(spark, path)
-        assertEqual(deltaLog.snapshot.schema, new StructType()
+        val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, path)
+        assertEqual(snapshot.schema, new StructType()
           .add("v1", "integer").add("v2", "string")
           .add("v3", "long").add("v4", "double"))
 
@@ -1549,7 +1549,8 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
   override protected def createTable(schema: String, tblProperties: Map[String, String]): String = {
       val tmpDir = Utils.createTempDir().getCanonicalPath
       val (deltaLog, snapshot) = getDeltaLogWithSnapshot(tmpDir)
-      val txn = deltaLog.startTransaction(Some(snapshot))
+      // This is a path-based table so we don't need to pass the catalogTable here
+      val txn = deltaLog.startTransaction(None, Some(snapshot))
       val metadata = Metadata(
         schemaString = StructType.fromDDL(schema).json,
         configuration = tblProperties)
@@ -1654,7 +1655,8 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
         }
         assert(e.getErrorClass == "DELTA_CANNOT_SET_LOCATION_ON_PATH_IDENTIFIER")
         assert(e.getSqlState == "42613")
-        assert(e.getMessage == "Cannot change the location of a path based table.")
+        assert(e.getMessage == "[DELTA_CANNOT_SET_LOCATION_ON_PATH_IDENTIFIER] " +
+          "Cannot change the location of a path based table.")
       }
     }
   }

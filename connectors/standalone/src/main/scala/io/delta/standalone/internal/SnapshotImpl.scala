@@ -339,7 +339,7 @@ private[internal] class SnapshotImpl(
   private lazy val activeFilesJ =
     state.activeFiles.map(ConversionUtils.convertAddFile).toList.asJava
 
-  logInfo(s"[tableId=${deltaLog.tableId}] Created snapshot $this")
+  logInfo(s"[tableId=${metadataScala.id}] Created snapshot $this")
 
   /** Complete initialization by checking protocol version. */
   deltaLog.assertProtocolRead(protocolScala)

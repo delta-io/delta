@@ -32,6 +32,7 @@ import org.apache.spark.sql.catalyst.analysis.Analyzer
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan, Project}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.{quoteIfNeeded, CaseInsensitiveMap}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
@@ -178,7 +179,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     val allowedBaseColumns = schema
       .filterNot(_.name == fieldName) // Can't reference itself
       .filterNot(isGeneratedColumn) // Can't reference other generated columns
-    val relation = new LocalRelation(StructType(allowedBaseColumns).toAttributes)
+    val relation = new LocalRelation(toAttributes(StructType(allowedBaseColumns)))
     try {
       val analyzer: Analyzer = spark.sessionState.analyzer
       val analyzed = analyzer.execute(Project(Seq(Alias(expression, fieldName)()), relation))
@@ -206,7 +207,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     // errors:
     // - Refer to a non existent column in a generation expression.
     // - Refer to a generated column in another one.
-    val relation = new LocalRelation(StructType(normalColumns).toAttributes)
+    val relation = new LocalRelation(toAttributes(StructType(normalColumns)))
     val selectExprs = generatedColumns.map { f =>
       getGenerationExpressionStr(f) match {
         case Some(exprString) =>
@@ -274,7 +275,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       return Set.empty
     }
 
-    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(schema.toAttributes))
+    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
     val generatedColumnsAndColumnsUsedByGeneratedColumns =
       df.select(generationExprs: _*).queryExecution.analyzed match {
         case Project(exprs, _) =>
@@ -344,7 +345,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       }
     }
 
-    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(schema.toAttributes))
+    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
     val extractedPartitionExprs =
       df.select(partitionGenerationExprs: _*).queryExecution.analyzed match {
         case Project(exprs, _) =>
@@ -545,7 +546,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         case GreaterThanOrEqual(ExtractBaseColumn(nameParts, _), lit: Literal) =>
           toPartitionFilter(nameParts, _.greaterThanOrEqual(lit))
         case IsNull(ExtractBaseColumn(nameParts, _)) =>
-          toPartitionFilter(nameParts, _.isNull)
+          toPartitionFilter(nameParts, _.isNull())
         case _ => Nil
       }
     }

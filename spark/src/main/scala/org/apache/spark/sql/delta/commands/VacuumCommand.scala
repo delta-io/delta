@@ -149,6 +149,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       clock: Clock = new SystemClock): DataFrame = {
     recordDeltaOperation(deltaLog, "delta.gc") {
 
+      val vacuumStartTime = System.currentTimeMillis()
       val path = deltaLog.dataPath
       val deltaHadoopConf = deltaLog.newDeltaHadoopConf()
       val fs = path.getFileSystem(deltaHadoopConf)
@@ -156,6 +157,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       import org.apache.spark.sql.delta.implicits._
 
       val snapshot = deltaLog.update()
+      deltaLog.protocolWrite(snapshot.protocol)
+
       val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
       val retentionMillis = retentionHours.map(h => TimeUnit.HOURS.toMillis(math.round(h)))
       val deleteBeforeTimestamp = retentionMillis match {
@@ -202,119 +205,137 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           duplicates.maxBy(_.modificationTime)
         }
 
-      try {
-        allFilesAndDirs.cache()
+      recordFrameProfile("Delta", "VacuumCommand.gc") {
+        try {
+          allFilesAndDirs.cache()
 
-        implicit val fileNameAndSizeEncoder = org.apache.spark.sql.Encoders.product[FileNameAndSize]
+          implicit val fileNameAndSizeEncoder =
+            org.apache.spark.sql.Encoders.product[FileNameAndSize]
 
-        val dirCounts = allFilesAndDirs.where(col("isDir")).count() + 1 // +1 for the base path
+          val dirCounts = allFilesAndDirs.where(col("isDir")).count() + 1 // +1 for the base path
+          val filesAndDirsPresentBeforeDelete = allFilesAndDirs.count()
 
-        // The logic below is as follows:
-        //   1. We take all the files and directories listed in our reservoir
-        //   2. We filter all files older than our tombstone retention period and directories
-        //   3. We get the subdirectories of all files so that we can find non-empty directories
-        //   4. We groupBy each path, and count to get how many files are in each sub-directory
-        //   5. We subtract all the valid files and tombstones in our state
-        //   6. We filter all paths with a count of 1, which will correspond to files not in the
-        //      state, and empty directories. We can safely delete all of these
-        val diff = allFilesAndDirs
-          .where(col("modificationTime") < deleteBeforeTimestamp || col("isDir"))
-          .mapPartitions { fileStatusIterator =>
-            val reservoirBase = new Path(basePath)
-            val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
-            fileStatusIterator.flatMap { fileStatus =>
-              if (fileStatus.isDir) {
-                Iterator.single(FileNameAndSize(
-                  relativize(fileStatus.getHadoopPath, fs, reservoirBase, isDir = true), 0L))
-              } else {
-                val dirs = getAllSubdirs(basePath, fileStatus.path, fs)
-                val dirsWithSlash = dirs.map { p =>
-                  val relativizedPath = relativize(new Path(p), fs, reservoirBase, isDir = true)
-                  FileNameAndSize(relativizedPath, 0L)
+          // The logic below is as follows:
+          //   1. We take all the files and directories listed in our reservoir
+          //   2. We filter all files older than our tombstone retention period and directories
+          //   3. We get the subdirectories of all files so that we can find non-empty directories
+          //   4. We groupBy each path, and count to get how many files are in each sub-directory
+          //   5. We subtract all the valid files and tombstones in our state
+          //   6. We filter all paths with a count of 1, which will correspond to files not in the
+          //      state, and empty directories. We can safely delete all of these
+          val diff = allFilesAndDirs
+            .where(col("modificationTime") < deleteBeforeTimestamp || col("isDir"))
+            .mapPartitions { fileStatusIterator =>
+              val reservoirBase = new Path(basePath)
+              val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
+              fileStatusIterator.flatMap { fileStatus =>
+                if (fileStatus.isDir) {
+                  Iterator.single(FileNameAndSize(
+                    relativize(fileStatus.getHadoopPath, fs, reservoirBase, isDir = true), 0L))
+                } else {
+                  val dirs = getAllSubdirs(basePath, fileStatus.path, fs)
+                  val dirsWithSlash = dirs.map { p =>
+                    val relativizedPath = relativize(new Path(p), fs, reservoirBase, isDir = true)
+                    FileNameAndSize(relativizedPath, 0L)
+                  }
+                  dirsWithSlash ++ Iterator(
+                    FileNameAndSize(relativize(
+                      fileStatus.getHadoopPath, fs, reservoirBase, isDir = false),
+                      fileStatus.length))
                 }
-                dirsWithSlash ++ Iterator(
-                  FileNameAndSize(relativize(
-                    fileStatus.getHadoopPath, fs, reservoirBase, isDir = false), fileStatus.length))
               }
-            }
-          }.groupBy(col("path")).agg(count(new Column("*")).as("count"), sum("length").as("length"))
-          .join(validFiles, Seq("path"), "leftanti")
-          .where(col("count") === 1)
+            }.groupBy(col("path")).agg(count(new Column("*")).as("count"),
+              sum("length").as("length"))
+            .join(validFiles, Seq("path"), "leftanti")
+            .where(col("count") === 1)
 
 
-        val sizeOfDataToDeleteRow = diff.agg(sum("length").cast("long")).first
-        val sizeOfDataToDelete = if (sizeOfDataToDeleteRow.isNullAt(0)) {
-          0L
-        } else {
-          sizeOfDataToDeleteRow.getLong(0)
-        }
-
-        val diffFiles = diff
-          .select(col("path"))
-          .as[String]
-          .map { relativePath =>
-            assert(!stringToPath(relativePath).isAbsolute,
-              "Shouldn't have any absolute paths for deletion here.")
-            pathToString(DeltaFileOperations.absolutePath(basePath, relativePath))
+          val sizeOfDataToDeleteRow = diff.agg(sum("length").cast("long")).first()
+          val sizeOfDataToDelete = if (sizeOfDataToDeleteRow.isNullAt(0)) {
+            0L
+          } else {
+            sizeOfDataToDeleteRow.getLong(0)
           }
-        val timeTakenToIdentifyEligibleFiles =
-          System.currentTimeMillis() - startTimeToIdentifyEligibleFiles
 
-        val numFiles = diffFiles.count()
-        if (dryRun) {
+          val diffFiles = diff
+            .select(col("path"))
+            .as[String]
+            .map { relativePath =>
+              assert(!stringToPath(relativePath).isAbsolute,
+                "Shouldn't have any absolute paths for deletion here.")
+              pathToString(DeltaFileOperations.absolutePath(basePath, relativePath))
+            }
+          val timeTakenToIdentifyEligibleFiles =
+            System.currentTimeMillis() - startTimeToIdentifyEligibleFiles
+
+
+          val numFiles = diffFiles.count()
+          if (dryRun) {
+            val stats = DeltaVacuumStats(
+              isDryRun = true,
+              specifiedRetentionMillis = retentionMillis,
+              defaultRetentionMillis = snapshotTombstoneRetentionMillis,
+              minRetainedTimestamp = deleteBeforeTimestamp,
+              dirsPresentBeforeDelete = dirCounts,
+              filesAndDirsPresentBeforeDelete = filesAndDirsPresentBeforeDelete,
+              objectsDeleted = numFiles,
+              sizeOfDataToDelete = sizeOfDataToDelete,
+              timeTakenToIdentifyEligibleFiles = timeTakenToIdentifyEligibleFiles,
+              timeTakenForDelete = 0L,
+              vacuumStartTime = vacuumStartTime,
+              vacuumEndTime = System.currentTimeMillis,
+              numPartitionColumns = partitionColumns.size
+            )
+
+            recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
+            logInfo(s"Found $numFiles files ($sizeOfDataToDelete bytes) and directories in " +
+              s"a total of $dirCounts directories that are safe to delete. Vacuum stats: $stats")
+
+            return diffFiles.map(f => stringToPath(f).toString).toDF("path")
+          }
+          logVacuumStart(
+            spark,
+            deltaLog,
+            path,
+            diffFiles,
+            sizeOfDataToDelete,
+            retentionMillis,
+            snapshotTombstoneRetentionMillis)
+
+          val deleteStartTime = System.currentTimeMillis()
+          val filesDeleted = try {
+            delete(diffFiles, spark, basePath,
+              hadoopConf, parallelDeleteEnabled, parallelDeletePartitions)
+          } catch {
+            case t: Throwable =>
+              logVacuumEnd(deltaLog, spark, path)
+              throw t
+          }
+          val timeTakenForDelete = System.currentTimeMillis() - deleteStartTime
           val stats = DeltaVacuumStats(
-            isDryRun = true,
+            isDryRun = false,
             specifiedRetentionMillis = retentionMillis,
             defaultRetentionMillis = snapshotTombstoneRetentionMillis,
             minRetainedTimestamp = deleteBeforeTimestamp,
             dirsPresentBeforeDelete = dirCounts,
-            objectsDeleted = numFiles,
+            filesAndDirsPresentBeforeDelete = filesAndDirsPresentBeforeDelete,
+            objectsDeleted = filesDeleted,
             sizeOfDataToDelete = sizeOfDataToDelete,
             timeTakenToIdentifyEligibleFiles = timeTakenToIdentifyEligibleFiles,
-            timeTakenForDelete = 0L)
-
+            timeTakenForDelete = timeTakenForDelete,
+            vacuumStartTime = vacuumStartTime,
+            vacuumEndTime = System.currentTimeMillis,
+            numPartitionColumns = partitionColumns.size)
           recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
-          logConsole(s"Found $numFiles files ($sizeOfDataToDelete bytes) and directories in " +
-            s"a total of $dirCounts directories that are safe to delete.")
+          logVacuumEnd(deltaLog, spark, path, Some(filesDeleted), Some(dirCounts))
+          logInfo(s"Deleted $filesDeleted files ($sizeOfDataToDelete bytes) and directories in " +
+            s"a total of $dirCounts directories. Vacuum stats: $stats")
 
-          return diffFiles.map(f => stringToPath(f).toString).toDF("path")
+
+          spark.createDataset(Seq(basePath)).toDF("path")
+        } finally {
+          allFilesAndDirs.unpersist()
         }
-        logVacuumStart(
-          spark,
-          deltaLog,
-          path,
-          diffFiles,
-          sizeOfDataToDelete,
-          retentionMillis,
-          snapshotTombstoneRetentionMillis)
-
-        val deleteStartTime = System.currentTimeMillis()
-        val filesDeleted = try {
-          delete(diffFiles, spark, basePath,
-            hadoopConf, parallelDeleteEnabled, parallelDeletePartitions)
-        } catch {
-          case t: Throwable =>
-            logVacuumEnd(deltaLog, spark, path)
-            throw t
-        }
-        val timeTakenForDelete = System.currentTimeMillis() - deleteStartTime
-        val stats = DeltaVacuumStats(
-          isDryRun = false,
-          specifiedRetentionMillis = retentionMillis,
-          defaultRetentionMillis = snapshotTombstoneRetentionMillis,
-          minRetainedTimestamp = deleteBeforeTimestamp,
-          dirsPresentBeforeDelete = dirCounts,
-          objectsDeleted = filesDeleted,
-          sizeOfDataToDelete = sizeOfDataToDelete,
-          timeTakenToIdentifyEligibleFiles = timeTakenToIdentifyEligibleFiles,
-          timeTakenForDelete = timeTakenForDelete)
-        recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
-        logVacuumEnd(deltaLog, spark, path, Some(filesDeleted), Some(dirCounts))
-
-
-        spark.createDataset(Seq(basePath)).toDF("path")
-      } finally {
-        allFilesAndDirs.unpersist()
       }
     }
   }
@@ -571,7 +592,12 @@ case class DeltaVacuumStats(
     defaultRetentionMillis: Long,
     minRetainedTimestamp: Long,
     dirsPresentBeforeDelete: Long,
+    filesAndDirsPresentBeforeDelete: Long,
     objectsDeleted: Long,
     sizeOfDataToDelete: Long,
     timeTakenToIdentifyEligibleFiles: Long,
-    timeTakenForDelete: Long)
+    timeTakenForDelete: Long,
+    vacuumStartTime: Long,
+    vacuumEndTime: Long,
+    numPartitionColumns: Long
+)

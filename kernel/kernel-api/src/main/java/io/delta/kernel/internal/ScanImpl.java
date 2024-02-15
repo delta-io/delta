@@ -16,68 +16,63 @@
 package io.delta.kernel.internal;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.NoSuchElementException;
-import java.util.Optional;
+import java.util.*;
+import static java.util.function.Function.identity;
+import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.data.*;
+import io.delta.kernel.expressions.*;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
 
-import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.data.AddFileColumnarBatch;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.lang.Lazy;
-import io.delta.kernel.internal.types.TableSchemaSerDe;
-import io.delta.kernel.internal.util.InternalSchemaUtils;
+import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.skipping.DataSkippingPredicate;
+import io.delta.kernel.internal.skipping.DataSkippingUtils;
+import io.delta.kernel.internal.util.*;
+import static io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema;
+import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
 
 /**
  * Implementation of {@link Scan}
  */
-public class ScanImpl
-    implements Scan {
+public class ScanImpl implements Scan {
     /**
      * Schema of the snapshot from the Delta log being scanned in this scan. It is a logical schema
      * with metadata properties to derive the physical schema.
      */
     private final StructType snapshotSchema;
 
-    private final Path dataPath;
-
-    /**
-     * Schema that we actually want to read.
-     */
+    /** Schema that we actually want to read. */
     private final StructType readSchema;
-    private final CloseableIterator<AddFile> filesIter;
-    private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
-    private final Optional<Predicate> filter;
-
+    private final Protocol protocol;
+    private final Metadata metadata;
+    private final LogReplay logReplay;
+    private final Path dataPath;
+    private final Optional<Tuple2<Predicate, Predicate>> partitionAndDataFilters;
     private boolean accessedScanFiles;
 
     public ScanImpl(
-        StructType snapshotSchema,
-        StructType readSchema,
-        Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
-        CloseableIterator<AddFile> filesIter,
-        Optional<Predicate> filter,
-        Path dataPath) {
+            StructType snapshotSchema,
+            StructType readSchema,
+            Protocol protocol,
+            Metadata metadata,
+            LogReplay logReplay,
+            Optional<Predicate> filter,
+            Path dataPath) {
         this.snapshotSchema = snapshotSchema;
         this.readSchema = readSchema;
-        this.protocolAndMetadata = protocolAndMetadata;
-        this.filesIter = filesIter;
+        this.protocol = protocol;
+        this.metadata = metadata;
+        this.logReplay = logReplay;
+        this.partitionAndDataFilters = splitFilters(filter);
         this.dataPath = dataPath;
-
-        this.filter = filter;
     }
 
     /**
@@ -86,80 +81,193 @@ public class ScanImpl
      * @return data in {@link ColumnarBatch} batch format. Each row correspond to one survived file.
      */
     @Override
-    public CloseableIterator<ColumnarBatch> getScanFiles(TableClient tableClient) {
+    public CloseableIterator<FilteredColumnarBatch> getScanFiles(TableClient tableClient) {
         if (accessedScanFiles) {
             throw new IllegalStateException("Scan files are already fetched from this instance");
         }
         accessedScanFiles = true;
-        return new CloseableIterator<ColumnarBatch>() {
-            private Optional<AddFile> nextValid = Optional.empty();
-            private boolean closed;
 
-            @Override
-            public boolean hasNext() {
-                if (closed) {
-                    throw new IllegalStateException("Can't call `hasNext` on a closed iterator.");
-                }
-                if (!nextValid.isPresent()) {
-                    nextValid = findNextValid();
-                }
-                return nextValid.isPresent();
-            }
+        // Generate data skipping filter and decide if we should read the stats column
+        Optional<DataSkippingPredicate> dataSkippingFilter = getDataSkippingFilter();
+        boolean shouldReadStats = dataSkippingFilter.isPresent();
 
-            @Override
-            public ColumnarBatch next() {
-                if (closed) {
-                    throw new IllegalStateException("Can't call `next` on a closed iterator.");
-                }
-                if (!hasNext()) {
-                    throw new NoSuchElementException();
-                }
+        // Get active AddFiles via log replay
+        CloseableIterator<FilteredColumnarBatch> scanFileIter = logReplay
+            .getAddFilesAsColumnarBatches(shouldReadStats);
 
-                // TODO: Figure out a way to take batch size as a parameter.
-                List<AddFile> batchAddFiles = new ArrayList<>();
-                do {
-                    batchAddFiles.add(nextValid.get());
-                    nextValid = Optional.empty();
-                }
-                while (batchAddFiles.size() < 8 && hasNext());
-                return new AddFileColumnarBatch(Collections.unmodifiableList(batchAddFiles));
-            }
+        // Apply partition pruning
+        scanFileIter = applyPartitionPruning(tableClient, scanFileIter);
 
-            @Override
-            public void close()
-                throws IOException {
-                filesIter.close();
-                this.closed = true;
-            }
-
-            private Optional<AddFile> findNextValid() {
-                if (filesIter.hasNext()) {
-                    return Optional.of(filesIter.next());
-                }
-                return Optional.empty();
-            }
-        };
+        // Apply data skipping
+        if (shouldReadStats) {
+            // there was a usable data skipping filter --> apply data skipping
+            // TODO drop stats column before returning
+            return applyDataSkipping(tableClient, scanFileIter, dataSkippingFilter.get());
+        } else {
+            return scanFileIter;
+        }
     }
 
     @Override
     public Row getScanState(TableClient tableClient) {
-        return new ScanStateRow(
-            protocolAndMetadata.get()._2,
-            protocolAndMetadata.get()._1,
-            TableSchemaSerDe.toJson(readSchema),
-            TableSchemaSerDe.toJson(
-                InternalSchemaUtils.convertToPhysicalSchema(
-                    readSchema,
-                    snapshotSchema,
-                    protocolAndMetadata.get()._2.getConfiguration()
-                        .getOrDefault("delta.columnMapping.mode", "none")
-                )
-            ),
+        // Physical equivalent of the logical read schema.
+        StructType physicalReadSchema = ColumnMapping.convertToPhysicalSchema(
+            readSchema,
+            snapshotSchema,
+            ColumnMapping.getColumnMappingMode(metadata.getConfiguration()));
+
+        // Compute the physical data read schema, basically the list of columns to read
+        // from a Parquet data file. It should exclude partition columns and include
+        // row_index metadata columns (in case DVs are present)
+        List<String> partitionColumns = VectorUtils.toJavaList(metadata.getPartitionColumns());
+        StructType physicalDataReadSchema =
+            PartitionUtils.physicalSchemaWithoutPartitionColumns(
+                readSchema, /* logical read schema */
+                physicalReadSchema,
+                new HashSet<>(partitionColumns)
+            );
+
+        if (protocol.getReaderFeatures().contains("deletionVectors")) {
+            physicalDataReadSchema = physicalDataReadSchema
+                .add(StructField.METADATA_ROW_INDEX_COLUMN);
+        }
+
+        return ScanStateRow.of(
+            metadata,
+            protocol,
+            readSchema.toJson(),
+            physicalReadSchema.toJson(),
+            physicalDataReadSchema.toJson(),
             dataPath.toUri().toString());
     }
 
     @Override
     public Optional<Predicate> getRemainingFilter() {
-        return filter;
+        return getDataFilters();
+    }
+
+    private Optional<Tuple2<Predicate, Predicate>> splitFilters(Optional<Predicate> filter) {
+        return filter.map(predicate ->
+            PartitionUtils.splitMetadataAndDataPredicates(
+                predicate, metadata.getPartitionColNames()));
+    }
+
+    private Optional<Predicate> getDataFilters() {
+        return removeAlwaysTrue(partitionAndDataFilters.map(filters -> filters._2));
+    }
+
+    private Optional<Predicate> getPartitionsFilters() {
+        return removeAlwaysTrue(partitionAndDataFilters.map(filters -> filters._1));
+    }
+
+    /**
+     * Consider `ALWAYS_TRUE` as no predicate.
+     */
+    private Optional<Predicate> removeAlwaysTrue(Optional<Predicate> predicate) {
+        return predicate
+            .filter(filter -> !filter.getName().equalsIgnoreCase("ALWAYS_TRUE"));
+    }
+
+    private CloseableIterator<FilteredColumnarBatch> applyPartitionPruning(
+        TableClient tableClient,
+        CloseableIterator<FilteredColumnarBatch> scanFileIter) {
+        Optional<Predicate> partitionPredicate = getPartitionsFilters();
+        if (!partitionPredicate.isPresent()) {
+            // There is no partition filter, return the scan file iterator as is.
+            return scanFileIter;
+        }
+
+        Set<String> partitionColNames = metadata.getPartitionColNames();
+        Map<String, StructField> partitionColNameToStructFieldMap =
+            metadata.getSchema().fields().stream()
+                .filter(field -> partitionColNames.contains(field.getName()))
+                .collect(toMap(
+                    field -> field.getName().toLowerCase(Locale.ENGLISH),
+                    identity()));
+
+        Predicate predicateOnScanFileBatch = rewritePartitionPredicateOnScanFileSchema(
+            partitionPredicate.get(),
+            partitionColNameToStructFieldMap);
+
+        return new CloseableIterator<FilteredColumnarBatch>() {
+            PredicateEvaluator predicateEvaluator = null;
+
+            @Override
+            public boolean hasNext() {
+                return scanFileIter.hasNext();
+            }
+
+            @Override
+            public FilteredColumnarBatch next() {
+                FilteredColumnarBatch next = scanFileIter.next();
+                if (predicateEvaluator == null) {
+                    predicateEvaluator =
+                        tableClient.getExpressionHandler().getPredicateEvaluator(
+                            next.getData().getSchema(),
+                            predicateOnScanFileBatch);
+                }
+                ColumnVector newSelectionVector = predicateEvaluator.eval(
+                    next.getData(),
+                    next.getSelectionVector());
+                return new FilteredColumnarBatch(
+                    next.getData(),
+                    Optional.of(newSelectionVector));
+            }
+
+            @Override
+            public void close() throws IOException {
+                scanFileIter.close();
+            }
+        };
+    }
+
+    private Optional<DataSkippingPredicate> getDataSkippingFilter() {
+        return getDataFilters().flatMap(dataFilters ->
+            DataSkippingUtils.constructDataSkippingFilter(dataFilters, metadata.getDataSchema())
+        );
+    }
+
+    private CloseableIterator<FilteredColumnarBatch> applyDataSkipping(
+            TableClient tableClient,
+            CloseableIterator<FilteredColumnarBatch> scanFileIter,
+            DataSkippingPredicate dataSkippingFilter) {
+        // Get the stats schema
+        // It's possible to instead provide the referenced columns when building the schema but
+        // pruning it after is much simpler
+        StructType prunedStatsSchema = DataSkippingUtils.pruneStatsSchema(
+            getStatsSchema(metadata.getDataSchema()),
+            dataSkippingFilter.getReferencedCols());
+
+        // Skipping happens in two steps:
+        // 1. The predicate produces false for any file whose stats prove we can safely skip it. A
+        //    value of true means the stats say we must keep the file, and null means we could not
+        //    determine whether the file is safe to skip, because its stats were missing/null.
+        // 2. The coalesce(skip, true) converts null (= keep) to true
+        Predicate filterToEval = new Predicate(
+            "=",
+            new ScalarExpression(
+                "COALESCE",
+                Arrays.asList(dataSkippingFilter, Literal.ofBoolean(true))),
+            AlwaysTrue.ALWAYS_TRUE);
+
+        PredicateEvaluator predicateEvaluator = tableClient
+            .getExpressionHandler()
+            .getPredicateEvaluator(prunedStatsSchema, filterToEval);
+
+        return scanFileIter.map(filteredScanFileBatch -> {
+
+            ColumnVector newSelectionVector = predicateEvaluator.eval(
+                DataSkippingUtils.parseJsonStats(
+                    tableClient,
+                    filteredScanFileBatch,
+                    prunedStatsSchema
+                ),
+                filteredScanFileBatch.getSelectionVector());
+
+            return new FilteredColumnarBatch(
+                filteredScanFileBatch.getData(),
+                Optional.of(newSelectionVector));
+            }
+        );
     }
 }

@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.internal.replay;
 
 import java.io.IOException;
@@ -21,40 +20,63 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.*;
 
-import io.delta.kernel.data.*;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.DataType;
+import io.delta.kernel.client.TableClient;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.expressions.ExpressionEvaluator;
+import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
-import static io.delta.kernel.utils.Utils.requireNonNull;
 
-import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.util.Tuple2;
+import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_DV_ORDINAL;
+import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_ORDINAL;
+import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_PATH_ORDINAL;
+import static io.delta.kernel.internal.replay.LogReplay.REMOVE_FILE_DV_ORDINAL;
+import static io.delta.kernel.internal.replay.LogReplay.REMOVE_FILE_ORDINAL;
+import static io.delta.kernel.internal.replay.LogReplay.REMOVE_FILE_PATH_ORDINAL;
 
 /**
- * This class takes an iterator of ({@link FileDataReadResult}, isFromCheckpoint), where the
- * columnar data inside the FileDataReadResult represents {@link LogReplay#ADD_REMOVE_READ_SCHEMA},
- * and produces an iterator of {@link DataReadResult} with schema
- * {@link LogReplay#ADD_ONLY_DATA_SCHEMA}, and with a selection vector indicating which AddFiles are
- * still active in the table (have not been tombstoned).
+ * This class takes an iterator of ({@link ColumnarBatch}, isFromCheckpoint), where the
+ * columnar data inside the columnar batch represents has top level columns "add" and "remove",
+ * and produces an iterator of {@link FilteredColumnarBatch} with only the "add" column and
+ * with a selection vector indicating which AddFiles are still active in the table
+ * (have not been tombstoned).
  */
-class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
+class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch> {
     private static class UniqueFileActionTuple extends Tuple2<URI, Optional<String>> {
         UniqueFileActionTuple(URI fileURI, Optional<String> deletionVectorId) {
             super(fileURI, deletionVectorId);
         }
     }
 
-    private final CloseableIterator<Tuple2<FileDataReadResult, Boolean>> iter;
+    private final TableClient tableClient;
+    private final Path tableRoot;
+
+    private final CloseableIterator<ActionWrapper> iter;
+
     private final Set<UniqueFileActionTuple> tombstonesFromJson;
     private final Set<UniqueFileActionTuple> addFilesFromJson;
 
-    private Optional<DataReadResult> next;
+    private Optional<FilteredColumnarBatch> next;
+    /**
+     * This buffer is reused across batches to keep the memory allocations minimal. It is resized
+     * as required and the array entries are reset between batches.
+     */
+    private boolean[] selectionVectorBuffer;
+    private ExpressionEvaluator tableRootVectorGenerator;
     private boolean closed;
 
     ActiveAddFilesIterator(
-            CloseableIterator<Tuple2<FileDataReadResult, Boolean>> iter) {
+            TableClient tableClient,
+            CloseableIterator<ActionWrapper> iter,
+            Path tableRoot) {
+        this.tableClient = tableClient;
+        this.tableRoot = tableRoot;
         this.iter = iter;
         this.tombstonesFromJson = new HashSet<>();
         this.addFilesFromJson = new HashSet<>();
@@ -73,7 +95,7 @@ class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
     }
 
     @Override
-    public DataReadResult next() {
+    public FilteredColumnarBatch next() {
         if (closed) {
             throw new IllegalStateException("Can't call `next` on a closed iterator.");
         }
@@ -83,7 +105,7 @@ class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
 
         // By the definition of `hasNext`, we know that `next` is non-empty
 
-        final DataReadResult ret = next.get();
+        final FilteredColumnarBatch ret = next.get();
         next = Optional.empty();
         return ret;
     }
@@ -98,33 +120,34 @@ class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
 
     /**
      * Grabs the next FileDataReadResult from `iter` and updates the value of `next`.
-     *
+     * <p>
      * Internally, implements the following algorithm:
      * 1. read all the RemoveFiles in the next ColumnarBatch to update the `tombstonesFromJson` set
      * 2. read all the AddFiles in that same ColumnarBatch, unselecting ones that have already
-     *    been removed or returned by updating a selection vector
+     * been removed or returned by updating a selection vector
      * 3. produces a DataReadResult by dropping that RemoveFile column from the ColumnarBatch and
-     *    using that selection vector
-     *
+     * using that selection vector
+     * <p>
      * Note that, according to the Delta protocol, "a valid [Delta] version is restricted to contain
      * at most one file action of the same type (i.e. add/remove) for any one combination of path
      * and dvId". This means that step 2 could actually come before 1 - there's no temporal
      * dependency between them.
-     *
+     * <p>
      * Ensures that
      * - `next` is non-empty if there is a next result
      * - `next` is empty if there is no next result
      */
     private void prepareNext() {
-        if (next.isPresent()) return; // already have a next result
-        if (!iter.hasNext()) return; // no next result, and no batches to read
+        if (next.isPresent()) {
+            return; // already have a next result
+        }
+        if (!iter.hasNext()) {
+            return; // no next result, and no batches to read
+        }
 
-        final Tuple2<FileDataReadResult, Boolean> _next = iter.next();
-        final FileDataReadResult fileDataReadResult = _next._1;
-        final boolean isFromCheckpoint = _next._2;
-        final ColumnarBatch addRemoveColumnarBatch = fileDataReadResult.getData();
-
-        assert(addRemoveColumnarBatch.getSchema().equals(LogReplay.ADD_REMOVE_READ_SCHEMA));
+        final ActionWrapper _next = iter.next();
+        final ColumnarBatch addRemoveColumnarBatch = _next.getColumnarBatch();
+        final boolean isFromCheckpoint = _next.isFromCheckpoint();
 
         // Step 1: Update `tombstonesFromJson` with all the RemoveFiles in this columnar batch, if
         //         and only if this batch is not from a checkpoint.
@@ -133,18 +156,19 @@ class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
         //         since, when we generate a checkpoint, any corresponding AddFile would have
         //         been excluded already
         if (!isFromCheckpoint) {
-            final ColumnVector removesVector = addRemoveColumnarBatch.getColumnVector(1);
+            final ColumnVector removesVector =
+                addRemoveColumnarBatch.getColumnVector(REMOVE_FILE_ORDINAL);
             for (int rowId = 0; rowId < removesVector.getSize(); rowId++) {
-                if (removesVector.isNullAt(rowId)) continue;
+                if (removesVector.isNullAt(rowId)) {
+                    continue;
+                }
 
                 // Note: this row doesn't represent the complete RemoveFile schema. It only contains
                 //       the fields we need for this replay.
-
-                final Row row = removesVector.getStruct(rowId);
-                final String path = requireNonNull(row, 0, "path").getString(0);
+                final String path = getRemoveFilePath(removesVector, rowId);
                 final URI pathAsUri = pathToUri(path);
                 final Optional<String> dvId = Optional.ofNullable(
-                    DeletionVectorDescriptor.fromRow(row.getStruct(1))
+                    getRemoveFileDV(removesVector, rowId)
                 ).map(DeletionVectorDescriptor::getUniqueId);
                 final UniqueFileActionTuple key = new UniqueFileActionTuple(pathAsUri, dvId);
                 tombstonesFromJson.add(key);
@@ -153,8 +177,8 @@ class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
 
         // Step 2: Iterate over all the AddFiles in this columnar batch in order to build up the
         //         selection vector. We unselect an AddFile when it was removed by a RemoveFile
-        final ColumnVector addsVector = addRemoveColumnarBatch.getColumnVector(0);
-        boolean[] selectionVector = new boolean[addsVector.getSize()];
+        final ColumnVector addsVector = addRemoveColumnarBatch.getColumnVector(ADD_FILE_ORDINAL);
+        prepareSelectionVectorBuffer(addsVector.getSize());
         boolean atLeastOneUnselected = false;
 
         for (int rowId = 0; rowId < addsVector.getSize(); rowId++) {
@@ -163,12 +187,10 @@ class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
                 continue; // selectionVector will be `false` at rowId by default
             }
 
-            final Row row = addsVector.getStruct(rowId);
-            final String path = AddFile.getPathFromRow(row);
+            final String path = getAddFilePath(addsVector, rowId);
             final URI pathAsUri = pathToUri(path);
-            final Optional<String> dvId = Optional.ofNullable(
-                AddFile.getDeletionVectorDescriptorFromRow(row)
-            ).map(DeletionVectorDescriptor::getUniqueId);
+            final Optional<String> dvId = Optional.ofNullable(getAddFileDV(addsVector, rowId))
+                .map(DeletionVectorDescriptor::getUniqueId);
             final UniqueFileActionTuple key = new UniqueFileActionTuple(pathAsUri, dvId);
             final boolean alreadyDeleted = tombstonesFromJson.contains(key);
             final boolean alreadyReturned = addFilesFromJson.contains(key);
@@ -184,7 +206,7 @@ class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
 
                 if (!alreadyDeleted) {
                     doSelect = true;
-                    selectionVector[rowId] = true;
+                    selectionVectorBuffer[rowId] = true;
                 }
             }
 
@@ -194,49 +216,38 @@ class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
         }
 
         // Step 3: Drop the RemoveFile column and use the selection vector to build a new
-        //         DataReadResult
-        next = Optional.of(
-            new DataReadResult(
-                addRemoveColumnarBatch.withDeletedColumnAt(1),
-                atLeastOneUnselected ?
-                    Optional.of(boolArrayToColumnVector(selectionVector)) :
-                    Optional.empty()
-            )
-        );
+        //         FilteredColumnarBatch
+        ColumnarBatch scanAddFiles = addRemoveColumnarBatch.withDeletedColumnAt(1);
+
+        // Step 4: TODO: remove this step. This is a temporary requirement until the path
+        //         in `add` is converted to absolute path.
+        if (tableRootVectorGenerator == null) {
+            tableRootVectorGenerator = tableClient.getExpressionHandler()
+                .getEvaluator(
+                    scanAddFiles.getSchema(),
+                    Literal.ofString(tableRoot.toUri().toString()),
+                    StringType.STRING);
+        }
+        ColumnVector tableRootVector = tableRootVectorGenerator.eval(scanAddFiles);
+        scanAddFiles = scanAddFiles.withNewColumn(
+            1,
+            InternalScanFileUtils.TABLE_ROOT_STRUCT_FIELD,
+            tableRootVector);
+
+        Optional<ColumnVector> selectionColumnVector = atLeastOneUnselected ?
+            Optional.of(tableClient.getExpressionHandler()
+                .createSelectionVector(selectionVectorBuffer, 0, addsVector.getSize())) :
+            Optional.empty();
+        next = Optional.of(new FilteredColumnarBatch(scanAddFiles, selectionColumnVector));
     }
 
-    private ColumnVector boolArrayToColumnVector(boolean[] arr) {
-        return new ColumnVector() {
-            @Override
-            public DataType getDataType() {
-                return BooleanType.INSTANCE;
-            }
-
-            @Override
-            public int getSize() {
-                return arr.length;
-            }
-
-            @Override
-            public void close() { }
-
-            @Override
-            public boolean isNullAt(int rowId) {
-                assertValidRowId(rowId);
-                return false;
-            }
-
-            @Override
-            public boolean getBoolean(int rowId) {
-                assertValidRowId(rowId);
-                return arr[rowId];
-            }
-
-            private void assertValidRowId(int rowId) {
-                checkArgument(rowId < getSize(),
-                    "Invalid rowId: " + rowId + ", max allowed rowId is: " + (getSize() - 1));
-            }
-        };
+    private void prepareSelectionVectorBuffer(int size) {
+        if (selectionVectorBuffer == null || selectionVectorBuffer.length < size) {
+            selectionVectorBuffer = new boolean[size];
+        } else {
+            // reset the array - if we are reusing the same buffer.
+            Arrays.fill(selectionVectorBuffer, false);
+        }
     }
 
     private URI pathToUri(String path) {
@@ -245,5 +256,24 @@ class ActiveAddFilesIterator implements CloseableIterator<DataReadResult> {
         } catch (URISyntaxException ex) {
             throw new RuntimeException(ex);
         }
+    }
+
+    public static String getAddFilePath(ColumnVector addFileVector, int rowId) {
+        return addFileVector.getChild(ADD_FILE_PATH_ORDINAL).getString(rowId);
+    }
+
+    public static DeletionVectorDescriptor getAddFileDV(ColumnVector addFileVector, int rowId) {
+        return DeletionVectorDescriptor.fromColumnVector(
+            addFileVector.getChild(ADD_FILE_DV_ORDINAL), rowId);
+    }
+
+    public static String getRemoveFilePath(ColumnVector removeFileVector, int rowId) {
+        return removeFileVector.getChild(REMOVE_FILE_PATH_ORDINAL).getString(rowId);
+    }
+
+    public static DeletionVectorDescriptor getRemoveFileDV(
+        ColumnVector removeFileVector, int rowId) {
+        return DeletionVectorDescriptor.fromColumnVector(
+            removeFileVector.getChild(REMOVE_FILE_DV_ORDINAL), rowId);
     }
 }

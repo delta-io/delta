@@ -176,7 +176,7 @@ object DeletionVectorDescriptor {
   final val INLINE_DV_MARKER: String = "i"
   final val UUID_DV_MARKER: String = "u"
 
-  final val STRUCT_TYPE: StructType =
+  final lazy val STRUCT_TYPE: StructType =
     Action.addFileSchema("deletionVector").dataType.asInstanceOf[StructType]
 
   private lazy val _encoder = new DeltaEncoder[DeletionVectorDescriptor]

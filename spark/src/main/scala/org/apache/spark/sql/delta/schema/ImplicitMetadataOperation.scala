@@ -16,12 +16,16 @@
 
 package org.apache.spark.sql.delta.schema
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -43,7 +47,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       if (colMatches.length > 1) {
         throw DeltaErrors.ambiguousPartitionColumnException(columnName, colMatches)
       } else if (colMatches.isEmpty) {
-        throw DeltaErrors.partitionColumnNotFoundException(columnName, schema.toAttributes)
+        throw DeltaErrors.partitionColumnNotFoundException(columnName, toAttributes(schema))
       }
       colMatches.head.name
     }
@@ -56,7 +60,8 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       partitionColumns: Seq[String],
       configuration: Map[String, String],
       isOverwriteMode: Boolean,
-      rearrangeOnly: Boolean): Unit = {
+      rearrangeOnly: Boolean
+      ): Unit = {
     // To support the new column mapping mode, we drop existing metadata on data schema
     // so that all the column mapping related properties can be reinitialized in
     // OptimisticTransaction.updateMetadata
@@ -94,9 +99,11 @@ trait ImplicitMetadataOperation extends DeltaLogging {
           description = description,
           schemaString = dataSchema.json,
           partitionColumns = normalizedPartitionCols,
-          configuration = cleanedConfs,
+          configuration = cleanedConfs
+          ,
           createdTime = Some(System.currentTimeMillis())))
-    } else if (isOverwriteMode && canOverwriteSchema && (isNewSchema || isPartitioningChanged)) {
+    } else if (isOverwriteMode && canOverwriteSchema && (isNewSchema || isPartitioningChanged
+        )) {
       // Can define new partitioning in overwrite mode
       val newMetadata = txn.metadata.copy(
         schemaString = dataSchema.json,
@@ -108,14 +115,17 @@ trait ImplicitMetadataOperation extends DeltaLogging {
           "change the partition schema")
       }
       txn.updateMetadataForTableOverwrite(newMetadata)
-    } else if (isNewSchema && canMergeSchema && !isNewPartitioning) {
+    } else if (isNewSchema && canMergeSchema && !isNewPartitioning
+        ) {
       logInfo(s"New merged schema: ${mergedSchema.treeString}")
       recordDeltaEvent(txn.deltaLog, "delta.ddl.mergeSchema")
       if (rearrangeOnly) {
         throw DeltaErrors.unexpectedDataChangeException("Change the Delta table schema")
       }
-      txn.updateMetadata(txn.metadata.copy(schemaString = mergedSchema.json))
-    } else if (isNewSchema || isNewPartitioning) {
+      txn.updateMetadata(txn.metadata.copy(schemaString = mergedSchema.json
+      ))
+    } else if (isNewSchema || isNewPartitioning
+        ) {
       recordDeltaEvent(txn.deltaLog, "delta.schemaValidation.failure")
       val errorBuilder = new MetadataMismatchErrorBuilder
       if (isNewSchema) {
@@ -128,6 +138,38 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         errorBuilder.addOverwriteBit()
       }
       errorBuilder.finalizeAndThrow(spark.sessionState.conf)
+    }
+  }
+
+  /**
+   * Returns a sequence of new DomainMetadata if canUpdateMetadata is true and the operation is
+   * either create table or replace the whole table (not replaceWhere operation). This is because
+   * we only update Domain Metadata when creating or replacing table, and replace table for DDL
+   * and DataFrameWriterV2 are already handled in CreateDeltaTableCommand. In that case,
+   * canUpdateMetadata is false, so we don't update again.
+   *
+   * @param txn [[OptimisticTransaction]] being used to create or replace table.
+   * @param canUpdateMetadata true if the metadata is not updated yet.
+   * @param isReplacingTable true if the operation is replace table without replaceWhere option.
+   * @param clusterBySpecOpt optional ClusterBySpec containing user-specified clustering columns.
+   */
+  protected final def getNewDomainMetadata(
+      txn: OptimisticTransaction,
+      canUpdateMetadata: Boolean,
+      isReplacingTable: Boolean,
+      clusterBySpecOpt: Option[ClusterBySpec] = None): Seq[DomainMetadata] = {
+    if (canUpdateMetadata && (!txn.deltaLog.tableExists || isReplacingTable)) {
+      val newDomainMetadata = Seq.empty[DomainMetadata] ++
+        ClusteredTableUtils.getDomainMetadataOptional(clusterBySpecOpt, txn)
+      if (!txn.deltaLog.tableExists) {
+        newDomainMetadata
+      } else {
+        // Handle domain metadata for replacing a table.
+        DomainMetadataUtils.handleDomainMetadataForReplaceTable(
+          txn.snapshot.domainMetadata, newDomainMetadata)
+      }
+    } else {
+      Seq.empty
     }
   }
 }

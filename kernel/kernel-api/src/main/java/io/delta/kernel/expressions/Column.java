@@ -15,29 +15,43 @@
  */
 package io.delta.kernel.expressions;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
+import static java.lang.String.format;
 
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * An expression type that refers to a column by name (case-sensitive) in the input.
+ * An expression type that refers to a column (case-sensitive) in the input. The column name is
+ * either a single name or array of names (when referring to a nested column).
  *
  * @since 3.0.0
  */
 @Evolving
 public final class Column implements Expression {
-    private final String name;
+    private final String[] names;
 
+    /**
+     * Create a column expression for referring to a column.
+     */
     public Column(String name) {
-        this.name = name;
+        this.names = new String[] {name};
     }
 
     /**
-     * @return the column name.
+     * Create a column expression to refer to a nested column.
      */
-    public String getName() {
-        return name;
+    public Column(String[] names) {
+        this.names = names;
+    }
+
+    /**
+     * @return the column names. Each part in the name correspond to one level of nested reference.
+     */
+    public String[] getNames() {
+        return names;
     }
 
     @Override
@@ -47,6 +61,30 @@ public final class Column implements Expression {
 
     @Override
     public String toString() {
-        return "column(" + name + ")";
+
+        return "column(" + quoteColumnPath(names)  + ")";
+    }
+
+    private static String quoteColumnPath(String[] names) {
+        return Arrays.stream(names)
+            .map(s -> format("`%s`", s.replace("`", "``")))
+            .collect(Collectors.joining("."));
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        Column other = (Column) o;
+        return Arrays.equals(names, other.getNames());
+    }
+
+    @Override
+    public int hashCode() {
+        return Arrays.hashCode(names);
     }
 }

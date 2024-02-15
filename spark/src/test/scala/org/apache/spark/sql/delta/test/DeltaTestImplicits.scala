@@ -16,11 +16,21 @@
 
 package org.apache.spark.sql.delta.test
 
+import java.io.File
+
 import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.hooks.AutoCompact
+import org.apache.spark.sql.delta.stats.StatisticsCollection
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
+import org.apache.spark.util.Clock
 
 /**
  * Additional method definitions for Delta classes that are intended for use only in testing.
@@ -31,25 +41,31 @@ object DeltaTestImplicits {
     /** Ensure that the initial commit of a Delta table always contains a Metadata action */
     def commitActions(op: Operation, actions: Action*): Long = {
       if (txn.readVersion == -1) {
-        val metadataOpt = if (!actions.exists(_.isInstanceOf[Metadata])) Some(Metadata()) else None
-        val metadata = metadataOpt.getOrElse(actions.collectFirst { case m: Metadata => m }.get)
-        val needsProtocolUpdate = Protocol.upgradeProtocolFromMetadataForExistingTable(
-          SparkSession.active, metadata, txn.protocol)
-        if (needsProtocolUpdate.isDefined) {
-          // if the metadata triggers a protocol upgrade, commit without an explicit protocol
-          // action as otherwise, we will create two (potentially different) protocol actions
-          // for this commit
-          txn.commit(actions ++ metadataOpt, op)
-        } else {
-          // if we don't have an implicit protocol action, make sure the first commit
-          // contains one explicitly
-          val protocolOpt = if (!actions.exists(_.isInstanceOf[Protocol])) {
-            Some(Action.supportedProtocolVersion())
-          } else {
-            None
-          }
-          txn.commit(actions ++ metadataOpt ++ protocolOpt, op)
+        val metadataOpt = actions.collectFirst { case m: Metadata => m }
+        val protocolOpt = actions.collectFirst { case p: Protocol => p }
+        val otherActions =
+          actions.filterNot(a => a.isInstanceOf[Metadata] || a.isInstanceOf[Protocol])
+        (metadataOpt, protocolOpt) match {
+          case (Some(metadata), Some(protocol)) =>
+            // When both metadata and protocol are explicitly passed, use them.
+            txn.updateProtocol(protocol)
+            // This will auto upgrade any required table features in the passed protocol as per
+            // given metadata.
+            txn.updateMetadataForNewTable(metadata)
+          case (Some(metadata), None) =>
+            // When just metadata is passed, use it.
+            // This will auto generate protocol as per metadata.
+            txn.updateMetadataForNewTable(metadata)
+          case (None, Some(protocol)) =>
+            txn.updateProtocol(protocol)
+            txn.updateMetadataForNewTable(Metadata())
+          case (None, None) =>
+            // If neither metadata nor protocol is explicitly passed, then use default Metadata and
+            // with the maximum protocol.
+            txn.updateMetadataForNewTable(Metadata())
+            txn.updateProtocol(Action.supportedProtocolVersion())
         }
+        txn.commit(otherActions, op)
       } else {
         txn.commit(actions, op)
       }
@@ -61,6 +77,17 @@ object DeltaTestImplicits {
 
     def commitWriteAppend(actions: Action*): Long = {
       commitActions(Write(SaveMode.Append), actions: _*)
+    }
+  }
+
+  /** Add test-only File overloads for DeltaTable.forPath */
+  implicit class DeltaLogObjectTestHelper(deltaLog: DeltaLog.type) {
+    def forTable(spark: SparkSession, dataPath: File): DeltaLog = {
+      DeltaLog.forTable(spark, new Path(dataPath.getCanonicalPath))
+    }
+
+    def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
+      DeltaLog.forTable(spark, new Path(dataPath.getCanonicalPath), clock)
     }
   }
 
@@ -86,6 +113,54 @@ object DeltaTestImplicits {
 
     def enableExpiredLogCleanup(): Boolean = {
       deltaLog.enableExpiredLogCleanup(snapshot.metadata)
+    }
+
+    def upgradeProtocol(newVersion: Protocol): Unit = {
+      upgradeProtocol(deltaLog.unsafeVolatileSnapshot, newVersion)
+    }
+
+    def upgradeProtocol(snapshot: Snapshot, newVersion: Protocol): Unit = {
+      deltaLog.upgradeProtocol(None, snapshot, newVersion)
+    }
+  }
+
+  implicit class DeltaTableV2ObjectTestHelper(dt: DeltaTableV2.type) {
+    /** Convenience overload that omits the cmd arg (which is not helpful in tests). */
+    def apply(spark: SparkSession, id: TableIdentifier): DeltaTableV2 =
+      dt.apply(spark, id, "test")
+  }
+
+  implicit class DeltaTableV2TestHelper(deltaTable: DeltaTableV2) {
+    /** For backward compatibility with existing unit tests */
+    def snapshot: Snapshot = deltaTable.initialSnapshot
+  }
+
+  implicit class AutoCompactObjectTestHelper(ac: AutoCompact.type) {
+    private[delta] def compact(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      partitionPredicates: Seq[Expression] = Nil,
+      opType: String = AutoCompact.OP_TYPE): Seq[OptimizeMetrics] = {
+      AutoCompact.compact(
+        spark, deltaLog, catalogTable = None,
+        partitionPredicates, opType)
+    }
+  }
+
+  implicit class StatisticsCollectionObjectTestHelper(sc: StatisticsCollection.type) {
+
+    /**
+     * This is an implicit helper required for backward compatibility with existing
+     * unit tests. It allows to call [[StatisticsCollection.recompute]] without a
+     * catalog table and in the actual call, sets it to [[None]].
+     */
+    def recompute(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      predicates: Seq[Expression] = Seq(Literal(true)),
+      fileFilter: AddFile => Boolean = af => true): Unit = {
+      StatisticsCollection.recompute(
+        spark, deltaLog, catalogTable = None, predicates, fileFilter)
     }
   }
 }

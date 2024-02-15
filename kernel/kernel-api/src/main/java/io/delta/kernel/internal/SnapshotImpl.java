@@ -15,18 +15,19 @@
  */
 package io.delta.kernel.internal;
 
+import java.util.Optional;
+
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.Tuple2;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.snapshot.SnapshotHint;
 
 /**
  * Implementation of {@link Snapshot}.
@@ -35,24 +36,28 @@ public class SnapshotImpl implements Snapshot {
     private final Path dataPath;
     private final long version;
     private final LogReplay logReplay;
-    private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
+    private final Protocol protocol;
+    private final Metadata metadata;
 
     public SnapshotImpl(
-        Path logPath,
-        Path dataPath,
-        long version,
-        LogSegment logSegment,
-        TableClient tableClient,
-        long timestamp) {
+            Path logPath,
+            Path dataPath,
+            long version,
+            LogSegment logSegment,
+            TableClient tableClient,
+            long timestamp,
+            Optional<SnapshotHint> snapshotHint) {
         this.dataPath = dataPath;
         this.version = version;
-
         this.logReplay = new LogReplay(
             logPath,
             dataPath,
+            version,
             tableClient,
-            logSegment);
-        this.protocolAndMetadata = new Lazy<>(logReplay::loadProtocolAndMetadata);
+            logSegment,
+            snapshotHint);
+        this.protocol = logReplay.getProtocol();
+        this.metadata = logReplay.getMetadata();
     }
 
     @Override
@@ -69,18 +74,33 @@ public class SnapshotImpl implements Snapshot {
     public ScanBuilder getScanBuilder(TableClient tableClient) {
         return new ScanBuilderImpl(
             dataPath,
-            protocolAndMetadata,
+            protocol,
+            metadata,
             getSchema(tableClient),
-            logReplay.getAddFiles(),
+            logReplay,
             tableClient
         );
     }
 
     public Metadata getMetadata() {
-        return protocolAndMetadata.get()._2;
+        return metadata;
     }
 
     public Protocol getProtocol() {
-        return protocolAndMetadata.get()._1;
+        return protocol;
+    }
+
+    /**
+     * Get the latest transaction version for given <i>applicationId</i>. This information comes
+     * from the transactions identifiers stored in Delta transaction log. This API is not a public
+     * API. For now keep this internal to enable Flink upgrade to use Kernel.
+     *
+     * @param applicationId Identifier of the application that put transaction identifiers in
+     *                      Delta transaction log
+     * @return Last transaction version or {@link Optional#empty()} if no transaction identifier
+     * exists for this application.
+     */
+    public Optional<Long> getLatestTransactionVersion(String applicationId) {
+        return logReplay.getLatestTransactionIdentifier(applicationId);
     }
 }

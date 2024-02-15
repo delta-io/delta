@@ -35,11 +35,10 @@ import org.apache.parquet.io.api.RecordMaterializer;
 import org.apache.parquet.schema.MessageType;
 
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-
-import io.delta.kernel.defaults.internal.DefaultKernelUtils;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public class ParquetBatchReader {
     private final Configuration configuration;
@@ -55,6 +54,9 @@ public class ParquetBatchReader {
     public CloseableIterator<ColumnarBatch> read(String path, StructType schema) {
         BatchReadSupport batchReadSupport = new BatchReadSupport(maxBatchSize, schema);
         ParquetRecordReader<Object> reader = new ParquetRecordReader<>(batchReadSupport);
+        final boolean hasRowIndexCol =
+            schema.indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME) >= 0 &&
+            schema.get(StructField.METADATA_ROW_INDEX_COLUMN_NAME).isMetadataColumn();
 
         Path filePath = new Path(URI.create(path));
         try {
@@ -98,7 +100,12 @@ public class ParquetBatchReader {
                     hasNotConsumedNextElement = false;
                     // hasNext reads to row to confirm there is a next element.
                     try {
-                        batchReadSupport.finalizeCurrentRow(reader.getCurrentRowIndex());
+                        long rowIndex = 0;
+                        if (hasRowIndexCol) {
+                            // get the row index only if required by the read schema
+                            rowIndex = reader.getCurrentRowIndex();
+                        }
+                        batchReadSupport.finalizeCurrentRow(rowIndex);
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     }
@@ -129,7 +136,7 @@ public class ParquetBatchReader {
         @Override
         public ReadContext init(InitContext context) {
             return new ReadContext(
-                DefaultKernelUtils.pruneSchema(context.getFileSchema(), readSchema));
+                ParquetSchemaUtils.pruneSchema(context.getFileSchema(), readSchema));
         }
 
         @Override

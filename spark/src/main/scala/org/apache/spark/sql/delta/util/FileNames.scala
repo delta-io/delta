@@ -18,27 +18,53 @@ package org.apache.spark.sql.delta.util
 
 import java.util.UUID
 
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 /** Helper for creating file names for specific commits / checkpoints. */
 object FileNames {
 
   val deltaFileRegex = raw"(\d+)\.json".r
+  val uuidDeltaFileRegex = raw"(\d+)\.[^.]+\.json".r
+  val compactedDeltaFileRegex = raw"(\d+).(\d+).compacted.json".r
   val checksumFileRegex = raw"(\d+)\.crc".r
-  val checkpointFileRegex = raw"(\d+)\.checkpoint(\.(\d+)\.(\d+))?\.parquet".r
+  val checkpointFileRegex = raw"(\d+)\.checkpoint((\.\d+\.\d+)?\.parquet|\.[^.]+\.(json|parquet))".r
 
-  val deltaFilePattern = deltaFileRegex.pattern
-  val checksumFilePattern = checksumFileRegex.pattern
-  val checkpointFilePattern = checkpointFileRegex.pattern
+  private val deltaFilePattern = deltaFileRegex.pattern
+  private val uuidDeltaFilePattern = deltaFileRegex.pattern
+  private val compactedDeltaFilePattern = compactedDeltaFileRegex.pattern
+  private val checksumFilePattern = checksumFileRegex.pattern
+  private val checkpointFilePattern = checkpointFileRegex.pattern
 
   /** Returns the delta (json format) path for a given delta file. */
   def deltaFile(path: Path, version: Long): Path = new Path(path, f"$version%020d.json")
+
+  /**
+   * Returns the un-backfilled uuid formatted delta (json format) path for a given version.
+   *
+   * @param logPath The root path of the delta log.
+   * @param version The version of the delta file.
+   * @return The path to the un-backfilled delta file: <logPath>/_commits/<version>.<uuid>.json
+   */
+  def uuidDeltaFile(logPath: Path, version: Long): Path = {
+    val basePath = commitDirPath(logPath)
+    val uuid = UUID.randomUUID
+    new Path(basePath, f"$version%020d.$uuid.commit.json")
+  }
 
   /** Returns the path for a given sample file */
   def sampleFile(path: Path, version: Long): Path = new Path(path, f"$version%020d")
 
   /** Returns the path to the checksum file for the given version. */
   def checksumFile(path: Path, version: Long): Path = new Path(path, f"$version%020d.crc")
+
+  /** Returns the path to the compacted delta file for the given version range. */
+  def compactedDeltaFile(
+      path: Path,
+      fromVersion: Long,
+      toVersion: Long): Path = {
+    new Path(path, f"$fromVersion%020d.$toVersion%020d.compacted.json")
+  }
 
   /** Returns the version for the given delta path. */
   def deltaVersion(path: Path): Long = path.getName.split("\\.")(0).toLong
@@ -47,6 +73,12 @@ object FileNames {
   /** Returns the version for the given checksum file. */
   def checksumVersion(path: Path): Long = path.getName.stripSuffix(".crc").toLong
   def checksumVersion(file: FileStatus): Long = checksumVersion(file.getPath)
+
+  def compactedDeltaVersions(path: Path): (Long, Long) = {
+    val parts = path.getName.split("\\.")
+    (parts(0).toLong, parts(1).toLong)
+  }
+  def compactedDeltaVersions(file: FileStatus): (Long, Long) = compactedDeltaVersions(file.getPath)
 
   /**
    * Returns the prefix of all delta log files for the given version.
@@ -87,14 +119,28 @@ object FileNames {
   def isCheckpointFile(path: Path): Boolean = checkpointFilePattern.matcher(path.getName).matches()
   def isCheckpointFile(file: FileStatus): Boolean = isCheckpointFile(file.getPath)
 
-  def isDeltaFile(path: Path): Boolean = deltaFilePattern.matcher(path.getName).matches()
+  def isDeltaFile(path: Path): Boolean = DeltaFile.unapply(path).isDefined
   def isDeltaFile(file: FileStatus): Boolean = isDeltaFile(file.getPath)
 
   def isChecksumFile(path: Path): Boolean = checksumFilePattern.matcher(path.getName).matches()
   def isChecksumFile(file: FileStatus): Boolean = isChecksumFile(file.getPath)
 
+  def isCompactedDeltaFile(path: Path): Boolean =
+    compactedDeltaFilePattern.matcher(path.getName).matches()
+  def isCompactedDeltaFile(file: FileStatus): Boolean = isCompactedDeltaFile(file.getPath)
+
   def checkpointVersion(path: Path): Long = path.getName.split("\\.")(0).toLong
   def checkpointVersion(file: FileStatus): Long = checkpointVersion(file.getPath)
+
+  object CompactedDeltaFile {
+    def unapply(f: FileStatus): Option[(FileStatus, Long, Long)] =
+      unapply(f.getPath).map { case (_, startVersion, endVersion) => (f, startVersion, endVersion) }
+    def unapply(path: Path): Option[(Path, Long, Long)] = path.getName match {
+      case compactedDeltaFileRegex(lo, hi) => Some(path, lo.toLong, hi.toLong)
+      case _ => None
+    }
+  }
+
 
   /**
    * Get the version of the checkpoint, checksum or delta file. Returns None if an unexpected
@@ -104,6 +150,7 @@ object FileNames {
     case DeltaFile(_, version) => Some(version)
     case ChecksumFile(_, version) => Some(version)
     case CheckpointFile(_, version) => Some(version)
+    case CompactedDeltaFile(_, _, endVersion) => Some(endVersion)
     case _ => None
   }
 
@@ -127,7 +174,10 @@ object FileNames {
     def unapply(f: FileStatus): Option[(FileStatus, Long)] =
       unapply(f.getPath).map { case (_, version) => (f, version) }
     def unapply(path: Path): Option[(Path, Long)] = {
-      deltaFileRegex.unapplySeq(path.getName).map(path -> _.head.toLong)
+      val parentDirName = path.getParent.getName
+      // If parent is _commits dir, then match against uuid commit file.
+      val regex = if (parentDirName == COMMIT_SUBDIR) uuidDeltaFileRegex else deltaFileRegex
+      regex.unapplySeq(path.getName).map(path -> _.head.toLong)
     }
   }
   object ChecksumFile {
@@ -145,9 +195,8 @@ object FileNames {
   }
 
   object FileType extends Enumeration {
-    val DELTA, CHECKPOINT, CHECKSUM, OTHER = Value
+    val DELTA, CHECKPOINT, CHECKSUM, COMPACTED_DELTA, OTHER = Value
   }
-
 
   /** File path for a new V2 Checkpoint Json file */
   def newV2CheckpointJsonFile(path: Path, version: Long): Path =
@@ -169,6 +218,10 @@ object FileNames {
   }
 
   val SIDECAR_SUBDIR = "_sidecars"
+  val COMMIT_SUBDIR = "_commits"
   /** Returns path to the sidecar directory */
   def sidecarDirPath(logPath: Path): Path = new Path(logPath, SIDECAR_SUBDIR)
+
+  /** Returns path to the sidecar directory */
+  def commitDirPath(logPath: Path): Path = new Path(logPath, COMMIT_SUBDIR)
 }

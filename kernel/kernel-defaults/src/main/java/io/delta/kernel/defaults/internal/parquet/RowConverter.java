@@ -15,11 +15,7 @@
  */
 package io.delta.kernel.defaults.internal.parquet;
 
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import static java.util.Objects.requireNonNull;
 
 import org.apache.parquet.io.api.Converter;
@@ -33,11 +29,12 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
 import io.delta.kernel.defaults.internal.data.vector.DefaultStructVector;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.findSubFieldType;
+import static io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.findSubFieldType;
+import static io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.getParquetFieldToTypeMap;
 
 class RowConverter
     extends GroupConverter
@@ -80,10 +77,11 @@ class RowConverter
         for (int i = 0; i < converters.length; i++) {
             final StructField field = fields.get(i);
             final DataType typeFromClient = field.getDataType();
+            final Map<Integer, Type> parquetFieldIdToTypeMap = getParquetFieldToTypeMap(fileSchema);
             final Type typeFromFile = field.isDataColumn() ?
-                findSubFieldType(fileSchema, field) : null;
+                findSubFieldType(fileSchema, field, parquetFieldIdToTypeMap) : null;
             if (typeFromFile == null) {
-                if (field.getName() == StructField.ROW_INDEX_COLUMN_NAME &&
+                if (StructField.METADATA_ROW_INDEX_COLUMN_NAME.equalsIgnoreCase(field.getName()) &&
                     field.isMetadataColumn()) {
                     checkArgument(field.getDataType() instanceof LongType,
                         "row index metadata column must be type long");

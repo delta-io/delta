@@ -27,11 +27,12 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
+import io.delta.kernel.client.FileReadRequest;
 import io.delta.kernel.client.FileSystemClient;
-import io.delta.kernel.fs.FileStatus;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
-import io.delta.kernel.utils.Utils;
+import io.delta.kernel.utils.FileStatus;
+
+import io.delta.kernel.internal.util.Utils;
 
 /**
  * Default implementation of {@link FileSystemClient} based on Hadoop APIs.
@@ -45,42 +46,47 @@ public class DefaultFileSystemClient
     }
 
     @Override
-    public CloseableIterator<FileStatus> listFrom(String filePath) {
-        try {
-            Iterator<org.apache.hadoop.fs.FileStatus> iter;
+    public CloseableIterator<FileStatus> listFrom(String filePath) throws IOException {
+        Iterator<org.apache.hadoop.fs.FileStatus> iter;
 
-            Path path = new Path(filePath);
-            FileSystem fs = path.getFileSystem(hadoopConf);
-            if (!fs.exists(path.getParent())) {
-                throw new FileNotFoundException(
-                    String.format("No such file or directory: %s", path.getParent())
-                );
-            }
-            org.apache.hadoop.fs.FileStatus[] files = fs.listStatus(path.getParent());
-            iter = Arrays.stream(files)
-                .filter(f -> f.getPath().getName().compareTo(path.getName()) >= 0)
-                .sorted(Comparator.comparing(o -> o.getPath().getName()))
-                .iterator();
-
-            return Utils.toCloseableIterator(iter)
-                .map(hadoopFileStatus ->
-                    FileStatus.of(
-                        hadoopFileStatus.getPath().toString(),
-                        hadoopFileStatus.getLen(),
-                        hadoopFileStatus.getModificationTime())
-                );
-        } catch (Exception ex) {
-            throw new RuntimeException("Could not resolve the FileSystem", ex);
+        Path path = new Path(filePath);
+        FileSystem fs = path.getFileSystem(hadoopConf);
+        if (!fs.exists(path.getParent())) {
+            throw new FileNotFoundException(
+                String.format("No such file or directory: %s", path.getParent())
+            );
         }
+        org.apache.hadoop.fs.FileStatus[] files = fs.listStatus(path.getParent());
+        iter = Arrays.stream(files)
+            .filter(f -> f.getPath().getName().compareTo(path.getName()) >= 0)
+            .sorted(Comparator.comparing(o -> o.getPath().getName()))
+            .iterator();
+
+        return Utils.toCloseableIterator(iter)
+            .map(hadoopFileStatus ->
+                FileStatus.of(
+                    hadoopFileStatus.getPath().toString(),
+                    hadoopFileStatus.getLen(),
+                    hadoopFileStatus.getModificationTime())
+            );
+    }
+
+    @Override
+    public String resolvePath(String path) throws IOException {
+        Path pathObject = new Path(path);
+        FileSystem fs = pathObject.getFileSystem(hadoopConf);
+        Path resolvedPath = fs.resolvePath(pathObject);
+        return fs.makeQualified(resolvedPath).toString();
     }
 
     @Override
     public CloseableIterator<ByteArrayInputStream> readFiles(
-        CloseableIterator<Tuple2<String, Tuple2<Integer, Integer>>> iter) {
-        return iter.map(elem -> getStream(elem._1, elem._2._1, elem._2._2));
+        CloseableIterator<FileReadRequest> readRequests) {
+        return readRequests.map(elem ->
+                getStream(elem.getPath(), elem.getStartOffset(), elem.getReadLength()));
     }
 
-    private ByteArrayInputStream getStream(String filePath, Integer offset, Integer size) {
+    private ByteArrayInputStream getStream(String filePath, int offset, int size) {
         Path path = new Path(filePath);
         try {
             FileSystem fs = path.getFileSystem(hadoopConf);

@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaDataSource
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.FunctionIdentifier
-import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedLeafNode, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, StringLiteral}
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, UnaryNode}
 import org.apache.spark.sql.connector.catalog.V1Table
@@ -71,13 +71,9 @@ object DeltaTableValueFunctions {
 /**
  * Represents an unresolved Delta Table Value Function
  */
-// TODO[SPARK-44071]: Inherit from UnresolvedLeafNode once spark-3.5 is released
-trait DeltaTableValueFunction extends LeafNode {
+trait DeltaTableValueFunction extends UnresolvedLeafNode {
   def fnName: String
   val functionArgs: Seq[Expression]
-
-  override def output: Seq[Attribute] = Nil
-  override lazy val resolved = false
 }
 
 /**
@@ -157,8 +153,8 @@ case class CDCNameBased(override val functionArgs: Seq[Expression])
 
   override protected def getTable(spark: SparkSession, name: Expression): LogicalPlan = {
     val stringId = getStringLiteral(name, "table name")
-    val tableId = spark.sessionState.sqlParser.parseTableIdentifier(stringId)
-    UnresolvedRelation(tableId, getOptions, isStreaming = false)
+    val identifier = spark.sessionState.sqlParser.parseMultipartIdentifier(stringId)
+    UnresolvedRelation(identifier, getOptions, isStreaming = false)
   }
 }
 
@@ -191,13 +187,7 @@ case class TableChanges(
   def toReadQuery: LogicalPlan = child.transformUp {
     case DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
       // withOptions empties the catalog table stats
-      val deltaTable = d.withOptions(options.asScala.toMap)
-      val relation = deltaTable.toBaseRelation
-      LogicalRelation(
-        relation,
-        relation.schema.toAttributes,
-        deltaTable.catalogTable,
-        isStreaming = false)
+      d.withOptions(options.asScala.toMap).toLogicalRelation
     case r: NamedRelation =>
       throw DeltaErrors.notADeltaTableException(fnName, r.name)
     case l: LogicalRelation =>

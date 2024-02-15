@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults.integration;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 import org.apache.hadoop.conf.Configuration;
 import static org.junit.Assert.assertEquals;
@@ -29,14 +28,18 @@ import io.delta.kernel.Table;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.DataReadResult;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
+
+import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.data.ScanStateRow;
+import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import io.delta.kernel.defaults.client.DefaultTableClient;
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
-import io.delta.kernel.defaults.internal.data.vector.VectorUtils;
 
 /**
  * Base class containing utility method to write integration tests that read data from
@@ -53,7 +56,7 @@ public abstract class BaseIntegration {
         });
 
     protected Table table(String path) throws Exception {
-        return Table.forPath(path);
+        return Table.forPath(tableClient, path);
     }
 
     protected Snapshot snapshot(String path) throws Exception {
@@ -67,28 +70,42 @@ public abstract class BaseIntegration {
             .build();
 
         Row scanState = scan.getScanState(tableClient);
-        CloseableIterator<ColumnarBatch> scanFileIter = scan.getScanFiles(tableClient);
+        CloseableIterator<FilteredColumnarBatch> scanFileIter = scan.getScanFiles(tableClient);
 
         return readScanFiles(scanState, scanFileIter);
     }
 
     protected List<ColumnarBatch> readScanFiles(
         Row scanState,
-        CloseableIterator<ColumnarBatch> scanFilesBatchIter) throws Exception {
+        CloseableIterator<FilteredColumnarBatch> scanFilesBatchIter) throws Exception {
         List<ColumnarBatch> dataBatches = new ArrayList<>();
         try {
+            StructType physicalReadSchema =
+                ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState);
             while (scanFilesBatchIter.hasNext()) {
-                // Read data
-                try (CloseableIterator<DataReadResult> data =
-                    Scan.readData(
-                        tableClient,
-                        scanState,
-                        scanFilesBatchIter.next().getRows(),
-                        Optional.empty())) {
-                    while (data.hasNext()) {
-                        DataReadResult dataReadResult = data.next();
-                        assertFalse(dataReadResult.getSelectionVector().isPresent());
-                        dataBatches.add(dataReadResult.getData());
+                FilteredColumnarBatch scanFilesBatch = scanFilesBatchIter.next();
+                try (CloseableIterator<Row> scanFileRows = scanFilesBatch.getRows()) {
+                    while (scanFileRows.hasNext()) {
+                        Row scanFileRow = scanFileRows.next();
+                        FileStatus fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow);
+                        CloseableIterator<ColumnarBatch> physicalDataIter =
+                            tableClient.getParquetHandler()
+                                .readParquetFiles(
+                                    singletonCloseableIterator(fileStatus),
+                                    physicalReadSchema,
+                                    Optional.empty());
+                        try (CloseableIterator<FilteredColumnarBatch> transformedData =
+                                 Scan.transformPhysicalData(
+                                    tableClient,
+                                    scanState,
+                                    scanFileRow,
+                                    physicalDataIter)) {
+                            while (transformedData.hasNext()) {
+                                FilteredColumnarBatch filteredData = transformedData.next();
+                                assertFalse(filteredData.getSelectionVector().isPresent());
+                                dataBatches.add(filteredData.getData());
+                            }
+                        }
                     }
                 }
             }
@@ -97,20 +114,6 @@ public abstract class BaseIntegration {
         }
 
         return dataBatches;
-    }
-
-    /**
-     * Remove unsupported top level delta types in Kernel from the schema. Unsupported data types
-     * include `TIMESTAMP`.
-     */
-    protected StructType removeUnsupportedType(StructType schema) {
-        List<StructField> filterList =
-            schema.fields().stream()
-                .filter(
-                    field -> !(field.getDataType() instanceof TimestampType)
-                ).collect(Collectors.toList());
-
-        return new StructType(filterList);
     }
 
     protected void compareEqualUnorderd(ColumnarBatch expDataBatch,
@@ -135,12 +138,10 @@ public abstract class BaseIntegration {
                         break;
                     }
                 }
-                // TODO: improve the logging info
                 assertTrue("Actual data contain a row that is not expected", matched);
             }
         }
 
-        // TODO: improve the logging info
         assertEquals(
             "An expected row is not present in the actual data output",
             expDataBatch.getSize(),
@@ -160,8 +161,8 @@ public abstract class BaseIntegration {
             ColumnVector expDataVector = expDataBatch.getColumnVector(fieldId);
             ColumnVector actDataVector = actDataBatch.getColumnVector(fieldId);
 
-            Object expObject = VectorUtils.getValueAsObject(expDataVector, expRowId);
-            Object actObject = VectorUtils.getValueAsObject(actDataVector, actRowId);
+            Object expObject = DefaultKernelTestUtils.getValueAsObject(expDataVector, expRowId);
+            Object actObject = DefaultKernelTestUtils.getValueAsObject(actDataVector, actRowId);
             boolean matched = compareObjects(fieldDataType, expObject, actObject);
             if (!matched) {
                 return false;

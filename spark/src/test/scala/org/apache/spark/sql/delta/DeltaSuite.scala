@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.fs.{FileSystem, FSDataInputStream, Path, PathHandle}
 
 import org.apache.spark.SparkException
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
@@ -260,7 +260,7 @@ class DeltaSuite extends QueryTest
             .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
             .save(tempDir.toString)
         }.getMessage
-        assert(e1.contains("Data written out does not match replaceWhere"))
+        assert(e1.contains("does not conform to partial table overwrite condition or constraint"))
 
         val e2 = intercept[AnalysisException] {
           Seq(true).toDF("is_odd")
@@ -303,7 +303,9 @@ class DeltaSuite extends QueryTest
             .save(tempDir.toString)
         }.getMessage
         if (enabled) {
-          assert(e4.contains("Data written out does not match replaceWhere 'value = 1'"))
+          assert(e4.contains(
+            "Written data does not conform to partial table overwrite condition " +
+              "or constraint 'value = 1'"))
         } else {
           assert(e4.contains("Predicate references non-partition column 'value'. Only the " +
             "partition columns may be referenced: [is_odd]"))
@@ -914,7 +916,8 @@ class DeltaSuite extends QueryTest
             .option(DeltaOptions.REPLACE_WHERE_OPTION, "part1 = 1")
             .save(tempDir.getCanonicalPath)
         }
-        assert(e.getMessage === "A 'replaceWhere' expression and " +
+        assert(e.getMessage === "[DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE] " +
+          "A 'replaceWhere' expression and " +
           "'partitionOverwriteMode'='dynamic' cannot both be set in the DataFrameWriter options.")
       }
     }
@@ -1190,7 +1193,7 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
+      spark.range(100).select('id, 'id % 4 as "by4", 'id % 8 as "by8")
         .write
         .format("delta")
         .partitionBy("by4", "by8")
@@ -1210,7 +1213,7 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4)
+      spark.range(100).select('id, 'id % 4 as "by4")
         .write
         .format("delta")
         .partitionBy("by4")
@@ -1263,14 +1266,14 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
+      spark.range(100).select('id, 'id % 4 as "by4", 'id % 8 as "by8")
         .write
         .format("delta")
         .partitionBy("by4", "by8")
         .save(tempDir.toString)
 
       val e = intercept[AnalysisException] {
-        spark.range(100).select('id, 'id % 4 as 'by4)
+        spark.range(100).select('id, 'id % 4 as "by4")
           .write
           .format("delta")
           .partitionBy("by4")
@@ -1287,13 +1290,13 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, ('id * 3).cast("string") as 'value)
+      spark.range(100).select('id, ('id * 3).cast("string") as "value")
         .write
         .format("delta")
         .save(tempDir.toString)
 
       val e = intercept[AnalysisException] {
-        spark.range(100).select('id, 'id * 3 as 'value)
+        spark.range(100).select('id, 'id * 3 as "value")
           .write
           .format("delta")
           .mode("append")
@@ -1309,7 +1312,7 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4)
+      spark.range(100).select('id, 'id % 4 as "by4")
         .write
         .format("delta")
         .partitionBy("by4")
@@ -1320,7 +1323,7 @@ class DeltaSuite extends QueryTest
       val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
       assertPartitionExists("by4", deltaLog, files)
 
-      spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
+      spark.range(101, 200).select('id, 'id % 4 as "by4", 'id % 8 as "by8")
         .write
         .format("delta")
         .option(DeltaOptions.MERGE_SCHEMA_OPTION, "true")
@@ -1329,7 +1332,7 @@ class DeltaSuite extends QueryTest
 
       checkAnswer(
         spark.read.format("delta").load(tempDir.toString),
-        spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8))
+        spark.range(101, 200).select('id, 'id % 4 as "by4", 'id % 8 as "by8"))
     }
   }
 
@@ -1339,7 +1342,7 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4)
+      spark.range(100).select('id, 'id % 4 as "by4")
         .write
         .format("delta")
         .partitionBy("by4")
@@ -1351,7 +1354,7 @@ class DeltaSuite extends QueryTest
       assertPartitionExists("by4", deltaLog, files)
 
       val e = intercept[AnalysisException] {
-        spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
+        spark.range(101, 200).select('id, 'id % 4 as "by4", 'id % 8 as "by8")
           .write
           .format("delta")
           .partitionBy("by4", "by8")
@@ -1371,7 +1374,7 @@ class DeltaSuite extends QueryTest
         }
 
         val e = intercept[AnalysisException] {
-          spark.range(100).select('id, 'id % 4 as 'by4)
+          spark.range(100).select('id, 'id % 4 as "by4")
             .write
             .format("delta")
             .partitionBy("by4", "id")
@@ -1539,6 +1542,7 @@ class DeltaSuite extends QueryTest
       assert(thrown.getMessage.contains("FileNotFound"))
     }
   }
+
 
   test("ES-4716: Delta shouldn't be broken when users turn on case sensitivity") {
     withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
@@ -2111,7 +2115,8 @@ class DeltaSuite extends QueryTest
           .mode("overwrite")
           .saveAsTable(table)
       }
-      assert(e.getMessage.startsWith("Data written out does not match replaceWhere"))
+      assert(e.getMessage.startsWith("[DELTA_REPLACE_WHERE_MISMATCH] " +
+        "Written data does not conform to partial table overwrite condition or constraint"))
 
       Seq(("a", "b", "c"), ("d", "e", "f"))
         .toDF("a.b", "c.d", "ab")
@@ -2673,7 +2678,8 @@ class DeltaSuite extends QueryTest
       val e1 = intercept[IllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (4, 0)")
       }
-      assert(e1.getMessage == "Invalid options for idempotent Dataframe writes: " +
+      assert(e1.getMessage == "[DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS] " +
+        "Invalid options for idempotent Dataframe writes: " +
         "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
         "must be specified for idempotent Delta writes")
       // this write should succeed as it's using a newer version than the latest
@@ -2683,7 +2689,8 @@ class DeltaSuite extends QueryTest
       val e2 = intercept[IllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (3, 0)")
       }
-      assert(e2.getMessage == "Invalid options for idempotent Dataframe writes: " +
+      assert(e2.getMessage == "[DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS] " +
+        "Invalid options for idempotent Dataframe writes: " +
         "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
         "must be specified for idempotent Delta writes")
 

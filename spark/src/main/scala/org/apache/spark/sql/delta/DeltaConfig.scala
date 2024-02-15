@@ -19,9 +19,11 @@ package org.apache.spark.sql.delta
 import java.util.{HashMap, Locale}
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -80,6 +82,11 @@ case class DeltaConfig[T](
  * Contains list of reservoir configs and validation checks.
  */
 trait DeltaConfigsBase extends DeltaLogging {
+
+  // Special properties stored in the Hive MetaStore that specifies which version last updated
+  // the entry in the MetaStore with the latest schema and table property information
+  val METASTORE_LAST_UPDATE_VERSION = "delta.lastUpdateVersion"
+  val METASTORE_LAST_COMMIT_TIMESTAMP = "delta.lastCommitTimestamp"
 
   /**
    * Convert a string to [[CalendarInterval]]. This method is case-insensitive and will throw
@@ -388,6 +395,21 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ > 0,
     "needs to be a positive integer.")
 
+  /**
+   * Enable auto compaction for a Delta table. When enabled, we will check if files already
+   * written to a Delta table can leverage compaction after a commit. If so, we run a post-commit
+   * hook to compact the files.
+   *  It can be enabled by setting the property to `true`
+   * Note that the behavior from table property can be overridden by the config:
+   * [[org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED]]
+   */
+  val AUTO_COMPACT = buildConfig[Option[String]](
+    "autoOptimize.autoCompact",
+    null,
+    v => Option(v).map(_.toLowerCase(Locale.ROOT)),
+    v => v.isEmpty || AutoCompactType.ALLOWED_VALUES.contains(v.get),
+      s""""needs to be one of: ${AutoCompactType.ALLOWED_VALUES.mkString(",")}""")
+
   /** Whether to clean up expired checkpoints and delta logs. */
   val ENABLE_EXPIRED_LOG_CLEANUP = buildConfig[Boolean](
     "enableExpiredLogCleanup",
@@ -409,6 +431,19 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "needs to be a boolean."
   )
+
+  /**
+   * The logRetention period to be used in DROP FEATURE ... TRUNCATE HISTORY command.
+   * The value should represent the expected duration of the longest running transaction. Setting
+   * this to a lower value than the longest running transaction may corrupt the table.
+   */
+  val TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION = buildConfig[CalendarInterval](
+    "dropFeatureTruncateHistory.retentionDuration",
+    "interval 24 hours",
+    parseCalendarInterval,
+    isValidIntervalConfigValue,
+    "needs to be provided as a calendar interval such as '2 weeks'. Months " +
+    "and years are not accepted. You may specify '365 days' for a year instead.")
 
   /**
    * The shortest duration we have to keep logically deleted data files around before deleting them
@@ -626,7 +661,7 @@ trait DeltaConfigsBase extends DeltaLogging {
 
   /** Policy to decide what kind of checkpoint to write to a table. */
   val CHECKPOINT_POLICY = buildConfig[CheckpointPolicy.Policy](
-    key = "checkpointPolicy-dev",
+    key = "checkpointPolicy",
     defaultValue = CheckpointPolicy.Classic.name,
     fromString = str => CheckpointPolicy.fromName(str),
     validationFunction = (v => CheckpointPolicy.ALL.exists(_.name == v.name)),
@@ -669,6 +704,45 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "needs to be a boolean."
   )
+
+  val ICEBERG_COMPAT_V2_ENABLED = buildConfig[Option[Boolean]](
+    key = "enableIcebergCompatV2",
+    defaultValue = null,
+    fromString = v => Option(v).map(_.toBoolean),
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean."
+  )
+
+  /**
+   * Enable optimized writes into a Delta table. Optimized writes adds an adaptive shuffle before
+   * the write to write compacted files into a Delta table during a write.
+   */
+  val OPTIMIZE_WRITE = buildConfig[Option[Boolean]](
+    "autoOptimize.optimizeWrite",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean."
+  )
+
+  val MANAGED_COMMIT_OWNER_NAME = buildConfig[Option[String]](
+    "managedCommits.commitOwner-dev",
+    null,
+    v => Option(v),
+    _ => true,
+    """The managed commit owner name for this table. This is used to determine which
+      |implementation of CommitStore to use when committing to this table. If this property is not
+      |set, the table will be considered as file system table and commits will be done via
+      |atomically publishing the commit file.
+      |""".stripMargin)
+
+  val MANAGED_COMMIT_OWNER_CONF = buildConfig[Map[String, String]](
+    "managedCommits.commitOwnerConf-dev",
+    null,
+    v => JsonUtils.fromJson[Map[String, String]](Option(v).getOrElse("{}")),
+    _ => true,
+    "A string-to-string map of configuration properties for the managed commit owner.")
+
 }
 
 object DeltaConfigs extends DeltaConfigsBase

@@ -22,11 +22,17 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import shadedForDelta.org.apache.iceberg.{DataFile, DataFiles, FileFormat, PartitionSpec, Schema => IcebergSchema}
+import shadedForDelta.org.apache.iceberg.Metrics
+// scalastyle:off import.ordering.noEmptyLine
+import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
+// scalastyle:on import.ordering.noEmptyLine
+import shadedForDelta.org.apache.iceberg.hive.HiveCatalog
 
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.types._
+import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier => SparkTableIdentifier}
+import org.apache.spark.sql.types.StructType
 
 object IcebergTransactionUtils
     extends DeltaLogging
@@ -70,6 +76,28 @@ object IcebergTransactionUtils
         // throw an exception when building the data file.
         .withRecordCount(add.numLogicalRecords.getOrElse(-1L))
 
+    if (add.stats != null && add.stats.nonEmpty) {
+      try {
+        val statsRow = statsParser(add.stats)
+
+        val metricsConverter = IcebergStatsConverter(statsRow, statsSchema)
+        val metrics = new Metrics(
+          metricsConverter.numRecordsStat, // rowCount
+          null, // columnSizes
+          null, // valueCounts
+          metricsConverter.nullValueCountsStat.getOrElse(null).asJava, // nullValueCounts
+          null, // nanValueCounts
+          metricsConverter.lowerBoundsStat.getOrElse(null).asJava, // lowerBounds
+          metricsConverter.upperBoundsStat.getOrElse(null).asJava // upperBounds
+        )
+
+        dataFileBuilder = dataFileBuilder.withMetrics(metrics)
+      } catch {
+        case NonFatal(e) =>
+          logWarning("Failed to convert Delta stats to Iceberg stats. Iceberg conversion will " +
+          "attempt to proceed without stats.", e)
+      }
+    }
 
     dataFileBuilder.build()
   }
@@ -171,5 +199,31 @@ object IcebergTransactionUtils
     }
 
     builder
+  }
+
+  /**
+   * Create an Iceberg HiveCatalog
+   * @param conf: Hadoop Configuration
+   * @return
+   */
+  def createHiveCatalog(conf : Configuration) : HiveCatalog = {
+    val catalog = new HiveCatalog()
+    catalog.setConf(conf)
+    catalog.initialize("spark_catalog", Map.empty[String, String].asJava)
+    catalog
+  }
+
+  /**
+   * Encode Spark table identifier to Iceberg table identifier by putting
+   * only "database" to the "namespace" in Iceberg table identifier.
+   * See [[HiveCatalog.isValidateNamespace]]
+   */
+  def convertSparkTableIdentifierToIcebergHive(
+      identifier: SparkTableIdentifier): IcebergTableIdentifier = {
+    val namespace = (identifier.database) match {
+      case Some(database) => Namespace.of(database)
+      case _ => Namespace.empty()
+    }
+    IcebergTableIdentifier.of(namespace, identifier.table)
   }
 }

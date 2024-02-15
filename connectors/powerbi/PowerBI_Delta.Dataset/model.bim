@@ -1,0 +1,2243 @@
+{
+  "compatibilityLevel": 1550,
+  "model": {
+    "annotations": [
+      {
+        "name": "__PBI_TimeIntelligenceEnabled",
+        "value": "0"
+      },
+      {
+        "name": "PBI_QueryOrder",
+        "value": "[\"fn_ReadDeltaTable\",\"DeltaTableFolderContent\",\"DeltaTableOptions\",\"Option_PartitionFilterFunction\",\"Option_StatsFilterFunction\",\"PartitionFilterFunction\",\"StatsFilterFunction\",\"DeltaTableVersion\",\"UseFileBuffer\",\"IterateFolderContent\",\"TimeZoneOffset\",\"TimeZoneOffsetDuration\",\"fn_AddColumnsToTable\",\"fn_GetPowerBIDataTypeInformation\",\"fn_URIDecode\",\"DeltaTableFolderContent_wFullPath\",\"Delimiter\",\"DeltaProtocol\",\"PQ_DataTypes\",\"DeltaTablePath\",\"_delta_log Folder\",\"metadata_columns\",\"TableSchema\",\"PhysicalTableSchema\",\"LogSchema\",\"_last_checkpoint\",\"Checkpoint Files\",\"Logs Checkpoint\",\"Latest Log Files\",\"Logs JSON\",\"Logs ALL\",\"Files with Stats\",\"Data\",\"Content_ADLS_DimProduct\",\"Content_ADLS_DimProduct_Clone\",\"Content_ADLS_DimProduct_ShallowClone\",\"Content_ADLS_FactInternetSales_part\",\"Content_ADLS_FactInternetSales_part_Hierarchical\",\"Content_LocalFolder\",\"DeltaTableData_CurrentFunction\",\"DeltaTableData_CurrentDebug\",\"Content_Blob_part\",\"Content_Blob_BasicDataTypes\",\"Option_Version\",\"Content_Blob_AllDataTypes\",\"Option_UseFileBuffer\",\"Option_IterateFolderContent\",\"Option_TimeZoneOffset\",\"Content_Blob_BasicDataTypes_Combine\",\"Steps_fn_AddColumnsToTable\",\"RowCounts\",\"OnSelectRows_Selector\",\"Content_Blob_DimProduct_Clone\",\"Content_Blob_DimProduct_ShallowClone\",\"Content_ColumnMapping_flat\",\"Content_ColumnMapping_complex\",\"SampleFiltering\",\"fn_test_UIFiltering\",\"test_UIFiltering\",\"Content_Blob_with_file_name\",\"GoldenDatasetsRootPath\",\"Content_multi-part-checkpoint\",\"Content_data-reader-nested-struct\",\"Content_data-reader-array-complex-objects\",\"GoldenTables\",\"Content_data-reader-partition-values\",\"Content_ADLS_BugBrackets\"]"
+      },
+      {
+        "name": "PBIDesktopVersion",
+        "value": "2.121.762.0 (23.09)"
+      },
+      {
+        "name": "PBI_ProTooling",
+        "value": "[\"DevMode\"]"
+      }
+    ],
+    "culture": "en-GB",
+    "cultures": [
+      {
+        "name": "en-GB",
+        "linguisticMetadata": {
+          "content": {
+            "DynamicImprovement": "HighConfidence",
+            "Language": "en-US",
+            "Version": "1.0.0"
+          },
+          "contentType": "json"
+        }
+      }
+    ],
+    "dataAccessOptions": {
+      "fastCombine": true,
+      "legacyRedirects": true,
+      "returnErrorValuesAsNull": true
+    },
+    "defaultPowerBIDataSourceVersion": "powerBI_V3",
+    "expressions": [
+      {
+        "name": "_last_checkpoint",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Record"
+          }
+        ],
+        "expression": [
+          "let",
+          "    #\"_delta_log\" = #\"_delta_log Folder\",",
+          "    #\"Filtered Rows\" = Table.SelectRows(_delta_log, each Text.EndsWith([Name], \"_last_checkpoint\")),",
+          "    #\"Added Custom\" = Table.AddColumn(#\"Filtered Rows\", \"JsonContent\", each Json.Document([Content])),",
+          "    JsonContent = #\"Added Custom\"{0}[JsonContent],",
+          "    CheckEmpty = if Table.RowCount(#\"Filtered Rows\") = 0 then [Size=-1, version=-1] else JsonContent,",
+          "    LatestCheckPointWithParts = if Record.HasFields(CheckEmpty, \"parts\") then CheckEmpty else Record.AddField(CheckEmpty, \"parts\", 1),",
+          "",
+          "    #\"Filtered Rows Version\" = Table.SelectRows(#\"_delta_log\", each Text.EndsWith([Name], \".checkpoint.parquet\")),",
+          "    MaxVersion = try Table.Group(#\"Filtered Rows Version\", {}, {{\"MaxVersion\", each List.Max([Version]), type number}}){0}[MaxVersion] otherwise -1,",
+          "    #\"Filtered Rows MaxVersion\" = Table.SelectRows(#\"Filtered Rows Version\", each [Version] = MaxVersion),",
+          "    CheckpointFromVersion = [version=try MaxVersion otherwise -1, size=-1, parts = Table.RowCount(#\"Filtered Rows MaxVersion\")],",
+          "",
+          "    LastCheckpoint = Table.Buffer(Table.FromRecords({if DeltaTableVersion = null then LatestCheckPointWithParts else CheckpointFromVersion})){0}",
+          "in",
+          "    LastCheckpoint"
+        ],
+        "kind": "m",
+        "lineageTag": "66b761a8-d937-41f3-ae59-6a9762a4cc9a",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Checkpoint Files",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    LastCheckpointFile = {1..Record.Field(_last_checkpoint, \"parts\")},",
+          "    #\"Converted to Table\" = Table.FromList(LastCheckpointFile, Splitter.SplitByNothing(), {\"part\"}, null, ExtraValues.Error),",
+          "    #\"Add Version\" = Table.AddColumn(#\"Converted to Table\", \"version\", each Record.Field(_last_checkpoint, \"version\")),",
+          "    #\"Add SingleFile\" = Table.AddColumn(#\"Add Version\", \"file_name\", each Text.PadStart(Text.From([version]), 20, \"0\") & \".checkpoint.parquet\", Text.Type),",
+          "    #\"Add MultipleFiles\" = Table.AddColumn(#\"Add Version\", \"file_name\", each Text.PadStart(Text.From([version]), 20, \"0\") & \".checkpoint.\" & Text.PadStart(Text.From([part]), 10, \"0\") & \".\" & Text.PadStart(Text.From(Record.Field(_last_checkpoint, \"parts\")), 10, \"0\") & \".parquet\", Text.Type),",
+          "    AllFiles = Table.SelectColumns(if Record.Field(_last_checkpoint, \"parts\") = 1 then #\"Add SingleFile\" else #\"Add MultipleFiles\", \"file_name\"),",
+          "    AllFiles_BufferedList = List.Buffer(Table.ToList(AllFiles)),",
+          "    Content = Table.SelectRows(#\"_delta_log Folder\", each List.Count(List.Select(AllFiles_BufferedList, (inner) => Text.EndsWith([Name], inner))) > 0)",
+          "in",
+          "    Content"
+        ],
+        "kind": "m",
+        "lineageTag": "8a59492b-dbe3-4bda-935c-2b87f1b4c5ef",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "metadata_columns",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = #\"Logs ALL\",",
+          "    #\"Filtered Rows1\" = Table.SelectRows(Source, each ([metaData] <> null)),",
+          "    MaxVersion = Table.Group(#\"Filtered Rows1\", {}, {{\"MaxVersion\", each List.Max([Version]), type number}}){0}[MaxVersion],",
+          "    #\"Filtered Rows2\" = Table.SelectRows(#\"Filtered Rows1\", each [Version] = MaxVersion),",
+          "    #\"Kept First Rows\" = Table.FirstN(#\"Filtered Rows2\",1),",
+          "    #\"Removed Other Columns\" = Table.SelectColumns(#\"Kept First Rows\",{\"metaData\"}),",
+          "    #\"Expanded metaData\" = Table.ExpandRecordColumn(#\"Removed Other Columns\", \"metaData\", {\"schemaString\", \"partitionColumns\"}, {\"schemaString\", \"partitionColumns\"}),",
+          "    #\"Filtered Rows\" = Table.SelectRows(#\"Expanded metaData\", each ([schemaString] <> null)),",
+          "    JSON = Table.TransformColumns(#\"Filtered Rows\",{{\"schemaString\", Json.Document}}),",
+          "    #\"Expanded schemaString\" = Table.ExpandRecordColumn(JSON, \"schemaString\", {\"fields\"}, {\"fields\"}),",
+          "    #\"Expanded fieldList\" = Table.ExpandListColumn(#\"Expanded schemaString\", \"fields\"),",
+          "    #\"Expanded fields\" = Table.ExpandRecordColumn(#\"Expanded fieldList\", \"fields\", {\"name\", \"type\", \"nullable\", \"metadata\"}, {\"name\", \"type\", \"nullable\", \"metadata\"}),",
+          "    #\"Added physicalName\" = Table.AddColumn(#\"Expanded fields\", \"physicalName\", each try Record.Field([metadata], \"delta.columnMapping.physicalName\") otherwise [name], type text),",
+          "    #\"Changed Type\" = Table.TransformColumnTypes(#\"Added physicalName\",{{\"name\", type text}, {\"nullable\", type logical}}),",
+          "    #\"Added isPartitionedBy\" = Table.Buffer(Table.AddColumn(#\"Changed Type\", \"isPartitionedBy\", each List.Contains([partitionColumns], [name]), Logical.Type)),",
+          "    #\"Added PBI_Text\" = Table.AddColumn(#\"Added isPartitionedBy\", \"PBI_Text\", each fn_GetPowerBIDataTypeInformation([type], false, [nullable]), type text),",
+          "    #\"Added PBI_DataType\" = Table.AddColumn(#\"Added PBI_Text\", \"PBI_DataType\", each Expression.Evaluate(\"type \" & [PBI_Text], PQ_DataTypes), type type),",
+          "    #\"Added PBI_Transformation\" = Table.AddColumn(#\"Added PBI_DataType\", \"PBI_Transformation\", each ",
+          "                if [type] = \"string\" then Text.From",
+          "                else if [type] = \"long\" then Int64.From",
+          "                else if [type] = \"integer\" then Int32.From",
+          "                else if [type] = \"short\" then Int16.From",
+          "                else if [type] = \"byte\" then Int8.From",
+          "                else if [type] = \"float\" then Single.From",
+          "                else if [type] = \"double\" then Double.From",
+          "                else if [type] = \"date\" then Date.From",
+          "                else if [type] = \"timestamp\" and TimeZoneOffset = null then DateTime.From",
+          "                else if [type] = \"timestamp\" and TimeZoneOffset <> null then (x) as nullable datetimezone => DateTime.AddZone(DateTime.From(x) + TimeZoneOffsetDuration, Duration.Hours(TimeZoneOffsetDuration), Duration.Minutes(TimeZoneOffsetDuration))",
+          "                else if [type] = \"boolean\" then Logical.From",
+          "                else if [type] = \"binary\" then Binary.From",
+          "                else if (Value.Is([type], type text) and Text.StartsWith([type], \"decimal\")) then Number.From",
+          "                else (x) as nullable any => x, type function),",
+          "    #\"Added physicalPBI_Text\" = Table.AddColumn(#\"Added PBI_Transformation\", \"physicalPBI_Text\", each fn_GetPowerBIDataTypeInformation([type], true, [nullable]), type text),",
+          "    #\"Added physicalPBI_DataType\" = Table.AddColumn(#\"Added physicalPBI_Text\", \"physicalPBI_DataType\", each Expression.Evaluate(\"type \" & [physicalPBI_Text], PQ_DataTypes), type type),",
+          "    #\"Added ChangeDataType\" = Table.AddColumn(#\"Added physicalPBI_DataType\", \"ChangeDataType\", each {[name], [PBI_DataType]}, type list),",
+          "    #\"Added TableDataType\" = Table.AddColumn(#\"Added ChangeDataType\", \"TableDataType\", each \"#\"\"\" & [name] & \"\"\"=\" & Text.From([PBI_Text]), type text),",
+          "    #\"Added PhysicalTableDataType\" = Table.AddColumn(#\"Added TableDataType\", \"PhysicalTableDataType\", each \"#\"\"\" & [physicalName] & \"\"\"=\" & Text.From([PBI_Text]), type text),",
+          "    #\"Added ColumnTransformation\" = Table.AddColumn(#\"Added PhysicalTableDataType\", \"ColumnTransformation\", each {[physicalName], [PBI_Transformation]}, type list),",
+          "    #\"Buffered Fields\" = Table.Buffer(#\"Added ColumnTransformation\")",
+          "in",
+          "    #\"Buffered Fields\""
+        ],
+        "kind": "m",
+        "lineageTag": "57b415a1-afb1-4fb4-832c-1b6119132ff1",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Logs Checkpoint",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = #\"Checkpoint Files\",",
+          "    #\"Parsed Logs\" = Table.AddColumn(Source, \"LogInfo\", each Parquet.Document([Content])),",
+          "    #\"Combine LogInfo and Version\" = Table.Combine(Table.TransformRows(#\"Parsed Logs\", each fn_AddColumnsToTable([Version=_[Version]], _[LogInfo])))",
+          "in",
+          "    #\"Combine LogInfo and Version\""
+        ],
+        "kind": "m",
+        "lineageTag": "d453cf62-55fc-4fdc-9d46-deaadb081d3c",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Latest Log Files",
+        "annotations": [
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          },
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = #\"_delta_log Folder\",",
+          "    #\"Filtered After Last Checkpoint\" = Table.SelectRows(Source, each [Version] > Record.Field(_last_checkpoint, \"version\")),",
+          "    #\"Filtered JSON Files\" = Table.SelectRows(#\"Filtered After Last Checkpoint\", each ([Extension] = \".json\" and not Text.EndsWith([Name], \".compacted.json\")))",
+          "in",
+          "    #\"Filtered JSON Files\""
+        ],
+        "kind": "m",
+        "lineageTag": "6c8889e9-0563-499c-8ef4-0dd45c347d97",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Logs JSON",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = #\"Latest Log Files\",",
+          "    #\"Added Custom\" = Table.AddColumn(Source, \"JsonContent\", each Lines.FromBinary([Content])),",
+          "    #\"Expanded JsonContent\" = Table.ExpandListColumn(#\"Added Custom\", \"JsonContent\"),",
+          "    #\"Parsed Logs\" = Table.TransformColumns(#\"Expanded JsonContent\",{{\"JsonContent\", Json.Document, LogSchema}}),",
+          "    #\"Expanded Logs\" = Table.ExpandRecordColumn(#\"Parsed Logs\", \"JsonContent\", {\"add\", \"remove\", \"metaData\", \"commitInfo\", \"protocol\"}),",
+          "    #\"Removed Other Columns\" = Table.SelectColumns(#\"Expanded Logs\",{\"Version\", \"add\", \"remove\", \"metaData\", \"commitInfo\", \"protocol\"})",
+          "in",
+          "    #\"Removed Other Columns\""
+        ],
+        "kind": "m",
+        "lineageTag": "7e8671a4-665f-480c-a654-568aa68446bb",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "DeltaTablePath",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Text"
+          }
+        ],
+        "expression": [
+          "let",
+          "    DeltaTablePath = Text.Combine(List.RemoveLastN(Text.Split(#\"_delta_log Folder\"{0}[Full_Path], Delimiter), 2), Delimiter) & Delimiter",
+          "in",
+          "    DeltaTablePath"
+        ],
+        "kind": "m",
+        "lineageTag": "4e0245c2-1323-4b68-bbb8-039b5d36d71c",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "_delta_log Folder",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = DeltaTableFolderContent_wFullPath,",
+          "    #\"Filtered Rows\" = Table.SelectRows(Source, each Text.Contains([Full_Path], Delimiter & \"_delta_log\" & Delimiter)),",
+          "    DeltaLogValidated = if Table.RowCount(#\"Filtered Rows\") = 0 then error \"Mandatory folder \" & Delimiter & \"_delta_log\" & Delimiter & \" not found in the root of the file listing! Are you sure this is a Delta Lake table?\" else #\"Filtered Rows\",",
+          "    #\"Added Version\" = Table.AddColumn(DeltaLogValidated, \"Version\", each try Int64.From(Text.BeforeDelimiter([File_Name], \".\")) otherwise -1, Int64.Type),",
+          "    MaxVersion = Table.Group(#\"Added Version\", {}, {{\"MaxVersion\", each List.Max([Version]), type number}}){0}[MaxVersion],",
+          "    #\"Filtered RequestedVersion\" = if DeltaTableVersion = null then #\"Added Version\" ",
+          "else if DeltaTableVersion < 0 then Table.SelectRows(#\"Added Version\", each [Version] <= MaxVersion + DeltaTableVersion)",
+          "else Table.SelectRows(#\"Added Version\", each [Version] <= DeltaTableVersion),",
+          "    BufferedTable = Table.Buffer(#\"Filtered RequestedVersion\"),",
+          "    BufferedContent = Table.TransformColumns(BufferedTable,{{\"Content\", Binary.Buffer}})",
+          "in",
+          "    BufferedContent"
+        ],
+        "kind": "m",
+        "lineageTag": "a36fa401-9c9b-40d0-8d63-c3af5563f07e",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Logs ALL",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = Table.Combine({#\"Logs Checkpoint\", #\"Logs JSON\"}),",
+          "    #\"Added timestamp\" = Table.AddColumn(Source, \"log_timestamp\", each if [add] <> null then Record.Field([add], \"modificationTime\") else ",
+          "if [remove] <> null then Record.Field([remove], \"deletionTimestamp\") else ",
+          "if [commitInfo] <> null then Record.Field([commitInfo], \"timestamp\") else ",
+          "if [metaData] <> null then Record.Field([metaData], \"createdTime\") else null, Int64.Type),",
+          "    #\"Added datetime\" = Table.AddColumn(#\"Added timestamp\", \"log_datetime\", each try #datetime(1970,1,1,0,0,0)+#duration(0,0,0,[log_timestamp]/1000) otherwise null, DateTime.Type)",
+          "in",
+          "    #\"Added datetime\""
+        ],
+        "kind": "m",
+        "lineageTag": "a04d3d9e-a8af-45f7-abb8-80934513a0d3",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "fn_ReadDeltaTable",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Function"
+          }
+        ],
+        "expression": [
+          "let",
+          "    fn_ReadDeltaTable = (",
+          "        DeltaTableFolderContent as table,",
+          "        optional DeltaTableOptions as record",
+          "    ) as table =>",
+          "",
+          "    let",
+          "",
+          "        DeltaTableVersion = if DeltaTableOptions = null then null else Record.FieldOrDefault(DeltaTableOptions, \"Version\", null),",
+          "        PartitionFilterFunction = if DeltaTableOptions = null then (x) => true else if Record.FieldOrDefault(DeltaTableOptions, \"PartitionFilterFunction\", null) = null then (x) => true else Record.Field(DeltaTableOptions, \"PartitionFilterFunction\"),",
+          "        StatsFilterFunction = if DeltaTableOptions = null then (x, y) => true else if Record.FieldOrDefault(DeltaTableOptions, \"StatsFilterFunction\", null) = null then (x, y) => true else Record.Field(DeltaTableOptions, \"StatsFilterFunction\"),",
+          "        UseFileBuffer = if DeltaTableOptions = null then false else if Record.FieldOrDefault(DeltaTableOptions, \"UseFileBuffer\", null) = null then false else Record.Field(DeltaTableOptions, \"UseFileBuffer\"),",
+          "        IterateFolderContent = if DeltaTableOptions = null then false else if Record.FieldOrDefault(DeltaTableOptions, \"IterateFolderContent\", null) = null then false else Record.Field(DeltaTableOptions, \"IterateFolderContent\"),",
+          "        TimeZoneOffset = if DeltaTableOptions = null then null else Record.FieldOrDefault(DeltaTableOptions, \"TimeZoneOffset\", null),",
+          "        TimeZoneOffsetDuration = Duration.FromText(Text.TrimStart(TimeZoneOffset, \"+\")),",
+          "",
+          "        Delimiter = if Text.Contains(DeltaTableFolderContent{0}[Folder Path], \"//\") then \"/\" else \"\\\",",
+          "",
+          "        fn_URIDecode = (data as text) as text => Uri.Parts(\"http://powerbi?txt=\" & data)[Query][txt],",
+          "",
+          "        DeltaProtocol =",
+          "        let",
+          "            Source = #\"Logs ALL\",",
+          "            #\"Filtered Rows1\" = Table.SelectRows(Source, each ([protocol] <> null)),",
+          "            MaxVersion = Table.Group(#\"Filtered Rows1\", {}, {{\"MaxVersion\", each List.Max([Version]), type number}}){0}[MaxVersion],",
+          "            #\"Filtered Rows2\" = Table.SelectRows(#\"Filtered Rows1\", each [Version] = MaxVersion),",
+          "            #\"Removed Other Columns\" = Table.SelectColumns(#\"Filtered Rows2\",{\"protocol\"}),",
+          "            #\"Expanded protocol\" = Table.ExpandRecordColumn(#\"Removed Other Columns\", \"protocol\", {\"minReaderVersion\", \"minWriterVersion\"}, {\"minReaderVersion\", \"minWriterVersion\"}),",
+          "            #\"Changed Type\" = Table.TransformColumnTypes(#\"Expanded protocol\",{{\"minReaderVersion\", Int64.Type}, {\"minWriterVersion\", Int64.Type}}),",
+          "            #\"Renamed Columns\" = Table.Buffer(#\"Changed Type\")",
+          "        in",
+          "            #\"Renamed Columns\",",
+          "",
+          "        DeltaTableFolderContent_wFullPath = ",
+          "        let",
+          "            Source = DeltaTableFolderContent,",
+          "",
+          "            fn_ReadContentRecursive = (tbl as table) as table => ",
+          "                let",
+          "                    subFolders = Table.SelectRows(tbl, each Value.Is(_[Content], type table)),",
+          "                    binaries = Table.SelectRows(tbl, each Value.Is(_[Content], type binary)),",
+          "                    combinedContent = if Table.RowCount(subFolders) > 0 then Table.Combine({binaries, @fn_ReadContentRecursive(Table.Combine(subFolders[Content]))}) else binaries",
+          "                in",
+          "                    combinedContent,",
+          "",
+          "            Content = if IterateFolderContent then fn_ReadContentRecursive(Source) else Source,",
+          "",
+          "            #\"Added Full_Path\" = Table.AddColumn(Content, \"Full_Path\", each fn_URIDecode([Folder Path]) & [Name], Text.Type),",
+          "            #\"Added File_Name\" = Table.AddColumn(#\"Added Full_Path\", \"File_Name\", each if Text.Length([Extension]) > 0 then List.Last(Text.Split([Full_Path], Delimiter)) else null, type text),",
+          "            Buffered = Table.Buffer(#\"Added File_Name\")",
+          "        in",
+          "            Buffered,",
+          "",
+          "        PQ_DataTypes = ",
+          "        let",
+          "            Source = [",
+          "                Any.Type = Any.Type,",
+          "                None.Type = None.Type,",
+          "                Day.Type = Day.Type,",
+          "                Duration.Type = Duration.Type,",
+          "                Record.Type = Record.Type,",
+          "                Precision.Type = Precision.Type,",
+          "                Number.Type = Number.Type,",
+          "                Binary.Type = Binary.Type,",
+          "                Byte.Type = Byte.Type,",
+          "                Character.Type = Character.Type,",
+          "                Text.Type = Text.Type,",
+          "                Function.Type = Function.Type,",
+          "                Null.Type = Null.Type,",
+          "                List.Type = List.Type,",
+          "                Type.Type = Type.Type,",
+          "                Logical.Type = Logical.Type,",
+          "                Int8.Type = Int8.Type,",
+          "                Int16.Type = Int16.Type,",
+          "                Int32.Type = Int32.Type,",
+          "                Int64.Type = Int64.Type,",
+          "                Single.Type = Single.Type,",
+          "                Double.Type = Double.Type,",
+          "                Decimal.Type = Decimal.Type,",
+          "                Currency.Type = Currency.Type,",
+          "                Percentage.Type = Percentage.Type,",
+          "                Guid.Type = Guid.Type,",
+          "                Date.Type = Date.Type,",
+          "                DateTime.Type = DateTime.Type,",
+          "                DateTimeZone.Type = DateTimeZone.Type,",
+          "                Time.Type = Time.Type,",
+          "                Table.Type = Table.Type",
+          "            ]",
+          "        in",
+          "        Source,",
+          "",
+          "        #\"TableSchema\" = ",
+          "        let",
+          "            ExpressionText = \"type table [\" & Text.Combine(metadata_columns[TableDataType], \", \") & \"]\",",
+          "            BufferedExpression = List.Buffer({ExpressionText}){0},",
+          "            TableSchema = Expression.Evaluate(BufferedExpression, PQ_DataTypes)",
+          "        in",
+          "            TableSchema,",
+          "",
+          "        #\"PhysicalTableSchema\" =",
+          "        let",
+          "            ExpressionText = \"type table [\" & Text.Combine(metadata_columns[PhysicalTableDataType], \", \") & \"]\",",
+          "            BufferedExpression = List.Buffer({ExpressionText}){0},",
+          "            PhysicalTableSchema = Expression.Evaluate(BufferedExpression, PQ_DataTypes)",
+          "        in",
+          "            PhysicalTableSchema,",
+          "",
+          "        LogSchema = type [txn=record, add=record, remove=record, metaData=record, commitInfo=record, protocol=record],",
+          "",
+          "        #\"_delta_log Folder\" = ",
+          "        let",
+          "            Source = DeltaTableFolderContent_wFullPath,",
+          "            #\"Filtered Rows\" = Table.SelectRows(Source, each Text.Contains([Full_Path], Delimiter & \"_delta_log\" & Delimiter)),",
+          "            DeltaLogValidated = if Table.RowCount(#\"Filtered Rows\") = 0 then error \"Mandatory folder \" & Delimiter & \"_delta_log\" & Delimiter & \" not found in the root of the file listing! Are you sure this is a Delta Lake table?\" else #\"Filtered Rows\",",
+          "            #\"Added Version\" = Table.AddColumn(DeltaLogValidated, \"Version\", each try Int64.From(Text.BeforeDelimiter([File_Name], \".\")) otherwise -1, Int64.Type),",
+          "            MaxVersion = Table.Group(#\"Added Version\", {}, {{\"MaxVersion\", each List.Max([Version]), type number}}){0}[MaxVersion],",
+          "            #\"Filtered RequestedVersion\" = if DeltaTableVersion = null then #\"Added Version\" ",
+          "        else if DeltaTableVersion < 0 then Table.SelectRows(#\"Added Version\", each [Version] <= MaxVersion + DeltaTableVersion)",
+          "        else Table.SelectRows(#\"Added Version\", each [Version] <= DeltaTableVersion),",
+          "            BufferedTable = Table.Buffer(#\"Filtered RequestedVersion\"),",
+          "            BufferedContent = Table.TransformColumns(BufferedTable,{{\"Content\", Binary.Buffer}})",
+          "        in",
+          "            BufferedContent,",
+          "",
+          "        #\"DeltaTablePath\" = ",
+          "        let",
+          "            DeltaTablePath = Text.Combine(List.RemoveLastN(Text.Split(#\"_delta_log Folder\"{0}[Full_Path], Delimiter), 2), Delimiter) & Delimiter",
+          "        in",
+          "            DeltaTablePath,",
+          "",
+          "        #\"_last_checkpoint\" = ",
+          "        let",
+          "            #\"_delta_log\" = #\"_delta_log Folder\",",
+          "            #\"Filtered Rows\" = Table.SelectRows(_delta_log, each Text.EndsWith([Name], \"_last_checkpoint\")),",
+          "            #\"Added Custom\" = Table.AddColumn(#\"Filtered Rows\", \"JsonContent\", each Json.Document([Content])),",
+          "            JsonContent = #\"Added Custom\"{0}[JsonContent],",
+          "            CheckEmpty = if Table.RowCount(#\"Filtered Rows\") = 0 then [Size=-1, version=-1] else JsonContent,",
+          "            LatestCheckPointWithParts = if Record.HasFields(CheckEmpty, \"parts\") then CheckEmpty else Record.AddField(CheckEmpty, \"parts\", 1),",
+          "",
+          "            #\"Filtered Rows Version\" = Table.SelectRows(#\"_delta_log\", each Text.EndsWith([Name], \".checkpoint.parquet\")),",
+          "            MaxVersion = try Table.Group(#\"Filtered Rows Version\", {}, {{\"MaxVersion\", each List.Max([Version]), type number}}){0}[MaxVersion] otherwise -1,",
+          "            #\"Filtered Rows MaxVersion\" = Table.SelectRows(#\"Filtered Rows Version\", each [Version] = MaxVersion),",
+          "            CheckpointFromVersion = [version=try MaxVersion otherwise -1, size=-1, parts = Table.RowCount(#\"Filtered Rows MaxVersion\")],",
+          "",
+          "            LastCheckpoint = Table.Buffer(Table.FromRecords({if DeltaTableVersion = null then LatestCheckPointWithParts else CheckpointFromVersion})){0}",
+          "        in",
+          "            LastCheckpoint,",
+          "",
+          "        #\"Checkpoint Files\" = ",
+          "        let",
+          "            LastCheckpointFile = {1..Record.Field(_last_checkpoint, \"parts\")},",
+          "            #\"Converted to Table\" = Table.FromList(LastCheckpointFile, Splitter.SplitByNothing(), {\"part\"}, null, ExtraValues.Error),",
+          "            #\"Add Version\" = Table.AddColumn(#\"Converted to Table\", \"version\", each Record.Field(_last_checkpoint, \"version\")),",
+          "            #\"Add SingleFile\" = Table.AddColumn(#\"Add Version\", \"file_name\", each Text.PadStart(Text.From([version]), 20, \"0\") & \".checkpoint.parquet\", Text.Type),",
+          "            #\"Add MultipleFiles\" = Table.AddColumn(#\"Add Version\", \"file_name\", each Text.PadStart(Text.From([version]), 20, \"0\") & \".checkpoint.\" & Text.PadStart(Text.From([part]), 10, \"0\") & \".\" & Text.PadStart(Text.From(Record.Field(_last_checkpoint, \"parts\")), 10, \"0\") & \".parquet\", Text.Type),",
+          "            AllFiles = Table.SelectColumns(if Record.Field(_last_checkpoint, \"parts\") = 1 then #\"Add SingleFile\" else #\"Add MultipleFiles\", \"file_name\"),",
+          "            AllFiles_BufferedList = List.Buffer(Table.ToList(AllFiles)),",
+          "            Content = Table.SelectRows(#\"_delta_log Folder\", each List.Count(List.Select(AllFiles_BufferedList, (inner) => Text.EndsWith([Name], inner))) > 0)",
+          "        in",
+          "            Content,",
+          "",
+          "        #\"Logs Checkpoint\" = ",
+          "        let",
+          "            Source = #\"Checkpoint Files\",",
+          "            #\"Parsed Logs\" = Table.AddColumn(Source, \"LogInfo\", each Parquet.Document([Content])),",
+          "            #\"Combine LogInfo and Version\" = Table.Combine(Table.TransformRows(#\"Parsed Logs\", each fn_AddColumnsToTable([Version=_[Version]], _[LogInfo])))",
+          "        in",
+          "            #\"Combine LogInfo and Version\",",
+          "",
+          "        #\"Latest Log Files\" = ",
+          "        let",
+          "            Source = #\"_delta_log Folder\",",
+          "            #\"Filtered After Last Checkpoint\" = Table.SelectRows(Source, each [Version] > Record.Field(_last_checkpoint, \"version\")),",
+          "            #\"Filtered JSON Files\" = Table.SelectRows(#\"Filtered After Last Checkpoint\", each ([Extension] = \".json\" and not Text.EndsWith([Name], \".compacted.json\")))",
+          "        in",
+          "            #\"Filtered JSON Files\",",
+          "",
+          "        #\"Logs JSON\" = ",
+          "        let",
+          "            Source = #\"Latest Log Files\",",
+          "            #\"Added Custom\" = Table.AddColumn(Source, \"JsonContent\", each Lines.FromBinary([Content])),",
+          "            #\"Expanded JsonContent\" = Table.ExpandListColumn(#\"Added Custom\", \"JsonContent\"),",
+          "            #\"Parsed Logs\" = Table.TransformColumns(#\"Expanded JsonContent\",{{\"JsonContent\", Json.Document}}),",
+          "            #\"Expanded Logs\" = Table.ExpandRecordColumn(#\"Parsed Logs\", \"JsonContent\", {\"add\", \"remove\", \"metaData\", \"commitInfo\", \"protocol\"}),",
+          "            #\"Removed Other Columns\" = Table.SelectColumns(#\"Expanded Logs\",{\"Version\", \"add\", \"remove\", \"metaData\", \"commitInfo\", \"protocol\"})",
+          "        in",
+          "            #\"Removed Other Columns\",",
+          "",
+          "        #\"Logs ALL\" = ",
+          "        let",
+          "            Source = Table.Combine({#\"Logs Checkpoint\", #\"Logs JSON\"}),",
+          "            #\"Added timestamp\" = Table.AddColumn(Source, \"log_timestamp\", each if [add] <> null then Record.Field([add], \"modificationTime\") else ",
+          "        if [remove] <> null then Record.Field([remove], \"deletionTimestamp\") else ",
+          "        if [commitInfo] <> null then Record.Field([commitInfo], \"timestamp\") else ",
+          "        if [metaData] <> null then Record.Field([metaData], \"createdTime\") else null, Int64.Type),",
+          "            #\"Added datetime\" = Table.AddColumn(#\"Added timestamp\", \"log_datetime\", each try #datetime(1970,1,1,0,0,0)+#duration(0,0,0,[log_timestamp]/1000) otherwise null, DateTime.Type)",
+          "        in",
+          "            #\"Added datetime\",",
+          "",
+          "        fn_GetPowerBIDataTypeInformation = ",
+          "        (type_value as any, physical_name as logical, optional is_nullable as nullable logical) as text =>",
+          "        let ",
+          "            par_is_nullable = if is_nullable = null then true else is_nullable,",
+          "",
+          "            ret = if Value.Is(type_value, Record.Type) then ",
+          "                    if type_value[type] = \"struct\" then \"[\" & Text.Combine(List.Transform(type_value[fields], each \"#\"\"\" & (if(physical_name) then _[metadata][delta.columnMapping.physicalName] else _[name]) & \"\"\" = \" & @fn_GetPowerBIDataTypeInformation(_[type], physical_name, _[nullable])), \", \") & \"]\"",
+          "                    else if type_value[type] = \"array\" then \"{\" & @fn_GetPowerBIDataTypeInformation(type_value[elementType], physical_name, type_value[containsNull]) & \"}\"",
+          "                    else if type_value[type] = \"map\" then \"table [Key=\" & @fn_GetPowerBIDataTypeInformation(type_value[keyType], false) & \", Value=\" & @fn_GetPowerBIDataTypeInformation(type_value[valueType], physical_name, type_value[valueContainsNull]) & \"]\"",
+          "                    else \"Any.Type\"",
+          "                else if type_value = \"string\" then \"Text.Type\"",
+          "                else if type_value = \"long\" then \"Int64.Type\"",
+          "                else if type_value = \"integer\" then \"Int32.Type\"",
+          "                else if type_value = \"short\" then \"Int16.Type\"",
+          "                else if type_value = \"byte\" then \"Int8.Type\"",
+          "                else if type_value = \"float\" then \"Single.Type\"",
+          "                else if type_value = \"double\" then \"Double.Type\"",
+          "                else if type_value = \"date\" then \"Date.Type\"",
+          "                else if type_value = \"timestamp\" and TimeZoneOffset = null then \"DateTime.Type\"",
+          "                else if type_value = \"timestamp\" and TimeZoneOffset <> null then \"DateTimeZone.Type\"",
+          "                else if type_value = \"boolean\" then \"Logical.Type\"",
+          "                else if type_value = \"binary\" then \"Binary.Type\"",
+          "                else if type_value = \"null\" then \"Any.Type\"",
+          "                else if Text.StartsWith(type_value, \"decimal\") then \"Number.Type\"                ",
+          "                else \"Any.Type\",",
+          "",
+          "            ret_nullable = (if par_is_nullable then \"nullable \" else \"\") & ret",
+          "        in",
+          "            ret_nullable,",
+          "",
+          "        #\"metadata_columns\" = ",
+          "        let",
+          "            Source = #\"Logs ALL\",",
+          "            #\"Filtered Rows1\" = Table.SelectRows(Source, each ([metaData] <> null)),",
+          "            MaxVersion = Table.Group(#\"Filtered Rows1\", {}, {{\"MaxVersion\", each List.Max([Version]), type number}}){0}[MaxVersion],",
+          "            #\"Filtered Rows2\" = Table.SelectRows(#\"Filtered Rows1\", each [Version] = MaxVersion),",
+          "            #\"Kept First Rows\" = Table.FirstN(#\"Filtered Rows2\",1),",
+          "            #\"Removed Other Columns\" = Table.SelectColumns(#\"Kept First Rows\",{\"metaData\"}),",
+          "            #\"Expanded metaData\" = Table.ExpandRecordColumn(#\"Removed Other Columns\", \"metaData\", {\"schemaString\", \"partitionColumns\"}, {\"schemaString\", \"partitionColumns\"}),",
+          "            #\"Filtered Rows\" = Table.SelectRows(#\"Expanded metaData\", each ([schemaString] <> null)),",
+          "            JSON = Table.TransformColumns(#\"Filtered Rows\",{{\"schemaString\", Json.Document}}),",
+          "            #\"Expanded schemaString\" = Table.ExpandRecordColumn(JSON, \"schemaString\", {\"fields\"}, {\"fields\"}),",
+          "            #\"Expanded fieldList\" = Table.ExpandListColumn(#\"Expanded schemaString\", \"fields\"),",
+          "            #\"Expanded fields\" = Table.ExpandRecordColumn(#\"Expanded fieldList\", \"fields\", {\"name\", \"type\", \"nullable\", \"metadata\"}, {\"name\", \"type\", \"nullable\", \"metadata\"}),",
+          "            #\"Added physicalName\" = Table.AddColumn(#\"Expanded fields\", \"physicalName\", each try Record.Field([metadata], \"delta.columnMapping.physicalName\") otherwise [name], type text),",
+          "            #\"Changed Type\" = Table.TransformColumnTypes(#\"Added physicalName\",{{\"name\", type text}, {\"nullable\", type logical}}),",
+          "            #\"Added isPartitionedBy\" = Table.Buffer(Table.AddColumn(#\"Changed Type\", \"isPartitionedBy\", each List.Contains([partitionColumns], [name]), Logical.Type)),",
+          "            #\"Added PBI_Text\" = Table.AddColumn(#\"Added isPartitionedBy\", \"PBI_Text\", each fn_GetPowerBIDataTypeInformation([type], false, [nullable]), type text),",
+          "            #\"Added PBI_DataType\" = Table.AddColumn(#\"Added PBI_Text\", \"PBI_DataType\", each Expression.Evaluate(\"type \" & [PBI_Text], PQ_DataTypes), type type),",
+          "            #\"Added PBI_Transformation\" = Table.AddColumn(#\"Added PBI_DataType\", \"PBI_Transformation\", each ",
+          "                        if [type] = \"string\" then Text.From",
+          "                        else if [type] = \"long\" then Int64.From",
+          "                        else if [type] = \"integer\" then Int32.From",
+          "                        else if [type] = \"short\" then Int16.From",
+          "                        else if [type] = \"byte\" then Int8.From",
+          "                        else if [type] = \"float\" then Single.From",
+          "                        else if [type] = \"double\" then Double.From",
+          "                        else if [type] = \"date\" then Date.From",
+          "                        else if [type] = \"timestamp\" and TimeZoneOffset = null then DateTime.From",
+          "                        else if [type] = \"timestamp\" and TimeZoneOffset <> null then (x) as nullable datetimezone => DateTime.AddZone(DateTime.From(x) + TimeZoneOffsetDuration, Duration.Hours(TimeZoneOffsetDuration), Duration.Minutes(TimeZoneOffsetDuration))",
+          "                        else if [type] = \"boolean\" then Logical.From",
+          "                        else if [type] = \"binary\" then Binary.From",
+          "                        else if (Value.Is([type], type text) and Text.StartsWith([type], \"decimal\")) then Number.From",
+          "                        else (x) as nullable any => x, type function),",
+          "            #\"Added physicalPBI_Text\" = Table.AddColumn(#\"Added PBI_Transformation\", \"physicalPBI_Text\", each fn_GetPowerBIDataTypeInformation([type], true, [nullable]), type text),",
+          "            #\"Added physicalPBI_DataType\" = Table.AddColumn(#\"Added physicalPBI_Text\", \"physicalPBI_DataType\", each Expression.Evaluate(\"type \" & [physicalPBI_Text], PQ_DataTypes), type type),",
+          "            #\"Added ChangeDataType\" = Table.AddColumn(#\"Added physicalPBI_DataType\", \"ChangeDataType\", each {[name], [PBI_DataType]}, type list),",
+          "            #\"Added TableDataType\" = Table.AddColumn(#\"Added ChangeDataType\", \"TableDataType\", each \"#\"\"\" & [name] & \"\"\"=\" & Text.From([PBI_Text]), type text),",
+          "            #\"Added PhysicalTableDataType\" = Table.AddColumn(#\"Added TableDataType\", \"PhysicalTableDataType\", each \"#\"\"\" & [physicalName] & \"\"\"=\" & Text.From([PBI_Text]), type text),",
+          "            #\"Added ColumnTransformation\" = Table.AddColumn(#\"Added PhysicalTableDataType\", \"ColumnTransformation\", each {[physicalName], [PBI_Transformation]}, type list),",
+          "            #\"Buffered Fields\" = Table.Buffer(#\"Added ColumnTransformation\")",
+          "        in",
+          "            #\"Buffered Fields\",",
+          "",
+          "        fn_AddColumnsToTable = ",
+          "        (cols as record, tbl as table) as table =>",
+          "        let ",
+          "            colName = List.First(Record.FieldNames(cols)),",
+          "            cols_new = Record.RemoveFields(cols, colName),",
+          "            tbl_new = Table.AddColumn(tbl, colName, (x) => Record.Field(cols, colName), Value.Type(Record.Field(cols, colName))),",
+          "",
+          "            ret = if Record.FieldCount(cols) = 0 then tbl else if Record.FieldCount(cols_new) = 0 then tbl_new else @fn_AddColumnsToTable(cols_new, tbl_new)",
+          "        in",
+          "            ret,",
+          "",
+          "        #\"Files with Stats\" = ",
+          "        let",
+          "            Source = #\"Logs ALL\",",
+          "            #\"Added Counter\" = Table.AddColumn(Source, \"Counter\", each if [remove] <> null then -1 else if [add] <> null then 1 else null, Int8.Type),",
+          "            #\"Added file_name\" = Table.AddColumn(#\"Added Counter\", \"file_name\", each if [add] <> null then Record.Field([add], \"path\") else if [remove] <> null then Record.Field([remove], \"path\") else null, Text.Type),",
+          "            #\"Filtered Rows\" = Table.SelectRows(#\"Added file_name\", each ([file_name] <> null)),",
+          "            #\"URI Decoded\" = Table.TransformColumns(#\"Filtered Rows\",{{\"file_name\", fn_URIDecode, type text}}),",
+          "            #\"Added partitionValuesTable\" = Table.AddColumn(#\"URI Decoded\", \"partitionValuesTable\", each if [add] <> null then if Value.Is(Record.Field([add], \"partitionValues\"), Record.Type) then Record.ToTable(Record.Field([add], \"partitionValues\")) else Table.RenameColumns(Record.Field([add], \"partitionValues\"), {\"Key\", \"Name\"}) else null, type nullable table),",
+          "            #\"Added partitionValuesJSON\" = Table.AddColumn(#\"Added partitionValuesTable\", \"partitionValuesJSON\", each Text.FromBinary(Json.FromValue([partitionValuesTable]))),",
+          "            #\"Added stats\" = Table.AddColumn(#\"Added partitionValuesJSON\", \"stats\", each if [add] <> null and Record.HasFields([add], \"stats\") and Value.Is(Record.Field([add], \"stats\"), type text) ",
+          "                then Record.Field([add], \"stats\") ",
+          "                else null, type text),",
+          "            #\"Grouped Rows1\" = Table.Group(#\"Added stats\", {\"file_name\"}, {{\"partitionValuesJSON\", each List.Max([partitionValuesJSON]), type nullable text}, {\"stats\", each List.Max([stats]), type nullable text}, {\"isRelevant\", each List.Sum([Counter]), type nullable text}}),",
+          "            #\"Relevant Files\" = Table.SelectRows(#\"Grouped Rows1\", each ([isRelevant] > 0)),",
+          "            #\"Added partitionValuesTable2\" = Table.AddColumn(#\"Relevant Files\", \"partitionValuesTable\", each try Table.FromRecords(Json.Document([partitionValuesJSON])) otherwise null),",
+          "            #\"Added partitionValuesRecord\" = Table.AddColumn(#\"Added partitionValuesTable2\", \"partitionValuesRecord\", each Record.TransformFields(Record.FromTable([partitionValuesTable]), Table.SelectRows(#\"metadata_columns\", each [isPartitionedBy] = true)[ColumnTransformation]), Expression.Evaluate(\"type [\" & Text.Combine(Table.SelectRows(#\"metadata_columns\", each [isPartitionedBy] = true)[TableDataType], \", \") & \"]\", PQ_DataTypes)),",
+          "            #\"Expanded partitionValuesRecord\" = Table.ExpandRecordColumn(#\"Added partitionValuesRecord\", \"partitionValuesRecord\", Table.SelectRows(#\"metadata_columns\", each [isPartitionedBy] = true)[physicalName]),",
+          "            #\"Renamed for Filters\" = Table.RenameColumns(#\"Expanded partitionValuesRecord\",Table.ToRows(Table.SelectColumns(Table.SelectRows(metadata_columns, each [isPartitionedBy]),{\"physicalName\", \"name\"}))),",
+          "            #\"Apply PartitionFilterFunction\" = Table.SelectRows(#\"Renamed for Filters\", each PartitionFilterFunction(_)),",
+          "            #\"Parse stats to JSON\" = Table.AddColumn(#\"Apply PartitionFilterFunction\", \"JSON\", each if [stats] = null then null else Json.Document([stats]), type [minValues=list, maxValues=list, numRecords=Int64.Type, nullCount=Int64.Type]),",
+          "            #\"Expanded Stats\" = Table.ExpandRecordColumn(#\"Parse stats to JSON\", \"JSON\", {\"minValues\", \"maxValues\", \"numRecords\", \"nullCount\"}, {\"minValues\", \"maxValues\", \"numRecords\", \"nullCount\"}),",
+          "            #\"Removed Columns\" = Table.RemoveColumns(#\"Expanded Stats\",{\"partitionValuesJSON\", \"stats\", \"isRelevant\", \"partitionValuesTable\"}),",
+          "            #\"Apply StatsFilterFunction\" = Table.SelectRows(#\"Removed Columns\", each StatsFilterFunction([minValues], [maxValues])),",
+          "            #\"Renamed to physicalNames\" = Table.RenameColumns(#\"Apply StatsFilterFunction\",Table.ToRows(Table.SelectColumns(Table.SelectRows(metadata_columns, each [isPartitionedBy]),{\"name\", \"physicalName\"})))",
+          "        in",
+          "            #\"Renamed to physicalNames\",",
+          "",
+          "    #\"Data\" = ",
+          "        let",
+          "            #\"Added Full_Path\" = Table.AddColumn(#\"Files with Stats\", \"Full_Path\", each Text.Replace(DeltaTablePath & [file_name], \"/\", Delimiter), Text.Type),",
+          "            #\"Removed FilteringColumns\" = Table.RemoveColumns(#\"Added Full_Path\",{\"file_name\", \"minValues\", \"maxValues\", \"numRecords\", \"nullCount\"}),",
+          "            #\"Buffered RelevantFiles\" = Table.Buffer(#\"Removed FilteringColumns\"),",
+          "            #\"Merged Queries\" = Table.NestedJoin(#\"Buffered RelevantFiles\", {\"Full_Path\"}, DeltaTableFolderContent_wFullPath, {\"Full_Path\"}, \"DeltaTable Folder\", JoinKind.Inner),",
+          "            #\"Removed Full_Path\" = Table.RemoveColumns(#\"Merged Queries\",{\"Full_Path\"}),",
+          "            #\"Expanded DeltaTable Folder\" = Table.ExpandTableColumn(#\"Removed Full_Path\", \"DeltaTable Folder\", {\"Content\"}, {\"Content\"}),",
+          "            BufferFile = if UseFileBuffer then Table.TransformColumns(#\"Expanded DeltaTable Folder\",{{\"Content\", Binary.Buffer}}) else #\"Expanded DeltaTable Folder\",",
+          "            #\"Read Parquet\" = Table.AddColumn(BufferFile, \"Data\", each Parquet.Document([Content]), type table),",
+          "            #\"Removed Binary Column\" = Table.RemoveColumns(#\"Read Parquet\",{\"Content\"}),",
+          "            #\"Combine Partition Values\" = Table.CombineColumnsToRecord(#\"Removed Binary Column\", \"cols\", List.RemoveItems(Table.ColumnNames(#\"Removed Binary Column\"), {\"Data\"})),",
+          "            #\"Combine Files\" = Table.Combine(Table.TransformRows(#\"Combine Partition Values\", each fn_AddColumnsToTable(_[cols], _[Data])), PhysicalTableSchema),",
+          "            #\"Changed Type\" = Table.TransformColumns(#\"Combine Files\",Table.SelectRows(metadata_columns, each [type] = \"timestamp\")[ColumnTransformation]),",
+          "            #\"Table with TimeZoneOffset\" = if TimeZoneOffset = null then #\"Combine Files\" else #\"Changed Type\",",
+          "            #\"Reordered Columns\" = Table.ReorderColumns(#\"Table with TimeZoneOffset\", metadata_columns[physicalName]),",
+          "            #\"Renamed Columns\" = Table.RenameColumns(#\"Reordered Columns\",Table.ToRows(Table.SelectColumns(metadata_columns,{\"physicalName\", \"name\"}))),",
+          "            #\"Renamed ComplexTypes\" = #\"Renamed Columns\" //Table.TransformColumnTypes(#\"Renamed Columns\",Table.ToRows(Table.SelectColumns(Table.SelectRows(metadata_columns, each [name] = \"structColumn\"),{\"name\", \"PBI_DataType\"})))",
+          "        //Table.TransformColumnTypes(#\"Renamed Columns\",Table.ToRows(Table.SelectColumns(Table.SelectRows(metadata_columns, each [name] = \"structColumn\"),{\"name\", \"PBI_DataType\"})))",
+          "        ,",
+          "",
+          "            #\"Validate ReaderVersion\" = if DeltaProtocol{0}[minReaderVersion] <= 2 then #\"Renamed ComplexTypes\" else error Error.Record(\"DeltaLakeVersionNotSupported\", \"This Connector currently only supports DeltaLake tables up to version 2.\", \"minReaderVersion\"),",
+          "            FinalDeltaTable = Table.View(",
+          "                #\"Validate ReaderVersion\", ",
+          "                [",
+          "                    GetType = () => TableSchema,",
+          "                    GetRowCount = () => List.Sum(#\"Files with Stats\"[numRecords])",
+          "                    //,OnSelectRows = (condition) => Table.FirstN(#\"Reordered Columns\", 3)",
+          "                ]",
+          "            )",
+          "        in",
+          "            FinalDeltaTable",
+          "            ",
+          "    in ",
+          "        #\"Data\",",
+          "",
+          "    documentation = [",
+          "        Documentation.Name =  \"fn_ReadDeltaTable\",",
+          "        Documentation.Description = \"Takes the file/folder list of a Delta Lake table and returns the content as a table object in Power Query.\",",
+          "        Documentation.LongDescription = \"Takes the file/folder list of a Delta Lake table and returns the content as a table object in Power Query. An optional 2nd parameter can be used to for special features like Time Travel, Partition Elimination, etc.\",",
+          "        Documentation.Category = \"Table\",",
+          "        Documentation.Source = \"https://github.com/delta-io/connectors/blob/master/powerbi/fn_ReadDeltaTable.pq\",",
+          "        Documentation.Version = \"1.0\",",
+          "        Documentation.Author = \"Gerhard Brueckl, paiqo GmbH\",",
+          "        Documentation.Examples = {[Description =  \"Reading Delta Lake table from Azure Blob Storage with Time-Travel\",",
+          "            Code = \"let",
+          "    Source = AzureStorage.Blobs(\"\"https://gbadls01.blob.core.windows.net/public\"\"),",
+          "    #\"\"Filtered Rows\"\" = Table.SelectRows(Source, each Text.StartsWith([Name], \"\"powerbi_delta/FactInternetSales_part.delta/\"\")),",
+          "    DeltaTable = fn_ReadDeltaTable(#\"\"Filtered Rows\"\", [Version=7])",
+          "in",
+          "    DeltaTable\",",
+          "            Result = \"#table( {\"\"ProductKey\"\", \"\"OrderDateKey\"\", \"\"Value\"\"}, { {\"\"A\"\", \"\"2020-01-01\"\", 123} ,{\"\"B\"\", \"\"2020-04-02\"\", 45} } )\"],",
+          "            ",
+          "            [Description =  \"Reading Delta Lake table from Azure Data Lake Storage Gen2 with PartitionFilterFunction\",",
+          "            Code = \"let",
+          "    Source = AzureStorage.DataLake(\"\"https://gbadls01.dfs.core.windows.net/public/powerbi_delta/FactInternetSales_part.delta\"\", [HierarchicalNavigation = false]),",
+          "    DeltaTable = fn_ReadDeltaTable(Source, [PartitionFilterFunction=(x) => x[SalesTerritoryKey] = 3])",
+          "in",
+          "    DeltaTable\",",
+          "            Result = \"#table( {\"\"ProductKey\"\", \"\"OrderDateKey\"\", \"\"SalesTerritoryKey\"\", \"\"Value\"\"}, { {\"\"A\"\", \"\"2020-01-01\"\", 3, 123} ,{\"\"B\"\", \"\"2020-04-02\"\", 3, 45} } )\"]",
+          "        }",
+          "    ]",
+          "  ",
+          "in",
+          "    Value.ReplaceType(fn_ReadDeltaTable, Value.ReplaceMetadata(Value.Type(fn_ReadDeltaTable), documentation))"
+        ],
+        "kind": "m",
+        "lineageTag": "aea6a379-0936-41f5-ae0d-e296735fff61"
+      },
+      {
+        "name": "Delimiter",
+        "annotations": [
+          {
+            "name": "PBI_ResultType",
+            "value": "Text"
+          },
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Delimiter = if Text.Contains(DeltaTableFolderContent{0}[Folder Path], \"//\") then \"/\" else \"\\\"",
+          "in",
+          "    Delimiter"
+        ],
+        "kind": "m",
+        "lineageTag": "9f25f3e3-6196-4e00-b95c-f97a3ce57f42",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Content_ADLS_DimProduct",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = AzureStorage.DataLake(\"https://gbadls01.dfs.core.windows.net/public/powerbi_delta/DimProduct.delta\", [HierarchicalNavigation = false])",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "2fbbb105-4ca4-4768-8c08-303defd25505",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "Content_LocalFolder",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = Folder.Files(\"D:\\Desktop\\dataset\")",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "f4c0e45e-b729-47d2-b357-a089f88390b8",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "DeltaTableFolderContent",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = #\"Content_ADLS_BugBrackets\"",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "951947f4-a85f-4416-8d37-414234d671bc",
+        "queryGroup": "FunctionParameters"
+      },
+      {
+        "name": "DeltaTableVersion",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Number"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = if DeltaTableOptions = null then null else Record.FieldOrDefault(DeltaTableOptions, \"Version\", null)",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "b62391f5-7729-4aaa-a9ee-98e52ad2b076",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "DeltaTableOptions",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Record"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = [",
+          "        PartitionFilterFunction = Option_PartitionFilterFunction, ",
+          "        StatsFilterFunction = Option_StatsFilterFunction, ",
+          "        Version=Option_Version, UseFileBuffer=Option_UseFileBuffer, ",
+          "        IterateFolderContent = Option_IterateFolderContent, ",
+          "        TimeZoneOffset = Option_TimeZoneOffset]",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "6b64a5e5-ef9d-49d0-b5e8-ccb6a457469f",
+        "queryGroup": "FunctionParameters"
+      },
+      {
+        "name": "DeltaTableFolderContent_wFullPath",
+        "annotations": [
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = DeltaTableFolderContent,",
+          "",
+          "    fn_ReadContentRecursive = (tbl as table) as table => ",
+          "        let",
+          "            subFolders = Table.SelectRows(tbl, each Value.Is(_[Content], type table)),",
+          "            binaries = Table.SelectRows(tbl, each Value.Is(_[Content], type binary)),",
+          "            combinedContent = if Table.RowCount(subFolders) > 0 then Table.Combine({binaries, @fn_ReadContentRecursive(Table.Combine(subFolders[Content]))}) else binaries",
+          "        in",
+          "            combinedContent,",
+          "",
+          "    Content = if IterateFolderContent then fn_ReadContentRecursive(Source) else Source,",
+          "",
+          "    #\"Added Full_Path\" = Table.AddColumn(Content, \"Full_Path\", each fn_URIDecode([Folder Path]) & [Name], Text.Type),",
+          "    #\"Added File_Name\" = Table.AddColumn(#\"Added Full_Path\", \"File_Name\", each if Text.Length([Extension]) > 0 then List.Last(Text.Split([Full_Path], Delimiter)) else null, type text),",
+          "    Buffered = Table.Buffer(#\"Added File_Name\")",
+          "in",
+          "    Buffered"
+        ],
+        "kind": "m",
+        "lineageTag": "5b1f7eb4-0b54-4495-91eb-27e55a184b10",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Content_Blob_part",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = AzureStorage.Blobs(\"https://gbadls01.blob.core.windows.net/public\"),",
+          "    #\"Filtered Rows\" = Table.SelectRows(Source, each Text.StartsWith([Name], \"powerbi_delta/FactInternetSales_part.delta\"))",
+          "in",
+          "    #\"Filtered Rows\""
+        ],
+        "kind": "m",
+        "lineageTag": "f17e5223-fd3a-4a22-addf-820c842539cf",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "Content_ADLS_FactInternetSales_part",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = AzureStorage.DataLake(\"https://gbadls01.dfs.core.windows.net/public/powerbi_delta/FactInternetSales_part.delta\", [HierarchicalNavigation = false])",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "5c70820a-38aa-4bc8-aaea-7b4022d09f87",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "Option_PartitionFilterFunction",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Function"
+          }
+        ],
+        "expression": [
+          "(",
+          "    PartitionValues as record",
+          ") as logical =>",
+          "",
+          "//Record.Field(PartitionValues, \"SalesTerritoryKey\") <= 3",
+          "//Record.Field(PartitionValues, \"partRenamed\") = \"A\"",
+          "true"
+        ],
+        "kind": "m",
+        "lineageTag": "ea976c34-e7e8-443f-b8ec-bfd1e2bfdf2c",
+        "queryGroup": "FunctionParameters\\Options"
+      },
+      {
+        "name": "PartitionFilterFunction",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Function"
+          }
+        ],
+        "expression": [
+          "let",
+          "    PartitionFilterFunction = if DeltaTableOptions = null then (x) => true else if Record.FieldOrDefault(DeltaTableOptions, \"PartitionFilterFunction\", null) = null then (x) => true else Record.Field(DeltaTableOptions, \"PartitionFilterFunction\")",
+          "in ",
+          "    PartitionFilterFunction"
+        ],
+        "kind": "m",
+        "lineageTag": "7bb8c117-853e-4b72-a8f6-0b667b5b03f3",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Option_Version",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Null"
+          }
+        ],
+        "expression": "null",
+        "kind": "m",
+        "lineageTag": "5794edba-f3f1-400b-b904-c56c371c0654",
+        "queryGroup": "FunctionParameters\\Options"
+      },
+      {
+        "name": "UseFileBuffer",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Logical"
+          }
+        ],
+        "expression": "if DeltaTableOptions = null then false else if Record.FieldOrDefault(DeltaTableOptions, \"UseFileBuffer\", null) = null then false else Record.Field(DeltaTableOptions, \"UseFileBuffer\")",
+        "kind": "m",
+        "lineageTag": "9439573b-2f9b-4454-9951-f020aa3592d5",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "IterateFolderContent",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Logical"
+          }
+        ],
+        "expression": "if DeltaTableOptions = null then false else if Record.FieldOrDefault(DeltaTableOptions, \"IterateFolderContent\", null) = null then false else Record.Field(DeltaTableOptions, \"IterateFolderContent\")",
+        "kind": "m",
+        "lineageTag": "3bbe61aa-ac8e-407d-ab32-e0e80445cb4e",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Content_ADLS_FactInternetSales_part_Hierarchical",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = AzureStorage.DataLake(\"https://gbadls01.dfs.core.windows.net/public/powerbi_delta/FactInternetSales_part.delta\", [HierarchicalNavigation = true])",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "986359ce-3c42-4d7d-bced-817bee521bb4",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "Option_UseFileBuffer",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Null"
+          }
+        ],
+        "expression": "null",
+        "kind": "m",
+        "lineageTag": "42d7ea54-24e4-40d6-af0d-1b01b825f646",
+        "queryGroup": "FunctionParameters\\Options"
+      },
+      {
+        "name": "Option_IterateFolderContent",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Null"
+          }
+        ],
+        "expression": "null",
+        "kind": "m",
+        "lineageTag": "2485ecd5-1afc-4ed7-bcc5-b49416f90eca",
+        "queryGroup": "FunctionParameters\\Options"
+      },
+      {
+        "name": "Option_TimeZoneOffset",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Text"
+          }
+        ],
+        "expression": "\"+02:00\"",
+        "kind": "m",
+        "lineageTag": "0aa7945f-5632-404d-832a-190b1b86260b",
+        "queryGroup": "FunctionParameters\\Options"
+      },
+      {
+        "name": "TimeZoneOffset",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Text"
+          }
+        ],
+        "expression": "if DeltaTableOptions = null then null else Record.FieldOrDefault(DeltaTableOptions, \"TimeZoneOffset\", null)",
+        "kind": "m",
+        "lineageTag": "f61dcfe0-d140-4644-8cf2-0477d716d1a5",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "TimeZoneOffsetDuration",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Duration"
+          }
+        ],
+        "expression": "Duration.FromText(Text.TrimStart(TimeZoneOffset, \"+\"))",
+        "kind": "m",
+        "lineageTag": "f634c047-1f7b-4d83-b1f3-a20b7159d7f4",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Option_StatsFilterFunction",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Function"
+          }
+        ],
+        "expression": [
+          "(",
+          "    MinValues as nullable record,",
+          "    MaxValues as nullable record",
+          ") as logical =>",
+          "",
+          "//Record.Field(MinValues, \"ProductKey\") <= 215",
+          "true"
+        ],
+        "kind": "m",
+        "lineageTag": "49991d54-e0bf-41d8-8eda-ccd894f39167",
+        "queryGroup": "FunctionParameters\\Options"
+      },
+      {
+        "name": "StatsFilterFunction",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    StatsFilterFunction = if DeltaTableOptions = null then (x) => true else if Record.FieldOrDefault(DeltaTableOptions, \"StatsFilterFunction\", null) = null then (x) => true else Record.Field(DeltaTableOptions, \"StatsFilterFunction\")",
+          "in ",
+          "    StatsFilterFunction"
+        ],
+        "kind": "m",
+        "lineageTag": "8442a0be-0bf0-43be-9967-89e8f9248604",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "fn_AddColumnsToTable",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    fn_AddColumnsToTable = ",
+          "        (cols as record, tbl as table) as table =>",
+          "        let ",
+          "            colName = List.First(Record.FieldNames(cols)),",
+          "            cols_new = Record.RemoveFields(cols, colName),",
+          "            tbl_new = Table.AddColumn(tbl, colName, (x) => Record.Field(cols, colName), Value.Type(Record.Field(cols, colName))),",
+          "",
+          "            ret = if Record.FieldCount(cols) = 0 then tbl else if Record.FieldCount(cols_new) = 0 then tbl_new else @fn_AddColumnsToTable(cols_new, tbl_new)",
+          "        in",
+          "            ret",
+          "in",
+          "    fn_AddColumnsToTable"
+        ],
+        "kind": "m",
+        "lineageTag": "9656a0e9-5899-483a-bbd4-58e7fb576c31",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Content_Blob_BasicDataTypes",
+        "expression": [
+          "let",
+          "    Source = AzureStorage.Blobs(\"https://gbadls01.blob.core.windows.net/public\"),",
+          "    #\"Filtered Rows\" = Table.SelectRows(Source, each Text.StartsWith([Name], \"/powerbi_delta/AllBasicDatatypes.delta/\"))",
+          "in",
+          "    #\"Filtered Rows\""
+        ],
+        "kind": "m",
+        "lineageTag": "aca7bde4-404d-43e9-9cf3-769c52c18481",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "Content_Blob_AllDataTypes",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = AzureStorage.Blobs(\"https://gbadls01.blob.core.windows.net/public\"),",
+          "    #\"Filtered Rows\" = Table.SelectRows(Source, each Text.StartsWith([Name], \"/powerbi_delta/AllDatatypes.delta/\"))",
+          "in",
+          "    #\"Filtered Rows\""
+        ],
+        "kind": "m",
+        "lineageTag": "d08cd582-bce8-4b34-803b-1a4af69d7a4c",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "Content_Blob_BasicDataTypes_Combine",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = Content_Blob_BasicDataTypes,",
+          "    #\"Filtered Rows\" = Table.SelectRows(Source, each ([Extension] = \".parquet\")),",
+          "    #\"Removed Other Columns\" = Table.SelectColumns(#\"Filtered Rows\",{\"Content\", \"Date modified\", \"Name\"}),",
+          "    #\"Added Custom\" = Table.AddColumn(#\"Removed Other Columns\", \"Data\", each Parquet.Document([Content]), type table),",
+          "    #\"Removed Columns\" = Table.RemoveColumns(#\"Added Custom\",{\"Content\"}),",
+          "    x = Table.CombineColumnsToRecord(#\"Removed Columns\", \"cols\", List.RemoveItems(Table.ColumnNames(#\"Removed Columns\"), {\"Data\"}))",
+          "in",
+          "    x"
+        ],
+        "kind": "m",
+        "lineageTag": "2ebbaf05-8ff6-4161-a397-1a5835f37c3e",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "Steps_fn_AddColumnsToTable",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = (cols as record, tbl as table) => 1,",
+          "    cols1 = Content_Blob_BasicDataTypes_Combine{0}[cols],",
+          "    tbl1 = Content_Blob_BasicDataTypes_Combine{0}[Data],",
+          "",
+          "    rec_AddColumnToTable = ",
+          "        (cols as record, tbl as table) as table =>",
+          "        let ",
+          "            colName = List.First(Record.FieldNames(cols)),",
+          "            cols_new = Record.RemoveFields(cols, colName),",
+          "            tbl_new = Table.AddColumn(tbl, colName, (x) => Record.Field(cols, colName), Value.Type(Record.Field(cols, colName))),",
+          "",
+          "            ret = if Record.FieldCount(cols_new) = 0 then tbl_new else @rec_AddColumnToTable(cols_new, tbl_new)",
+          "        in",
+          "            ret,",
+          "",
+          "    ret = List.Last(List.Generate(",
+          "        () => [cols=cols1, tbl=tbl1],",
+          "        each Record.FieldCount(_[cols]) > 0,",
+          "        (item) => ",
+          "            let",
+          "                ",
+          "            in",
+          "            [",
+          "                cols = Record.RemoveFields(item[cols], colName),",
+          "                tbl = Table.AddColumn(item[tbl], colName, (x) => Record.Field(item[cols], colName), Type.RecordFields())",
+          "            ],",
+          "        each _[tbl]",
+          "    )),",
+          "",
+          "    ret_rec = rec_AddColumnToTable(cols1, tbl1)",
+          "in",
+          "    ret_rec"
+        ],
+        "kind": "m",
+        "lineageTag": "9ebb45b6-4de6-4276-8acd-ec7c45b29fae",
+        "queryGroup": "UI_Filtering"
+      },
+      {
+        "name": "TableSchema",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    ExpressionText = \"type table [\" & Text.Combine(metadata_columns[TableDataType], \", \") & \"]\",",
+          "    BufferedExpression = List.Buffer({ExpressionText}){0},",
+          "    TableSchema = Expression.Evaluate(BufferedExpression, PQ_DataTypes)",
+          "in",
+          "    TableSchema"
+        ],
+        "kind": "m",
+        "lineageTag": "5468bbcd-63e9-4dc6-b0e5-532249225dd1",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "OnSelectRows_Selector",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Record"
+          }
+        ],
+        "expression": [
+          "let",
+          "    condition = RowExpression.From(each [SalesTerritoryKey] = 3 or 1 = 3)",
+          "in",
+          "    condition"
+        ],
+        "kind": "m",
+        "lineageTag": "56971686-8779-4ab4-ab71-2f7334e5bfe8",
+        "queryGroup": "UI_Filtering"
+      },
+      {
+        "name": "Files with Stats",
+        "annotations": [
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = #\"Logs ALL\",",
+          "    #\"Added Counter\" = Table.AddColumn(Source, \"Counter\", each if [remove] <> null then -1 else if [add] <> null then 1 else null, Int8.Type),",
+          "    #\"Added file_name\" = Table.AddColumn(#\"Added Counter\", \"file_name\", each if [add] <> null then Record.Field([add], \"path\") else if [remove] <> null then Record.Field([remove], \"path\") else null, Text.Type),",
+          "    #\"Filtered Rows\" = Table.SelectRows(#\"Added file_name\", each ([file_name] <> null)),",
+          "    #\"URI Decoded\" = Table.TransformColumns(#\"Filtered Rows\",{{\"file_name\", fn_URIDecode, type text}}),",
+          "    #\"Added partitionValuesTable\" = Table.AddColumn(#\"URI Decoded\", \"partitionValuesTable\", each if [add] <> null then if Value.Is(Record.Field([add], \"partitionValues\"), Record.Type) then Record.ToTable(Record.Field([add], \"partitionValues\")) else Table.RenameColumns(Record.Field([add], \"partitionValues\"), {\"Key\", \"Name\"}) else null, type nullable table),",
+          "    #\"Added partitionValuesJSON\" = Table.AddColumn(#\"Added partitionValuesTable\", \"partitionValuesJSON\", each Text.FromBinary(Json.FromValue([partitionValuesTable]))),",
+          "    #\"Added stats\" = Table.AddColumn(#\"Added partitionValuesJSON\", \"stats\", each if [add] <> null and Record.HasFields([add], \"stats\") and Value.Is(Record.Field([add], \"stats\"), type text) ",
+          "        then Record.Field([add], \"stats\") ",
+          "        else null, type text),",
+          "    #\"Grouped Rows1\" = Table.Group(#\"Added stats\", {\"file_name\"}, {{\"partitionValuesJSON\", each List.Max([partitionValuesJSON]), type nullable text}, {\"stats\", each List.Max([stats]), type nullable text}, {\"isRelevant\", each List.Sum([Counter]), type nullable text}}),",
+          "    #\"Relevant Files\" = Table.SelectRows(#\"Grouped Rows1\", each ([isRelevant] > 0)),",
+          "    #\"Added partitionValuesTable2\" = Table.AddColumn(#\"Relevant Files\", \"partitionValuesTable\", each try Table.FromRecords(Json.Document([partitionValuesJSON])) otherwise null),",
+          "    #\"Added partitionValuesRecord\" = Table.AddColumn(#\"Added partitionValuesTable2\", \"partitionValuesRecord\", each Record.TransformFields(",
+          "Record.FromTable([partitionValuesTable]), Table.SelectRows(#\"metadata_columns\", each [isPartitionedBy] = true)[ColumnTransformation]), Expression.Evaluate(\"type [\" & Text.Combine(Table.SelectRows(#\"metadata_columns\", each [isPartitionedBy] = true)[TableDataType], \", \") & \"]\", PQ_DataTypes)),",
+          "    #\"Expanded partitionValuesRecord\" = Table.ExpandRecordColumn(#\"Added partitionValuesRecord\", \"partitionValuesRecord\", Table.SelectRows(#\"metadata_columns\", each [isPartitionedBy] = true)[physicalName]),",
+          "    #\"Renamed for Filters\" = Table.RenameColumns(#\"Expanded partitionValuesRecord\",Table.ToRows(Table.SelectColumns(Table.SelectRows(metadata_columns, each [isPartitionedBy]),{\"physicalName\", \"name\"}))),",
+          "    #\"Apply PartitionFilterFunction\" = Table.SelectRows(#\"Renamed for Filters\", each PartitionFilterFunction(_)),",
+          "    #\"Parse stats to JSON\" = Table.AddColumn(#\"Apply PartitionFilterFunction\", \"JSON\", each if [stats] = null then null else Json.Document([stats]), type [minValues=list, maxValues=list, numRecords=Int64.Type, nullCount=Int64.Type]),",
+          "    #\"Expanded Stats\" = Table.ExpandRecordColumn(#\"Parse stats to JSON\", \"JSON\", {\"minValues\", \"maxValues\", \"numRecords\", \"nullCount\"}, {\"minValues\", \"maxValues\", \"numRecords\", \"nullCount\"}),",
+          "    #\"Removed Columns\" = Table.RemoveColumns(#\"Expanded Stats\",{\"partitionValuesJSON\", \"stats\", \"isRelevant\", \"partitionValuesTable\"}),",
+          "    #\"Apply StatsFilterFunction\" = Table.SelectRows(#\"Removed Columns\", each StatsFilterFunction([minValues], [maxValues])),",
+          "    #\"Renamed to physicalNames\" = Table.RenameColumns(#\"Apply StatsFilterFunction\",Table.ToRows(Table.SelectColumns(Table.SelectRows(metadata_columns, each [isPartitionedBy]),{\"name\", \"physicalName\"})))",
+          "in",
+          "    #\"Renamed to physicalNames\""
+        ],
+        "kind": "m",
+        "lineageTag": "b7a52ea1-e764-4895-8536-83293d65ec63",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Content_ADLS_DimProduct_Clone",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = AzureStorage.DataLake(\"https://gbadls01.dfs.core.windows.net/public/powerbi_delta/DimProduct_clone.delta\", [HierarchicalNavigation = false])",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "f70e1210-84b4-4279-9759-4739dec01139",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "Content_Blob_DimProduct_Clone",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = AzureStorage.Blobs(\"https://gbadls01.blob.core.windows.net/public\"),",
+          "    #\"Filtered Rows\" = Table.SelectRows(Source, each Text.StartsWith([Name], \"powerbi_delta/DimProduct_clone.delta\"))",
+          "in",
+          "    #\"Filtered Rows\""
+        ],
+        "kind": "m",
+        "lineageTag": "a8441d5d-352b-485f-bffa-789c3218dc4d",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "Content_Blob_DimProduct_ShallowClone",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = AzureStorage.Blobs(\"https://gbadls01.blob.core.windows.net/public\"),",
+          "    #\"Filtered Rows\" = Table.SelectRows(Source, each Text.StartsWith([Name], \"powerbi_delta/DimProduct_shallow.delta\"))",
+          "in",
+          "    #\"Filtered Rows\""
+        ],
+        "kind": "m",
+        "lineageTag": "a1ce3a4f-a016-4501-abe5-27cf3c65bfc5",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "LogSchema",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    LogSchema = type [txn=record, add=record, remove=record, metaData=record, commitInfo=record, protocol=record]",
+          "in",
+          "    LogSchema"
+        ],
+        "kind": "m",
+        "lineageTag": "df6acb50-eddc-45df-8dfd-3f8b7d900430",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Content_ADLS_DimProduct_ShallowClone",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = AzureStorage.DataLake(\"https://gbadls01.dfs.core.windows.net/public/powerbi_delta/DimProduct_shallow.delta\", [HierarchicalNavigation = false])",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "5243d99f-a8a9-4ecd-9c45-a87668bf3390",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "fn_GetPowerBIDataTypeInformation",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    fn_GetPowerBIDataTypeInformation = ",
+          "        (type_value as any, physical_name as logical, optional is_nullable as nullable logical) as text =>",
+          "        let ",
+          "            par_is_nullable = if is_nullable = null then true else is_nullable,",
+          "",
+          "            ret = if Value.Is(type_value, Record.Type) then ",
+          "                    if type_value[type] = \"struct\" then \"[\" & Text.Combine(List.Transform(type_value[fields], each \"#\"\"\" & (if(physical_name) then _[metadata][delta.columnMapping.physicalName] else _[name]) & \"\"\" = \" & @fn_GetPowerBIDataTypeInformation(_[type], physical_name, _[nullable])), \", \") & \"]\"",
+          "                    else if type_value[type] = \"array\" then \"{\" & @fn_GetPowerBIDataTypeInformation(type_value[elementType], physical_name, type_value[containsNull]) & \"}\"",
+          "                    else if type_value[type] = \"map\" then \"table [Key=\" & @fn_GetPowerBIDataTypeInformation(type_value[keyType], false) & \", Value=\" & @fn_GetPowerBIDataTypeInformation(type_value[valueType], physical_name, type_value[valueContainsNull]) & \"]\"",
+          "                    else \"Any.Type\"",
+          "                else if type_value = \"string\" then \"Text.Type\"",
+          "                else if type_value = \"long\" then \"Int64.Type\"",
+          "                else if type_value = \"integer\" then \"Int32.Type\"",
+          "                else if type_value = \"short\" then \"Int16.Type\"",
+          "                else if type_value = \"byte\" then \"Int8.Type\"",
+          "                else if type_value = \"float\" then \"Single.Type\"",
+          "                else if type_value = \"double\" then \"Double.Type\"",
+          "                else if type_value = \"date\" then \"Date.Type\"",
+          "                else if type_value = \"timestamp\" and TimeZoneOffset = null then \"DateTime.Type\"",
+          "                else if type_value = \"timestamp\" and TimeZoneOffset <> null then \"DateTimeZone.Type\"",
+          "                else if type_value = \"boolean\" then \"Logical.Type\"",
+          "                else if type_value = \"binary\" then \"Binary.Type\"",
+          "                else if type_value = \"null\" then \"Any.Type\"",
+          "                else if Text.StartsWith(type_value, \"decimal\") then \"Number.Type\"                ",
+          "                else \"Any.Type\",",
+          "",
+          "            ret_nullable = (if par_is_nullable then \"nullable \" else \"\") & ret",
+          "        in",
+          "            ret_nullable",
+          "in",
+          "    fn_GetPowerBIDataTypeInformation"
+        ],
+        "kind": "m",
+        "lineageTag": "252b720a-c58a-4735-b10c-12dff3670b71",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "DeltaProtocol",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = #\"Logs ALL\",",
+          "    #\"Filtered Rows1\" = Table.SelectRows(Source, each ([protocol] <> null)),",
+          "    MaxVersion = Table.Group(#\"Filtered Rows1\", {}, {{\"MaxVersion\", each List.Max([Version]), type number}}){0}[MaxVersion],",
+          "    #\"Filtered Rows2\" = Table.SelectRows(#\"Filtered Rows1\", each [Version] = MaxVersion),",
+          "    #\"Removed Other Columns\" = Table.SelectColumns(#\"Filtered Rows2\",{\"protocol\"}),",
+          "    #\"Expanded protocol\" = Table.ExpandRecordColumn(#\"Removed Other Columns\", \"protocol\", {\"minReaderVersion\", \"minWriterVersion\"}, {\"minReaderVersion\", \"minWriterVersion\"}),",
+          "    #\"Changed Type\" = Table.TransformColumnTypes(#\"Expanded protocol\",{{\"minReaderVersion\", Int64.Type}, {\"minWriterVersion\", Int64.Type}}),",
+          "    #\"Renamed Columns\" = Table.Buffer(#\"Changed Type\")",
+          "in",
+          "    #\"Renamed Columns\""
+        ],
+        "kind": "m",
+        "lineageTag": "704f8b23-099b-4087-883a-0fa343106c48",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "PhysicalTableSchema",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    ExpressionText = \"type table [\" & Text.Combine(metadata_columns[PhysicalTableDataType], \", \") & \"]\",",
+          "    BufferedExpression = List.Buffer({ExpressionText}){0},",
+          "    PhysicalTableSchema = Expression.Evaluate(BufferedExpression, PQ_DataTypes)",
+          "in",
+          "    PhysicalTableSchema"
+        ],
+        "kind": "m",
+        "lineageTag": "cfa20de8-c42b-40d2-8130-dbe93a36a673",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Content_ColumnMapping_flat",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = Folder.Files(\"D:\\Desktop\\powerbi_delta\\columnmapping_flat.delta\")",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "00ad374a-5b82-45a4-96f8-d8ed82ec2072",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "Content_ColumnMapping_complex",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = Folder.Files(\"D:\\Desktop\\powerbi_delta\\columnmapping_complex.delta\")",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "7b3579d5-bc37-4e79-bb2c-35fdf77d4447",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "SampleFiltering",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = Table.FromRows(Json.Document(Binary.Decompress(Binary.FromText(\"i45WMjIwMlTSUULgWB24oBEcQwVBHGM4RhI0gWOoIEiFKRzHxgIA\", BinaryEncoding.Base64), Compression.Deflate)), let _t = ((type nullable text) meta [Serialized.Text = true]) in type table [p_year = _t, month = _t, day = _t, value = _t]),",
+          "    #\"Changed Type\" = Table.TransformColumnTypes(Source,{{\"p_year\", Int64.Type}})",
+          "in",
+          "    #\"Changed Type\""
+        ],
+        "kind": "m",
+        "lineageTag": "271cc088-31e4-4363-bc28-83c769a3f355",
+        "queryGroup": "UI_Filtering"
+      },
+      {
+        "name": "fn_test_UIFiltering",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    myFilterFunction = Table.View(",
+          "        null,",
+          "    [",
+          "        GetType = () => Value.Type(SampleFiltering),",
+          "        GetRows = () => SampleFiltering,",
+          "        OnSelectRows = (selector) =>",
+          "            let",
+          "                condition = RowExpression.From(selector),",
+          "",
+          "                result = Table.SelectRows(SampleFiltering, (_) => Record.Field(_, condition[Left][MemberName]) = condition[Right][Value]+1)",
+          "                ",
+          "            in",
+          "                result",
+          "    ]   ",
+          "    )",
+          "in ",
+          "    myFilterFunction"
+        ],
+        "kind": "m",
+        "lineageTag": "05e530a8-a687-48be-8f6c-65afa8143734",
+        "queryGroup": "UI_Filtering"
+      },
+      {
+        "name": "test_UIFiltering",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = fn_test_UIFiltering,",
+          "    #\"Filtered Rows\" = Table.SelectRows(Source, each ([p_year] = 2022))",
+          "in",
+          "    #\"Filtered Rows\""
+        ],
+        "kind": "m",
+        "lineageTag": "36f3ccf9-4ac9-43ec-b182-61268b20e51b",
+        "queryGroup": "UI_Filtering"
+      },
+      {
+        "name": "Content_Blob_with_file_name",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = AzureStorage.Blobs(\"https://gbadls01.blob.core.windows.net/public\"),",
+          "    #\"Filtered Rows\" = Table.SelectRows(Source, each Text.StartsWith([Name], \"/powerbi_delta/table_with_file_name.delta/\"))",
+          "in",
+          "    #\"Filtered Rows\""
+        ],
+        "kind": "m",
+        "lineageTag": "70e9d438-742e-4c55-9ea4-09478a953f2c",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "GoldenDatasetsRootPath",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Text"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = \"D:\\SourceControl\\DeltaLake\\delta\\connectors\\golden-tables\\src\\main\\resources\\golden\"",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "7830e861-c78c-411f-9de8-90d50d614ebd",
+        "queryGroup": "Sources\\Golden Datasets"
+      },
+      {
+        "name": "Content_multi-part-checkpoint",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    GoldenTableName = \"multi-part-checkpoint\",",
+          "    Source = GoldenTables,",
+          "    #\"Filtered Rows\" = Table.SelectRows(Source, each [GoldenTable] = GoldenTableName),",
+          "    Content = #\"Filtered Rows\"{0}[Content]",
+          "in",
+          "    Content"
+        ],
+        "kind": "m",
+        "lineageTag": "cbd8a9bb-6434-442d-8571-e160c18070e7",
+        "queryGroup": "Sources\\Golden Datasets"
+      },
+      {
+        "name": "Content_data-reader-nested-struct",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    GoldenTableName = \"data-reader-nested-struct\",",
+          "    Source = GoldenTables,",
+          "    #\"Filtered Rows\" = Table.SelectRows(Source, each [GoldenTable] = GoldenTableName),",
+          "    Content = #\"Filtered Rows\"{0}[Content]",
+          "in",
+          "    Content"
+        ],
+        "kind": "m",
+        "lineageTag": "58d0668f-23dc-47dd-97bf-e1c686de807b",
+        "queryGroup": "Sources\\Golden Datasets"
+      },
+      {
+        "name": "Content_data-reader-array-complex-objects",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    GoldenTableName = \"data-reader-array-complex-objects\",",
+          "    Source = GoldenTables,",
+          "    #\"Filtered Rows\" = Table.SelectRows(Source, each [GoldenTable] = GoldenTableName),",
+          "    Content = #\"Filtered Rows\"{0}[Content]",
+          "in",
+          "    Content"
+        ],
+        "kind": "m",
+        "lineageTag": "cd4f48a2-6917-4781-8543-7efe717300c3",
+        "queryGroup": "Sources\\Golden Datasets"
+      },
+      {
+        "name": "GoldenTables",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = Table.FromRows(Json.Document(Binary.Decompress(Binary.FromText(\"ZY1JEsIwDAT/4jPzolQOQp4UBm/IMkV+Tyi45TzdPcsSysye0MUceqM+ekvVw3pZQhQXGCXSUDmcEcNt6nkVM9mhrfTMN9r1TvVxor4fyVOreEme/APMdB4IJB59KcSWMhHTttFYHW5Sh+hX/ClH5znpiNRUJMP3zrCuHw==\", BinaryEncoding.Base64), Compression.Deflate)), let _t = ((type nullable text) meta [Serialized.Text = true]) in type table [GoldenTable = _t]),",
+          "    #\"Added Custom\" = Table.AddColumn(Source, \"FullPath\", each Text.TrimEnd(GoldenDatasetsRootPath, \"\\\") & \"\\\" & Text.Trim([GoldenTable], \"\\\"), type text),",
+          "    #\"Added Custom1\" = Table.AddColumn(#\"Added Custom\", \"Content\", each Folder.Files([FullPath]))",
+          "in",
+          "    #\"Added Custom1\""
+        ],
+        "kind": "m",
+        "lineageTag": "9e2b2364-12e2-48b4-a8f3-7222d8054f89",
+        "queryGroup": "Sources\\Golden Datasets"
+      },
+      {
+        "name": "Content_data-reader-partition-values",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    GoldenTableName = \"data-reader-partition-values\",",
+          "    Source = GoldenTables,",
+          "    #\"Filtered Rows\" = Table.SelectRows(Source, each [GoldenTable] = GoldenTableName),",
+          "    Content = #\"Filtered Rows\"{0}[Content]",
+          "in",
+          "    Content"
+        ],
+        "kind": "m",
+        "lineageTag": "75d3eb1c-06a8-44f5-8547-3ada809319c8",
+        "queryGroup": "Sources\\Golden Datasets"
+      },
+      {
+        "name": "Data",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    #\"Added Full_Path\" = Table.AddColumn(#\"Files with Stats\", \"Full_Path\", each Text.Replace(DeltaTablePath & [file_name], \"/\", Delimiter), Text.Type),",
+          "    #\"Removed FilteringColumns\" = Table.RemoveColumns(#\"Added Full_Path\",{\"minValues\", \"maxValues\", \"numRecords\", \"nullCount\", \"file_name\"}),",
+          "    #\"Buffered RelevantFiles\" = Table.Buffer(#\"Removed FilteringColumns\"),",
+          "    #\"Merged Queries\" = Table.NestedJoin(#\"Buffered RelevantFiles\", {\"Full_Path\"}, DeltaTableFolderContent_wFullPath, {\"Full_Path\"}, \"DeltaTable Folder\", JoinKind.Inner),",
+          "    #\"Removed Full_Path\" = Table.RemoveColumns(#\"Merged Queries\",{\"Full_Path\"}),",
+          "    #\"Expanded DeltaTable Folder\" = Table.ExpandTableColumn(#\"Removed Full_Path\", \"DeltaTable Folder\", {\"Content\"}, {\"Content\"}),",
+          "    BufferFile = if UseFileBuffer then Table.TransformColumns(#\"Expanded DeltaTable Folder\",{{\"Content\", Binary.Buffer}}) else #\"Expanded DeltaTable Folder\",",
+          "    #\"Read Parquet\" = Table.AddColumn(BufferFile, \"Data\", each Parquet.Document([Content]), type table),",
+          "    #\"Removed Binary Column\" = Table.RemoveColumns(#\"Read Parquet\",{\"Content\"}),",
+          "    #\"Combine Partition Values\" = Table.CombineColumnsToRecord(#\"Removed Binary Column\", \"cols\", List.RemoveItems(Table.ColumnNames(#\"Removed Binary Column\"), {\"Data\"})),",
+          "    #\"Combine Files\" = Table.Combine(Table.TransformRows(#\"Combine Partition Values\", each fn_AddColumnsToTable(_[cols], _[Data])), PhysicalTableSchema),",
+          "    #\"Changed Type\" = Table.TransformColumns(#\"Combine Files\",Table.SelectRows(metadata_columns, each [type] = \"timestamp\")[ColumnTransformation]),",
+          "    #\"Table with TimeZoneOffset\" = if TimeZoneOffset = null then #\"Combine Files\" else #\"Changed Type\",",
+          "    #\"Reordered Columns\" = Table.ReorderColumns(#\"Table with TimeZoneOffset\", metadata_columns[physicalName]),",
+          "    #\"Renamed Columns\" = Table.RenameColumns(#\"Reordered Columns\",Table.ToRows(Table.SelectColumns(metadata_columns,{\"physicalName\", \"name\"}))),",
+          "    #\"Renamed ComplexTypes\" = #\"Renamed Columns\" //Table.TransformColumnTypes(#\"Renamed Columns\",Table.ToRows(Table.SelectColumns(Table.SelectRows(metadata_columns, each [name] = \"structColumn\"),{\"name\", \"PBI_DataType\"})))",
+          " //Table.TransformColumnTypes(#\"Renamed Columns\",Table.ToRows(Table.SelectColumns(Table.SelectRows(metadata_columns, each [name] = \"structColumn\"),{\"name\", \"PBI_DataType\"})))",
+          ",",
+          "",
+          "    #\"Validate ReaderVersion\" = if DeltaProtocol{0}[minReaderVersion] <= 2 then #\"Renamed ComplexTypes\" else error Error.Record(\"DeltaLakeVersionNotSupported\", \"This Connector currently only supports DeltaLake tables up to version 2.\", \"minReaderVersion\"),",
+          "    FinalDeltaTable = Table.View(",
+          "        #\"Validate ReaderVersion\", ",
+          "        [",
+          "            GetType = () => TableSchema,",
+          "            GetRowCount = () => List.Sum(#\"Files with Stats\"[numRecords])",
+          "            //,OnSelectRows = (condition) => Table.FirstN(#\"Reordered Columns\", 3)",
+          "        ]",
+          "    )",
+          "in",
+          "    FinalDeltaTable"
+        ],
+        "kind": "m",
+        "lineageTag": "b6598977-52e0-4812-9047-62e3c68ecd25",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "Content_ADLS_BugBrackets",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = AzureStorage.DataLake(\"https://gbadls01.dfs.core.windows.net/data/powerbi_delta/BugBrackets.delta\", [HierarchicalNavigation = false])",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "953fe840-f321-4de7-87e4-c37f94a7498c",
+        "queryGroup": "Sources"
+      },
+      {
+        "name": "fn_URIDecode",
+        "annotations": [
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          },
+          {
+            "name": "PBI_ResultType",
+            "value": "Function"
+          }
+        ],
+        "expression": "(data as text) as text => Uri.Parts(\"http://powerbi?txt=\" & data)[Query][txt]",
+        "kind": "m",
+        "lineageTag": "1ec75613-27ea-4fd2-beea-d8ce24d9a51f",
+        "queryGroup": "FunctionSteps"
+      },
+      {
+        "name": "PQ_DataTypes",
+        "annotations": [
+          {
+            "name": "PBI_ResultType",
+            "value": "Record"
+          }
+        ],
+        "expression": [
+          "let",
+          "    Source = [",
+          "Any.Type = Any.Type,",
+          "None.Type = None.Type,",
+          "Day.Type = Day.Type,",
+          "Duration.Type = Duration.Type,",
+          "Record.Type = Record.Type,",
+          "Precision.Type = Precision.Type,",
+          "Number.Type = Number.Type,",
+          "Binary.Type = Binary.Type,",
+          "Byte.Type = Byte.Type,",
+          "Character.Type = Character.Type,",
+          "Text.Type = Text.Type,",
+          "Function.Type = Function.Type,",
+          "Null.Type = Null.Type,",
+          "List.Type = List.Type,",
+          "Type.Type = Type.Type,",
+          "Logical.Type = Logical.Type,",
+          "Int8.Type = Int8.Type,",
+          "Int16.Type = Int16.Type,",
+          "Int32.Type = Int32.Type,",
+          "Int64.Type = Int64.Type,",
+          "Single.Type = Single.Type,",
+          "Double.Type = Double.Type,",
+          "Decimal.Type = Decimal.Type,",
+          "Currency.Type = Currency.Type,",
+          "Percentage.Type = Percentage.Type,",
+          "Guid.Type = Guid.Type,",
+          "Date.Type = Date.Type,",
+          "DateTime.Type = DateTime.Type,",
+          "DateTimeZone.Type = DateTimeZone.Type,",
+          "Time.Type = Time.Type,",
+          "Table.Type = Table.Type",
+          "]",
+          "in",
+          "    Source"
+        ],
+        "kind": "m",
+        "lineageTag": "f0c17dfb-9e84-4f23-b7f2-d2a8224a6bd0",
+        "queryGroup": "FunctionSteps"
+      }
+    ],
+    "queryGroups": [
+      {
+        "annotations": [
+          {
+            "name": "PBI_QueryGroupOrder",
+            "value": "0"
+          }
+        ],
+        "folder": "Sources"
+      },
+      {
+        "annotations": [
+          {
+            "name": "PBI_QueryGroupOrder",
+            "value": "4"
+          }
+        ],
+        "folder": "FunctionSteps"
+      },
+      {
+        "annotations": [
+          {
+            "name": "PBI_QueryGroupOrder",
+            "value": "2"
+          }
+        ],
+        "folder": "FunctionParameters"
+      },
+      {
+        "annotations": [
+          {
+            "name": "PBI_QueryGroupOrder",
+            "value": "0"
+          }
+        ],
+        "folder": "FunctionParameters\\Options"
+      },
+      {
+        "annotations": [
+          {
+            "name": "PBI_QueryGroupOrder",
+            "value": "1"
+          }
+        ],
+        "folder": "UI_Filtering"
+      },
+      {
+        "annotations": [
+          {
+            "name": "PBI_QueryGroupOrder",
+            "value": "0"
+          }
+        ],
+        "folder": "Sources\\Golden Datasets"
+      }
+    ],
+    "sourceQueryCulture": "en-GB",
+    "tables": [
+      {
+        "name": "DeltaTableData_CurrentFunction",
+        "annotations": [
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          },
+          {
+            "name": "PBI_NavigationStepName",
+            "value": "Navigation"
+          }
+        ],
+        "columns": [
+          {
+            "name": "product",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "76c9e6eb-5030-4e15-adc1-55a50f56b02b",
+            "sourceColumn": "product",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "users",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "e5c72b40-ccde-4311-91c0-7b494b5bc047",
+            "sourceColumn": "users",
+            "summarizeBy": "none"
+          }
+        ],
+        "lineageTag": "1c1b35b6-5451-4971-a822-c33d3e7214f8",
+        "measures": [
+          {
+            "name": "RowCount",
+            "expression": "COUNTROWS(DeltaTableData_CurrentFunction)",
+            "formatString": "#,0",
+            "lineageTag": "cc48cce2-feb1-46ac-93d9-31807c333f67"
+          },
+          {
+            "name": "Function Up-to-Date",
+            "expression": [
+              "//IF(COUNTROWS(EXCEPT(Data, DeltaTableData_Generic)) = 0, \"Function Up-to-Date!\", \"FUNCTION NOT UP TO DATE!!!\")",
+              "IF(COUNTROWS(DeltaTableData_CurrentDebug) = COUNTROWS(DeltaTableData_CurrentFunction), \"Function Up-to-Date!\", \"FUNCTION NOT UP TO DATE!!!\")"
+            ],
+            "lineageTag": "3dd360ff-6cc6-4f34-bd49-9ca3357e5a76"
+          }
+        ],
+        "partitions": [
+          {
+            "name": "DeltaTableData_CurrentFunction-9c259273-48b9-495e-a4df-983309fa0f9d",
+            "mode": "import",
+            "source": {
+              "expression": [
+                "let",
+                "    Source = fn_ReadDeltaTable(DeltaTableFolderContent, DeltaTableOptions)",
+                "in",
+                "    Source"
+              ],
+              "type": "m"
+            }
+          }
+        ]
+      },
+      {
+        "name": "RowCounts",
+        "annotations": [
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "columns": [
+          {
+            "name": "GoldenTable",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "6c44fecf-af30-4464-b2f7-89c1bfe39082",
+            "sourceColumn": "GoldenTable",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "RowCounts",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "dataType": "int64",
+            "formatString": "#,0",
+            "lineageTag": "f124689d-7424-4dac-8043-f8efbaf44d82",
+            "sourceColumn": "RowCounts",
+            "summarizeBy": "sum"
+          }
+        ],
+        "lineageTag": "9a0dddd8-84f0-4e44-ab08-361abf445c3b",
+        "partitions": [
+          {
+            "name": "RowCounts-38e290fc-6a76-4321-ae40-7d220463adf6",
+            "mode": "import",
+            "source": {
+              "expression": [
+                "let",
+                "    Source = GoldenTables,",
+                "    #\"Invoked Custom Function\" = Table.AddColumn(Source, \"fn_ReadDeltaTable\", each fn_ReadDeltaTable([Content], null)),",
+                "    #\"Added Custom\" = Table.AddColumn(#\"Invoked Custom Function\", \"RowCounts\", each Table.RowCount([fn_ReadDeltaTable]), Int64.Type),",
+                "    #\"Removed Other Columns\" = Table.SelectColumns(#\"Added Custom\",{\"GoldenTable\", \"RowCounts\"})",
+                "in",
+                "    #\"Removed Other Columns\""
+              ],
+              "type": "m"
+            }
+          }
+        ]
+      },
+      {
+        "name": "DeltaTableData_CurrentDebug",
+        "annotations": [
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "columns": [
+          {
+            "name": "product",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "ff67f5a0-eadd-4391-aa68-060fb5cda460",
+            "sourceColumn": "product",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "users",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "1217c4ea-017f-4131-b18b-8a20d74b3844",
+            "sourceColumn": "users",
+            "summarizeBy": "none"
+          }
+        ],
+        "lineageTag": "b5082451-2c3d-49d6-ad7f-eb9510869aea",
+        "partitions": [
+          {
+            "name": "DeltaTableData_CurrentDebug",
+            "mode": "import",
+            "source": {
+              "expression": [
+                "let",
+                "    Source = #\"Data\"",
+                "in",
+                "    Source"
+              ],
+              "type": "m"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

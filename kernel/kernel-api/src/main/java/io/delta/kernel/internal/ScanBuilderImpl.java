@@ -16,7 +16,6 @@
 
 package io.delta.kernel.internal;
 
-import java.util.List;
 import java.util.Optional;
 
 import io.delta.kernel.Scan;
@@ -24,15 +23,11 @@ import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.types.TimestampType;
-import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.Tuple2;
 
-import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.replay.LogReplay;
 
 /**
  * Implementation of {@link ScanBuilder}.
@@ -40,27 +35,29 @@ import io.delta.kernel.internal.lang.Lazy;
 public class ScanBuilderImpl
     implements ScanBuilder {
 
-    private final StructType snapshotSchema;
-    private final CloseableIterator<AddFile> filesIter;
-    private final Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata;
-    private final TableClient tableClient;
     private final Path dataPath;
+    private final Protocol protocol;
+    private final Metadata metadata;
+    private final StructType snapshotSchema;
+    private final LogReplay logReplay;
+    private final TableClient tableClient;
 
     private StructType readSchema;
     private Optional<Predicate> predicate;
 
     public ScanBuilderImpl(
-        Path dataPath,
-        Lazy<Tuple2<Protocol, Metadata>> protocolAndMetadata,
-        StructType snapshotSchema,
-        CloseableIterator<AddFile> filesIter,
-        TableClient tableClient) {
+            Path dataPath,
+            Protocol protocol,
+            Metadata metadata,
+            StructType snapshotSchema,
+            LogReplay logReplay,
+            TableClient tableClient) {
         this.dataPath = dataPath;
+        this.protocol = protocol;
+        this.metadata = metadata;
         this.snapshotSchema = snapshotSchema;
-        this.filesIter = filesIter;
-        this.protocolAndMetadata = protocolAndMetadata;
+        this.logReplay = logReplay;
         this.tableClient = tableClient;
-
         this.readSchema = snapshotSchema;
         this.predicate = Optional.empty();
     }
@@ -83,27 +80,12 @@ public class ScanBuilderImpl
 
     @Override
     public Scan build() {
-        // TODO: support timestamp type partition columns
-        // Timestamp partition columns have complicated semantics related to timezones so block this
-        // for now
-        List<String> partitionCols = protocolAndMetadata.get()._2.getPartitionColumns();
-        for (String colName : partitionCols) {
-            if (readSchema.indexOf(colName) >= 0 &&
-                readSchema.get(colName).getDataType() instanceof TimestampType) {
-                throw new UnsupportedOperationException(String.format(
-                    "Reading partition columns of TimestampType is unsupported.\n" +
-                        "readSchema: %s\npartitionColumns: %s",
-                    readSchema,
-                    partitionCols
-                ));
-            }
-        }
-
         return new ScanImpl(
             snapshotSchema,
             readSchema,
-            protocolAndMetadata,
-            filesIter,
+            protocol,
+            metadata,
+            logReplay,
             predicate,
             dataPath);
     }

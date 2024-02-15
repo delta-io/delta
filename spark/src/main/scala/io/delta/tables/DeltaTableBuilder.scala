@@ -19,6 +19,7 @@ package io.delta.tables
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableUtils}
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.tables.execution._
 
@@ -175,7 +176,7 @@ class DeltaTableBuilder private[tables](
   @Evolving
   def addColumn(colName: String, dataType: String): DeltaTableBuilder = {
     addColumn(
-      DeltaTable.columnBuilder(spark, colName).dataType(dataType).build
+      DeltaTable.columnBuilder(spark, colName).dataType(dataType).build()
     )
     this
   }
@@ -192,7 +193,7 @@ class DeltaTableBuilder private[tables](
   @Evolving
   def addColumn(colName: String, dataType: DataType): DeltaTableBuilder = {
     addColumn(
-      DeltaTable.columnBuilder(spark, colName).dataType(dataType).build
+      DeltaTable.columnBuilder(spark, colName).dataType(dataType).build()
     )
     this
   }
@@ -210,7 +211,7 @@ class DeltaTableBuilder private[tables](
   @Evolving
   def addColumn(colName: String, dataType: String, nullable: Boolean): DeltaTableBuilder = {
     addColumn(
-      DeltaTable.columnBuilder(spark, colName).dataType(dataType).nullable(nullable).build
+      DeltaTable.columnBuilder(spark, colName).dataType(dataType).nullable(nullable).build()
     )
     this
   }
@@ -228,7 +229,7 @@ class DeltaTableBuilder private[tables](
   @Evolving
   def addColumn(colName: String, dataType: DataType, nullable: Boolean): DeltaTableBuilder = {
     addColumn(
-      DeltaTable.columnBuilder(spark, colName).dataType(dataType).nullable(nullable).build
+      DeltaTable.columnBuilder(spark, colName).dataType(dataType).nullable(nullable).build()
     )
     this
   }
@@ -302,7 +303,7 @@ class DeltaTableBuilder private[tables](
    * @since 1.0.0
    */
   @Evolving
-  def execute(): DeltaTable = {
+  def execute(): DeltaTable = withActiveSession(spark) {
     if (identifier == null && location.isEmpty) {
       throw DeltaErrors.analysisException("Table name or location has to be specified")
     }

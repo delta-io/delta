@@ -76,7 +76,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       spark, txn.deltaLog, txn.snapshot, postCommitSnapshot, committedActions)
   }
 
-  override def handleError(error: Throwable, version: Long): Unit = {
+  override def handleError(spark: SparkSession, error: Throwable, version: Long): Unit = {
     error match {
       case e: ColumnMappingUnsupportedException => throw e
       case e: DeltaCommandUnsupportedWithDeletionVectorsException => throw e
@@ -245,7 +245,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
   }
 
   protected def assertTableIsDVFree(spark: SparkSession, snapshot: Snapshot): Unit = {
-    if (!isTableDVFree(spark, snapshot)) {
+    if (!isTableDVFree(snapshot)) {
       throw DeltaErrors.generateNotSupportedWithDeletionVectors()
     }
   }

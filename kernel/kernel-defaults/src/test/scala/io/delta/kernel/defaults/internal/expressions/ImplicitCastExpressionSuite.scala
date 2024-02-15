@@ -16,33 +16,33 @@
 package io.delta.kernel.defaults.internal.expressions
 
 import io.delta.kernel.data.ColumnVector
-import io.delta.kernel.defaults.internal.data.vector.VectorUtils.getValueAsObject
 import io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo
-import io.delta.kernel.defaults.TestUtils
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
+import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
 class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
   private val allowedCasts: Set[(DataType, DataType)] = Set(
-    (ByteType.INSTANCE, ShortType.INSTANCE),
-    (ByteType.INSTANCE, IntegerType.INSTANCE),
-    (ByteType.INSTANCE, LongType.INSTANCE),
-    (ByteType.INSTANCE, FloatType.INSTANCE),
-    (ByteType.INSTANCE, DoubleType.INSTANCE),
+    (ByteType.BYTE, ShortType.SHORT),
+    (ByteType.BYTE, IntegerType.INTEGER),
+    (ByteType.BYTE, LongType.LONG),
+    (ByteType.BYTE, FloatType.FLOAT),
+    (ByteType.BYTE, DoubleType.DOUBLE),
 
-    (ShortType.INSTANCE, IntegerType.INSTANCE),
-    (ShortType.INSTANCE, LongType.INSTANCE),
-    (ShortType.INSTANCE, FloatType.INSTANCE),
-    (ShortType.INSTANCE, DoubleType.INSTANCE),
+    (ShortType.SHORT, IntegerType.INTEGER),
+    (ShortType.SHORT, LongType.LONG),
+    (ShortType.SHORT, FloatType.FLOAT),
+    (ShortType.SHORT, DoubleType.DOUBLE),
 
-    (IntegerType.INSTANCE, LongType.INSTANCE),
-    (IntegerType.INSTANCE, FloatType.INSTANCE),
-    (IntegerType.INSTANCE, DoubleType.INSTANCE),
+    (IntegerType.INTEGER, LongType.LONG),
+    (IntegerType.INTEGER, FloatType.FLOAT),
+    (IntegerType.INTEGER, DoubleType.DOUBLE),
 
-    (LongType.INSTANCE, FloatType.INSTANCE),
-    (LongType.INSTANCE, DoubleType.INSTANCE),
-    (FloatType.INSTANCE, DoubleType.INSTANCE))
+    (LongType.LONG, FloatType.FLOAT),
+    (LongType.LONG, DoubleType.DOUBLE),
+    (FloatType.FLOAT, DoubleType.DOUBLE))
 
   test("can cast to") {
     Seq.range(0, ALL_TYPES.length).foreach { fromTypeIdx =>
@@ -74,32 +74,32 @@ class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
       override def isNullAt(rowId: Int): Boolean = nullability(rowId)
 
       override def getByte(rowId: Int): Byte = {
-        assert(dataType === ByteType.INSTANCE)
+        assert(dataType === ByteType.BYTE)
         generateValue(rowId).toByte
       }
 
       override def getShort(rowId: Int): Short = {
-        assert(dataType === ShortType.INSTANCE)
+        assert(dataType === ShortType.SHORT)
         generateValue(rowId).toShort
       }
 
       override def getInt(rowId: Int): Int = {
-        assert(dataType === IntegerType.INSTANCE)
+        assert(dataType === IntegerType.INTEGER)
         generateValue(rowId).toInt
       }
 
       override def getLong(rowId: Int): Long = {
-        assert(dataType === LongType.INSTANCE)
+        assert(dataType === LongType.LONG)
         generateValue(rowId).toLong
       }
 
       override def getFloat(rowId: Int): Float = {
-        assert(dataType === FloatType.INSTANCE)
+        assert(dataType === FloatType.FLOAT)
         generateValue(rowId).toFloat
       }
 
       override def getDouble(rowId: Int): Double = {
-        assert(dataType === DoubleType.INSTANCE)
+        assert(dataType === DoubleType.DOUBLE)
         generateValue(rowId)
       }
     }

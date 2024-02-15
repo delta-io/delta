@@ -27,9 +27,9 @@ import org.apache.parquet.schema.Type;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.*;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.*;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 
 class ParquetConverters {
     public static Converter createConverter(
@@ -468,7 +468,7 @@ class ParquetConverters {
 
     public static class FileRowIndexColumnConverter extends LongColumnConverter {
         FileRowIndexColumnConverter(int initialBatchSize) {
-            super(LongType.INSTANCE, initialBatchSize);
+            super(LongType.LONG, initialBatchSize);
         }
 
         @Override

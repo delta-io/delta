@@ -198,8 +198,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
       val e = intercept[AnalysisException] {
         sql(s"DESCRIBE DETAIL $viewName")
       }
-      assert(e.getMessage.contains(
-        s"`$viewName` is a view. DESCRIBE DETAIL is only supported for tables."))
+      assert(e.getMessage.contains("'DESCRIBE DETAIL' expects a table"))
     }
   }
 
@@ -208,8 +207,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     withView(view) {
       sql(s"CREATE VIEW $view AS SELECT 1")
       val e = intercept[AnalysisException] { sql(s"DESCRIBE DETAIL $view") }
-      assert(e.getMessage.contains(
-        "`detailTestView` is a view. DESCRIBE DETAIL is only supported for tables."))
+      assert(e.getMessage.contains("'DESCRIBE DETAIL' expects a table"))
     }
   }
 
@@ -283,6 +281,69 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
         Seq(s"$catalogAndSchema$tblName"),
         Seq("name")
       )
+    }
+  }
+
+  private def withTempTableOrDir(useTable: Boolean = true)(f: String => Unit): Unit = {
+    if (useTable) {
+      val testTable = "test_table"
+      withTable(testTable) {
+        f(testTable)
+      }
+    } else {
+      withTempDir { dir =>
+        f(s"delta.`$dir`")
+      }
+    }
+  }
+
+  private def checkResultForClusteredTable(
+      table: String,
+      clusteringColumns: Array[String]): Unit = {
+    // Check SQL API.
+    checkResult(
+      sql(s"DESCRIBE DETAIL $table"),
+      Seq("delta", Array.empty, clusteringColumns, 0),
+      Seq("format", "partitionColumns", "clusteringColumns", "numFiles"))
+
+    // Check DeltaTable APIs.
+    val isPathBased = table.startsWith("delta.")
+    val deltaTable = if (isPathBased) {
+      val path = table.replace("delta.`", "").dropRight(1)
+      io.delta.tables.DeltaTable.forPath(path)
+    } else {
+      io.delta.tables.DeltaTable.forName(table)
+    }
+    checkResult(
+      deltaTable.detail(),
+      Seq("delta", Array.empty, clusteringColumns, 0),
+      Seq("format", "partitionColumns", "clusteringColumns", "numFiles"))
+  }
+
+  Seq(true -> "", false -> " - path based").foreach { case (useTable, testSuffix) =>
+    test(s"describe liquid table$testSuffix") {
+      withTempTableOrDir(useTable) { testTable =>
+        sql(s"CREATE TABLE $testTable(a STRUCT<b INT, c STRING>, d INT) USING DELTA " +
+          "CLUSTER BY (a.b, d)")
+
+        checkResultForClusteredTable(testTable, Array("a.b", "d"))
+
+        sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
+
+        checkResultForClusteredTable(testTable, Array.empty)
+      }
+    }
+
+    test(s"describe liquid table - column mapping$testSuffix") {
+      withTempTableOrDir(useTable) { testTable =>
+        sql(s"CREATE TABLE $testTable (col1 STRING, col2 INT) USING delta CLUSTER BY (col1, col2)")
+        sql(s"ALTER TABLE $testTable SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name'," +
+          "'delta.minReaderVersion' = '3'," +
+          "'delta.minWriterVersion'= '7')")
+        sql(s"ALTER TABLE $testTable RENAME COLUMN col2 TO new_col_name")
+
+        checkResultForClusteredTable(testTable, Array("col1", "new_col_name"))
+      }
     }
   }
 

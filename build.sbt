@@ -21,23 +21,23 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala212 = "2.12.15"
-val scala213 = "2.13.5"
+val scala212 = "2.12.17"
+val scala213 = "2.13.8"
 val all_scala_versions = Seq(scala212, scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
 // It was necessary to change default_scala_version to scala213 in build.sbt
 // to build the project with Scala 2.13 only
 // As a setting, it's possible to set it on command line easily
-// sbt 'set default_scala_version := 2.13.5' [commands]
+// sbt 'set default_scala_version := 2.13.8' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
 // Dependent library versions
-val sparkVersion = "3.4.0"
+val sparkVersion = "3.5.0"
 val flinkVersion = "1.16.1"
-val hadoopVersion = "3.3.1"
+val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -115,6 +115,8 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
     ),
+    // For adding staged Spark RC versions, Ex:
+    // resolvers += "Apche Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
@@ -211,6 +213,31 @@ lazy val contribs = (project in file("contribs"))
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
   ).configureUnidoc()
 
+lazy val sharing = (project in file("sharing"))
+  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .settings(
+    name := "delta-sharing-spark",
+    commonSettings,
+    scalaStyleSettings,
+    releaseSettings,
+    Test / javaOptions ++= Seq("-ea"),
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
+
+      "io.delta" %% "delta-sharing-client" % "1.0.4",
+
+      // Test deps
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
+      "junit" % "junit" % "4.12" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
+    )
+  ).configureUnidoc()
+
 lazy val kernelApi = (project in file("kernel/kernel-api"))
   .settings(
     name := "delta-kernel-api",
@@ -220,28 +247,22 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
+      "org.slf4j" % "slf4j-api" % "1.7.36",
 
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.11" % "test",
-      "com.novocode" % "junit-interface" % "0.11" % "test"
+      "junit" % "junit" % "4.13" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test",
+      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test"
     ),
-
-    // Can be run explicitly via: build/sbt $module/checkstyle
-    // Will automatically be run during compilation (e.g. build/sbt compile)
-    // and during tests (e.g. build/sbt test)
-    checkstyleConfigLocation := CheckstyleConfigLocation.File("kernel/dev/checkstyle.xml"),
-    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
-    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
-    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value,
-
+    javaCheckstyleSettings("kernel/dev/checkstyle.xml"),
     // Unidoc settings
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kernel/")),
   ).configureUnidoc(docTitle = "Delta Kernel")
 
 lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(kernelApi)
-  .dependsOn(spark % "test")
+  .dependsOn(spark % "test->test")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-kernel-defaults",
@@ -255,18 +276,17 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.11" % "test",
-      "com.novocode" % "junit-interface" % "0.11" % "test"
+      "junit" % "junit" % "4.13" % "test",
+      "commons-io" % "commons-io" % "2.8.0" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test",
+      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
+
+      "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
     ),
-
-    // Can be run explicitly via: build/sbt $module/checkstyle
-    // Will automatically be run during compilation (e.g. build/sbt compile)
-    // and during tests (e.g. build/sbt test)
-    checkstyleConfigLocation := CheckstyleConfigLocation.File("kernel/dev/checkstyle.xml"),
-    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
-    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
-    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value,
-
+    javaCheckstyleSettings("kernel/dev/checkstyle.xml"),
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
@@ -309,7 +329,7 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     // Test / publishArtifact := true,
 
     libraryDependencies ++= Seq(
-      "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided",
+      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
 
       // Test Deps
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException
@@ -321,8 +341,36 @@ val icebergSparkRuntimeArtifactName = {
  s"iceberg-spark-runtime-$expMaj.$expMin"
 }
 
+lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
+  // delta-iceberg depends on delta-spark! So, we need to include it during our test.
+  .dependsOn(spark % "test")
+  .settings(
+    name := "test-delta-iceberg-jar",
+    commonSettings,
+    skipReleaseSettings,
+    exportJars := true,
+    Compile / unmanagedJars += (iceberg / assembly).value,
+    libraryDependencies ++= Seq(
+      "org.apache.hadoop" % "hadoop-client" % hadoopVersion,
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.apache.spark" %% "spark-core" % sparkVersion % "test"
+    )
+  )
+
+val deltaIcebergSparkIncludePrefixes = Seq(
+  // We want everything from this package
+  "org/apache/spark/sql/delta/icebergShaded",
+
+  // We only want the files in this project from this package. e.g. we want to exclude
+  // org/apache/spark/sql/delta/commands/convert/ConvertTargetFile.class (from delta-spark project).
+  "org/apache/spark/sql/delta/commands/convert/IcebergFileManifest",
+  "org/apache/spark/sql/delta/commands/convert/IcebergSchemaUtils",
+  "org/apache/spark/sql/delta/commands/convert/IcebergTable"
+)
+
 // Build using: build/sbt clean icebergShaded/compile iceberg/compile
 // It will fail the first time, just re-run it.
+// scalastyle:off println
 lazy val iceberg = (project in file("iceberg"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .settings (
@@ -334,7 +382,7 @@ lazy val iceberg = (project in file("iceberg"))
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
-      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.3.0" % "provided",
+      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.4.0" % "provided",
       "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3"
     ),
     Compile / unmanagedJars += (icebergShaded / assembly).value,
@@ -343,8 +391,57 @@ lazy val iceberg = (project in file("iceberg"))
     assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
     assembly / logLevel := Level.Info,
     assembly / test := {},
+    assembly / assemblyExcludedJars := {
+      // Note: the input here is only `libraryDependencies` jars, not `.dependsOn(_)` jars.
+      val allowedJars = Seq(
+        s"iceberg-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
+        s"scala-library-${scala212}.jar",
+        s"scala-library-${scala213}.jar",
+        s"scala-collection-compat_${scalaBinaryVersion.value}-2.1.1.jar",
+        "caffeine-2.9.3.jar",
+        // Note: We are excluding
+        // - antlr4-runtime-4.9.3.jar
+        // - checker-qual-3.19.0.jar
+        // - error_prone_annotations-2.10.0.jar
+      )
+      val cp = (assembly / fullClasspath).value
+
+      // Return `true` when we want the jar `f` to be excluded from the assembly jar
+      cp.filter { f =>
+        val doExclude = !allowedJars.contains(f.data.getName)
+        println(s"Excluding jar: ${f.data.getName} ? $doExclude")
+        doExclude
+      }
+    },
+    assembly / assemblyMergeStrategy := {
+      // Project iceberg `dependsOn` spark and accidentally brings in it, along with its
+      // compile-time dependencies (like delta-storage). We want these excluded from the
+      // delta-iceberg jar.
+      case PathList("io", "delta", xs @ _*) =>
+        // - delta-storage will bring in classes: io/delta/storage
+        // - delta-spark will bring in classes: io/delta/exceptions/, io/delta/implicits,
+        //   io/delta/package, io/delta/sql, io/delta/tables,
+        println(s"Discarding class: io/delta/${xs.mkString("/")}")
+        MergeStrategy.discard
+      case PathList("com", "databricks", xs @ _*) =>
+        // delta-spark will bring in com/databricks/spark/util
+        println(s"Discarding class: com/databricks/${xs.mkString("/")}")
+        MergeStrategy.discard
+      case PathList("org", "apache", "spark", xs @ _*)
+        if !deltaIcebergSparkIncludePrefixes.exists { prefix =>
+          s"org/apache/spark/${xs.mkString("/")}".startsWith(prefix) } =>
+        println(s"Discarding class: org/apache/spark/${xs.mkString("/")}")
+        MergeStrategy.discard
+      case PathList("scoverage", xs @ _*) =>
+        println(s"Discarding class: scoverage/${xs.mkString("/")}")
+        MergeStrategy.discard
+      case x =>
+        println(s"Including class: $x")
+        (assembly / assemblyMergeStrategy).value(x)
+    },
     assemblyPackageScala / assembleArtifact := false
   )
+// scalastyle:on println
 
 lazy val generateIcebergJarsTask = TaskKey[Unit]("generateIcebergJars", "Generate Iceberg JARs")
 
@@ -618,23 +715,26 @@ lazy val hive2Tez = (project in file("connectors/hive2-tez"))
  * -- .m2/repository/io/delta/delta-standalone_2.12/0.2.1-SNAPSHOT/delta-standalone_2.12-0.2.1-SNAPSHOT-javadoc.jar
  */
 lazy val standaloneCosmetic = project
-  .dependsOn(storage)
+  .dependsOn(storage) // this doesn't impact the output artifact (jar), only the pom.xml dependencies
   .settings(
     name := "delta-standalone",
     commonSettings,
     releaseSettings,
     exportJars := true,
     Compile / packageBin := (standaloneParquet / assembly).value,
+    Compile / packageSrc := (standalone / Compile / packageSrc).value,
     libraryDependencies ++= scalaCollectionPar(scalaVersion.value) ++ Seq(
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
-      "org.apache.parquet" % "parquet-hadoop" % "1.12.0" % "provided",
+      "org.apache.parquet" % "parquet-hadoop" % "1.12.3" % "provided",
       // parquet4s-core dependencies that are not shaded are added with compile scope.
       "com.chuusai" %% "shapeless" % "2.3.4",
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.4.3"
     )
   )
 
-lazy val testStandaloneCosmetic = project.dependsOn(standaloneCosmetic)
+lazy val testStandaloneCosmetic = (project in file("connectors/testStandaloneCosmetic"))
+  .dependsOn(standaloneCosmetic)
+  .dependsOn(goldenTables % "test")
   .settings(
     name := "test-standalone-cosmetic",
     commonSettings,
@@ -657,7 +757,7 @@ lazy val testParquetUtilsWithStandaloneCosmetic = project.dependsOn(standaloneCo
     skipReleaseSettings,
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion,
-      "org.apache.parquet" % "parquet-hadoop" % "1.12.0" % "provided",
+      "org.apache.parquet" % "parquet-hadoop" % "1.12.3" % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test",
     )
   )
@@ -680,7 +780,7 @@ lazy val standaloneParquet = (project in file("connectors/standalone-parquet"))
     commonSettings,
     skipReleaseSettings,
     libraryDependencies ++= Seq(
-      "org.apache.parquet" % "parquet-hadoop" % "1.12.0" % "provided",
+      "org.apache.parquet" % "parquet-hadoop" % "1.12.3" % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test"
     ),
     assemblyPackageScala / assembleArtifact := false
@@ -696,8 +796,9 @@ lazy val standaloneWithoutParquetUtils = project
     Compile / packageBin := (standalone / assembly).value
   )
 
+// TODO scalastyle settings
 lazy val standalone = (project in file("connectors/standalone"))
-  .dependsOn(storage)
+  .dependsOn(storage % "compile->compile;provided->provided")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-standalone-original",
@@ -750,7 +851,8 @@ lazy val standalone = (project in file("connectors/standalone"))
     assembly / logLevel := Level.Info,
     assembly / test := {},
     assembly / assemblyJarName := s"${name.value}-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
-    // we exclude jars first, and then we shade what is remaining
+    // We exclude jars first, and then we shade what is remaining. Note: the input here is only
+    // `libraryDependencies` jars, not `.dependsOn(_)` jars.
     assembly / assemblyExcludedJars := {
       val cp = (assembly / fullClasspath).value
       val allowedPrefixes = Set("META_INF", "io", "json4s", "jackson", "paranamer",
@@ -778,6 +880,9 @@ lazy val standalone = (project in file("connectors/standalone"))
       // Discard the jackson service configs that we don't need. These files are not shaded so
       // adding them may conflict with other jackson version used by the user.
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
+      // This project `.dependsOn` delta-storage, and its classes will be included by default
+      // in this assembly jar. Manually discard them since it is already a compile-time dependency.
+      case PathList("io", "delta", "storage", xs @ _*) => MergeStrategy.discard
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
@@ -790,6 +895,7 @@ lazy val standalone = (project in file("connectors/standalone"))
 
     // Unidoc setting
     unidocSourceFilePatterns += SourceFilePattern("io/delta/standalone/"),
+    javaCheckstyleSettings("connectors/dev/checkstyle.xml")
   ).configureUnidoc()
 
 
@@ -873,6 +979,8 @@ def flinkScalaVersion(scalaBinaryVersion: String): String = {
 
 lazy val flink = (project in file("connectors/flink"))
   .dependsOn(standaloneCosmetic % "provided")
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
   .settings (
     name := "delta-flink",
     commonSettings,
@@ -882,10 +990,10 @@ lazy val flink = (project in file("connectors/flink"))
     autoScalaLibrary := false, // exclude scala-library from dependencies
     Test / publishArtifact := false,
     pomExtra :=
-      <url>https://github.com/delta-io/connectors</url>
+      <url>https://github.com/delta-io/delta</url>
         <scm>
-          <url>git@github.com:delta-io/connectors.git</url>
-          <connection>scm:git:git@github.com:delta-io/connectors.git</connection>
+          <url>git@github.com:delta-io/delta.git</url>
+          <connection>scm:git:git@github.com:delta-io/delta.git</connection>
         </scm>
         <developers>
           <developer>
@@ -970,6 +1078,9 @@ lazy val flink = (project in file("connectors/flink"))
 
     // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/flink/"),
+    // TODO: this is the config that was used before archiving connectors but it has
+    //  standalone-specific import orders
+    javaCheckstyleSettings("connectors/dev/checkstyle.xml")
   ).configureUnidoc()
 
 /**
@@ -1000,7 +1111,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar, sharing)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
@@ -1040,6 +1151,24 @@ lazy val scalaStyleSettings = Seq(
 
   Test / test := ((Test / test) dependsOn testScalastyle).value
 )
+
+/*
+ ****************************
+ * Java checkstyle settings *
+ ****************************
+ */
+
+def javaCheckstyleSettings(checkstyleFile: String): Def.SettingsDefinition = {
+  // Can be run explicitly via: build/sbt $module/checkstyle
+  // Will automatically be run during compilation (e.g. build/sbt compile)
+  // and during tests (e.g. build/sbt test)
+  Seq(
+    checkstyleConfigLocation := CheckstyleConfigLocation.File(checkstyleFile),
+    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
+    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
+    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
+  )
+}
 
 /*
  ********************
