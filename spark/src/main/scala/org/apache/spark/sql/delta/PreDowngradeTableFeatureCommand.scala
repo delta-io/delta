@@ -53,12 +53,14 @@ case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
 }
 
 case class TestReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
-  extends PreDowngradeTableFeatureCommand {
+  extends PreDowngradeTableFeatureCommand
+  with DeltaLogging {
   // To remove the feature we only need to remove the table property.
   override def removeFeatureTracesIfNeeded(): Boolean = {
     // Make sure feature data/metadata exist before proceeding.
     if (TestRemovableReaderWriterFeature.validateRemoval(table.initialSnapshot)) return false
 
+    recordDeltaEvent(table.deltaLog, "delta.test.TestReaderWriterFeaturePreDowngradeCommand")
     val properties = Seq(TestRemovableReaderWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
     true
