@@ -30,7 +30,7 @@ import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.catalyst.expressions.{Cast, Expression, GenericInternalRow, Literal}
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.types.StructType
@@ -62,8 +62,20 @@ abstract class TahoeFileIndex(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[PartitionDirectory] = {
     val partitionValuesToFiles = listAddFiles(partitionFilters, dataFilters)
-    makePartitionDirectories(partitionValuesToFiles.toSeq)
+    makePartitionDirectories(toInternalRowAddFileSeq(partitionValuesToFiles.toSeq))
   }
+
+  /**
+   * Utility method to convert a sequence of partition values (represented as a Map) and AddFiles
+   * to a sequence of (partitionValuesRow, files) tuples. The partitionValuesRow is a
+   * [[InternalRow]] representing the partition values. The files are represented as a
+   * sequence of [[AddFile]].
+   */
+  def toInternalRowAddFileSeq(partitionValuesToFilesMap: Seq[(Map[String, String], Seq[AddFile])]):
+    Seq[(InternalRow, Seq[AddFile])] = partitionValuesToFilesMap.map {
+      case (partitionValues, addFiles) =>
+        (getPartitionValuesRow(partitionValues), addFiles)
+    }
 
 
   private def listAddFiles(
@@ -72,12 +84,12 @@ abstract class TahoeFileIndex(
     matchingFiles(partitionFilters, dataFilters).groupBy(_.partitionValues)
   }
 
-  private def makePartitionDirectories(
-      partitionValuesToFiles: Seq[(Map[String, String], Seq[AddFile])]): Seq[PartitionDirectory] = {
+
+  def makePartitionDirectories(
+      partitionValuesToFiles: Seq[(InternalRow, Seq[AddFile])]): Seq[PartitionDirectory] = {
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
     partitionValuesToFiles.map {
       case (partitionValues, files) =>
-        val partitionValuesRow = getPartitionValuesRow(partitionValues)
 
         val fileStatuses = files.map { f =>
           new FileStatus(
@@ -89,7 +101,7 @@ abstract class TahoeFileIndex(
             absolutePath(f.path))
         }.toArray
 
-        PartitionDirectory(partitionValuesRow, fileStatuses)
+        PartitionDirectory(partitionValues, fileStatuses)
     }
   }
 
@@ -105,7 +117,7 @@ abstract class TahoeFileIndex(
 
   override def partitionSchema: StructType = metadata.partitionSchema
 
-  protected def absolutePath(child: String): Path = {
+  def absolutePath(child: String): Path = {
     // scalastyle:off pathfromuri
     val p = new Path(new URI(child))
     // scalastyle:on pathfromuri
