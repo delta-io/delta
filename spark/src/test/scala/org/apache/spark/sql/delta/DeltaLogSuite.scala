@@ -655,10 +655,22 @@ class DeltaLogSuite extends QueryTest
       assert(DeltaLog.cacheSize === expected)
     }
     DeltaLog.unsetCache()
-    spark.sessionState.conf.setConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE, 2L)
-    assertCacheSize(2)
-    DeltaLog.unsetCache()
-    System.getProperties.setProperty("delta.log.cacheSize", "3")
-    assertCacheSize(3)
+    withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "2") {
+      assertCacheSize(2)
+      DeltaLog.unsetCache()
+      // the larger of SQLConf and env var is adopted
+      try {
+        System.getProperties.setProperty("delta.log.cacheSize", "3")
+        assertCacheSize(3)
+      } finally {
+        System.getProperties.remove("delta.log.cacheSize")
+      }
+    }
+
+    // assert timeconf returns correct value
+    withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES.key -> "100") {
+      assert(spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES) === 100)
+    }
   }
 }

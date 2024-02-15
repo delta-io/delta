@@ -641,7 +641,7 @@ object DeltaLog extends DeltaLogging {
   /**
    * Helper to create delta log caches
    */
-  private[delta] def createCacheBuilder(conf: SQLConf): CacheBuilder[AnyRef, AnyRef] = {
+  private def createCacheBuilder(conf: SQLConf): CacheBuilder[AnyRef, AnyRef] = {
     val cacheRetention = conf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES)
     val cacheSize = conf
       .getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE)
@@ -808,8 +808,8 @@ object DeltaLog extends DeltaLogging {
       // - Different `authority` (e.g., different user tokens in the path)
       // - Different mount point.
       try {
-        getOrCreateCache(spark.sessionState.conf).get(
-            path -> fileSystemOptions, () => {
+        getOrCreateCache(spark.sessionState.conf)
+          .get(path -> fileSystemOptions, () => {
             createDeltaLog()
           }
         )
@@ -864,9 +864,7 @@ object DeltaLog extends DeltaLogging {
   }
 
   def clearCache(): Unit = {
-    deltaLogCache.foreach { cache =>
-      cache.invalidateAll()
-    }
+    deltaLogCache.foreach(_.invalidateAll())
   }
 
   /** Unset the caches. Exposing for testing */
