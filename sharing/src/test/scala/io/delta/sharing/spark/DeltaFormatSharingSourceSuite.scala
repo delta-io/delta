@@ -33,7 +33,7 @@ import org.apache.spark.SparkEnv
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
 import org.apache.spark.sql.functions.{col, lit}
-import org.apache.spark.sql.streaming.StreamingQueryExceptions
+import org.apache.spark.sql.streaming.StreamingQueryException
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.{
   DateType,
@@ -974,6 +974,7 @@ class DeltaFormatSharingSourceSuite
             var e = intercept[StreamingQueryException] {
               processAllAvailableInStream(0)
             }
+
             assert(e.getCause.asInstanceOf[DeltaIllegalStateException].getErrorClass
               == "DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS")
             assert(e.getMessage.contains("Detected schema change in version 3"))
