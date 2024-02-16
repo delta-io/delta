@@ -415,13 +415,13 @@ class SnapshotManagerSuite extends AnyFunSuite {
       files = deltaFileStatuses(Seq(0)),
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains =
-        "Trying to load a non-existent version 15. Latest version available is 0"
+        "Trying to load a non-existent version 15. The latest version available is 0"
     )
     testExpectedError[RuntimeException](
       files = deltaFileStatuses((10L until 13L)) ++ singularCheckpointFileStatuses(Seq(10)),
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains =
-        "Trying to load a non-existent version 15. Latest version available is 12"
+        "Trying to load a non-existent version 15. The latest version available is 12"
     )
   }
 
