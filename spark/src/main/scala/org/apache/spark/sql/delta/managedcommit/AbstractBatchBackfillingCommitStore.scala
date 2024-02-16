@@ -16,11 +16,13 @@
 
 package org.apache.spark.sql.delta.managedcommit
 
+import java.nio.file.FileAlreadyExistsException
+
 import org.apache.spark.sql.delta.{DeltaLog, SerializableFileStatus}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileAlreadyExistsException, FileStatus, FileSystem, Path}
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.Logging
 
@@ -119,17 +121,27 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
       fileStatus: FileStatus): Unit = {
     val targetFile = FileNames.deltaFile(logPath(tablePath), version)
     logInfo(s"Backfilling commit ${fileStatus.getPath} to ${targetFile.toString}")
+    val commitContentIterator = logStore.readAsIterator(fileStatus, hadoopConf)
     try {
       logStore.write(
         targetFile,
-        logStore.readAsIterator(fileStatus, hadoopConf),
+        commitContentIterator,
         overwrite = false,
         hadoopConf)
+      registerBackfill(tablePath, version, targetFile)
     } catch {
       case _: FileAlreadyExistsException =>
         logInfo(s"The backfilled file $targetFile already exists.")
+    } finally {
+      commitContentIterator.close()
     }
   }
+
+  /** Callback to tell the CommitStore that all commits <= `untilVersion` are backfilled. */
+  protected[managedcommit] def registerBackfill(
+      tablePath: Path,
+      untilVersion: Long,
+      deltaFile: Path): Unit
 
   protected def logPath(tablePath: Path): Path = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
 }
