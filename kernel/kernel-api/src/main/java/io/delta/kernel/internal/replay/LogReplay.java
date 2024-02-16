@@ -129,8 +129,8 @@ public class LogReplay {
         return this.protocolAndMetadata._2;
     }
 
-    public Optional<Long> getLatestTransactionIdentifier(String applicationId) {
-        return loadLatestTransactionVersion(applicationId);
+    public Optional<Long> getLatestTransactionIdentifier(String applicationId , TableClient tableClient) {
+        return loadLatestTransactionVersion(applicationId, tableClient);
     }
 
     /**
