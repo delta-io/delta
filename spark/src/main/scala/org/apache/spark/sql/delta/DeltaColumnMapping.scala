@@ -629,10 +629,10 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * no rename column or drop column has happened in-between.
    */
   def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata,
-    allowUnsafeReadOnPartitionChanges: Boolean = false): Boolean = {
+      allowUnsafeReadOnPartitionChanges: Boolean = false): Boolean = {
     // Helper function to check no column mapping schema change and no repartition
     def hasNoColMappingAndRepartitionSchemaChange(
-        newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
+       newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
       isRenameColumnOperation(newMetadata, oldMetadata) ||
         isDropColumnOperation(newMetadata, oldMetadata) ||
         !SchemaUtils.isPartitionCompatible(

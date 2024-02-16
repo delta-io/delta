@@ -648,7 +648,7 @@ trait DeltaSourceBase extends Source
             isStreamingFromColumnMappingTable &&
               allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
               backfilling,
-            // Partition column change will be ignored if user enable the unsafe flag
+          // Partition column change will be ignored if user enable the unsafe flag
           newPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
             else newMetadata.partitionColumns,
           oldPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
