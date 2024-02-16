@@ -219,7 +219,8 @@ public class SnapshotManager {
         long startVersion,
         Optional<Long> versionToLoad) {
         versionToLoad.ifPresent(v ->
-            checkArgument(v >= startVersion,
+            checkArgument(
+                v >= startVersion,
                 String.format(
                     "versionToLoad=%s provided is less than startVersion=%s",
                     v,

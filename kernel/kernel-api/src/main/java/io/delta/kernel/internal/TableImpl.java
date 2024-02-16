@@ -63,7 +63,7 @@ public class TableImpl implements Table {
 
     @Override
     public Snapshot getSnapshotAtVersion(TableClient tableClient, long versionId)
-        throws TableNotFoundException{
+        throws TableNotFoundException {
         return snapshotManager.getSnapshotAt(tableClient, versionId);
     }
 }

@@ -16,6 +16,7 @@
 package io.delta.kernel.internal;
 
 public final class DeltaErrors {
+    private DeltaErrors() {}
 
     // TODO update to be user-facing exception with future exception framework
     //  (see delta-io/delta#2231) & document in method docs as needed (Table::getSnapshotAtVersion)
