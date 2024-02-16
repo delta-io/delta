@@ -382,7 +382,8 @@ abstract class ConvertToDeltaCommandBase(
       )
       val (committedVersion, postCommitSnapshot) = txn.commitLarge(
         spark,
-        Iterator.single(txn.protocol) ++ addFilesIter,
+        addFilesIter,
+        Some(txn.protocol),
         getOperation(numFiles, convertProperties, targetTable.format),
         getContext,
         metrics)

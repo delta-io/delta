@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults.integration;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 import org.apache.hadoop.conf.Configuration;
 import static org.junit.Assert.assertEquals;
@@ -33,6 +32,11 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
+
+import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.data.ScanStateRow;
+import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import io.delta.kernel.defaults.client.DefaultTableClient;
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils;
@@ -76,18 +80,32 @@ public abstract class BaseIntegration {
         CloseableIterator<FilteredColumnarBatch> scanFilesBatchIter) throws Exception {
         List<ColumnarBatch> dataBatches = new ArrayList<>();
         try {
+            StructType physicalReadSchema =
+                ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState);
             while (scanFilesBatchIter.hasNext()) {
-                // Read data
-                try (CloseableIterator<FilteredColumnarBatch> data =
-                    Scan.readData(
-                        tableClient,
-                        scanState,
-                        scanFilesBatchIter.next().getRows(),
-                        Optional.empty())) {
-                    while (data.hasNext()) {
-                        FilteredColumnarBatch filteredColumnarBatch = data.next();
-                        assertFalse(filteredColumnarBatch.getSelectionVector().isPresent());
-                        dataBatches.add(filteredColumnarBatch.getData());
+                FilteredColumnarBatch scanFilesBatch = scanFilesBatchIter.next();
+                try (CloseableIterator<Row> scanFileRows = scanFilesBatch.getRows()) {
+                    while (scanFileRows.hasNext()) {
+                        Row scanFileRow = scanFileRows.next();
+                        FileStatus fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow);
+                        CloseableIterator<ColumnarBatch> physicalDataIter =
+                            tableClient.getParquetHandler()
+                                .readParquetFiles(
+                                    singletonCloseableIterator(fileStatus),
+                                    physicalReadSchema,
+                                    Optional.empty());
+                        try (CloseableIterator<FilteredColumnarBatch> transformedData =
+                                 Scan.transformPhysicalData(
+                                    tableClient,
+                                    scanState,
+                                    scanFileRow,
+                                    physicalDataIter)) {
+                            while (transformedData.hasNext()) {
+                                FilteredColumnarBatch filteredData = transformedData.next();
+                                assertFalse(filteredData.getSelectionVector().isPresent());
+                                dataBatches.add(filteredData.getData());
+                            }
+                        }
                     }
                 }
             }
@@ -96,20 +114,6 @@ public abstract class BaseIntegration {
         }
 
         return dataBatches;
-    }
-
-    /**
-     * Remove unsupported top level delta types in Kernel from the schema. Unsupported data types
-     * include `TIMESTAMP`.
-     */
-    protected StructType removeUnsupportedType(StructType schema) {
-        List<StructField> filterList =
-            schema.fields().stream()
-                .filter(
-                    field -> !(field.getDataType() instanceof TimestampType)
-                ).collect(Collectors.toList());
-
-        return new StructType(filterList);
     }
 
     protected void compareEqualUnorderd(ColumnarBatch expDataBatch,

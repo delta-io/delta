@@ -50,7 +50,7 @@ public class TestDeltaTableReads
         throws Exception {
         String tablePath = goldenTablePath("data-reader-primitives");
         Snapshot snapshot = snapshot(tablePath);
-        StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
+        StructType readSchema = snapshot.getSchema(tableClient);
 
         List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
 
@@ -98,7 +98,7 @@ public class TestDeltaTableReads
         throws Exception {
         String tablePath = getTestResourceFilePath("data-reader-primitives-column-mapping-name");
         Snapshot snapshot = snapshot(tablePath);
-        StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
+        StructType readSchema = snapshot.getSchema(tableClient);
 
         List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
 
@@ -149,24 +149,5 @@ public class TestDeltaTableReads
 
         ColumnarBatch expData = builder.build();
         compareEqualUnorderd(expData, actualData);
-    }
-
-    @Test
-    public void columnMappingIdModeThrowsError()
-        throws Exception {
-        expectedEx.expect(UnsupportedOperationException.class);
-        expectedEx.expectMessage("Unsupported column mapping mode: id");
-
-        String tablePath = getTestResourceFilePath("column-mapping-id");
-        Snapshot snapshot = snapshot(tablePath);
-        readSnapshot(snapshot.getSchema(tableClient), snapshot);
-    }
-
-    private StructType structTypeOf(StructType structType, String colName) {
-        return (StructType) structType.get(colName).getDataType();
-    }
-
-    private StructType arrayElemStructTypeOf(StructType structType, String colName) {
-        return (StructType) ((ArrayType) structType.get(colName).getDataType()).getElementType();
     }
 }

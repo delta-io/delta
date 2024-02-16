@@ -570,6 +570,45 @@ trait MergeIntoMaterializeSourceTests
     }
   }
 
+  test("materialize source for non-deterministic source queries - udf") {
+    {
+      val targetSchema = StructType(Array(
+        StructField("id", IntegerType, nullable = false),
+        StructField("value", IntegerType, nullable = true)))
+      val targetData = Seq(
+        Row(1, 0),
+        Row(2, 0),
+        Row(3, 0))
+      val sourceData = Seq(1, 3).toDF("id")
+      withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "auto") {
+        withTable("target", "source") {
+          val targetRdd = spark.sparkContext.parallelize(targetData)
+          val targetDf = spark.createDataFrame(targetRdd, targetSchema)
+          targetDf.write.format("delta").mode("overwrite").saveAsTable("target")
+          val targetTable = io.delta.tables.DeltaTable.forName("target")
+
+          sourceData.write.format("delta").mode("overwrite").saveAsTable("source")
+          val f = udf { () => 1L }
+          val sourceDf = spark.table("source").withColumn("value", f())
+
+          val events: Seq[UsageRecord] = Log4jUsageLogger.track {
+            targetTable
+              .merge(sourceDf, col("target.id") === sourceDf("id"))
+              .whenMatched(col("target.value") > sourceDf("value")).delete()
+              .whenMatched().updateAll()
+              .whenNotMatched().insertAll()
+              .execute()
+          }
+
+          val materializeReason = mergeSourceMaterializeReason(events)
+          assert(materializeReason == MergeIntoMaterializeSourceReason.
+            NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF.toString,
+            "Source has a udf and merge should have materialized the source.")
+        }
+      }
+    }
+  }
+
   test("materialize source for non-deterministic source queries - rand expr") {
     val targetSchema = StructType(Array(
       StructField("id", IntegerType, nullable = false),
@@ -774,4 +813,8 @@ trait MergeIntoMaterializeSourceTests
 
 // MERGE + materialize
 class MergeIntoMaterializeSourceSuite extends MergeIntoMaterializeSourceTests
+{
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
+}
 

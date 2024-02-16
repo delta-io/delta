@@ -115,9 +115,9 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       val admissionControl = limits.get
       if (isInitialSnapshot) {
         // NOTE: the initial snapshot can be huge hence we do not do a toSeq here.
-        fileActionsItr.filter(isValidIndexedFile(_, fromVersion, fromIndex, endOffset))
-          .takeWhile { indexedFile => admissionControl.admit(Option(indexedFile.getFileAction))
-          }
+        fileActionsItr
+          .filter(isValidIndexedFile(_, fromVersion, fromIndex, endOffset))
+          .takeWhile { admissionControl.admit(_) }
       } else {
         // Change data for a commit can be either recorded by a Seq[AddCDCFiles] or
         // a Seq[AddFile]/ Seq[RemoveFile]
@@ -138,7 +138,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           // For CDC commits we either admit the entire commit or nothing at all.
           // This is to avoid returning `update_preimage` and `update_postimage` in separate
           // batches.
-          if (admissionControl.admit(filteredFiles.map(_.cdc))) {
+          if (admissionControl.admit(filteredFiles)) {
             filteredFiles.toIterator
           } else {
             Iterator()
@@ -153,8 +153,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
               hasAddsOrRemoves(indexedFile) || hasNoFileActionAndStartOrEndIndex(indexedFile)
             }
             .filter(isValidIndexedFile(_, fromVersion, fromIndex, endOffset))
-          val filteredFileActions = filteredFiles.flatMap(f => Option(f.getFileAction))
-          val hasDeletionVectors = filteredFileActions.exists {
+          val hasDeletionVectors = fileActions.filter(_.hasFileAction).map(_.getFileAction).exists {
             case add: AddFile => add.deletionVector != null
             case remove: RemoveFile => remove.deletionVector != null
             case _ => false
@@ -163,15 +162,13 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
             // We cannot split up add/remove pairs with Deletion Vectors, because we will get the
             // wrong result.
             // So in this case we behave as above with CDC files and either admit all or none.
-            if (admissionControl.admit(filteredFileActions)) {
+            if (admissionControl.admit(filteredFiles)) {
               filteredFiles.toIterator
             } else {
               Iterator()
             }
           } else {
-            filteredFiles.takeWhile { indexedFile =>
-              admissionControl.admit(Option(indexedFile.getFileAction))
-            }.toIterator
+            filteredFiles.takeWhile { admissionControl.admit(_) }.toIterator
           }
         }
       }

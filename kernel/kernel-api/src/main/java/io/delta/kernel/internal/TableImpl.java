@@ -38,22 +38,26 @@ public class TableImpl implements Table {
         } catch (IOException io) {
             throw new RuntimeException(io);
         }
-        final Path dataPath = new Path(resolvedPath);
-        final Path logPath = new Path(dataPath, "_delta_log");
-
-        return new TableImpl(logPath, dataPath);
+        return new TableImpl(resolvedPath);
     }
 
-    private final Path logPath;
-    private final Path dataPath;
+    private final SnapshotManager snapshotManager;
+    private final String tablePath;
 
-    public TableImpl(Path logPath, Path dataPath) {
-        this.logPath = logPath;
-        this.dataPath = dataPath;
+    public TableImpl(String tablePath) {
+        this.tablePath = tablePath;
+        final Path dataPath = new Path(tablePath);
+        final Path logPath = new Path(dataPath, "_delta_log");
+        this.snapshotManager = new SnapshotManager(logPath, dataPath);
     }
 
     @Override
     public Snapshot getLatestSnapshot(TableClient tableClient) throws TableNotFoundException {
-        return new SnapshotManager().buildLatestSnapshot(tableClient, logPath, dataPath);
+        return snapshotManager.buildLatestSnapshot(tableClient);
+    }
+
+    @Override
+    public String getPath() {
+        return tablePath;
     }
 }

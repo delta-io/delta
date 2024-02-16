@@ -43,6 +43,7 @@ import java.util.Locale
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.catalyst.TimeTravel
+import org.apache.spark.sql.delta.skipping.clustering.temp.{AlterTableClusterBy, ClusterByParserUtils, ClusterByPlan, ClusterBySpec}
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands._
@@ -58,7 +59,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
-import org.apache.spark.sql.catalyst.parser.ParserUtils.{string, withOrigin}
+import org.apache.spark.sql.catalyst.parser.ParserUtils.{checkDuplicateClauses, string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, AlterTableDropFeature, CloneTableStatement, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
@@ -76,6 +77,8 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
 
   override def parsePlan(sqlText: String): LogicalPlan = parse(sqlText) { parser =>
     builder.visit(parser.singleStatement()) match {
+      case clusterByPlan: ClusterByPlan =>
+        ClusterByParserUtils(clusterByPlan, delegate).parsePlan(sqlText)
       case plan: LogicalPlan => plan
       case _ => delegate.parsePlan(sqlText)
     }
@@ -128,7 +131,12 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
         throw e.withCommand(command)
       case e: AnalysisException =>
         val position = Origin(e.line, e.startPosition)
-        throw new ParseException(Option(command), e.message, position, position)
+        throw new ParseException(
+          command = Option(command),
+          start = position,
+          stop = position,
+          errorClass = "DELTA_PARSING_ANALYSIS_ERROR",
+          messageParameters = Map("msg" -> e.message))
     }
   }
 
@@ -257,7 +265,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case replaceHeader: ReplaceTableHeaderContext =>
         (visitTableIdentifier(replaceHeader.table), replaceHeader.CREATE() != null, true, false)
       case _ =>
-        throw new DeltaParseException("Incorrect CLONE header expected REPLACE or CREATE table", ctx)
+        throw new DeltaParseException(ctx, "DELTA_PARSING_INCORRECT_CLONE_HEADER")
     }
   }
 
@@ -274,7 +282,10 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
     if (!isCreate && ifNotExists) {
       throw new DeltaParseException(
-        "IF NOT EXISTS cannot be used together with REPLACE", ctx.cloneTableHeader())
+        ctx.cloneTableHeader(),
+        "DELTA_PARSING_MUTUALLY_EXCLUSIVE_CLAUSES",
+        Map("clauseOne" -> "IF NOT EXISTS", "clauseTwo" -> "REPLACE")
+      )
     }
 
     // Get source for clone (and time travel source if necessary)
@@ -340,7 +351,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    */
   override def visitOptimizeTable(ctx: OptimizeTableContext): AnyRef = withOrigin(ctx) {
     if (ctx.path == null && ctx.table == null) {
-      throw new DeltaParseException("OPTIMIZE command requires a file path or table name.", ctx)
+      throw new DeltaParseException(
+        ctx,
+        "DELTA_PARSING_MISSING_TABLE_NAME_OR_PATH",
+        Map("command" -> "OPTIMIZE")
+      )
     }
     val interleaveBy = Option(ctx.zorderSpec).map(visitZorderSpec).getOrElse(Seq.empty)
     OptimizeTableCommand(
@@ -356,18 +371,36 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    *   -- Physically delete dropped rows and columns of target table
    *   REORG TABLE (delta.`/path/to/table` | delta_table_name)
    *    [WHERE partition_predicate] APPLY (PURGE)
+   *
+   *   -- Rewrite the files in UNIFORM(ICEBERG) compliant way.
+   *   REORG TABLE table_name (delta.`/path/to/table` | catalog.db.table)
+   *    APPLY (UPGRADE UNIFORM(ICEBERG_COMPAT_VERSION=version))
    * }}}
    */
   override def visitReorgTable(ctx: ReorgTableContext): AnyRef = withOrigin(ctx) {
     if (ctx.table == null) {
-      throw new ParseException("REORG command requires a file path or table name.", ctx)
+      throw new DeltaParseException(
+        ctx,
+        "DELTA_PARSING_MISSING_TABLE_NAME_OR_PATH",
+        Map("command" -> "REORG")
+      )
     }
 
     val targetIdentifier = visitTableIdentifier(ctx.table)
     val tableNameParts = targetIdentifier.database.toSeq :+ targetIdentifier.table
     val targetTable = createUnresolvedTable(tableNameParts, "REORG")
 
-    DeltaReorgTable(targetTable)(Option(ctx.partitionPredicate).map(extractRawText(_)).toSeq)
+    val reorgTableSpec = if (ctx.PURGE != null) {
+      DeltaReorgTableSpec(DeltaReorgTableMode.PURGE, None)
+    } else if (ctx.ICEBERG_COMPAT_VERSION != null) {
+      DeltaReorgTableSpec(DeltaReorgTableMode.UNIFORM_ICEBERG, Option(ctx.version).map(_.getText.toInt))
+    } else {
+      throw new ParseException(
+        "Invalid syntax: REORG TABLE only support PURGE/UPGRADE UNIFORM.",
+        ctx)
+    }
+
+    DeltaReorgTable(targetTable, reorgTableSpec)(Option(ctx.partitionPredicate).map(extractRawText(_)).toSeq)
   }
 
   override def visitDescribeDeltaDetail(
@@ -407,6 +440,33 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   }
 
   /**
+   * Captures any CLUSTER BY clause and creates a [[ClusterByPlan]] logical plan.
+   * The plan will be used as a sentinel for DeltaSqlParser to process it further.
+   */
+  override def visitClusterBy(ctx: ClusterByContext): LogicalPlan = withOrigin(ctx) {
+    val clusterBySpecCtx = ctx.clusterBySpec.asScala.head
+    checkDuplicateClauses(ctx.clusterBySpec, "CLUSTER BY", clusterBySpecCtx)
+    val columnNames =
+      clusterBySpecCtx.interleave.asScala
+        .map(_.identifier.asScala.map(_.getText).toSeq)
+        .map(_.asInstanceOf[Seq[String]]).toSeq
+    // get CLUSTER BY clause positions.
+    val startIndex = clusterBySpecCtx.getStart.getStartIndex
+    val stopIndex = clusterBySpecCtx.getStop.getStopIndex
+
+    // get CLUSTER BY parenthesis positions.
+    val parenStartIndex = clusterBySpecCtx.LEFT_PAREN().getSymbol.getStartIndex
+    val parenStopIndex = clusterBySpecCtx.RIGHT_PAREN().getSymbol.getStopIndex
+    ClusterByPlan(
+      ClusterBySpec(columnNames),
+      startIndex,
+      stopIndex,
+      parenStartIndex,
+      parenStopIndex,
+      clusterBySpecCtx)
+  }
+
+  /**
    * Time travel the table to the given version or timestamp.
    */
   private def maybeTimeTravelChild(ctx: TemporalClauseContext, child: LogicalPlan): LogicalPlan = {
@@ -428,7 +488,10 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case Seq(db, tbl) => TableIdentifier(tbl.getText, Some(db.getText))
       case Seq(catalog, db, tbl) =>
         TableIdentifier(tbl.getText, Some(db.getText), Some(catalog.getText))
-      case _ => throw new DeltaParseException(s"Illegal table name ${ctx.getText}", ctx)
+      case _ => throw new DeltaParseException(
+        ctx,
+        "DELTA_PARSING_ILLEGAL_TABLE_NAME",
+        Map("table" -> ctx.getText))
     }
   }
 
@@ -520,6 +583,25 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       truncateHistory)
   }
 
+  /**
+   * Parse an ALTER TABLE CLUSTER BY command.
+   */
+  override def visitAlterTableClusterBy(ctx: AlterTableClusterByContext): LogicalPlan = {
+    val table =
+      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
+      "ALTER TABLE ... CLUSTER BY")
+    if (ctx.NONE() != null) {
+      AlterTableClusterBy(table, None)
+    } else {
+      assert(ctx.clusterBySpec() != null)
+      val columnNames =
+        ctx.clusterBySpec().interleave.asScala
+          .map(_.identifier.asScala.map(_.getText).toSeq)
+          .map(_.asInstanceOf[Seq[String]]).toSeq
+      AlterTableClusterBy(table, Some(ClusterBySpec(columnNames)))
+    }
+  }
+
   protected def typedVisit[T](ctx: ParseTree): T = {
     ctx.accept(this).asInstanceOf[T]
   }
@@ -547,7 +629,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       case ("interval", Nil) => CalendarIntervalType
       case (dt, params) =>
         val dtStr = if (params.nonEmpty) s"$dt(${params.mkString(",")})" else dt
-        throw new DeltaParseException(s"DataType $dtStr is not supported.", ctx)
+        throw new DeltaParseException(
+          ctx,
+          "DELTA_PARSING_UNSUPPORTED_DATA_TYPE",
+          Map("dataType" -> dtStr)
+        )
     }
   }
 }

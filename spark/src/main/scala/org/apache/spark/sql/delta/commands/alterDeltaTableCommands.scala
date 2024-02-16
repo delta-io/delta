@@ -22,8 +22,11 @@ import java.util.concurrent.TimeUnit
 
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
+import org.apache.spark.sql.delta.skipping.clustering.ClusteringColumnInfo
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -40,6 +43,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, QualifiedC
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
+import org.apache.spark.sql.connector.expressions.FieldReference
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types._
 
@@ -120,6 +124,9 @@ case class AlterTableSetPropertiesDeltaCommand(
           false
         case k if k == TableCatalog.PROP_PROVIDER =>
           throw DeltaErrors.cannotChangeProvider()
+        case k if k == TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature) =>
+          throw DeltaErrors.alterTableSetClusteringTableFeatureException(
+            ClusteringTableFeature.name)
         case _ =>
           true
       }
@@ -311,11 +318,11 @@ case class AlterTableDropFeatureDeltaCommand(
       if (isReaderWriterFeature) {
         // Clean up expired logs before checking history. This also makes sure there is no
         // concurrent metadataCleanup during findEarliestReliableCheckpoint. Note, this
-        // cleanUpExpiredLogs call truncates the cutoff at an hour granularity.
+        // cleanUpExpiredLogs call truncates the cutoff at a minute granularity.
         deltaLog.cleanUpExpiredLogs(
           snapshot,
           truncateHistoryLogRetentionMillis(txn),
-          TruncationGranularity.HOUR)
+          TruncationGranularity.MINUTE)
 
         val historyContainsFeature = removableFeature.historyContainsFeature(
           spark = sparkSession,
@@ -418,7 +425,11 @@ case class AlterTableAddColumnsDeltaCommand(
 
       val field = StructField(col.name.last, col.dataType, col.nullable, builder.build())
 
+      col.default.map { value =>
+        Some((col.name.init, field.withCurrentDefaultValue(value), col.position.map(toV2Position)))
+      }.getOrElse {
         Some((col.name.init, field, col.position.map(toV2Position)))
+      }
     }
   }
 }
@@ -461,6 +472,12 @@ case class AlterTableDropColumnsDeltaCommand(
       val droppingPartitionCols = metadata.partitionColumns.filter(droppedColumnSet.contains(_))
       if (droppingPartitionCols.nonEmpty) {
         throw DeltaErrors.dropPartitionColumnNotSupported(droppingPartitionCols)
+      }
+      // Disallow dropping clustering columns.
+      val clusteringCols = ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
+      val droppingClusteringCols = clusteringCols.filter(droppedColumnSet.contains(_))
+      if (droppingClusteringCols.nonEmpty) {
+        throw DeltaErrors.dropClusteringColumnNotSupported(droppingClusteringCols)
       }
       // Updates the delta statistics column list by removing the dropped columns from it.
       val newConfiguration = metadata.configuration ++
@@ -522,6 +539,11 @@ case class AlterTableChangeColumnDeltaCommand(
               // It's crucial to keep the old column's metadata, which may contain column mapping
               // metadata.
               var result = newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
+              // Apply the current default value as well, if any.
+              result = newColumn.getCurrentDefaultValue() match {
+                case Some(newDefaultValue) => result.withCurrentDefaultValue(newDefaultValue)
+                case None => result.clearCurrentDefaultValue()
+              }
               result
                 .copy(
                   name = newColumn.name,
@@ -910,3 +932,58 @@ case class AlterTableDropConstraintDeltaCommand(
   }
 }
 
+/**
+ * Command for altering clustering columns for clustered tables.
+ * - ALTER TABLE .. CLUSTER BY (col1, col2, ...)
+ * - ALTER TABLE .. CLUSTER BY NONE
+ *
+ * Note that the given `clusteringColumns` are empty when CLUSTER BY NONE is specified.
+ * Also, `clusteringColumns` are validated (e.g., duplication / existence check) in
+ * DeltaCatalog.alterTable().
+ */
+case class AlterTableClusterByDeltaCommand(
+    table: DeltaTableV2,
+    clusteringColumns: Seq[Seq[String]])
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    val deltaLog = table.deltaLog
+    ClusteredTableUtils.validateNumClusteringColumns(clusteringColumns, Some(deltaLog))
+    recordDeltaOperation(deltaLog, "delta.ddl.alter.clusterBy") {
+      val txn = startTransaction()
+
+      val clusteringColsLogicalNames = ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
+      val oldLogicalClusteringColumnsString = clusteringColsLogicalNames.mkString(",")
+      val oldColumnsCount = clusteringColsLogicalNames.size
+
+      val newLogicalClusteringColumns = clusteringColumns.map(FieldReference(_).toString)
+      ClusteredTableUtils.validateClusteringColumnsInStatsSchema(
+        txn.snapshot, newLogicalClusteringColumns)
+
+      val newDomainMetadata =
+        ClusteredTableUtils
+          .getClusteringDomainMetadataForAlterTableClusterBy(newLogicalClusteringColumns, txn)
+
+      recordDeltaEvent(
+        deltaLog,
+        "delta.ddl.alter.clusterBy",
+        data = Map(
+          "isNewClusteredTable" -> !ClusteredTableUtils.isSupported(txn.protocol),
+          "oldColumnsCount" -> oldColumnsCount, "newColumnsCount" -> clusteringColumns.size))
+      // Add clustered table properties if the current table is not clustered.
+      // [[DeltaCatalog.alterTable]] already ensures that the table is not partitioned.
+      if (!ClusteredTableUtils.isSupported(txn.protocol)) {
+        txn.updateMetadata(
+          txn.metadata.copy(
+            configuration = txn.metadata.configuration ++
+              ClusteredTableUtils.getTableFeatureProperties(txn.metadata.configuration)
+          ))
+      }
+      txn.commit(
+        newDomainMetadata,
+        DeltaOperations.ClusterBy(
+          oldLogicalClusteringColumnsString,
+          newLogicalClusteringColumns.mkString(",")))
+    }
+    Seq.empty[Row]
+  }
+}

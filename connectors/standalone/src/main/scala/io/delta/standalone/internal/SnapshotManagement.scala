@@ -218,7 +218,7 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
    * file as a hint on where to start listing the transaction log directory. If the _delta_log
    * directory doesn't exist, this method will return an `InitialSnapshot`.
    */
-  private def getSnapshotAtInit: SnapshotImpl = {
+  protected def getSnapshotAtInit: SnapshotImpl = {
     try {
       val logSegment = getLogSegmentForVersion(lastCheckpoint.map(_.version))
 

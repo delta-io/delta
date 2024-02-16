@@ -77,7 +77,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
    * @param fileIndex the new file index
    */
   private def replaceFileIndex(target: LogicalPlan, fileIndex: TahoeFileIndex): LogicalPlan = {
-    val rowIndexCol = AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FILED.dataType)();
+    val rowIndexCol = AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FIELD.dataType)();
     var fileMetadataCol: AttributeReference = null
 
     val newTarget = target.transformUp {
@@ -85,11 +85,11 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         hfsr @ HadoopFsRelation(_, _, _, _, format: DeltaParquetFileFormat, _), _, _, _) =>
         fileMetadataCol = format.createFileMetadataCol()
         // Take the existing schema and add additional metadata columns
-        val newDataSchema = StructType(hfsr.dataSchema).add(ROW_INDEX_STRUCT_FILED)
+        val newDataSchema =
+          StructType(hfsr.dataSchema).add(ROW_INDEX_STRUCT_FIELD)
         val finalOutput = l.output ++ Seq(rowIndexCol, fileMetadataCol)
         // Disable splitting and filter pushdown in order to generate the row-indexes
         val newFormat = format.copy(isSplittable = false, disablePushDowns = true)
-
         val newBaseRelation = hfsr.copy(
           location = fileIndex,
           dataSchema = newDataSchema,
@@ -147,7 +147,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
   /**
    * Finds the files in nameToAddFileMap in which rows were deleted by checking the row index set.
    */
-  private def findFilesWithMatchingRows(
+  def findFilesWithMatchingRows(
       txn: OptimisticTransaction,
       nameToAddFileMap: Map[String, AddFile],
       matchedFileRowIndexSets: Seq[DeletionVectorResult]): Seq[TouchedFileWithDV] = {
@@ -215,8 +215,10 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       addFilesWithNewDvs: Seq[AddFile],
       snapshot: Snapshot): Seq[AddFile] = {
     import org.apache.spark.sql.delta.implicits._
-    val statsColName = snapshot.getBaseStatsColumnName
-    val selectionPathAndStatsCols = Seq(col("path"), col(statsColName))
+
+    if (addFilesWithNewDvs.isEmpty) return Seq.empty
+
+    val selectionPathAndStatsCols = Seq(col("path"), col("stats"))
     val addFilesWithNewDvsDf = addFilesWithNewDvs.toDF(spark)
 
     // These files originate from snapshot.filesForScan which resets column statistics.
@@ -234,6 +236,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
     // null count. We want to set the bounds before the AddFile has DV descriptor attached.
     // Attaching the DV descriptor here, causes wrong logical records computation in
     // `updateStatsToWideBounds`.
+    val statsColName = snapshot.getBaseStatsColumnName
     val addFilesWithWideBoundsDf = snapshot
       .updateStatsToWideBounds(addFileWithStatsDf, statsColName)
 
@@ -362,14 +365,17 @@ object DeletionVectorBitmapGenerator {
       tableHasDVs: Boolean,
       targetDf: DataFrame,
       candidateFiles: Seq[AddFile],
-      condition: Expression)
-    : Seq[DeletionVectorResult] = {
+      condition: Expression,
+      fileNameColumnOpt: Option[Column] = None,
+      rowIndexColumnOpt: Option[Column] = None): Seq[DeletionVectorResult] = {
+    val fileNameColumn = fileNameColumnOpt.getOrElse(col(s"${METADATA_NAME}.${FILE_PATH}"))
+    val rowIndexColumn = rowIndexColumnOpt.getOrElse(col(ROW_INDEX_COLUMN_NAME))
     val matchedRowsDf = targetDf
-      .withColumn(FILE_NAME_COL, col(s"${METADATA_NAME}.${FILE_PATH}"))
+      .withColumn(FILE_NAME_COL, fileNameColumn)
       // Filter after getting input file name as the filter might introduce a join and we
       // cannot get input file name on join's output.
       .filter(new Column(condition))
-      .withColumn(ROW_INDEX_COL, col(ROW_INDEX_COLUMN_NAME))
+      .withColumn(ROW_INDEX_COL, rowIndexColumn)
 
     val df = if (tableHasDVs) {
       // When the table already has DVs, join the `matchedRowDf` above to attach for each matched
@@ -385,14 +391,12 @@ object DeletionVectorBitmapGenerator {
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
 
       val joinExpr = filePathToDVDf("path") === matchedRowsDf(FILE_NAME_COL)
-      val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr)
-      assert(joinedDf.count() == matchedRowsDf.count(),
-        s"""
-           |The joined DataFrame should contain the same number of entries as the original
-           |DataFrame. It is likely that _metadata.file_path is not encoded by Spark as expected.
-           |Joined DataFrame count: ${joinedDf.count()}
-           |matchedRowsDf count: ${matchedRowsDf.count()}
-           |""".stripMargin)
+      // Perform leftOuter join to make sure we do not eliminate any rows because of path
+      // encoding issues. If there is such an issue we will detect it during the aggregation
+      // of the bitmaps.
+      val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr, "leftOuter")
+        .drop(FILE_NAME_COL)
+        .withColumnRenamed("path", FILE_NAME_COL)
       joinedDf
     } else {
       // When the table has no DVs, just add a column to indicate that the existing dv is null
@@ -543,14 +547,14 @@ object DeletionVectorWriter extends DeltaLogging {
     val broadcastHadoopConf = sparkSession.sparkContext.broadcast(
       new SerializableConfiguration(hadoopConf))
     // hadoop.fs.Path is not Serializable, so close over the String representation instead
-    val tablePathString = DeletionVectorStore.pathToString(table)
+    val tablePathString = DeletionVectorStore.pathToEscapedString(table)
     val packingTargetSize =
       sparkSession.conf.get(DeltaSQLConf.DELETION_VECTOR_PACKING_TARGET_SIZE)
 
     // This is the (partition) mapper function we are returning
     (rowIterator: Iterator[InputT]) => {
       val dvStore = DeletionVectorStore.createInstance(broadcastHadoopConf.value.value)
-      val tablePath = DeletionVectorStore.stringToPath(tablePathString)
+      val tablePath = DeletionVectorStore.escapedStringToPath(tablePathString)
       val tablePathWithFS = dvStore.pathWithFileSystem(tablePath)
 
       val perBinFunction: Seq[InputT] => Seq[OutputT] = (rows: Seq[InputT]) => {
@@ -625,6 +629,14 @@ object DeletionVectorWriter extends DeltaLogging {
    */
   def storeBitmapAndGenerateResult(ctx: DeletionVectorMapperContext, row: DeletionVectorData)
     : DeletionVectorResult = {
+    // If a group with null path exists it means there was an issue while joining with the log to
+    // fetch the DeletionVectorDescriptors.
+    assert(row.filePath != null,
+      s"""
+         |Encountered a non matched file path.
+         |It is likely that _metadata.file_path is not encoded by Spark as expected.
+         |""".stripMargin)
+
     val fileDvDescriptor = row.deletionVectorId.map(DeletionVectorDescriptor.fromJson(_))
     val finalDvDescriptor = fileDvDescriptor match {
       case Some(existingDvDescriptor) if row.deletedRowIndexCount > 0 =>

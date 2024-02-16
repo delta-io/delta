@@ -1868,7 +1868,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           assert(endOffsets.toList ==
             DeltaSourceOffset(id, 1, 0, isInitialSnapshot = false)
               // When we reach the end of version 1, we will jump to version 2 with index -1
-              :: DeltaSourceOffset(id, 2, -1, isInitialSnapshot = false)
+              :: DeltaSourceOffset(id, 2, DeltaSourceOffset.BASE_INDEX, isInitialSnapshot = false)
               :: Nil)
         } finally {
           q.stop()
@@ -1910,8 +1910,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       assert(e.getCause.isInstanceOf[UnsupportedOperationException])
       assert(e.getCause.getMessage.contains(
-        "This is currently not supported. If you'd like to ignore updates, set the option " +
-          "'skipChangeCommits' to 'true'."))
+        "This is currently not supported. If this is going to happen regularly and you are okay" +
+          " to skip changes, set the option 'skipChangeCommits' to 'true'."
+      ))
       assert(e.getCause.getMessage.contains("for example"))
       assert(e.getCause.getMessage.contains("version"))
       assert(e.getCause.getMessage.matches(s".*$inputDir.*"))
@@ -2212,7 +2213,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           index = 10,
           isInitialSnapshot = true)
       )
-    }.getMessage.contains("Found invalid offsets: 'isInitialSnapshot' fliped incorrectly."))
+    }.getMessage.contains("Found invalid offsets: 'isInitialSnapshot' flipped incorrectly."))
     assert(intercept[IllegalStateException] {
       DeltaSourceOffset.validateOffsets(
         previousOffset = DeltaSourceOffset(

@@ -35,18 +35,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   // Timestamp type tests
   //////////////////////////////////////////////////////////////////////////////////
 
-  // For now we do not support timestamp partition columns, make sure it's blocked
-  test("cannot read partition column of timestamp type") {
-    val path = goldenTablePath("kernel-timestamp-TIMESTAMP_MICROS")
-    val snapshot = latestSnapshot(path)
-
-    val e = intercept[UnsupportedOperationException] {
-      readSnapshot(snapshot) // request entire schema
-    }
-    assert(e.getMessage.contains("Reading partition columns of TimestampType is unsupported"))
-  }
-
   // Below table is written in either UTC or PDT for the golden tables
+  // Kernel always interprets partition timestamp columns in UTC
   /*
   id: int  | Part (TZ agnostic): timestamp     | time : timestamp
   ------------------------------------------------------------------------
@@ -59,26 +49,31 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
   def row0: TestRow = TestRow(
     0,
+    1577866150001000L, // 2020-01-01 08:09:10.001 UTC to micros since the epoch
     1580544550000000L // 2020-02-01 08:09:10 UTC to micros since the epoch
   )
 
   def row1: TestRow = TestRow(
     1,
+    1633075760000000L, // 2021-10-01 08:09:20 UTC to micros since the epoch
     915181200000000L // 1999-01-01 09:00:00 UTC to micros since the epoch
   )
 
   def row2: TestRow = TestRow(
     2,
+    1633075760000000L, // 2021-10-01 08:09:20 UTC to micros since the epoch
     946717200000000L // 2000-01-01 09:00:00 UTC to micros since the epoch
   )
 
   def row3: TestRow = TestRow(
     3,
+    -31536000000000L, // 1969-01-01 00:00:00  UTC to micros since the epoch
     -31536000000000L // 1969-01-01 00:00:00 UTC to micros since the epoch
   )
 
   def row4: TestRow = TestRow(
     4,
+    null,
     null
   )
 
@@ -91,9 +86,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     withTimeZone(timeZone) {
       checkTable(
         path = goldenTablePath(goldenTableName),
-        expectedAnswer = expectedResult,
-        // for now omit "part" column since we don't support reading timestamp partition values
-        readCols = Seq("id", "time")
+        expectedAnswer = expectedResult
       )
     }
   }
@@ -112,10 +105,14 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     val values = testRow.toSeq
     TestRow(
       values(0),
-      if (values(1) == null) {
+      // Partition columns are written as the local date time without timezone information and then
+      // interpreted by Kernel in UTC --> so the written partition value (& the read value) is the
+      // same as the UTC table
+      values(1),
+      if (values(2) == null) {
         null
       } else {
-        values(1).asInstanceOf[Long] + DefaultKernelUtils.DateTimeConstants.MICROS_PER_HOUR * 8
+        values(2).asInstanceOf[Long] + DefaultKernelUtils.DateTimeConstants.MICROS_PER_HOUR * 8
       }
     )
   }
@@ -291,6 +288,102 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       path = path,
       expectedAnswer = expectedAnswer
     )
+  }
+
+  Seq("name", "id").foreach { columnMappingMode =>
+    test(s"table with `$columnMappingMode` column mapping mode") {
+      val path = goldenTablePath(s"table-with-columnmapping-mode-$columnMappingMode")
+
+      val expectedAnswer = (0 until 5).map { i =>
+        TestRow(
+          i.byteValue(),
+          i.shortValue(),
+          i,
+          i.longValue(),
+          i.floatValue(),
+          i.doubleValue(),
+          new java.math.BigDecimal(i),
+          i % 2 == 0,
+          i.toString,
+          i.toString.getBytes,
+          daysSinceEpoch(Date.valueOf("2021-11-18")), // date in days
+          (i * 1000).longValue(), // timestamp in micros
+          TestRow(i.toString, TestRow(i)), // nested_struct
+          Seq(i, i + 1), // array_of_prims
+          Seq(Seq(i, i + 1), Seq(i + 2, i + 3)), // array_of_arrays
+          Seq(TestRow(i.longValue()), null), // array_of_structs
+          Map(
+            i -> (i + 1).longValue(),
+            (i + 2) -> (i + 3).longValue()
+          ), // map_of_prims
+          Map(i + 1 -> TestRow((i * 20).longValue())), // map_of_rows
+          {
+            val val1 = Seq(i, null, i + 1)
+            val val2 = Seq[Integer]()
+            Map(
+              i.longValue() -> val1,
+              (i + 1).longValue() -> val2
+            ) // map_of_arrays
+          }
+        )
+      } ++ (TestRow(
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ) :: Nil)
+
+      checkTable(
+        path = path,
+        expectedAnswer = expectedAnswer
+      )
+    }
+  }
+
+  Seq("name", "id").foreach { columnMappingMode =>
+    test(s"table with `$columnMappingMode` column mapping mode - read subset of columns") {
+      val path = goldenTablePath(s"table-with-columnmapping-mode-$columnMappingMode")
+
+      val expectedAnswer = (0 until 5).map { i =>
+        TestRow(
+          i.byteValue(),
+          new java.math.BigDecimal(i),
+          TestRow(i.toString, TestRow(i)), // nested_struct
+          Seq(i, i + 1), // array_of_prims
+          Map(
+            i -> (i + 1).longValue(),
+            (i + 2) -> (i + 3).longValue()
+          ) // map_of_prims
+        )
+      } ++ (TestRow(
+        null,
+        null,
+        null,
+        null,
+        null
+      ) :: Nil)
+
+      checkTable(
+        path = path,
+        expectedAnswer = expectedAnswer,
+        readCols = Seq("ByteType", "decimal", "nested_struct", "array_of_prims", "map_of_prims")
+      )
+    }
   }
 
   test("table with complex map types") {

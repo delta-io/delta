@@ -305,6 +305,21 @@ trait Checkpoints extends DeltaLogging {
     }
   }
 
+  /**
+   * Creates a checkpoint at given version. Does not invoke metadata cleanup as part of it.
+   * @param version - version at which we want to create a checkpoint.
+   */
+  def createCheckpointAtVersion(version: Long): Unit =
+    recordDeltaOperation(this, "delta.createCheckpointAtVersion") {
+      val snapshot = getSnapshotAt(version)
+      withCheckpointExceptionHandling(this, "delta.checkpoint.sync.error") {
+        if (snapshot.version < 0) {
+          throw DeltaErrors.checkpointNonExistTable(dataPath)
+        }
+        writeCheckpointFiles(snapshot)
+      }
+    }
+
   def checkpointAndCleanUpDeltaLog(
       snapshotToCheckpoint: Snapshot): Unit = {
     val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint)
@@ -827,7 +842,8 @@ object Checkpoints
       ds: Dataset[Row],
       finalPath: Path,
       hadoopConf: Configuration,
-      useRename: Boolean): StructType = {
+      useRename: Boolean): StructType = recordFrameProfile(
+        "Checkpoints", "createCheckpointV2ParquetFile") {
     val df = ds.select(
       "txn", "add", "remove", "metaData", "protocol", "domainMetadata",
       "checkpointMetadata", "sidecar")
@@ -994,7 +1010,8 @@ object Checkpoints
         col("add.tags"),
         col("add.deletionVector"),
         col("add.baseRowId"),
-        col("add.defaultRowCommitVersion")) ++
+        col("add.defaultRowCommitVersion"),
+        col("add.clusteringProvider")) ++
         additionalCols: _*
       ))
     )
