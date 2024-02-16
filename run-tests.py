@@ -80,7 +80,7 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
     # a GC that is optimized for larger multiprocessor machines with large memory
     cmd += ["-J-XX:+UseG1GC"]
     # 6x the default heap size (set in delta/built.sbt)
-    cmd += ["-J-Xmx12G"]
+    cmd += ["-J-Xmx6G"]
     run_cmd(cmd, stream_output=True)
 
 def run_python_tests(root_dir):
