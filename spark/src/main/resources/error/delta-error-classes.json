@@ -1137,6 +1137,15 @@
     ],
     "sqlState" : "22KD1"
   },
+  "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING" : {
+    "message" : [
+      "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema.",
+      "Invalid column names: <invalidColumnNames>.",
+      "Column mapping cannot be removed when there are invalid characters in the column names.",
+      "Please rename the columns to remove the invalid characters and execute this command again."
+    ],
+    "sqlState" : "42K05"
+  },
   "DELTA_INVALID_COMMITTED_VERSION" : {
     "message" : [
       "The committed version is <committedVersion> but the current version is <currentVersion>."

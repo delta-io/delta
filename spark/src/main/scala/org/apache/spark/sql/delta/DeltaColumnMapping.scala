@@ -85,14 +85,20 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     protocol.isFeatureSupported(ColumnMappingTableFeature)
 
   /**
-   * The only allowed mode change is from NoMapping to NameMapping. Other changes
-   * would require re-writing Parquet files and are not supported right now.
+   * Allow NameMapping -> NoMapping transition behind a feature flag.
+   * Otherwise only NoMapping -> NameMapping is allowed.
    */
   private def allowMappingModeChange(
       oldMode: DeltaColumnMappingMode,
       newMode: DeltaColumnMappingMode): Boolean = {
-    if (oldMode == newMode) true
-    else oldMode == NoMapping && newMode == NameMapping
+    val removalAllowed = SparkSession.getActiveSession
+      .exists(_.conf.get(DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL))
+    // No change.
+    (oldMode == newMode) ||
+      // Downgrade allowed with a flag.
+      (removalAllowed && (oldMode == NameMapping && newMode == NoMapping)) ||
+      // Upgrade always allowed.
+      (oldMode == NoMapping && newMode == NameMapping)
   }
 
   def isColumnMappingUpgrade(

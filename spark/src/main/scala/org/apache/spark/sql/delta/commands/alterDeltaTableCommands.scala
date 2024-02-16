@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
@@ -111,6 +112,14 @@ case class AlterTableSetPropertiesDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
+    val columnMappingPropertyKey = DeltaConfigs.COLUMN_MAPPING_MODE.key
+    val disableColumnMapping = configuration.get(columnMappingPropertyKey).contains("none")
+    val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
+      DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL)
+    if (disableColumnMapping && columnMappingRemovalAllowed) {
+      new RemoveColumnMappingCommand(deltaLog, table.catalogTable)
+        .run(sparkSession, removeColumnMappingTableProperty = false)
+    }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.setProperties") {
       val txn = startTransaction()
 
@@ -129,7 +138,7 @@ case class AlterTableSetPropertiesDeltaCommand(
             ClusteringTableFeature.name)
         case _ =>
           true
-      }
+      }.toMap
 
       val newMetadata = metadata.copy(
         description = configuration.getOrElse(TableCatalog.PROP_COMMENT, metadata.description),
@@ -162,6 +171,14 @@ case class AlterTableUnsetPropertiesDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
+    val columnMappingPropertyKey = DeltaConfigs.COLUMN_MAPPING_MODE.key
+    val disableColumnMapping = propKeys.contains(columnMappingPropertyKey)
+    val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
+      DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL)
+    if (disableColumnMapping && columnMappingRemovalAllowed) {
+      new RemoveColumnMappingCommand(deltaLog, table.catalogTable)
+        .run(sparkSession, removeColumnMappingTableProperty = true)
+    }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.unsetProperties") {
       val txn = startTransaction()
       val metadata = txn.metadata
