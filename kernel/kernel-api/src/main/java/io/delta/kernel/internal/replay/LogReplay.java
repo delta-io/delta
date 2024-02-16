@@ -101,22 +101,20 @@ public class LogReplay {
 
     private final Path dataPath;
     private final LogSegment logSegment;
-    private final TableClient tableClient;
     private final Tuple2<Protocol, Metadata> protocolAndMetadata;
 
     public LogReplay(
             Path logPath,
             Path dataPath,
             long snapshotVersion,
-            TableClient tableClient,
             LogSegment logSegment,
+            TableClient tableClient,
             Optional<SnapshotHint> snapshotHint) {
         assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
         this.dataPath = dataPath;
         this.logSegment = logSegment;
-        this.tableClient = tableClient;
-        this.protocolAndMetadata = loadTableProtocolAndMetadata(snapshotHint, snapshotVersion);
+        this.protocolAndMetadata = loadTableProtocolAndMetadata(snapshotHint, snapshotVersion ,tableClient);
     }
 
     /////////////////
@@ -151,7 +149,9 @@ public class LogReplay {
      * </ol>
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
-            boolean shouldReadStats) {
+            boolean shouldReadStats,
+            TableClient tableClient
+            ) {
         final CloseableIterator<ActionWrapper> addRemoveIter =
             new ActionsIterator(
                 tableClient,
@@ -174,7 +174,9 @@ public class LogReplay {
      */
     private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
             Optional<SnapshotHint> snapshotHint,
-            long snapshotVersion) {
+            long snapshotVersion,
+            TableClient tableClient
+            ) {
 
         // Exit early if the hint already has the info we need
         if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
@@ -269,7 +271,7 @@ public class LogReplay {
         );
     }
 
-    private Optional<Long> loadLatestTransactionVersion(String applicationId) {
+    private Optional<Long> loadLatestTransactionVersion(String applicationId, TableClient tableClient) {
         try (CloseableIterator<ActionWrapper> reverseIter =
                  new ActionsIterator(
                      tableClient,
