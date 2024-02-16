@@ -20,6 +20,7 @@ import org.apache.hadoop.fs.Path;
 
 import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
+import java.net.URI;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,7 @@ import java.io.IOException;
 import org.apache.hadoop.conf.Configuration;
 
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClientBuilder;
 import software.amazon.awssdk.services.dynamodb.model.*;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
@@ -299,14 +301,17 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
         };
     }
 
-    private DynamoDbClient getClient() throws java.io.IOException {
+    protected DynamoDbClient getClient() throws java.io.IOException {
         try {
             final AwsCredentialsProvider awsCredentialsProvider = DefaultCredentialsProvider.create();
-            final DynamoDbClient client = DynamoDbClient.builder()
+            DynamoDbClientBuilder builder = DynamoDbClient.builder()
                 .region(Region.of(regionName))
-                .credentialsProvider(awsCredentialsProvider)
-                .build();
-            return client;
+                .credentialsProvider(awsCredentialsProvider);
+            String endpoint = System.getenv("AWS_ENDPOINT_URL");
+            if (endpoint != null) {
+                builder = builder.endpointOverride(URI.create(endpoint));
+            }
+            return builder.build();
         } catch (Exception e) {
             throw new RuntimeException("Failed to create DynamoDB client", e);
         }
