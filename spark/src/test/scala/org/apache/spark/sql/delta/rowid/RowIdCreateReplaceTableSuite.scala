@@ -123,8 +123,8 @@ class RowIdCreateReplaceTableSuite extends QueryTest
       writeTargetTestData(withRowIds = false)
       writeSourceTestData(withRowIds = true)
 
-      val beforeCommandLog = DeltaLog.forTable(spark, TableIdentifier("target"))
-      assertRowIdsAreNotSet(beforeCommandLog)
+      val log = DeltaLog.forTable(spark, TableIdentifier("target"))
+      assertRowIdsAreNotSet(log)
 
       withRowTrackingEnabled(enabled = true) {
         createReplaceTargetTable(
@@ -134,8 +134,7 @@ class RowIdCreateReplaceTableSuite extends QueryTest
             s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION" :: Nil)
       }
 
-      val afterCommandLog = DeltaLog.forTable(spark, TableIdentifier("target"))
-      assertRowIdsAreValid(afterCommandLog)
+      assertRowIdsAreValid(log)
     }
   }
 
@@ -144,8 +143,8 @@ class RowIdCreateReplaceTableSuite extends QueryTest
     withTable("target") {
       writeTargetTestData(withRowIds = false)
 
-      val beforeCommandLog = DeltaLog.forTable(spark, TableIdentifier("target"))
-      assertRowIdsAreNotSet(beforeCommandLog)
+      val log = DeltaLog.forTable(spark, TableIdentifier("target"))
+      assertRowIdsAreNotSet(log)
 
       withRowTrackingEnabled(enabled = true) {
         createReplaceTargetTable(
@@ -154,8 +153,7 @@ class RowIdCreateReplaceTableSuite extends QueryTest
           tblProperties = s"${DeltaConfigs.ROW_TRACKING_ENABLED.key} = 'true'" :: Nil)
       }
 
-      val afterCommandLog = DeltaLog.forTable(spark, TableIdentifier("target"))
-      assertRowIdsAreValid(afterCommandLog)
+      assertRowIdsAreValid(log)
     }
   }
 
