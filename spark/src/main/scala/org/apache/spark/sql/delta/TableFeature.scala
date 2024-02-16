@@ -355,7 +355,8 @@ object TableFeature {
         // managed-commits are under development and only available in testing.
         ManagedCommitTableFeature,
         // Row IDs are still under development and only available in testing.
-        RowTrackingFeature)
+        RowTrackingFeature,
+        TypeWideningTableFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -623,6 +624,18 @@ object ManagedCommitTableFeature
       spark: SparkSession): Boolean = {
     DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(metadata).nonEmpty
   }
+}
+
+object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening-dev")
+    with FeatureAutomaticallyEnabledByMetadata {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  private def isTypeWideningSupportNeededByMetadata(metadata: Metadata): Boolean =
+    DeltaConfigs.ENABLE_TYPE_WIDENING.fromMetaData(metadata)
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = isTypeWideningSupportNeededByMetadata(metadata)
 }
 
 /**

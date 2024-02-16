@@ -685,8 +685,14 @@ case class AlterTableChangeColumnDeltaCommand(
     // first (original data type is already normalized as we store char/varchar as string type with
     // special metadata in the Delta log), then apply Delta-specific checks.
     val newType = CharVarcharUtils.replaceCharVarcharWithString(newColumn.dataType)
-    if (SchemaUtils.canChangeDataType(originalField.dataType, newType, resolver,
-        txn.metadata.columnMappingMode, columnPath :+ originalField.name).nonEmpty) {
+    if (SchemaUtils.canChangeDataType(
+        originalField.dataType,
+        newType,
+        resolver,
+        txn.metadata.columnMappingMode,
+        columnPath :+ originalField.name,
+        allowTypeWidening = TypeWidening.isEnabled(txn.protocol, txn.metadata)
+      ).nonEmpty) {
       throw DeltaErrors.alterTableChangeColumnException(
         s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
           s"'${originalField.dataType}" +
@@ -738,8 +744,14 @@ case class AlterTableReplaceColumnsDeltaCommand(
       val resolver = sparkSession.sessionState.conf.resolver
       val changingSchema = StructType(columns)
 
-      SchemaUtils.canChangeDataType(existingSchema, changingSchema, resolver,
-        txn.metadata.columnMappingMode, failOnAmbiguousChanges = true).foreach { operation =>
+      SchemaUtils.canChangeDataType(
+        existingSchema,
+        changingSchema,
+        resolver,
+        txn.metadata.columnMappingMode,
+        allowTypeWidening = TypeWidening.isEnabled(txn.protocol, txn.metadata),
+        failOnAmbiguousChanges = true
+      ).foreach { operation =>
         throw DeltaErrors.alterTableReplaceColumnsException(
           existingSchema, changingSchema, operation)
       }

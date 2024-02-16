@@ -725,6 +725,17 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a boolean."
   )
 
+  /**
+   * Whether widening the type of an existing column or field is allowed, either manually using
+   * ALTER TABLE CHANGE COLUMN or automatically if automatic schema evolution is enabled.
+   */
+  val ENABLE_TYPE_WIDENING = buildConfig[Boolean](
+    key = "enableTypeWidening",
+    defaultValue = false.toString,
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
   val MANAGED_COMMIT_OWNER_NAME = buildConfig[Option[String]](
     "managedCommits.commitOwner-dev",
     null,
