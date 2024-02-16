@@ -501,6 +501,26 @@ class SnapshotManagerSuite extends AnyFunSuite {
     }
   }
 
+  test("getLogSegmentForVersion: corrupt listing with missing log files") {
+    // checkpoint(10), 010.json, 011.json, 013.json
+    val fileList = deltaFileStatuses(Seq(10L, 11L)) ++ deltaFileStatuses(Seq(13L)) ++
+      singularCheckpointFileStatuses(Seq(10L))
+    testExpectedError[RuntimeException](
+      fileList,
+      expectedErrorMessageContains = "Versions ([11, 13]) are not continuous"
+    )
+    testExpectedError[RuntimeException](
+      fileList,
+      startCheckpoint = Optional.of(10),
+      expectedErrorMessageContains = "Versions ([11, 13]) are not continuous"
+    )
+    testExpectedError[RuntimeException](
+      fileList,
+      versionToLoad = Optional.of(13),
+      expectedErrorMessageContains = "Versions ([11, 13]) are not continuous"
+    )
+  }
+
   // TODO address the inconsistent behaviors and throw better error messages for corrupt listings?
   //  (delta-io/delta#2283)
   test("getLogSegmentForVersion: corrupt listing 000.json...009.json + checkpoint(10)") {
