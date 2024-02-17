@@ -113,7 +113,7 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
     }
   }
 
-  override protected[managedcommit] def registerBackfill(
+  override protected[delta] def registerBackfill(
       tablePath: Path,
       untilVersion: Long,
       deltaFile: Path): Unit = {

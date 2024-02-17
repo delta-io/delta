@@ -138,7 +138,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
   }
 
   /** Callback to tell the CommitStore that all commits <= `untilVersion` are backfilled. */
-  protected def registerBackfill(
+  protected[delta] def registerBackfill(
       tablePath: Path,
       untilVersion: Long,
       deltaFile: Path): Unit
