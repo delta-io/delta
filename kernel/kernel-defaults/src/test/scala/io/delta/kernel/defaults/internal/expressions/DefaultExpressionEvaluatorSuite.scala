@@ -241,6 +241,18 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkBooleanVectors(actOutputVector, expOutputVector)
   }
 
+  test("evaluate expression: is null") {
+    val childColumn = booleanVector(Seq[BooleanJ](true, false, null))
+
+    val schema = new StructType().add("child", BooleanType.BOOLEAN)
+    val batch = new DefaultColumnarBatch(childColumn.getSize, schema, Array(childColumn))
+
+    val isNullExpression = new Predicate("IS_NULL", new Column("child"))
+    val expOutputVector = booleanVector(Seq[BooleanJ](false, false, true))
+    val actOutputVector = evaluator(schema, isNullExpression, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector, expOutputVector)
+  }
+
   test("evaluate expression: coalesce") {
     val col1 = booleanVector(Seq[BooleanJ](true, null, null, null))
     val col2 = booleanVector(Seq[BooleanJ](false, false, null, null))
