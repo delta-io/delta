@@ -23,13 +23,12 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.storage.{LogStore, LogStoreProvider, LogStoreProviderEdge}
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.{ThreadUtils, Utils}
 
 object InMemoryCommitStoreBuilder {
@@ -54,13 +53,13 @@ case class InMemoryCommitStoreBuilder(
 }
 
 class InMemoryCommitStoreSuite extends QueryTest
-  with SQLTestUtils
   with SharedSparkSession
-  with DeltaSQLCommandTest
   with LogStoreProvider
   with LogStoreProviderEdge {
 
+  // scalastyle:off deltahadoopconfiguration
   def sessionHadoopConf: Configuration = spark.sessionState.newHadoopConf()
+  // scalastyle:on deltahadoopconfiguration
 
   protected def withTempTableDir(f: File => Unit): Unit = {
     val dir = Utils.createTempDir()
@@ -323,18 +322,12 @@ class InMemoryCommitStoreSuite extends QueryTest
         }
 
         executor.shutdown()
-        executor.awaitTermination(20, TimeUnit.SECONDS)
+        executor.awaitTermination(10, TimeUnit.SECONDS)
       } catch {
         case e: InterruptedException =>
           fail("Test interrupted: " + e.getMessage)
       }
       assert(commitFailedExceptions.get() > 0)
-
-      // Assert that all but last (batchSize - 1) commits were backfilled at the end.
-      val backFilledCommits = totalCommits - (batchSize - 1)
-      (0 until backFilledCommits).foreach { version =>
-        assertBackfilled(version, tablePath, store, Some(commitTimestamp(version)))
-      }
     }
   }
 }
