@@ -104,7 +104,7 @@ public class LogReplay {
     private final Tuple2<Protocol, Metadata> protocolAndMetadata;
 
     public LogReplay(
-            TableClien,
+            TableClient tableClient,
             Path logPath,
             Path dataPath,
             long snapshotVersion,
@@ -114,7 +114,7 @@ public class LogReplay {
 
         this.dataPath = dataPath;
         this.logSegment = logSegment;
-        this.protocolAndMetadata = loadTableProtocolAndMetadat, snapshotHint, snapshotVersion);
+        this.protocolAndMetadata = loadTableProtocolAndMetadata(tableClient,snapshotHint, snapshotVersion);
     }
 
     /////////////////
@@ -129,8 +129,8 @@ public class LogReplay {
         return this.protocolAndMetadata._2;
     }
 
-    public Optional<Long> getLatestTransactionIdentifier(TableClien, String applicationId) {
-        return loadLatestTransactionVersio, applicationId);
+    public Optional<Long> getLatestTransactionIdentifier(TableClient tableClient, String applicationId ) {
+        return loadLatestTransactionVersion(tableClient,applicationId);
     }
 
     /**
@@ -149,15 +149,15 @@ public class LogReplay {
      * </ol>
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
-            TableClien
-            boolean shouldReadStats
+            TableClient tableClient
+            boolean shouldReadStats,   
             ) {
         final CloseableIterator<ActionWrapper> addRemoveIter =
             new ActionsIterator(
-        ,
+                tableClient,
                 logSegment.allLogFilesReversed(),
                 getAddRemoveReadSchema(shouldReadStats));
-        return new ActiveAddFilesIterato, addRemoveIter, dataPath);
+        return new ActiveAddFilesIterator(tableClient, addRemoveIter, dataPath);
     }
 
     ////////////////////
@@ -173,8 +173,9 @@ public class LogReplay {
      * just use the P and/or M from the hint.
      */
     private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
+            TableClient tableClient
             Optional<SnapshotHint> snapshotHint,
-            long snapshotVersion,
+            long snapshotVersion,  
             ) {
 
         // Exit early if the hint already has the info we need
@@ -190,7 +191,7 @@ public class LogReplay {
 
         try (CloseableIterator<ActionWrapper> reverseIter =
                  new ActionsIterator(
-                ,
+                     tableClient,
                      logSegment.allLogFilesReversed(),
                      PROTOCOL_METADATA_READ_SCHEMA)) {
             while (reverseIter.hasNext()) {
@@ -229,7 +230,7 @@ public class LogReplay {
 
                     for (int i = 0; i < metadataVector.getSize(); i++) {
                         if (!metadataVector.isNullAt(i)) {
-                            metadata = Metadata.fromColumnVector( tableClient, metadataVector, i);
+                            metadata = Metadata.fromColumnVector(tableClient, metadataVector, i);
 
                             if (protocol != null) {
                                 // Stop since we have found the latest Protocol and Metadata.
