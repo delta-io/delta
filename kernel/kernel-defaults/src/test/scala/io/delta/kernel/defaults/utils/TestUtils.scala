@@ -107,9 +107,9 @@ trait TestUtils extends Assertions with SQLHelper {
     testFunc(tablePath)
   }
 
-  def latestSnapshot(path: String): Snapshot = {
-    Table.forPath(defaultTableClient, path)
-      .getLatestSnapshot(defaultTableClient)
+  def latestSnapshot(path: String, tableClient: TableClient = defaultTableClient): Snapshot = {
+    Table.forPath(tableClient, path)
+      .getLatestSnapshot(tableClient)
   }
 
   def collectScanFileRows(scan: Scan, tableClient: TableClient = defaultTableClient): Seq[Row] = {
@@ -251,11 +251,15 @@ trait TestUtils extends Assertions with SQLHelper {
     tableClient: TableClient = defaultTableClient,
     expectedSchema: StructType = null,
     filter: Predicate = null,
+    version: Option[Long] = None,
     expectedRemainingFilter: Predicate = null,
     expectedVersion: Option[Long] = None
   ): Unit = {
 
-    val snapshot = latestSnapshot(path)
+    val snapshot = version.map { v =>
+      Table.forPath(tableClient, path)
+        .getSnapshotAtVersion(tableClient, v)
+    }.getOrElse(latestSnapshot(path, tableClient))
 
     val readSchema = if (readCols == null) {
       null
