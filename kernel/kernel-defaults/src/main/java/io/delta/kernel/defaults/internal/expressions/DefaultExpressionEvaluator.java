@@ -233,6 +233,15 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         }
 
         @Override
+        ExpressionTransformResult visitIsNull(Predicate predicate) {
+            Expression child = visit(predicate.getChildren().get(0)).expression;
+            return new ExpressionTransformResult(
+                new Predicate(predicate.getName(), child),
+                BooleanType.BOOLEAN
+            );
+        }
+
+        @Override
         ExpressionTransformResult visitCoalesce(ScalarExpression coalesce) {
             List<ExpressionTransformResult> children = coalesce.getChildren().stream()
                 .map(this::visit)
@@ -509,6 +518,16 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             return booleanWrapperVector(
                 childResult,
                 rowId -> !childResult.isNullAt(rowId),
+                rowId -> false
+            );
+        }
+
+        @Override
+        ColumnVector visitIsNull(Predicate predicate) {
+            ColumnVector childResult = visit(childAt(predicate, 0));
+            return booleanWrapperVector(
+                childResult,
+                rowId -> childResult.isNullAt(rowId),
                 rowId -> false
             );
         }
