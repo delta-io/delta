@@ -607,6 +607,10 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   }
 
   test("partitioned table with column mapping") {
+    val expectedAnswer = (0 to 2).map {
+      case 2 => TestRow(null, null, "2")
+      case i => TestRow(i, i.toDouble, i.toString)
+    }
     val readCols = Seq(
       // partition fields
       "as_int",
@@ -614,10 +618,6 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       // data fields
       "value"
     )
-    val expectedAnswer = (0 to 2).map {
-      case 2 => TestRow(null, null, "2")
-      case i => TestRow(i, i.toDouble, i.toString)
-    }
 
     checkTable(
       path = DefaultKernelTestUtils.getTestResourceFilePath(
