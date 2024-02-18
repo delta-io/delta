@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.CommitInfo
-import org.apache.spark.sql.delta.storage.{LogStore, LogStoreProvider, LogStoreProviderEdge}
+import org.apache.spark.sql.delta.storage.{LogStore, LogStoreProvider}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -54,14 +54,15 @@ case class InMemoryCommitStoreBuilder(
 
 class InMemoryCommitStoreSuite extends QueryTest
   with SharedSparkSession
-  with LogStoreProvider
-  with LogStoreProviderEdge {
+  with LogStoreProvider {
 
   // scalastyle:off deltahadoopconfiguration
   def sessionHadoopConf: Configuration = spark.sessionState.newHadoopConf()
   // scalastyle:on deltahadoopconfiguration
 
-  protected def withTempTableDir(f: File => Unit): Unit = {
+  def store: LogStore = createLogStore(spark)
+
+  private def withTempTableDir(f: File => Unit): Unit = {
     val dir = Utils.createTempDir()
     val deltaLogDir = new File(dir, DeltaLog.LOG_DIR_NAME)
     deltaLogDir.mkdir()
@@ -80,7 +81,7 @@ class InMemoryCommitStoreSuite extends QueryTest
       tablePath: Path): Commit = {
     val commitInfo = CommitInfo.empty(version = Some(version)).withTimestamp(timestamp)
     cs.commit(
-      spark.sharedState.logStore,
+      store,
       sessionHadoopConf,
       tablePath,
       version,
@@ -91,7 +92,6 @@ class InMemoryCommitStoreSuite extends QueryTest
   private def assertBackfilled(
       version: Long,
       tablePath: Path,
-      store: LogStore,
       timestampOpt: Option[Long] = None): Unit = {
     val logPath = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
     val delta = FileNames.deltaFile(logPath, version)
@@ -120,7 +120,6 @@ class InMemoryCommitStoreSuite extends QueryTest
   private def assertInvariants(
       tablePath: Path,
       cs: InMemoryCommitStore,
-      store: LogStore,
       commitTimestampsOpt: Option[Array[Long]] = None): Unit = {
     val maxUntrackedVersion: Int = cs.withReadLock[Int](tablePath) {
       val tableData = cs.perTableMap.get(tablePath)
@@ -139,7 +138,7 @@ class InMemoryCommitStoreSuite extends QueryTest
       }
     }
     (0 to maxUntrackedVersion).foreach { version =>
-      assertBackfilled(version, tablePath, store, commitTimestampsOpt.map(_(version)))}
+      assertBackfilled(version, tablePath, commitTimestampsOpt.map(_(version)))}
   }
 
   test("in-memory-commit-store-builder works as expected") {
@@ -167,14 +166,13 @@ class InMemoryCommitStoreSuite extends QueryTest
 
   test("test basic commit and backfill functionality") {
     withTempTableDir { tempDir =>
-      val store = createLogStore(spark)
       val tablePath = new Path(tempDir.getCanonicalPath)
       val cs = InMemoryCommitStoreBuilder(batchSize = 3).build(Map.empty)
 
       // Commit 0 is always immediately backfilled
       val c0 = commit(0, 0, cs, tablePath)
       assert(cs.getCommits(tablePath, 0) == Seq.empty)
-      assertBackfilled(0, tablePath, store, Some(0))
+      assertBackfilled(0, tablePath, Some(0))
 
       val c1 = commit(1, 1, cs, tablePath)
       val c2 = commit(2, 2, cs, tablePath)
@@ -183,7 +181,7 @@ class InMemoryCommitStoreSuite extends QueryTest
       // All 3 commits are backfilled since batchSize == 3
       val c3 = commit(3, 3, cs, tablePath)
       assert(cs.getCommits(tablePath, 0) == Seq.empty)
-      (1 to 3).foreach(i => assertBackfilled(i, tablePath, store, Some(i)))
+      (1 to 3).foreach(i => assertBackfilled(i, tablePath, Some(i)))
 
       // Test that startVersion and endVersion are respected in getCommits
       val c4 = commit(4, 4, cs, tablePath)
@@ -195,14 +193,13 @@ class InMemoryCommitStoreSuite extends QueryTest
       // Commit [4, 6] are backfilled since batchSize == 3
       val c6 = commit(6, 6, cs, tablePath)
       assert(cs.getCommits(tablePath, 0) == Seq.empty)
-      (4 to 6).foreach(i => assertBackfilled(i, tablePath, store, Some(i)))
-      assertInvariants(tablePath, cs.asInstanceOf[InMemoryCommitStore], store)
+      (4 to 6).foreach(i => assertBackfilled(i, tablePath, Some(i)))
+      assertInvariants(tablePath, cs.asInstanceOf[InMemoryCommitStore])
     }
   }
 
   test("test basic commit and backfill functionality with 1 batch size") {
     withTempTableDir { tempDir =>
-      val store = createLogStore(spark)
       val tablePath = new Path(tempDir.getCanonicalPath)
       val cs = InMemoryCommitStoreBuilder(batchSize = 1).build(Map.empty)
 
@@ -210,7 +207,7 @@ class InMemoryCommitStoreSuite extends QueryTest
       (0 to 3).foreach { version =>
         commit(version, version, cs, tablePath)
         assert(cs.getCommits(tablePath, 0) == Seq.empty)
-        assertBackfilled(version, tablePath, store, Some(version))
+        assertBackfilled(version, tablePath, Some(version))
       }
 
       // Test that out-of-order backfill is rejected
@@ -218,13 +215,12 @@ class InMemoryCommitStoreSuite extends QueryTest
         cs.asInstanceOf[InMemoryCommitStore]
           .registerBackfill(tablePath, 5, new Path("delta5.json"))
       }
-      assertInvariants(tablePath, cs.asInstanceOf[InMemoryCommitStore], store)
+      assertInvariants(tablePath, cs.asInstanceOf[InMemoryCommitStore])
     }
   }
 
   test("test out of order commits are rejected") {
     withTempTableDir { tempDir =>
-      val store = createLogStore(spark)
       val tablePath = new Path(tempDir.getCanonicalPath)
       val cs = InMemoryCommitStoreBuilder(batchSize = 5).build(Map.empty)
 
@@ -242,13 +238,12 @@ class InMemoryCommitStoreSuite extends QueryTest
       assertCommitFail(5, 6, retryable = true, commit(5, 5, cs, tablePath))
       assertCommitFail(7, 6, retryable = false, commit(7, 7, cs, tablePath))
 
-      assertInvariants(tablePath, cs.asInstanceOf[InMemoryCommitStore], store)
+      assertInvariants(tablePath, cs.asInstanceOf[InMemoryCommitStore])
     }
   }
 
   test("test out of order backfills are rejected") {
     withTempTableDir { tempDir =>
-      val store = createLogStore(spark)
       val tablePath = new Path(tempDir.getCanonicalPath)
       val cs = InMemoryCommitStoreBuilder(batchSize = 5).build(Map.empty)
       intercept[IllegalArgumentException] {
@@ -269,7 +264,6 @@ class InMemoryCommitStoreSuite extends QueryTest
 
   test("should handle concurrent readers and writers") {
     withTempTableDir { tempDir =>
-      val store = createLogStore(spark)
       val tablePath = new Path(tempDir.getCanonicalPath)
       val batchSize = 6
       val cs = InMemoryCommitStoreBuilder(batchSize).build(Map.empty)
@@ -313,7 +307,6 @@ class InMemoryCommitStoreSuite extends QueryTest
                   assertInvariants(
                     tablePath,
                     cs.asInstanceOf[InMemoryCommitStore],
-                    store,
                     Some(commitTimestamp))
                 }
               }
