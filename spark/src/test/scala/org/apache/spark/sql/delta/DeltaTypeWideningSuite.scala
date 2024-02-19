@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.errors.QueryErrorsBase
@@ -32,6 +34,7 @@ class DeltaTypeWideningSuite
   extends QueryTest
     with ParquetTest
     with DeltaDMLTestUtils
+    with DeltaSQLCommandTest
     with DeltaTypeWideningTestMixin
     with DeltaTypeWideningAlterTableTests
     with DeltaTypeWideningTableFeatureTests
