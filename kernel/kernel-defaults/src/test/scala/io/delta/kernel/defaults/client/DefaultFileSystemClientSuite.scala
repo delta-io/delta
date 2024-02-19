@@ -15,17 +15,16 @@
  */
 package io.delta.kernel.defaults.client
 
-import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getTestResourceFilePath
-import io.delta.kernel.defaults.utils.TestUtils
-import org.apache.hadoop.conf.Configuration
-import org.scalatest.funsuite.AnyFunSuite
-
 import java.io.FileNotFoundException
+
 import scala.collection.mutable.ArrayBuffer
+
+import io.delta.kernel.defaults.utils.TestUtils
+import org.scalatest.funsuite.AnyFunSuite
 
 class DefaultFileSystemClientSuite extends AnyFunSuite with TestUtils {
 
-  val fsClient = new DefaultFileSystemClient(new Configuration())
+  val fsClient = defaultTableClient.getFileSystemClient
 
   test("list from file") {
     val basePath = fsClient.resolvePath(getTestResourceFilePath("json-files"))
