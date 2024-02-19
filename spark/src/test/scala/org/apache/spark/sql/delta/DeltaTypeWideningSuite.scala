@@ -242,7 +242,7 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase {
     checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3), Row(4)))
   }
 
-  test("row group skipping Int -> Long") {
+  test("row group skipping Short -> Int") {
     withSQLConf(
       SQLConf.FILES_MAX_PARTITION_BYTES.key -> 1024.toString) {
       append((0 until 1024).toDF("value").select($"value".cast(ShortType)))
@@ -250,7 +250,8 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase {
       append((Short.MinValue + 1 until Short.MaxValue + 2048).toDF("value"))
       withAllParquetReaders {
         checkAnswer(
-          sql(s"SELECT * FROM delta.`$tempPath` WHERE value >= ${Short.MaxValue}::INT + 1000"),
+          sql(s"SELECT * FROM delta.`$tempPath` " +
+            s"WHERE value >= CAST(${Short.MaxValue} AS INT) + 1000"),
           (Short.MaxValue + 1000 until Short.MaxValue + 2048).map(Row(_)))
       }
     }
