@@ -50,7 +50,7 @@ public class TestDeltaTableReads
         throws Exception {
         String tablePath = goldenTablePath("data-reader-primitives");
         Snapshot snapshot = snapshot(tablePath);
-        StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
+        StructType readSchema = snapshot.getSchema(tableClient);
 
         List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
 
@@ -98,7 +98,7 @@ public class TestDeltaTableReads
         throws Exception {
         String tablePath = getTestResourceFilePath("data-reader-primitives-column-mapping-name");
         Snapshot snapshot = snapshot(tablePath);
-        StructType readSchema = removeUnsupportedType(snapshot.getSchema(tableClient));
+        StructType readSchema = snapshot.getSchema(tableClient);
 
         List<ColumnarBatch> actualData = readSnapshot(readSchema, snapshot);
 

@@ -68,7 +68,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
           readingSchema = readingSchema.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD)
         }
         if (readRowIndexCol) {
-          readingSchema = readingSchema.add(DeltaParquetFileFormat.ROW_INDEX_STRUCT_FILED)
+          readingSchema = readingSchema.add(DeltaParquetFileFormat.ROW_INDEX_STRUCT_FIELD)
         }
 
         // Fetch the only file in the DeltaLog snapshot

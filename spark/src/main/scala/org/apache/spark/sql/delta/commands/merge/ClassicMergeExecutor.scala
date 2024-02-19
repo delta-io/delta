@@ -388,7 +388,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
 
     // The target output columns need to be marked as nullable here, as they are going to be used
     // to reference the output of an outer join.
-    val targetOutputCols = getTargetOutputCols(deltaTxn, makeNullable = true)
+    val targetOutputCols = getTargetOutputCols(spark, deltaTxn, makeNullable = true)
 
     // If there are N columns in the target table, the full outer join output will have:
     // - N columns for target table

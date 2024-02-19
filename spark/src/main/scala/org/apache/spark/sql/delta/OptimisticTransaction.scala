@@ -1094,6 +1094,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
+      // Validate that the [[DeltaConfigs.MANAGED_COMMIT_PROVIDER_CONF]] is json parse-able.
+      DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.fromMetaData(metadata)
+
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.toSeq,

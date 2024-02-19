@@ -103,7 +103,9 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       deltaLog: DeltaLog,
       options: Option[DeltaOptions],
       data: Dataset[_]): (QueryExecution, Seq[Attribute], Seq[Constraint], Set[String]) = {
-    val normalizedData = SchemaUtils.normalizeColumnNames(metadata.schema, data)
+    val normalizedData = SchemaUtils.normalizeColumnNames(
+      deltaLog, metadata.schema, data
+    )
     val nullAsDefault = options.isDefined &&
       options.get.options.contains(ColumnWithDefaultExprUtils.USE_NULL_AS_DEFAULT_DELTA_OPTION)
     val enforcesDefaultExprs = ColumnWithDefaultExprUtils.tableHasDefaultExpr(
