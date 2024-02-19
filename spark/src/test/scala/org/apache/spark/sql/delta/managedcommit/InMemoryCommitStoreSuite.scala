@@ -219,7 +219,7 @@ class InMemoryCommitStoreSuite extends QueryTest
     }
   }
 
-  test("test out of order commits are rejected") {
+  test("test out-of-order commits are rejected") {
     withTempTableDir { tempDir =>
       val tablePath = new Path(tempDir.getCanonicalPath)
       val cs = InMemoryCommitStoreBuilder(batchSize = 5).build(Map.empty)
@@ -242,7 +242,7 @@ class InMemoryCommitStoreSuite extends QueryTest
     }
   }
 
-  test("test out of order backfills are rejected") {
+  test("test out-of-order backfills are rejected") {
     withTempTableDir { tempDir =>
       val tablePath = new Path(tempDir.getCanonicalPath)
       val cs = InMemoryCommitStoreBuilder(batchSize = 5).build(Map.empty)
