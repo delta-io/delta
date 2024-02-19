@@ -498,7 +498,8 @@ case class AlterTableDropColumnsDeltaCommand(
       }
       // Updates the delta statistics column list by removing the dropped columns from it.
       val newConfiguration = metadata.configuration ++
-        StatisticsCollection.dropDeltaStatsColumns(metadata, columnsToDrop)
+        StatisticsCollection.dropDeltaStatsColumns(metadata, columnsToDrop) ++
+        ColumnMappingUsageTracking.trackColumnDropOrRename(txn.protocol)
       val newMetadata = metadata.copy(
         schemaString = newSchema.json,
         configuration = newConfiguration
@@ -612,7 +613,8 @@ case class AlterTableChangeColumnDeltaCommand(
       val newColumnPath = columnPath :+ newColumn.name
       // Rename the column in the delta statistics columns configuration, if present.
       val newConfiguration = metadata.configuration ++
-        StatisticsCollection.renameDeltaStatsColumn(metadata, oldColumnPath, newColumnPath)
+        StatisticsCollection.renameDeltaStatsColumn(metadata, oldColumnPath, newColumnPath) ++
+        ColumnMappingUsageTracking.trackColumnDropOrRename(txn.protocol)
 
       val newMetadata = metadata.copy(
         schemaString = newSchema.json,
