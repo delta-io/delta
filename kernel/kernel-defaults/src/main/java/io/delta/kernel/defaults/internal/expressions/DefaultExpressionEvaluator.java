@@ -29,6 +29,7 @@ import io.delta.kernel.types.*;
 
 import static io.delta.kernel.internal.util.ExpressionUtils.getLeft;
 import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
+import static io.delta.kernel.internal.util.ExpressionUtils.getUnaryChild;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
@@ -234,7 +235,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
 
         @Override
         ExpressionTransformResult visitIsNull(Predicate predicate) {
-            Expression child = visit(predicate.getChildren().get(0)).expression;
+            Expression child = visit(getUnaryChild(predicate)).expression;
             return new ExpressionTransformResult(
                 new Predicate(predicate.getName(), child),
                 BooleanType.BOOLEAN
@@ -524,7 +525,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
 
         @Override
         ColumnVector visitIsNull(Predicate predicate) {
-            ColumnVector childResult = visit(childAt(predicate, 0));
+            ColumnVector childResult = visit(getUnaryChild(predicate));
             return booleanWrapperVector(
                 childResult,
                 rowId -> childResult.isNullAt(rowId),

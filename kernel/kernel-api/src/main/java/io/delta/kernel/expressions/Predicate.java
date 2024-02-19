@@ -100,7 +100,7 @@ import io.delta.kernel.client.ExpressionHandler;
  *  <li>Name: <code>IS_NULL</code>
  *   <ul>
  *    <li>SQL semantic: <code>expr IS NULL</code></li>
- *    <li>Since version: 3.1.0</li>
+ *    <li>Since version: 3.2.0</li>
  *   </ul>
  *  </li>
  * </ol>
