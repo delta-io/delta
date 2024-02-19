@@ -114,7 +114,7 @@ public class LogReplay {
 
         this.dataPath = dataPath;
         this.logSegment = logSegment;
-        this.protocolAndMetadata = loadTableProtocolAndMetadata(tableClient,snapshotHint, snapshotVersion);
+        this.protocolAndMetadata = loadTableProtocolAndMetadata(tableClient, snapshotHint, snapshotVersion);
     }
 
     /////////////////
@@ -130,7 +130,7 @@ public class LogReplay {
     }
 
     public Optional<Long> getLatestTransactionIdentifier(TableClient tableClient, String applicationId ) {
-        return loadLatestTransactionVersion(tableClient,applicationId);
+        return loadLatestTransactionVersion(tableClient, applicationId);
     }
 
     /**
@@ -149,7 +149,7 @@ public class LogReplay {
      * </ol>
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
-            TableClient tableClient
+            TableClient tableClient,
             boolean shouldReadStats,   
             ) {
         final CloseableIterator<ActionWrapper> addRemoveIter =
@@ -173,7 +173,7 @@ public class LogReplay {
      * just use the P and/or M from the hint.
      */
     private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-            TableClient tableClient
+            TableClient tableClient,
             Optional<SnapshotHint> snapshotHint,
             long snapshotVersion,  
             ) {
@@ -230,7 +230,7 @@ public class LogReplay {
 
                     for (int i = 0; i < metadataVector.getSize(); i++) {
                         if (!metadataVector.isNullAt(i)) {
-                            metadata = Metadata.fromColumnVector(tableClient, metadataVector, i);
+                            metadata = Metadata.fromColumnVector(metadataVector, i, tableClient);
 
                             if (protocol != null) {
                                 // Stop since we have found the latest Protocol and Metadata.
