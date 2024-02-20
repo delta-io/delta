@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.managedcommit
 
 import java.io.File
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{Executors, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.spark.sql.delta.DeltaLog
@@ -29,7 +29,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.util.{ThreadUtils, Utils}
+import org.apache.spark.util.Utils
 
 object InMemoryCommitStoreBuilder {
   private val defaultBatchSize = 5L
@@ -270,8 +270,9 @@ class InMemoryCommitStoreSuite extends QueryTest
 
       val numberOfWriters = 10
       val numberOfCommitsPerWriter = 10
-      val executor =
-        ThreadUtils.newDaemonFixedThreadPool(numberOfWriters, "in-memory-commit-store-test-")
+      // scalastyle:off sparkThreadPools
+      val executor = Executors.newFixedThreadPool(numberOfWriters)
+      // scalastyle:on sparkThreadPools
       val runningTimestamp = new AtomicInteger(0)
       val commitFailedExceptions = new AtomicInteger(0)
       val totalCommits = numberOfWriters * numberOfCommitsPerWriter
@@ -315,7 +316,7 @@ class InMemoryCommitStoreSuite extends QueryTest
         }
 
         executor.shutdown()
-        executor.awaitTermination(30, TimeUnit.SECONDS)
+        executor.awaitTermination(15, TimeUnit.SECONDS)
       } catch {
         case e: InterruptedException =>
           fail("Test interrupted: " + e.getMessage)
