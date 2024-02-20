@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.defaults.utils
 
-import java.io.File
+import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.nio.file.Files
 import java.util.{Optional, TimeZone, UUID}
@@ -586,6 +586,10 @@ trait TestUtils extends Assertions with SQLHelper {
    * Returns a URI encoded path of the resource.
    */
   def getTestResourceFilePath(resourcePath: String): String = {
-    ResourceLoader.classLoader.getResource(resourcePath).getFile
+    val resource = ResourceLoader.classLoader.getResource(resourcePath)
+    if (resource == null) {
+      throw new FileNotFoundException("resource not found")
+    }
+    resource.getFile
   }
 }
