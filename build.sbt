@@ -79,6 +79,7 @@ lazy val commonSettings = Seq(
     "-Dspark.databricks.delta.snapshotPartitions=2",
     "-Dspark.sql.shuffle.partitions=5",
     "-Ddelta.log.cacheSize=3",
+    "-Dspark.databricks.delta.delta.log.cacheSize=3",
     "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
     "-Xmx1024m"
   ),
@@ -144,6 +145,7 @@ lazy val spark = (project in file("spark"))
       "-Dspark.databricks.delta.snapshotPartitions=2",
       "-Dspark.sql.shuffle.partitions=5",
       "-Ddelta.log.cacheSize=3",
+      "-Dspark.databricks.delta.delta.log.cacheSize=3",
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
       "-Xmx1024m"
     ),
@@ -201,6 +203,7 @@ lazy val contribs = (project in file("contribs"))
       "-Dspark.databricks.delta.snapshotPartitions=2",
       "-Dspark.sql.shuffle.partitions=5",
       "-Ddelta.log.cacheSize=3",
+      "-Dspark.databricks.delta.delta.log.cacheSize=3",
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
       "-Xmx1024m"
     ),
