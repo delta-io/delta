@@ -281,4 +281,58 @@ class RowIdSuite extends QueryTest
       }
     }
   }
+
+  test(s"CONVERT TO DELTA assigns row ids") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { dir =>
+        spark.range(10).repartition(1)
+          .write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
+
+        sql(s"CONVERT TO DELTA parquet.`$dir`")
+
+        val log = DeltaLog.forTable(spark, dir)
+        assertRowIdsAreValid(log)
+        assert(extractMaterializedRowIdColumnName(log).isDefined)
+      }
+    }
+  }
+
+  test(s"CONVERT TO DELTA NO STATISTICS throws error") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { dir =>
+        spark.range(10)
+          .write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
+
+        val err = intercept[DeltaIllegalStateException] {
+          sql(s"CONVERT TO DELTA parquet.`$dir` NO STATISTICS")
+        }
+        checkError(err, "DELTA_CONVERT_TO_DELTA_ROW_TRACKING_WITHOUT_STATS",
+          parameters = Map(
+            "statisticsCollectionPropertyKey" -> DeltaSQLConf.DELTA_COLLECT_STATS.key,
+            "rowTrackingTableFeatureDefaultKey" -> defaultRowTrackingFeatureProperty,
+            "rowTrackingDefaultPropertyKey" ->
+              DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey))
+      }
+    }
+  }
+
+  test(s"CONVERT TO DELTA without stats collection enabled throws error") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { dir =>
+        spark.range(10)
+          .write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
+        withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+          val err = intercept[DeltaIllegalStateException] {
+            sql(s"CONVERT TO DELTA parquet.`$dir`")
+          }
+          checkError(err, "DELTA_CONVERT_TO_DELTA_ROW_TRACKING_WITHOUT_STATS",
+            parameters = Map(
+              "statisticsCollectionPropertyKey" -> DeltaSQLConf.DELTA_COLLECT_STATS.key,
+              "rowTrackingTableFeatureDefaultKey" -> defaultRowTrackingFeatureProperty,
+              "rowTrackingDefaultPropertyKey" ->
+                DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey))
+        }
+      }
+    }
+  }
 }
