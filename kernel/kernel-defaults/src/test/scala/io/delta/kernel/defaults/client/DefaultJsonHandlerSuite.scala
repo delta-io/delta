@@ -16,23 +16,27 @@
 package io.delta.kernel.defaults.client
 
 import java.math.{BigDecimal => JBigDecimal}
-import java.util.Optional
+import java.util.{Arrays, Collections, List, Optional}
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
 
+import io.delta.kernel.data.ColumnVector
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils, VectorTestUtils}
+import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
+import io.delta.kernel.internal.util.VectorUtils
+import io.delta.kernel.types._
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
-
-import io.delta.kernel.types._
-import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
-
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils, VectorTestUtils}
 
 // NOTE: currently tests are split across scala and java; additional tests are in
 // TestDefaultJsonHandler.java
 class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with VectorTestUtils {
 
-  val jsonHandler = new DefaultJsonHandler(new Configuration());
+  val jsonHandler = new DefaultJsonHandler(new Configuration {
+    set("delta.kernel.default.json.reader.batch-size", "1")
+  })
+  val fsClient = new DefaultFileSystemClient(new Configuration())
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Tests for parseJson for statistics eligible types (additional in TestDefaultJsonHandler.java)
@@ -344,6 +348,157 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with VectorTest
       )
     }
     assert(e.getMessage.contains("Could not parse JSON"))
+  }
+
+  test("read json files") {
+    val testFiles = fsClient.listFrom(getTestResourceFilePath("json-files/1.json"))
+
+    val actPaths = new ArrayBuffer[String]()
+    val actSizes = new ArrayBuffer[Long]()
+    val actDataChanges = new ArrayBuffer[Boolean]()
+    val data = jsonHandler.readJsonFiles(
+      testFiles,
+      new StructType()
+        .add("path", StringType.STRING)
+        .add("size", LongType.LONG)
+        .add("dataChange", BooleanType.BOOLEAN),
+      Optional.empty()
+    )
+    try {
+      data.forEach(batch => {
+        val dataBatchRows = batch.getRows
+        try {
+          dataBatchRows.forEach(row => {
+            actPaths += row.getString(0)
+            actSizes += row.getLong(1)
+            actDataChanges += row.getBoolean(2)
+          })
+        } finally {
+          dataBatchRows.close()
+        }
+      })
+    } finally {
+      data.close()
+    }
+
+    val expPaths = Seq(
+      "part-00000-d83dafd8-c344-49f0-ab1c-acd944e32493-c000.snappy.parquet",
+      "part-00000-cb078bc1-0aeb-46ed-9cf8-74a843b32c8c-c000.snappy.parquet",
+      "part-00001-9bf4b8f8-1b95-411b-bf10-28dc03aa9d2f-c000.snappy.parquet",
+      "part-00000-0441e99a-c421-400e-83a1-212aa6c84c73-c000.snappy.parquet",
+      "part-00001-34c8c673-3f44-4fa7-b94e-07357ec28a7d-c000.snappy.parquet",
+      "part-00000-842017c2-3e02-44b5-a3d6-5b9ae1745045-c000.snappy.parquet",
+      "part-00001-e62ca5a1-923c-4ee6-998b-c61d1cfb0b1c-c000.snappy.parquet"
+    )
+    val expSizes = Seq(348L, 687L, 705L, 650L, 650L, 649L, 649L)
+    val expDataChanges = Seq(true, true, true, true, true, true, true)
+
+    assert(expPaths === actPaths)
+    assert(expSizes === actSizes)
+    assert(expDataChanges === actDataChanges)
+  }
+
+  test("parse json content") {
+    val input = """
+      |{
+      |  "path":"part-00000-d83dafd8-c344-49f0-ab1c-acd944e32493-c000.snappy.parquet",
+      |  "partitionValues":{"p1" : "0", "p2" : "str"},
+      |  "size":348,
+      |  "modificationTime":1603723974000,
+      |  "dataChange":true
+      |}
+      |""".stripMargin
+    val readSchema = new StructType()
+      .add("path", StringType.STRING)
+      .add("partitionValues", new MapType(StringType.STRING, StringType.STRING, false))
+      .add("size", LongType.LONG)
+      .add("dataChange", BooleanType.BOOLEAN)
+
+    val batch = jsonHandler.parseJson(
+      singletonStringColumnVector(input), readSchema, Optional.empty[ColumnVector]()
+    )
+    assert(batch.getSize == 1)
+
+    val rows = batch.getRows
+    try {
+      val row = rows.next
+      assert(
+        row.getString(0) == "part-00000-d83dafd8-c344-49f0-ab1c-acd944e32493-c000.snappy.parquet"
+      )
+
+      val expPartitionValues = Map("p1" -> "0", "p2" -> "str").asJava
+      val actualPartitionValues = VectorUtils.toJavaMap(row.getMap(1))
+      assert(expPartitionValues === actualPartitionValues)
+      assert(row.getLong(2) === 348L)
+      assert(row.getBoolean(3) === true)
+    } finally {
+      rows.close()
+    }
+  }
+
+  test("parse nested complex types") {
+    val json = """
+      |{
+      |  "array": [0, 1, null],
+      |  "nested_array": [["a", "b"], ["c"], []],
+      |  "map": {"a":  true, "b":  false},
+      |  "nested_map": {"a":  {"one":  [], "two":  [1, 2, 3]}, "b":  {}},
+      |  "array_of_struct": [{"field1": "foo", "field2": 3}, {"field1": null}]
+      |}
+      |""".stripMargin
+
+    val schema = new StructType()
+      .add("array", new ArrayType(IntegerType.INTEGER, true))
+      .add("nested_array", new ArrayType(new ArrayType(StringType.STRING, true), true))
+      .add("map", new MapType(StringType.STRING, BooleanType.BOOLEAN, true))
+      .add(
+        "nested_map",
+        new MapType(
+          StringType.STRING,
+          new MapType(StringType.STRING, new ArrayType(IntegerType.INTEGER, true), true),
+          true
+        )
+      )
+      .add("array_of_struct", new ArrayType(new StructType()
+        .add("field1", StringType.STRING, true)
+        .add("field2", IntegerType.INTEGER, true), true)
+      )
+    val batch = jsonHandler.parseJson(
+      singletonStringColumnVector(json), schema, Optional.empty[ColumnVector]()
+    )
+
+    val rows = batch.getRows
+    try {
+      val result = rows.next
+      val exp0 = Seq(0, 1, null).asJava
+      assert(exp0 === VectorUtils.toJavaList(result.getArray(0)))
+
+      val exp1 = Seq(
+        Seq("a", "b").asJava,
+        Seq("c").asJava,
+        Collections.emptyList[String]()
+      ).asJava
+      assert(exp1 === VectorUtils.toJavaList(result.getArray(1)))
+
+      val exp2 = Map("a" -> true, "b" -> false).asJava
+      assert(exp2 === VectorUtils.toJavaMap(result.getMap(2)))
+
+      val nestedMap = Map(
+        "one" -> Collections.emptyList[Integer](),
+        "two" -> Arrays.asList(1, 2, 3)
+      ).asJava
+      val exp3 = Map("a" -> nestedMap, "b" -> Collections.emptyMap[String, List[Integer]]()).asJava
+      assert(exp3 === VectorUtils.toJavaMap(result.getMap(3)))
+
+      val arrayOfStruct = result.getArray(4)
+      assert(arrayOfStruct.getSize == 2)
+      assert(arrayOfStruct.getElements.getChild(0).getString(0) === "foo")
+      assert(arrayOfStruct.getElements.getChild(1).getInt(0) == 3)
+      assert(arrayOfStruct.getElements.getChild(0).isNullAt(1))
+      assert(arrayOfStruct.getElements.getChild(1).isNullAt(1))
+    } finally {
+      rows.close()
+    }
   }
 
   // TODO we use toJson to serialize our physical and logical schemas in ScanStateRow, we should
