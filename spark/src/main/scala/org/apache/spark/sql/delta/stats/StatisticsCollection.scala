@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
-import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
+import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.stats.StatisticsCollection.getIndexedColumns
@@ -490,12 +490,12 @@ object StatisticsCollection extends DeltaCommand {
         SchemaUtils.findColumnPosition(columnFullPath, schema)
         // Delta statistics columns must be data skipping type.
         val (prefixPath, columnName) = columnFullPath.splitAt(columnFullPath.size - 1)
-        transformColumnsStructs(schema, Some(columnName.head)) {
+        transformSchema(schema, Some(columnName.head)) {
           case (`prefixPath`, struct @ StructType(_), _) =>
             val columnField = struct(columnName.head)
             validateDataSkippingType(columnAttribute.name, columnField.dataType, visitedColumns)
             struct
-          case (_, s: StructType, _) => s
+          case (_, other, _) => other
         }
       }
     }
