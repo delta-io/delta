@@ -22,7 +22,6 @@ import static java.util.Objects.requireNonNull;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.hadoop.ParquetOutputFormat;
 import org.apache.parquet.hadoop.ParquetWriter;
@@ -41,6 +40,7 @@ import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.parquet.ParquetColumnWriters.ColumnWriter;
+import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.readDataFileStatistics;
 
 /**
  * Implements writing data given as {@link FilteredColumnarBatch} to Parquet files.
@@ -351,13 +351,18 @@ public class ParquetFileWriter {
         try {
             // Get the FileStatus to figure out the file size and modification time
             Path hadoopPath = new Path(path);
-            FileSystem hadoopFs = hadoopPath.getFileSystem(configuration);
-            FileStatus fileStatus = hadoopFs.getFileStatus(hadoopPath);
-            long fileSize = fileStatus.getLen();
-            long modTime = fileStatus.getModificationTime();
+            FileStatus fileStatus = hadoopPath.getFileSystem(configuration)
+                    .getFileStatus(hadoopPath);
+            Path resolvedPath = fileStatus.getPath();
 
-            // TODO: Stats computation is coming next.
-            return new DataFileStatus(path, fileSize, modTime, Optional.empty());
+            DataFileStatistics stats = (statsColumns.isEmpty()) ? null :
+                    readDataFileStatistics(resolvedPath, configuration, dataSchema, statsColumns);
+
+            return new DataFileStatus(
+                    resolvedPath.toString(),
+                    fileStatus.getLen(),
+                    fileStatus.getModificationTime(),
+                    Optional.ofNullable(stats));
         } catch (IOException ioe) {
             throw new UncheckedIOException("Failed to read the stats for: " + path, ioe);
         }

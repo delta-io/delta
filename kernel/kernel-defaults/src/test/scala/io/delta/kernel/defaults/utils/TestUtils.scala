@@ -29,7 +29,7 @@ import io.delta.kernel.client.TableClient
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
-import io.delta.kernel.expressions.Predicate
+import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
@@ -96,12 +96,20 @@ trait TestUtils extends Assertions with SQLHelper {
       new FilteredColumnarBatch(batch, Optional.empty())
     }
 
-    def toFiltered(predicate: Predicate): FilteredColumnarBatch = {
-      val predicateEvaluator = defaultTableClient.getExpressionHandler
-        .getPredicateEvaluator(batch.getSchema, predicate)
-      val selVector = predicateEvaluator.eval(batch, Optional.empty())
-      new FilteredColumnarBatch(batch, Optional.of(selVector))
+    def toFiltered(predicate: Option[Predicate]): FilteredColumnarBatch = {
+      if (predicate.isEmpty) {
+        new FilteredColumnarBatch(batch, Optional.empty())
+      } else {
+        val predicateEvaluator = defaultTableClient.getExpressionHandler
+          .getPredicateEvaluator(batch.getSchema, predicate.get)
+        val selVector = predicateEvaluator.eval(batch, Optional.empty())
+        new FilteredColumnarBatch(batch, Optional.of(selVector))
+      }
     }
+  }
+
+  implicit class ColumnOps(column: Column) {
+    def toPath: String = column.getNames.mkString(".")
   }
 
   implicit object ResourceLoader {

@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.defaults.utils
 
-import io.delta.kernel.expressions.{Column, Expression, Predicate}
+import io.delta.kernel.expressions._
 
 /** Useful helper functions for creating expressions in tests */
 trait ExpressionTestUtils {
@@ -52,6 +52,14 @@ trait ExpressionTestUtils {
 
   def nestedCol(name: String): Column = {
     new Column(name.split("\\."))
+  }
+
+  protected def and(left: Predicate, right: Predicate): And = {
+    new And(left, right)
+  }
+
+  protected def or(left: Predicate, right: Predicate): Or = {
+    new Or(left, right)
   }
 
   /* ---------- NOT-YET SUPPORTED EXPRESSIONS ----------- */
