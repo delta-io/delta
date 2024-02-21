@@ -24,7 +24,6 @@ import scala.collection.JavaConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
-import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getTestResourceFilePath
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils

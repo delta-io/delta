@@ -25,7 +25,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.apache.hadoop.conf.Configuration
-import org.apache.spark.sql.{SparkSession, Row => SparkRow}
+import org.apache.spark.sql.{Row => SparkRow}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
@@ -1044,13 +1044,13 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         expNumFiles = 1) // 1 files with key = 'b'
 
       // TODO shouldn't partition filters on unsupported expressions just not prune instead of fail?
-      /*
-      NOT YET SUPPORTED EXPRESSIONS
       checkResults(
         predicate = isNull(col("key")),
         expNumPartitions = 1,
         expNumFiles = 3) // 3 files with key = null
 
+      /*
+      NOT YET SUPPORTED EXPRESSIONS
       checkResults(
         predicate = nullSafeEquals(col("key"), ofNull(string)),
         expNumPartitions = 1,
@@ -1065,7 +1065,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         predicate = nullSafeEquals(col("key"), ofString("b")),
         expNumPartitions = 1,
         expNumFiles = 1) // 1 files with key <=> 'b'
-        */
+      */
 
       // Conditions on partitions keys and values
       checkResults(
