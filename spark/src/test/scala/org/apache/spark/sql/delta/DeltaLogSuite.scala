@@ -656,12 +656,12 @@ class DeltaLogSuite extends QueryTest
     }
     DeltaLog.unsetCache()
     withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "4") {
-      assertCacheSize(2)
+      assertCacheSize(4)
       DeltaLog.unsetCache()
       // the larger of SQLConf and env var is adopted
       try {
         System.getProperties.setProperty("delta.log.cacheSize", "5")
-        assertCacheSize(3)
+        assertCacheSize(5)
       } finally {
         System.getProperties.remove("delta.log.cacheSize")
       }
