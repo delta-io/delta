@@ -838,7 +838,6 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
             "<=", nestedCol("nested.ts"), "2019-09-09T01:02:03.455999-07:00")
         )
       )
-
     }
   }
 
@@ -1120,7 +1119,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         predicate = new And(nullSafeEquals(col("key"), ofNull(STRING)), nullSafeEquals(col("value"),
         ofNull(STRING))),
         expNumPartitions = 1,
-        expNumFiles = 1) // 3 files with key = null, but only 1 with val = null.       */
+        expNumFiles = 1) // 3 files with key = null, but only 1 with val = null.
+      */
 
       checkResults(
         predicate = new And(isNotNull(col("key")), isNotNull(col("value"))),
@@ -1304,7 +1304,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           isNotNull(col("map_col")),
           isNotNull(col("struct_col")),
           isNotNull(nestedCol("struct_col.field1")),
-          not(isNotNull(col("struct_col"))), // we don't skip on non-leaf columns
+          not(isNotNull(col("struct_col"))) // we don't skip on non-leaf columns
         ),
         misses = Seq(
           equals(col("id"), ofInt(1)),
