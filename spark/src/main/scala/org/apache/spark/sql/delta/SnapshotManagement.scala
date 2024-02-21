@@ -57,6 +57,10 @@ trait SnapshotManagement { self: DeltaLog =>
 
   @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
 
+  /**
+   * Cached fileStatus for the latest CRC file seen in the deltaLog.
+   */
+  @volatile protected var lastSeenChecksumFileStatusOpt: Option[FileStatus] = None
   @volatile protected var currentSnapshot: CapturedSnapshot = getSnapshotAtInit
 
   /** Use ReentrantLock to allow us to call `lockInterruptibly` */
@@ -121,6 +125,7 @@ trait SnapshotManagement { self: DeltaLog =>
    *
    * @param startVersion the version to start. Inclusive.
    * @param versionToLoad the optional parameter to set the max version we should return. Inclusive.
+   * @param includeMinorCompactions Whether to include minor compaction files in the result
    * @return Some array of files found (possibly empty, if no usable commit files are present), or
    *         None if the listing returned no files at all.
    */
@@ -130,14 +135,19 @@ trait SnapshotManagement { self: DeltaLog =>
       includeMinorCompactions: Boolean): Option[Array[FileStatus]] =
     recordDeltaOperation(self, "delta.deltaLog.listDeltaAndCheckpointFiles") {
       listFromOrNone(startVersion).map { _
-        .collect {
+        .flatMap {
           case DeltaFile(f, fileVersion) =>
-            (f, fileVersion)
+            Some((f, fileVersion))
           case CompactedDeltaFile(f, startVersion, endVersion)
               if includeMinorCompactions && versionToLoad.forall(endVersion <= _) =>
-            (f, startVersion)
+            Some((f, startVersion))
           case CheckpointFile(f, fileVersion) if f.getLen > 0 =>
-            (f, fileVersion)
+            Some((f, fileVersion))
+          case ChecksumFile(f, version) if versionToLoad.forall(version <= _) =>
+            lastSeenChecksumFileStatusOpt = Some(f)
+            None
+          case _ =>
+            None
         }
         // take files until the version we want to load
         .takeWhile { case (_, fileVersion) => versionToLoad.forall(fileVersion <= _) }
@@ -500,7 +510,8 @@ trait SnapshotManagement { self: DeltaLog =>
         logSegment = segment,
         deltaLog = this,
         timestamp = segment.lastCommitTimestamp,
-        checksumOpt = checksumOpt.orElse(readChecksum(segment.version))
+        checksumOpt = checksumOpt.orElse(
+          readChecksum(segment.version, lastSeenChecksumFileStatusOpt))
       )
     }
   }
