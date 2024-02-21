@@ -36,7 +36,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with VectorTest
   val jsonHandler = new DefaultJsonHandler(new Configuration {
     set("delta.kernel.default.json.reader.batch-size", "1")
   })
-  val fsClient = new DefaultFileSystemClient(new Configuration())
+  val fsClient = defaultTableClient.getFileSystemClient
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Tests for parseJson for statistics eligible types (additional in TestDefaultJsonHandler.java)
