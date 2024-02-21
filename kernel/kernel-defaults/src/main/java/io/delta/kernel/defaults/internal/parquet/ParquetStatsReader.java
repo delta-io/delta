@@ -207,15 +207,17 @@ public class ParquetStatsReader {
 
     private static boolean hasInvalidStatistics(Collection<ColumnChunkMetaData> metadataList) {
         // If any row group does not have stats collected, stats for the file will not be valid
-        return metadataList.stream().anyMatch(metadata ->
-                !metadata.getStatistics().isNumNullsSet() ||
-                        metadata.getStatistics().isEmpty() ||
-                        // Columns with NaN values are marked by
-                        // `hasNonNullValue` = false by the Parquet reader.
-                        // See issue: https://issues.apache.org/jira/browse/PARQUET-1246
-                        (!metadata.getStatistics().hasNonNullValue() &&
-                                metadata.getStatistics().getNumNulls() !=
-                                        metadata.getValueCount()));
+        return metadataList.stream().anyMatch(metadata -> {
+            Statistics<?> stats = metadata.getStatistics();
+            if (stats == null || stats.isEmpty() || !stats.isNumNullsSet()) {
+                return true;
+            }
+
+            // Columns with NaN values are marked by `hasNonNullValue` = false by the Parquet reader
+            // See issue: https://issues.apache.org/jira/browse/PARQUET-1246
+            return !stats.hasNonNullValue() &&
+                    stats.getNumNulls() != metadata.getValueCount();
+        });
     }
 
     private static boolean isStatsSupportedDataType(DataType dataType) {
