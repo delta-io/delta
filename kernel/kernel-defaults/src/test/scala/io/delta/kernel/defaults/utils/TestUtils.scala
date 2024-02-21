@@ -15,12 +15,14 @@
  */
 package io.delta.kernel.defaults.utils
 
-import java.io.File
+import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.nio.file.Files
 import java.util.{Optional, TimeZone, UUID}
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
+
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.client.TableClient
@@ -100,6 +102,10 @@ trait TestUtils extends Assertions with SQLHelper {
       val selVector = predicateEvaluator.eval(batch, Optional.empty())
       new FilteredColumnarBatch(batch, Optional.of(selVector))
     }
+  }
+
+  implicit object ResourceLoader {
+    lazy val classLoader: ClassLoader = ResourceLoader.getClass.getClassLoader
   }
 
   def withGoldenTable(tableName: String)(testFunc: String => Unit): Unit = {
@@ -574,5 +580,16 @@ trait TestUtils extends Assertions with SQLHelper {
           )
         })
     }
+  }
+
+  /**
+   * Returns a URI encoded path of the resource.
+   */
+  def getTestResourceFilePath(resourcePath: String): String = {
+    val resource = ResourceLoader.classLoader.getResource(resourcePath)
+    if (resource == null) {
+      throw new FileNotFoundException("resource not found")
+    }
+    resource.getFile
   }
 }
