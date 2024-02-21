@@ -1071,7 +1071,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       checkResults(
         predicate = isNull(col("value")),
         expNumPartitions = 3,
-        expNumFiles = 5) // should be 3 once IS_NULL is supported
+        expNumFiles = 3)
 
       checkResults(
         predicate = isNotNull(col("value")),
@@ -1305,14 +1305,14 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           isNotNull(col("struct_col")),
           isNotNull(nestedCol("struct_col.field1")),
           not(isNotNull(col("struct_col"))), // we don't skip on non-leaf columns
-            // MOVE BELOW EXPRESSIONS TO MISSES ONCE IS_NULL IS SUPPORTED BY DATA SKIPPING
-          // [not(is_not_null) is converted to is_null]
-          not(isNotNull(col("id"))),
-          not(isNotNull(col("arr_col"))),
-          not(isNotNull(col("map_col"))),
-          not(isNotNull(nestedCol("struct_col.field1")))
         ),
-        misses = Seq(equals(col("id"), ofInt(1)))
+        misses = Seq(
+          equals(col("id"), ofInt(1)),
+          isNull(col("id")),
+          isNull(col("arr_col")),
+          isNull(col("map_col")),
+          isNull(nestedCol("struct_col.field1"))
+        )
       )
     }
   }
@@ -1327,8 +1327,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       checkSkipping(
         tempDir.getCanonicalPath,
         hits = Seq(
-          // note "is_null" is not supported yet [not(is_not_null) is converted to is_null] but
-          // these should still be hits once supported
+          // [not(is_not_null) is converted to is_null]
           not(isNotNull(col("id"))),
           not(isNotNull(col("arr_col"))),
           not(isNotNull(col("map_col"))),
@@ -1358,8 +1357,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       checkSkipping(
         tempDir.getCanonicalPath,
         hits = Seq(
-          // note "is_null" is not supported yet [not(is_not_null) is converted to is_null] but
-          // these should still be hits once supported
+          // [not(is_not_null) is converted to is_null]
           not(isNotNull(col("id"))),
           not(isNotNull(col("arr_col"))),
           not(isNotNull(col("map_col"))),
