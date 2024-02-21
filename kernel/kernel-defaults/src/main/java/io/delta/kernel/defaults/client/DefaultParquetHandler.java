@@ -56,7 +56,6 @@ public class DefaultParquetHandler implements ParquetHandler {
             Optional<Predicate> predicate) throws IOException {
         return new CloseableIterator<ColumnarBatch>() {
             private final ParquetFileReader batchReader = new ParquetFileReader(hadoopConf);
-            private FileStatus currentFile;
             private CloseableIterator<ColumnarBatch> currentFileReader;
 
             @Override
@@ -75,8 +74,8 @@ public class DefaultParquetHandler implements ParquetHandler {
                     Utils.closeCloseables(currentFileReader);
                     currentFileReader = null;
                     if (fileIter.hasNext()) {
-                        currentFile = fileIter.next();
-                        currentFileReader = batchReader.read(currentFile.getPath(), physicalSchema);
+                        String nextFile = fileIter.next().getPath();
+                        currentFileReader = batchReader.read(nextFile, physicalSchema, predicate);
                         return hasNext(); // recurse since it's possible the loaded file is empty
                     } else {
                         return false;
