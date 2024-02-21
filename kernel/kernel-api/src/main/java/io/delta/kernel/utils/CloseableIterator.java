@@ -19,6 +19,7 @@ package io.delta.kernel.utils;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.NoSuchElementException;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -53,6 +54,45 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
             @Override
             public U next() {
                 return mapper.apply(delegate.next());
+            }
+
+            @Override
+            public void close()
+                throws IOException {
+                delegate.close();
+            }
+        };
+    }
+
+    default CloseableIterator<T> filter(Function<T, Boolean> mapper) {
+        CloseableIterator<T> delegate = this;
+        return new CloseableIterator<T>() {
+            T next;
+            boolean hasLoadedNext;
+
+            @Override
+            public boolean hasNext() {
+                if (hasLoadedNext) {
+                    return true;
+                }
+                while (delegate.hasNext()) {
+                    T potentialNext = delegate.next();
+                    if (mapper.apply(potentialNext)) {
+                        next = potentialNext;
+                        hasLoadedNext = true;
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            @Override
+            public T next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                hasLoadedNext = false;
+                return next;
             }
 
             @Override

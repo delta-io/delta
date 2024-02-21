@@ -121,7 +121,7 @@ public class SnapshotManager {
      */
     public Snapshot getSnapshotAt(
             TableClient tableClient,
-            Long version) throws TableNotFoundException {
+            long version) throws TableNotFoundException {
 
         Optional<LogSegment> logSegmentOpt = getLogSegmentForVersion(
             tableClient,
@@ -131,6 +131,13 @@ public class SnapshotManager {
         return logSegmentOpt
             .map(logSegment -> createSnapshot(logSegment, tableClient))
             .orElseThrow(() -> new TableNotFoundException(dataPath.toString()));
+    }
+
+    public Snapshot getSnapshotForTimestamp(
+            TableClient tableClient, long timestamp) throws TableNotFoundException {
+        long versionToRead = DeltaHistoryManager.getActiveCommitAtTimestamp(
+            tableClient, logPath, timestamp);
+        return getSnapshotAt(tableClient, versionToRead);
     }
 
     ////////////////////

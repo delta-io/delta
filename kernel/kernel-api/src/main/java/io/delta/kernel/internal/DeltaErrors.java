@@ -42,4 +42,37 @@ public final class DeltaErrors {
             latestVersion);
         return new RuntimeException(message);
     }
+
+    // TODO update to be user-facing exception with future exception framework
+    //  (see delta-io/delta#2231) & document in method docs as needed
+    //  (Table::getSnapshotAtTimestamp)
+    public static RuntimeException timestampEarlierThanTableFirstCommitException(
+            String tablePath, long providedTimestamp, long commitTimestamp) {
+        String message = String.format(
+            "%s: The provided timestamp %s is before the earliest version available. " +
+                "Please use a timestamp greater than or equal to %s",
+            tablePath,
+            providedTimestamp,
+            commitTimestamp);
+        // TODO format the timestamps?
+        return new RuntimeException(message);
+    }
+
+    // TODO update to be user-facing exception with future exception framework
+    //  (see delta-io/delta#2231) & document in method docs as needed
+    //  (Table::getSnapshotAtTimestamp)
+    public static RuntimeException timestampLaterThanTableLastCommit(
+            String tablePath, long providedTimestamp, long commitTimestamp, long commitVersion) {
+        String message = String.format(
+            "%s: The provided timestamp %s is after the latest commit with timestamp %s. " +
+                "If you wish to query this version of the table please either provide the " +
+                "version %s or use the exact timestamp of the last commit %s",
+            tablePath,
+            providedTimestamp,
+            commitTimestamp,
+            commitVersion,
+            commitTimestamp);
+        // TODO format the timestamps?
+        return new RuntimeException(message);
+    }
 }

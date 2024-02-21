@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal
 
-import java.io.ByteArrayInputStream
 import java.util.{Arrays, Collections, Optional}
 
 import scala.collection.JavaConverters._
@@ -23,15 +22,12 @@ import scala.reflect.ClassTag
 
 import org.scalatest.funsuite.AnyFunSuite
 
-import io.delta.kernel.client._
-import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
 import io.delta.kernel.internal.util.FileNames
-import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.utils.FileStatus
+import io.delta.kernel.MockFileSystemClientUtils
 
-class SnapshotManagerSuite extends AnyFunSuite {
-  import SnapshotManagerSuite._
+class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("verifyDeltaVersions") {
     // empty array
@@ -108,6 +104,8 @@ class SnapshotManagerSuite extends AnyFunSuite {
   //////////////////////////////////////////////////////////////////////////////////
   // getLogSegmentForVersion tests
   //////////////////////////////////////////////////////////////////////////////////
+
+  private val snapshotManager = new SnapshotManager(logPath, dataPath)
 
   /* ------------------HELPER METHODS------------------ */
 
@@ -722,82 +720,3 @@ class SnapshotManagerSuite extends AnyFunSuite {
     assert(!logSegmentOpt.isPresent())
   }
 }
-
-object SnapshotManagerSuite {
-
-  private val dataPath = new Path("/fake/path/to/table/")
-  private val logPath = new Path(dataPath, "_delta_log")
-  private val snapshotManager = new SnapshotManager(logPath, dataPath)
-
-  private def deltaFileStatuses(deltaVersions: Seq[Long]): Seq[FileStatus] = {
-    assert(deltaVersions.size == deltaVersions.toSet.size)
-    deltaVersions.map(v => FileStatus.of(FileNames.deltaFile(logPath, v), v, v))
-  }
-
-  private def singularCheckpointFileStatuses(checkpointVersions: Seq[Long]): Seq[FileStatus] = {
-    assert(checkpointVersions.size == checkpointVersions.toSet.size)
-    checkpointVersions.map(v =>
-      FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v))
-  }
-
-  private def multiCheckpointFileStatuses(
-    checkpointVersions: Seq[Long], numParts: Int): Seq[FileStatus] = {
-    assert(checkpointVersions.size == checkpointVersions.toSet.size)
-    checkpointVersions.flatMap { v =>
-      FileNames.checkpointFileWithParts(logPath, v, numParts).asScala
-        .map(p => FileStatus.of(p.toString, v, v))
-    }
-  }
-
-  /**
-   * Create input function for createMockTableClient to implement listFrom from a list of
-   * file statuses.
-   * */
-  private def listFromFileList(files: Seq[FileStatus])(filePath: String): Seq[FileStatus] = {
-    files.filter(_.getPath.compareTo(filePath) >= 0).sortBy(_.getPath)
-  }
-
-  /**
-   * Create a mock {@link TableClient} to test log segment generation.
-   */
-  def createMockTableClient(listFromPath: String => Seq[FileStatus]): TableClient = {
-    new TableClient {
-      override def getExpressionHandler: ExpressionHandler = {
-        throw new UnsupportedOperationException("not supported for SnapshotManagerSuite tests")
-      }
-
-      override def getJsonHandler: JsonHandler = {
-        throw new UnsupportedOperationException("not supported for SnapshotManagerSuite tests")
-      }
-
-      override def getFileSystemClient: FileSystemClient =
-        createMockFileSystemClient(listFromPath)
-
-      override def getParquetHandler: ParquetHandler = {
-        throw new UnsupportedOperationException("not supported for SnapshotManagerSuite tests")
-      }
-    }
-  }
-
-  private def createMockFileSystemClient(
-    listFromPath: String => Seq[FileStatus]): FileSystemClient = {
-
-    new FileSystemClient {
-
-      override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
-        toCloseableIterator(listFromPath(filePath).iterator.asJava)
-      }
-
-      override def resolvePath(path: String): String = {
-        throw new UnsupportedOperationException("not supported for SnapshotManagerSuite tests")
-      }
-
-      override def readFiles(
-          readRequests: CloseableIterator[FileReadRequest]
-      ): CloseableIterator[ByteArrayInputStream] = {
-        throw new UnsupportedOperationException("not supported for SnapshotManagerSuite tests")
-      }
-    }
-  }
-}
-
