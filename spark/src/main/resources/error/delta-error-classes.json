@@ -2254,6 +2254,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP" : {
+    "message" : [
+      "ALTER TABLE CHANGE COLUMN is not supported for changing column <fieldPath> from <oldField> to <newField>"
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP" : {
     "message" : [
       "Unsupported ALTER TABLE REPLACE COLUMNS operation. Reason: <details>",
@@ -2320,6 +2326,12 @@
   "DELTA_UNSUPPORTED_COLUMN_TYPE_IN_BLOOM_FILTER" : {
     "message" : [
       "Creating a bloom filter index on a column with type <dataType> is unsupported: <columnName>"
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY" : {
+    "message" : [
+      "Can't add a comment to <fieldPath>. Adding a comment to a map key/value or array element is not supported."
     ],
     "sqlState" : "0AKDC"
   },

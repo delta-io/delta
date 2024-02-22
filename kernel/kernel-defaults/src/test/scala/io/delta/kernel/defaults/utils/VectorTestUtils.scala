@@ -15,10 +15,10 @@
  */
 package io.delta.kernel.defaults.utils
 
-import java.lang.{Boolean => BooleanJ}
-
-import io.delta.kernel.data.ColumnVector
-import io.delta.kernel.types.{BooleanType, DataType, StringType}
+import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.types._
 
 trait VectorTestUtils {
 
@@ -50,4 +50,46 @@ trait VectorTestUtils {
     }
   }
 
+  protected def floatVector(values: Seq[FloatJ]): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = FloatType.FLOAT
+
+      override def getSize: Int = values.length
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = (values(rowId) == null)
+
+      override def getFloat(rowId: Int): Float = values(rowId)
+    }
+  }
+
+  protected def doubleVector(values: Seq[DoubleJ]): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = DoubleType.DOUBLE
+
+      override def getSize: Int = values.length
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = (values(rowId) == null)
+
+      override def getDouble(rowId: Int): Double = values(rowId)
+    }
+  }
+
+  /**
+   * Returns a [[ColumnarBatch]] with each given vector is a top-level column col_i where i is
+   * the index of the vector in the input list.
+   */
+  protected def columnarBatch(vectors: ColumnVector*): ColumnarBatch = {
+    val numRows = vectors.head.getSize
+    vectors.tail.foreach(
+      v => require(v.getSize == numRows, "All vectors should have the same size"))
+
+    val schema = (0 until vectors.length)
+      .foldLeft(new StructType())((s, i) => s.add(s"col_$i", vectors(i).getDataType))
+
+    new DefaultColumnarBatch(numRows, schema, vectors.toArray)
+  }
 }

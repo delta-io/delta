@@ -43,7 +43,7 @@ case class Commit(
  *  |   yes     |   yes     | physical conflict (allowed to rebase and retry)                 |
  */
 class CommitFailedException(
-    retryable: Boolean, conflict: Boolean, message: String) extends Exception(message)
+    val retryable: Boolean, val conflict: Boolean, message: String) extends Exception(message)
 
 /** Response container for [[CommitStore.commit]] API */
 case class CommitResponse(commit: Commit)

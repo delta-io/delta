@@ -21,7 +21,6 @@ import java.net.ServerSocket
 import org.apache.commons.io.FileUtils
 
 import org.apache.spark.sql.SparkSession
-
 /**
  * This example relies on an external Hive metastore (HMS) instance to run.
  *
@@ -35,19 +34,19 @@ import org.apache.spark.sql.SparkSession
  *  By default this hms will use `/opt/hive/data/warehouse` as warehouse path.
  *  Please make sure this path exists or change it prior to running the example.
  */
-object UniForm {
+object IcebergCompatV2 {
 
   def main(args: Array[String]): Unit = {
     // Update this according to the metastore config
     val port = 9083
     val warehousePath = "/opt/hive/data/warehouse/"
 
-    if (!hmsReady(port)) {
+    if (!UniForm.hmsReady(port)) {
       print("HMS not available. Exit.")
       return
     }
 
-    val testTableName = "deltatable"
+    val testTableName = "uniform_table3"
     FileUtils.deleteDirectory(new File(s"${warehousePath}${testTableName}"))
 
     val deltaSpark = SparkSession
@@ -60,19 +59,18 @@ object UniForm {
       .config("spark.sql.catalogImplementation", "hive")
       .getOrCreate()
 
-
     deltaSpark.sql(s"DROP TABLE IF EXISTS ${testTableName}")
     deltaSpark.sql(
-      s"""CREATE TABLE `${testTableName}` (col1 INT) using DELTA
-         |TBLPROPERTIES (
-         |  'delta.columnMapping.mode' = 'name',
-         |  'delta.enableIcebergCompatV1' = 'true',
-         |  'delta.universalFormat.enabledFormats' = 'iceberg'
-         |)""".stripMargin)
-    deltaSpark.sql(s"INSERT INTO `$testTableName` VALUES (123)")
-
-    // Wait for the conversion to be done
-    Thread.sleep(10000)
+      s"""CREATE TABLE `${testTableName}`
+         | (id INT, ts TIMESTAMP, array_data array<int>, map_data map<int, int>)
+         | using DELTA""".stripMargin)
+    deltaSpark.sql(
+      s"""
+         |INSERT INTO `$testTableName` (id, ts, array_data, map_data)
+         | VALUES (123, '2024-01-01 00:00:00', array(2, 3, 4, 5), map(3, 6, 8, 7))""".stripMargin)
+    deltaSpark.sql(
+      s"""REORG TABLE `$testTableName` APPLY (UPGRADE UNIFORM
+         | (ICEBERG_COMPAT_VERSION = 2))""".stripMargin)
 
     val icebergSpark = SparkSession.builder()
       .master("local[*]")
@@ -85,24 +83,5 @@ object UniForm {
       .getOrCreate()
 
     icebergSpark.sql(s"SELECT * FROM ${testTableName}").show()
-  }
-
-  def hmsReady(port: Int): Boolean = {
-    var ss: ServerSocket = null
-    try {
-      ss = new ServerSocket(port)
-      ss.setReuseAddress(true)
-      return false
-    } catch {
-      case e: IOException =>
-    } finally {
-      if (ss != null) {
-        try ss.close()
-        catch {
-          case e: IOException =>
-        }
-      }
-    }
-    true
   }
 }

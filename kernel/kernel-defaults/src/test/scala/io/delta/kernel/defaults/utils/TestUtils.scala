@@ -15,19 +15,21 @@
  */
 package io.delta.kernel.defaults.utils
 
-import java.io.File
+import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.nio.file.Files
 import java.util.{Optional, TimeZone, UUID}
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
+
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.client.TableClient
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
-import io.delta.kernel.expressions.Predicate
+import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
@@ -94,12 +96,24 @@ trait TestUtils extends Assertions with SQLHelper {
       new FilteredColumnarBatch(batch, Optional.empty())
     }
 
-    def toFiltered(predicate: Predicate): FilteredColumnarBatch = {
-      val predicateEvaluator = defaultTableClient.getExpressionHandler
-        .getPredicateEvaluator(batch.getSchema, predicate)
-      val selVector = predicateEvaluator.eval(batch, Optional.empty())
-      new FilteredColumnarBatch(batch, Optional.of(selVector))
+    def toFiltered(predicate: Option[Predicate]): FilteredColumnarBatch = {
+      if (predicate.isEmpty) {
+        new FilteredColumnarBatch(batch, Optional.empty())
+      } else {
+        val predicateEvaluator = defaultTableClient.getExpressionHandler
+          .getPredicateEvaluator(batch.getSchema, predicate.get)
+        val selVector = predicateEvaluator.eval(batch, Optional.empty())
+        new FilteredColumnarBatch(batch, Optional.of(selVector))
+      }
     }
+  }
+
+  implicit class ColumnOps(column: Column) {
+    def toPath: String = column.getNames.mkString(".")
+  }
+
+  implicit object ResourceLoader {
+    lazy val classLoader: ClassLoader = ResourceLoader.getClass.getClassLoader
   }
 
   def withGoldenTable(tableName: String)(testFunc: String => Unit): Unit = {
@@ -107,9 +121,9 @@ trait TestUtils extends Assertions with SQLHelper {
     testFunc(tablePath)
   }
 
-  def latestSnapshot(path: String): Snapshot = {
-    Table.forPath(defaultTableClient, path)
-      .getLatestSnapshot(defaultTableClient)
+  def latestSnapshot(path: String, tableClient: TableClient = defaultTableClient): Snapshot = {
+    Table.forPath(tableClient, path)
+      .getLatestSnapshot(tableClient)
   }
 
   def collectScanFileRows(scan: Scan, tableClient: TableClient = defaultTableClient): Seq[Row] = {
@@ -251,11 +265,15 @@ trait TestUtils extends Assertions with SQLHelper {
     tableClient: TableClient = defaultTableClient,
     expectedSchema: StructType = null,
     filter: Predicate = null,
+    version: Option[Long] = None,
     expectedRemainingFilter: Predicate = null,
     expectedVersion: Option[Long] = None
   ): Unit = {
 
-    val snapshot = latestSnapshot(path)
+    val snapshot = version.map { v =>
+      Table.forPath(tableClient, path)
+        .getSnapshotAtVersion(tableClient, v)
+    }.getOrElse(latestSnapshot(path, tableClient))
 
     val readSchema = if (readCols == null) {
       null
@@ -570,5 +588,16 @@ trait TestUtils extends Assertions with SQLHelper {
           )
         })
     }
+  }
+
+  /**
+   * Returns a URI encoded path of the resource.
+   */
+  def getTestResourceFilePath(resourcePath: String): String = {
+    val resource = ResourceLoader.classLoader.getResource(resourcePath)
+    if (resource == null) {
+      throw new FileNotFoundException("resource not found")
+    }
+    resource.getFile
   }
 }

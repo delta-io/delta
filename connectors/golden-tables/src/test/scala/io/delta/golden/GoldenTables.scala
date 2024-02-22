@@ -1171,7 +1171,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     val df = spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
     df.repartition(1)
       .write
-      .format("parquet")
+      .format("delta")
       .mode("append")
       .save(tablePath)
   }

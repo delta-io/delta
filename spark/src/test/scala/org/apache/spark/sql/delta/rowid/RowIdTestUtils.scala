@@ -78,4 +78,11 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
     val files = snapshot.allFiles.collect()
     assert(files.forall(_.baseRowId.isEmpty))
   }
+
+  def assertRowIdsAreLargerThanValue(log: DeltaLog, value: Long): Unit = {
+    log.update().allFiles.collect().foreach { f =>
+      val minRowId = getRowIdRangeInclusive(f)._1
+      assert(minRowId > value, s"${f.toString} has a row id smaller or equal than $value")
+    }
+  }
 }
