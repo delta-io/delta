@@ -50,11 +50,11 @@ The following is an example for the definition of a column that went through two
         {
           "tableVersion": 1,
           "fromType": "short",
-          "toType": "int"
+          "toType": "integer"
         },
         {
           "tableVersion": 5,
-          "fromType": "int",
+          "fromType": "integer",
           "toType": "long"
         }
       ]
@@ -69,7 +69,7 @@ The following is an example for the definition of a column after changing the ty
     "type" : {
       "type": "map",
       "keyType": "double",
-      "valueType": "int",
+      "valueType": "integer",
       "valueContainsNull": true
     },
     "nullable" : true,
