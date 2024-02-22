@@ -194,6 +194,12 @@ trait TestUtils extends Assertions with SQLHelper {
       .flatMap(_.getRows.toSeq)
   }
 
+  def tableSchema(path: String): StructType = {
+    Table.forPath(defaultTableClient, path)
+      .getLatestSnapshot(defaultTableClient)
+      .getSchema(defaultTableClient)
+  }
+
   def readSnapshot(
     snapshot: Snapshot,
     readSchema: StructType = null,
