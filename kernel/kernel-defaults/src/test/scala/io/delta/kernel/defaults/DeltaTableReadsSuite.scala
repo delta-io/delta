@@ -28,6 +28,7 @@ import org.apache.spark.sql.functions.col
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getTestResourceFilePath
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
@@ -464,6 +465,80 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         .build()
     }
     assert(e.getMessage.contains("Unsupported reader protocol version"))
+  }
+
+
+  test("table primitives") {
+    val expectedAnswer = (0 to 10).map {
+      case 10 => TestRow(null, null, null, null, null, null, null, null, null, null)
+      case i => TestRow(
+        i,
+        i.toLong,
+        i.toByte,
+        i.toShort,
+        i % 2 == 0,
+        i.toFloat,
+        i.toDouble,
+        i.toString,
+        Array[Byte](i.toByte, i.toByte),
+        new BigDecimal(i)
+      )
+    }
+
+    checkTable(
+      path = goldenTablePath("data-reader-primitives"),
+      expectedAnswer = expectedAnswer
+    )
+  }
+
+  test("table with checkpoint") {
+    checkTable(
+      path = getTestResourceFilePath("basic-with-checkpoint"),
+      expectedAnswer = (0 until 150).map(i => TestRow(i.toLong))
+    )
+  }
+
+  test("table with name column mapping mode") {
+    val expectedAnswer = (0 to 10).map {
+      case 10 => TestRow(null, null, null, null, null, null, null, null, null, null)
+      case i => TestRow(
+        i,
+        i.toLong,
+        i.toByte,
+        i.toShort,
+        i % 2 == 0,
+        i.toFloat,
+        i.toDouble,
+        i.toString,
+        Array[Byte](i.toByte, i.toByte),
+        new BigDecimal(i)
+      )
+    }
+
+    checkTable(
+      path = getTestResourceFilePath("data-reader-primitives-column-mapping-name"),
+      expectedAnswer = expectedAnswer
+    )
+  }
+
+  test("partitioned table with column mapping") {
+    val expectedAnswer = (0 to 2).map {
+      case 2 => TestRow(null, null, "2")
+      case i => TestRow(i, i.toDouble, i.toString)
+    }
+    val readCols = Seq(
+      // partition fields
+      "as_int",
+      "as_double",
+      // data fields
+      "value"
+    )
+
+    checkTable(
+      path = getTestResourceFilePath("data-reader-partition-values-column-mapping-name"),
+      readCols = readCols,
+      expectedAnswer = expectedAnswer
+    )
   }
 
   //////////////////////////////////////////////////////////////////////////////////

@@ -16,12 +16,14 @@
 
 package io.delta.sharing.spark
 
+import org.apache.spark.sql.delta.DeltaIllegalStateException
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOptions.{
   IGNORE_CHANGES_OPTION,
   IGNORE_DELETES_OPTION,
   SKIP_CHANGE_COMMITS_OPTION
 }
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.sharing.client.DeltaSharingRestClient
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
@@ -30,7 +32,8 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.streaming.StreamingQueryException
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.{
   DateType,
@@ -894,6 +897,108 @@ class DeltaFormatSharingSourceSuite
             expected
           )
           assertBlocksAreCleanedUp()
+        }
+      }
+    }
+  }
+
+  Seq(
+    ("add a partition column", Seq("part"), Seq("is_even", "part")),
+    ("change partition order", Seq("part", "is_even"), Seq("is_even", "part")),
+    ("different partition column", Seq("part"), Seq("is_even"))
+  ).foreach { case (repartitionTestCase, initPartitionCols, overwritePartitionCols) =>
+    test("deltaSharing - repartition delta source should fail by default " +
+      s"unless unsafe flag is set - $repartitionTestCase") {
+      withTempDirs { (inputDir, outputDir, checkpointDir) =>
+
+        val deltaTableName = "basic_delta_table_partition_check"
+        withTable(deltaTableName) {
+          spark.sql(
+            s"""CREATE TABLE $deltaTableName (id LONG, part INT, is_even BOOLEAN)
+               |USING DELTA PARTITIONED BY (${initPartitionCols.mkString(", ")})
+               |""".stripMargin
+          )
+          val sharedTableName = "shared_streaming_table_partition_check_" +
+            s"${repartitionTestCase.replace(' ', '_')}"
+          prepareMockedClientMetadata(deltaTableName, sharedTableName)
+          val profileFile = prepareProfileFile(inputDir)
+          val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+
+            def processAllAvailableInStream(startingVersion: Int): Unit = {
+              val q = spark.readStream
+                .format("deltaSharing")
+                .option("responseFormat", "delta")
+                .option("skipChangeCommits", "true")
+                .option("startingVersion", startingVersion)
+                .load(tablePath)
+                .writeStream
+                .format("delta")
+                .option("checkpointLocation", checkpointDir.toString)
+                .start(outputDir.toString)
+
+              try {
+                q.processAllAvailable()
+              } finally {
+                q.stop()
+              }
+            }
+
+            spark.range(10).withColumn("part", lit(1))
+              .withColumn("is_even", $"id" % 2 === 0).write
+              .format("delta").partitionBy(initPartitionCols: _*)
+              .mode("append")
+              .saveAsTable(deltaTableName)
+            spark.range(2).withColumn("part", lit(2))
+              .withColumn("is_even", $"id" % 2 === 0).write
+              .format("delta").partitionBy(initPartitionCols: _*)
+              .mode("append").saveAsTable(deltaTableName)
+            spark.range(10).withColumn("part", lit(1))
+              .withColumn("is_even", $"id" % 2 === 0).write
+              .format("delta").partitionBy(overwritePartitionCols: _*)
+              .option("overwriteSchema", "true").mode("overwrite")
+              .saveAsTable(deltaTableName)
+            spark.range(2).withColumn("part", lit(2))
+              .withColumn("is_even", $"id" % 2 === 0).write
+              .format("delta").partitionBy(overwritePartitionCols: _*)
+              .mode("append").saveAsTable(deltaTableName)
+
+            prepareMockedClientAndFileSystemResultForStreaming(
+              deltaTable = deltaTableName,
+              sharedTable = sharedTableName,
+              startingVersion = 0L,
+              endingVersion = 4L
+            )
+            prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+            var e = intercept[StreamingQueryException] {
+              processAllAvailableInStream(0)
+            }
+            assert(e.getCause.asInstanceOf[DeltaIllegalStateException].getErrorClass
+              == "DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS")
+            assert(e.getMessage.contains("Detected schema change in version 3"))
+
+            // delta table created using sql with specified partition col
+            // will construct their initial snapshot on the initial definition
+            prepareMockedClientAndFileSystemResultForStreaming(
+              deltaTable = deltaTableName,
+              sharedTable = sharedTableName,
+              startingVersion = 4L,
+              endingVersion = 4L
+            )
+            prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+            e = intercept[StreamingQueryException] {
+              processAllAvailableInStream(4)
+            }
+            assert(e.getMessage.contains("Detected schema change in version 4"))
+
+            // Streaming query made progress without throwing error when
+            // unsafe flag is set to true
+            withSQLConf(
+              DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_PARTITION_COLUMN_CHANGE.key -> "true") {
+              processAllAvailableInStream(0)
+            }
+          }
         }
       }
     }

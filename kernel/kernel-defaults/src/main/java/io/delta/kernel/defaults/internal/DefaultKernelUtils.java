@@ -18,12 +18,17 @@ package io.delta.kernel.defaults.internal;
 import java.time.LocalDate;
 import java.util.concurrent.TimeUnit;
 
+import io.delta.kernel.expressions.Column;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StructType;
+
 import io.delta.kernel.internal.util.Tuple2;
 
 public class DefaultKernelUtils {
     private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
 
-    private DefaultKernelUtils() {}
+    private DefaultKernelUtils() {
+    }
 
     //////////////////////////////////////////////////////////////////////////////////
     // Below utils are adapted from org.apache.spark.sql.catalyst.util.DateTimeUtils
@@ -39,12 +44,12 @@ public class DefaultKernelUtils {
     public static long fromJulianDay(int days, long nanos) {
         // use Long to avoid rounding errors
         return ((long) (days - JULIAN_DAY_OF_EPOCH)) * DateTimeConstants.MICROS_PER_DAY +
-            nanos / DateTimeConstants.NANOS_PER_MICROS;
+                nanos / DateTimeConstants.NANOS_PER_MICROS;
     }
 
     /**
      * Returns Julian day and remaining nanoseconds from the number of microseconds
-     *
+     * <p>
      * Note: support timestamp since 4717 BC (without negative nanoseconds, compatible with Hive).
      */
     public static Tuple2<Integer, Long> toJulianDay(long micros) {
@@ -86,5 +91,31 @@ public class DefaultKernelUtils {
         public static final long NANOS_PER_MICROS = 1000L;
         public static final long NANOS_PER_MILLIS = MICROS_PER_MILLIS * NANOS_PER_MICROS;
         public static final long NANOS_PER_SECOND = MILLIS_PER_SECOND * NANOS_PER_MILLIS;
+    }
+
+    /**
+     * Search for the data type of the given column in the schema.
+     *
+     * @param schema the schema to search
+     * @param column the column whose data type is to be found
+     * @return the data type of the column
+     * @throws IllegalArgumentException if the column is not found in the schema
+     */
+    public static DataType getDataType(StructType schema, Column column) {
+        DataType dataType = schema;
+        for (String part : column.getNames()) {
+            if (!(dataType instanceof StructType)) {
+                throw new IllegalArgumentException(
+                        String.format("Cannot resolve column (%s) in schema: %s", column, schema));
+            }
+            StructType structType = (StructType) dataType;
+            if (structType.fieldNames().contains(part)) {
+                dataType = structType.get(part).getDataType();
+            } else {
+                throw new IllegalArgumentException(
+                        String.format("Cannot resolve column (%s) in schema: %s", column, schema));
+            }
+        }
+        return dataType;
     }
 }
