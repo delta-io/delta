@@ -193,7 +193,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       expectedDeltas = expectedDeltas,
       expectedCheckpoints = expectedCheckpoints,
       expectedCheckpointVersion = expectedCheckpointVersion,
-      expectedLastCommitTimestamp = versionToLoad.orElse(deltaVersions.max)
+      expectedLastCommitTimestamp = versionToLoad.orElse(deltaVersions.max)*10
     )
   }
 
@@ -446,7 +446,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         expectedDeltas = deltaFileStatuses(21L until 25L),
         expectedCheckpoints = singularCheckpointFileStatuses(Seq(20L)),
         expectedCheckpointVersion = Some(20),
-        expectedLastCommitTimestamp = 24L
+        expectedLastCommitTimestamp = 240L
       )
     }
   }
@@ -557,7 +557,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       Seq.empty,
       singularCheckpointFileStatuses(Seq(10L)),
       Some(10),
-      9 // is the last available delta file
+      90 // is the last available delta file
     )
   }
 
@@ -705,7 +705,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
           deltaVersions.filter(_ > checkpointVersion.getOrElse(-1L))),
         expectedCheckpoints = checkpoints,
         expectedCheckpointVersion = checkpointVersion,
-        expectedLastCommitTimestamp = deltaVersions.max
+        expectedLastCommitTimestamp = deltaVersions.max*10
       )
     }
   }
