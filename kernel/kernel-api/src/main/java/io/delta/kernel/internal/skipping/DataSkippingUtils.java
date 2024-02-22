@@ -241,6 +241,27 @@ public class DataSkippingUtils {
                 }
                 break;
 
+            // Match any file whose null count is larger than zero.
+            // Note DVs might result in a redundant read of a file.
+            // However, they cannot lead to a correctness issue.
+            case "IS_NULL":
+                Expression unaryChild = getUnaryChild(dataFilters);
+                if (unaryChild instanceof Column) {
+                    Column childColumn = (Column) unaryChild;
+                    if (schemaHelper.isSkippingEligibleNullCountColumn((Column) unaryChild)) {
+                        Column nullCountCol = schemaHelper.getNullCountColumn(childColumn);
+                        Literal zero = Literal.ofLong(0);
+                        return Optional.of(
+                            new DataSkippingPredicate(
+                                ">",
+                                Arrays.asList(nullCountCol, zero),
+                                Collections.singleton(nullCountCol)
+                            )
+                        );
+                    }
+                }
+                break;
+
             case "=": case "<": case "<=": case ">": case ">=":
                 Expression left = getLeft(dataFilters);
                 Expression right = getRight(dataFilters);
@@ -396,6 +417,11 @@ public class DataSkippingUtils {
             case "IS_NOT_NULL":
                 return constructDataSkippingFilter(
                     new Predicate("IS_NULL", getUnaryChild(childPredicate)),
+                    schemaHelper);
+
+            case "IS_NULL":
+                return constructDataSkippingFilter(
+                    new Predicate("IS_NOT_NULL", getUnaryChild(childPredicate)),
                     schemaHelper);
 
             case "=":

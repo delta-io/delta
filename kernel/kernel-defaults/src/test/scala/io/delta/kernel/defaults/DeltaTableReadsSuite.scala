@@ -427,47 +427,6 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     )
   }
 
-  test("table with nested struct") {
-    val expectedAnswer = (0 until 10).map { i =>
-      TestRow(TestRow(i.toString, i.toString, TestRow(i, i.toLong)), i)
-    }
-    checkTable(
-      path = goldenTablePath("data-reader-nested-struct"),
-      expectedAnswer = expectedAnswer
-    )
-  }
-
-  test("table with empty parquet files") {
-    checkTable(
-      path = goldenTablePath("125-iterator-bug"),
-      expectedAnswer = (1 to 5).map(TestRow(_))
-    )
-  }
-
-  test("handle corrupted '_last_checkpoint' file") {
-    checkTable(
-      path = goldenTablePath("corrupted-last-checkpoint-kernel"),
-      expectedAnswer = (0L until 100L).map(TestRow(_))
-    )
-  }
-
-  test("error - version not contiguous") {
-    val e = intercept[IllegalStateException] {
-      latestSnapshot(goldenTablePath("versions-not-contiguous"))
-    }
-    assert(e.getMessage.contains("Versions ([0, 2]) are not continuous"))
-  }
-
-  test("table protocol version greater than reader protocol version") {
-    val e = intercept[Exception] {
-      latestSnapshot(goldenTablePath("deltalog-invalid-protocol-version"))
-        .getScanBuilder(defaultTableClient)
-        .build()
-    }
-    assert(e.getMessage.contains("Unsupported reader protocol version"))
-  }
-
-
   test("table primitives") {
     val expectedAnswer = (0 to 10).map {
       case 10 => TestRow(null, null, null, null, null, null, null, null, null, null)
@@ -539,6 +498,46 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       readCols = readCols,
       expectedAnswer = expectedAnswer
     )
+  }
+
+  test("table with nested struct") {
+    val expectedAnswer = (0 until 10).map { i =>
+      TestRow(TestRow(i.toString, i.toString, TestRow(i, i.toLong)), i)
+    }
+    checkTable(
+      path = goldenTablePath("data-reader-nested-struct"),
+      expectedAnswer = expectedAnswer
+    )
+  }
+
+  test("table with empty parquet files") {
+    checkTable(
+      path = goldenTablePath("125-iterator-bug"),
+      expectedAnswer = (1 to 5).map(TestRow(_))
+    )
+  }
+
+  test("handle corrupted '_last_checkpoint' file") {
+    checkTable(
+      path = goldenTablePath("corrupted-last-checkpoint-kernel"),
+      expectedAnswer = (0L until 100L).map(TestRow(_))
+    )
+  }
+
+  test("error - version not contiguous") {
+    val e = intercept[IllegalStateException] {
+      latestSnapshot(goldenTablePath("versions-not-contiguous"))
+    }
+    assert(e.getMessage.contains("Versions ([0, 2]) are not continuous"))
+  }
+
+  test("table protocol version greater than reader protocol version") {
+    val e = intercept[Exception] {
+      latestSnapshot(goldenTablePath("deltalog-invalid-protocol-version"))
+        .getScanBuilder(defaultTableClient)
+        .build()
+    }
+    assert(e.getMessage.contains("Unsupported reader protocol version"))
   }
 
   //////////////////////////////////////////////////////////////////////////////////
