@@ -34,7 +34,6 @@ import org.apache.parquet.hadoop.metadata.ParquetMetadata
 
 trait ParquetSuiteBase extends TestUtils {
 
-<<<<<<< HEAD
   /**
    * Verify the contents of the Parquet files located in `actualFileDir` matches the
    * `expected` data. Does two types of verifications.
@@ -42,9 +41,6 @@ trait ParquetSuiteBase extends TestUtils {
    * 2) Verify the data using the Spark Parquet reader
    */
   def verifyContent(actualFileDir: String, expected: Seq[FilteredColumnarBatch]): Unit = {
-=======
-  def verify(actualFileDir: String, expected: Seq[FilteredColumnarBatch]): Unit = {
->>>>>>> 86b911d2 ([Kernel][TEST-ONLY] Refactors the test parquet suite)
     verifyFileMetadata(actualFileDir)
     verifyContentUsingKernelReader(actualFileDir, expected)
     verifyContentUsingSparkReader(actualFileDir, expected)
@@ -231,45 +227,3 @@ trait ParquetSuiteBase extends TestUtils {
       .map(TestRow(_))
   }
 }
-<<<<<<< HEAD
-=======
-
-object ParquetSuiteBase {
-  // Parquet file containing data of all supported types and variations
-  val ALL_TYPES_DATA = goldenTableFile("parquet-all-types").toString
-  // Schema of the data in `ALL_TYPES_DATA`
-  val ALL_TYPES_FILE_SCHEMA = new StructType()
-    .add("byteType", ByteType.BYTE)
-    .add("shortType", ShortType.SHORT)
-    .add("integerType", IntegerType.INTEGER)
-    .add("longType", LongType.LONG)
-    .add("floatType", FloatType.FLOAT)
-    .add("doubleType", DoubleType.DOUBLE)
-    .add("decimal", new DecimalType(10, 2))
-    .add("booleanType", BooleanType.BOOLEAN)
-    .add("stringType", StringType.STRING)
-    .add("binaryType", BinaryType.BINARY)
-    .add("dateType", DateType.DATE)
-    .add("timestampType", TimestampType.TIMESTAMP)
-    .add("nested_struct", new StructType()
-      .add("aa", StringType.STRING)
-      .add("ac", new StructType().add("aca", IntegerType.INTEGER)))
-    .add("array_of_prims", new ArrayType(IntegerType.INTEGER, true))
-    .add("array_of_arrays", new ArrayType(new ArrayType(IntegerType.INTEGER, true), true))
-    .add("array_of_structs", new ArrayType(new StructType().add("ab", LongType.LONG), true))
-    .add("map_of_prims", new MapType(IntegerType.INTEGER, LongType.LONG, true))
-    .add("map_of_rows",
-      new MapType(IntegerType.INTEGER, new StructType().add("ab", LongType.LONG), true))
-    .add("map_of_arrays",
-      new MapType(LongType.LONG, new ArrayType(IntegerType.INTEGER, true), true))
-
-  // Parquet file containing all variations (int, long and fixed binary) Decimal type data
-  val DECIMAL_TYPES_DATA = goldenTableFile("parquet-decimal-type").toString
-  // Schema of the data in `DECIMAL_TYPES_DATA`
-  val DECIMAL_TYPES_FILE_SCHEMA = new StructType()
-    .add("id", IntegerType.INTEGER)
-    .add("col1", new DecimalType(5, 1)) // stored as int
-    .add("col2", new DecimalType(10, 5)) // stored as long
-    .add("col3", new DecimalType(20, 5)) // stored as fixed binary
-}
->>>>>>> 86b911d2 ([Kernel][TEST-ONLY] Refactors the test parquet suite)
