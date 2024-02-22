@@ -33,46 +33,25 @@ trait MockFileSystemClientUtils {
   /** Delta file statuses where the timestamp = 10*version */
   def deltaFileStatuses(deltaVersions: Seq[Long]): Seq[FileStatus] = {
     assert(deltaVersions.size == deltaVersions.toSet.size)
-    deltaFileStatuses(deltaVersions.map(v => (v, v*10)).toMap)
-  }
-
-  def deltaFileStatuses(deltaVersionsToTimestamps: Map[Long, Long]): Seq[FileStatus] = {
-    deltaVersionsToTimestamps.map { case (v, t) =>
-      FileStatus.of(FileNames.deltaFile(logPath, v), v, t)
-    }.toSeq
+    deltaVersions.map(v => FileStatus.of(FileNames.deltaFile(logPath, v), v, v*10))
   }
 
   /** Checkpoint file statuses where the timestamp = 10*version */
   def singularCheckpointFileStatuses(checkpointVersions: Seq[Long]): Seq[FileStatus] = {
     assert(checkpointVersions.size == checkpointVersions.toSet.size)
-    singularCheckpointFileStatuses(
-      checkpointVersions.map(v => (v, v*10)).toMap
+    checkpointVersions.map(v =>
+      FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v*10)
     )
-  }
-
-  def singularCheckpointFileStatuses(
-    checkpointVersionsToTimestamps: Map[Long, Long]): Seq[FileStatus] = {
-    checkpointVersionsToTimestamps.map { case (v, t) =>
-      FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, t)
-    }.toSeq
   }
 
   /** Checkpoint file statuses where the timestamp = 10*version */
   def multiCheckpointFileStatuses(
     checkpointVersions: Seq[Long], numParts: Int): Seq[FileStatus] = {
     assert(checkpointVersions.size == checkpointVersions.toSet.size)
-    multiCheckpointFileStatuses(
-      checkpointVersions.map(v => (v, v*10)).toMap,
-      numParts
-    )
-  }
-
-  def multiCheckpointFileStatuses(
-    checkpointVersionsToTimestamps: Map[Long, Long], numParts: Int): Seq[FileStatus] = {
-    checkpointVersionsToTimestamps.flatMap { case (v, t) =>
+    checkpointVersions.flatMap(v =>
       FileNames.checkpointFileWithParts(logPath, v, numParts).asScala
-        .map(p => FileStatus.of(p.toString, v, t))
-    }.toSeq
+        .map(p => FileStatus.of(p.toString, v, v*10))
+    )
   }
 
   /**
