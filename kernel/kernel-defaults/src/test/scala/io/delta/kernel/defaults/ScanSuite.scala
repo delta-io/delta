@@ -1304,10 +1304,22 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           isNotNull(col("map_col")),
           isNotNull(col("struct_col")),
           isNotNull(nestedCol("struct_col.field1")),
-          not(isNotNull(col("struct_col"))) // we don't skip on non-leaf columns
+          not(isNotNull(col("struct_col"))), // we don't skip on non-leaf columns
+
+          not(isNull(col("id"))),
+          not(isNull(col("arr_col"))),
+          not(isNull(col("map_col"))),
+          not(isNull(col("struct_col"))),
+          not(isNull(nestedCol("struct_col.field1"))),
+          isNull(col("struct_col"))
         ),
         misses = Seq(
           equals(col("id"), ofInt(1)),
+          not(isNotNull(col("id"))),
+          not(isNotNull(col("arr_col"))),
+          not(isNotNull(col("map_col"))),
+          not(isNotNull(nestedCol("struct_col.field1"))),
+
           isNull(col("id")),
           isNull(col("arr_col")),
           isNull(col("map_col")),

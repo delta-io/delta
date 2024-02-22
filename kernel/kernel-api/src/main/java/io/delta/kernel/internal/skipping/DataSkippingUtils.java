@@ -255,11 +255,7 @@ public class DataSkippingUtils {
                             new DataSkippingPredicate(
                                 ">",
                                 Arrays.asList(nullCountCol, zero),
-                                new HashSet<Column>(){
-                                    {
-                                        add(nullCountCol);
-                                    }
-                                }
+                                Collections.singleton(nullCountCol)
                             )
                         );
                     }
