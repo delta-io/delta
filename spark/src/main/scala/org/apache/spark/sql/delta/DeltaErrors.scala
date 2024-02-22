@@ -2040,6 +2040,12 @@ trait DeltaErrorsBase
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES",
       messageParameters = invalidColumnNames.toArray)
 
+  def foundInvalidColumnNamesWhenRemovingColumnMapping(columnNames: Seq[String])
+    : Throwable =
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
+      messageParameters = columnNames.toArray)
+
   def foundViolatingConstraintsForColumnChange(
       operation: String,
       columnName: String,

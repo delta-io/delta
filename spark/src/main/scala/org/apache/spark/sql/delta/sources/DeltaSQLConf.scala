@@ -1507,6 +1507,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val ALLOW_COLUMN_MAPPING_REMOVAL =
+    buildConf("columnMapping.allowRemoval")
+      .internal()
+      .doc(
+        """
+          |If enabled, allow the column mapping to be removed from a table.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTALOG_MINOR_COMPACTION_USE_FOR_READS =
     buildConf("deltaLog.minorCompaction.useForReads")
       .doc("If true, minor compacted delta log files will be used for creating Snapshots")
