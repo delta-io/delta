@@ -393,7 +393,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with VectorTest
     )
     assert(batch.getSize == 1)
 
-    val actResult = batch.toSeq.map(TestRow(_))
+    val actResult = Seq(TestRow(batch.getRows.next))
     val expResult = Seq(TestRow(
       "part-00000-d83dafd8-c344-49f0-ab1c-acd944e32493-c000.snappy.parquet",
       Map("p1" -> "0", "p2" -> "str"),
@@ -440,7 +440,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with VectorTest
       singletonStringColumnVector(json), schema, Optional.empty[ColumnVector]()
     )
 
-    val actResult = batch.toSeq.map(TestRow(_))
+    val actResult = Seq(TestRow(batch.getRows.next))
     val expResult = Seq(TestRow(
       Vector(0, 1, null),
       Vector(Vector("a", "b"), Vector("c"), Vector()),
