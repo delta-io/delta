@@ -34,7 +34,9 @@
   - [Supported Features](#supported-features)
   - [Active Features](#active-features)
 - [Column Mapping](#column-mapping)
+  - [Usage Tracking](#usage-tracking) 
   - [Writer Requirements for Column Mapping](#writer-requirements-for-column-mapping)
+    - [Write Requirements for Usage Tracking](#write-requirements-for-usage-tracking)
   - [Reader Requirements for Column Mapping](#reader-requirements-for-column-mapping)
 - [Deletion Vectors](#deletion-vectors)
   - [Deletion Vector Descriptor Schema](#deletion-vector-descriptor-schema)
@@ -802,6 +804,12 @@ The following is an example for the column definition of a table that leverages 
   }
 ```
 
+## Usage Tracking
+
+Column Mapping Usage Tracking is an extension of the column mapping feature that allows Delta to track whether a column has been dropped or renamed.
+This is tracked by the table property `delta.columnMapping.hasDroppedOrRenamed`. This table property is set to `true` when the table is created, and flipped to `false` when the first column is either dropped or renamed.
+The writer table feature `columnMappingUsageTracking` is added to the `writerFeatures` in the `protocol` to ensure that all writers correctly track when columns are dropped or renamed.
+
 ## Writer Requirements for Column Mapping
 In order to support column mapping, writers must:
  - Write `protocol` and `metaData` actions when Column Mapping is turned on for the first time:
@@ -812,7 +820,20 @@ In order to support column mapping, writers must:
  - Write data files by using the _physical name_ that is chosen for each column. The physical name of the column is static and can be different than the _display name_ of the column, which is changeable.
  - Write the 32 bit integer column identifier as part of the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift).
  - Track partition values and column level statistics with the physical name of the column in the transaction log.
- - Assign a globally unique identifier as the physical name for each new column that is added to the schema. This is especially important for supporting cheap column deletions in `name` mode. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
+ - Assign a unique physical name to each column.
+   - When enabling column mapping on existing table, the physical name of the column must be set to the (logical) name of the column.
+   - If usage tracking is supported, then when adding a new column to a table and `delta.columnMapping.hasDroppedOrRenamed` column property is `false` the (logical) name of the column should be used as the physical name.
+   - Otherwise the physical column must contain a universally unique identifier (UUID) to guarantee uniqueness.
+ - Assign a column id to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
+
+### Writer Requirements for Usage Tracking
+
+In order to support column mapping usage tracking, writers must:
+ - Write `protocol` and `metaData` actions when Column Mapping Usage Tracking is turned on for the first time:
+   - Write a `protocol` action with writer version 7 and the feature `columnMappingUsageTracking` in the `writerFeatures`.
+   - Write a `metaData` actions with the table property `delta.columnMapping.hasDroppedOrRenamed` set to `false` when creating a new table, or set to `true` when enabling usage tracking on an existing table.
+ - When dropping or renaming a column `delta.columnMapping.hasDroppedOrRenamed` must be set to `true`.
+ - After `delta.columnMapping.hasDroppedOrRenamed` is set to `false` it must never be set back to `true` again.
 
 ## Reader Requirements for Column Mapping
 If the table is on Reader Version 2, or if the table is on Reader Version 3 and the feature `columnMapping` is present in `readerFeatures`, readers and writers must read the table property `delta.columnMapping.mode` and do one of the following.
