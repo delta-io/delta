@@ -1179,6 +1179,17 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_STREAMING_UNSAFE_READ_ON_PARTITION_COLUMN_CHANGE =
+    buildConf("streaming.unsafeReadOnPartitionColumnChanges.enabled")
+      .doc(
+        "Streaming read on Delta table with partition column overwrite " +
+          "(e.g. changing partition column) is currently blocked due to potential data loss. " +
+          "However, existing users may use this flag to force unblock " +
+          "if they'd like to take the risk.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_STREAMING_ENABLE_SCHEMA_TRACKING =
     buildConf("streaming.schemaTracking.enabled")
       .doc(

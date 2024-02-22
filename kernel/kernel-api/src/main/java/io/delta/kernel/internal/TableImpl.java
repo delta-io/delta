@@ -60,4 +60,10 @@ public class TableImpl implements Table {
     public String getPath() {
         return tablePath;
     }
+
+    @Override
+    public Snapshot getSnapshotAtVersion(TableClient tableClient, long versionId)
+        throws TableNotFoundException {
+        return snapshotManager.getSnapshotAt(tableClient, versionId);
+    }
 }

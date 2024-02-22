@@ -24,6 +24,7 @@ import scala.collection.JavaConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getTestResourceFilePath
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
@@ -459,5 +460,168 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         .build()
     }
     assert(e.getMessage.contains("Unsupported reader protocol version"))
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////
+  // getSnapshotAtVersion end-to-end tests (log segment tests in SnapshotManagerSuite)
+  //////////////////////////////////////////////////////////////////////////////////
+
+  test("getSnapshotAtVersion: basic end-to-end read") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      (0 to 10).foreach { i =>
+        spark.range(i*10, i*10 + 10).write
+          .format("delta")
+          .mode("append")
+          .save(path)
+      }
+      // Read a checkpoint version
+      checkTable(
+        path = path,
+        expectedAnswer = (0L to 99L).map(TestRow(_)),
+        version = Some(9),
+        expectedVersion = Some(9)
+      )
+      // Read a JSON version
+      checkTable(
+        path = path,
+        expectedAnswer = (0L to 89L).map(TestRow(_)),
+        version = Some(8),
+        expectedVersion = Some(8)
+      )
+      // Read the current version
+      checkTable(
+        path = path,
+        expectedAnswer = (0L to 109L).map(TestRow(_)),
+        version = Some(10),
+        expectedVersion = Some(10)
+      )
+      // Cannot read a version that does not exist
+      val e = intercept[RuntimeException] {
+        Table.forPath(defaultTableClient, path)
+          .getSnapshotAtVersion(defaultTableClient, 11)
+      }
+      assert(e.getMessage.contains(
+        "Trying to load a non-existent version 11. The latest version available is 10"))
+    }
+  }
+
+  test("getSnapshotAtVersion: end-to-end test with truncated delta log") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      // Write versions [0, 10] (inclusive) including a checkpoint
+      (0 to 10).foreach { i =>
+        spark.range(i*10, i*10 + 10).write
+          .format("delta")
+          .mode("append")
+          .save(tablePath)
+      }
+      val log = org.apache.spark.sql.delta.DeltaLog.forTable(
+        spark, new org.apache.hadoop.fs.Path(tablePath))
+      // Delete the log files for versions 0-9, truncating the table history to version 10
+      (0 to 9).foreach { i =>
+        val jsonFile = org.apache.spark.sql.delta.util.FileNames.deltaFile(log.logPath, i)
+        new File(new org.apache.hadoop.fs.Path(log.logPath, jsonFile).toUri).delete()
+      }
+      // Create version 11 that overwrites the whole table
+      spark.range(50).write
+        .format("delta")
+        .mode("overwrite")
+        .save(tablePath)
+
+      // Cannot read a version that has been truncated
+      val e = intercept[RuntimeException] {
+        Table.forPath(defaultTableClient, tablePath)
+          .getSnapshotAtVersion(defaultTableClient, 9)
+      }
+      assert(e.getMessage.contains("Unable to reconstruct state at version 9"))
+      // Can read version 10
+      checkTable(
+        path = tablePath,
+        expectedAnswer = (0L to 109L).map(TestRow(_)),
+        version = Some(10),
+        expectedVersion = Some(10)
+      )
+      // Can read version 11
+      checkTable(
+        path = tablePath,
+        expectedAnswer = (0L until 50L).map(TestRow(_)),
+        version = Some(11),
+        expectedVersion = Some(11)
+      )
+    }
+  }
+
+  test("table primitives") {
+    val expectedAnswer = (0 to 10).map {
+      case 10 => TestRow(null, null, null, null, null, null, null, null, null, null)
+      case i => TestRow(
+        i,
+        i.toLong,
+        i.toByte,
+        i.toShort,
+        i % 2 == 0,
+        i.toFloat,
+        i.toDouble,
+        i.toString,
+        Array[Byte](i.toByte, i.toByte),
+        new BigDecimal(i)
+      )
+    }
+
+    checkTable(
+      path = goldenTablePath("data-reader-primitives"),
+      expectedAnswer = expectedAnswer
+    )
+  }
+
+  test("table with checkpoint") {
+    checkTable(
+      path = getTestResourceFilePath("basic-with-checkpoint"),
+      expectedAnswer = (0 until 150).map(i => TestRow(i.toLong))
+    )
+  }
+
+  test("table with name column mapping mode") {
+    val expectedAnswer = (0 to 10).map {
+      case 10 => TestRow(null, null, null, null, null, null, null, null, null, null)
+      case i => TestRow(
+        i,
+        i.toLong,
+        i.toByte,
+        i.toShort,
+        i % 2 == 0,
+        i.toFloat,
+        i.toDouble,
+        i.toString,
+        Array[Byte](i.toByte, i.toByte),
+        new BigDecimal(i)
+      )
+    }
+
+    checkTable(
+      path = getTestResourceFilePath("data-reader-primitives-column-mapping-name"),
+      expectedAnswer = expectedAnswer
+    )
+  }
+
+  test("partitioned table with column mapping") {
+    val expectedAnswer = (0 to 2).map {
+      case 2 => TestRow(null, null, "2")
+      case i => TestRow(i, i.toDouble, i.toString)
+    }
+    val readCols = Seq(
+      // partition fields
+      "as_int",
+      "as_double",
+      // data fields
+      "value"
+    )
+
+    checkTable(
+      path = getTestResourceFilePath("data-reader-partition-values-column-mapping-name"),
+      readCols = readCols,
+      expectedAnswer = expectedAnswer
+    )
   }
 }
