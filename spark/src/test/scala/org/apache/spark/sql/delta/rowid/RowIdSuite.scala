@@ -193,6 +193,23 @@ class RowIdSuite extends QueryTest
     }
   }
 
+  test("Check missing High Watermark for newly created empty table") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { dir =>
+        spark.range(start = 0, end = 0)
+          .write.format("delta").save(dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, dir)
+        assert(RowId.extractHighWatermark(log.update()) === None)
+        assertRowIdsAreNotSet(log)
+
+        spark.range(start = 0, end = 10)
+          .write.mode("append").format("delta").save(dir.getAbsolutePath)
+        assert(RowId.extractHighWatermark(log.update()) === Some(9))
+        assertRowIdsAreValid(log)
+      }
+    }
+  }
+
   test("row_id column with row ids disabled") {
     withRowTrackingEnabled(enabled = false) {
       withTempDir { dir =>
