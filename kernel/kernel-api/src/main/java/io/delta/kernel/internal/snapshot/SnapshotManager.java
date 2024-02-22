@@ -133,10 +133,19 @@ public class SnapshotManager {
             .orElseThrow(() -> new TableNotFoundException(dataPath.toString()));
     }
 
+    /**
+     * Construct the snapshot for the given table at the provided timestamp.
+     *
+     * @param tableClient         Instance of {@link TableClient} to use.
+     * @param millisSinceEpochUTC timestamp to fetch the snapshot for in milliseconds since the
+     *                            unix epoch
+     * @return a {@link Snapshot} of the table at the provided timestamp
+     * @throws TableNotFoundException
+     */
     public Snapshot getSnapshotForTimestamp(
-            TableClient tableClient, long timestamp) throws TableNotFoundException {
+            TableClient tableClient, long millisSinceEpochUTC) throws TableNotFoundException {
         long versionToRead = DeltaHistoryManager.getActiveCommitAtTimestamp(
-            tableClient, logPath, timestamp);
+            tableClient, logPath, millisSinceEpochUTC);
         return getSnapshotAt(tableClient, versionToRead);
     }
 

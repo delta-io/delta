@@ -71,9 +71,9 @@ public interface Table {
      * Get the snapshot at the given {@code timestamp}.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @param timestamp timestamp to fetch the snapshot for in milliseconds since the unix epoch
+     * @param millisSinceEpochUTC timestamp to fetch the snapshot for in milliseconds since the unix epoch
      * @return an instance of {@link Snapshot}
      */
-    Snapshot getSnapshotAtTimestamp(TableClient tableClient, long timestamp)
+    Snapshot getSnapshotAtTimestamp(TableClient tableClient, long millisSinceEpochUTC)
         throws TableNotFoundException;
 }

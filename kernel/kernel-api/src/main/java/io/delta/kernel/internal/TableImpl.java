@@ -68,8 +68,8 @@ public class TableImpl implements Table {
     }
 
     @Override
-    public Snapshot getSnapshotAtTimestamp(TableClient tableClient, long timestamp)
+    public Snapshot getSnapshotAtTimestamp(TableClient tableClient, long millisSinceEpochUTC)
         throws TableNotFoundException {
-        return snapshotManager.getSnapshotForTimestamp(tableClient, timestamp);
+        return snapshotManager.getSnapshotForTimestamp(tableClient, millisSinceEpochUTC);
     }
 }
