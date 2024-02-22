@@ -6,14 +6,12 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import io.delta.golden.GoldenTableUtils.goldenTableFile
-import io.delta.kernel.Table
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
-import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampType}
+import io.delta.kernel.types.{ArrayType, DataType, MapType, StructType}
 import io.delta.kernel.utils.{DataFileStatus, FileStatus}
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.ParquetFileReader
