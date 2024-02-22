@@ -66,7 +66,8 @@ public final class DeltaHistoryManager {
             );
 
         // If timestamp is after the last commit of the table
-        if (commit == commits.get(commits.size() -1) && commit.timestamp < timestamp) {
+        if (commit.version == commits.get(commits.size() -1).version &&
+                commit.timestamp < timestamp) {
             throw DeltaErrors.timestampLaterThanTableLastCommit(
                 logPath.getParent().toString(), /* use dataPath */
                 timestamp,
@@ -237,11 +238,10 @@ public final class DeltaHistoryManager {
         }
     }
 
-    private static class Commit extends Tuple2<Long, Long> {
+    private static class Commit {
         final long version;
         final long timestamp;
         Commit(long version, long timestamp) {
-            super(version, timestamp);
             this.version = version;
             this.timestamp = timestamp;
         }
