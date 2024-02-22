@@ -410,13 +410,13 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("getLogSegmentForVersion: versionToLoad higher than possible") {
     testExpectedError[RuntimeException](
-      files = deltaFileStatuses(Seq(0)),
+      files = deltaFileStatuses(Seq(0L)),
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains =
         "Trying to load a non-existent version 15. The latest version available is 0"
     )
     testExpectedError[RuntimeException](
-      files = deltaFileStatuses((10L until 13L)) ++ singularCheckpointFileStatuses(Seq(10)),
+      files = deltaFileStatuses((10L until 13L)) ++ singularCheckpointFileStatuses(Seq(10L)),
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains =
         "Trying to load a non-existent version 15. The latest version available is 12"
@@ -425,7 +425,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("getLogSegmentForVersion: start listing from _last_checkpoint when it is provided") {
     val deltas = deltaFileStatuses(0L until 25)
-    val checkpoints = singularCheckpointFileStatuses(Seq(10, 20))
+    val checkpoints = singularCheckpointFileStatuses(Seq(10L, 20L))
     val files = deltas ++ checkpoints
     def listFrom(minVersion: Long)(filePath: String): Seq[FileStatus] = {
       if (filePath < FileNames.listingPrefix(logPath, minVersion)) {
@@ -444,7 +444,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         logSegmentOpt.get(),
         expectedVersion = 24,
         expectedDeltas = deltaFileStatuses(21L until 25L),
-        expectedCheckpoints = singularCheckpointFileStatuses(Seq(20)),
+        expectedCheckpoints = singularCheckpointFileStatuses(Seq(20L)),
         expectedCheckpointVersion = Some(20),
         expectedLastCommitTimestamp = 24L
       )
@@ -468,7 +468,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("getLogSegmentForVersion: versionToLoad not constructable from history") {
-    val files = deltaFileStatuses(20L until 25L) ++ singularCheckpointFileStatuses(Seq(20))
+    val files = deltaFileStatuses(20L until 25L) ++ singularCheckpointFileStatuses(Seq(20L))
     testExpectedError[RuntimeException](
       files,
       versionToLoad = Optional.of(15),
@@ -490,7 +490,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       for (startCheckpoint <-
              Seq(Optional.empty(), Optional.of(10L)): Seq[Optional[java.lang.Long]]) {
         testExpectedError[IllegalStateException](
-          files = singularCheckpointFileStatuses(Seq(10)),
+          files = singularCheckpointFileStatuses(Seq(10L)),
           startCheckpoint = startCheckpoint,
           versionToLoad = versionToLoad,
           expectedErrorMessageContains = "Could not find any delta files for version 10"
@@ -522,7 +522,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   // TODO address the inconsistent behaviors and throw better error messages for corrupt listings?
   //  (delta-io/delta#2283)
   test("getLogSegmentForVersion: corrupt listing 000.json...009.json + checkpoint(10)") {
-    val fileList = deltaFileStatuses((0L until 10L)) ++ singularCheckpointFileStatuses(Seq(10))
+    val fileList = deltaFileStatuses((0L until 10L)) ++ singularCheckpointFileStatuses(Seq(10L))
 
     /* ----------  version to load is 15 (greater than latest checkpoint/delta file) ---------- */
     // (?) different error messages
@@ -555,7 +555,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       logSegment.get(),
       10,
       Seq.empty,
-      singularCheckpointFileStatuses(Seq(10)),
+      singularCheckpointFileStatuses(Seq(10L)),
       Some(10),
       9 // is the last available delta file
     )
@@ -563,7 +563,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   // it's weird that checkpoint(10) fails but 011.json...014.json + checkpoint(10) does not
   test("getLogSegmentForVersion: corrupt listing 011.json...014.json + checkpoint(10)") {
-    val fileList = singularCheckpointFileStatuses(Seq(10)) ++ deltaFileStatuses((11L until 15L))
+    val fileList = singularCheckpointFileStatuses(Seq(10L)) ++ deltaFileStatuses((11L until 15L))
     /* ---------- versionToLoad is latest (14) ---------- */
     // no error
     testWithSingularAndMultipartCheckpoint(
@@ -601,12 +601,12 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       expectedErrorMessageContains = expectedErrorMessage(1)
     )
     testExpectedError[RuntimeException](
-      deltaFileStatuses(15L until 25L) ++ singularCheckpointFileStatuses(Seq(20)),
+      deltaFileStatuses(15L until 25L) ++ singularCheckpointFileStatuses(Seq(20L)),
       versionToLoad = Optional.of(17),
       expectedErrorMessageContains = expectedErrorMessage(15)
     )
     testExpectedError[RuntimeException](
-      deltaFileStatuses(15L until 25L) ++ singularCheckpointFileStatuses(Seq(20)),
+      deltaFileStatuses(15L until 25L) ++ singularCheckpointFileStatuses(Seq(20L)),
       startCheckpoint = Optional.of(20),
       versionToLoad = Optional.of(17),
       expectedErrorMessageContains = expectedErrorMessage(15)
@@ -670,7 +670,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       .take(4)
     testExpectedError[RuntimeException](
       files = corruptedCheckpointStatuses ++ deltaFileStatuses(10L to 20L) ++
-        singularCheckpointFileStatuses(Seq(10)),
+        singularCheckpointFileStatuses(Seq(10L)),
       startCheckpoint = Optional.of(20),
       expectedErrorMessageContains = "Checkpoint file to load version: 20 is missing."
     )
