@@ -21,7 +21,6 @@ import scala.reflect.ClassTag
 
 import org.scalatest.funsuite.AnyFunSuite
 
-import io.delta.kernel.internal.snapshot.DeltaHistoryManager
 import io.delta.kernel.utils.FileStatus
 import io.delta.kernel.{MockFileSystemClientUtils, TableNotFoundException}
 

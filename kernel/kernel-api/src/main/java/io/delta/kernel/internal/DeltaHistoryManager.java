@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.internal.snapshot;
+package io.delta.kernel.internal;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -26,7 +26,6 @@ import io.delta.kernel.TableNotFoundException;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
-import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
@@ -35,7 +34,9 @@ import static io.delta.kernel.internal.fs.Path.getName;
 
 public final class DeltaHistoryManager {
 
-    private static final Logger logger = LoggerFactory.getLogger(SnapshotManager.class);
+    private DeltaHistoryManager() {}
+
+    private static final Logger logger = LoggerFactory.getLogger(DeltaHistoryManager.class);
 
     /**
      * Returns the latest recreatable commit that happened at or before {@code timestamp}. If the
@@ -237,8 +238,8 @@ public final class DeltaHistoryManager {
     }
 
     private static class Commit extends Tuple2<Long, Long> {
-        long version;
-        long timestamp;
+        final long version;
+        final long timestamp;
         Commit(long version, long timestamp) {
             super(version, timestamp);
             this.version = version;
