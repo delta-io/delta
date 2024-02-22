@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.rowid
 
-import org.apache.spark.sql.delta.{DeltaLog, RowId}
+import org.apache.spark.sql.delta.{DeltaLog, MaterializedRowId, RowId}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -84,5 +84,9 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
       val minRowId = getRowIdRangeInclusive(f)._1
       assert(minRowId > value, s"${f.toString} has a row id smaller or equal than $value")
     }
+  }
+
+  def extractMaterializedRowIdColumnName(log: DeltaLog): Option[String] = {
+    log.update().metadata.configuration.get(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
   }
 }
