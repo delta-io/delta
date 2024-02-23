@@ -34,6 +34,40 @@ import org.apache.parquet.hadoop.metadata.ParquetMetadata
 
 trait ParquetSuiteBase extends TestUtils {
 
+  implicit class DataFileStatusOps(dataFileStatus: DataFileStatus) {
+    /**
+     * Convert the [[DataFileStatus]] to a [[TestRow]].
+     * (path, size, modification time, numRecords,
+     * min_col1, max_col1, nullCount_col1 (..repeated for every stats column)
+     * )
+     */
+    def toTestRow(statsColumns: Seq[Column]): TestRow = {
+      val statsOpt = dataFileStatus.getStatistics
+      val record: Seq[Any] = {
+        dataFileStatus.getPath +:
+          dataFileStatus.getSize +:
+          // convert to seconds, Spark returns in seconds and we can compare at second level
+          (dataFileStatus.getModificationTime / 1000) +:
+          // Add the row count to the stats literals
+          (if (statsOpt.isPresent) statsOpt.get().getNumRecords else null) +:
+          statsColumns.flatMap { column =>
+            if (statsOpt.isPresent) {
+              val stats = statsOpt.get()
+              Seq(
+                Option(stats.getMinValues.get(column)).map(_.getValue).orNull,
+                Option(stats.getMaxValues.get(column)).map(_.getValue).orNull,
+                Option(stats.getNullCounts.get(column)).orNull
+              )
+            } else {
+              Seq(null, null, null)
+            }
+          }
+      }
+      TestRow(record: _*)
+    }
+  }
+
+
   /**
    * Verify the contents of the Parquet files located in `actualFileDir` matches the
    * `expected` data. Does two types of verifications.
