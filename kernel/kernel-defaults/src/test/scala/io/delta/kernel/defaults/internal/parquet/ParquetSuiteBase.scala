@@ -67,7 +67,6 @@ trait ParquetSuiteBase extends TestUtils {
     }
   }
 
-
   /**
    * Verify the contents of the Parquet files located in `actualFileDir` matches the
    * `expected` data. Does two types of verifications.
