@@ -31,27 +31,6 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
-object InMemoryCommitStoreBuilder {
-  private val defaultBatchSize = 5L
-}
-
-/**
- * The InMemoryCommitStoreBuilder class is responsible for creating singleton instances of
- * InMemoryCommitStore with the specified batchSize.
- */
-case class InMemoryCommitStoreBuilder(
-    batchSize: Long = InMemoryCommitStoreBuilder.defaultBatchSize) extends CommitStoreBuilder {
-  private lazy val inMemoryStore = new InMemoryCommitStore(batchSize)
-
-  /** Name of the commit-store */
-  def name: String = "InMemoryCommitStore"
-
-  /** Returns a commit store based on the given conf */
-  def build(conf: Map[String, String]): CommitStore = {
-    inMemoryStore
-  }
-}
-
 class InMemoryCommitStoreSuite extends QueryTest
   with SharedSparkSession
   with LogStoreProvider {
@@ -213,7 +192,7 @@ class InMemoryCommitStoreSuite extends QueryTest
       // Test that out-of-order backfill is rejected
       intercept[IllegalArgumentException] {
         cs.asInstanceOf[InMemoryCommitStore]
-          .registerBackfill(tablePath, 5, new Path("delta5.json"))
+          .registerBackfill(tablePath, 5)
       }
       assertInvariants(tablePath, cs.asInstanceOf[InMemoryCommitStore])
     }
@@ -247,17 +226,17 @@ class InMemoryCommitStoreSuite extends QueryTest
       val tablePath = new Path(tempDir.getCanonicalPath)
       val cs = InMemoryCommitStoreBuilder(batchSize = 5).build(Map.empty)
       intercept[IllegalArgumentException] {
-        cs.asInstanceOf[InMemoryCommitStore].registerBackfill(tablePath, 0, new Path("delta0.json"))
+        cs.asInstanceOf[InMemoryCommitStore].registerBackfill(tablePath, 0)
       }
       (0 to 3).foreach(i => commit(i, i, cs, tablePath))
 
       // Test that backfilling is idempotent for already-backfilled commits.
-      cs.asInstanceOf[InMemoryCommitStore].registerBackfill(tablePath, 2, new Path("delta2.json"))
-      cs.asInstanceOf[InMemoryCommitStore].registerBackfill(tablePath, 2, new Path("delta2.json"))
+      cs.asInstanceOf[InMemoryCommitStore].registerBackfill(tablePath, 2)
+      cs.asInstanceOf[InMemoryCommitStore].registerBackfill(tablePath, 2)
 
       // Test that backfilling uncommited commits fail.
       intercept[IllegalArgumentException] {
-        cs.asInstanceOf[InMemoryCommitStore].registerBackfill(tablePath, 4, new Path("delta4.json"))
+        cs.asInstanceOf[InMemoryCommitStore].registerBackfill(tablePath, 4)
       }
     }
   }

@@ -52,6 +52,7 @@ class CommitStoreSuite extends QueryTest with SQLTestUtils with SharedSparkSessi
   override def beforeEach(): Unit = {
     super.beforeEach()
     CommitStoreProvider.clearNonDefaultBuilders()
+    CommitStoreProvider.registerBuilder(InMemoryCommitStoreBuilder(batchSize = 1))
   }
 
   test("registering multiple commit store builders with same name") {
@@ -166,7 +167,7 @@ class CommitStoreSuite extends QueryTest with SQLTestUtils with SharedSparkSessi
       val path = dir.getCanonicalPath
       spark.range(10).write.format("delta").mode("append").save(path)
       val metadata =
-        Metadata(configuration = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> "name"))
+        Metadata(configuration = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> "in-memory"))
       val deltaLog = DeltaLog.forTable(spark, path)
 
       def getWriterFeatures(log: DeltaLog): Set[String] = {
