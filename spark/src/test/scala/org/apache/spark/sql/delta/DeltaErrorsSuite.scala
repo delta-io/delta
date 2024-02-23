@@ -512,7 +512,7 @@ trait DeltaErrorsSuiteBase
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.generatedColumnsReferToWrongColumns(
-          new AnalysisException("analysis exception"))
+          new DeltaAnalysisException("analysis exception"))
       }
       checkErrorMessage(e, None, None,
         Some("A generated column cannot use a non-existent column or " +

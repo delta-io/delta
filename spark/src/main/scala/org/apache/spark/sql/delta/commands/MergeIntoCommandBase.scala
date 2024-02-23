@@ -121,7 +121,7 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       // queries that add void columns.
       val newNullColumn = SchemaUtils.findNullTypeColumn(migratedSchema.get)
       if (newNullColumn.isDefined) {
-        throw new AnalysisException(
+        throw new DeltaAnalysisException(
           s"""Cannot add column '${newNullColumn.get}' with type 'void'. Please explicitly specify a
               |non-void type.""".stripMargin.replaceAll("\n", " ")
         )

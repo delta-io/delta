@@ -550,7 +550,8 @@ trait ClusteredTableDDLSuiteBase
       }
       assert(e2.getErrorClass == "DELTA_DUPLICATE_COLUMNS_FOUND")
       assert(e2.getSqlState == "42711")
-      assert(e2.getMessageParametersArray === Array("in CLUSTER BY", "`id`"))
+      assert(e2.getMessageParameters ===
+        Map("colType" -> "in CLUSTER BY", "duplicateCols" -> "`id`"))
     }
   }
 

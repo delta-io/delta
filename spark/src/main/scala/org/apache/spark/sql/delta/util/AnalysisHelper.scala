@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.util
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors}
 
 import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.AnalysisErrorAt
@@ -52,7 +52,7 @@ trait AnalysisHelper {
       tryResolveReferencesForExpressions(sparkSession)(exprs, Seq(planProvidingAttrs))
     resolvedExprs.foreach { expr =>
       if (!expr.resolved) {
-        throw new AnalysisException(
+        throw new DeltaAnalysisException(
           s"cannot resolve ${expr.sql} given $planProvidingAttrs")
       }
     }
