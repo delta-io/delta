@@ -822,7 +822,7 @@ In order to support column mapping, writers must:
  - Track partition values and column level statistics with the physical name of the column in the transaction log.
  - Assign a unique physical name to each column.
    - When enabling column mapping on existing table, the physical name of the column must be set to the (logical) name of the column.
-   - If column mapping usage tracking is supported, then when adding a new column to a table and `delta.columnMapping.hasDroppedOrRenamed` column property is `false` the (logical) name of the column should be used as the physical name.
+   - If the feature `columnMappingUsageTracking` is supported, then when adding a new column to a table and `delta.columnMapping.hasDroppedOrRenamed` column property is `false` the (logical) name of the column should be used as the physical name.
    - Otherwise the physical column must contain a universally unique identifier (UUID) to guarantee uniqueness.
  - Assign a column id to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
 
