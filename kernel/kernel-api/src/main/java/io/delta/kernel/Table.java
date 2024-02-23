@@ -68,7 +68,20 @@ public interface Table {
         throws TableNotFoundException;
 
     /**
-     * Get the snapshot at the given {@code timestamp}.
+     * Get the snapshot of the table at the given {@code timestamp}. This is the latest version of
+     * the table that was committed before or at {@code timestamp}.
+     * <p>
+     * Specifically:
+     * <ul>
+     *     <li>If a commit version exactly matches the provided timestamp, we return the table
+     *     snapshot at that version.</li>
+     *     <li>Else, we return the latest commit version with a timestamp less than the provided
+     *     one.</li>
+     *     <li>If the provided timestamp is less than the timestamp of any committed version,
+     *         we throw an error.</li>
+     *     <li>If the provided timestamp is after (strictly greater than) the timestamp of the
+     *     latest version of the table, we throw an error</li>
+     * </ul>.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @param millisSinceEpochUTC timestamp to fetch the snapshot for in milliseconds since the
