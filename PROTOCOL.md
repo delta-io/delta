@@ -807,7 +807,7 @@ The following is an example for the column definition of a table that leverages 
 ## Usage Tracking
 
 Column Mapping Usage Tracking is an extension of the column mapping feature that allows Delta to track whether a column has been dropped or renamed.
-This is tracked by the table property `delta.columnMapping.hasDroppedOrRenamed`. This table property is set to `true` when the table is created, and flipped to `false` when the first column is either dropped or renamed.
+This is tracked by the table property `delta.columnMapping.hasDroppedOrRenamed`. This table property is set to `false` when the table is created, and flipped to `true` when the first column is either dropped or renamed.
 The writer table feature `columnMappingUsageTracking` is added to the `writerFeatures` in the `protocol` to ensure that all writers correctly track when columns are dropped or renamed.
 
 ## Writer Requirements for Column Mapping
@@ -822,7 +822,7 @@ In order to support column mapping, writers must:
  - Track partition values and column level statistics with the physical name of the column in the transaction log.
  - Assign a unique physical name to each column.
    - When enabling column mapping on existing table, the physical name of the column must be set to the (logical) name of the column.
-   - If usage tracking is supported, then when adding a new column to a table and `delta.columnMapping.hasDroppedOrRenamed` column property is `false` the (logical) name of the column should be used as the physical name.
+   - If column mapping usage tracking is supported, then when adding a new column to a table and `delta.columnMapping.hasDroppedOrRenamed` column property is `false` the (logical) name of the column should be used as the physical name.
    - Otherwise the physical column must contain a universally unique identifier (UUID) to guarantee uniqueness.
  - Assign a column id to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
 
@@ -833,7 +833,7 @@ In order to support column mapping usage tracking, writers must:
    - Write a `protocol` action with writer version 7 and the feature `columnMappingUsageTracking` in the `writerFeatures`.
    - Write a `metaData` actions with the table property `delta.columnMapping.hasDroppedOrRenamed` set to `false` when creating a new table, or set to `true` when enabling usage tracking on an existing table.
  - When dropping or renaming a column `delta.columnMapping.hasDroppedOrRenamed` must be set to `true`.
- - After `delta.columnMapping.hasDroppedOrRenamed` is set to `false` it must never be set back to `true` again.
+ - After `delta.columnMapping.hasDroppedOrRenamed` is set to `true` it must never be set back to `false` again.
 
 ## Reader Requirements for Column Mapping
 If the table is on Reader Version 2, or if the table is on Reader Version 3 and the feature `columnMapping` is present in `readerFeatures`, readers and writers must read the table property `delta.columnMapping.mode` and do one of the following.
