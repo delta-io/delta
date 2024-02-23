@@ -50,11 +50,11 @@ public final class DeltaErrors {
     //  (Table::getSnapshotAtTimestamp)
     public static RuntimeException timestampEarlierThanTableFirstCommitException(
             String tablePath, long providedTimestamp, long commitTimestamp) {
-        String providedTimestampStr = new Timestamp(providedTimestamp).toString();
-        String commitTimestampStr = new Timestamp(commitTimestamp).toString();
+        String providedTimestampStr = formatTimestamp(providedTimestamp);
+        String commitTimestampStr = formatTimestamp(commitTimestamp);
         String message = String.format(
-            "%s: The provided timestamp %s ms (%s UTC) is before the earliest version available. " +
-                "Please use a timestamp greater than or equal to %s ms (%s UTC)",
+            "%s: The provided timestamp %s ms (%s) is before the earliest version available. " +
+                "Please use a timestamp greater than or equal to %s ms (%s)",
             tablePath,
             providedTimestamp,
             providedTimestampStr,
@@ -68,13 +68,13 @@ public final class DeltaErrors {
     //  (Table::getSnapshotAtTimestamp)
     public static RuntimeException timestampLaterThanTableLastCommit(
             String tablePath, long providedTimestamp, long commitTimestamp, long commitVersion) {
-        String providedTimestampStr = new Timestamp(providedTimestamp).toString();
-        String commitTimestampStr = new Timestamp(commitTimestamp).toString();
+        String providedTimestampStr = formatTimestamp(providedTimestamp);
+        String commitTimestampStr = formatTimestamp(commitTimestamp);
         String message = String.format(
-            "%s: The provided timestamp %s ms (%s UTC) is after the latest commit with " +
-                "timestamp %s ms (%s UTC). If you wish to query this version of the table please " +
+            "%s: The provided timestamp %s ms (%s) is after the latest commit with " +
+                "timestamp %s ms (%s). If you wish to query this version of the table please " +
                 "either provide the version %s or use the exact timestamp of the last " +
-                "commit %s ms (%s UTC)",
+                "commit %s ms (%s)",
             tablePath,
             providedTimestamp,
             providedTimestampStr,
@@ -84,5 +84,9 @@ public final class DeltaErrors {
             commitTimestamp,
             commitTimestampStr);
         return new RuntimeException(message);
+    }
+
+    private static String formatTimestamp(long millisSinceEpochUTC) {
+        return new Timestamp(millisSinceEpochUTC).toInstant().toString();
     }
 }
