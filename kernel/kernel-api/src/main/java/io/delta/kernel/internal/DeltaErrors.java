@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal;
 
+import java.sql.Timestamp;
+
 public final class DeltaErrors {
     private DeltaErrors() {}
 
@@ -48,13 +50,16 @@ public final class DeltaErrors {
     //  (Table::getSnapshotAtTimestamp)
     public static RuntimeException timestampEarlierThanTableFirstCommitException(
             String tablePath, long providedTimestamp, long commitTimestamp) {
+        String providedTimestampStr = new Timestamp(providedTimestamp).toString();
+        String commitTimestampStr = new Timestamp(commitTimestamp).toString();
         String message = String.format(
-            "%s: The provided timestamp %s is before the earliest version available. " +
-                "Please use a timestamp greater than or equal to %s",
+            "%s: The provided timestamp %s ms (%s UTC) is before the earliest version available. " +
+                "Please use a timestamp greater than or equal to %s ms (%s UTC)",
             tablePath,
             providedTimestamp,
-            commitTimestamp);
-        // TODO format the timestamps?
+            providedTimestampStr,
+            commitTimestamp,
+            commitTimestampStr);
         return new RuntimeException(message);
     }
 
@@ -63,16 +68,21 @@ public final class DeltaErrors {
     //  (Table::getSnapshotAtTimestamp)
     public static RuntimeException timestampLaterThanTableLastCommit(
             String tablePath, long providedTimestamp, long commitTimestamp, long commitVersion) {
+        String providedTimestampStr = new Timestamp(providedTimestamp).toString();
+        String commitTimestampStr = new Timestamp(commitTimestamp).toString();
         String message = String.format(
-            "%s: The provided timestamp %s is after the latest commit with timestamp %s. " +
-                "If you wish to query this version of the table please either provide the " +
-                "version %s or use the exact timestamp of the last commit %s",
+            "%s: The provided timestamp %s ms (%s UTC) is after the latest commit with " +
+                "timestamp %s ms (%s UTC). If you wish to query this version of the table please " +
+                "either provide the version %s or use the exact timestamp of the last " +
+                "commit %s ms (%s UTC)",
             tablePath,
             providedTimestamp,
+            providedTimestampStr,
             commitTimestamp,
+            commitTimestampStr,
             commitVersion,
-            commitTimestamp);
-        // TODO format the timestamps?
+            commitTimestamp,
+            commitTimestampStr);
         return new RuntimeException(message);
     }
 }

@@ -724,7 +724,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         )
       }
       assert(e1.getMessage.contains(
-        s"The provided timestamp ${start + 50 * minuteInMilliseconds} is after the latest commit"))
+        s"The provided timestamp ${start + 50 * minuteInMilliseconds} ms " +
+          s"(2018-10-24 15:04:18.0 UTC) is after the latest commit"))
       // Timestamp before the first commit fails
       val e2 = intercept[RuntimeException] {
         checkTable(
@@ -734,7 +735,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         )
       }
       assert(e2.getMessage.contains(
-        s"The provided timestamp ${start - 1L} is before the earliest version available."))
+        s"The provided timestamp ${start - 1L} ms (2018-10-24 14:14:17.999 UTC) is before " +
+          s"the earliest version available."))
     }
   }
 
