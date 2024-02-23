@@ -1,0 +1,38 @@
+Iceberg PartitionField takes source column field id from latest schema if changed
+
+--- a/core/src/main/java/org/apache/iceberg/TableMetadata.java
++++ b/core/src/main/java/org/apache/iceberg/TableMetadata.java
+@@ -664,13 +664,21 @@ public class TableMetadata implements Serializable {
+     return new Builder(this).upgradeFormatVersion(newFormatVersion).build();
+   }
+ 
+-  private static PartitionSpec updateSpecSchema(Schema schema, PartitionSpec partitionSpec) {
++  private static PartitionSpec updateSpecSchema(Schema schema, Schema currSchema, PartitionSpec partitionSpec) {
+     PartitionSpec.Builder specBuilder =
+         PartitionSpec.builderFor(schema).withSpecId(partitionSpec.specId());
+ 
+-    // add all the fields to the builder. IDs should not change.
++    // add all the fields to the builder. IDs may change so it looks up the source field id by
++    // name from schema to update
+     for (PartitionField field : partitionSpec.fields()) {
+-      specBuilder.add(field.sourceId(), field.fieldId(), field.name(), field.transform());
++      String partFieldSourceName = currSchema.findField(field.sourceId()).name();
++      int partFieldSourceInt;
++      if (schema.findField(partFieldSourceName) == null) {
++        partFieldSourceInt = field.sourceId();
++      } else {
++        partFieldSourceInt = schema.findField(partFieldSourceName).fieldId();
++      }
++      specBuilder.add(partFieldSourceInt, field.fieldId(), field.name(), field.transform());
+     }
+ 
+     // build without validation because the schema may have changed in a way that makes this spec
+@@ -970,7 +978,7 @@ public class TableMetadata implements Serializable {
+ 
+       // rebuild all the partition specs and sort orders for the new current schema
+       this.specs =
+-          Lists.newArrayList(Iterables.transform(specs, spec -> updateSpecSchema(schema, spec)));
++          Lists.newArrayList(Iterables.transform(specs, spec -> updateSpecSchema(schema, schemasById.get(currentSchemaId), spec)));
+       specsById.clear();
+       specsById.putAll(indexSpecs(specs));
+ 
