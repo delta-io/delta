@@ -32,9 +32,10 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.internal.data.ScanStateRow
+import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.utils.{CloseableIterator, DataFileStatus}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.SparkSession
@@ -124,6 +125,35 @@ trait TestUtils extends Assertions with SQLHelper {
   def latestSnapshot(path: String, tableClient: TableClient = defaultTableClient): Snapshot = {
     Table.forPath(tableClient, path)
       .getLatestSnapshot(tableClient)
+  }
+
+  def tableSchema(path: String): StructType = {
+    Table.forPath(defaultTableClient, path)
+      .getLatestSnapshot(defaultTableClient)
+      .getSchema(defaultTableClient)
+  }
+
+  def hasColumnMappingId(str: String): Boolean = {
+    val table = Table.forPath(defaultTableClient, str)
+    val schema = table.getLatestSnapshot(defaultTableClient).getSchema(defaultTableClient)
+    schema.fields().asScala.exists { field =>
+      field.getMetadata.contains(ColumnMapping.COLUMN_MAPPING_ID_KEY)
+    }
+  }
+
+  /** Get the list of all leaf-level primitive column references in the given `structType` */
+  def leafLevelPrimitiveColumns(basePath: Seq[String], structType: StructType): Seq[Column] = {
+    structType.fields.asScala.flatMap {
+      case field if field.getDataType.isInstanceOf[StructType] =>
+        leafLevelPrimitiveColumns(
+          basePath :+ field.getName,
+          field.getDataType.asInstanceOf[StructType])
+      case field if !field.getDataType.isInstanceOf[ArrayType] &&
+        !field.getDataType.isInstanceOf[MapType] =>
+        // for all primitive types
+        Seq(new Column((basePath :+ field.getName).asJava.toArray(new Array[String](0))));
+      case _ => Seq.empty
+    }
   }
 
   def collectScanFileRows(scan: Scan, tableClient: TableClient = defaultTableClient): Seq[Row] = {
