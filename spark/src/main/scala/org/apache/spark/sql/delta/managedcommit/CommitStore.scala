@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.managedcommit
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaConfigs, ManagedCommitTableFeature, SerializableFileStatus, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeltaConfigs, InitialSnapshot, ManagedCommitTableFeature, SerializableFileStatus, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
@@ -26,13 +26,11 @@ import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.internal.Logging
 
-
 /** Representation of a commit file */
 case class Commit(
   version: Long,
   serializableFileStatus: SerializableFileStatus,
   commitTimestamp: Long)
-
 
 /**
  * Exception raised by [[CommitStore.commit]] method.
@@ -126,17 +124,13 @@ object CommitStoreProvider {
   }
 
   def getCommitStore(snapshotDescriptor: SnapshotDescriptor): Option[CommitStore] = {
-    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(snapshotDescriptor.metadata) match {
-      case Some(commitOwnerStr) =>
+    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME
+      .fromMetaData(snapshotDescriptor.metadata)
+      .map { commitOwnerStr =>
         assert(snapshotDescriptor.protocol.isFeatureSupported(ManagedCommitTableFeature))
         val conf = DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.fromMetaData(snapshotDescriptor.metadata)
-        Some(CommitStoreProvider.getCommitStore(commitOwnerStr, conf))
-      case None =>
-        assert(!snapshotDescriptor.protocol.isFeatureSupported(ManagedCommitTableFeature),
-          s"Snapshot version ${snapshotDescriptor.version} doesn't have ManagedCommitTableFeature" +
-            s" but it has commitStore defined. Snapshot: $snapshotDescriptor")
-        None
-    }
+        CommitStoreProvider.getCommitStore(commitOwnerStr, conf)
+      }
   }
 
   // Visible only for UTs

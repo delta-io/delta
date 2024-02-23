@@ -21,12 +21,14 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
+import org.apache.spark.sql.delta.managedcommit.{CommitStore, CommitStoreProvider}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -160,6 +162,13 @@ class Snapshot(
 
     protocol -> metadata
   }
+
+  /**
+   * [[CommitStore]] for the given delta table as of this snapshot.
+   * - This must be present when managed commit is enabled.
+   * - This must be None when managed commit is disabled.
+   */
+  val commitStoreOpt: Option[CommitStore] = CommitStoreProvider.getCommitStore(this)
 
   /** Number of columns to collect stats on for data skipping */
   override lazy val statsColumnSpec: DeltaStatsColumnSpec =
@@ -429,8 +438,11 @@ object Snapshot extends DeltaLogging {
 
   /** Verifies that a set of delta or checkpoint files to be read actually belongs to this table. */
   private def assertLogFilesBelongToTable(logBasePath: Path, files: Seq[FileStatus]): Unit = {
+    val logPath = new Path(logBasePath.toUri)
+    val commitDirPath = FileNames.commitDirPath(logPath)
     files.map(_.getPath).foreach { filePath =>
-      if (new Path(filePath.toUri).getParent != new Path(logBasePath.toUri)) {
+      val commitParent = new Path(filePath.toUri).getParent
+      if (commitParent != logPath && commitParent != commitDirPath) {
         // scalastyle:off throwerror
         throw new AssertionError(s"File ($filePath) doesn't belong in the " +
           s"transaction log at $logBasePath.")
