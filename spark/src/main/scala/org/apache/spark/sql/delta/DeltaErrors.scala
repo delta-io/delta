@@ -566,7 +566,12 @@ trait DeltaErrorsBase
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
       messageParameters = Array(name))
   }
-
+  def invalidInventorySchema(expectedSchema: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_INVENTORY_SCHEMA",
+      messageParameters = Array(expectedSchema)
+    )
+  }
   def invalidIsolationLevelException(s: String): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_INVALID_ISOLATION_LEVEL",
