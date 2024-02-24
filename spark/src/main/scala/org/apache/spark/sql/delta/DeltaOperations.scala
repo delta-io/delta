@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.commons.lang3.StringUtils
 import org.apache.spark.sql.delta.DeltaOperationMetrics.MetricsTransformer
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.constraints.Constraint
@@ -77,7 +78,8 @@ object DeltaOperations {
 
   abstract class OperationWithPredicates(name: String, val predicates: Seq[Expression])
       extends Operation(name) {
-    private val predicateString = JsonUtils.toJson(predicatesToString(predicates))
+    private val predicateString = JsonUtils.toJson(predicatesToString(predicates).map(
+        c => StringUtils.abbreviate(c, 256)))
     override def parameters: Map[String, Any] = Map("predicate" -> predicateString)
   }
 
