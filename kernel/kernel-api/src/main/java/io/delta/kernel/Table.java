@@ -54,6 +54,7 @@ public interface Table {
      * The fully qualified path of this {@link Table} instance.
      *
      * @return the table path
+     * @since 3.2.0
      */
     String getPath();
 
@@ -63,6 +64,7 @@ public interface Table {
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @param versionId snapshot version to retrieve
      * @return an instance of {@link Snapshot}
+     * @since 3.2.0
      */
     Snapshot getSnapshotAtVersion(TableClient tableClient, long versionId)
         throws TableNotFoundException;
@@ -87,6 +89,7 @@ public interface Table {
      * @param millisSinceEpochUTC timestamp to fetch the snapshot for in milliseconds since the
      *                            unix epoch
      * @return an instance of {@link Snapshot}
+     * @since 3.2.0
      */
     Snapshot getSnapshotAtTimestamp(TableClient tableClient, long millisSinceEpochUTC)
         throws TableNotFoundException;

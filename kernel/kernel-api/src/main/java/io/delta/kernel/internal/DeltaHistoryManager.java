@@ -57,7 +57,7 @@ public final class DeltaHistoryManager {
 
         // Search for the commit
         List<Commit> commits = getCommits(tableClient, logPath, earliestRecreatableCommit);
-        Commit commit = lastCommitBeforeTimestamp(commits, timestamp)
+        Commit commit = lastCommitBeforeOrAtTimestamp(commits, timestamp)
             .orElseThrow(() ->
                 DeltaErrors.timestampEarlierThanTableFirstCommitException(
                     logPath.getParent().toString(), /* use dataPath */
@@ -66,7 +66,7 @@ public final class DeltaHistoryManager {
             );
 
         // If timestamp is after the last commit of the table
-        if (commit.version == commits.get(commits.size() -1).version &&
+        if (commit.version == commits.get(commits.size() - 1).version &&
                 commit.timestamp < timestamp) {
             throw DeltaErrors.timestampLaterThanTableLastCommit(
                 logPath.getParent().toString(), /* use dataPath */
@@ -87,10 +87,13 @@ public final class DeltaHistoryManager {
      * method assumes that the commits are contiguous.
      */
     private static long getEarliestRecreatableCommit(TableClient tableClient, Path logPath)
-            throws TableNotFoundException{
+            throws TableNotFoundException {
         try (CloseableIterator<FileStatus> files = listFrom(tableClient, logPath, 0)
-            .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())) ||
-                FileNames.isCheckpointFile(getName(fs.getPath())))) {
+            .filter(fs ->
+                FileNames.isCommitFile(getName(fs.getPath())) ||
+                    FileNames.isCheckpointFile(getName(fs.getPath()))
+            )
+        ) {
 
             if (!files.hasNext()) {
                 // listFrom already throws an error if the directory is truly empty, thus this must
@@ -225,17 +228,13 @@ public final class DeltaHistoryManager {
     }
 
     /** Returns the latest commit that happened at or before {@code timestamp} */
-    private static Optional<Commit> lastCommitBeforeTimestamp(
+    private static Optional<Commit> lastCommitBeforeOrAtTimestamp(
             List<Commit> commits, long timestamp) {
         int i = -1;
         while (i + 1 < commits.size() && commits.get(i + 1).timestamp <= timestamp) {
-            i ++;
+            i++;
         }
-        if (i < 0) { // none existed
-            return Optional.empty();
-        } else {
-            return Optional.of(commits.get(i));
-        }
+        return Optional.ofNullable((i < 0) ? null : commits.get(i));
     }
 
     private static class Commit {

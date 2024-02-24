@@ -50,16 +50,14 @@ public final class DeltaErrors {
     //  (Table::getSnapshotAtTimestamp)
     public static RuntimeException timestampEarlierThanTableFirstCommitException(
             String tablePath, long providedTimestamp, long commitTimestamp) {
-        String providedTimestampStr = formatTimestamp(providedTimestamp);
-        String commitTimestampStr = formatTimestamp(commitTimestamp);
         String message = String.format(
             "%s: The provided timestamp %s ms (%s) is before the earliest version available. " +
                 "Please use a timestamp greater than or equal to %s ms (%s)",
             tablePath,
             providedTimestamp,
-            providedTimestampStr,
+            formatTimestamp(providedTimestamp),
             commitTimestamp,
-            commitTimestampStr);
+            formatTimestamp(commitTimestamp));
         return new RuntimeException(message);
     }
 
@@ -68,7 +66,6 @@ public final class DeltaErrors {
     //  (Table::getSnapshotAtTimestamp)
     public static RuntimeException timestampLaterThanTableLastCommit(
             String tablePath, long providedTimestamp, long commitTimestamp, long commitVersion) {
-        String providedTimestampStr = formatTimestamp(providedTimestamp);
         String commitTimestampStr = formatTimestamp(commitTimestamp);
         String message = String.format(
             "%s: The provided timestamp %s ms (%s) is after the latest commit with " +
@@ -77,7 +74,7 @@ public final class DeltaErrors {
                 "commit %s ms (%s)",
             tablePath,
             providedTimestamp,
-            providedTimestampStr,
+            formatTimestamp(providedTimestamp),
             commitTimestamp,
             commitTimestampStr,
             commitVersion,
