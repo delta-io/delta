@@ -259,11 +259,6 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 throw new UnsupportedOperationException(
                     "Coalesce is only supported for arguments of the same type");
             }
-            // TODO support other data types besides boolean (just needs tests)
-            if (!(children.get(0).outputType instanceof BooleanType)) {
-                throw new UnsupportedOperationException(
-                    "Coalesce is only supported for boolean type expressions");
-            }
             return new ExpressionTransformResult(
                 new ScalarExpression(
                     "COALESCE",
