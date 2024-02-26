@@ -19,7 +19,7 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 import scala.collection.Map
 
-import org.apache.spark.sql.delta.{DeltaErrors, PostHocResolveUpCast, PreprocessTableMerge}
+import org.apache.spark.sql.delta.{DeltaErrors, PostHocResolveUpCast, PreprocessTableMerge, ResolveDeltaMergeInto}
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.DeltaViewHelper
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
@@ -277,7 +277,7 @@ class DeltaMergeBuilder private(
       // explained in the function `mergePlan` and
       // https://issues.apache.org/jira/browse/SPARK-34962.
       val resolvedMergeInto =
-      DeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
+      ResolveDeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
         tryResolveReferencesForExpressions(sparkSession))
       if (!resolvedMergeInto.resolved) {
         throw DeltaErrors.analysisException("Failed to resolve\n", plan = Some(resolvedMergeInto))
