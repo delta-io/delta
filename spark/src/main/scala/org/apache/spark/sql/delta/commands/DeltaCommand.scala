@@ -155,9 +155,9 @@ trait DeltaCommand extends DeltaLogging {
    * Find the AddFile record corresponding to the file that was read as part of a
    * delete/update/merge operation.
    *
-   * @param escapedFilePath The path to a file. Can be either absolute or relative, and
-   *                        must have been escaped.
-   * @param nameToAddFileMap Map generated through `generateCandidateFileMap()`
+   * @param escapedFilePath The path to a file that can be either absolute or relative. All special
+   *                        chars in this path must be already escaped.
+   * @param nameToAddFileMap Map generated through `generateCandidateFileMap()`.
    */
   def getTouchedFile(
       basePath: Path,
