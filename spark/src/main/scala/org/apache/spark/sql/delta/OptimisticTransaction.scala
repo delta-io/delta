@@ -1676,10 +1676,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     var commitVersion = attemptVersion
     var updatedCurrentTransactionInfo = currentTransactionInfo
     val maxRetryAttempts = spark.conf.get(DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS)
+    val maxNonConflictRetryAttempts =
+      spark.conf.get(DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS)
+    var nonConflictAttemptNumber = 0
+    var shouldCheckForConflicts = false
     recordDeltaOperation(deltaLog, "delta.commit.allAttempts") {
       for (attemptNumber <- 0 to maxRetryAttempts) {
         try {
-          val postCommitSnapshot = if (attemptNumber == 0) {
+          val postCommitSnapshot = if (!shouldCheckForConflicts) {
             doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
           } else recordDeltaOperation(deltaLog, "delta.commit.retry") {
             val (newCommitVersion, newCurrentTransactionInfo) = checkForConflicts(
@@ -1691,11 +1695,26 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           committed = true
           return (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo)
         } catch {
-          case _: FileAlreadyExistsException =>
+          case _: FileAlreadyExistsException if preCommitCommitStoreOpt.isEmpty =>
+            // For filesystem based tables, we use LogStore to do the commit. On a conflict,
+            // LogStore returns FileAlreadyExistsException necessitating conflict resolution.
+            // For commit-stores, FileAlreadyExistsException isn't expected under normal operations
+            // and thus retries are not performed if this exception is thrown by CommitStore.
+            shouldCheckForConflicts = true
             // Do nothing, retry with next available attemptVersion
           case ex: CommitFailedException if ex.retryable && ex.conflict =>
+            shouldCheckForConflicts = true
+            // Reset nonConflictAttemptNumber if a conflict is detected.
+            nonConflictAttemptNumber = 0
             // For managed-commits, only retry with next available attemptVersion when
             // retryable is set and it was a case of conflict.
+          case ex: CommitFailedException if ex.retryable && !ex.conflict =>
+            if (nonConflictAttemptNumber < maxNonConflictRetryAttempts) {
+              nonConflictAttemptNumber += 1
+            } else {
+              // Rethrow the exception if max retries for non-conflict case have been reached
+              throw ex
+            }
         }
       }
     }
