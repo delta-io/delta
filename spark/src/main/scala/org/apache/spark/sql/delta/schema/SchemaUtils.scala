@@ -974,7 +974,7 @@ def normalizeColumnNamesInDataType(
           }
 
         case (fromDataType: AtomicType, toDataType: AtomicType) if allowTypeWidening =>
-          verify(TypeWidening.isAtomicTypeChangeSupported(fromDataType, toDataType),
+          verify(TypeWidening.isTypeChangeSupported(fromDataType, toDataType),
             s"changing data type of ${UnresolvedAttribute(columnPath).name} " +
               s"from $fromDataType to $toDataType")
 

@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.{SparkConf, SparkException}
-import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, Encoder, QueryTest, Row}
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.functions.lit
@@ -37,6 +37,7 @@ class DeltaTypeWideningSuite
     with DeltaSQLCommandTest
     with DeltaTypeWideningTestMixin
     with DeltaTypeWideningAlterTableTests
+    with DeltaTypeWideningNestedFieldsTests
     with DeltaTypeWideningTableFeatureTests
 
 /**
@@ -44,7 +45,10 @@ class DeltaTypeWideningSuite
  */
 trait DeltaTypeWideningTestMixin extends SharedSparkSession {
   protected override def sparkConf: SparkConf = {
-    super.sparkConf.set(DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey, "true")
+    super.sparkConf
+      .set(DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey, "true")
+      // Ensure we don't silently cast test inputs to null on overflow.
+      .set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
   /** Enable (or disable) type widening for the table under the given path. */
@@ -65,39 +69,54 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase {
   /**
    * Represents the input of a type change test.
    * @param fromType         The original type of the column 'value' in the test table.
-   * @param toType           The type to use when changing the type of column 'value'
-   * @param initialValues    The initial values to insert in column 'value after table creation,
-   *                         using type `fromType`
-   * @param additionalValues Additional values to insert after changing the type of the column
-   *                         'value' to `toType`.
+   * @param toType           The type to use when changing the type of column 'value'.
    */
-  case class TypeEvolutionTestCase(
-      fromType: DataType,
-      toType: DataType,
-      initialValues: Seq[String],
-      additionalValues: Seq[String] = Seq.empty) {
-    def initialValuesDF: DataFrame =
+  abstract class TypeEvolutionTestCase(
+      val fromType: DataType,
+      val toType: DataType) {
+    /** The initial values to insert with type `fromType` in column 'value' after table creation. */
+    def initialValuesDF: DataFrame
+    /** Additional values to insert after changing the type of the column 'value' to `toType`. */
+    def additionalValuesDF: DataFrame
+    /** Expected content of the table after inserting the additional values. */
+    def expectedResult: DataFrame
+  }
+
+  /**
+   * Represents the input of a supported type change test. Handles converting the test values from
+   * scala types to a dataframe.
+   */
+  case class SupportedTypeEvolutionTestCase[
+      FromType  <: DataType, ToType <: DataType,
+      FromVal : Encoder, ToVal: Encoder
+    ](
+      override val fromType: FromType,
+      override val toType: ToType,
+      initialValues: Seq[FromVal],
+      additionalValues: Seq[ToVal]
+  ) extends TypeEvolutionTestCase(fromType, toType) {
+    override def initialValuesDF: DataFrame =
       initialValues.toDF("value").select($"value".cast(fromType))
 
-    def additionalValuesDF: DataFrame =
+    override def additionalValuesDF: DataFrame =
       additionalValues.toDF("value").select($"value".cast(toType))
 
-    def expectedResult: DataFrame =
+    override def expectedResult: DataFrame =
       initialValuesDF.union(additionalValuesDF).select($"value".cast(toType))
   }
 
   // Type changes that are supported by all Parquet readers. Byte, Short, Int are all stored as
   // INT32 in parquet so these changes are guaranteed to be supported.
   private val supportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
-    TypeEvolutionTestCase(ByteType, ShortType,
-      Seq("1", "2", Byte.MinValue.toString),
-      Seq("4", "5", Int.MaxValue.toString)),
-    TypeEvolutionTestCase(ByteType, IntegerType,
-      Seq("1", "2", Byte.MinValue.toString),
-      Seq("4", "5", Int.MaxValue.toString)),
-    TypeEvolutionTestCase(ShortType, IntegerType,
-      Seq("1", "2", Byte.MinValue.toString),
-      Seq("4", "5", Int.MaxValue.toString))
+    SupportedTypeEvolutionTestCase(ByteType, ShortType,
+      Seq(1, -1, Byte.MinValue, Byte.MaxValue, null.asInstanceOf[Byte]),
+      Seq(4, -4, Short.MinValue, Short.MaxValue, null.asInstanceOf[Short])),
+    SupportedTypeEvolutionTestCase(ByteType, IntegerType,
+      Seq(1, -1, Byte.MinValue, Byte.MaxValue, null.asInstanceOf[Byte]),
+      Seq(4, -4, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int])),
+    SupportedTypeEvolutionTestCase(ShortType, IntegerType,
+      Seq(1, -1, Short.MinValue, Short.MaxValue, null.asInstanceOf[Short]),
+      Seq(4, -4, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int]))
   )
 
   for {
@@ -117,50 +136,80 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase {
       sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE ${testCase.toType.sql}")
       withAllParquetReaders {
         assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
-        checkAnswer(readDeltaTable(tempPath).select("value"),
-          testCase.initialValuesDF.select($"value".cast(testCase.toType)))
+        checkAnswer(readDeltaTable(tempPath).select("value").sort("value"),
+          testCase.initialValuesDF.select($"value".cast(testCase.toType)).sort("value"))
       }
       writeData(testCase.additionalValuesDF)
       withAllParquetReaders {
-        checkAnswer(readDeltaTable(tempPath).select("value"), testCase.expectedResult)
+        checkAnswer(
+          readDeltaTable(tempPath).select("value").sort("value"),
+          testCase.expectedResult.sort("value"))
       }
     }
   }
 
+  /**
+   * Represents the input of an unsupported type change test. Handles converting the test values
+   * from scala types to a dataframe. Additional values to insert are always empty since the type
+   * change is expected to fail.
+   */
+  case class UnsupportedTypeEvolutionTestCase[
+    FromType  <: DataType, ToType <: DataType, FromVal : Encoder](
+      override val fromType: FromType,
+      override val toType: ToType,
+      initialValues: Seq[FromVal]) extends TypeEvolutionTestCase(fromType, toType) {
+    override def initialValuesDF: DataFrame =
+      initialValues.toDF("value").select($"value".cast(fromType))
+
+    override def additionalValuesDF: DataFrame =
+      spark.createDataFrame(
+        sparkContext.emptyRDD[Row],
+        new StructType().add(StructField("value", toType)))
+
+    override def expectedResult: DataFrame =
+      initialValuesDF.select($"value".cast(toType))
+  }
+
   // Test type changes that aren't supported.
-  private val unsupportedNonTestCases: Seq[TypeEvolutionTestCase] = Seq(
-    TypeEvolutionTestCase(IntegerType, ByteType,
-      Seq("1", "2", Int.MinValue.toString)),
-    TypeEvolutionTestCase(LongType, IntegerType,
-      Seq("4", "5", Long.MaxValue.toString)),
-    TypeEvolutionTestCase(DoubleType, FloatType,
-      Seq("987654321.987654321", Double.NaN.toString, Double.NegativeInfinity.toString,
-        Double.PositiveInfinity.toString, Double.MinPositiveValue.toString,
-        Double.MinValue.toString, Double.MaxValue.toString)),
-    TypeEvolutionTestCase(IntegerType, DecimalType(6, 0),
-      Seq("1", "2", Int.MinValue.toString)),
-    TypeEvolutionTestCase(TimestampNTZType, DateType,
+  private val unsupportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
+    UnsupportedTypeEvolutionTestCase(IntegerType, ByteType,
+      Seq(1, 2, Int.MinValue)),
+    UnsupportedTypeEvolutionTestCase(LongType, IntegerType,
+      Seq(4, 5, Long.MaxValue)),
+    UnsupportedTypeEvolutionTestCase(DoubleType, FloatType,
+      Seq(987654321.987654321d, Double.NaN, Double.NegativeInfinity,
+        Double.PositiveInfinity, Double.MinPositiveValue,
+        Double.MinValue, Double.MaxValue)),
+    UnsupportedTypeEvolutionTestCase(IntegerType, DecimalType(9, 0),
+      Seq(1, -1, Int.MinValue)),
+    UnsupportedTypeEvolutionTestCase(LongType, DecimalType(19, 0),
+      Seq(1, -1, Long.MinValue)),
+    UnsupportedTypeEvolutionTestCase(TimestampNTZType, DateType,
       Seq("2020-03-17 15:23:15", "2023-12-31 23:59:59", "0001-01-01 00:00:00")),
     // Reduce scale
-    TypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
+    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
       DecimalType(Decimal.MAX_INT_DIGITS, 3),
-      Seq("-67.89", "9" * (Decimal.MAX_INT_DIGITS - 2) + ".99")),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
     // Reduce precision
-    TypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
+    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
       DecimalType(Decimal.MAX_INT_DIGITS - 1, 2),
-      Seq("-67.89", "9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99")),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
     // Reduce precision & scale
-    TypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
+    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_LONG_DIGITS, 2),
       DecimalType(Decimal.MAX_INT_DIGITS - 1, 1),
-      Seq("-67.89", "9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99")),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99"))),
     // Increase scale more than precision
-    TypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
+    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
       DecimalType(Decimal.MAX_INT_DIGITS + 1, 4),
-      Seq("-67.89", "9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99"))
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
+    // Smaller scale and larger precision.
+    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_LONG_DIGITS, 2),
+      DecimalType(Decimal.MAX_INT_DIGITS + 3, 1),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99")))
   )
 
   for {
-    testCase <- unsupportedNonTestCases
+    testCase <- unsupportedTestCases
     partitioned <- BOOLEAN_DOMAIN
   } {
     test(s"unsupported type changes ${testCase.fromType.sql} -> ${testCase.toType.sql}, " +
@@ -196,7 +245,29 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase {
     }
   }
 
-  test("type widening in nested fields") {
+  test("type widening using ALTER TABLE REPLACE COLUMNS") {
+    append(Seq(1, 2).toDF("value").select($"value".cast(ShortType)))
+    assert(readDeltaTable(tempPath).schema === new StructType().add("value", ShortType))
+    sql(s"ALTER TABLE delta.`$tempPath` REPLACE COLUMNS (value INT)")
+    assert(readDeltaTable(tempPath).schema === new StructType().add("value", IntegerType))
+    checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2)))
+    append(Seq(3, 4).toDF("value"))
+    checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3), Row(4)))
+  }
+
+}
+
+/**
+ * Tests covering type changes on nested fields in structs, maps and arrays.
+ */
+trait DeltaTypeWideningNestedFieldsTests {
+  self: QueryTest with ParquetTest with DeltaDMLTestUtils with DeltaTypeWideningTestMixin
+    with SharedSparkSession =>
+
+  import testImplicits._
+
+  /** Create a table with a struct, map and array for each test. */
+  protected def createNestedTable(): Unit = {
     sql(s"CREATE TABLE delta.`$tempPath` " +
       "(s struct<a: byte>, m map<byte, short>, a array<short>) USING DELTA")
     append(Seq((1, 2, 3, 4))
@@ -210,7 +281,56 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase {
       .add("s", new StructType().add("a", ByteType))
       .add("m", MapType(ByteType, ShortType))
       .add("a", ArrayType(ShortType)))
+  }
 
+  test("unsupported ALTER TABLE CHANGE COLUMN on non-leaf fields") {
+    createNestedTable()
+    // Running ALTER TABLE CHANGE COLUMN on non-leaf fields is invalid.
+    var alterTableSql = s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN s TYPE struct<a: short>"
+    checkError(
+      exception = intercept[AnalysisException] { sql(alterTableSql) },
+      errorClass = "CANNOT_UPDATE_FIELD.STRUCT_TYPE",
+      parameters = Map(
+        "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
+        "fieldName" -> "`s`"
+      ),
+      context = ExpectedContext(
+        fragment = alterTableSql,
+        start = 0,
+        stop = alterTableSql.length - 1)
+    )
+
+    alterTableSql = s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN m TYPE map<int, int>"
+    checkError(
+      exception = intercept[AnalysisException] { sql(alterTableSql) },
+      errorClass = "CANNOT_UPDATE_FIELD.MAP_TYPE",
+      parameters = Map(
+        "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
+        "fieldName" -> "`m`"
+      ),
+      context = ExpectedContext(
+        fragment = alterTableSql,
+        start = 0,
+        stop = alterTableSql.length - 1)
+    )
+
+    alterTableSql = s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE array<int>"
+    checkError(
+      exception = intercept[AnalysisException] { sql(alterTableSql) },
+      errorClass = "CANNOT_UPDATE_FIELD.ARRAY_TYPE",
+      parameters = Map(
+        "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
+        "fieldName" -> "`a`"
+      ),
+      context = ExpectedContext(
+        fragment = alterTableSql,
+        start = 0,
+        stop = alterTableSql.length - 1)
+    )
+  }
+
+  test("type widening with ALTER TABLE on nested fields") {
+    createNestedTable()
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN s.a TYPE short")
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN m.key TYPE int")
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN m.value TYPE int")
@@ -232,31 +352,25 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase {
         .selectExpr("named_struct('a', cast(a as short)) as s", "map(b, c) as m", "array(d) as a"))
   }
 
-  test("type widening using ALTER TABLE REPLACE COLUMNS") {
-    append(Seq(1, 2).toDF("value").select($"value".cast(ShortType)))
-    assert(readDeltaTable(tempPath).schema === new StructType().add("value", ShortType))
-    sql(s"ALTER TABLE delta.`$tempPath` REPLACE COLUMNS (value INT)")
-    assert(readDeltaTable(tempPath).schema === new StructType().add("value", IntegerType))
-    checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2)))
-    append(Seq(3, 4).toDF("value"))
-    checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3), Row(4)))
-  }
+  test("type widening using ALTER TABLE REPLACE COLUMNS on nested fields") {
+    createNestedTable()
+    sql(s"ALTER TABLE delta.`$tempPath` REPLACE COLUMNS " +
+      "(s struct<a: short>, m map<int, int>, a array<int>)")
+    assert(readDeltaTable(tempPath).schema === new StructType()
+      .add("s", new StructType().add("a", ShortType))
+      .add("m", MapType(IntegerType, IntegerType))
+      .add("a", ArrayType(IntegerType)))
 
-  test("row group skipping Short -> Int") {
-    withSQLConf(
-      SQLConf.FILES_MAX_PARTITION_BYTES.key -> 1024.toString) {
-      append((0 until 1024).toDF("value").select($"value".cast(ShortType)))
-      sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE INT")
-      append((Short.MinValue + 1 until Short.MaxValue + 2048).toDF("value"))
-      withAllParquetReaders {
-        checkAnswer(
-          sql(s"SELECT * FROM delta.`$tempPath` " +
-            s"WHERE value >= CAST(${Short.MaxValue} AS INT) + 1000"),
-          (Short.MaxValue + 1000 until Short.MaxValue + 2048).map(Row(_)))
-      }
-    }
-  }
+    append(Seq((5, 6, 7, 8))
+      .toDF("a", "b", "c", "d")
+        .selectExpr("named_struct('a', cast(a as short)) as s", "map(b, c) as m", "array(d) as a"))
 
+    checkAnswer(
+      readDeltaTable(tempPath),
+      Seq((1, 2, 3, 4), (5, 6, 7, 8))
+        .toDF("a", "b", "c", "d")
+        .selectExpr("named_struct('a', cast(a as short)) as s", "map(b, c) as m", "array(d) as a"))
+  }
 }
 
 trait DeltaTypeWideningTableFeatureTests {

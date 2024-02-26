@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 
+import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.types._
 
 object TypeWidening {
@@ -46,12 +47,15 @@ object TypeWidening {
   }
 
   /**
-   * Returns whether the given type change is eligible for widening. This only checks atomic types,
-   * it is the responsibility of the caller to recurse into structs, maps and arrays.
+   * Returns whether the given type change is eligible for widening. This only checks atomic types.
+   * It is the responsibility of the caller to recurse into structs, maps and arrays.
    */
-  def isAtomicTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
+  def isTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
     (fromType, toType) match {
       case (from, to) if from == to => true
+      // All supported type changes below are supposed to be widening, but to be safe, reject any
+      // non-widening change upfront.
+      case (from, to) if !Cast.canUpCast(from, to) => false
       case (ByteType, ShortType) => true
       case (ByteType | ShortType, IntegerType) => true
       case _ => false
