@@ -21,13 +21,13 @@ import org.apache.spark.sql.delta.test.DeltaHiveTest
 
 import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.functions.{col, from_json}
 import org.apache.spark.sql.hive.test.TestHiveSingleton
-import org.apache.spark.sql.test.SQLTestUtils
 
 abstract class HiveConvertToDeltaSuiteBase
   extends ConvertToDeltaHiveTableTests
-  with SQLTestUtils {
+  with DeltaSQLTestUtils {
 
   override protected def convertToDelta(
       identifier: String,

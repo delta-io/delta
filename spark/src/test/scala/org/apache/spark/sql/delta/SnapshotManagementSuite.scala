@@ -21,16 +21,17 @@ import java.util.concurrent.ExecutionException
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.storage.StorageLevel
 
-class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSparkSession
+class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
   with DeltaSQLCommandTest {
 
 

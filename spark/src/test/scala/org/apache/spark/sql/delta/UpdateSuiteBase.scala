@@ -24,19 +24,20 @@ import scala.language.implicitConversions
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.functions.struct
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 abstract class UpdateSuiteBase
   extends QueryTest
   with SharedSparkSession
   with DeltaDMLTestUtils
-  with SQLTestUtils
+  with DeltaSQLTestUtils
   with DeltaTestUtilsForTempViews {
   import testImplicits._
 

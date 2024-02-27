@@ -22,16 +22,16 @@ import org.scalatest.BeforeAndAfterAll
 
 import org.apache.spark.{SparkContext, SparkFunSuite}
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.hive.test.{TestHive, TestHiveContext}
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
-import org.apache.spark.sql.test.SQLTestUtils
 
 /**
  * Test utility for initializing a SparkSession with a Hive Client and a Hive Catalog for testing
  * DDL operations. Typical tests leverage an in-memory catalog with a mock catalog client. Here we
  * use real Hive classes.
  */
-trait DeltaHiveTest extends SparkFunSuite with BeforeAndAfterAll { self: SQLTestUtils =>
+trait DeltaHiveTest extends SparkFunSuite with BeforeAndAfterAll { self: DeltaSQLTestUtils =>
 
   private var _session: SparkSession = _
   private var _hiveContext: TestHiveContext = _

@@ -53,9 +53,10 @@ import org.apache.spark.sql.catalyst.expressions.Uuid
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, StringType, StructField, StructType, TimestampNTZType}
 
 trait DeltaErrorsSuiteBase
@@ -63,7 +64,7 @@ trait DeltaErrorsSuiteBase
     with SharedSparkSession
     with GivenWhenThen
     with DeltaSQLCommandTest
-    with SQLTestUtils
+    with DeltaSQLTestUtils
     with QueryErrorsBase {
 
   val MAX_URL_ACCESS_RETRIES = 3

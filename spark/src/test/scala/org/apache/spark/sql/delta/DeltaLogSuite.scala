@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -38,7 +39,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.JsonToStructs
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 
@@ -47,7 +48,7 @@ class DeltaLogSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaCheckpointTestUtils
-  with SQLTestUtils {
+  with DeltaSQLTestUtils {
 
 
   protected val testOp = Truncate()

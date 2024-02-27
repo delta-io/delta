@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.tables.DeltaTable
 import org.scalatest.GivenWhenThen
 
@@ -32,13 +33,13 @@ import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 class SchemaUtilsSuite extends QueryTest
   with SharedSparkSession
   with GivenWhenThen
-  with SQLTestUtils
+  with DeltaSQLTestUtils
   with DeltaSQLCommandTest {
   import SchemaUtils._
   import testImplicits._

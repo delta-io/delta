@@ -23,8 +23,9 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, QueryTest}
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 
 
 class DeltaNotSupportedDDLSuite
@@ -34,7 +35,7 @@ class DeltaNotSupportedDDLSuite
 
 
 abstract class DeltaNotSupportedDDLBase extends QueryTest
-    with SQLTestUtils {
+    with DeltaSQLTestUtils {
 
   val format = "delta"
 

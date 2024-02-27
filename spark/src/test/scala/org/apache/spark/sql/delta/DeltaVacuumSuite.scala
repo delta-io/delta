@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, Remove
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.commons.io.FileUtils
@@ -44,7 +45,7 @@ import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{col, expr, lit}
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.ManualClock
@@ -52,7 +53,7 @@ import org.apache.spark.util.ManualClock
 trait DeltaVacuumSuiteBase extends QueryTest
   with SharedSparkSession
   with GivenWhenThen
-  with SQLTestUtils
+  with DeltaSQLTestUtils
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews {
 

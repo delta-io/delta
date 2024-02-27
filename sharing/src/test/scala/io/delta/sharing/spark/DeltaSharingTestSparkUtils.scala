@@ -30,11 +30,11 @@ import org.apache.spark.sql.catalyst.util.DateTimeUtils.{
   toJavaDate,
   toJavaTimestamp
 }
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.unsafe.types.UTF8String
 
-trait DeltaSharingTestSparkUtils extends SQLTestUtils {
+trait DeltaSharingTestSparkUtils extends DeltaSQLTestUtils {
 
   /**
    * Creates 3 temporary directories for use within a function.

@@ -27,9 +27,10 @@ import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
@@ -38,7 +39,7 @@ import org.apache.spark.util.Utils
  * so that we can re-use them in tests using Hive support. Tests that leverage Hive support cannot
  * extend the `SharedSparkSession`, therefore we keep this utility class as bare-bones as possible.
  */
-trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
+trait ConvertToDeltaTestUtils extends QueryTest { self: DeltaSQLTestUtils =>
 
   protected def collectStatisticsStringOption(collectStats: Boolean): String = Option(collectStats)
     .filterNot(identity).map(_ => "NO STATISTICS").getOrElse("")
@@ -81,7 +82,7 @@ trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 
 trait ConvertToDeltaSuiteBaseCommons extends ConvertToDeltaTestUtils
   with SharedSparkSession
-  with SQLTestUtils
+  with DeltaSQLTestUtils
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews
 
@@ -813,7 +814,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
  * in the HiveMetaStore. This test trait *should not* extend SharedSparkSession so that it can be
  * mixed in with the Hive test utilities.
  */
-trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestUtils {
+trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with DeltaSQLTestUtils {
 
   // Test conversion with and without the new CatalogFileManifest.
   protected def testCatalogFileManifest(testName: String)(block: (Boolean) => Unit): Unit = {

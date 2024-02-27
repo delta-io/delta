@@ -20,8 +20,9 @@ import io.delta.tables._
 
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.util.FailFastMode
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -69,7 +70,7 @@ trait MergeIntoTestUtils extends DeltaDMLTestUtils with MergeHelpers {
   }
 }
 
-trait MergeIntoSQLTestUtils extends SQLTestUtils with MergeIntoTestUtils {
+trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
   self: SharedSparkSession =>
 
   protected def basicMergeStmt(

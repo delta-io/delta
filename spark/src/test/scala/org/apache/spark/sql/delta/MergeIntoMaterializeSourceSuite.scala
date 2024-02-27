@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSourceErro
 import org.apache.spark.sql.delta.commands.merge.MergeIntoMaterializeSource.mergeMaterializedSourceRddBlockLostErrorRegex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.scalactic.source.Position
 import org.scalatest.Tag
@@ -38,7 +39,7 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.{FilterExec, LogicalRDD, RDDScanExec, SQLExecution}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.Utils
@@ -47,7 +48,7 @@ trait MergeIntoMaterializeSourceTests
     extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with SQLTestUtils
+    with DeltaSQLTestUtils
     with DeltaTestUtilsBase
   {
 
