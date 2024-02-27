@@ -88,7 +88,7 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase {
    */
   case class SupportedTypeEvolutionTestCase[
       FromType  <: DataType, ToType <: DataType,
-      FromVal : Encoder, ToVal: Encoder
+      FromVal: Encoder, ToVal: Encoder
     ](
       override val fromType: FromType,
       override val toType: ToType,
