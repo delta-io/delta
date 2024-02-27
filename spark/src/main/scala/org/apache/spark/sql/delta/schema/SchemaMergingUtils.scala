@@ -32,7 +32,8 @@ import org.apache.spark.sql.types.{ArrayType, ByteType, DataType, DecimalType, I
 /**
  * Utils to merge table schema with data schema.
  * This is split from SchemaUtils, because finalSchema is introduced into DeltaMergeInto,
- * and resolving the final schema is now part of [[DeltaMergeInto.resolveReferencesAndSchema]].
+ * and resolving the final schema is now part of
+ * [[ResolveDeltaMergeInto.resolveReferencesAndSchema]].
  */
 object SchemaMergingUtils {
 
