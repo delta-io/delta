@@ -22,7 +22,7 @@ This feature affects only the VACUUM operations; standard commits remain unaffec
 
 Before performing a VACUUM operation, writers must ensure that they check the table's write protocol. This is most easily implemented by adding an unconditional write protocol check for all tables, which removes the need to examine individual table properties.
 
-Writers that don't implement VACUUM do not need to change anything and can safely write to tables that enable the feature.
+Writers that do not implement VACUUM do not need to change anything and can safely write to tables that enable the feature.
 
 ## Recommendations for Readers of Tables with Vacuum Protocol Check feature
 
