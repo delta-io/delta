@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkException}
@@ -2366,6 +2367,44 @@ class DeltaTableCreationSuite
     }
   }
 
+  test("CREATE OR REPLACE TABLE on a catalog table where the backing " +
+    "directory has been deleted") {
+    val tbl = "delta_tbl"
+    withTempDir { dir =>
+      withTable(tbl) {
+        val subdir = new File(dir, "subdir")
+        sql(s"CREATE OR REPLACE table $tbl (id String) USING delta " +
+          s"LOCATION '${subdir.getCanonicalPath}'")
+        val tableIdentifier =
+          spark.sessionState.catalog.getTableMetadata(TableIdentifier(tbl)).identifier
+        val tableName = tableIdentifier.copy(catalog = None).toString
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tbl))
+        sql(s"INSERT INTO $tbl VALUES ('1')")
+        FileUtils.deleteDirectory(subdir)
+        val e = intercept[DeltaIllegalStateException] {
+          sql(
+            s"CREATE OR REPLACE table $tbl (id String) USING delta" +
+              s" LOCATION '${subdir.getCanonicalPath}'")
+        }
+        checkError(
+          exception = e,
+          errorClass = "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE",
+          parameters = Map(
+            "tableName" -> tableName,
+            "tablePath" -> deltaLog.logPath.toString,
+            "tableNameForDropCmd" -> tableName
+          ))
+
+        // Table creation should work after running DROP TABLE.
+        sql(s"DROP table ${e.getMessageParameters().get("tableNameForDropCmd")}")
+        sql(s"CREATE OR REPLACE table $tbl (id String) USING delta " +
+          s"LOCATION '${subdir.getCanonicalPath}'")
+        sql(s"INSERT INTO $tbl VALUES ('21')")
+        val data = sql(s"SELECT * FROM $tbl").collect()
+        assert(data.length == 1)
+      }
+    }
+  }
 }
 
 trait DeltaTableCreationColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {

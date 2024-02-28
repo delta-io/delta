@@ -24,8 +24,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 
-import org.apache.spark.SparkConf
-import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, StructField, StructType}
@@ -158,7 +157,6 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
           .write.mode("append").format("delta").saveAsTable("srcTbl")
 
         val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, new TableIdentifier("srcTbl"))
-        val schemaStr = snapshot.statCollectionLogicalSchema.treeString
         // Test multiple data types.
         Seq("a", "d", "e").foreach { colName =>
           withTempDir { tmpDir =>
@@ -185,8 +183,19 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
                   f()
                 }
                 checkError(
-                  e,
-                  "DELTA_CLUSTERING_COLUMN_MISSING_STATS"
+                  exception = e,
+                  errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+                  parameters = Map(
+                    "columns" -> colName,
+                    "schema" -> """root
+                      | |-- a: struct (nullable = true)
+                      | |    |-- b: integer (nullable = true)
+                      | |    |-- c: integer (nullable = true)
+                      | |-- d: boolean (nullable = true)
+                      | |-- e: map (nullable = true)
+                      | |    |-- key: integer
+                      | |    |-- value: integer (valueContainsNull = true)
+                      |""".stripMargin)
                 )
               }
           }
@@ -203,8 +212,9 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
           "CREATE", testTable, "a INT, b INT, c INT, d INT, e INT", "a, b, c, d, e")
       }
       checkError(
-        e,
-        errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS"
+        exception = e,
+        errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+        parameters = Map("numColumnsLimit" -> "4", "actualNumColumns" -> "5")
       )
     }
   }
@@ -220,8 +230,9 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
             "CREATE", testTable, sourceTable, "a, b, c, d, e", location = location)
         }
         checkError(
-          e,
-          errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS"
+          exception = e,
+          errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+          parameters = Map("numColumnsLimit" -> "4", "actualNumColumns" -> "5")
         )
       }
     }
@@ -268,8 +279,15 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
                 indexedColumns,
                 Some(tableSchema)))
             checkError(
-              e,
-              "DELTA_CLUSTERING_COLUMN_MISSING_STATS"
+              exception = e,
+              errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+              parameters = Map(
+                "columns" -> "col1.col12, col2",
+                "schema" -> """root
+                    | |-- col0: integer (nullable = true)
+                    | |-- col1: struct (nullable = true)
+                    | |    |-- col11: integer (nullable = true)
+                    |""".stripMargin)
             )
             // Validate the first two columns can be clustering columns.
             createTableWithStatsColumns(
@@ -318,8 +336,15 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
                   None,
                   location = Some(dir.getPath)))
               checkError(
-                e,
-                "DELTA_CLUSTERING_COLUMN_MISSING_STATS"
+                exception = e,
+                errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+                parameters = Map(
+                  "columns" -> "col1.col12, col2",
+                  "schema" -> """root
+                    | |-- col0: integer (nullable = true)
+                    | |-- col1: struct (nullable = true)
+                    | |    |-- col11: integer (nullable = true)
+                    |""".stripMargin)
               )
 
               // Validate the first two columns can be clustering columns.
@@ -356,8 +381,17 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
             indexedColumns,
             Some(nonEligibleTableSchema)))
         checkError(
-          e,
-          "DELTA_CLUSTERING_COLUMN_MISSING_STATS"
+          exception = e,
+          errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+          parameters = Map(
+            "columns" -> "col1.col11",
+            "schema" -> """root
+              | |-- col0: integer (nullable = true)
+              | |-- col1: struct (nullable = true)
+              | |    |-- col11: array (nullable = true)
+              | |    |    |-- element: integer (containsNull = true)
+              | |    |-- col12: string (nullable = true)
+              |""".stripMargin)
         )
       }
     }
@@ -391,8 +425,9 @@ trait ClusteredTableDDLWithColumnMapping
         sql(s"ALTER TABLE $testTable DROP COLUMNS (col1)")
       }
       checkError(
-        e,
-        "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN"
+        exception = e,
+        errorClass = "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+        parameters = Map("columnList" -> "col1")
       )
       // Drop non-clustering columns are allowed.
       sql(s"ALTER TABLE $testTable DROP COLUMNS (col2)")
@@ -405,8 +440,9 @@ trait ClusteredTableDDLWithColumnMapping
         sql(s"ALTER TABLE $testTable DROP COLUMNS (col1, col2)")
       }
       checkError(
-        e,
-        "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN"
+        exception = e,
+        errorClass = "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+        parameters = Map("columnList" -> "col1,col2")
       )
     }
   }
@@ -418,14 +454,45 @@ trait ClusteredTableDDLWithColumnMapping
         sql(s"ALTER TABLE $testTable DROP COLUMNS (col1, col3)")
       }
       checkError(
-        e,
-        "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN"
+        exception = e,
+        errorClass = "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+        parameters = Map("columnList" -> "col1")
       )
     }
   }
 }
 
-trait ClusteredTableDDLWithColumnMappingV2Base extends ClusteredTableDDLWithColumnMapping
+trait ClusteredTableDDLWithColumnMappingV2Base extends ClusteredTableDDLWithColumnMapping {
+  test("test clustering column names (alter table + create table) with spaces") {
+    withClusteredTable(testTable, "`col1 a` INT, col2 INT, col3 STRUCT<col4 INT, `col5 b` INT>, " +
+      "`col6 c` STRUCT<col7 INT, `col8 d.e` INT>, `col9.f` INT", "`col1 a`") {
+      val tableIdentifier = TableIdentifier(testTable)
+      verifyClusteringColumns(tableIdentifier, "`col1 a`")
+
+      // Test ALTER CLUSTER BY to change clustering columns away from names with spaces.
+      sql(s"ALTER TABLE $testTable CLUSTER BY (col2)")
+      verifyClusteringColumns(tableIdentifier, "col2")
+
+      // Test ALTER CLUSTER BY to test with structs with spaces in varying places.
+      sql(s"ALTER TABLE $testTable CLUSTER BY (col3.`col5 b`, `col6 c`.col7)")
+      verifyClusteringColumns(tableIdentifier, "col3.`col5 b`, `col6 c`.col7")
+
+      // Test ALTER CLUSTER BY on structs with spaces on both entries and with no spaces in the same
+      // clustering spec, including cases where there is a '.' in the name.
+      sql(s"ALTER TABLE $testTable CLUSTER BY (col3.col4, `col6 c`.`col8 d.e`, `col1 a`)")
+      verifyClusteringColumns(tableIdentifier, "col3.col4,`col6 c`.`col8 d.e`,`col1 a`")
+
+      // Test ALTER TABLE CLUSTER BY after renaming a column to include spaces in the name.
+      sql(s"ALTER TABLE $testTable RENAME COLUMN col2 to `col2 e`")
+      sql(s"ALTER TABLE $testTable CLUSTER BY (`col2 e`)")
+      verifyClusteringColumns(tableIdentifier, "`col2 e`")
+
+      // Test ALTER TABLE with '.' in the name.
+      sql(s"ALTER TABLE $testTable CLUSTER BY (`col9.f`)")
+      verifyClusteringColumns(tableIdentifier, "`col9.f`")
+    }
+  }
+}
 
 trait ClusteredTableDDLWithColumnMappingV2
   extends ClusteredTableDDLWithColumnMappingV2Base
@@ -436,6 +503,66 @@ trait ClusteredTableCreateOrReplaceDDLSuite
 trait ClusteredTableDDLSuiteBase
   extends ClusteredTableCreateOrReplaceDDLSuite
     with DeltaSQLCommandTest {
+
+  test("cluster by with more than 4 columns - alter table") {
+    val testTable = "test_table"
+    withClusteredTable(testTable, "a INT, b INT, c INT, d INT, e INT", "a") {
+      val e = intercept[DeltaAnalysisException] {
+        sql(s"ALTER TABLE $testTable CLUSTER BY (a, b, c, d, e)")
+      }
+      checkError(
+        e,
+        errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+        parameters = Map(
+          "numColumnsLimit" -> "4",
+          "actualNumColumns" -> "5")
+      )
+    }
+  }
+
+  test("alter table cluster by - valid scenarios") {
+    withClusteredTable(testTable, "id INT, a STRUCT<b INT, c STRING>, name STRING", "id, name") {
+      val tableIdentifier = TableIdentifier(testTable)
+      verifyClusteringColumns(tableIdentifier, "id,name")
+
+      // Change the clustering columns and verify that they are changed in both
+      // Delta logs and catalog.
+      sql(s"ALTER TABLE $testTable CLUSTER BY (name)")
+      verifyClusteringColumns(tableIdentifier, "name")
+
+      // Nested column scenario.
+      sql(s"ALTER TABLE $testTable CLUSTER BY (a.b, id)")
+      verifyClusteringColumns(tableIdentifier, "a.b,id")
+    }
+  }
+
+  test("alter table cluster by - error scenarios") {
+    withClusteredTable(testTable, "id INT, id2 INT, name STRING", "id, name") {
+      // Specify non-existing columns.
+      val e = intercept[AnalysisException] {
+        sql(s"ALTER TABLE $testTable CLUSTER BY (invalid)")
+      }
+      assert(e.getMessage.contains("Couldn't find column"))
+
+      // Specify duplicate clustering columns.
+      val e2 = intercept[DeltaAnalysisException] {
+        sql(s"ALTER TABLE $testTable CLUSTER BY (id, id)")
+      }
+      assert(e2.getErrorClass == "DELTA_DUPLICATE_COLUMNS_FOUND")
+      assert(e2.getSqlState == "42711")
+      assert(e2.getMessageParametersArray === Array("in CLUSTER BY", "`id`"))
+    }
+  }
+
+  test("alter table cluster by none") {
+    withClusteredTable(testTable, "id Int", "id") {
+      val tableIdentifier = TableIdentifier(testTable)
+      verifyClusteringColumns(tableIdentifier, "id")
+
+      sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
+      verifyClusteringColumns(tableIdentifier, "")
+    }
+  }
 
   test("optimize clustered table - error scenarios") {
     withClusteredTable(testTable, "a INT, b STRING", "a") {
@@ -454,9 +581,44 @@ trait ClusteredTableDDLSuiteBase
         sql(s"OPTIMIZE $testTable ZORDER BY (a)")
       }
       checkError(
-        e2,
-        "DELTA_CLUSTERING_WITH_ZORDER_BY"
+        exception = e2,
+        errorClass = "DELTA_CLUSTERING_WITH_ZORDER_BY",
+        parameters = Map("zOrderBy" -> "a")
       )
+    }
+  }
+
+  test("Validate stats collected - alter table") {
+    val tableSchema = "col0 int, col1 STRUCT<col11: int, col12: string>"
+    val indexedColumns = 2
+    // Validate ALTER TABLE can not change to a missing stats column.
+    testStatsCollectionHelper(
+      tableSchema = tableSchema,
+      numberOfIndexedCols = indexedColumns) {
+      withTable(testTable) {
+        createTableWithStatsColumns(
+          "CREATE",
+          testTable,
+          "col0" :: "col1.col11" :: Nil,
+          indexedColumns,
+          Some(tableSchema))
+        // Try to alter to col1.col12 which is missing stats.
+        val e = intercept[DeltaAnalysisException] {
+          sql(
+            s"""
+               |ALTER TABLE $testTable
+               |CLUSTER BY (col0, col1.col12)
+               |""".stripMargin)
+        }
+        val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTable))
+        checkError(
+          e,
+          "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+          parameters = Map(
+            "columns" -> "col1.col12",
+            "schema" -> snapshot.statCollectionLogicalSchema.treeString)
+        )
+      }
     }
   }
 }
@@ -518,7 +680,8 @@ trait ClusteredTableDDLWithV2Base
             }
             checkError(
               e,
-              "DELTA_CLUSTERING_REPLACE_TABLE_WITH_PARTITIONED_TABLE"
+              "DELTA_CLUSTERING_REPLACE_TABLE_WITH_PARTITIONED_TABLE",
+              parameters = Map.empty
             )
           }
         }

@@ -39,7 +39,7 @@ import io.delta.standalone.internal.util.{Clock, ConversionUtils, FileNames, Sys
 /**
  * Scala implementation of Java interface [[DeltaLog]].
  */
-private[internal] class DeltaLogImpl private(
+private[internal] class DeltaLogImpl private[internal](
     val hadoopConf: Configuration,
     val logPath: Path,
     val dataPath: Path,

@@ -363,7 +363,7 @@ object DeltaParquetFileFormat {
 
   /** Row index for each column */
   val ROW_INDEX_COLUMN_NAME = "__delta_internal_row_index"
-  val ROW_INDEX_STRUCT_FILED = StructField(ROW_INDEX_COLUMN_NAME, LongType)
+  val ROW_INDEX_STRUCT_FIELD = StructField(ROW_INDEX_COLUMN_NAME, LongType)
 
   /** Utility method to create a new writable vector */
   private def newVector(

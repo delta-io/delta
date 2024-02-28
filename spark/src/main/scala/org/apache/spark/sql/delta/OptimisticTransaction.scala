@@ -35,6 +35,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
+import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitStore, UpdatedActions}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -365,6 +366,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    */
   private[delta] var preCommitLogSegment: LogSegment =
     snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
+
+  // The commit store of a table shouldn't change. If it is changed by a concurrent commit, then it
+  // will be detected as a conflict and the transaction will anyway fail.
+  private[delta] val preCommitCommitStoreOpt: Option[CommitStore] = snapshot.commitStoreOpt
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
@@ -1094,6 +1099,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
+      // Validate that the [[DeltaConfigs.MANAGED_COMMIT_PROVIDER_CONF]] is json parse-able.
+      DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.fromMetaData(metadata)
+
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.toSeq,
@@ -1164,13 +1172,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * In addition, the expectation is that the list of actions performed by the transaction
    * remains an iterator and is never materialized, given the nature of a large commit potentially
    * touching many files.
+   * The `nonProtocolMetadataActions` parameter should only contain non-{protocol, metadata}
+   * actions only. If the protocol of table needs to be updated, it should be passed in the
+   * `newProtocolOpt` parameter.
    */
   def commitLarge(
-    spark: SparkSession,
-    actions: Iterator[Action],
-    op: DeltaOperations.Operation,
-    context: Map[String, String],
-    metrics: Map[String, String]): (Long, Snapshot) = {
+      spark: SparkSession,
+      nonProtocolMetadataActions: Iterator[Action],
+      newProtocolOpt: Option[Protocol],
+      op: DeltaOperations.Operation,
+      context: Map[String, String],
+      metrics: Map[String, String]): (Long, Snapshot) = {
     assert(!committed, "Transaction already committed.")
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
@@ -1189,7 +1201,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
-      val extraActions = Seq(commitInfo, metadata)
       // We don't expect commits to have more than 2 billion actions
       var commitSize: Int = 0
       var numAbsolutePaths: Int = 0
@@ -1204,7 +1215,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Initialize everything needed to maintain auto-compaction stats.
       partitionsAddedToOpt = Some(new mutable.HashSet[Map[String, String]])
       val acStatsCollector = createAutoCompactStatsCollector()
-      var allActions = (extraActions.toIterator ++ actions).map { action =>
+      var allActions =
+        Seq(commitInfo, metadata).toIterator ++
+          nonProtocolMetadataActions ++
+          newProtocolOpt.toIterator
+      allActions = allActions.map { action =>
         commitSize += 1
         action match {
           case a: AddFile =>
@@ -1253,11 +1268,27 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
       val fsWriteStartNano = System.nanoTime()
       val jsonActions = allActions.map(_.json)
-      deltaLog.store.write(
-        deltaFile(deltaLog.logPath, attemptVersion),
-        jsonActions,
-        overwrite = false,
-        deltaLog.newDeltaHadoopConf())
+      val hadoopConf = deltaLog.newDeltaHadoopConf()
+      val commitOpt = preCommitCommitStoreOpt match {
+        case Some(preCommitCommitStore) =>
+          val commitResponse = preCommitCommitStore.commit(
+            deltaLog.store,
+            hadoopConf,
+            deltaLog.dataPath,
+            attemptVersion,
+            jsonActions,
+            UpdatedActions(commitInfo, newMetadata, newProtocolOpt))
+          // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
+          //  merged.
+          Some(commitResponse.commit)
+        case None =>
+          deltaLog.store.write(
+            deltaFile(deltaLog.logPath, attemptVersion),
+            jsonActions,
+            overwrite = false,
+            hadoopConf)
+          None
+      }
 
       acStatsCollector.finalizeStats(deltaLog.tableId)
       spark.sessionState.conf.setConf(
@@ -1267,8 +1298,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       committed = true
       // NOTE: commitLarge cannot run postCommitHooks (such as the CheckpointHook).
       // Instead, manually run any necessary actions in updateAndCheckpoint.
-      val postCommitSnapshot =
-        updateAndCheckpoint(spark, deltaLog, commitSize, attemptVersion, txnId)
+      val postCommitSnapshot = updateAndCheckpoint(
+        spark, deltaLog, commitSize, attemptVersion, commitOpt, txnId)
       val postCommitReconstructionTime = System.nanoTime()
       var stats = CommitStats(
         startVersion = readVersion,
@@ -1333,11 +1364,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Update the table now that the commit has been made, and write a checkpoint. */
   protected def updateAndCheckpoint(
-    spark: SparkSession,
-    deltaLog: DeltaLog,
-    commitSize: Int,
-    attemptVersion: Long,
-    txnId: String): Snapshot = {
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      commitSize: Int,
+      attemptVersion: Long,
+      commitOpt: Option[Commit],
+      txnId: String): Snapshot = {
     val currentSnapshot = deltaLog.update()
     if (currentSnapshot.version != attemptVersion) {
       throw DeltaErrors.invalidCommittedVersion(attemptVersion, currentSnapshot.version)
@@ -1659,7 +1691,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           committed = true
           return (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo)
         } catch {
-          case _: FileAlreadyExistsException => // Do nothing, retry
+          case _: FileAlreadyExistsException =>
+            // Do nothing, retry with next available attemptVersion
+          case ex: CommitFailedException if ex.retryable && ex.conflict =>
+            // For managed-commits, only retry with next available attemptVersion when
+            // retryable is set and it was a case of conflict.
         }
       }
     }
@@ -1705,10 +1741,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val fsWriteStartNano = System.nanoTime()
     val jsonActions = actions.map(_.json)
 
-    val newChecksumOpt = writeCommitFile(
-      attemptVersion,
-      jsonActions.toIterator,
-      currentTransactionInfo)
+    val (newChecksumOpt, commitOpt) =
+      writeCommitFile(attemptVersion, jsonActions.toIterator, currentTransactionInfo)
 
     spark.sessionState.conf.setConf(
       DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
@@ -1794,17 +1828,44 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     postCommitSnapshot
   }
 
-  /** Writes the json actions provided to the commit file corresponding to attemptVersion */
+  /**
+   * Writes the json actions provided to the commit file corresponding to attemptVersion.
+   * If managed-commits are enabled, this method must return a non-empty [[Commit]]
+   * since we can't guess it from the FileSystem.
+   */
   protected def writeCommitFile(
       attemptVersion: Long,
       jsonActions: Iterator[String],
-      currentTransactionInfo: CurrentTransactionInfo): Option[VersionChecksum] = {
-    deltaLog.store.write(
-      deltaFile(deltaLog.logPath, attemptVersion),
-      jsonActions,
-      overwrite = false,
-      deltaLog.newDeltaHadoopConf())
-    None // No VersionChecksum available yet
+      currentTransactionInfo: CurrentTransactionInfo)
+      : (Option[VersionChecksum], Option[Commit]) = preCommitCommitStoreOpt match {
+    case Some(preCommitCommitStore) =>
+      // managed-commit
+      val updatedActions = currentTransactionInfo.getUpdateActions()
+      val commitResponse = preCommitCommitStore.commit(
+        deltaLog.store,
+        deltaLog.newDeltaHadoopConf(),
+        deltaLog.dataPath,
+        attemptVersion,
+        jsonActions,
+        updatedActions)
+      if (attemptVersion == 0L) {
+        val expectedPathForCommitZero = deltaFile(deltaLog.logPath, version = 0L).toUri
+        val actualCommitPath = new Path(commitResponse.commit.serializableFileStatus.path).toUri
+        if (actualCommitPath != expectedPathForCommitZero) {
+          throw new IllegalStateException("Expected 0th commit to be written to " +
+            s"$expectedPathForCommitZero but was written to $actualCommitPath")
+        }
+      }
+      (None, Some(commitResponse.commit))
+    case None =>
+      // filesystem based commit
+      deltaLog.store.write(
+        deltaFile(deltaLog.logPath, attemptVersion),
+        jsonActions,
+        overwrite = false,
+        deltaLog.newDeltaHadoopConf())
+      // No VersionChecksum and commitInfo available yet
+      (None, None)
   }
 
   /**
@@ -1889,7 +1950,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected def getConflictingVersions(previousAttemptVersion: Long): Seq[FileStatus] = {
     assert(previousAttemptVersion == preCommitLogSegment.version + 1)
     val (newPreCommitLogSegment, newCommitFileStatuses) =
-      deltaLog.getUpdatedLogSegment(preCommitLogSegment)
+      deltaLog.getUpdatedLogSegment(preCommitLogSegment, preCommitCommitStoreOpt)
     assert(preCommitLogSegment.version + newCommitFileStatuses.size ==
       newPreCommitLogSegment.version)
     preCommitLogSegment = newPreCommitLogSegment
@@ -1939,7 +2000,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           "version" -> version,
           "exception" -> e.toString
         ))
-        hook.handleError(e, version)
+        hook.handleError(spark, e, version)
     }
   }
 

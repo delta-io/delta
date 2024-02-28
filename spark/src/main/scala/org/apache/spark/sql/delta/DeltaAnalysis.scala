@@ -872,17 +872,19 @@ class DeltaAnalysis(session: SparkSession)
   private def resolveQueryColumnsByName(
       query: LogicalPlan, targetAttrs: Seq[Attribute], deltaTable: DeltaTableV2): LogicalPlan = {
     insertIntoByNameMissingColumn(query, targetAttrs, deltaTable)
-    // Spark will resolve columns to make sure specified columns are in the table schema and don't
-    // have duplicates. This is just a sanity check.
-    assert(
-      query.output.length <= targetAttrs.length,
-      s"Too many specified columns ${query.output.map(_.name).mkString(", ")}. " +
-        s"Table columns: ${targetAttrs.map(_.name).mkString(", ")}")
+
+    // This is called before resolveOutputColumns in postHocResolutionRules, so we need to duplicate
+    // the schema validation here.
+    if (query.output.length > targetAttrs.length) {
+      throw QueryCompilationErrors.cannotWriteTooManyColumnsToTableError(
+        tableName = deltaTable.name(),
+        expected = targetAttrs.map(_.name),
+        queryOutput = query.output)
+    }
 
     val project = query.output.map { attr =>
       val targetAttr = targetAttrs.find(t => session.sessionState.conf.resolver(t.name, attr.name))
         .getOrElse {
-          // This is a sanity check. Spark should have done the check.
           throw DeltaErrors.missingColumn(attr, targetAttrs)
         }
       addCastToColumn(attr, targetAttr, deltaTable.name())

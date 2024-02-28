@@ -193,6 +193,23 @@ class RowIdSuite extends QueryTest
     }
   }
 
+  test("Check missing High Watermark for newly created empty table") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { dir =>
+        spark.range(start = 0, end = 0)
+          .write.format("delta").save(dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, dir)
+        assert(RowId.extractHighWatermark(log.update()) === None)
+        assertRowIdsAreNotSet(log)
+
+        spark.range(start = 0, end = 10)
+          .write.mode("append").format("delta").save(dir.getAbsolutePath)
+        assert(RowId.extractHighWatermark(log.update()) === Some(9))
+        assertRowIdsAreValid(log)
+      }
+    }
+  }
+
   test("row_id column with row ids disabled") {
     withRowTrackingEnabled(enabled = false) {
       withTempDir { dir =>
@@ -278,6 +295,60 @@ class RowIdSuite extends QueryTest
             s"SET TBLPROPERTIES ('${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = true)")
         }
         assert(err.getMessage === "Cannot enable Row IDs on an existing table.")
+      }
+    }
+  }
+
+  test(s"CONVERT TO DELTA assigns row ids") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { dir =>
+        spark.range(10).repartition(1)
+          .write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
+
+        sql(s"CONVERT TO DELTA parquet.`$dir`")
+
+        val log = DeltaLog.forTable(spark, dir)
+        assertRowIdsAreValid(log)
+        assert(extractMaterializedRowIdColumnName(log).isDefined)
+      }
+    }
+  }
+
+  test(s"CONVERT TO DELTA NO STATISTICS throws error") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { dir =>
+        spark.range(10)
+          .write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
+
+        val err = intercept[DeltaIllegalStateException] {
+          sql(s"CONVERT TO DELTA parquet.`$dir` NO STATISTICS")
+        }
+        checkError(err, "DELTA_CONVERT_TO_DELTA_ROW_TRACKING_WITHOUT_STATS",
+          parameters = Map(
+            "statisticsCollectionPropertyKey" -> DeltaSQLConf.DELTA_COLLECT_STATS.key,
+            "rowTrackingTableFeatureDefaultKey" -> defaultRowTrackingFeatureProperty,
+            "rowTrackingDefaultPropertyKey" ->
+              DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey))
+      }
+    }
+  }
+
+  test(s"CONVERT TO DELTA without stats collection enabled throws error") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { dir =>
+        spark.range(10)
+          .write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
+        withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+          val err = intercept[DeltaIllegalStateException] {
+            sql(s"CONVERT TO DELTA parquet.`$dir`")
+          }
+          checkError(err, "DELTA_CONVERT_TO_DELTA_ROW_TRACKING_WITHOUT_STATS",
+            parameters = Map(
+              "statisticsCollectionPropertyKey" -> DeltaSQLConf.DELTA_COLLECT_STATS.key,
+              "rowTrackingTableFeatureDefaultKey" -> defaultRowTrackingFeatureProperty,
+              "rowTrackingDefaultPropertyKey" ->
+                DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey))
+        }
       }
     }
   }

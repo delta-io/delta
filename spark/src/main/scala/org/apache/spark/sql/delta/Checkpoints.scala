@@ -842,7 +842,8 @@ object Checkpoints
       ds: Dataset[Row],
       finalPath: Path,
       hadoopConf: Configuration,
-      useRename: Boolean): StructType = {
+      useRename: Boolean): StructType = recordFrameProfile(
+        "Checkpoints", "createCheckpointV2ParquetFile") {
     val df = ds.select(
       "txn", "add", "remove", "metaData", "protocol", "domainMetadata",
       "checkpointMetadata", "sidecar")

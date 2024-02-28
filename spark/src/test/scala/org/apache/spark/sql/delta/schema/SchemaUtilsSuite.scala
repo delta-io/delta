@@ -20,6 +20,9 @@ package org.apache.spark.sql.delta.schema
 import java.util.Locale
 import java.util.regex.Pattern
 
+import scala.annotation.tailrec
+
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
@@ -28,9 +31,12 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.DeltaTable
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
-import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.expressions.{Alias, Cast, Expression}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
@@ -259,7 +265,7 @@ class SchemaUtilsSuite extends QueryTest
    * Tests change of nullability within a schema (making a field nullable is not allowed,
    * but making a nullable field non-nullable is ok).
    *  - the make() function is a "factory" function to create schemas that vary only by the
-   *    nullability (of a field, array elemnt, or map values) in a specific position in the schema.
+   *    nullability (of a field, array element, or map values) in a specific position in the schema.
    *  - other tests will call this method with different make() functions to test nullability
    *    incompatibility in all the different places within a schema (in a top-level struct,
    *    in a nested struct, for the element type of an array, etc.)
@@ -1089,6 +1095,14 @@ class SchemaUtilsSuite extends QueryTest
         keyType = new StructType().add(k),
         valueType = new StructType().add(v).add(x))))
 
+    // Adding to map key/value.
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema, x, Seq(0, MAP_KEY_INDEX))
+    }
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema, x, Seq(0, MAP_VALUE_INDEX))
+    }
+    // Invalid map access.
     expectFailure("parent is not a structtype") {
       SchemaUtils.addColumn(schema, x, Seq(0, MAP_KEY_INDEX - 1, 0))
     }
@@ -1137,6 +1151,13 @@ class SchemaUtilsSuite extends QueryTest
     assert(SchemaUtils.addColumn(schema(), x, Seq(0, MAP_VALUE_INDEX, MAP_VALUE_INDEX, 1)) ===
       schema(vv = new StructType().add("vv", IntegerType).add(x)))
 
+    // Adding to map key/value.
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema(), x, Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX))
+    }
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema(), x, Seq(0, MAP_KEY_INDEX, MAP_VALUE_INDEX))
+    }
     // Invalid map access.
     expectFailure("parent is not a structtype") {
       SchemaUtils.addColumn(schema(), x, Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX - 1, 0))
@@ -1166,6 +1187,10 @@ class SchemaUtilsSuite extends QueryTest
     assert(SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, 1)) ===
       new StructType().add("a", ArrayType(new StructType().add(e).add(x))))
 
+    // Adding to array element.
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX))
+    }
     // Invalid array access.
     expectFailure("Incorrectly accessing an ArrayType") {
       SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX - 1, 0))
@@ -1189,6 +1214,10 @@ class SchemaUtilsSuite extends QueryTest
     assert(SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX, 1)) ===
       new StructType().add("a", ArrayType(ArrayType(new StructType().add(e).add(x)))))
 
+    // Adding to array element.
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX))
+    }
     // Invalid array access.
     expectFailure("Incorrectly accessing an ArrayType") {
       SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX - 1, 0))
@@ -1301,6 +1330,14 @@ class SchemaUtilsSuite extends QueryTest
         valueType = new StructType().add(c))),
       d))
 
+    // Dropping map key/value.
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema, Seq(0, MAP_KEY_INDEX))
+    }
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema, Seq(0, MAP_VALUE_INDEX))
+    }
+    // Invalid map access.
     expectFailure("can only drop nested columns from structtype") {
       SchemaUtils.dropColumn(schema, Seq(0, MAP_KEY_INDEX - 1, 0))
     }
@@ -1367,6 +1404,13 @@ class SchemaUtilsSuite extends QueryTest
       initialSchema = schema(vv = new StructType().add("vv", IntegerType).add(a)),
       position = Seq(0, MAP_VALUE_INDEX, MAP_VALUE_INDEX, 1))
 
+    // Dropping map key/value.
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema(), Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX))
+    }
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema(), Seq(0, MAP_KEY_INDEX, MAP_VALUE_INDEX))
+    }
     // Invalid map access.
     expectFailure("can only drop nested columns from structtype") {
       SchemaUtils.dropColumn(schema(), Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX - 1, 0))
@@ -1396,6 +1440,10 @@ class SchemaUtilsSuite extends QueryTest
     assert(SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, 1)) ===
       (new StructType().add("a", ArrayType(new StructType().add(e))), f))
 
+    // Dropping array element.
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX))
+    }
     // Invalid array access.
     expectFailure("Incorrectly accessing an ArrayType") {
       SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX - 1, 0))
@@ -1419,6 +1467,10 @@ class SchemaUtilsSuite extends QueryTest
     assert(SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX, 1)) ===
       (new StructType().add("a", ArrayType(ArrayType(new StructType().add(e)))), f))
 
+    // Dropping array element.
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX))
+    }
     // Invalid array access.
     expectFailure("Incorrectly accessing an ArrayType") {
       SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX - 1, 0))
@@ -1434,64 +1486,607 @@ class SchemaUtilsSuite extends QueryTest
     }
   }
 
+  /////////////////////////////////
+  // normalizeColumnNamesInDataType
+  /////////////////////////////////
+
+  private def checkNormalizedColumnNamesInDataType(
+      sourceDataType: DataType,
+      tableDataType: DataType,
+      expectedDataType: DataType): Unit = {
+    assert(normalizeColumnNamesInDataType(
+      deltaLog = null,
+      sourceDataType,
+      tableDataType,
+      sourceParentFields = Seq.empty,
+      tableSchema = new StructType()) == expectedDataType)
+  }
+
+  test("normalize column names in data type - atomic types") {
+    val source = new StructType()
+      .add("a", IntegerType)
+      .add("b", StringType)
+    val table = new StructType()
+      .add("B", StringType)
+      .add("A", IntegerType)
+    val expected = new StructType()
+      .add("A", IntegerType)
+      .add("B", StringType)
+    checkNormalizedColumnNamesInDataType(source, table, expected)
+  }
+
+  test("normalize column names in data type - incompatible atomic types") {
+    val source = new StructType()
+      .add("a", IntegerType)
+      .add("b", StringType)
+    val table = new StructType()
+      .add("B", StringType)
+      .add("A", LongType) // LongType != IntType
+    val exception = intercept[AssertionError] {
+      normalizeColumnNamesInDataType(
+        deltaLog = null,
+        source,
+        table,
+        sourceParentFields = Seq.empty,
+        tableSchema = new StructType())
+    }
+    assert(exception.getMessage.contains("Types without nesting should match"))
+  }
+
+  test("normalize column names in data type - nested structs") {
+    val source = new StructType()
+      .add("a1", IntegerType)
+      .add("a2", new StructType()
+        .add("b1", IntegerType)
+        .add("b2", new StructType()
+          .add("c1", IntegerType)
+          .add("c2", LongType)
+        )
+        .add("b3", LongType)
+      )
+      .add("a3", new StructType()
+        .add("d1", IntegerType)
+        .add("d2", LongType)
+      )
+    val table = new StructType()
+      .add("A3", new StructType()
+        .add("D2", LongType)
+        .add("D3x", StringType)
+        .add("D1", IntegerType)
+      )
+      .add("A2", new StructType()
+        .add("B3", LongType)
+        .add("B4x", IntegerType)
+        .add("B1", IntegerType)
+        .add("B2", new StructType()
+          .add("C3", LongType)
+          .add("C2", LongType)
+          .add("C1", IntegerType)
+        )
+      )
+      .add("A4x", StringType)
+      .add("A1", IntegerType)
+    val expected = new StructType()
+      .add("A1", IntegerType)
+      .add("A2", new StructType()
+        .add("B1", IntegerType)
+        .add("B2", new StructType()
+          .add("C1", IntegerType)
+          .add("C2", LongType))
+        .add("B3", LongType)
+      )
+      .add("A3", new StructType()
+        .add("D1", IntegerType)
+        .add("D2", LongType)
+      )
+    checkNormalizedColumnNamesInDataType(source, table, expected)
+  }
+
+  test("normalize column names in data type - incompatible types in a struct") {
+    val source = new StructType()
+      .add("a", new StructType()
+      .add("b", new StructType()
+      .add("c", MapType(StringType, IntegerType))))
+    val table = new StructType()
+      .add("A", new StructType()
+      .add("B", new StructType()
+      .add("C", MapType(IntegerType, StringType))))
+    val expected = new StructType()
+      .add("A", new StructType()
+      .add("B", new StructType()
+      .add("C", MapType(StringType, IntegerType))))
+    assertThrows[AssertionError] {
+      checkNormalizedColumnNamesInDataType(source, table, expected)
+    }
+  }
+
+  test("normalize column names in data type - arrays, maps, structs") {
+    val source = MapType(
+      new StructType()
+        .add("aa", IntegerType)
+        .add("bb", StringType),
+      ArrayType(new StructType()
+        .add("aa", IntegerType)
+        .add("bb", StringType)))
+    val table = MapType(
+      new StructType()
+        .add("aA", IntegerType)
+        .add("bB", StringType),
+      ArrayType(new StructType()
+        .add("Cc", IntegerType)
+        .add("Aa", IntegerType)
+        .add("Bb", StringType)))
+    val expected = MapType(
+      new StructType()
+        .add("aA", IntegerType)
+        .add("bB", StringType),
+      ArrayType(new StructType()
+        .add("Aa", IntegerType)
+        .add("Bb", StringType)))
+    checkNormalizedColumnNamesInDataType(source, table, expected)
+  }
+
+  test("normalize column names in data type - missing column") {
+    val source = ArrayType(
+      new StructType()
+        .add("aa", IntegerType)
+        .add("bb", StringType)
+    )
+    val target = ArrayType(
+      new StructType()
+        .add("AA", IntegerType)
+        .add("CC", StringType) // "bb" != "CC"
+    )
+    val exception = intercept[DeltaAnalysisException] {
+      normalizeColumnNamesInDataType(deltaLog = null, source, target,
+        Seq("x", "Y"), new StructType())
+    }
+    checkError(
+      exception = exception,
+      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      sqlState = "42703",
+      parameters = Map("columnName" -> "x.Y.bb", "schema" -> "root\n")
+    )
+  }
+
+  test("normalize column names in data type - preserve nullability and comments") {
+    val source = new StructType()
+      .add("a1", IntegerType, nullable = true)
+      .add("a2", new StructType()
+        .add("b1", IntegerType, nullable = false)
+        .add("b2", ArrayType(IntegerType, containsNull = true),
+          nullable = true, comment = "comment for b2")
+        .add("b3", MapType(IntegerType, StringType, valueContainsNull = false),
+          nullable = true, comment = "comment for b3"),
+        nullable = false, comment = "comment for a2"
+      )
+    val table = new StructType()
+      .add("A1", IntegerType, nullable = false, "comment for A1")
+      .add("A2", new StructType()
+        .add("B1", IntegerType, nullable = true)
+        .add("B2", ArrayType(IntegerType, containsNull = false),
+          nullable = false, comment = "comment for B2")
+        .add("B3", MapType(IntegerType, StringType, valueContainsNull = true),
+          nullable = false, comment = "comment for B3"),
+        nullable = true
+      )
+    val expected = new StructType()
+      .add("A1", IntegerType, nullable = true)
+      .add("A2", new StructType()
+        .add("B1", IntegerType, nullable = false)
+        .add("B2", ArrayType(IntegerType, containsNull = true),
+          nullable = true, comment = "comment for b2")
+        .add("B3", MapType(IntegerType, StringType, valueContainsNull = false),
+          nullable = true, comment = "comment for b3"),
+        nullable = false, comment = "comment for a2"
+      )
+    checkNormalizedColumnNamesInDataType(source, table, expected)
+  }
+
+  test("normalize column names in data type - empty source struct") {
+    val source = new StructType()
+    val table = new StructType().add("a", IntegerType)
+    val expected = new StructType()
+    checkNormalizedColumnNamesInDataType(source, table, expected)
+  }
+
   ////////////////////////////
   // normalizeColumnNames
   ////////////////////////////
 
-  test("normalize column names") {
-    val df = Seq((1, 2, 3)).toDF("Abc", "def", "gHi")
-    val schema = new StructType()
-      .add("abc", IntegerType)
-      .add("Def", IntegerType)
-      .add("ghi", IntegerType)
-    assert(normalizeColumnNames(schema, df).schema.fieldNames === schema.fieldNames)
-  }
+  /**
+   * SchemaUtils.normalizeColumnNames() introduces a Project operator where for each of the
+   * top-level columns:
+   * - If a top-level field name differs from the table schema, we correct it using an Alias.
+   * - If a nested field name differs from the table schema, we correct it using a Cast.
+   * This function verifies that the Casts are only introduced for the correct subset of top-level
+   * columns.
+   */
+  private def verifyColumnsWithCasts(df: DataFrame, columnsWithCasts: Seq[String]): Unit = {
+    @tailrec def isCast(expression: Expression): Boolean = expression match {
+      case _: Cast => true
+      case Alias(child, _) => isCast(child)
+      case _ => false
+    }
 
-  test("normalize column names - different ordering") {
-    val df = Seq((1, 2, 3)).toDF("def", "gHi", "abC")
-    val schema = new StructType()
-      .add("abc", IntegerType)
-      .add("Def", IntegerType)
-      .add("ghi", IntegerType)
-    assert(normalizeColumnNames(schema, df).schema.fieldNames === Seq("Def", "ghi", "abc"))
-  }
-
-  test("normalize column names - dots in the name") {
-    val df = Seq((1, 2)).toDF("a.b", "c.D")
-    val schema = new StructType().add("a.b", IntegerType).add("c.d", IntegerType)
-    assert(normalizeColumnNames(schema, df).schema.fieldNames === Seq("a.b", "c.d"))
-  }
-
-  test("throw error if nested column cases don't match") {
-    val df = spark.read.json(Seq("""{"a":1,"b":{"X":1,"y":2}}""").toDS())
-    val schema = new StructType()
-      .add("a", IntegerType)
-      .add("b", new StructType()
-        .add("x", IntegerType)
-        .add("y", IntegerType))
-    expectFailure("[b.X]", "b.x") {
-      normalizeColumnNames(schema, df)
+    val plan = df.queryExecution.analyzed
+    val projections = plan.asInstanceOf[Project].projectList
+    for (projection <- projections) {
+      val expectedIsCast = columnsWithCasts.contains(projection.name)
+      val actualIsCast = isCast(projection)
+      assert(expectedIsCast === actualIsCast, s"Verifying cast for ${projection.name}")
     }
   }
 
-  test("can rename top level nested column") {
-    val df = spark.read.json(Seq("""{"a":1,"B":{"x":1,"y":2}}""").toDS()).select('a, 'b)
-    val schema = new StructType()
-      .add("a", IntegerType)
-      .add("b", new StructType()
-        .add("x", IntegerType)
-        .add("y", IntegerType))
-    assert(normalizeColumnNames(schema, df).schema.fieldNames === Seq("a", "b"))
-  }
-
-  test("can normalize CDC type column") {
-    val df = Seq((1, 2, 3, 4)).toDF("Abc", "def", "gHi", CDCReader.CDC_TYPE_COLUMN_NAME)
-    val schema = new StructType()
+  test("normalize column names - different top-level ordering") {
+    val df = Seq((1, 2, 3)).toDF("def", "gHi", "abC")
+    val tableSchema = new StructType()
       .add("abc", IntegerType)
       .add("Def", IntegerType)
       .add("ghi", IntegerType)
-    assert(normalizeColumnNames(schema, df).schema.fieldNames ===
-      schema.fieldNames :+ CDCReader.CDC_TYPE_COLUMN_NAME)
+      // Add an extra column to the table schema to make sure it is not added, and does not cause
+      // an error.
+      .add("jkl", StringType)
+    val expectedSchema = new StructType()
+      .add("Def", IntegerType, false)
+      .add("ghi", IntegerType, false)
+      .add("abc", IntegerType, false)
+    val normalized = normalizeColumnNames(
+      deltaLog = null,
+      tableSchema,
+      df
+    )
+    verifyColumnsWithCasts(normalized, Seq.empty)
+    assert(normalized.schema == expectedSchema)
+  }
+
+  test("normalize column names - dots in the name") {
+    val df = spark.read.json(Seq("""{"a.b":1,"c.d":{"x.y":2, "y.z":1}}""").toDS())
+    val tableSchema = new StructType()
+      .add("c.D", new StructType()
+        .add("y.z", LongType)
+        .add("x.Y", LongType)
+      )
+      .add("a.B", LongType)
+    val expectedSchema = new StructType()
+      .add("a.B", LongType, nullable = true)
+      .add("c.D", new StructType()
+        .add("x.Y", LongType, nullable = true)
+        .add("y.z", LongType, nullable = true),
+        nullable = true
+      )
+    val normalized = normalizeColumnNames(
+      deltaLog = null,
+      tableSchema,
+      df
+    )
+    verifyColumnsWithCasts(normalized, Seq("c.D"))
+    assert(normalized.schema === expectedSchema)
+  }
+
+  test("normalize column names - different case in struct") {
+    // JSON schema inference does not preserve the order of columns, so we need an explicit schema.
+    val jsonSchema = new StructType()
+      .add("b", new StructType()
+        .add("x", LongType)
+        .add("y", new StructType()
+          .add("T", LongType)
+          .add("s", LongType)
+        )
+      )
+      .add("a", LongType)
+    val df = spark.read.schema(jsonSchema)
+      .json(Seq("""{"b":{"x":1,"y":{"T":2, "s":1}}, "a":1}""").toDS())
+    val tableSchema = new StructType()
+      .add("a", LongType)
+      .add("b", new StructType()
+        .add("x", LongType)
+        .add("y", new StructType()
+          .add("s", LongType)
+          .add("t", LongType)
+        )
+      )
+    val expectedSchema = new StructType()
+      .add("b", new StructType()
+        .add("x", LongType)
+        .add("y", new StructType()
+          .add("t", LongType)
+          .add("s", LongType)
+        )
+      )
+      .add("a", LongType)
+    val normalized = normalizeColumnNames(
+      deltaLog = null,
+      tableSchema,
+      df
+    )
+    verifyColumnsWithCasts(normalized, Seq("b"))
+    assert(normalized.schema === expectedSchema)
+  }
+
+  test("normalize column names - different case in array") {
+    val df = spark.read.json(Seq("""{"X":1,"y":[{"Z": "alpha"},{"Z":"beta"}]}""").toDS())
+    val tableSchema = new StructType()
+      .add("x", LongType)
+      .add("y", ArrayType(new StructType().add("z", StringType)))
+    val normalized = normalizeColumnNames(
+      deltaLog = null,
+      tableSchema,
+      df
+    )
+    verifyColumnsWithCasts(normalized, Seq("y"))
+    assert(normalized.schema == tableSchema)
+  }
+
+  test("normalize column names - different case in map") {
+    val sourceMapType = MapType(StringType, new StructType().add("Z", StringType))
+    val df = spark.range(1).toDF("X")
+      .withColumn("y", lit(null).cast(sourceMapType))
+      .select(col("y"), col("X"))
+    val tableSchema = new StructType()
+      .add("x", LongType)
+      .add("y", MapType(StringType, new StructType()
+        .add("z", StringType)
+        // Add an extra nested column to the table schema to make sure it is not added.
+        .add("v", IntegerType)))
+    val expectedSchema = new StructType()
+      .add("y", MapType(StringType, new StructType().add("z", StringType)))
+      .add("x", LongType, nullable = false)
+    val normalized = normalizeColumnNames(
+      deltaLog = null,
+      tableSchema,
+      df
+    )
+    verifyColumnsWithCasts(normalized, Seq("y"))
+    assert(normalized.schema === expectedSchema)
+  }
+
+  test("normalize column names - maintain nested column order") {
+    val sourceStructColumnNames =
+      Seq("the", "quick", "brown", "fox", "jumps", "over", "them", "lazy", "dog")
+    val sourceStructType = new StructType(
+      sourceStructColumnNames.map(StructField(_, IntegerType)).toArray)
+
+    // Nested columns in the table are all name in upper case, and listed in reverse order.
+    val tableStructColumnNames = Seq("LOOK") ++
+      sourceStructColumnNames.reverse.map(_.toUpperCase(Locale.ROOT))
+    val tableSchema = new StructType()
+      .add("s", new StructType(
+        tableStructColumnNames.map(StructField(_, IntegerType)).toArray))
+
+    // We expect the columns to maintain the same order as the source.
+    val expectedStructColumnNames = sourceStructColumnNames.map(_.toUpperCase(Locale.ROOT))
+    val expectedSchema = new StructType()
+      .add("s", new StructType(
+        expectedStructColumnNames.map(StructField(_, IntegerType)).toArray))
+
+    val df = spark.range(1).toDF("id")
+      .select(lit(null).cast(sourceStructType).as("s"))
+    val normalized = normalizeColumnNames(
+      deltaLog = null,
+      tableSchema,
+      df
+    )
+    verifyColumnsWithCasts(normalized, Seq("s"))
+    assert(normalized.schema === expectedSchema)
+  }
+
+  test("normalize column names - only top-level names of complex columns differ") {
+    val structType = new StructType()
+      .add("a", IntegerType)
+      .add("b", IntegerType)
+    val mapType = MapType(structType, structType)
+    val arrayType = ArrayType(structType)
+
+    val df = spark.range(1).toDF("id")
+      .select(lit(null).cast(structType).as("x"),
+        lit(null).cast(mapType).as("y"),
+        lit(null).cast(arrayType).as("z"))
+    val tableSchema = new StructType()
+      .add("X", structType)
+      .add("Y", mapType)
+      .add("Z", arrayType)
+    val normalized = normalizeColumnNames(
+      deltaLog = null,
+      tableSchema,
+      df
+    )
+    // If only top-level names differ, there is no need to cast complex types.
+    verifyColumnsWithCasts(normalized, Seq.empty)
+    assert(normalized.schema === tableSchema)
+  }
+
+  test("normalize column names - unmatched top-level column") {
+    val df = spark.range(1).toDF("id")
+      .select(lit(1L).as("one"), lit(2L).as("two"))
+    val tableSchema = new StructType()
+      .add("ONE", LongType)
+      .add("THREE", LongType)
+    val exception = intercept[DeltaAnalysisException] {
+      normalizeColumnNames(
+        deltaLog = null,
+        tableSchema,
+        df
+      )
+    }
+    checkError(
+      exception = exception,
+      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      sqlState = "42703",
+      parameters = Map("columnName" -> "two", "schema" -> tableSchema.treeString)
+    )
+  }
+
+  test("normalize column names - unmatched nested column") {
+    val sourceStructType = new StructType()
+      .add("one", LongType)
+      .add("two", LongType)
+    val df = spark.range(1).toDF("id")
+      .select(lit(null).cast(sourceStructType).as("s"))
+    val tableSchema = new StructType()
+      .add("S", new StructType()
+        .add("ONE", LongType)
+        .add("THREE", LongType)
+      )
+    val exception = intercept[DeltaAnalysisException] {
+      normalizeColumnNames(
+        deltaLog = null,
+        tableSchema,
+        df
+      )
+    }
+    checkError(
+      exception = exception,
+      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      sqlState = "42703",
+      parameters = Map("columnName" -> "s.two", "schema" -> tableSchema.treeString)
+    )
+  }
+
+  test("normalize column names - deeply nested schema") {
+    // The only difference is the case of the most deeply nested column.
+    val structTypes = Seq("z", "Z").map { finalColumnName =>
+      new StructType()
+        .add("a", IntegerType)
+        .add("b", MapType(StringType, new StructType()
+          .add("c", IntegerType)
+          .add("d", new StructType()
+            .add("e", IntegerType)
+            .add("f", IntegerType)
+            .add("g", ArrayType(new StructType()
+              .add("h", IntegerType)
+              .add("i", IntegerType)
+              .add("j", new StructType()
+                .add("k", MapType(StringType, new StructType()
+                  .add("l", ArrayType(new StructType()
+                    .add("m", IntegerType)
+                    .add(finalColumnName, IntegerType)
+      ))))))))))
+    }.toArray
+
+    val sourceStructType = structTypes(0)
+    val df = spark.range(1).toDF("id")
+      .select(lit(null).cast(sourceStructType).as("s"))
+    val tableStructType = structTypes(1)
+    val tableSchema = new StructType()
+      .add("s", tableStructType)
+    val normalized = normalizeColumnNames(
+      deltaLog = null,
+      tableSchema,
+      df
+    )
+    verifyColumnsWithCasts(normalized, Seq("s"))
+    assert(normalized.schema === tableSchema)
+  }
+
+  test("normalize column names - can normalize CDC type column") {
+    val df = Seq((1, 2, 3, 4)).toDF("Abc", "def", "gHi", CDCReader.CDC_TYPE_COLUMN_NAME)
+    val tableSchema = new StructType()
+      .add("abc", IntegerType)
+      .add("Def", IntegerType)
+      .add("ghi", IntegerType)
+    val normalized = normalizeColumnNames(
+      deltaLog = null,
+      tableSchema,
+      df
+    )
+    verifyColumnsWithCasts(normalized, Seq.empty)
+    assert(normalized.schema.fieldNames ===
+      tableSchema.fieldNames :+ CDCReader.CDC_TYPE_COLUMN_NAME)
+  }
+
+  private def checkLatestStatsForOneRowFile(
+      tableName: String,
+      expectedStats: Map[String, Option[Any]]): Unit = {
+    val snapshot = DeltaLog.forTable(spark, TableIdentifier(tableName)).update()
+    val fileStats = snapshot.allFiles
+      .orderBy(desc("modificationTime"))
+      .limit(1)
+      .withColumn("stats", from_json(col("stats"), snapshot.statsSchema))
+      .select("stats.*")
+
+    val assertions = Seq(assert_true(col("numRecords") === lit(1L))) ++
+        expectedStats.flatMap { case (columnName, columnValue) =>
+      columnValue match {
+        case Some(value) => Seq(
+          assert_true(col("minValues." + columnName) === lit(value)),
+          assert_true(col("maxValues." + columnName) === lit(value)),
+          assert_true(col("nullCount." + columnName) === lit(0L)))
+        case None => Seq(
+          assert_true(col("minValues." + columnName).isNull),
+          assert_true(col("maxValues." + columnName).isNull),
+          assert_true(col("nullCount." + columnName) === lit(1L)))
+      }
+    }
+    fileStats.select(assertions: _*).collect()
+  }
+
+  for (caseSensitive <- DeltaTestUtils.BOOLEAN_DOMAIN) {
+    test(s"normalize column names - e2e nested struct (caseSensitive=$caseSensitive)") {
+      withSQLConf(SQLConf.CASE_SENSITIVE.key -> caseSensitive.toString) {
+        val sourceData = Seq((105L, "foo", 205L, "bar",
+            Struct1("James", 11, "Smith", 3000, "Correct")))
+        val sourceDf = sourceData.toDF("long1", "str1", "long2", "str2", "struct1")
+        val sourceSchema = new StructType()
+          .add("long1", LongType, nullable = false)
+          .add("str1", StringType, nullable = true)
+          .add("long2", LongType, nullable = false)
+          .add("str2", StringType, nullable = true)
+          .add("struct1", new StructType()
+            .add("firstname", StringType, nullable = true)
+            .add("numberone", LongType, nullable = false)
+            .add("lastname", StringType, nullable = true)
+            .add("numbertwo", LongType, nullable = false)
+            .add("CorrectCase", StringType, nullable = true),
+            nullable = true
+          )
+        assert(sourceDf.schema === sourceSchema)
+        val createTableCommand =
+          """ CREATE TABLE t (
+            |  Long2 LONG, Str2 STRING, Long1 LONG, Str1 STRING, Int1 INT,
+            |  Struct1 STRUCT<LastName: STRING, NumberTwo: LONG, FirstName: STRING,
+            |    NumberOne: LONG, MissingNested: INT, CorrectCase: STRING>
+            | ) USING delta
+            |""".stripMargin
+
+        withTable("t") {
+          sql(createTableCommand)
+          sourceDf.write.format("delta").mode("append").saveAsTable("t")
+
+          // Make sure all the values were inserted into the right columns, and columns missing in
+          // the source were set to null.
+          spark.table("t")
+            .select(
+              assert_true(col("Long2") === 205L),
+              assert_true(col("Str2") === "bar"),
+              assert_true(col("Long1") === 105L),
+              assert_true(col("Str1") === "foo"),
+              assert_true(col("Int1").isNull),
+              assert_true(col("Struct1.LastName") === "Smith"),
+              assert_true(col("Struct1.NumberTwo") === 3000L),
+              assert_true(col("Struct1.FirstName") === "James"),
+              assert_true(col("Struct1.NumberOne") === 11L),
+              assert_true(col("Struct1.MissingNested").isNull),
+              assert_true(col("Struct1.CorrectCase") === "Correct")
+            ).collect()
+
+          // Make sure each of the columns stats was computed correctly.
+          checkLatestStatsForOneRowFile("t", Map(
+            "Long2" -> Some(205L),
+            "Str2" -> Some("bar"),
+            "Long1" -> Some(105L),
+            "Str1" -> Some("foo"),
+            "Int1" -> None,
+            "Struct1.LastName" -> Some("Smith"),
+            "Struct1.NumberTwo" -> Some(3000L),
+            "Struct1.FirstName" -> Some("James"),
+            "Struct1.NumberOne" -> Some(11L),
+            "Struct1.MissingNested" -> None,
+            "Struct1.CorrectCase" -> Some("Correct")
+          ))
+        }
+      }
+    }
   }
 
   ////////////////////////////
@@ -1907,8 +2502,8 @@ class SchemaUtilsSuite extends QueryTest
           exception = intercept[AnalysisException] {
             SchemaUtils.checkFieldNames(Seq(name))
           },
-          errorClass = "INVALID_COLUMN_NAME_AS_PATH",
-          parameters = Map("datasource" -> "delta", "columnName" -> s"`$name`")
+          errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
+          parameters = Map("columnName" -> s"$name")
         )
       }
     }
@@ -2176,3 +2771,9 @@ class PointUDT extends UserDefinedType[Point] {
 class UnsupportedUDT extends PointUDT {
   override def sqlType: DataType = UnsupportedDataType
 }
+case class Struct1(
+    firstname: String,
+    numberone: Long,
+    lastname: String,
+    numbertwo: Long,
+    CorrectCase: String)

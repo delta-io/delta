@@ -566,7 +566,12 @@ trait DeltaErrorsBase
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
       messageParameters = Array(name))
   }
-
+  def invalidInventorySchema(expectedSchema: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_INVENTORY_SCHEMA",
+      messageParameters = Array(expectedSchema)
+    )
+  }
   def invalidIsolationLevelException(s: String): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_INVALID_ISOLATION_LEVEL",
@@ -610,10 +615,37 @@ trait DeltaErrorsBase
     )
   }
 
-  def alterTableChangeColumnException(oldColumns: String, newColumns: String): Throwable = {
-    new AnalysisException(
-      "ALTER TABLE CHANGE COLUMN is not supported for changing column " + oldColumns + " to "
-      + newColumns)
+  def addCommentToMapArrayException(fieldPath: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
+      messageParameters = Array(fieldPath)
+    )
+  }
+
+  def alterTableChangeColumnException(
+      fieldPath: String,
+      oldField: StructField,
+      newField: StructField): Throwable = {
+    def fieldToString(field: StructField): String =
+      field.dataType.sql + (if (!field.nullable) " NOT NULL" else "")
+
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+      messageParameters = Array(
+        fieldPath,
+        fieldToString(oldField),
+        fieldToString(newField))
+    )
+  }
+
+  def alterTableReplaceColumnsException(
+      oldSchema: StructType,
+      newSchema: StructType,
+      reason: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP",
+      messageParameters = Array(reason, formatSchema(oldSchema), formatSchema(newSchema))
+    )
   }
 
   def cannotWriteIntoView(table: TableIdentifier): Throwable = {
@@ -685,16 +717,6 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_COLUMN_STRUCT_TYPE_MISMATCH",
       messageParameters = Array(source, targetType, target, tableName))
-  }
-
-  def alterTableReplaceColumnsException(
-      oldSchema: StructType,
-      newSchema: StructType,
-      reason: String): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP",
-      messageParameters = Array(reason, formatSchema(oldSchema), formatSchema(newSchema))
-    )
   }
 
   def ambiguousPartitionColumnException(
@@ -1175,13 +1197,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def nestedFieldsNeedRename(columns : Set[String], baseSchema : StructType): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_NESTED_FIELDS_NEED_RENAME",
-      messageParameters = Array(columns.mkString("[", ", ", "]"), formatSchema(baseSchema))
-    )
-  }
-
   def inSubqueryNotSupportedException(operation: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_IN_SUBQUERY",
@@ -1598,6 +1613,12 @@ trait DeltaErrorsBase
   def metadataAbsentException(): Throwable = {
     new DeltaIllegalStateException(errorClass = "DELTA_METADATA_ABSENT",
       messageParameters = Array(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key))
+  }
+
+  def metadataAbsentForExistingCatalogTable(tableName: String, tablePath: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE",
+      messageParameters = Array(tableName, tablePath, tableName))
   }
 
   def updateSchemaMismatchExpression(from: StructType, to: StructType): Throwable = {
@@ -2019,11 +2040,16 @@ trait DeltaErrorsBase
         formatSchema(oldSchema),
         formatSchema(newSchema)))
 
-  def foundInvalidCharsInColumnNames(cause: Throwable): Throwable =
+  def foundInvalidCharsInColumnNames(invalidColumnNames: Seq[String]): Throwable =
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES",
-      messageParameters = Array.empty,
-      cause = Some(cause))
+      messageParameters = invalidColumnNames.toArray)
+
+  def foundInvalidColumnNamesWhenRemovingColumnMapping(columnNames: Seq[String])
+    : Throwable =
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
+      messageParameters = columnNames.toArray)
 
   def foundViolatingConstraintsForColumnChange(
       operation: String,
@@ -3086,7 +3112,7 @@ trait DeltaErrorsBase
       version: Int, tf: TableFeature): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.MISSING_REQUIRED_TABLE_FEATURE",
-      messageParameters = Array(version.toString, version.toString, tf.toString)
+      messageParameters = Array(version.toString, version.toString, tf.name)
     )
   }
 
@@ -3094,7 +3120,7 @@ trait DeltaErrorsBase
       version: Int, tf: TableFeature): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.DISABLING_REQUIRED_TABLE_FEATURE",
-      messageParameters = Array(version.toString, version.toString, tf.toString, version.toString)
+      messageParameters = Array(version.toString, version.toString, tf.name, version.toString)
     )
   }
 
@@ -3102,7 +3128,7 @@ trait DeltaErrorsBase
       version: Int, tf: TableFeature): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.INCOMPATIBLE_TABLE_FEATURE",
-      messageParameters = Array(version.toString, version.toString, tf.toString)
+      messageParameters = Array(version.toString, version.toString, tf.name)
     )
   }
 
@@ -3189,6 +3215,18 @@ trait DeltaErrorsBase
       messageParameters = Array(s"${zOrderBy.map(_.name).mkString(", ")}"))
   }
 
+  def alterClusterByNotOnDeltaTableException(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ONLY_OPERATION",
+      messageParameters = Array("ALTER TABLE CLUSTER BY"))
+  }
+
+  def alterClusterByNotAllowedException(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ALTER_TABLE_CLUSTER_BY_NOT_ALLOWED",
+      messageParameters = Array.empty)
+  }
+
   def clusteringTablePreviewDisabledException(): Throwable = {
     val msg = s"""
       |A clustered table is currently in preview and is disabled by default. Please set
@@ -3197,6 +3235,18 @@ trait DeltaErrorsBase
       |incremental clustering).
       |""".stripMargin.replace("\n", " ")
     new UnsupportedOperationException(msg)
+  }
+
+  def alterTableSetClusteringTableFeatureException(tableFeature: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ALTER_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED",
+      messageParameters = Array(tableFeature))
+  }
+
+  def createTableSetClusteringTableFeatureException(tableFeature: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CREATE_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED",
+      messageParameters = Array(tableFeature))
   }
 }
 

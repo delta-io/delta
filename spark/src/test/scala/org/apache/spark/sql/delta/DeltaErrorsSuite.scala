@@ -56,7 +56,7 @@ import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.types.{CalendarIntervalType, DataTypes, DateType, IntegerType, StringType, StructField, StructType, TimestampNTZType}
+import org.apache.spark.sql.types._
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
@@ -1005,6 +1005,22 @@ trait DeltaErrorsSuiteBase
          | |-- c0: string (nullable = true)
          |""".stripMargin
         ))
+    }
+    {
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          throw DeltaErrors.alterTableChangeColumnException(
+            fieldPath = "a.b.c",
+            oldField = StructField("c", IntegerType),
+            newField = StructField("c", LongType))
+        },
+        errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        parameters = Map(
+          "fieldPath" -> "a.b.c",
+          "oldField" -> "INT",
+          "newField" -> "BIGINT"
+        )
+      )
     }
     {
       val s1 = StructType(Seq(StructField("c0", IntegerType)))
@@ -2538,10 +2554,11 @@ trait DeltaErrorsSuiteBase
       }
       checkErrorMessage(e, Some("DELTA_SOURCE_TABLE_IGNORE_CHANGES"), Some("0A000"),
         Some("Detected a data update (for example removedFile) in the source table at version " +
-          "10. This is currently not supported. If you'd like to ignore updates, set the " +
-          "option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, " +
-          "please restart this query with a fresh checkpoint directory. The source table can be " +
-          "found at path tablePath."))
+          "10. This is currently not supported. If this is going to happen regularly and you are" +
+          " okay to skip changes, set the option 'skipChangeCommits' to 'true'. If you would like" +
+          " the data update to be reflected, please restart this query with a fresh checkpoint" +
+          " directory" +
+          ". The source table can be found at path tablePath."))
     }
     {
       val limit = "limit"
@@ -2602,22 +2619,26 @@ trait DeltaErrorsSuiteBase
         Some(s"Can only drop nested columns from StructType. Found $StringType"))
     }
     {
-      val columnsThatNeedRename = Set("c0", "c1")
-      val schema = StructType(Seq(StructField("schema1", StringType)))
-      val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.nestedFieldsNeedRename(columnsThatNeedRename, schema)
-      }
-      checkErrorMessage(e, Some("DELTA_NESTED_FIELDS_NEED_RENAME"), Some("42K05"),
-        Some("Nested fields need renaming to avoid data loss. Fields:\n[c0, c1].\n" +
-          s"Original schema:\n${schema.treeString}"))
-    }
-    {
       val locations = Seq("location1", "location2")
       val e = intercept[DeltaIllegalArgumentException] {
         throw DeltaErrors.cannotSetLocationMultipleTimes(locations)
       }
       checkErrorMessage(e, Some("DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES"), Some("XXKDS"),
         Some(s"Can't set location multiple times. Found ${locations}"))
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.metadataAbsentForExistingCatalogTable("tblName", "file://path/to/table")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE"),
+        Some("XXKDS"),
+        Some(
+          "The table tblName already exists in the catalog but no metadata could be found for the table at the path file://path/to/table.\n" +
+            "Did you manually delete files from the _delta_log directory? If so, then you should be able to recreate it as follows. First, drop the table by running `DROP TABLE tblName`. Then, recreate it by running the current command again."
+        )
+      )
     }
     {
       val e = intercept[DeltaStreamingColumnMappingSchemaIncompatibleException] {

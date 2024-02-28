@@ -35,7 +35,7 @@ import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.util.FileNames
-import com.google.common.cache.{CacheBuilder, RemovalNotification}
+import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
@@ -444,7 +444,7 @@ class DeltaLog private(
         }
       }
     }
-    createDirIfNotExists(logPath)
+    createDirIfNotExists(FileNames.commitDirPath(logPath))
   }
 
   /**
@@ -605,7 +605,7 @@ object DeltaLog extends DeltaLogging {
   private type DeltaLogCacheKey = (Path, Map[String, String])
 
   /** The name of the subdirectory that holds Delta metadata files */
-  private val LOG_DIR_NAME = "_delta_log"
+  private[delta] val LOG_DIR_NAME = "_delta_log"
 
   private[delta] def logPathFor(dataPath: String): Path = logPathFor(new Path(dataPath))
   private[delta] def logPathFor(dataPath: Path): Path =
@@ -615,21 +615,42 @@ object DeltaLog extends DeltaLogging {
    * We create only a single [[DeltaLog]] for any given `DeltaLogCacheKey` to avoid wasted work
    * in reconstructing the log.
    */
-  private val deltaLogCache = {
-    val builder = CacheBuilder.newBuilder()
-      .expireAfterAccess(60, TimeUnit.MINUTES)
-      .removalListener((removalNotification: RemovalNotification[DeltaLogCacheKey, DeltaLog]) => {
-          val log = removalNotification.getValue
-          // TODO: We should use ref-counting to uncache snapshots instead of a manual timed op
-          try log.unsafeVolatileSnapshot.uncache() catch {
-            case _: java.lang.NullPointerException =>
-            // Various layers will throw null pointer if the RDD is already gone.
-          }
-      })
-    sys.props.get("delta.log.cacheSize")
-      .flatMap(v => Try(v.toLong).toOption)
-      .foreach(builder.maximumSize)
-    builder.build[DeltaLogCacheKey, DeltaLog]()
+  type CacheKey = (Path, Map[String, String])
+  private[delta] def getOrCreateCache(conf: SQLConf):
+      Cache[CacheKey, DeltaLog] = synchronized {
+    deltaLogCache match {
+      case Some(c) => c
+      case None =>
+        val builder = createCacheBuilder(conf)
+          .removalListener(
+              (removalNotification: RemovalNotification[DeltaLogCacheKey, DeltaLog]) => {
+            val log = removalNotification.getValue
+            // TODO: We should use ref-counting to uncache snapshots instead of a manual timed op
+            try log.unsafeVolatileSnapshot.uncache() catch {
+              case _: java.lang.NullPointerException =>
+              // Various layers will throw null pointer if the RDD is already gone.
+            }
+          })
+        deltaLogCache = Some(builder.build[CacheKey, DeltaLog]())
+        deltaLogCache.get
+    }
+  }
+
+  private var deltaLogCache: Option[Cache[CacheKey, DeltaLog]] = None
+
+  /**
+   * Helper to create delta log caches
+   */
+  private def createCacheBuilder(conf: SQLConf): CacheBuilder[AnyRef, AnyRef] = {
+    val cacheRetention = conf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES)
+    val cacheSize = conf
+      .getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE)
+      .max(sys.props.get("delta.log.cacheSize").map(_.toLong).getOrElse(0L))
+
+    CacheBuilder
+      .newBuilder()
+      .expireAfterAccess(cacheRetention, TimeUnit.MINUTES)
+      .maximumSize(cacheSize)
   }
 
 
@@ -787,7 +808,8 @@ object DeltaLog extends DeltaLogging {
       // - Different `authority` (e.g., different user tokens in the path)
       // - Different mount point.
       try {
-        deltaLogCache.get(path -> fileSystemOptions, () => {
+        getOrCreateCache(spark.sessionState.conf)
+          .get(path -> fileSystemOptions, () => {
             createDeltaLog()
           }
         )
@@ -801,7 +823,7 @@ object DeltaLog extends DeltaLogging {
     if (Option(deltaLog.sparkContext.get).map(_.isStopped).getOrElse(true)) {
       // Invalid the cached `DeltaLog` and create a new one because the `SparkContext` of the cached
       // `DeltaLog` has been stopped.
-      deltaLogCache.invalidate(path -> fileSystemOptions)
+      getOrCreateCache(spark.sessionState.conf).invalidate(path -> fileSystemOptions)
       getDeltaLogFromCache()
     } else {
       deltaLog
@@ -819,6 +841,7 @@ object DeltaLog extends DeltaLogging {
       // scalastyle:on deltahadoopconfiguration
       val path = fs.makeQualified(rawPath)
 
+      val deltaLogCache = getOrCreateCache(spark.sessionState.conf)
       if (spark.sessionState.conf.getConf(
           DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
         // We rely on the fact that accessing the key set doesn't modify the entry access time. See
@@ -841,12 +864,19 @@ object DeltaLog extends DeltaLogging {
   }
 
   def clearCache(): Unit = {
-    deltaLogCache.invalidateAll()
+    deltaLogCache.foreach(_.invalidateAll())
+  }
+
+  /** Unset the caches. Exposing for testing */
+  private[delta] def unsetCache(): Unit = {
+    synchronized {
+      deltaLogCache = None
+    }
   }
 
   /** Return the number of cached `DeltaLog`s. Exposing for testing */
   private[delta] def cacheSize: Long = {
-    deltaLogCache.size()
+    deltaLogCache.map(_.size()).getOrElse(0L)
   }
 
   /**

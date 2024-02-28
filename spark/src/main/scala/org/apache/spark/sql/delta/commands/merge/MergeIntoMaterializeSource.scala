@@ -239,6 +239,8 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     val forceMaterializationWithUnreadableFiles =
       spark.conf.get(DeltaSQLConf.MERGE_FORCE_SOURCE_MATERIALIZATION_WITH_UNREADABLE_FILES)
     import DeltaSQLConf.MergeMaterializeSource._
+    val checkDeterministicOptions =
+      DeltaSparkPlanUtils.CheckDeterministicOptions(allowDeterministicUdf = true)
     materializeType match {
       case ALL =>
         (true, MergeIntoMaterializeSourceReason.MATERIALIZE_ALL)
@@ -249,7 +251,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
           (false, MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO_INSERT_ONLY)
         } else if (!planContainsOnlyDeltaScans(source)) {
           (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA)
-        } else if (!planIsDeterministic(source)) {
+        } else if (!planIsDeterministic(source, checkDeterministicOptions)) {
           (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_OPERATORS)
           // Force source materialization if Spark configs IGNORE_CORRUPT_FILES,
           // IGNORE_MISSING_FILES or file source read options FileSourceOptions.IGNORE_CORRUPT_FILES
@@ -258,6 +260,11 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
         } else if (forceMaterializationWithUnreadableFiles &&
             ignoreUnreadableFilesConfigsAreSet(source, spark)) {
           (true, MergeIntoMaterializeSourceReason.IGNORE_UNREADABLE_FILES_CONFIGS_ARE_SET)
+        } else if (planContainsUdf(source)) {
+          // Force source materialization if the source contains a User Defined Function, even if
+          // the user defined function is marked as deterministic, as it is often incorrectly marked
+          // as such.
+          (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF)
         } else {
           (false, MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO)
         }
@@ -440,6 +447,9 @@ object MergeIntoMaterializeSourceReason extends Enumeration {
   // with ignore unreadable files options.
   val IGNORE_UNREADABLE_FILES_CONFIGS_ARE_SET =
     Value("materializeIgnoreUnreadableFilesConfigsAreSet")
+  // The source query is considered non-determistic because it contains a User Defined Function.
+  val NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF =
+    Value("materializeNonDeterministicSourceWithDeterministicUdf")
   // Materialize when the configuration is invalid
   val INVALID_CONFIG = Value("invalidConfigurationFailsafe")
   // Catch-all case.
@@ -451,6 +461,7 @@ object MergeIntoMaterializeSourceReason extends Enumeration {
     NON_DETERMINISTIC_SOURCE_NON_DELTA,
     NON_DETERMINISTIC_SOURCE_OPERATORS,
     IGNORE_UNREADABLE_FILES_CONFIGS_ARE_SET,
+    NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF,
     INVALID_CONFIG
   )
 }

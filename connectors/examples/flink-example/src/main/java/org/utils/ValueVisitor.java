@@ -1,5 +1,7 @@
 package org.utils;
 
+import java.time.LocalDate;
+
 import org.apache.flink.table.data.ArrayData;
 import org.apache.flink.table.data.DecimalData;
 import org.apache.flink.table.data.MapData;
@@ -110,8 +112,9 @@ public class ValueVisitor implements LogicalTypeVisitor<Object> {
     }
 
     @Override
-    public Object visit(DateType dateType) {
-        throw new UnsupportedOperationException("Not supported");
+    public LocalDate visit(DateType dateType) {
+        int sinceEpoch = row.getInt(index);
+        return LocalDate.ofEpochDay(sinceEpoch);
     }
 
     @Override

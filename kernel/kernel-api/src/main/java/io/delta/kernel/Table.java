@@ -49,4 +49,21 @@ public interface Table {
      */
     Snapshot getLatestSnapshot(TableClient tableClient)
         throws TableNotFoundException;
+
+    /**
+     * The fully qualified path of this {@link Table} instance.
+     *
+     * @return the table path
+     */
+    String getPath();
+
+    /**
+     * Get the snapshot at the given {@code versionId}.
+     *
+     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
+     * @param versionId snapshot version to retrieve
+     * @return an instance of {@link Snapshot}
+     */
+    Snapshot getSnapshotAtVersion(TableClient tableClient, long versionId)
+        throws TableNotFoundException;
 }

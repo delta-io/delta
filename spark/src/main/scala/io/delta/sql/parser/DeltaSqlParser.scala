@@ -43,7 +43,7 @@ import java.util.Locale
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.catalyst.TimeTravel
-import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByParserUtils, ClusterByPlan, ClusterBySpec}
+import org.apache.spark.sql.delta.skipping.clustering.temp.{AlterTableClusterBy, ClusterByParserUtils, ClusterByPlan, ClusterBySpec}
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands._
@@ -319,10 +319,12 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    */
   override def visitVacuumTable(ctx: VacuumTableContext): AnyRef = withOrigin(ctx) {
     VacuumTableCommand(
-      Option(ctx.path).map(string),
-      Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.number).map(_.getText.toDouble),
-      ctx.RUN != null)
+      path = Option(ctx.path).map(string),
+      table = Option(ctx.table).map(visitTableIdentifier),
+      inventoryTable = Option(ctx.inventoryTable).map(visitTableIdentifier),
+      inventoryQuery = Option(ctx.inventoryQuery).map(extractRawText),
+      horizonHours = Option(ctx.number).map(_.getText.toDouble),
+      dryRun = ctx.RUN != null)
   }
 
   /** Provides a list of unresolved attributes for multi dimensional clustering. */
@@ -581,6 +583,25 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
         "ALTER TABLE ... DROP FEATURE"),
       visitFeatureNameValue(ctx.featureName),
       truncateHistory)
+  }
+
+  /**
+   * Parse an ALTER TABLE CLUSTER BY command.
+   */
+  override def visitAlterTableClusterBy(ctx: AlterTableClusterByContext): LogicalPlan = {
+    val table =
+      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
+      "ALTER TABLE ... CLUSTER BY")
+    if (ctx.NONE() != null) {
+      AlterTableClusterBy(table, None)
+    } else {
+      assert(ctx.clusterBySpec() != null)
+      val columnNames =
+        ctx.clusterBySpec().interleave.asScala
+          .map(_.identifier.asScala.map(_.getText).toSeq)
+          .map(_.asInstanceOf[Seq[String]]).toSeq
+      AlterTableClusterBy(table, Some(ClusterBySpec(columnNames)))
+    }
   }
 
   protected def typedVisit[T](ctx: ParseTree): T = {

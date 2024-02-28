@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.dsl.expressions.DslExpression
@@ -50,11 +51,16 @@ class ConflictCheckerPredicateEliminationUnitSuite
     col("c").expr > ScalarSubquery(df.queryExecution.analyzed)
   }
 
+  private def defaultEliminationFunction(e: Seq[Expression]): PredicateElimination = {
+    val options = DeltaSparkPlanUtils.CheckDeterministicOptions(allowDeterministicUdf = false)
+    eliminateNonDeterministicPredicates(e, options)
+  }
+
   private def checkEliminationResult(
       predicate: Expression,
       expected: PredicateElimination,
-      eliminationFunction: Seq[Expression] => PredicateElimination =
-        eliminateNonDeterministicPredicates): Unit = {
+      eliminationFunction: Seq[Expression] => PredicateElimination = defaultEliminationFunction)
+  : Unit = {
     require(expected.newPredicates.size === 1)
     val actual = eliminationFunction(Seq(predicate))
     assert(actual.newPredicates.size === 1)

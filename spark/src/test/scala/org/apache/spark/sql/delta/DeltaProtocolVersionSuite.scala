@@ -422,6 +422,38 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("Vacuum checks the write protocol") {
+    withTempDir { path =>
+      spark.range(10).write.format("delta").save(path.getCanonicalPath)
+      val log = DeltaLog.forTable(spark, path)
+
+      sql(s"INSERT INTO delta.`${path.getCanonicalPath}` VALUES (10)")
+      val vacuumCommandsToTry = Seq(
+        s"vacuum delta.`${path.getCanonicalPath}` RETAIN 10000 HOURS",
+        s"vacuum delta.`${path.getCanonicalPath}` RETAIN 10000 HOURS DRY RUN"
+      )
+      // Both vacuum and vacuum dry run works as expected
+      vacuumCommandsToTry.foreach(spark.sql(_).collect())
+
+      val snapshot = log.update()
+      val newProtocol = Protocol(
+        TABLE_FEATURES_MIN_READER_VERSION,
+        TABLE_FEATURES_MIN_WRITER_VERSION).withWriterFeatures(Seq("newUnsupportedWriterFeature"))
+      log.store.write(
+        deltaFile(log.logPath, snapshot.version + 1),
+        Iterator(Metadata().json, newProtocol.json),
+        overwrite = false,
+        log.newDeltaHadoopConf())
+
+      // Both vacuum and vacuum dry run fails as expected
+      vacuumCommandsToTry.foreach { command =>
+        intercept[DeltaUnsupportedTableFeatureException] {
+          spark.sql(command).collect()
+        }
+      }
+    }
+  }
+
   test("InvalidProtocolVersionException - error message with protocol too high - table path") {
     withTempDir { path =>
       spark.range(1).write.format("delta").save(path.getCanonicalPath)
@@ -3153,6 +3185,78 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       }
       // Test that the write downgrade command was invoked.
       val expectedOpType = "delta.test.TestWriterFeaturePreDowngradeCommand"
+      val blob = logs.collectFirst {
+        case r if r.metric == MetricDefinitions.EVENT_TAHOE.name &&
+          r.tags.get("opType").contains(expectedOpType) => r.blob
+      }
+      assert(blob.nonEmpty, s"Expecting an '$expectedOpType' event but didn't see any.")
+    }
+  }
+
+  for {
+    withCatalog <- BOOLEAN_DOMAIN
+    quoteWith <- if (withCatalog) Seq("none", "single", "backtick") else Seq("none")
+  } test(s"Drop feature DDL TRUNCATE HISTORY - withCatalog=$withCatalog, quoteWith=$quoteWith") {
+    withTempDir { dir =>
+      val table: String = if (withCatalog) {
+        s"${spark.sessionState.catalog.getCurrentDatabase}.table"
+      } else {
+        s"delta.`${dir.getCanonicalPath}`"
+      }
+      if (withCatalog) sql(s"DROP TABLE IF EXISTS $table")
+      sql(
+        s"""CREATE TABLE $table (id bigint) USING delta
+           |TBLPROPERTIES (
+           |delta.feature.${TestRemovableReaderWriterFeature.name} = 'supported',
+           |${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = "true",
+           |${DeltaConfigs.TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION.key} = "0 hours"
+           |)""".stripMargin)
+
+      // We need to use a Delta log object with the ManualClock created in this test instead of
+      // the default SystemClock. However, we can't pass the Delta log to use directly in the SQL
+      // command. Instead, we will
+      //  1. Clear the Delta log cache to remove the log associated with table creation.
+      //  2. Populate the Delta log cache with the Delta log object that has the ManualClock we
+      //  want to use
+      // TODO(c27kwan): Refactor this and provide a better way to control clocks in Delta tests.
+      val clock = new ManualClock(System.currentTimeMillis())
+      val deltaLog = if (withCatalog) {
+        val tableIdentifier =
+          TableIdentifier("table", Some(spark.sessionState.catalog.getCurrentDatabase))
+        // We need to hack the Delta log cache with path based access to setup the right key.
+        val path = DeltaLog.forTable(spark, tableIdentifier, clock).dataPath
+        DeltaLog.clearCache()
+        DeltaLog.forTable(spark, path, clock)
+      } else {
+        DeltaLog.clearCache()
+        DeltaLog.forTable(spark, dir, clock)
+      }
+
+      val protocol = deltaLog.update().protocol
+      assert(protocol === protocolWithReaderFeature(TestRemovableReaderWriterFeature))
+
+      val logs = Log4jUsageLogger.track {
+        val featureName = quoteWith match {
+          case "none" => s"${TestRemovableReaderWriterFeature.name}"
+          case "single" => s"'${TestRemovableReaderWriterFeature.name}'"
+          case "backtick" => s"`${TestRemovableReaderWriterFeature.name}`"
+        }
+
+        // Expect an exception when dropping a reader writer feature on a table that
+        // still has traces of the feature.
+        intercept[DeltaTableFeatureException] {
+          sql(s"ALTER TABLE $table DROP FEATURE $featureName")
+        }
+
+        // Move past retention period.
+        clock.advance(TimeUnit.HOURS.toMillis(1))
+
+        sql(s"ALTER TABLE $table DROP FEATURE $featureName TRUNCATE HISTORY")
+        assert(deltaLog.update().protocol === Protocol(1, 1))
+      }
+
+      // Validate the correct downgrade command was invoked.
+      val expectedOpType = "delta.test.TestReaderWriterFeaturePreDowngradeCommand"
       val blob = logs.collectFirst {
         case r if r.metric == MetricDefinitions.EVENT_TAHOE.name &&
           r.tags.get("opType").contains(expectedOpType) => r.blob

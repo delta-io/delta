@@ -444,9 +444,9 @@ class SnapshotManagementSuite extends QueryTest with SQLTestUtils with SharedSpa
       val oldLogSegment = log.snapshot.logSegment
       spark.range(10).write.format("delta").save(path)
       val newLogSegment = log.snapshot.logSegment
-      assert(log.getLogSegmentAfterCommit(oldLogSegment.checkpointProvider) === newLogSegment)
+      assert(log.getLogSegmentAfterCommit(None, oldLogSegment.checkpointProvider) === newLogSegment)
       spark.range(10).write.format("delta").mode("append").save(path)
-      assert(log.getLogSegmentAfterCommit(oldLogSegment.checkpointProvider)
+      assert(log.getLogSegmentAfterCommit(None, oldLogSegment.checkpointProvider)
         === log.snapshot.logSegment)
     }
   }

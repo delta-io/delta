@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.File
+
 import org.apache.spark.sql.delta.storage.{HDFSLogStore, LogStore, S3SingleDriverLogStore}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
@@ -112,7 +114,9 @@ trait S3SingleDriverLogStoreSuiteBase extends LogStoreSuiteBase {
   }
 
   test("cache works correctly when writing an initial log version") {
-    withTempDir { dir =>
+    withTempDir { rootDir =>
+      val dir = new File(rootDir, "_delta_log")
+      dir.mkdir()
       val store = createLogStore(spark)
       val deltas =
         Seq(0, 1, 2).map(i => FileNames.deltaFile(new Path(dir.toURI), i))

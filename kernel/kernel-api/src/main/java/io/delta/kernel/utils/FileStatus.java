@@ -31,7 +31,7 @@ public class FileStatus {
     private final long size;
     private final long modificationTime;
 
-    private FileStatus(
+    protected FileStatus(
         String path,
         long size,
         long modificationTime) {

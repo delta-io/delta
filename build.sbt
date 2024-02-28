@@ -37,7 +37,7 @@ Global / default_scala_version := scala212
 // Dependent library versions
 val sparkVersion = "3.5.0"
 val flinkVersion = "1.16.1"
-val hadoopVersion = "3.3.1"
+val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -79,6 +79,7 @@ lazy val commonSettings = Seq(
     "-Dspark.databricks.delta.snapshotPartitions=2",
     "-Dspark.sql.shuffle.partitions=5",
     "-Ddelta.log.cacheSize=3",
+    "-Dspark.databricks.delta.delta.log.cacheSize=3",
     "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
     "-Xmx1024m"
   ),
@@ -144,6 +145,7 @@ lazy val spark = (project in file("spark"))
       "-Dspark.databricks.delta.snapshotPartitions=2",
       "-Dspark.sql.shuffle.partitions=5",
       "-Ddelta.log.cacheSize=3",
+      "-Dspark.databricks.delta.delta.log.cacheSize=3",
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
       "-Xmx1024m"
     ),
@@ -201,6 +203,7 @@ lazy val contribs = (project in file("contribs"))
       "-Dspark.databricks.delta.snapshotPartitions=2",
       "-Dspark.sql.shuffle.partitions=5",
       "-Ddelta.log.cacheSize=3",
+      "-Dspark.databricks.delta.delta.log.cacheSize=3",
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
       "-Xmx1024m"
     ),
@@ -224,7 +227,7 @@ lazy val sharing = (project in file("sharing"))
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.0.3",
+      "io.delta" %% "delta-sharing-client" % "1.0.4",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -329,7 +332,7 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     // Test / publishArtifact := true,
 
     libraryDependencies ++= Seq(
-      "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided",
+      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
 
       // Test Deps
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException
