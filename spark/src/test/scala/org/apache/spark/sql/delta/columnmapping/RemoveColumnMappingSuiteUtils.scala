@@ -25,7 +25,7 @@ import org.apache.spark.sql.QueryTest
  * A base trait for testing removing column mapping.
  * Takes care of setting basic SQL configs and dropping the [[testTableName]] after each test.
  */
-trait RemoveColumnMappingBaseSuite extends QueryTest with DeltaColumnMappingSuiteUtils {
+trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSuiteUtils {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
