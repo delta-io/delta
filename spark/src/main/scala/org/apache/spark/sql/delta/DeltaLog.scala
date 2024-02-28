@@ -444,7 +444,7 @@ class DeltaLog private(
         }
       }
     }
-    createDirIfNotExists(logPath)
+    createDirIfNotExists(FileNames.commitDirPath(logPath))
   }
 
   /**

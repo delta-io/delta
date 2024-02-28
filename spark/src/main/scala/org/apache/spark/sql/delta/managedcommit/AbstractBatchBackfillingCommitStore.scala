@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.managedcommit
 
 import java.nio.file.FileAlreadyExistsException
+import java.util.UUID
 
 import org.apache.spark.sql.delta.{DeltaLog, SerializableFileStatus}
 import org.apache.spark.sql.delta.storage.LogStore
@@ -58,11 +59,12 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = {
 
+    logInfo(s"Attempting to commit version $commitVersion on table $tablePath")
     val fs = tablePath.getFileSystem(hadoopConf)
     if (batchSize <= 1) {
       // Backfill until `commitVersion - 1`
       logInfo(s"Making sure commits are backfilled until $commitVersion version for" +
-        s"table ${tablePath.toString}")
+        s" table ${tablePath.toString}")
       backfillToVersion(logStore, hadoopConf, tablePath)
     }
 
@@ -87,6 +89,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
         s"table ${tablePath.toString}")
       backfillToVersion(logStore, hadoopConf, tablePath)
     }
+    logInfo(s"Commit $commitVersion done successfully on table $tablePath")
     commitResponse
   }
 
@@ -96,12 +99,15 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
       tablePath: Path,
       commitVersion: Long,
       actions: Iterator[String]): FileStatus = {
-    val commitPath = FileNames.uuidDeltaFile(logPath(tablePath), commitVersion)
+    val uuidStr = generateUUID()
+    val commitPath = FileNames.uuidDeltaFile(logPath(tablePath), commitVersion, Some(uuidStr))
     logStore.write(commitPath, actions, overwrite = false, hadoopConf)
     commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
   }
 
-  /** Backfills commits from [`lastKnownBackfill`, `commitVersion - 1`] */
+  protected def generateUUID(): String = UUID.randomUUID().toString
+
+  /** Backfills all un-backfilled commits */
   protected def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
@@ -128,7 +134,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
         commitContentIterator,
         overwrite = false,
         hadoopConf)
-      registerBackfill(tablePath, version, targetFile)
+      registerBackfill(tablePath, version)
     } catch {
       case _: FileAlreadyExistsException =>
         logInfo(s"The backfilled file $targetFile already exists.")
@@ -137,11 +143,10 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
     }
   }
 
-  /** Callback to tell the CommitStore that all commits <= `untilVersion` are backfilled. */
+  /** Callback to tell the CommitStore that all commits <= `backfilledVersion` are backfilled. */
   protected[delta] def registerBackfill(
       tablePath: Path,
-      untilVersion: Long,
-      deltaFile: Path): Unit
+      backfilledVersion: Long): Unit
 
   protected def logPath(tablePath: Path): Path = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
 }

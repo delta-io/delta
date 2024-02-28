@@ -115,18 +115,33 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
 
   override protected[delta] def registerBackfill(
       tablePath: Path,
-      untilVersion: Long,
-      deltaFile: Path): Unit = {
+      backfilledVersion: Long): Unit = {
     withWriteLock(tablePath) {
       val tableData = perTableMap.get(tablePath)
-      if (untilVersion > tableData.maxCommitVersion) {
+      if (backfilledVersion > tableData.maxCommitVersion) {
         throw new IllegalArgumentException(
-          s"Unexpected backfill version: $untilVersion. " +
+          s"Unexpected backfill version: $backfilledVersion. " +
             s"Max backfill version: ${tableData.maxCommitVersion}")
       }
       // Remove keys with versions less than or equal to 'untilVersion'
-      val versionsToRemove = tableData.commitsMap.keys.takeWhile(_ <= untilVersion).toList
+      val versionsToRemove = tableData.commitsMap.keys.takeWhile(_ <= backfilledVersion).toList
       versionsToRemove.foreach(tableData.commitsMap.remove)
     }
+  }
+}
+
+/**
+ * The InMemoryCommitStoreBuilder class is responsible for creating singleton instances of
+ * InMemoryCommitStore with the specified batchSize.
+ */
+case class InMemoryCommitStoreBuilder(batchSize: Long) extends CommitStoreBuilder {
+  private lazy val inMemoryStore = new InMemoryCommitStore(batchSize)
+
+  /** Name of the commit-store */
+  def name: String = "in-memory"
+
+  /** Returns a commit store based on the given conf */
+  def build(conf: Map[String, String]): CommitStore = {
+    inMemoryStore
   }
 }

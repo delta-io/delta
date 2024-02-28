@@ -23,6 +23,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.managedcommit.UpdatedActions
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
@@ -67,12 +68,18 @@ private[delta] case class CurrentTransactionInfo(
    */
   lazy val finalActionsToCommit: Seq[Action] = commitInfo ++: actions
 
-  /** Whether this transaction wants to make any [[Metadata]] update */
-  lazy val metadataChanged: Boolean = actions.exists {
-    case _: Metadata => true
-    case _ => false
-  }
+  var newMetadata: Option[Metadata] = None
+  var newProtocol: Option[Protocol] = None
 
+  actions.foreach {
+    case m: Metadata => newMetadata = Some(m)
+    case p: Protocol => newProtocol = Some(p)
+    case _ => // do nothing
+  }
+  def getUpdateActions(): UpdatedActions = UpdatedActions(commitInfo.get, newMetadata, newProtocol)
+
+  /** Whether this transaction wants to make any [[Metadata]] update */
+  lazy val metadataChanged: Boolean = newMetadata.nonEmpty
 
   /**
    * Partition schema corresponding to the read snapshot for this transaction.
