@@ -1137,6 +1137,15 @@
     ],
     "sqlState" : "22KD1"
   },
+  "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING" : {
+    "message" : [
+      "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema.",
+      "Invalid column names: <invalidColumnNames>.",
+      "Column mapping cannot be removed when there are invalid characters in the column names.",
+      "Please rename the columns to remove the invalid characters and execute this command again."
+    ],
+    "sqlState" : "42K05"
+  },
   "DELTA_INVALID_COMMITTED_VERSION" : {
     "message" : [
       "The committed version is <committedVersion> but the current version is <currentVersion>."
@@ -1166,6 +1175,12 @@
       "<interval> is not a valid INTERVAL."
     ],
     "sqlState" : "22006"
+  },
+  "DELTA_INVALID_INVENTORY_SCHEMA" : {
+    "message" : [
+      "The schema for the specified INVENTORY does not contain all of the required fields. Required fields are: <expectedSchema>"
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_INVALID_ISOLATION_LEVEL" : {
     "message" : [
@@ -1459,12 +1474,6 @@
       "<usageReference>"
     ],
     "sqlState" : "21506"
-  },
-  "DELTA_NESTED_FIELDS_NEED_RENAME" : {
-    "message" : [
-      "Nested fields need renaming to avoid data loss. Fields:\n<fields>.\nOriginal schema:\n<schema>"
-    ],
-    "sqlState" : "42K05"
   },
   "DELTA_NESTED_NOT_NULL_CONSTRAINT" : {
     "message" : [
@@ -1905,7 +1914,7 @@
   },
   "DELTA_SOURCE_TABLE_IGNORE_CHANGES" : {
     "message" : [
-      "Detected a data update (for example <file>) in the source table at version <version>. This is currently not supported. If you'd like to ignore updates, set the option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
+      "Detected a data update (for example <file>) in the source table at version <version>. This is currently not supported. If this is going to happen regularly and you are okay to skip changes, set the option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
     ],
     "sqlState" : "0A000"
   },
@@ -2260,6 +2269,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP" : {
+    "message" : [
+      "ALTER TABLE CHANGE COLUMN is not supported for changing column <fieldPath> from <oldField> to <newField>"
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP" : {
     "message" : [
       "Unsupported ALTER TABLE REPLACE COLUMNS operation. Reason: <details>",
@@ -2326,6 +2341,12 @@
   "DELTA_UNSUPPORTED_COLUMN_TYPE_IN_BLOOM_FILTER" : {
     "message" : [
       "Creating a bloom filter index on a column with type <dataType> is unsupported: <columnName>"
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY" : {
+    "message" : [
+      "Can't add a comment to <fieldPath>. Adding a comment to a map key/value or array element is not supported."
     ],
     "sqlState" : "0AKDC"
   },

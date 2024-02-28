@@ -116,7 +116,7 @@ public class DefaultColumnarBatch
 
     private void checkColumnOrdinal(int ordinal) {
         if (ordinal < 0 || ordinal >= columnVectors.size()) {
-            throw new IllegalArgumentException("invalid column ordinal");
+            throw new IllegalArgumentException("invalid column ordinal: " + ordinal);
         }
     }
 }

@@ -223,7 +223,7 @@ abstract class CloneTableBase(
     val newProtocol = determineTargetProtocol(spark, txn, deltaOperation.name)
 
     try {
-      var actions = Iterator.single(newProtocol) ++
+      var actions: Iterator[Action] =
         addedFileList.iterator.asScala.map { fileToCopy =>
           val copiedFile = fileToCopy.copy(dataChange = dataChangeInFileAction)
           // CLONE does not preserve Row IDs and Commit Versions
@@ -246,6 +246,7 @@ abstract class CloneTableBase(
           txn.commitLarge(
             spark,
             actions,
+            Some(newProtocol),
             deltaOperation,
             context,
             commitOpMetrics.mapValues(_.toString()).toMap)

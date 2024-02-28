@@ -96,7 +96,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
         sourceDF
       }
 
-      val outputDF = generateInsertsOnlyOutputDF(preparedSourceDF, deltaTxn)
+      val outputDF = generateInsertsOnlyOutputDF(spark, preparedSourceDF, deltaTxn)
       logDebug(s"$extraOpType: output plan:\n" + outputDF.queryExecution)
 
       val newFiles = writeFiles(spark, deltaTxn, outputDF)
@@ -142,10 +142,11 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
    * and when there are multiple insert clauses.
    */
   private def generateInsertsOnlyOutputDF(
+      spark: SparkSession,
       preparedSourceDF: DataFrame,
       deltaTxn: OptimisticTransaction): DataFrame = {
 
-    val targetOutputColNames = getTargetOutputCols(deltaTxn).map(_.name)
+    val targetOutputColNames = getTargetOutputCols(spark, deltaTxn).map(_.name)
 
     // When there is only one insert clause, there is no need for ROW_DROPPED_COL and
     // output df can be generated without CaseWhen.

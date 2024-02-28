@@ -1179,6 +1179,17 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_STREAMING_UNSAFE_READ_ON_PARTITION_COLUMN_CHANGE =
+    buildConf("streaming.unsafeReadOnPartitionColumnChanges.enabled")
+      .doc(
+        "Streaming read on Delta table with partition column overwrite " +
+          "(e.g. changing partition column) is currently blocked due to potential data loss. " +
+          "However, existing users may use this flag to force unblock " +
+          "if they'd like to take the risk.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_STREAMING_ENABLE_SCHEMA_TRACKING =
     buildConf("streaming.schemaTracking.enabled")
       .doc(
@@ -1496,6 +1507,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val ALLOW_COLUMN_MAPPING_REMOVAL =
+    buildConf("columnMapping.allowRemoval")
+      .internal()
+      .doc(
+        """
+          |If enabled, allow the column mapping to be removed from a table.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTALOG_MINOR_COMPACTION_USE_FOR_READS =
     buildConf("deltaLog.minorCompaction.useForReads")
       .doc("If true, minor compacted delta log files will be used for creating Snapshots")
@@ -1606,6 +1627,18 @@ trait DeltaSQLConfBase {
         "'clusteredTable.numClusteringColumnsLimit' must be positive."
       )
     .createWithDefault(4)
+
+  val DELTA_LOG_CACHE_SIZE = buildConf("delta.log.cacheSize")
+    .internal()
+    .doc("The maximum number of DeltaLog instances to cache in memory.")
+    .longConf
+    .createWithDefault(10000)
+
+  val DELTA_LOG_CACHE_RETENTION_MINUTES = buildConf("delta.log.cacheRetentionMinutes")
+    .internal()
+    .doc("The rentention duration of DeltaLog instances in the cache")
+    .timeConf(TimeUnit.MINUTES)
+    .createWithDefault(60)
 
   //////////////////
   // Delta Sharing

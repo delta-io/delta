@@ -18,23 +18,37 @@ package org.apache.spark.sql.delta.util
 
 import java.util.UUID
 
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 /** Helper for creating file names for specific commits / checkpoints. */
 object FileNames {
 
   val deltaFileRegex = raw"(\d+)\.json".r
+  val uuidDeltaFileRegex = raw"(\d+)\.[^.]+\.json".r
   val compactedDeltaFileRegex = raw"(\d+).(\d+).compacted.json".r
   val checksumFileRegex = raw"(\d+)\.crc".r
   val checkpointFileRegex = raw"(\d+)\.checkpoint((\.\d+\.\d+)?\.parquet|\.[^.]+\.(json|parquet))".r
 
-  val deltaFilePattern = deltaFileRegex.pattern
-  val compactedDeltaFilePattern = compactedDeltaFileRegex.pattern
-  val checksumFilePattern = checksumFileRegex.pattern
-  val checkpointFilePattern = checkpointFileRegex.pattern
+  private val compactedDeltaFilePattern = compactedDeltaFileRegex.pattern
+  private val checksumFilePattern = checksumFileRegex.pattern
+  private val checkpointFilePattern = checkpointFileRegex.pattern
 
   /** Returns the delta (json format) path for a given delta file. */
   def deltaFile(path: Path, version: Long): Path = new Path(path, f"$version%020d.json")
+
+  /**
+   * Returns the un-backfilled uuid formatted delta (json format) path for a given version.
+   *
+   * @param logPath The root path of the delta log.
+   * @param version The version of the delta file.
+   * @return The path to the un-backfilled delta file: <logPath>/_commits/<version>.<uuid>.json
+   */
+  def uuidDeltaFile(logPath: Path, version: Long, uuidString: Option[String] = None): Path = {
+    val basePath = commitDirPath(logPath)
+    val uuid = uuidString.getOrElse(UUID.randomUUID.toString)
+    new Path(basePath, f"$version%020d.$uuid.json")
+  }
 
   /** Returns the path for a given sample file */
   def sampleFile(path: Path, version: Long): Path = new Path(path, f"$version%020d")
@@ -103,7 +117,7 @@ object FileNames {
   def isCheckpointFile(path: Path): Boolean = checkpointFilePattern.matcher(path.getName).matches()
   def isCheckpointFile(file: FileStatus): Boolean = isCheckpointFile(file.getPath)
 
-  def isDeltaFile(path: Path): Boolean = deltaFilePattern.matcher(path.getName).matches()
+  def isDeltaFile(path: Path): Boolean = DeltaFile.unapply(path).isDefined
   def isDeltaFile(file: FileStatus): Boolean = isDeltaFile(file.getPath)
 
   def isChecksumFile(path: Path): Boolean = checksumFilePattern.matcher(path.getName).matches()
@@ -158,7 +172,10 @@ object FileNames {
     def unapply(f: FileStatus): Option[(FileStatus, Long)] =
       unapply(f.getPath).map { case (_, version) => (f, version) }
     def unapply(path: Path): Option[(Path, Long)] = {
-      deltaFileRegex.unapplySeq(path.getName).map(path -> _.head.toLong)
+      val parentDirName = path.getParent.getName
+      // If parent is _commits dir, then match against uuid commit file.
+      val regex = if (parentDirName == COMMIT_SUBDIR) uuidDeltaFileRegex else deltaFileRegex
+      regex.unapplySeq(path.getName).map(path -> _.head.toLong)
     }
   }
   object ChecksumFile {
@@ -199,6 +216,10 @@ object FileNames {
   }
 
   val SIDECAR_SUBDIR = "_sidecars"
+  val COMMIT_SUBDIR = "_commits"
   /** Returns path to the sidecar directory */
   def sidecarDirPath(logPath: Path): Path = new Path(logPath, SIDECAR_SUBDIR)
+
+  /** Returns path to the sidecar directory */
+  def commitDirPath(logPath: Path): Path = new Path(logPath, COMMIT_SUBDIR)
 }

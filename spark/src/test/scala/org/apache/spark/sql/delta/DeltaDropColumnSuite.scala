@@ -437,4 +437,27 @@ class DeltaDropColumnSuite extends QueryTest
     initialColumnType = "map<int, array<struct<a: int, b: string>>>",
     fieldToDrop = "value.element.b",
     updatedColumnType = "map<int, array<struct<a: int>>>")
+
+  test("can't drop map key/value or array element") {
+    withTable("delta_test") {
+      sql(
+        s"""
+           |CREATE TABLE delta_test (m map<int, int>, a array<int>)
+           |USING delta
+           |TBLPROPERTIES (${DeltaConfigs.COLUMN_MAPPING_MODE.key} = 'name')
+          """.stripMargin)
+      for {
+        field <- Seq("m.key", "m.value", "a.element")
+      }
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"ALTER TABLE delta_test DROP COLUMN $field")
+        },
+        errorClass = "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE",
+        parameters = Map(
+          "struct" -> "IntegerType"
+        )
+      )
+    }
+  }
 }

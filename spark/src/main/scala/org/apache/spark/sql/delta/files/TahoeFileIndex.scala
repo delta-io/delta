@@ -30,10 +30,18 @@ import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.catalyst.expressions.{Cast, Expression, GenericInternalRow, Literal}
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.types.StructType
+
+/**
+ * Similar to [[FileListingResult]], but maintains the partitions as [[AddFile]].
+ */
+case class DeltaFileListingResult(
+    partitions: Seq[(InternalRow, Seq[AddFile])],
+    addFiles: Seq[AddFile],
+    sortTime: Long = 0L)
 
 /**
  * A [[FileIndex]] that generates the list of files managed by the Tahoe protocol.
@@ -58,11 +66,38 @@ abstract class TahoeFileIndex(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[AddFile]
 
+  /**
+   * Utility method to convert a sequence of partition values (represented as a Map) and AddFiles
+   * to a sequence of (partitionValuesRow, files) tuples. The partitionValuesRow is a
+   * [[InternalRow]] representing the partition values. The files are represented as a
+   * sequence of [[AddFile]].
+   */
+  private def convertPartitionsToInternalRow(
+      partitions: Seq[(Map[String, String], Seq[AddFile])]): Seq[(InternalRow, Seq[AddFile])] = {
+    partitions.map { case (partitionValues, addFiles) =>
+        (getPartitionValuesRow(partitionValues), addFiles)
+    }
+  }
+
+  /**
+   * Returns (i) tuples of partition directories to their respective AddFile actions and
+   * (ii) a collection of matched AddFiles. The matched AddFiles are those that meet the criteria
+   * set by the partition and data filters. Essentially, this is a collection of all the files
+   * associated with the identified partitions.
+   */
+  def listPartitionsAsAddFiles(
+      partitionFilters: Seq[Expression],
+      dataFilters: Seq[Expression]): (Seq[(InternalRow, Seq[AddFile])], Seq[AddFile]) = {
+    val matchedFiles = matchingFiles(partitionFilters, dataFilters)
+    val partitionValuesToFiles = matchedFiles.groupBy(_.partitionValues)
+    (convertPartitionsToInternalRow(partitionValuesToFiles.toSeq), matchedFiles)
+  }
+
   override def listFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[PartitionDirectory] = {
     val partitionValuesToFiles = listAddFiles(partitionFilters, dataFilters)
-    makePartitionDirectories(partitionValuesToFiles.toSeq)
+    makePartitionDirectories(convertPartitionsToInternalRow(partitionValuesToFiles.toSeq))
   }
 
 
@@ -72,12 +107,12 @@ abstract class TahoeFileIndex(
     matchingFiles(partitionFilters, dataFilters).groupBy(_.partitionValues)
   }
 
-  private def makePartitionDirectories(
-      partitionValuesToFiles: Seq[(Map[String, String], Seq[AddFile])]): Seq[PartitionDirectory] = {
+
+  def makePartitionDirectories(
+      partitionValuesToFiles: Seq[(InternalRow, Seq[AddFile])]): Seq[PartitionDirectory] = {
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
     partitionValuesToFiles.map {
       case (partitionValues, files) =>
-        val partitionValuesRow = getPartitionValuesRow(partitionValues)
 
         val fileStatuses = files.map { f =>
           new FileStatus(
@@ -89,7 +124,7 @@ abstract class TahoeFileIndex(
             absolutePath(f.path))
         }.toArray
 
-        PartitionDirectory(partitionValuesRow, fileStatuses)
+        PartitionDirectory(partitionValues, fileStatuses)
     }
   }
 
@@ -105,7 +140,7 @@ abstract class TahoeFileIndex(
 
   override def partitionSchema: StructType = metadata.partitionSchema
 
-  protected def absolutePath(child: String): Path = {
+  def absolutePath(child: String): Path = {
     // scalastyle:off pathfromuri
     val p = new Path(new URI(child))
     // scalastyle:on pathfromuri

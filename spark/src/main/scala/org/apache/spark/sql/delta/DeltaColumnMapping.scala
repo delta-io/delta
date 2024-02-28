@@ -85,14 +85,20 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     protocol.isFeatureSupported(ColumnMappingTableFeature)
 
   /**
-   * The only allowed mode change is from NoMapping to NameMapping. Other changes
-   * would require re-writing Parquet files and are not supported right now.
+   * Allow NameMapping -> NoMapping transition behind a feature flag.
+   * Otherwise only NoMapping -> NameMapping is allowed.
    */
   private def allowMappingModeChange(
       oldMode: DeltaColumnMappingMode,
       newMode: DeltaColumnMappingMode): Boolean = {
-    if (oldMode == newMode) true
-    else oldMode == NoMapping && newMode == NameMapping
+    val removalAllowed = SparkSession.getActiveSession
+      .exists(_.conf.get(DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL))
+    // No change.
+    (oldMode == newMode) ||
+      // Downgrade allowed with a flag.
+      (removalAllowed && (oldMode == NameMapping && newMode == NoMapping)) ||
+      // Upgrade always allowed.
+      (oldMode == NoMapping && newMode == NameMapping)
   }
 
   def isColumnMappingUpgrade(
@@ -628,14 +634,17 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * As of now, `newMetadata` is column mapping read compatible with `oldMetadata` if
    * no rename column or drop column has happened in-between.
    */
-  def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
+  def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata,
+      allowUnsafeReadOnPartitionChanges: Boolean = false): Boolean = {
     // Helper function to check no column mapping schema change and no repartition
     def hasNoColMappingAndRepartitionSchemaChange(
        newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
       isRenameColumnOperation(newMetadata, oldMetadata) ||
         isDropColumnOperation(newMetadata, oldMetadata) ||
         !SchemaUtils.isPartitionCompatible(
-          newMetadata.partitionColumns, oldMetadata.partitionColumns)
+          // if allow unsafe row read for partition change, ignore the check
+          if (allowUnsafeReadOnPartitionChanges) Seq.empty else newMetadata.partitionColumns,
+          if (allowUnsafeReadOnPartitionChanges) Seq.empty else oldMetadata.partitionColumns)
     }
 
     val (oldMode, newMode) = (oldMetadata.columnMappingMode, newMetadata.columnMappingMode)
