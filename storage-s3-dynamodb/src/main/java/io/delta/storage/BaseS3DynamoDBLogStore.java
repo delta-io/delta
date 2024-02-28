@@ -268,6 +268,9 @@ public abstract class BaseS3DynamoDBLogStore extends BaseExternalLogStore {
                             ),
                             provisionedThroughput
                     );
+                    client.updateTimeToLive(new UpdateTimeToLiveRequest()
+                            .withTableName(tableName)
+                            .withTimeToLiveSpecification(new TimeToLiveSpecification().withEnabled(true).withAttributeName(ATTR_EXPIRE_TIME)));
                     created = true;
                 } catch (ResourceInUseException e3) {
                     // race condition - table just created by concurrent process

@@ -248,6 +248,8 @@ By this point, this multi-cluster setup is fully operational. However, there is 
 
    Once a DynamoDB\ScyllaDB metadata entry is marked as complete, and after sufficient time such that we can now rely on S3 alone to prevent accidental overwrites on its corresponding Delta file, it is safe to delete that entry from DynamoDB\ScyllaDB. The cheapest way to do this is using [DynamoDB's TTL](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html) feature which is a free, automated means to delete items from your DynamoDB\ScyllaDB table.
 
+   If you create the DynamoDB\ScyllaDB table automatically, the TTL is already enabled on the table. If you create it manually, you will need to enable TTL manually.
+
    Run the following command on your given DynamoDB\ScyllaDB table to enable TTL:
 
    **For DynamoDB:**
