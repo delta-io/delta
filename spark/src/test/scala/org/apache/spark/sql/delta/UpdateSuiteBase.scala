@@ -22,9 +22,9 @@ import java.util.Locale
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.functions.struct

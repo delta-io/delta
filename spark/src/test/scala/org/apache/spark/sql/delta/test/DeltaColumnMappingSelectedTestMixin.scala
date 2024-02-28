@@ -19,12 +19,12 @@ package org.apache.spark.sql.delta.test
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaColumnMappingTestUtils, DeltaConfigs, NoMapping}
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.scalactic.source.Position
 import org.scalatest.Tag
 import org.scalatest.exceptions.TestFailedException
 
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 /**
  * A trait for selective enabling certain tests to run for column mapping modes
