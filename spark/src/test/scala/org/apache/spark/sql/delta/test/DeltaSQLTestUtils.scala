@@ -26,6 +26,8 @@ trait DeltaSQLTestUtils extends SQLTestUtils {
    * Generates a temporary path with a prefix without creating the actual file/directory,
    * and passes it to `f`. If a file/directory is created by `f`, it will be deleted
    * after `f` returns.
+   *
+   * This method is copied over from [[SQLTestUtils]] of Apache Spark.
    */
   def withTempDir(prefix: String)(f: File => Unit): Unit = {
     val path = Utils.createTempDir(namePrefix = prefix)
@@ -37,6 +39,8 @@ trait DeltaSQLTestUtils extends SQLTestUtils {
    * Generates a temporary path with a prefix without creating the actual file/directory,
    * and passes it to `f`. If a file/directory is created by `f`, it will be deleted
    * after `f` returns.
+   *
+   * This method is copied over from `SQLTestUtils` of Apache Spark.
    */
   def withTempPath(prefix: String)(f: File => Unit): Unit = {
     withTempDir(prefix)(f)

@@ -1616,7 +1616,7 @@ trait DeltaTableCreationTests
   }
 
   testQuietly("CREATE TABLE with existing data path") {
-    // Re-use `filterV2TableProperties()` from `DeltaSQLTestUtils` as soon as it will be released.
+    // Re-use `filterV2TableProperties()` from `SQLTestUtils` as soon as it will be released.
     def isReservedProperty(propName: String): Boolean = {
       CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(propName) ||
         propName.startsWith(TableCatalog.OPTION_PREFIX) ||
