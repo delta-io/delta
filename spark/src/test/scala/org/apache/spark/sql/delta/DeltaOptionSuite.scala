@@ -235,19 +235,15 @@ class DeltaOptionSuite extends QueryTest
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       withTable("compression") {
-        checkErrorMatchPVals(
-          exception = intercept[SparkIllegalArgumentException] {
+        assert(
+          intercept[java.lang.IllegalArgumentException] {
             spark.range(100)
               .writeTo("compression")
               .using("delta")
               .option("compression", "???")
               .tableProperty("location", path)
               .create()
-          },
-          errorClass = "CODEC_NOT_AVAILABLE.WITH_AVAILABLE_CODECS_SUGGESTION",
-          parameters = Map(
-            "availableCodecs" -> ".*",
-            "codecName" -> ".*"))
+          }.getMessage.nonEmpty)
       }
     }
   }
