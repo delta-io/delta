@@ -34,7 +34,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * A concrete implementation of {@link BaseExternalLogStore} that uses an external DynamoDB-compatible-API table
+ * A Base implementation of {@link BaseExternalLogStore} that uses an external DynamoDB-compatible-API table
  * to provide the mutual exclusion during calls to `putExternalEntry`.
  *
  * DynamoDB entries are of form

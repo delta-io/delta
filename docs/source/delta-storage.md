@@ -68,7 +68,7 @@ This section explains how to quickly start reading and writing Delta tables on S
 
    ```bash
    bin/spark-shell \
-    --packages io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.4 \
+    --packages io.delta:delta-spark_2.12:3.1.0,org.apache.hadoop:hadoop-aws:3.3.4 \
 
     --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
     --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key>
@@ -152,7 +152,7 @@ This section explains how to quickly start reading and writing Delta tables on S
    **For ScyllaDB:**
    ```bash
      bin/spark-shell \
-      --packages io.delta:delta-spark_2.12:3.0.0,org.apache.hadoop:hadoop-aws:3.3.4,io.delta:delta-storage-s3-dynamodb:3.0.0 \
+      --packages io.delta:delta-spark_2.12:3.1.0,org.apache.hadoop:hadoop-aws:3.3.4,io.delta:delta-storage-s3-dynamodb:3.1.0 \
       --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
       --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key> \
       --conf spark.delta.logStore.s3a.impl=io.delta.storage.S3DynamoDBLogStore \
