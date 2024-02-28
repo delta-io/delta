@@ -234,16 +234,19 @@ class DeltaOptionSuite extends QueryTest
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       withTable("compression") {
-        val e = intercept[IllegalArgumentException] {
-          spark.range(100)
-            .writeTo("compression")
-            .using("delta")
-            .option("compression", "???")
-            .tableProperty("location", path)
-            .create()
-        }
-        val expectedMessage = "Codec [???] is not available. Available codecs are "
-        assert(e.getMessage.startsWith(expectedMessage))
+        checkErrorMatchPVals(
+          exception = intercept[SparkIllegalArgumentException] {
+            spark.range(100)
+              .writeTo("compression")
+              .using("delta")
+              .option("compression", "???")
+              .tableProperty("location", path)
+              .create()
+          },
+          errorClass = "CODEC_NOT_AVAILABLE.WITH_AVAILABLE_CODECS_SUGGESTION",
+          parameters = Map(
+            "availableCodecs" -> ".*",
+            "codecName" -> ".*"))
       }
     }
   }
