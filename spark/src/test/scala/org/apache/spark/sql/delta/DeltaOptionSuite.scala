@@ -28,7 +28,6 @@ import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
 import org.apache.parquet.format.CompressionCodec
 
-import org.apache.spark.SparkIllegalArgumentException
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.internal.SQLConf.PARTITION_OVERWRITE_MODE
