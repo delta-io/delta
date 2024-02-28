@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 
 import org.apache.spark.sql.catalyst.TableIdentifier
 
-class RemoveColumnMappingSuite extends RemoveColumnMappingBaseSuite {
+class RemoveColumnMappingSuite extends RemoveColumnMappingSuiteUtils {
 
   test("column mapping cannot be removed without the feature flag") {
     withSQLConf(ALLOW_COLUMN_MAPPING_REMOVAL.key -> "false") {
