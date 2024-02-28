@@ -18,10 +18,10 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaHiveTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.functions.{col, from_json}
 import org.apache.spark.sql.hive.test.TestHiveSingleton
 

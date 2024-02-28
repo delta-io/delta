@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.tables._
 
 import org.apache.spark.sql.DataFrame

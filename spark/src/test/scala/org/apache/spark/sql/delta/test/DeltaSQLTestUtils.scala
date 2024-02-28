@@ -1,5 +1,5 @@
 /*
- * Copyright (2024) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ trait DeltaSQLTestUtils extends SQLTestUtils {
    * and passes it to `f`. If a file/directory is created by `f`, it will be deleted
    * after `f` returns.
    *
-   * This method is copied over from `SQLTestUtils` of Apache Spark.
+   * This method is copied over from [[SQLTestUtils]] of Apache Spark.
    */
   def withTempPath(prefix: String)(f: File => Unit): Unit = {
     withTempDir(prefix)(f)

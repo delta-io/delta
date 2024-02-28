@@ -21,9 +21,9 @@ import java.util.Locale
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 import org.apache.spark.sql.{AnalysisException, QueryTest}
-import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 
