@@ -22,17 +22,18 @@ import org.apache.spark.sql.delta.{DeltaLog, SerializableFileStatus}
 import org.apache.spark.sql.delta.DeltaConfigs.{MANAGED_COMMIT_OWNER_CONF, MANAGED_COMMIT_OWNER_NAME}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 
 class ManagedCommitSuite
     extends QueryTest
-    with SQLTestUtils
+    with DeltaSQLTestUtils
     with SharedSparkSession
     with DeltaSQLCommandTest
     with ManagedCommitTestUtils {
