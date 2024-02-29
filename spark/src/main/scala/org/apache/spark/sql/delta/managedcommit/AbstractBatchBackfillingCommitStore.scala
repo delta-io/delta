@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.managedcommit
 import java.nio.file.FileAlreadyExistsException
 import java.util.UUID
 
-import org.apache.spark.sql.delta.{DeltaLog, SerializableFileStatus}
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
@@ -81,8 +81,8 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
       // Always backfill zeroth commit or when batch size is configured as 1
       backfill(logStore, hadoopConf, tablePath, commitVersion, fileStatus)
       val targetFile = FileNames.deltaFile(logPath(tablePath), commitVersion)
-      val targetFileStatus = SerializableFileStatus.fromStatus(fs.getFileStatus(targetFile))
-      val newCommit = commitResponse.commit.copy(serializableFileStatus = targetFileStatus)
+      val targetFileStatus = fs.getFileStatus(targetFile)
+      val newCommit = commitResponse.commit.copy(fileStatus = targetFileStatus)
       commitResponse = commitResponse.copy(commit = newCommit)
     } else if (commitVersion % batchSize == 0) {
       logInfo(s"Making sure commits are backfilled till $commitVersion version for" +
@@ -113,7 +113,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
       hadoopConf: Configuration,
       tablePath: Path): Unit = {
     getCommits(tablePath, startVersion = 0).foreach { case commit =>
-      val fileStatus = commit.serializableFileStatus.toFileStatus
+      val fileStatus = commit.fileStatus
       backfill(logStore, hadoopConf, tablePath, commit.version, fileStatus)
     }
   }

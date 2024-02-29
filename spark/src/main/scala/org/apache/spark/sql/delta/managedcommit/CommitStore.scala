@@ -29,7 +29,7 @@ import org.apache.spark.internal.Logging
 /** Representation of a commit file */
 case class Commit(
   version: Long,
-  serializableFileStatus: SerializableFileStatus,
+  fileStatus: FileStatus,
   commitTimestamp: Long)
 
 /**

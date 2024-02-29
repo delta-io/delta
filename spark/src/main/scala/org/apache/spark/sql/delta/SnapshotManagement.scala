@@ -200,7 +200,7 @@ trait SnapshotManagement { self: DeltaLog =>
     val resultFromCommitStoreFiltered = resultFromCommitStore
       .dropWhile(_.version <= maxDeltaVersionSeen)
       .takeWhile(commit => versionToLoad.forall(commit.version <= _))
-      .map(_.serializableFileStatus.toFileStatus)
+      .map(_.fileStatus)
       .toArray
     if (resultTuplesFromFsListingOpt.isEmpty && resultFromCommitStoreFiltered.nonEmpty) {
       throw new IllegalStateException("No files found from the file system listing, but " +

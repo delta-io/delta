@@ -21,7 +21,6 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.SerializableFileStatus
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -89,8 +88,7 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
           s"Commit version $commitVersion is not valid. Expected version: $expectedVersion.")
       }
 
-      val commit =
-        Commit(commitVersion, SerializableFileStatus.fromStatus(commitFile), commitTimestamp)
+      val commit = Commit(commitVersion, commitFile, commitTimestamp)
       tableData.commitsMap(commitVersion) = commit
       tableData.maxCommitVersion = commitVersion
 
