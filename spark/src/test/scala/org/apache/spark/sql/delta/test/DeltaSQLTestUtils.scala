@@ -31,7 +31,6 @@ trait DeltaSQLTestUtils extends SQLTestUtils {
    */
   def withTempDir(prefix: String)(f: File => Unit): Unit = {
     val path = Utils.createTempDir(namePrefix = prefix)
-    path.delete()
     try f(path) finally Utils.deleteRecursively(path)
   }
 
