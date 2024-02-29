@@ -743,6 +743,17 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "A string-to-string map of configuration properties for the managed commit owner.")
 
+  /**
+   * Maximum columnId used in the schema so far for column mapping. Internal property that cannot
+   * be set by users.
+   */
+  val MAX_AMOUNT_OF_CHAR_IN_TRANSACTION_PREDICATE = buildConfig[Int](
+    "maxAmountOfCharInTransactionPredicate",
+    "4096",
+    _.toInt,
+    _ > 3,
+    "needs to be greater than 3.")
+
 }
 
 object DeltaConfigs extends DeltaConfigsBase

@@ -762,7 +762,7 @@ object StatisticsCollection extends DeltaCommand {
     // Save the current AddFiles that match the predicates so we can update their stats
     val files = txn.filterFiles(predicates).filter(fileFilter)
     val newAddFiles = computeNewAddFiles(deltaLog, txn, files)
-    txn.commit(newAddFiles, ComputeStats(predicates))
+    txn.commit(newAddFiles, ComputeStats(predicates, txn.metadata))
   }
 
   /**

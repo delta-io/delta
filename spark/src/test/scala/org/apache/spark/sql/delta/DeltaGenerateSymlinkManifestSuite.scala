@@ -524,7 +524,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
           assert(txn.snapshot.allFiles.count() === 1)
           val file = txn.snapshot.allFiles.collect().head
           val actions = removeRowsFromFileUsingDV(deltaLog, file, rowIds = rowsToBeRemoved)
-          txn.commit(actions, Delete(predicate = Seq.empty))
+          txn.commit(actions, Delete(predicate = Seq.empty, txn.metadata))
         }
         val e = intercept[DeltaCommandUnsupportedWithDeletionVectorsException] {
           spark.sql(s"""GENERATE symlink_format_manifest FOR TABLE delta.`$tablePath`""")
@@ -594,7 +594,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
           assert(txn.snapshot.allFiles.count() === 1)
           val file = txn.snapshot.allFiles.collect().head
           val actions = removeRowsFromFileUsingDV(deltaLog, file, rowIds = rowsToBeRemoved)
-          txn.commit(actions, Delete(predicate = Seq.empty))
+          txn.commit(actions, Delete(predicate = Seq.empty, txn.metadata))
         }
         assert(getFilesWithDeletionVectors(deltaLog).nonEmpty)
         enableDeletionVectorsInTable(new Path(tablePath), enable = false)
@@ -622,7 +622,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
           assert(txn.snapshot.allFiles.count() === 1)
           val file = txn.snapshot.allFiles.collect().head
           val actions = removeRowsFromFileUsingDV(deltaLog, file, rowIds = rowsToBeRemoved)
-          txn.commit(actions, Delete(predicate = Seq.empty))
+          txn.commit(actions, Delete(predicate = Seq.empty, txn.metadata))
         }
         // Force enable manifest generation.
         withSQLConf(DeltaSQLConf.DELTA_TABLE_PROPERTY_CONSTRAINTS_CHECK_ENABLED.key -> "false") {

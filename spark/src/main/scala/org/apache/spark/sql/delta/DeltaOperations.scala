@@ -76,10 +76,12 @@ object DeltaOperations {
     }
   }
 
-  abstract class OperationWithPredicates(name: String, val predicates: Seq[Expression])
+  abstract class OperationWithPredicates(name: String, val predicates: Seq[Expression]
+                                         , metadata: Metadata)
       extends Operation(name) {
     private val predicateString = JsonUtils.toJson(predicatesToString(predicates).map(
-        c => StringUtils.abbreviate(c, 256)))
+        c => StringUtils.abbreviate(c,
+          DeltaConfigs.MAX_AMOUNT_OF_CHAR_IN_TRANSACTION_PREDICATE.fromMetaData(metadata))))
     override def parameters: Map[String, Any] = Map("predicate" -> predicateString)
   }
 
@@ -151,8 +153,8 @@ object DeltaOperations {
     override def changesData: Boolean = true
   }
   /** Recorded while deleting certain partitions. */
-  case class Delete(predicate: Seq[Expression])
-      extends OperationWithPredicates("DELETE", predicate) {
+  case class Delete(predicate: Seq[Expression], metaData: Metadata)
+      extends OperationWithPredicates("DELETE", predicate, metaData) {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.DELETE
 
     override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
@@ -223,9 +225,10 @@ object DeltaOperations {
       insertPredicate: Option[String],
       matchedPredicates: Seq[MergePredicate],
       notMatchedPredicates: Seq[MergePredicate],
-      notMatchedBySourcePredicates: Seq[MergePredicate]
+      notMatchedBySourcePredicates: Seq[MergePredicate],
+      metaData: Metadata
   )
-    extends OperationWithPredicates(OP_MERGE, predicate.toSeq) {
+    extends OperationWithPredicates(OP_MERGE, predicate.toSeq, metaData) {
 
     override val parameters: Map[String, Any] = {
       super.parameters ++
@@ -268,21 +271,23 @@ object DeltaOperations {
         predicate: Option[Expression],
         matchedPredicates: Seq[MergePredicate],
         notMatchedPredicates: Seq[MergePredicate],
-        notMatchedBySourcePredicates: Seq[MergePredicate]
-    ): Merge = Merge(
+        notMatchedBySourcePredicates: Seq[MergePredicate],
+        metaData: Metadata
+             ): Merge = Merge(
           predicate,
           updatePredicate = None,
           deletePredicate = None,
           insertPredicate = None,
           matchedPredicates,
           notMatchedPredicates,
-          notMatchedBySourcePredicates
+          notMatchedBySourcePredicates,
+          metaData
     )
   }
 
   /** Recorded when an update operation is committed to the table. */
-  case class Update(predicate: Option[Expression])
-      extends OperationWithPredicates("UPDATE", predicate.toSeq) {
+  case class Update(predicate: Option[Expression], metadata: Metadata)
+      extends OperationWithPredicates("UPDATE", predicate.toSeq, metadata) {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.UPDATE
 
     override def changesData: Boolean = true
@@ -459,8 +464,8 @@ object DeltaOperations {
   }
 
   /** Recorded when recomputing stats on the table. */
-  case class ComputeStats(predicate: Seq[Expression])
-      extends OperationWithPredicates("COMPUTE STATS", predicate)
+  case class ComputeStats(predicate: Seq[Expression], metadata: Metadata)
+      extends OperationWithPredicates("COMPUTE STATS", predicate, metadata)
 
   /** Recorded when restoring a Delta table to an older version. */
   val OP_RESTORE = "RESTORE"
@@ -475,8 +480,9 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.RESTORE
   }
 
-  sealed abstract class OptimizeOrReorg(override val name: String, predicates: Seq[Expression])
-    extends OperationWithPredicates(name, predicates)
+  sealed abstract class OptimizeOrReorg(override val name: String, predicates: Seq[Expression]
+                                        , metadata: Metadata)
+    extends OperationWithPredicates(name, predicates, metadata)
   /** parameter key to indicate whether it's an Auto Compaction */
   val AUTO_COMPACTION_PARAMETER_KEY = "auto"
 
@@ -491,8 +497,9 @@ object DeltaOperations {
   case class Optimize(
       predicate: Seq[Expression],
       zOrderBy: Seq[String] = Seq.empty,
-      auto: Boolean = false
-  ) extends OptimizeOrReorg(OPTIMIZE_OPERATION_NAME, predicate) {
+      auto: Boolean = false,
+      metadata: Metadata
+  ) extends OptimizeOrReorg(OPTIMIZE_OPERATION_NAME, predicate, metadata) {
     override val parameters: Map[String, Any] = super.parameters ++ Map(
       ZORDER_PARAMETER_KEY -> JsonUtils.toJson(zOrderBy),
       AUTO_COMPACTION_PARAMETER_KEY -> auto
@@ -546,7 +553,8 @@ object DeltaOperations {
   /** Recorded when running REORG on the table. */
   case class Reorg(
       predicate: Seq[Expression],
-      applyPurge: Boolean = true) extends OptimizeOrReorg(REORG_OPERATION_NAME, predicate) {
+      applyPurge: Boolean = true,
+      metadata: Metadata) extends OptimizeOrReorg(REORG_OPERATION_NAME, predicate, metadata) {
     override val parameters: Map[String, Any] = super.parameters ++ Map(
       "applyPurge" -> applyPurge
     )

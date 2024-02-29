@@ -282,7 +282,7 @@ class OptimizeExecutor(
       val removedDVs = filesToProcess.filter(_.deletionVector != null).map(_.deletionVector).toSeq
       if (addedFiles.size > 0) {
         val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles, removedDVs)
-        commitAndRetry(txn, getOperation(), updates, metrics) { newTxn =>
+        commitAndRetry(txn, getOperation(txn.metadata), updates, metrics) { newTxn =>
           val newPartitionSchema = newTxn.metadata.partitionSchema
           val candidateSetOld = candidateFiles.map(_.path).toSet
           val candidateSetNew = newTxn.filterFiles(partitionPredicate).map(_.path).toSet
@@ -497,11 +497,12 @@ class OptimizeExecutor(
   }
 
   /** Create the appropriate [[Operation]] object for txn commit history */
-  private def getOperation(): Operation = {
+  private def getOperation(metadata : org.apache.spark.sql.delta.actions.Metadata): Operation = {
     if (optimizeContext.reorg.nonEmpty) {
-      DeltaOperations.Reorg(partitionPredicate)
+      DeltaOperations.Reorg(partitionPredicate, metadata = metadata)
     } else {
-      DeltaOperations.Optimize(partitionPredicate, clusteringColumns, auto = isAutoCompact)
+      DeltaOperations.Optimize(partitionPredicate, clusteringColumns, auto = isAutoCompact
+                              , metadata)
     }
   }
 

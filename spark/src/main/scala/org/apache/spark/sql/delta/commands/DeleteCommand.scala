@@ -126,7 +126,7 @@ case class DeleteCommand(
         }
 
         val deleteActions = performDelete(sparkSession, deltaLog, txn)
-        txn.commitIfNeeded(deleteActions, DeltaOperations.Delete(condition.toSeq))
+        txn.commitIfNeeded(deleteActions, DeltaOperations.Delete(condition.toSeq, txn.metadata))
       }
       // Re-cache all cached plans(including this relation itself, if it's cached) that refer to
       // this data source relation.

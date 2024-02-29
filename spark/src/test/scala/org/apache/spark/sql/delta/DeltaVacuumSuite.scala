@@ -204,7 +204,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         )
         txn.registerSQLMetrics(spark, metrics)
         txn.commit(Seq(RemoveFile(path, Option(clock.getTimeMillis()))),
-          Delete(Seq(Literal.TrueLiteral)))
+          Delete(Seq(Literal.TrueLiteral), txn.metadata))
       // scalastyle:on
       case e: ExecuteVacuumInSQL =>
         Given(s"*** Executing SQL: ${e.sql}")
