@@ -63,9 +63,11 @@ trait SnapshotDescriptor {
  *  - Metadata
  *  - Transaction state
  *
- * @param timestamp The timestamp of the latest commit in milliseconds. Can also be set to -1 if the
- *                  timestamp of the commit is unknown or the table has not been initialized, i.e.
- *                  `version = -1`.
+ * @param inCommitTimestampOpt The in-commit-timestamp of the latest commit in milliseconds. Can
+ *                  be set to None if
+ *                   1. The timestamp has not been read yet - generally the case for cold tables.
+ *                   2. Or the table has not been initialized, i.e. `version = -1`.
+ *                   3. Or the table does not have [[InCommitTimestampTableFeature]] enabled.
  *
  */
 class Snapshot(
@@ -73,7 +75,7 @@ class Snapshot(
     override val version: Long,
     val logSegment: LogSegment,
     override val deltaLog: DeltaLog,
-    val timestamp: Long,
+    val inCommitTimestampOpt: Option[Long],
     val checksumOpt: Option[VersionChecksum]
   )
   extends SnapshotDescriptor
@@ -94,6 +96,26 @@ class Snapshot(
   override val snapshotToScan: Snapshot = this
 
   override def columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
+
+  /**
+   * Returns the timestamp of the latest commit of this snapshot.
+   * For an uninitialized snapshot, this returns -1.
+   *
+   * When InCommitTimestampTableFeature is enabled, the timestamp
+   * is retrieved from the CommitInfo of the latest commit which
+   * can result in an IO operation.
+   */
+  def timestamp: Long = {
+    if (DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata)) {
+      inCommitTimestampOpt.getOrElse {
+        val commitInfoOpt = DeltaHistoryManager.getCommitInfoOpt(
+          deltaLog.store, deltaLog.logPath, version, deltaLog.newDeltaHadoopConf())
+        CommitInfo.getRequiredInCommitTimestamp(commitInfoOpt, version.toString)
+      }
+    } else {
+      logSegment.lastCommitTimestamp
+    }
+  }
 
 
   private[delta] lazy val nonFileActions: Seq[Action] = {
@@ -469,7 +491,7 @@ class InitialSnapshot(
     version = -1,
     logSegment = LogSegment.empty(logPath),
     deltaLog = deltaLog,
-    timestamp = -1,
+    inCommitTimestampOpt = None,
     checksumOpt = None
   ) {
 
@@ -490,4 +512,5 @@ class InitialSnapshot(
   override def stateDF: DataFrame = emptyDF
   override protected lazy val computedState: SnapshotState = initialState(metadata)
   override def protocol: Protocol = computedState.protocol
+  override def timestamp: Long = -1L
 }

@@ -356,6 +356,7 @@ object TableFeature {
         ManagedCommitTableFeature,
         // Row IDs are still under development and only available in testing.
         RowTrackingFeature,
+        InCommitTimestampTableFeature,
         TypeWideningTableFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
@@ -636,6 +637,23 @@ object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
       spark: SparkSession): Boolean = isTypeWideningSupportNeededByMetadata(metadata)
+}
+
+/**
+ * inCommitTimestamp table feature is a writer feature that makes
+ * every writer write a monotonically increasing timestamp inside the commit file.
+ */
+object InCommitTimestampTableFeature
+  extends WriterFeature(name = "inCommitTimestamp-dev")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata)
+  }
 }
 
 /**

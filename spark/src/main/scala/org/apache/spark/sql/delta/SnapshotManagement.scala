@@ -566,7 +566,7 @@ trait SnapshotManagement { self: DeltaLog =>
         version = segment.version,
         logSegment = segment,
         deltaLog = this,
-        timestamp = segment.lastCommitTimestamp,
+        inCommitTimestampOpt = None,
         checksumOpt = checksumOpt.orElse(
           readChecksum(segment.version, lastSeenChecksumFileStatusOpt))
       )
@@ -1154,9 +1154,9 @@ object SerializableFileStatus {
  * @param version The Snapshot version to generate
  * @param deltas The delta commit files (.json) to read
  * @param checkpointProvider provider to give information about Checkpoint files.
- * @param lastCommitTimestamp The "unadjusted" timestamp of the last commit within this segment. By
- *                            unadjusted, we mean that the commit timestamps may not necessarily be
- *                            monotonically increasing for the commits within this segment.
+ * @param lastCommitTimestamp The "unadjusted" file modification timestamp of the
+ *          last commit within this segment. By unadjusted, we mean that the commit timestamps may
+ *          not necessarily be monotonically increasing for the commits within this segment.
  */
 case class LogSegment(
     logPath: Path,

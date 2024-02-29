@@ -40,6 +40,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats._
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkException
@@ -296,7 +297,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * Tracks the start time since we started trying to write a particular commit.
    * Used for logging duration of retried transactions.
    */
-  protected var commitAttemptStartTime: Long = _
+  protected var commitAttemptStartTimeMillis: Long = _
 
   /**
    * Tracks actions within the transaction, will commit along with the passed-in actions in the
@@ -370,6 +371,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   // The commit store of a table shouldn't change. If it is changed by a concurrent commit, then it
   // will be detected as a conflict and the transaction will anyway fail.
   private[delta] val preCommitCommitStoreOpt: Option[CommitStore] = snapshot.commitStoreOpt
+
+  /**
+   * Generates a timestamp which is greater than the commit timestamp
+   * of the last snapshot. Note that this is only needed when the
+   * feature `inCommitTimestamps` is enabled.
+   */
+  protected[delta] def generateInCommitTimestampForFirstCommitAttempt(
+      currentTimestamp: Long): Option[Long] =
+    Option.when(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata)) {
+      val lastCommitTimestamp = snapshot.timestamp
+      math.max(currentTimestamp, lastCommitTimestamp + 1)
+    }
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
@@ -1086,31 +1099,50 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val readRowIdHighWatermark =
         RowId.extractHighWatermark(snapshot).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
 
+      commitAttemptStartTimeMillis = clock.getTimeMillis()
       commitInfo = CommitInfo(
-        clock.getTimeMillis(),
-        op.name,
-        op.jsonEncodedValues,
-        Map.empty,
-        Some(readVersion).filter(_ >= 0),
-        Option(isolationLevelToUse.toString),
-        Some(isBlindAppend),
-        getOperationMetrics(op),
-        getUserMetadata(op),
+        time = commitAttemptStartTimeMillis,
+        operation = op.name,
+        inCommitTimestamp =
+          generateInCommitTimestampForFirstCommitAttempt(commitAttemptStartTimeMillis),
+        operationParameters = op.jsonEncodedValues,
+        commandContext = Map.empty,
+        readVersion = Some(readVersion).filter(_ >= 0),
+        isolationLevel = Option(isolationLevelToUse.toString),
+        isBlindAppend = Some(isBlindAppend),
+        operationMetrics = getOperationMetrics(op),
+        userMetadata = getUserMetadata(op),
         tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
       // Validate that the [[DeltaConfigs.MANAGED_COMMIT_PROVIDER_CONF]] is json parse-able.
       DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.fromMetaData(metadata)
 
+      val firstAttemptVersion = getFirstAttemptVersion
+      val updatedMetadataOpt = commitInfo.inCommitTimestamp.flatMap { inCommitTimestamp =>
+        InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+          inCommitTimestamp,
+          snapshot,
+          metadata,
+          firstAttemptVersion)
+      }
+      val updatedActions = updatedMetadataOpt.map { updatedMetadata =>
+          preparedActions.map {
+            case _: Metadata => updatedMetadata
+            case other => other
+          }
+        }
+        .getOrElse(preparedActions)
+      val updatedMetadata = updatedMetadataOpt.getOrElse(metadata)
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.toSeq,
         readFiles = readFiles.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
-        metadata = metadata,
+        metadata = updatedMetadata,
         protocol = protocol,
-        actions = preparedActions,
+        actions = updatedActions,
         readSnapshot = snapshot,
         commitInfo = Option(commitInfo),
         readRowIdHighWatermark = readRowIdHighWatermark,
@@ -1125,7 +1157,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         registerPostCommitHook(GenerateSymlinkManifest)
       }
 
-      commitAttemptStartTime = clock.getTimeMillis()
       if (preparedActions.isEmpty && canSkipEmptyCommits &&
           skipRecordingEmptyCommitAllowed(isolationLevelToUse)) {
         return None
@@ -1133,7 +1164,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
       val (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo) =
         doCommitRetryIteratively(
-          getFirstAttemptVersion, currentTransactionInfo, isolationLevelToUse)
+          firstAttemptVersion, currentTransactionInfo, isolationLevelToUse)
       logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")
       (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo.actions)
     } catch {
@@ -1182,15 +1213,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       newProtocolOpt: Option[Protocol],
       op: DeltaOperations.Operation,
       context: Map[String, String],
-      metrics: Map[String, String]): (Long, Snapshot) = {
+      metrics: Map[String, String]
+  ): (Long, Snapshot) = recordDeltaOperation(deltaLog, "delta.commit.large") {
     assert(!committed, "Transaction already committed.")
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
     try {
       val tags = Map.empty[String, String]
       val commitInfo = CommitInfo(
-        time = clock.getTimeMillis(),
+        NANOSECONDS.toMillis(commitStartNano),
         operation = op.name,
+        generateInCommitTimestampForFirstCommitAttempt(NANOSECONDS.toMillis(commitStartNano)),
         operationParameters = op.jsonEncodedValues,
         context,
         readVersion = Some(readVersion),
@@ -1215,8 +1248,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Initialize everything needed to maintain auto-compaction stats.
       partitionsAddedToOpt = Some(new mutable.HashSet[Map[String, String]])
       val acStatsCollector = createAutoCompactStatsCollector()
+      val updatedMetadataOpt = commitInfo.inCommitTimestamp.flatMap { inCommitTimestamp =>
+          InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+            inCommitTimestamp,
+            snapshot,
+            metadata,
+            attemptVersion)
+        }
       var allActions =
-        Seq(commitInfo, metadata).toIterator ++
+        Seq(commitInfo, updatedMetadataOpt.getOrElse(metadata)).toIterator ++
           nonProtocolMetadataActions ++
           newProtocolOpt.toIterator
       allActions = allActions.map { action =>
@@ -1719,7 +1759,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
     }
     // retries all failed
-    val totalCommitAttemptTime = clock.getTimeMillis() - commitAttemptStartTime
+    val totalCommitAttemptTime = clock.getTimeMillis() - commitAttemptStartTimeMillis
     throw DeltaErrors.maxCommitRetriesExceededException(
       maxRetryAttempts + 1,
       commitVersion,
@@ -1939,12 +1979,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           otherCommitFileStatus,
           commitIsolationLevel)
         logInfo(s"$logPrefixStr No conflicts in version $otherCommitVersion, " +
-          s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start")
+          s"${clock.getTimeMillis() - commitAttemptStartTimeMillis} ms since start")
       }
 
       logInfo(s"$logPrefixStr No conflicts with versions [$checkVersion, $nextAttemptVersion) " +
         s"with current txn having $txnDetailsLogStr, " +
-        s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start")
+        s"${clock.getTimeMillis() - commitAttemptStartTimeMillis} ms since start")
       (nextAttemptVersion, updatedCurrentTransactionInfo)
     }
   }
