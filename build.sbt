@@ -283,6 +283,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
+      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
+      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
 
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
