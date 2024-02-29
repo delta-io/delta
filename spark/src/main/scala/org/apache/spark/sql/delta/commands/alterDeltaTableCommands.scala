@@ -723,7 +723,8 @@ case class AlterTableChangeColumnDeltaCommand(
         newType,
         resolver,
         txn.metadata.columnMappingMode,
-        columnPath :+ originalField.name
+        columnPath :+ originalField.name,
+        allowTypeWidening = TypeWidening.isEnabled(txn.protocol, txn.metadata)
       ).nonEmpty) {
       throw DeltaErrors.alterTableChangeColumnException(
         fieldPath = UnresolvedAttribute(columnPath :+ originalField.name).name,
@@ -802,6 +803,7 @@ case class AlterTableReplaceColumnsDeltaCommand(
         changingSchema,
         resolver,
         txn.metadata.columnMappingMode,
+        allowTypeWidening = TypeWidening.isEnabled(txn.protocol, txn.metadata),
         failOnAmbiguousChanges = true
       ).foreach { operation =>
         throw DeltaErrors.alterTableReplaceColumnsException(
