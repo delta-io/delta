@@ -23,9 +23,8 @@ import org.apache.spark.util.Utils
 
 trait DeltaSQLTestUtils extends SQLTestUtils {
   /**
-   * Generates a temporary path with a prefix without creating the actual file/directory,
-   * and passes it to `f`. If a file/directory is created by `f`, it will be deleted
-   * after `f` returns.
+   * Creates a temporary directory, which is then passed to `f` and will be deleted after `f`
+   * returns.
    *
    * This method is copied over from [[SQLTestUtils]] of Apache Spark.
    */
@@ -35,9 +34,8 @@ trait DeltaSQLTestUtils extends SQLTestUtils {
   }
 
   /**
-   * Generates a temporary path with a prefix without creating the actual file/directory,
-   * and passes it to `f`. If a file/directory is created by `f`, it will be deleted
-   * after `f` returns.
+   * Creates a temporary directory, which is then passed to `f` and will be deleted after `f`
+   * returns.
    *
    * This method is copied over from [[SQLTestUtils]] of Apache Spark.
    */
