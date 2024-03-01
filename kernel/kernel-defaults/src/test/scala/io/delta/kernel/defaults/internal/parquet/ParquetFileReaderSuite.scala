@@ -16,13 +16,14 @@
 package io.delta.kernel.defaults.internal.parquet
 
 import java.io.File
-import java.lang.{Double => DoubleJ, Float => FloatJ}
-import java.math.BigDecimal
+import java.math.{BigDecimal, RoundingMode}
 
-import io.delta.golden.GoldenTableUtils.goldenTableFile
+import scala.collection.mutable.ArrayBuffer
+
+import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
+import io.delta.kernel.defaults.internal.DefaultKernelUtils.DateTimeConstants
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, VectorTestUtils}
-import io.delta.kernel.types.{DecimalType, IntegerType, StructType}
-import org.apache.hadoop.conf.Configuration
+import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
 class ParquetFileReaderSuite extends AnyFunSuite
@@ -45,7 +46,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
     goldenTableFile("parquet-decimal-dictionaries-v2"))
 
   test("decimals encoded using dictionary encoding ") {
-    val expectedResult = (0 until 1000000).map { i =>
+    val expResult = (0 until 1000000).map { i =>
       TestRow(i, BigDecimal.valueOf(i%5), BigDecimal.valueOf(i%6), BigDecimal.valueOf(i%2))
     }
 
@@ -55,11 +56,10 @@ class ParquetFileReaderSuite extends AnyFunSuite
       .add("col2", new DecimalType(12, 0)) // INT64: 10 <= precision <= 18
       .add("col3", new DecimalType(25, 0)) // FIXED_LEN_BYTE_ARRAY
 
-    val batchReader = new ParquetBatchReader(new Configuration())
     for (file <- Seq(DECIMAL_TYPES_DICT_FILE_V1, DECIMAL_TYPES_DICT_FILE_V2)) {
-      val batches = batchReader.read(file, readSchema)
-      val result = batches.toSeq.flatMap(_.getRows.toSeq)
-      checkAnswer(result, expectedResult)
+      val actResult = readParquetFilesUsingSpark(file, readSchema)
+
+      checkAnswer(actResult, expResult)
     }
   }
 
@@ -72,7 +72,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
       n.scaleByPowerOfTen(5).add(n)
     }
 
-    val expectedResult = (0 until 99998).map { i =>
+    val expResult = (0 until 99998).map { i =>
       if (i % 85 == 0) {
         val n = BigDecimal.valueOf(i)
         TestRow(i, n.movePointLeft(1).setScale(1), n.setScale(5), n.setScale(5))
@@ -98,66 +98,167 @@ class ParquetFileReaderSuite extends AnyFunSuite
       .add("col2", new DecimalType(10, 5)) // INT64: 10 <= precision <= 18
       .add("col3", new DecimalType(20, 5)) // FIXED_LEN_BYTE_ARRAY
 
-    val batchReader = new ParquetBatchReader(new Configuration())
-    val batches = batchReader.read(LARGE_SCALE_DECIMAL_TYPES_FILE, readSchema)
+    val actResult = readParquetFilesUsingSpark(LARGE_SCALE_DECIMAL_TYPES_FILE, readSchema)
 
-    val result = batches.toSeq.flatMap(_.getRows.toSeq)
-    checkAnswer(result, expectedResult)
+    checkAnswer(actResult, expResult)
+  }
+
+  private val ALL_TYPES_FILE = getSingleParquetFile(goldenTableFile("parquet-all-types"))
+
+  test("read all types of data") {
+    val readSchema = tableSchema(goldenTablePath("parquet-all-types"))
+
+    val actResult = readParquetFilesUsingSpark(ALL_TYPES_FILE, readSchema)
+
+    val expResult = (0 until 200).map { i =>
+      val expRow = generateRowFromAllTypesFile(readSchema, i)
+      TestRow(expRow: _*)
+    }
+
+    checkAnswer(actResult, expResult)
+  }
+
+  test("read subset of columns") {
+    val readSchema = new StructType()
+      .add("byteType", ByteType.BYTE)
+      .add("booleanType", BooleanType.BOOLEAN)
+      .add("stringType", StringType.STRING)
+      .add("dateType", DateType.DATE)
+      .add("nested_struct", new StructType()
+        .add("aa", StringType.STRING)
+        .add("ac", new StructType().add("aca", IntegerType.INTEGER)))
+      .add("array_of_prims", new ArrayType(IntegerType.INTEGER, true))
+
+    val actResult = readParquetFilesUsingSpark(ALL_TYPES_FILE, readSchema)
+
+    val expResult = (0 until 200).map { i =>
+      val expRow = generateRowFromAllTypesFile(readSchema, i)
+      TestRow(expRow: _*)
+    }
+
+    checkAnswer(actResult, expResult)
+  }
+
+  test("request row indices") {
+    val readSchema = new StructType()
+      .add("id", LongType.LONG)
+      .add(StructField.METADATA_ROW_INDEX_COLUMN)
+
+    val path = getTestResourceFilePath("parquet-basic-row-indexes")
+    val actResult1 = readParquetFilesUsingKernel(path, readSchema)
+    val expResult1 = (0 until 30)
+      .map(i => TestRow(i, if (i < 10) i else if (i < 20) i - 10 else i - 20))
+
+    checkAnswer(actResult1, expResult1)
+
+    // File with multiple row-groups [0, 20000) where rowIndex = id
+    val filePath = getTestResourceFilePath("parquet/")
+    val actResult2 = readParquetFilesUsingKernel(filePath, readSchema)
+    val expResult2 = (0 until 20000).map(i => TestRow(i, i))
+
+    checkAnswer(actResult2, expResult2)
+  }
+
+  private def generateRowFromAllTypesFile(readSchema: StructType, rowId: Int): Seq[Any] = {
+    val expRow = ArrayBuffer.empty[Any]
+    readSchema.fields.forEach { field =>
+      val name = field.getName.toLowerCase()
+      val expValue = name match {
+        case "booleantype" => if (rowId % 87 != 0) rowId % 2 == 0 else null
+        case "bytetype" => if (rowId % 72 != 0) rowId.toByte else null
+        case "shorttype" => if (rowId % 56 != 0) rowId.toShort else null
+        case "datetype" => if (rowId % 61 != 0) {
+            Math.floorDiv(rowId * 20000000L, DateTimeConstants.MILLIS_PER_DAY).toInt
+          } else null
+        case "integertype" => if (rowId % 23 != 0) rowId else null
+        case "longtype" => if (rowId % 25 != 0) rowId + 1L else null
+        case "floattype" => if (rowId % 28 != 0) {
+            new BigDecimal(rowId * 0.234f).setScale(3, RoundingMode.HALF_UP)
+              .stripTrailingZeros.floatValue
+          } else null
+        case "doubletype" => if (rowId % 54 != 0) rowId * 234234.23d else null
+        case "stringtype" => if (rowId % 57 != 0) rowId.toString else null
+        case "binarytype" => if (rowId % 59 != 0) rowId.toString.getBytes else null
+        case "timestamptype" =>
+          // Tests only for spark.sql.parquet.outputTimestampTyp = INT96, other formats
+          // are tested in end-to-end tests in DeltaTableReadsSuite
+          if (rowId % 62 != 0) 23423523L * rowId * 1000 else null
+        case "decimal" =>
+          // Value is rounded to scale=2 when written
+          if (rowId % 67 != 0) new BigDecimal(rowId * 123.52).setScale(2, RoundingMode.HALF_UP)
+          else null
+        case "nested_struct" => generateNestedStructColumn(rowId)
+        case "array_of_prims" => if (rowId % 25 == 0) null
+          else if (rowId % 29 == 0) Vector.empty
+          else Vector(rowId, null, rowId + 1)
+        case "array_of_arrays" => generateArrayOfArraysColumn(rowId)
+        case "array_of_structs" => Vector(TestRow(rowId), null)
+        case "map_of_prims" => generateMapOfPrimsColumn(rowId)
+        case "map_of_rows" => Map(rowId + 1 -> (if (rowId % 10 == 0) TestRow(rowId*20) else null))
+        case "map_of_arrays" => generateMapOfArraysColumn(rowId)
+        case "missing_column_primitive" => null
+        case "missing_column_struct" => null
+        case _ => throw new IllegalArgumentException("unknown column: " + name)
+      }
+      expRow += expValue
+    }
+    expRow
+  }
+
+  private def generateNestedStructColumn(rowId: Int): TestRow = {
+    if (rowId % 63 == 0) return null
+    if (rowId % 19 != 0 && rowId % 23 != 0) return TestRow(rowId, TestRow(rowId))
+    if (rowId % 23 == 0) return TestRow(rowId, null)
+    TestRow(null, null)
+  }
+
+  private def generateMapOfPrimsColumn(rowId: Int): Map[Int, Any] = {
+    if (rowId % 28 == 0) return null
+    if (rowId % 30 == 0) return Map.empty[Int, Any]
+    Map(
+      rowId -> (if (rowId % 29 == 0) null else rowId + 2L),
+      (if (rowId % 27 != 0) rowId + 2 else rowId + 3) -> (rowId + 9L)
+    )
+  }
+
+  private def generateArrayOfArraysColumn(rowId: Int): Vector[ArrayBuffer[Any]] = {
+    if (rowId % 8 == 0) {
+      return null
+    }
+    val emptyArray = ArrayBuffer.empty[Any]
+    val singleElemArray = ArrayBuffer[Any](rowId)
+    val doubleElemArray = ArrayBuffer[Any](rowId + 10, rowId + 20)
+    val arrayWithNulls = ArrayBuffer[Any](null, rowId + 200)
+    val singleElemNullArray = ArrayBuffer[Any](null)
+
+    rowId % 7 match {
+      case 0 => Vector(singleElemArray, singleElemArray, arrayWithNulls)
+      case 1 => Vector(singleElemArray, doubleElemArray, emptyArray)
+      case 2 => Vector(arrayWithNulls)
+      case 3 => Vector(singleElemNullArray)
+      case 4 => Vector(null)
+      case 5 => Vector(emptyArray)
+      case 6 => Vector.empty[ArrayBuffer[Any]]
+    }
+  }
+
+  private def generateMapOfArraysColumn(rowId: Int): Map[Int, ArrayBuffer[Any]] = {
+    if (rowId % 30 == 0) {
+      return null
+    }
+    val val1 = if (rowId % 4 == 0) ArrayBuffer(rowId, null, rowId + 1) else ArrayBuffer.empty[Any]
+    val val2 = if (rowId % 7 == 0) ArrayBuffer.empty[Any] else ArrayBuffer[Any](null)
+    val expMap = if (rowId % 24 == 0) {
+      Map.empty[Int, ArrayBuffer[Any]]
+    } else {
+      Map[Int, ArrayBuffer[Any]](rowId -> val1, rowId + 1 -> val2)
+    }
+
+    expMap
   }
 
   //////////////////////////////////////////////////////////////////////////////////
   // Timestamp type tests
   //////////////////////////////////////////////////////////////////////////////////
   // TODO move over from DeltaTableReadsSuite once there is better testing infra
-
-  test("read all types of data") {
-    Seq(
-      ( // no stats collection as NaN is present
-        Seq(Float.NegativeInfinity, Float.MinValue, -1.0f,
-          -0.0f, 0.0f, 1.0f, null, Float.MaxValue, Float.PositiveInfinity, Float.NaN),
-        Seq(Double.NegativeInfinity, Double.MinValue, -1.0d,
-          -0.0d, 0.0d, 1.0d, null, Double.MaxValue, Double.PositiveInfinity, Double.NaN),
-        10,
-        (null, null, null),
-        (null, null, null)
-      ),
-      ( // Min and max are infinities
-        Seq(Float.NegativeInfinity, Float.MinValue, -1.0f,
-          -0.0f, 0.0f, 1.0f, null, Float.MaxValue, Float.PositiveInfinity),
-        Seq(Double.NegativeInfinity, Double.MinValue, -1.0d,
-          -0.0d, 0.0d, 1.0d, null, Double.MaxValue, Double.PositiveInfinity),
-        9,
-        (Float.NegativeInfinity, Float.PositiveInfinity, 1L),
-        (Double.NegativeInfinity, Double.PositiveInfinity, 1L)
-      )
-    ).foreach {
-      case (floats: Seq[FloatJ], doubles: Seq[DoubleJ], expRowCount, expFltStats, expDblStats) =>
-        withTempDir { tempPath =>
-          val targetDir = tempPath.getAbsolutePath
-          val testBatch = columnarBatch(floatVector(floats), doubleVector(doubles))
-          val dataToWrite = Seq(testBatch.toFiltered)
-
-          val writeOutput =
-            writeToParquetUsingKernel(
-              dataToWrite,
-              targetDir,
-              statsColumns = Seq(col("col_0"), col("col_1")))
-
-          assert(parquetFileRowCount(targetDir) == expRowCount)
-          verifyContent(targetDir, dataToWrite)
-
-          val stats = writeOutput.head.getStatistics.get()
-
-          def getStats(column: String): (Object, Object, Object) =
-            (
-              Option(stats.getMinValues.get(col(column))).map(_.getValue).orNull,
-              Option(stats.getMaxValues.get(col(column))).map(_.getValue).orNull,
-              Option(stats.getNullCounts.get(col(column))).orNull
-            )
-
-          assert(getStats("col_0") === expFltStats)
-          assert(getStats("col_1") === expDblStats)
-        }
-    }
-  }
 }
