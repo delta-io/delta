@@ -146,7 +146,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       preparedSourceDF: DataFrame,
       deltaTxn: OptimisticTransaction): DataFrame = {
 
-    val targetOutputColNames = getTargetOutputCols(spark, deltaTxn).map(_.name)
+    val targetOutputColNames = deltaTxn.metadata.schema.map(_.name)
 
     // When there is only one insert clause, there is no need for ROW_DROPPED_COL and
     // output df can be generated without CaseWhen.

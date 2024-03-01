@@ -285,23 +285,13 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     // And construct operations for columns that the insert/update clauses will add.
     val newUpdateOps = generateUpdateOpsForNewTargetFields(target, finalSchema, resolvedActions)
 
-    // Get expressions for the final schema for alignment. Note that attributes which already
-    // exist in the target need to use the same expression ID, even if the schema will evolve.
-    val finalSchemaExprs =
-    finalSchema.map { field =>
-      target.resolve(Seq(field.name), conf.resolver).map { r =>
-        AttributeReference(field.name, field.dataType)(r.exprId)
-      }.getOrElse {
-        AttributeReference(field.name, field.dataType)()
-      }
-    }
-
-    // Use the helper methods for in UpdateExpressionsSupport to generate expressions such
-    // that nested fields can be updated (only for existing columns).
+    // Use the helper methods in UpdateExpressionsSupport to generate expressions such that nested
+    // fields can be updated (only for existing columns).
     val alignedExprs = generateUpdateExpressions(
-      finalSchemaExprs,
-      existingUpdateOps ++ newUpdateOps,
-      conf.resolver,
+      targetSchema = finalSchema,
+      updateOps = existingUpdateOps ++ newUpdateOps,
+      defaultExprs = target.output,
+      resolver = conf.resolver,
       allowStructEvolution = allowStructEvolution,
       generatedColumns = generatedColumns)
 
@@ -310,13 +300,13 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         alignedExprs.map(_.get)
       } else {
         generateUpdateExprsForGeneratedColumns(target, generatedColumns, alignedExprs,
-          Some(finalSchemaExprs))
+          Some(finalSchema))
       }
 
     alignedExprsWithGenerationExprs
-      .zip(finalSchemaExprs)
-      .map { case (expr, attrib) =>
-        DeltaMergeAction(Seq(attrib.name), expr, targetColNameResolved = true)
+      .zip(finalSchema)
+      .map { case (expr, field) =>
+        DeltaMergeAction(Seq(field.name), expr, targetColNameResolved = true)
       }
   }
 

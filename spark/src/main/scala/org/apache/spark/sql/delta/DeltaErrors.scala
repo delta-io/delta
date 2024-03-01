@@ -2490,10 +2490,10 @@ trait DeltaErrorsBase
     )
   }
 
-  def nonGeneratedColumnMissingUpdateExpression(column: Attribute): Throwable = {
+  def nonGeneratedColumnMissingUpdateExpression(columnName: String): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_NON_GENERATED_COLUMN_MISSING_UPDATE_EXPR",
-      messageParameters = Array(column.toString)
+      messageParameters = Array(columnName)
     )
   }
 

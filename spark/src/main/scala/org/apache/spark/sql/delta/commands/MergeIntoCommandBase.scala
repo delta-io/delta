@@ -44,7 +44,8 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
   with DeltaLogging
   with PredicateHelper
   with ImplicitMetadataOperation
-  with MergeIntoMaterializeSource {
+  with MergeIntoMaterializeSource
+  with UpdateExpressionsSupport {
 
   @transient val source: LogicalPlan
   @transient val target: LogicalPlan
@@ -272,7 +273,6 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
 
     buildTargetPlanWithIndex(
       spark,
-      deltaTxn,
       fileIndex,
       columnsToDrop
     )
@@ -286,73 +286,42 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
    * @param columnsToDrop unneeded non-partition columns to be dropped
    */
   protected def buildTargetPlanWithIndex(
-    spark: SparkSession,
-    deltaTxn: OptimisticTransaction,
-    fileIndex: TahoeFileIndex,
-    columnsToDrop: Seq[String]): LogicalPlan = {
-
-    val targetOutputCols = getTargetOutputCols(spark, deltaTxn)
-
-    val plan = {
-
-      // In case of schema evolution & column mapping, we need to rebuild the file format
-      // because under column mapping, the reference schema within DeltaParquetFileFormat
-      // that is used to populate metadata needs to be updated.
-      //
-      // WARNING: We must do this before replacing the file index, or we risk invalidating the
-      // metadata column expression ids that replaceFileIndex might inject into the plan.
-      val planWithReplacedFileFormat = if (deltaTxn.metadata.columnMappingMode != NoMapping) {
-        val updatedFileFormat = deltaTxn.deltaLog.fileFormat(deltaTxn.protocol, deltaTxn.metadata)
-        DeltaTableUtils.replaceFileFormat(target, updatedFileFormat)
-      } else {
-        target
-      }
-
-      // We have to do surgery to use the attributes from `targetOutputCols` to scan the table.
-      // In cases of schema evolution, they may not be the same type as the original attributes.
-      // We can ignore the new columns which aren't yet AttributeReferences.
-      val newReadCols = targetOutputCols.collect { case a: AttributeReference => a }
-      DeltaTableUtils.replaceFileIndex(
-        spark,
-        planWithReplacedFileFormat,
-        fileIndex,
-        columnsToDrop,
-        newOutput = Some(newReadCols))
-    }
-
-    // Add back the null expression aliases for columns that are new to the target schema
-    // and don't exist in the input snapshot.
-    // These have been added in `getTargetOutputCols` but have been removed in `newReadCols` above
-    // and are thus not in `plan.output`.
-    val newColumnsWithNulls = targetOutputCols.filter(_.isInstanceOf[Alias])
-    Project(plan.output ++ newColumnsWithNulls, plan)
+      spark: SparkSession,
+      fileIndex: TahoeFileIndex,
+      columnsToDrop: Seq[String]): LogicalPlan = {
+    var newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
+    newTarget = DeltaTableUtils.dropColumns(spark, newTarget, columnsToDrop)
+    newTarget
   }
 
   /**
    * Get the expression references for the output columns of the target table relative to
    * the transaction. Due to schema evolution, there are two kinds of expressions here:
    *  * References to columns in the target dataframe. Note that these references may have a
-   *    different data type than they originally did due to schema evolution, but the exprId
-   *    will be the same. These references will be marked as nullable if `makeNullable` is set
-   *    to true.
+   *    different data type than they originally did due to schema evolution so we add a cast that
+   *    supports schema evolution. The references will be marked as nullable if `makeNullable` is
+   *    set to true, which allows the attributes to reference the output of an outer join.
    *  * Literal nulls, for new columns which are being added to the target table as part of
    *    this transaction, since new columns will have a value of null for all existing rows.
    */
-  protected def getTargetOutputCols(
-      spark: SparkSession,
-      txn: OptimisticTransaction,
-      makeNullable: Boolean = false)
-    : Seq[NamedExpression] = {
-    // Internal metadata attached to the table schema must not leak into the the target plan to
-    // prevent inconsistencies - e.p. metadata matters when comparing data type of struct with
-    // nested fields.
-    val schema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalMetadata(spark, txn.metadata.schema))
+  protected def getTargetOutputCols(makeNullable: Boolean = false): Seq[NamedExpression] = {
+    val schema = if (makeNullable) {
+      migratedSchema.getOrElse(target.schema).asNullable
+    } else {
+      migratedSchema.getOrElse(target.schema)
+    }
     schema.map { col =>
       targetOutputAttributesMap
         .get(col.name)
         .map { a =>
-          AttributeReference(col.name, col.dataType, makeNullable || col.nullable)(a.exprId)
+          Alias(
+            castIfNeeded(
+              a.withNullability(a.nullable || makeNullable),
+              col.dataType,
+              allowStructEvolution = true,
+              col.name),
+            col.name
+          )()
         }
         .getOrElse(Alias(Literal(null), col.name)())
     }
