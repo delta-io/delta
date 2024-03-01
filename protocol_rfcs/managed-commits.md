@@ -196,7 +196,7 @@ interface CommitStore {
      * ratified any version.
      *
      * @return GetCommitsResponse which has a list of `Commit` and the latestTableVersion which are
-     * tracked by commit-owner.
+     *         tracked by commit-owner.
      */
     def getCommits(
         startVersion: Long,
