@@ -1995,9 +1995,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   def containsPostCommitHook(hook: PostCommitHook): Boolean = postCommitHooks.contains(hook)
 
-<<<<<<< HEAD
+
   /** Executes the registered post commit hooks. */
-=======
   protected def runRegisteredPostCommitHooks(
       version: Long,
       postCommitSnapshot: Snapshot,
@@ -2008,7 +2007,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /**
    * Executes post commit hooks.
    */
->>>>>>> cbac6468 (Squashed commits:)
   protected def runPostCommitHooks(
       version: Long,
       postCommitSnapshot: Snapshot,
