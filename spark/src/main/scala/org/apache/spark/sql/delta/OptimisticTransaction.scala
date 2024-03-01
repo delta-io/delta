@@ -1296,10 +1296,20 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         Some(attemptVersion))
       commitEndNano = System.nanoTime()
       committed = true
-      // NOTE: commitLarge cannot run postCommitHooks (such as the CheckpointHook).
-      // Instead, manually run any necessary actions in updateAndCheckpoint.
-      val postCommitSnapshot = updateAndCheckpoint(
-        spark, deltaLog, commitSize, attemptVersion, commitOpt, txnId)
+      // update the state of table and run post commit hooks
+      // we only run only those necessary to reduce overhead
+      // by default ChecksumHook and CheckpointHook will run
+      val postCommitSnapshot = updateAndRunPostCommitHooks(
+        spark,
+        deltaLog,
+        commitSize,
+        attemptVersion,
+        commitOpt,
+        txnId,
+        actions.toSeq,
+        additionalHooks
+      )
+
       val postCommitReconstructionTime = System.nanoTime()
       var stats = CommitStats(
         startVersion = readVersion,
@@ -1985,7 +1995,20 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   def containsPostCommitHook(hook: PostCommitHook): Boolean = postCommitHooks.contains(hook)
 
+<<<<<<< HEAD
   /** Executes the registered post commit hooks. */
+=======
+  protected def runRegisteredPostCommitHooks(
+      version: Long,
+      postCommitSnapshot: Snapshot,
+      committedActions: Seq[Action]): Unit = {
+    runPostCommitHooks(version, postCommitSnapshot, committedActions, postCommitHooks.toSeq)
+  }
+
+  /**
+   * Executes post commit hooks.
+   */
+>>>>>>> cbac6468 (Squashed commits:)
   protected def runPostCommitHooks(
       version: Long,
       postCommitSnapshot: Snapshot,
