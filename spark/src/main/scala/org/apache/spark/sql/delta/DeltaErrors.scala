@@ -186,6 +186,18 @@ trait DeltaErrorsBase
       cause = cause)
   }
 
+  def missingCommitInfo(featureName: String, commitVersion: String): DeltaIllegalStateException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_COMMIT_INFO",
+      messageParameters = Array(featureName, commitVersion))
+  }
+
+  def missingCommitTimestamp(commitVersion: String): DeltaIllegalStateException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_COMMIT_TIMESTAMP",
+      messageParameters = Array(InCommitTimestampTableFeature.name, commitVersion))
+  }
+
   def failOnCheckpointRename(src: Path, dest: Path): DeltaIllegalStateException = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_CANNOT_RENAME_PATH",

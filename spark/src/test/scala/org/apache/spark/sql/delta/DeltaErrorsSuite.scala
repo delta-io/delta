@@ -2788,6 +2788,34 @@ trait DeltaErrorsSuiteBase
              |value first, then run a second ALTER TABLE ALTER COLUMN SET DEFAULT command to apply
              |for future inserted rows instead.""".stripMargin))
     }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.missingCommitInfo("featureName", "1225")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_MISSING_COMMIT_INFO"),
+        Some("KD004"),
+        Some(
+          "This table has the feature featureName enabled which requires the presence of the " +
+           "CommitInfo action in every commit. However, the CommitInfo action is missing from commit " +
+           "version 1225.")
+      )
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.missingCommitTimestamp("1225")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_MISSING_COMMIT_TIMESTAMP"),
+        Some("KD004"),
+        Some(
+          s"This table has the feature ${InCommitTimestampTableFeature.name} enabled which requires " +
+            "the presence of commitTimestamp in the CommitInfo action. However, this field has not " +
+            "been set in commit version 1225.")
+      )
+    }
   }
 }
 
