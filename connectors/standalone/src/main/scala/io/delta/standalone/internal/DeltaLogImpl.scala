@@ -61,6 +61,13 @@ private[internal] class DeltaLogImpl private[internal](
   // retention interval...
   protected def metadata = if (snapshot == null) Metadata() else snapshot.metadataScala
 
+  /** How long to keep around SetTransaction actions before physically deleting them. */
+  def minSetTransactionRetentionInterval(metadata: Metadata): Option[Long] = {
+    DeltaConfigs.TRANSACTION_ID_RETENTION_DURATION
+      .fromMetadata(metadata)
+      .map(DeltaConfigs.getMilliSeconds)
+  }
+
   /** How long to keep around logically deleted files before physically deleting them. */
   def tombstoneRetentionMillis: Long =
     DeltaConfigs.getMilliSeconds(DeltaConfigs.TOMBSTONE_RETENTION.fromMetadata(metadata))

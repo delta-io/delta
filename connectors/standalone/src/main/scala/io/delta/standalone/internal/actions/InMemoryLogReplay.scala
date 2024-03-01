@@ -36,8 +36,9 @@ import io.delta.standalone.internal.SnapshotImpl.canonicalizePath
  * This class is not thread safe.
  */
 private[internal] class InMemoryLogReplay(
-    hadoopConf: Configuration,
-    minFileRetentionTimestamp: Long) {
+     hadoopConf: Configuration,
+     minFileRetentionTimestamp: Long,
+     minSetTransactionRetentionTimestamp: Option[Long]) {
   var currentProtocolVersion: Protocol = null
   var currentVersion: Long = -1
   var currentMetaData: Metadata = null
@@ -83,7 +84,15 @@ private[internal] class InMemoryLogReplay(
     }
   }
 
-  def getSetTransactions: Seq[SetTransaction] = transactions.values.toSeq
+  def getSetTransactions: Seq[SetTransaction] = {
+    if (minSetTransactionRetentionTimestamp.isEmpty) {
+      transactions.values.toSeq
+    } else {
+      transactions.values.filter { txn =>
+        txn.lastUpdated.exists(_ > minSetTransactionRetentionTimestamp.get)
+      }.toSeq
+    }
+  }
 
   def getActiveFiles: Iterable[AddFile] = activeFiles.values
 
