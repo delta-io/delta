@@ -823,7 +823,7 @@ In order to support column mapping, writers must:
  - Assign a unique physical name to each column.
    - When enabling column mapping on existing table, the physical name of the column must be set to the (logical) name of the column.
    - If the feature `columnMappingUsageTracking` is supported, then when adding a new column to a table and `delta.columnMapping.hasDroppedOrRenamed` column property is `false` the (logical) name of the column should be used as the physical name.
-   - Otherwise the physical column must contain a universally unique identifier (UUID) to guarantee uniqueness.
+   - Otherwise the physical column name must contain a universally unique identifier (UUID) to guarantee uniqueness.
  - Assign a column id to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
 
 ### Writer Requirements for Usage Tracking
@@ -831,7 +831,7 @@ In order to support column mapping, writers must:
 In order to support column mapping usage tracking, writers must:
  - Write `protocol` and `metaData` actions when Column Mapping Usage Tracking is turned on for the first time:
    - Write a `protocol` action with writer version 7 and the feature `columnMappingUsageTracking` in the `writerFeatures`.
-   - Write a `metaData` actions with the table property `delta.columnMapping.hasDroppedOrRenamed` set to `false` when creating a new table, or set to `true` when enabling usage tracking on an existing table.
+   - Write a `metaData` action with the table property `delta.columnMapping.hasDroppedOrRenamed` set to `false` when creating a new table, or set to `true` when enabling usage tracking on an existing table.
  - When dropping or renaming a column `delta.columnMapping.hasDroppedOrRenamed` must be set to `true`.
  - After `delta.columnMapping.hasDroppedOrRenamed` is set to `true` it must never be set back to `false` again.
 
