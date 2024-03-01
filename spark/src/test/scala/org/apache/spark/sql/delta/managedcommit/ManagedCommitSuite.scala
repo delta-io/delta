@@ -18,13 +18,13 @@ package org.apache.spark.sql.delta.managedcommit
 
 import java.io.File
 
-import org.apache.spark.sql.delta.{DeltaLog, SerializableFileStatus}
 import org.apache.spark.sql.delta.DeltaConfigs.{MANAGED_COMMIT_OWNER_CONF, MANAGED_COMMIT_OWNER_NAME}
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
@@ -73,8 +73,7 @@ class ManagedCommitSuite
             val commitTime = uuidFileStatus.getModificationTime
             commitImpl(logStore, hadoopConf, tablePath, commitVersion, uuidFileStatus, commitTime)
 
-            CommitResponse(
-              Commit(commitVersion, SerializableFileStatus.fromStatus(uuidFileStatus), commitTime))
+            CommitResponse(Commit(commitVersion, uuidFileStatus, commitTime))
           }
         }
     }

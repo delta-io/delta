@@ -1909,7 +1909,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         updatedActions)
       if (attemptVersion == 0L) {
         val expectedPathForCommitZero = deltaFile(deltaLog.logPath, version = 0L).toUri
-        val actualCommitPath = new Path(commitResponse.commit.serializableFileStatus.path).toUri
+        val actualCommitPath = commitResponse.commit.fileStatus.getPath.toUri
         if (actualCommitPath != expectedPathForCommitZero) {
           throw new IllegalStateException("Expected 0th commit to be written to " +
             s"$expectedPathForCommitZero but was written to $actualCommitPath")
