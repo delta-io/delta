@@ -24,6 +24,7 @@ import scala.util.{Success, Try}
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.hooks.IcebergConverterHook
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 import org.apache.hadoop.fs.Path
@@ -211,7 +212,8 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           Some(newProtocol),
           DeltaOperations.Restore(version, timestamp),
           Map.empty,
-          metrics.mapValues(_.toString).toMap)
+          metrics.mapValues(_.toString).toMap,
+          additionalHooks = Seq(IcebergConverterHook))
 
         Seq(Row(
           metrics.get(TABLE_SIZE_AFTER_RESTORE),

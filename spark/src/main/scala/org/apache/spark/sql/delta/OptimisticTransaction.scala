@@ -1146,7 +1146,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         throw e
     }
 
-    runPostCommitHooks(version, postCommitSnapshot, actualCommittedActions)
+    runRegisteredPostCommitHooks(version, postCommitSnapshot, actualCommittedActions)
 
     Some(version)
   }
@@ -1175,6 +1175,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * The `nonProtocolMetadataActions` parameter should only contain non-{protocol, metadata}
    * actions only. If the protocol of table needs to be updated, it should be passed in the
    * `newProtocolOpt` parameter.
+   * At the end we will run ChecksumHook and CheckpointHook and all additionalHooks in sequence
    */
   def commitLarge(
       spark: SparkSession,
@@ -1182,7 +1183,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       newProtocolOpt: Option[Protocol],
       op: DeltaOperations.Operation,
       context: Map[String, String],
-      metrics: Map[String, String]): (Long, Snapshot) = {
+      metrics: Map[String, String],
+      additionalHooks: Seq[PostCommitHook] = Nil)
+  : (Long, Snapshot) = recordDeltaOperation(deltaLog, "delta.commit.large") {
     assert(!committed, "Transaction already committed.")
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
@@ -1296,11 +1299,22 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         Some(attemptVersion))
       commitEndNano = System.nanoTime()
       committed = true
-      // NOTE: commitLarge cannot run postCommitHooks (such as the CheckpointHook).
-      // Instead, manually run any necessary actions in updateAndCheckpoint.
-      val postCommitSnapshot = updateAndCheckpoint(
-        spark, deltaLog, commitSize, attemptVersion, commitOpt, txnId)
+      // update the state of table and run post commit hooks
+      // we only run only those necessary to reduce overhead
+      // by default ChecksumHook and CheckpointHook will run
+      val postCommitSnapshot = updateAndRunPostCommitHooks(
+        spark,
+        deltaLog,
+        commitSize,
+        attemptVersion,
+        commitOpt,
+        txnId,
+        actions.toSeq,
+        additionalHooks
+      )
+
       val postCommitReconstructionTime = System.nanoTime()
+
       var stats = CommitStats(
         startVersion = readVersion,
         commitVersion = attemptVersion,
@@ -1363,13 +1377,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /** Update the table now that the commit has been made, and write a checkpoint. */
-  protected def updateAndCheckpoint(
+  protected def updateAndRunPostCommitHooks(
       spark: SparkSession,
       deltaLog: DeltaLog,
       commitSize: Int,
       attemptVersion: Long,
       commitOpt: Option[Commit],
-      txnId: String): Snapshot = {
+      txnId: String,
+      committedActions: Seq[Action] = Nil,
+      additionalHooks: Seq[PostCommitHook] = Nil): Snapshot = {
     val currentSnapshot = deltaLog.update()
     if (currentSnapshot.version != attemptVersion) {
       throw DeltaErrors.invalidCommittedVersion(attemptVersion, currentSnapshot.version)
@@ -1377,7 +1393,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")
 
-    deltaLog.checkpoint(currentSnapshot)
+    needsCheckpoint = true
+    val hooksToRun = Seq(CheckpointHook) ++ additionalHooks
+    runPostCommitHooks(attemptVersion, currentSnapshot, committedActions, hooksToRun)
+
     currentSnapshot
   }
 
@@ -1985,11 +2004,21 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   def containsPostCommitHook(hook: PostCommitHook): Boolean = postCommitHooks.contains(hook)
 
-  /** Executes the registered post commit hooks. */
-  protected def runPostCommitHooks(
+  protected def runRegisteredPostCommitHooks(
       version: Long,
       postCommitSnapshot: Snapshot,
       committedActions: Seq[Action]): Unit = {
+    runPostCommitHooks(version, postCommitSnapshot, committedActions, postCommitHooks.toSeq)
+  }
+
+  /**
+   * Executes post commit hooks.
+   */
+  protected def runPostCommitHooks(
+      version: Long,
+      postCommitSnapshot: Snapshot,
+      committedActions: Seq[Action],
+      hooksToRun: Seq[PostCommitHook]): Unit = {
     assert(committed, "Can't call post commit hooks before committing")
 
     // Keep track of the active txn because hooks may create more txns and overwrite the active one.
@@ -1997,7 +2026,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     OptimisticTransaction.clearActive()
 
     try {
-      postCommitHooks.foreach(runPostCommitHook(_, version, postCommitSnapshot, committedActions))
+      hooksToRun.foreach(runPostCommitHook(_, version, postCommitSnapshot, committedActions))
     } finally {
       activeCommit.foreach(OptimisticTransaction.setActive)
     }

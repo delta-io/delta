@@ -24,6 +24,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.hooks.{IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util._
@@ -243,13 +244,16 @@ abstract class CloneTableBase(
 
         recordDeltaOperation(
           destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
+          assert(deltaOperation.name == DeltaOperations.OP_RESTORE
+            || deltaOperation.name == DeltaOperations.OP_CLONE)
           txn.commitLarge(
             spark,
             actions,
             Some(newProtocol),
             deltaOperation,
             context,
-            commitOpMetrics.mapValues(_.toString()).toMap)
+            commitOpMetrics.mapValues(_.toString()).toMap,
+            additionalHooks = Seq(IcebergConverterHook))
         }
 
       val cloneLogData = getOperationMetricsForEventRecord(opMetrics) ++ Map(
