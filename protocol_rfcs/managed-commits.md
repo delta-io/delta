@@ -143,7 +143,7 @@ are responsible to define the commit atomicity and backfill protocols which the 
 
 At a high level, the `commit-owner` needs to provide:
 - API to atomically commit a version `x` with given set of `actions`. This is explained in detail in the [commit protocol](#commit-protocol) section.
-- API to retrieve information about the recent commits on the table. This is explained in detail in the [getting un-backfilled commits from commit-owner](#getting-un-backfilled-commits-from-commit-owner) section.
+- API to retrieve information about the recent commits and the latest ratified version on the table. This is explained in detail in the [getting un-backfilled commits from commit-owner](#getting-un-backfilled-commits-from-commit-owner) section.
 
 ### Commit Protocol
 
@@ -161,7 +161,8 @@ Even after a commit succeeds, Delta clients can only discover the commit through
 have no way to determine which file in `_delta_log/_commits` directory corresponds to the actual commit `v`.
 
 The commit-owner is responsible to implement an API (defined by the Delta client) that Delta clients can use to retrieve information about un-backfilled commits maintained
-by the commit-owner. Delta clients who are unaware of the commit-owner (or unwilling to talk to it), may not see recent un-backfilled commits and thus may encounter stale reads.
+by the commit-owner. Delta clients who are unaware of the commit-owner (or unwilling to talk to it), may not see recent un-backfilled commits and thus may encounter stale reads. The API must also return the latest version of the table ratified by Commit Owner (if any).
+
 
 ## Sample Commit Owner API
 
