@@ -176,7 +176,7 @@ interface CommitStore {
      * @param version The version we want to commit.
      * @param actions Actions that need to be committed.
      *
-     * returns CommitResponse which has details around the new committed delta file.
+     * @return CommitResponse which has details around the new committed delta file.
      */
     def commit(
         version: Long,
@@ -191,13 +191,16 @@ interface CommitStore {
      * Note that the first version returned by this API may not be equal to the `startVersion`. This
      * happens when few versions starting from `startVersion` are already backfilled and so
      * CommitStore may have stopped tracking them.
+     * The returned latestTableVersion is the maximum commit version ratified by the Commit-Owner.
+     * Note that returning latestTableVersion as -1 is acceptable only if the commit-owner never
+     * ratified any version.
      *
-     * @return a list of `Commit` which are tracked by commit-owner.
-     *
+     * @return GetCommitsResponse which has a list of `Commit` and the latestTableVersion which are
+     * tracked by commit-owner.
      */
     def getCommits(
         startVersion: Long,
-        endVersion: Long): Seq[Commit]
+        endVersion: Long): GetCommitsResponse
 
     /**
      * API to ask the commit-owner to backfill all commits <= given `version`.
