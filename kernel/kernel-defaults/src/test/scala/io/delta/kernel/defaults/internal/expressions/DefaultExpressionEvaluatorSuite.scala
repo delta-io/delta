@@ -16,8 +16,9 @@
 package io.delta.kernel.defaults.internal.expressions
 
 import java.lang.{Boolean => BooleanJ}
-import java.lang.{Integer => IntegerJ}
-import java.lang.{Long => LongJ}
+import java.lang.{
+  Byte => ByteJ,
+  Short => ShortJ, Integer => IntegerJ, Long => LongJ, Double => DoubleJ, Float => FloatJ}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.sql.{Date, Timestamp}
 import java.util
@@ -255,64 +256,81 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkBooleanVectors(actOutputVector, expOutputVector)
   }
 
-  test("evaluate expression: coalesce long") {
-    val col1 = longVector(Seq[LongJ](1, null, null, null))
-    val col2 = longVector(Seq[LongJ](2, 2, null, null))
-    val col3 = longVector(Seq[LongJ](3, 3, 3, null))
-
-    val schema = new StructType()
-      .add("col1", LongType.LONG)
-      .add("col2", LongType.LONG)
-      .add("col3", LongType.LONG)
-    val batch = new DefaultColumnarBatch(
-      col1.getSize, schema, Array(col1, col2, col3))
-    val coalesceEpxr1 = new ScalarExpression(
-      "COALESCE",
-      util.Arrays.asList(new Column("col1")))
-    val expOutputVector1 = longVector(Seq[LongJ](1, null, null, null))
-    val actOutputVector1 = evaluator(
-      schema, coalesceEpxr1, LongType.LONG).eval(batch)
-    checkVectors(expOutputVector1, actOutputVector1, LongType.LONG)
-
-
-    val coalesceEpxr3 = new ScalarExpression(
-      "COALESCE",
-      util.Arrays.asList(
-        new Column("col1"), new Column("col2"), new Column("col3")))
-    val expOutputVector3 = longVector(Seq[LongJ](1, 2, 3, null))
-    val actOutputVector3 = evaluator(
-      schema, coalesceEpxr3, LongType.LONG).eval(batch)
-    checkVectors(actOutputVector3, expOutputVector3, LongType.LONG)
+  def getColumnVector
+  (kernelType: DataType, data: Seq[Any]): ColumnVector = kernelType match {
+    case ByteType.BYTE =>
+      val copy: Seq[ByteJ] = data.map {
+        case i: Int => new ByteJ(i.toByte)
+        case _ => null
+      }
+      byteVector(copy)
+    case ShortType.SHORT =>
+      val copy: Seq[ShortJ] = data.map {
+        case i: Int => new ShortJ(i.toShort)
+        case _ => null
+      }
+      shortVector(copy)
+    case IntegerType.INTEGER =>
+      val copy: Seq[IntegerJ] = data.map {
+        case i: Int => IntegerJ.valueOf(i)
+        case _ => null
+      }
+      integerVector(copy)
+    case LongType.LONG =>
+      val copy: Seq[LongJ] = data.map {
+        case i: Int => LongJ.valueOf(i)
+        case _ => null
+      }
+      longVector(copy)
+    case FloatType.FLOAT =>
+      val copy: Seq[FloatJ] = data.map {
+        case i: Int => FloatJ.valueOf(i)
+        case _ => null
+      }
+      floatVector(copy)
+    case DoubleType.DOUBLE =>
+      val copy: Seq[DoubleJ] = data.map {
+        case i: Int => DoubleJ.valueOf(i)
+        case _ => null
+      }
+      doubleVector(copy)
+    case null => null
   }
 
-  test("evaluate expression: coalesce integer") {
-    val col1 = integerVector(Seq[IntegerJ](1, null, null, null))
-    val col2 = integerVector(Seq[IntegerJ](2, 2, null, null))
-    val col3 = integerVector(Seq[IntegerJ](3, 3, 3, null))
+  Seq(ByteType.BYTE,
+    ShortType.SHORT,
+    IntegerType.INTEGER,
+    LongType.LONG,
+    FloatType.FLOAT,
+    DoubleType.DOUBLE).foreach(typeToTest =>
+    test(s"evaluate expression coalesce with type: $typeToTest") {
+      val col1 = getColumnVector(typeToTest, Seq(1, null, null, null))
+      val col2 = getColumnVector(typeToTest, Seq(2, 2, null, null))
+      val col3 = getColumnVector(typeToTest, Seq(3, 3, 3, null))
+      val schema = new StructType()
+        .add("col1", typeToTest)
+        .add("col2", typeToTest)
+        .add("col3", typeToTest)
+      val batch = new DefaultColumnarBatch(
+        col1.getSize, schema, Array(col1, col2, col3))
+      val coalesceEpxr1 = new ScalarExpression(
+        "COALESCE",
+        util.Arrays.asList(new Column("col1")))
+      val expOutputVector1 = getColumnVector(typeToTest, Seq(1, null, null, null))
+      val actOutputVector1 = evaluator(
+        schema, coalesceEpxr1, typeToTest).eval(batch)
+      checkVectors(expOutputVector1, actOutputVector1, typeToTest)
 
-    val schema = new StructType()
-      .add("col1", IntegerType.INTEGER)
-      .add("col2", IntegerType.INTEGER)
-      .add("col3", IntegerType.INTEGER)
-    val batch = new DefaultColumnarBatch(
-      col1.getSize, schema, Array(col1, col2, col3))
-    val coalesceIntEpxr1 = new ScalarExpression(
-      "COALESCE",
-      util.Arrays.asList(new Column("col1")))
-    val expOutputVector1 = integerVector(Seq[IntegerJ](1, null, null, null))
-    val actOutputVector1 = evaluator(
-      schema, coalesceIntEpxr1, IntegerType.INTEGER).eval(batch)
-    checkVectors(expOutputVector1, actOutputVector1, IntegerType.INTEGER)
-
-    val coalesceEpxr3 = new ScalarExpression(
-      "COALESCE",
-      util.Arrays.asList(
-        new Column("col1"), new Column("col2"), new Column("col3")))
-    val expOutputVector3 = integerVector(Seq[IntegerJ](1, 2, 3, null))
-    val actOutputVector3 = evaluator(
-      schema, coalesceEpxr3, IntegerType.INTEGER).eval(batch)
-    checkVectors(actOutputVector3, expOutputVector3, IntegerType.INTEGER)
-  }
+      val coalesceEpxr3 = new ScalarExpression(
+        "COALESCE",
+        util.Arrays.asList(
+          new Column("col1"), new Column("col2"), new Column("col3")))
+      val expOutputVector3 = getColumnVector(typeToTest, Seq(1, 2, 3, null))
+      val actOutputVector3 = evaluator(
+        schema, coalesceEpxr3, typeToTest).eval(batch)
+      checkVectors(actOutputVector3, expOutputVector3, typeToTest)
+    }
+  )
 
   test("evaluate expression: coalesce") {
     val col1 = booleanVector(Seq[BooleanJ](true, null, null, null))

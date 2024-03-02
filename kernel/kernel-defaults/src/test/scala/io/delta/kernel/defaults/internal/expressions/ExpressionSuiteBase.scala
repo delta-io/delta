@@ -15,11 +15,7 @@
  */
 package io.delta.kernel.defaults.internal.expressions
 
-import java.util
-
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
-import java.lang.{Integer => IntegerJ}
-import java.lang.{Long => LongJ}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.utils.{TestUtils, VectorTestUtils}
 import io.delta.kernel.expressions._
@@ -54,11 +50,23 @@ trait ExpressionSuiteBase extends TestUtils with VectorTestUtils {
           case BooleanType.BOOLEAN => assert(
             actual.getBoolean(rowId) === expected.getBoolean(rowId),
             s"unexpected value at $rowId")
+          case ByteType.BYTE => assert(
+            actual.getByte(rowId) === expected.getByte(rowId),
+            s"unexpected value at $rowId")
+          case ShortType.SHORT => assert(
+            actual.getShort(rowId) === expected.getShort(rowId),
+            s"unexpected value at $rowId")
           case IntegerType.INTEGER => assert(
             actual.getInt(rowId) === expected.getInt(rowId),
             s"unexpected value at $rowId")
           case LongType.LONG => assert(
             actual.getLong(rowId) === expected.getLong(rowId),
+            s"unexpected value at $rowId")
+          case FloatType.FLOAT => assert(
+            actual.getFloat(rowId) === expected.getFloat(rowId),
+            s"unexpected value at $rowId")
+          case DoubleType.DOUBLE => assert(
+            actual.getDouble(rowId) === expected.getDouble(rowId),
             s"unexpected value at $rowId")
           case _ => new UnsupportedOperationException("date type is not supported")
         }
@@ -79,31 +87,5 @@ trait ExpressionSuiteBase extends TestUtils with VectorTestUtils {
       }
     }
   }
-  protected def integerVector(values: Seq[IntegerJ]): ColumnVector = {
-    new ColumnVector {
-      override def getDataType: DataType = IntegerType.INTEGER
 
-      override def getSize: Int = values.length
-
-      override def close(): Unit = {}
-
-      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
-
-      override def getInt(rowId: Int): Int = values(rowId)
-    }
-  }
-
-  protected def longVector(values: Seq[LongJ]): ColumnVector = {
-    new ColumnVector {
-      override def getDataType: DataType = LongType.LONG
-
-      override def getSize: Int = values.length
-
-      override def close(): Unit = {}
-
-      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
-
-      override def getLong(rowId: Int): Long = values(rowId)
-    }
-  }
 }
