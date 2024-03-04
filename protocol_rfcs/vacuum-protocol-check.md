@@ -10,7 +10,7 @@ This RFC introduces a new ReaderWriter feature named `vacuumProtocolCheck`. This
 > ***New Section***
 # VACUUM Protocol Check
 
-The vacuumProtocolCheck ReaderWriter feature ensures consistent application of reader and writer protocol checks during `VACUUM` operations, addressing potential protocol discrepancies and mitigating the risk of data corruption due to skipped writer checks.
+The `vacuumProtocolCheck` ReaderWriter feature ensures consistent application of reader and writer protocol checks during `VACUUM` operations, addressing potential protocol discrepancies and mitigating the risk of data corruption due to skipped writer checks.
 
 Enablement:
 - The table must be on Writer Version 7 and Reader Version 3.
