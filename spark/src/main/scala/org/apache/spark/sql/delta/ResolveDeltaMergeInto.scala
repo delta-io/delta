@@ -78,6 +78,7 @@ object ResolveDeltaMergeInto {
         throw new DeltaAnalysisException(
           errorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
           messageParameters = Array(a.sql, mergeClauseType, cols),
+          cause = None,
           origin = Some(a.origin))
       }
     }
@@ -308,6 +309,7 @@ object ResolveDeltaMergeInto {
         errorClass = "DELTA_MERGE_RESOLVED_ATTRIBUTE_MISSING_FROM_INPUT",
         messageParameters = Array(missingAttributes, input,
           resolvedMerge.simpleString(SQLConf.get.maxToStringFields)),
+        cause = None,
         origin = Some(resolvedMerge.origin)
       )
     }
