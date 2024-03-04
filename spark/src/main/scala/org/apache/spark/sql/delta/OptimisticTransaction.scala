@@ -1848,6 +1848,37 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val info = currentTransactionInfo.commitInfo
       .map(_.copy(readVersion = None, isolationLevel = None)).orNull
     setNeedsCheckpoint(attemptVersion, postCommitSnapshot)
+
+    val numFilesTotal =
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_COMMIT_STATS)) {
+        // Forces snapshot state reconstruction
+        postCommitSnapshot.numOfFiles
+      } else -1L
+
+    val sizeInBytesTotal =
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_COMMIT_STATS)) {
+        // Forces snapshot state reconstruction
+        postCommitSnapshot.sizeInBytes
+      } else -1L
+
+    val protocol =
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_COMMIT_STATS)) {
+        // Forces protocolAndMetadata reconstruction
+        postCommitSnapshot.protocol
+      } else currentTransactionInfo.protocol
+
+    val checkpointSizeInBytes =
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_COMMIT_STATS)) {
+        // This might block waiting on a Future that has not yet completed.
+        postCommitSnapshot.checkpointSizeInBytes()
+      } else -1L
+
+    val numPartitionColumnsInTable =
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_COMMIT_STATS)) {
+        // Forces protocolAndMetadata reconstruction
+        postCommitSnapshot.metadata.partitionColumns.size
+      } else -1
+
     val stats = CommitStats(
       startVersion = snapshot.version,
       commitVersion = attemptVersion,
@@ -1861,20 +1892,20 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       numRemove = numRemove,
       numSetTransaction = numSetTransaction,
       bytesNew = bytesNew,
-      numFilesTotal = postCommitSnapshot.numOfFiles,
-      sizeInBytesTotal = postCommitSnapshot.sizeInBytes,
+      numFilesTotal = numFilesTotal,
+      sizeInBytesTotal = sizeInBytesTotal,
       numCdcFiles = numCdcFiles,
       cdcBytesNew = cdcBytesNew,
-      protocol = postCommitSnapshot.protocol,
+      protocol = protocol,
       commitSizeBytes = jsonActions.map(_.size).sum,
-      checkpointSizeBytes = postCommitSnapshot.checkpointSizeInBytes(),
+      checkpointSizeBytes = checkpointSizeInBytes,
       totalCommitsSizeSinceLastCheckpoint = postCommitSnapshot.deltaFileSizeInBytes(),
       checkpointAttempt = needsCheckpoint,
       info = info,
       newMetadata = newMetadata,
       numAbsolutePathsInAdd = numAbsolutePaths,
       numDistinctPartitionsInAdd = distinctPartitions.size,
-      numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
+      numPartitionColumnsInTable = numPartitionColumnsInTable,
       isolationLevel = isolationLevel.toString,
       numOfDomainMetadatas = numOfDomainMetadatas,
       txnId = Some(txnId))

@@ -83,6 +83,17 @@ trait DeltaSQLConfBase {
       .stringConf
       .createOptional
 
+  val DELTA_COLLECT_COMMIT_STATS =
+    buildConf("commitStats.collect")
+      .internal()
+      .doc(
+        """When true, commit statistics are collected for logging purposes.
+        | Enabling this feature might require the Snapshot State to be computed, which is
+        | potentially expensive.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CONVERT_USE_METADATA_LOG =
     buildConf("convert.useMetadataLog")
       .doc(
