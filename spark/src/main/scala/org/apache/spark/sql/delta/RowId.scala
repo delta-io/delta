@@ -114,7 +114,11 @@ object RowId {
    * Extracts the high watermark of row IDs from a snapshot.
    */
   private[delta] def extractHighWatermark(snapshot: Snapshot): Option[Long] =
-    RowTrackingMetadataDomain.fromSnapshot(snapshot).map(_.rowIdHighWaterMark)
+    if (isSupported(snapshot.protocol)) {
+      RowTrackingMetadataDomain.fromSnapshot(snapshot).map(_.rowIdHighWaterMark)
+    } else {
+      None
+    }
 
   /** Base Row ID column name */
   val BASE_ROW_ID = "base_row_id"
