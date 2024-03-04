@@ -117,7 +117,7 @@ case class AlterTableSetPropertiesDeltaCommand(
     val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
       DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL)
     if (disableColumnMapping && columnMappingRemovalAllowed) {
-      new RemoveColumnMappingCommand(deltaLog, table.catalogTable)
+      RemoveColumnMappingCommand(deltaLog, table.catalogTable)
         .run(sparkSession, removeColumnMappingTableProperty = false)
     }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.setProperties") {
@@ -176,7 +176,7 @@ case class AlterTableUnsetPropertiesDeltaCommand(
     val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
       DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL)
     if (disableColumnMapping && columnMappingRemovalAllowed) {
-      new RemoveColumnMappingCommand(deltaLog, table.catalogTable)
+      RemoveColumnMappingCommand(deltaLog, table.catalogTable)
         .run(sparkSession, removeColumnMappingTableProperty = true)
     }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.unsetProperties") {
