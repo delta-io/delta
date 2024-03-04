@@ -43,11 +43,8 @@ class DeltaTypeWideningMetadataSuite extends QueryTest with DeltaSQLCommandTest 
   }
 
   override protected def afterAll(): Unit = {
-    try {
-      sql(s"DROP TABLE IF EXISTS $testTableName")
-    } finally {
-      super.afterAll()
-    }
+    sql(s"DROP TABLE IF EXISTS $testTableName")
+    super.afterAll()
   }
 
   /**

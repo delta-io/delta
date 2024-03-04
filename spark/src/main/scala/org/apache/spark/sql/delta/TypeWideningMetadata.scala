@@ -126,6 +126,9 @@ private[delta] object TypeWideningMetadata {
 
     SchemaMergingUtils.transformColumns(schema, oldSchema) {
       case (_, newField, Some(oldField), _) =>
+        // Record the version the transaction will attempt to use in the type change metadata. If
+        // there's a conflict with another transaction, the version in the metadata will be updated
+        // during conflict resolution. See [[ConflictChecker.updateTypeWideningMetadata()]].
         val typeChanges =
           collectTypeChanges(oldField.dataType, newField.dataType, txn.getFirstAttemptVersion)
         TypeWideningMetadata(typeChanges).appendToField(newField)
