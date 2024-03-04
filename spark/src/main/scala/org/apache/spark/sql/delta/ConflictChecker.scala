@@ -161,6 +161,9 @@ private[delta] class ConflictChecker(
     reassignOverlappingRowIds()
     reassignRowCommitVersions()
 
+    // Update the table version in newly added type widening metadata.
+    updateTypeWideningMetadata()
+
     // Data file checks.
     checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn()
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
@@ -484,6 +487,26 @@ private[delta] class ConflictChecker(
     currentTransactionInfo = currentTransactionInfo.copy(
       domainMetadata = mergedDomainMetadata.toSeq,
       actions = updatedActions)
+  }
+
+  /**
+   * Metadata is recorded in the table schema on type changes. This includes the table version that
+   * the change was made in, which needs to be updated when there's a conflict.
+   */
+  private def updateTypeWideningMetadata(): Unit = {
+    if (!TypeWidening.isEnabled(currentTransactionInfo.protocol, currentTransactionInfo.metadata)) {
+      return
+    }
+    val newActions = currentTransactionInfo.actions.map {
+      case metadata: Metadata =>
+        val updatedSchema = TypeWideningMetadata.updateTypeChangeVersion(
+          schema = metadata.schema,
+          fromVersion = winningCommitVersion,
+          toVersion = winningCommitVersion + 1L)
+        metadata.copy(schemaString = updatedSchema.json)
+      case a => a
+    }
+    currentTransactionInfo = currentTransactionInfo.copy(actions = newActions)
   }
 
   /**
