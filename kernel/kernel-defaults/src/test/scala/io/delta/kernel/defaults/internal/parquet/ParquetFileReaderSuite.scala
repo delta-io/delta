@@ -26,16 +26,18 @@ class ParquetFileReaderSuite extends AnyFunSuite
   with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils {
 
   test("decimals encoded using dictionary encoding ") {
-    val DECIMAL_DICT_FILE_V1 = goldenTableFile("parquet-decimal-dictionaries-v1").getAbsolutePath
-    val DECIMAL_DICT_FILE_V2 = goldenTableFile("parquet-decimal-dictionaries-v2").getAbsolutePath
+    // Below golden tables contains three decimal columns
+    // each stored in a different physical format: int32, int64 and fixed binary
+    val decimalDictFileV1 = goldenTableFile("parquet-decimal-dictionaries-v1").getAbsolutePath
+    val decimalDictFileV2 = goldenTableFile("parquet-decimal-dictionaries-v2").getAbsolutePath
 
     val expResult = (0 until 1000000).map { i =>
       TestRow(i, BigDecimal.valueOf(i%5), BigDecimal.valueOf(i%6), BigDecimal.valueOf(i%2))
     }
 
-    val readSchema = tableSchema(DECIMAL_DICT_FILE_V1)
+    val readSchema = tableSchema(decimalDictFileV1)
 
-    for (file <- Seq(DECIMAL_DICT_FILE_V1, DECIMAL_DICT_FILE_V2)) {
+    for (file <- Seq(decimalDictFileV1, decimalDictFileV2)) {
       val actResult = readParquetFilesUsingKernel(file, readSchema)
 
       checkAnswer(actResult, expResult)
@@ -43,7 +45,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
   }
 
   test("large scale decimal type file") {
-    val LARGE_SCALE_DECIMAL_TYPES_FILE = goldenTableFile("parquet-decimal-type").getAbsolutePath
+    val largeScaleDecimalTypesFile = goldenTableFile("parquet-decimal-type").getAbsolutePath
 
     def expand(n: BigDecimal): BigDecimal = {
       n.scaleByPowerOfTen(5).add(n)
@@ -65,9 +67,9 @@ class ParquetFileReaderSuite extends AnyFunSuite
       }
     }
 
-    val readSchema = tableSchema(LARGE_SCALE_DECIMAL_TYPES_FILE)
+    val readSchema = tableSchema(largeScaleDecimalTypesFile)
 
-    val actResult = readParquetFilesUsingKernel(LARGE_SCALE_DECIMAL_TYPES_FILE, readSchema)
+    val actResult = readParquetFilesUsingKernel(largeScaleDecimalTypesFile, readSchema)
 
     checkAnswer(actResult, expResult)
   }
