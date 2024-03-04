@@ -24,7 +24,7 @@ import java.time.LocalDateTime
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, TestsStatistics}
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -44,6 +44,7 @@ class StatsCollectionSuite
     with DeltaColumnMappingTestUtils
     with TestsStatistics
     with DeltaSQLCommandTest
+    with DeltaSQLTestUtils
     with DeletionVectorsTestUtils {
 
   import testImplicits._

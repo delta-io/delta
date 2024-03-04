@@ -20,13 +20,14 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, Mana
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 
-class CommitStoreSuite extends QueryTest with SQLTestUtils with SharedSparkSession
+class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
   with DeltaSQLCommandTest {
 
   trait TestCommitStoreBase extends CommitStore {

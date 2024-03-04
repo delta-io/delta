@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 import org.json4s.JString
@@ -55,7 +56,7 @@ import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 trait DeltaErrorsSuiteBase
@@ -63,7 +64,7 @@ trait DeltaErrorsSuiteBase
     with SharedSparkSession
     with GivenWhenThen
     with DeltaSQLCommandTest
-    with SQLTestUtils
+    with DeltaSQLTestUtils
     with QueryErrorsBase {
 
   val MAX_URL_ACCESS_RETRIES = 3
