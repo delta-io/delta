@@ -250,7 +250,7 @@ trait ParquetSuiteBase extends TestUtils {
   }
 
   // Read the parquet files in actionFileDir using Spark Parquet reader
-  private def readParquetFilesUsingSpark(
+  def readParquetFilesUsingSpark(
     actualFileDir: String, readSchema: StructType): Seq[TestRow] = {
     spark.read
       .format("parquet")
