@@ -60,22 +60,22 @@ case class UpdatedActions(
  */
 trait CommitStore {
   /**
-   * API to commit the given set of `actions` to the table represented by given `tablePath` at the
+   * API to commit the given set of `actions` to the table represented by given `logPath` at the
    * given `commitVersion`.
    * @return CommitResponse which contains the file status of the commit file. If the commit is
    *         already backfilled, then the fileStatus could be omitted from response and the client
    *         could get the info by themselves.
    */
   def commit(
-    logStore: LogStore,
-    hadoopConf: Configuration,
-    tablePath: Path,
-    commitVersion: Long,
-    actions: Iterator[String],
-    updatedActions: UpdatedActions): CommitResponse
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      logPath: Path,
+      commitVersion: Long,
+      actions: Iterator[String],
+      updatedActions: UpdatedActions): CommitResponse
 
   /**
-   * API to get the un-backfilled commits for the table represented by the given `tablePath`.
+   * API to get the un-backfilled commits for the table represented by the given `logPath`.
    * Commits older than `startVersion`, or newer than `endVersion` (if given), are ignored. The
    * returned commits are contiguous and in ascending version order.
    * Note that the first version returned by this API may not be equal to the `startVersion`. This
@@ -85,9 +85,9 @@ trait CommitStore {
    * @return a sequence of [[Commit]] which are tracked by [[CommitStore]].
    */
   def getCommits(
-    tablePath: Path,
-    startVersion: Long,
-    endVersion: Option[Long] = None): Seq[Commit]
+      logPath: Path,
+      startVersion: Long,
+      endVersion: Option[Long] = None): Seq[Commit]
 }
 
 /** A builder interface for CommitStore */

@@ -79,18 +79,18 @@ case class TrackingInMemoryCommitStore(
   override def commit(
       logStore: LogStore,
       hadoopConf: Configuration,
-      tablePath: Path,
+      logPath: Path,
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = recordOperation("commit") {
-    super.commit(logStore, hadoopConf, tablePath, commitVersion, actions, updatedActions)
+    super.commit(logStore, hadoopConf, logPath, commitVersion, actions, updatedActions)
   }
 
   override def getCommits(
-      tablePath: Path,
+      logPath: Path,
       startVersion: Long,
       endVersion: Option[Long] = None): Seq[Commit] = recordOperation("getCommits") {
-    super.getCommits(tablePath, startVersion, endVersion)
+    super.getCommits(logPath, startVersion, endVersion)
   }
 
   var nextUuidSuffix = 0L
