@@ -64,15 +64,19 @@ object TypeWidening {
 
   /**
    * Filter the given list of files to only keep files that were written before the latest type
-   * change and that then contain a column or field with a type that is different from the current
-   * table schema.
+   * change, if any. These older files contain a column or field with a type that is different than
+   * in the current table schema and must be rewritten when dropping the type widening table feature
+   * to make the table readable by readers that don't support the feature.
    */
   def filterFilesRequiringRewrite(snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile] =
      TypeWideningMetadata.getLatestTypeChangeVersion(snapshot.metadata.schema) match {
       case Some(latestVersion) =>
         files.filter(_.defaultRowCommitVersion match {
             case Some(version) => version < latestVersion
-            case None => false
+            // Files written before the type widening table feature was added to the table don't
+            // have a defaultRowCommitVersion. That does mean they were written before the latest
+            // type change.
+            case None => true
         })
       case None =>
         Seq.empty

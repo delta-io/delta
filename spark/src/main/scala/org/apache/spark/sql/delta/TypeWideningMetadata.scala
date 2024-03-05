@@ -218,7 +218,7 @@ private[delta] object TypeWideningMetadata {
     newSchema -> changes.toSeq
   }
 
-  /** Check whether any struct field in the schema contains type widening metadata. */
+  /** Recursively checks whether any struct field in the schema contains type widening metadata. */
   def containsTypeWideningMetadata(schema: StructType): Boolean =
     schema.existsRecursively {
       case s: StructType => s.exists(_.metadata.contains(TYPE_CHANGES_METADATA_KEY))
@@ -227,18 +227,16 @@ private[delta] object TypeWideningMetadata {
 
   /** Return the version of the latest type change recorded in the schema metadata */
   def getLatestTypeChangeVersion(schema: StructType): Option[Long] = {
-    val fields =
-      SchemaUtils.filterRecursively(schema, checkComplexTypes = true) {
-        _.metadata.contains(TypeWideningMetadata.TYPE_CHANGES_METADATA_KEY)
-      }.map(_._2)
+    val allStructFields = SchemaUtils.filterRecursively(schema, checkComplexTypes = true) {
+      _ => true
+    }.map(_._2)
 
-    val versions = fields.flatMap { field =>
-      field.metadata
-        .getMetadataArray(TypeWideningMetadata.TYPE_CHANGES_METADATA_KEY)
-        .map { typeChange =>
-          typeChange.getLong(TypeChange.TABLE_VERSION_METADATA_KEY)
-        }
-    }
+    // Collect all type change versions from all struct fields.
+    val versions = allStructFields
+      .flatMap(TypeWideningMetadata.fromField)
+      .flatMap(_.typeChanges)
+      .map(_.version)
+
     if (versions.nonEmpty) Some(versions.max) else None
   }
 }
