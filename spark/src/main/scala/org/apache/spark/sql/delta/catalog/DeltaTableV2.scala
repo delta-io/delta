@@ -329,7 +329,7 @@ object DeltaTableV2 {
 
   /** Resolves a table identifier into a DeltaTableV2, leveraging standard v2 table resolution. */
   def apply(spark: SparkSession, tableId: TableIdentifier, cmd: String): DeltaTableV2 = {
-    resolve(spark, UnresolvedTable(tableId.nameParts, cmd, None), cmd)
+    resolve(spark, UnresolvedTable(tableId.nameParts, cmd), cmd)
   }
 
   /** Applies standard v2 table resolution to an unresolved Delta table plan node */

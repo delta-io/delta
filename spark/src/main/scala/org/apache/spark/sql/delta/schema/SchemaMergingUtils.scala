@@ -199,7 +199,8 @@ object SchemaMergingUtils {
                     currentField.metadata)
                 } catch {
                   case NonFatal(e) =>
-                    throw new AnalysisException(s"Failed to merge fields '${currentField.name}' " +
+                    throw new DeltaAnalysisException(
+                      s"Failed to merge fields '${currentField.name}' " +
                       s"and '${updateField.name}'. " + e.getMessage)
                 }
               case None =>
@@ -274,7 +275,7 @@ object SchemaMergingUtils {
         case (_, NullType) =>
           current
         case _ =>
-          throw new AnalysisException(
+          throw new DeltaAnalysisException(
             s"Failed to merge incompatible data types $current and $update")
       }
     }
