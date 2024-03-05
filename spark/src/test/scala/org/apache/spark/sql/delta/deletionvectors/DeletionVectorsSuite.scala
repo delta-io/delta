@@ -202,8 +202,6 @@ class DeletionVectorsSuite extends QueryTest
     }
   }
 
-
-
   test("DELETE with DVs - on a table with no prior DVs") {
     withDeletionVectorsEnabled() {
       withTempDir { dirName =>

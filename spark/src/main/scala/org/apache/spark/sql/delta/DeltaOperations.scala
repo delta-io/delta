@@ -81,7 +81,7 @@ object DeltaOperations {
       extends Operation(name) {
     private val predicateString = JsonUtils.toJson(predicatesToString(predicates).map(
         c => StringUtils.abbreviate(c,
-          DeltaConfigs.MAX_AMOUNT_OF_CHAR_IN_TRANSACTION_PREDICATE.fromMetaData(metadata))))
+          DeltaConfigs.MAX_AMOUNT_OF_CHAR_IN_TRANSACTION_PREDICATE_DEBUG.fromMetaData(metadata))))
     override def parameters: Map[String, Any] = Map("predicate" -> predicateString)
   }
 

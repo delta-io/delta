@@ -85,7 +85,8 @@ class DeleteSQLSuite extends DeleteSuiteBase
 
   test("DELETE with huge predicate") {
     withSQLConf(
-      DeltaConfigs.MAX_AMOUNT_OF_CHAR_IN_TRANSACTION_PREDICATE.defaultTablePropertyKey -> "4") {
+      DeltaConfigs.MAX_AMOUNT_OF_CHAR_IN_TRANSACTION_PREDICATE_DEBUG
+        .defaultTablePropertyKey -> "4") {
       withTempDir { dirName =>
         val path = dirName.getAbsolutePath
         spark.range(0, 10, step = 1).withColumn("id2", col("id") + 10
