@@ -47,7 +47,7 @@ class DeltaAnalysisException(
     messageParameters,
     context)
     with DeltaThrowable {
-  
+
   /* Implemented for testing */
   private[delta] def getMessageParametersArray: Array[String] = errorClass match {
     case Some(eClass) =>
