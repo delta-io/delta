@@ -2003,7 +2003,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /** Returns the version that the first attempt will try to commit at. */
-  protected def getFirstAttemptVersion: Long = readVersion + 1L
+  private[delta] def getFirstAttemptVersion: Long = readVersion + 1L
 
   /** Returns the conflicting commit information */
   protected def getConflictingVersions(previousAttemptVersion: Long): Seq[FileStatus] = {
