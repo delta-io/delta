@@ -131,8 +131,11 @@ class IcebergFileManifest(
             s"Cannot convert Iceberg merge-on-read table with delete files. " +
               s"Please trigger an Iceberg compaction and retry the command.")
         }
-        val partitionValues = convertIcebergPartitionToPartitionValues(
-          fileScanTask.file().partition())
+        val partitionValues = if (spark.sessionState.conf.getConf(
+            DeltaSQLConf.DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES)) {
+          Some(convertIcebergPartitionToPartitionValues(
+            fileScanTask.file().partition()))
+        } else None
         (filePath, partitionValues)
       }
       val numParallelism = Math.min(Math.max(filePathWithPartValues.size, 1),
@@ -157,35 +160,32 @@ class IcebergFileManifest(
   override def close(): Unit = fileSparkResults.map(_.unpersist())
 
   def convertIcebergPartitionToPartitionValues(partition: StructLike):
-      Option[Map[String, String]] = {
-    if (spark.sessionState.conf
-        .getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES)) {
-      val icebergPartitionData = partition.asInstanceOf[PartitionData]
-      val fieldIdToIdx = icebergPartitionData.getPartitionType
-        .fields()
-        .asScala
-        .zipWithIndex
-        .map(kv => kv._1.fieldId() -> kv._2)
-        .toMap
-      val physicalNameToPartValueMap = physicalNameToField
-        .map {
-          case (physicalName, field) =>
-            val fieldIndex = fieldIdToIdx.get(field.fieldId())
-            val partValueAsString = fieldIndex
-              .map { idx =>
-                val partValue = icebergPartitionData.get(idx)
-                IcebergPartitionUtil.partitionValueToString(
-                  field,
-                  partValue,
-                  icebergSchema,
-                  dateFormatter,
-                  timestampFormatter
-                )
-              }
-              .getOrElse(null)
-            physicalName -> partValueAsString
-        }
-      Some(physicalNameToPartValueMap)
-    } else None
+      Map[String, String] = {
+    val icebergPartitionData = partition.asInstanceOf[PartitionData]
+    val fieldIdToIdx = icebergPartitionData.getPartitionType
+      .fields()
+      .asScala
+      .zipWithIndex
+      .map(kv => kv._1.fieldId() -> kv._2)
+      .toMap
+    val physicalNameToPartValueMap = physicalNameToField
+      .map {
+        case (physicalName, field) =>
+          val fieldIndex = fieldIdToIdx.get(field.fieldId())
+          val partValueAsString = fieldIndex
+            .map { idx =>
+              val partValue = icebergPartitionData.get(idx)
+              IcebergPartitionUtil.partitionValueToString(
+                field,
+                partValue,
+                icebergSchema,
+                dateFormatter,
+                timestampFormatter
+              )
+            }
+            .getOrElse(null)
+          physicalName -> partValueAsString
+      }
+    physicalNameToPartValueMap
   }
 }
