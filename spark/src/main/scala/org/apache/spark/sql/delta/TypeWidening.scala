@@ -16,9 +16,10 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
 
 import org.apache.spark.sql.catalyst.expressions.Cast
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types._
 
 object TypeWidening {
@@ -60,4 +61,30 @@ object TypeWidening {
       case (ByteType | ShortType, IntegerType) => true
       case _ => false
     }
+
+  /**
+   * Filter the given list of files to only keep files that were written before the latest type
+   * change and that then contain a column or field with a type that is different from the current
+   * table schema.
+   */
+  def filterFilesRequiringRewrite(snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile] =
+     TypeWideningMetadata.getLatestTypeChangeVersion(snapshot.metadata.schema) match {
+      case Some(latestVersion) =>
+        files.filter(_.defaultRowCommitVersion match {
+            case Some(version) => version < latestVersion
+            case None => false
+        })
+      case None =>
+        Seq.empty
+    }
+
+
+
+  /**
+   * Return the number of files that were written before the latest type change and that then
+   * contain a column or field with a type that is different from the current able schema.
+   */
+  def numFilesRequiringRewrite(snapshot: Snapshot): Long = {
+    filterFilesRequiringRewrite(snapshot, snapshot.allFiles.collect()).size
+  }
 }

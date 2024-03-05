@@ -264,7 +264,7 @@ class OptimizeExecutor(
       val partitionSchema = txn.metadata.partitionSchema
 
       val filesToProcess = optimizeContext.reorg match {
-        case Some(reorgOperation) => reorgOperation.filterFilesToReorg(candidateFiles)
+        case Some(reorgOperation) => reorgOperation.filterFilesToReorg(txn.snapshot, candidateFiles)
         case None => filterCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
       }
       val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq

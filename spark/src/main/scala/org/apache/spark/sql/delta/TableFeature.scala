@@ -627,7 +627,8 @@ object ManagedCommitTableFeature
 }
 
 object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening-dev")
-    with FeatureAutomaticallyEnabledByMetadata {
+    with FeatureAutomaticallyEnabledByMetadata
+    with RemovableFeature {
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
   private def isTypeWideningSupportNeededByMetadata(metadata: Metadata): Boolean =
@@ -636,6 +637,19 @@ object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
       spark: SparkSession): Boolean = isTypeWideningSupportNeededByMetadata(metadata)
+
+  override def validateRemoval(snapshot: Snapshot): Boolean =
+    !isTypeWideningSupportNeededByMetadata(snapshot.metadata) &&
+      !TypeWideningMetadata.containsTypeWideningMetadata(snapshot.metadata.schema)
+
+  override def actionUsesFeature(action: Action): Boolean =
+    action match {
+      case m: Metadata => TypeWideningMetadata.containsTypeWideningMetadata(m.schema)
+      case _ => false
+    }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TypeWideningPreDowngradeCommand(table)
 }
 
 /**
