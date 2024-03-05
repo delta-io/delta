@@ -54,6 +54,25 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
     }
   }
 
+  test("Restore to a specific version") {
+    withTable(testTableName) {
+      write(
+        s"""CREATE TABLE `$testTableName` (col1 INT) USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+      (1 to 4).foreach{ i =>
+        write(s"INSERT INTO `$testTableName` VALUES ($i)")
+      }
+      readAndVerify(testTableName, "col1", "col1", Seq(Row(1), Row(2), Row(3), Row(4)))
+
+      write(s"RESTORE `$testTableName` TO VERSION AS OF 2")
+      readAndVerify(testTableName, "col1", "col1", Seq(Row(1), Row(2)))
+    }
+  }
+
+
   test("Nested struct schema test") {
     withTable(testTableName) {
       write(s"""CREATE TABLE $testTableName
