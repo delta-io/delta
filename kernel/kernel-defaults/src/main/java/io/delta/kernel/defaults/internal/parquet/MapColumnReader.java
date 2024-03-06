@@ -25,12 +25,16 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.MapType;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultMapVector;
-import static io.delta.kernel.defaults.internal.parquet.ParquetConverters.createConverter;
+import static io.delta.kernel.defaults.internal.parquet.ParquetColumnReaders.createConverter;
 
-class MapConverter extends RepeatedValueConverter {
+/**
+ * Map column readers for materializing the column values from Parquet files into Kernels
+ * {@link ColumnVector}.
+ */
+class MapColumnReader extends RepeatedValueConverter {
     private final MapType typeFromClient;
 
-    MapConverter(int initialBatchSize, MapType typeFromClient, GroupType typeFromFile) {
+    MapColumnReader(int initialBatchSize, MapType typeFromClient, GroupType typeFromFile) {
         super(
             initialBatchSize,
             createElementConverters(initialBatchSize, typeFromClient, typeFromFile));
