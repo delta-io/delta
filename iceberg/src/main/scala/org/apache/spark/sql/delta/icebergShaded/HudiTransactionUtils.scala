@@ -59,10 +59,18 @@ object HudiTransactionUtils extends DeltaLogging {
   def getPartitionPath(tableBasePath: Path, filePath: Path): String = {
     val fileName = filePath.getName
     val pathStr = filePath.toUri.getPath
-    val startIndex = tableBasePath.toUri.getPath.length + 1
-    val endIndex = pathStr.length - fileName.length - 1
-    if (endIndex <= startIndex) ""
-    else pathStr.substring(startIndex, endIndex)
+    val tableBasePathStr = tableBasePath.toUri.getPath
+    if (pathStr.contains(tableBasePathStr)) {
+      // input file path is absolute
+      val startIndex = tableBasePath.toUri.getPath.length + 1
+      val endIndex = pathStr.length - fileName.length - 1
+      if (endIndex <= startIndex) ""
+      else pathStr.substring(startIndex, endIndex)
+    } else {
+      val lastSlash = pathStr.lastIndexOf("/")
+      if (lastSlash <= 0) ""
+      else pathStr.substring(0, pathStr.lastIndexOf("/"))
+    }
   }
 
   /**

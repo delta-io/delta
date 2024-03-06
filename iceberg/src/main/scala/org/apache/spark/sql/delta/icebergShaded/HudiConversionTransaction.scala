@@ -51,7 +51,6 @@ import org.apache.hudi.config.HoodieWriteConfig
 import org.apache.hudi.index.HoodieIndex.IndexType.INMEMORY
 import org.apache.hudi.table.HoodieJavaTable
 import org.apache.hudi.table.action.clean.CleanPlanner
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 import java.io.{IOException, UncheckedIOException}
 import java.time.{Instant, LocalDateTime, ZoneId}
@@ -73,10 +72,10 @@ import scala.collection.JavaConverters._
  * @param tableOp How to instantiate the underlying Iceberg table. Defaults to WRITE_TABLE.
  */
 class HudiConversionTransaction(
-    protected val catalogTable: CatalogTable,
     protected val conf: Configuration,
     protected val postCommitSnapshot: Snapshot,
     protected val tableOp: IcebergTableOp = WRITE_TABLE,
+    protected val providedMetaClient: HoodieTableMetaClient,
     protected val lastConvertedDeltaVersion: Option[Long] = None) extends DeltaLogging {
 
   //////////////////////
@@ -84,17 +83,16 @@ class HudiConversionTransaction(
   //////////////////////
 
   private val tablePath = postCommitSnapshot.deltaLog.dataPath
-  private val tableName = catalogTable.identifier.table
   private val hudiSchema: Schema =
     convertDeltaSchemaToHudiSchema(postCommitSnapshot.metadata.schema)
-  private var metaClient = loadTableMetaClient(tablePath.toString,
-    tableName, postCommitSnapshot.metadata.partitionColumns, conf)
+  private var metaClient = providedMetaClient
   private val instantTime = convertInstantToCommit(
     Instant.ofEpochMilli(postCommitSnapshot.timestamp))
   private var writeStatuses: util.List[WriteStatus] = Collections.emptyList[WriteStatus]
   private var partitionToReplacedFileIds: util.Map[String, util.List[String]] =
     Collections.emptyMap[String, util.List[String]]
 
+  private val version = postCommitSnapshot.version
   /** Tracks if this transaction has already committed. You can only commit once. */
   private var committed = false
 
@@ -137,9 +135,11 @@ class HudiConversionTransaction(
         new HoodieInstant(HoodieInstant.State.REQUESTED, HoodieTimeline.REPLACE_COMMIT_ACTION,
           instantTime),
         HudiOption.empty[Array[Byte]])
+      val syncMetadata: Map[String, String] =
+        Map(HudiConverter.DELTA_VERSION_PROPERTY -> version.toString)
       writeClient.commit(instantTime,
         writeStatuses,
-        HudiOption.empty[java.util.Map[String, String]],
+        HudiOption.of(syncMetadata.asJava),
         HoodieTimeline.REPLACE_COMMIT_ACTION,
         partitionToReplacedFileIds)
       // if the metaclient was created before the table's first commit, we need to reload it to

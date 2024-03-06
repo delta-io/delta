@@ -17,14 +17,19 @@
 package org.apache.spark.sql.delta.icebergShaded
 
 import org.apache.commons.lang3.exception.ExceptionUtils
+import org.apache.hudi.common.model.{HoodieCommitMetadata, HoodieReplaceCommitMetadata}
+import org.apache.hudi.common.table.HoodieTableMetaClient
+import org.apache.hudi.common.table.timeline.{HoodieInstant, HoodieTimeline}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.hooks.HudiConverterHook
+import org.apache.spark.sql.delta.icebergShaded.HudiTransactionUtils._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta._
 
+import java.io.{IOException, UncheckedIOException}
 import java.util.concurrent.atomic.AtomicReference
 import javax.annotation.concurrent.GuardedBy
 import scala.collection.JavaConverters._
@@ -144,7 +149,6 @@ class HudiConverter(spark: SparkSession)
 
     // If there already was a snapshot waiting to be converted, log that snapshot info.
     if (previouslyQueued != null) {
-//      previouslyQueued._1.uncache()
       recordDeltaEvent(
         snapshotToConvert.deltaLog,
         "delta.hudi.conversion.async.backlog",
@@ -213,8 +217,10 @@ class HudiConverter(spark: SparkSession)
       catalogTable: CatalogTable): Option[(Long, Long)] =
       recordFrameProfile("Delta", "HudiConverter.convertSnapshot") {
     val log = snapshotToConvert.deltaLog
-    val lastDeltaVersionConverted: Option[Long] =
-      loadLastDeltaVersionConverted(snapshotToConvert, catalogTable)
+    val metaClient = loadTableMetaClient(snapshotToConvert.deltaLog.dataPath.toString,
+      catalogTable.identifier.table, snapshotToConvert.metadata.partitionColumns,
+      log.newDeltaHadoopConf())
+    val lastDeltaVersionConverted: Option[Long] = loadLastDeltaVersionConverted(metaClient)
     val maxCommitsToConvert =
       spark.sessionState.conf.getConf(DeltaSQLConf.ICEBERG_MAX_COMMITS_TO_CONVERT)
 
@@ -253,8 +259,8 @@ class HudiConverter(spark: SparkSession)
       case _ =>
     }
 
-    val hudiTxn = new HudiConversionTransaction(
-      catalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp, lastDeltaVersionConverted)
+    val hudiTxn = new HudiConversionTransaction(log.newDeltaHadoopConf(),
+      snapshotToConvert, tableOp, metaClient, lastDeltaVersionConverted)
 
     // Write out the actions taken since the last conversion (or since table creation).
     // This is done in batches, with each batch corresponding either to one delta file,
@@ -315,11 +321,39 @@ class HudiConverter(spark: SparkSession)
     Some(snapshotToConvert.version, snapshotToConvert.timestamp)
   }
 
-  override def loadLastDeltaVersionConverted(
-      snapshot: Snapshot, catalogTable: CatalogTable): Option[Long] =
-    recordFrameProfile("Delta", "HudiConverter.loadLastDeltaVersionConverted") {
-        catalogTable.properties.get(HudiConverter.DELTA_VERSION_PROPERTY).map(_.toLong)
+  def loadLastDeltaVersionConverted(snapshot: Snapshot, table: CatalogTable): Option[Long] = {
+    val metaClient = loadTableMetaClient(snapshot.deltaLog.dataPath.toString,
+      table.identifier.table, snapshot.metadata.partitionColumns,
+      snapshot.deltaLog.newDeltaHadoopConf())
+    loadLastDeltaVersionConverted(metaClient)
+  }
+
+  private def loadLastDeltaVersionConverted(metaClient: HoodieTableMetaClient): Option[Long] = {
+    val lastCompletedCommit = metaClient.getCommitsTimeline.filterCompletedInstants.lastInstant
+    if (!lastCompletedCommit.isPresent) {
+      return None
     }
+    val extraMetadata = parseCommitExtraMetadata(lastCompletedCommit.get(), metaClient)
+    extraMetadata.get(HudiConverter.DELTA_VERSION_PROPERTY).map(_.toLong)
+  }
+
+  private def parseCommitExtraMetadata(instant: HoodieInstant,
+                                       metaClient: HoodieTableMetaClient): Map[String, String] = {
+    try {
+      if (instant.getAction == HoodieTimeline.REPLACE_COMMIT_ACTION) {
+        HoodieReplaceCommitMetadata.fromBytes(
+          metaClient.getActiveTimeline.getInstantDetails(instant).get,
+          classOf[HoodieReplaceCommitMetadata]).getExtraMetadata.asScala.toMap
+      } else {
+        HoodieCommitMetadata.fromBytes(
+          metaClient.getActiveTimeline.getInstantDetails(instant).get,
+          classOf[HoodieCommitMetadata]).getExtraMetadata.asScala.toMap
+      }
+    } catch {
+      case ex: IOException =>
+        throw new UncheckedIOException("Unable to read Hudi commit metadata", ex)
+    }
+  }
 
   private[delta] def runHudiConversionForActions(
       hudiTxn: HudiConversionTransaction,
