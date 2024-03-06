@@ -36,9 +36,13 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultStructVector;
 import static io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.findSubFieldType;
 import static io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.getParquetFieldToTypeMap;
 
-class RowConverter
+/**
+ * Row column readers for materializing the column values from Parquet files into Kernels
+ * {@link ColumnVector}.
+ */
+class RowColumnReader
     extends GroupConverter
-    implements ParquetConverters.BaseConverter {
+    implements ParquetColumnReaders.BaseColumnReader {
     private final StructType readSchema;
     private final Converter[] converters;
     // The delta may request columns that don't exists in Parquet
@@ -63,7 +67,7 @@ class RowConverter
      *                         fields in fileSchema are in the same order as the corresponding
      *                         fields in readSchema.
      */
-    RowConverter(int initialBatchSize, StructType readSchema, GroupType fileSchema) {
+    RowColumnReader(int initialBatchSize, StructType readSchema, GroupType fileSchema) {
         checkArgument(initialBatchSize > 0, "invalid initialBatchSize: %s", initialBatchSize);
         this.readSchema = requireNonNull(readSchema, "readSchema is not null");
         List<StructField> fields = readSchema.fields();
@@ -71,7 +75,7 @@ class RowConverter
         this.parquetOrdinalToConverterOrdinal = new HashMap<>();
 
         // Initialize the working state
-        this.nullability = ParquetConverters.initNullabilityVector(initialBatchSize);
+        this.nullability = ParquetColumnReaders.initNullabilityVector(initialBatchSize);
 
         int parquetOrdinal = 0;
         for (int i = 0; i < converters.length; i++) {
@@ -86,13 +90,13 @@ class RowConverter
                     checkArgument(field.getDataType() instanceof LongType,
                         "row index metadata column must be type long");
                     converters[i] =
-                        new ParquetConverters.FileRowIndexColumnConverter(initialBatchSize);
+                        new ParquetColumnReaders.FileRowIndexColumnReader(initialBatchSize);
                 } else {
-                    converters[i] = new ParquetConverters.NonExistentColumnConverter(
+                    converters[i] = new ParquetColumnReaders.NonExistentColumnReader(
                         typeFromClient);
                 }
             } else {
-                converters[i] = ParquetConverters.createConverter(
+                converters[i] = ParquetColumnReaders.createConverter(
                     initialBatchSize, typeFromClient, typeFromFile);
                 parquetOrdinalToConverterOrdinal.put(parquetOrdinal, i);
                 parquetOrdinal++;
@@ -148,7 +152,7 @@ class RowConverter
         if (nullability.length == currentRowIndex) {
             int newSize = nullability.length * 2;
             this.nullability = Arrays.copyOf(this.nullability, newSize);
-            ParquetConverters.setNullabilityToTrue(this.nullability, newSize / 2, newSize);
+            ParquetColumnReaders.setNullabilityToTrue(this.nullability, newSize / 2, newSize);
         }
     }
 
@@ -156,12 +160,13 @@ class RowConverter
     public void resetWorkingState() {
         this.currentRowIndex = 0;
         this.isCurrentValueNull = true;
-        this.nullability = ParquetConverters.initNullabilityVector(this.nullability.length);
+        this.nullability = ParquetColumnReaders.initNullabilityVector(this.nullability.length);
     }
 
     private void finalizeLastRowInConverters(long prevRowIndex) {
         for (int i = 0; i < converters.length; i++) {
-            ((ParquetConverters.BaseConverter) converters[i]).finalizeCurrentRow(prevRowIndex);
+            ((ParquetColumnReaders.BaseColumnReader) converters[i])
+                    .finalizeCurrentRow(prevRowIndex);
         }
     }
 
@@ -169,7 +174,7 @@ class RowConverter
         final ColumnVector[] output = new ColumnVector[converters.length];
 
         for (int i = 0; i < converters.length; i++) {
-            output[i] = ((ParquetConverters.BaseConverter) converters[i])
+            output[i] = ((ParquetColumnReaders.BaseColumnReader) converters[i])
                 .getDataColumnVector(batchSize);
         }
 

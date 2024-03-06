@@ -31,7 +31,7 @@ import io.delta.kernel.utils.*;
 
 import io.delta.kernel.internal.util.Utils;
 
-import io.delta.kernel.defaults.internal.parquet.ParquetBatchReader;
+import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileWriter;
 
 /**
@@ -55,7 +55,7 @@ public class DefaultParquetHandler implements ParquetHandler {
             StructType physicalSchema,
             Optional<Predicate> predicate) throws IOException {
         return new CloseableIterator<ColumnarBatch>() {
-            private final ParquetBatchReader batchReader = new ParquetBatchReader(hadoopConf);
+            private final ParquetFileReader batchReader = new ParquetFileReader(hadoopConf);
             private FileStatus currentFile;
             private CloseableIterator<ColumnarBatch> currentFileReader;
 
