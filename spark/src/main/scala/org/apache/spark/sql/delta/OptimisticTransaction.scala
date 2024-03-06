@@ -611,9 +611,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     newMetadataTmp = MaterializedRowCommitVersion.updateMaterializedColumnName(
       protocol, oldMetadata = snapshot.metadata, newMetadataTmp)
 
-    RowId.verifyMetadata(
-      snapshot.protocol, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
-
     assertMetadata(newMetadataTmp)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")
     newMetadata = Some(newMetadataTmp)
