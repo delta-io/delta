@@ -38,7 +38,7 @@ Global / default_scala_version := scala213
 // Dependent library versions
 val sparkVersion = "4.0.0-SNAPSHOT"
 val flinkVersion = "1.16.1"
-val hadoopVersion = "3.3.4"
+val hadoopVersion = "3.3.6"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
