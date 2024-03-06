@@ -32,7 +32,7 @@ import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Encoder, QueryTest, Row}
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
-import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
@@ -624,6 +624,8 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
     with RowTrackingTestUtils
     with DeltaTypeWideningTestMixin =>
 
+  import testImplicits._
+
   /** Clock used to advance past the retention period when dropping the table feature. */
   var clock: ManualClock = _
 
@@ -697,6 +699,9 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
       deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
         TimeUnit.MINUTES.toMillis(5))
   }
+
+  def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
+      append(values.toDF("a").select(col("a").cast(dataType)).repartition(1))
 
   /** Get the number of AddFile actions committed since the given table version (included). */
   def getNumAddFilesSinceVersion(version: Long): Long =
@@ -814,7 +819,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
   for(rowTrackingEnabled <- BOOLEAN_DOMAIN) {
     test(s"drop unused table feature on table with data, rowTrackingEnabled=$rowTrackingEnabled") {
       sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
-      sql(s"INSERT INTO delta.`$tempPath` VALUES (1), (2), (3)")
+      addSingleFile(Seq(1, 2, 3), ByteType)
       assert(getNumAddFilesSinceVersion(version = 0) === 1)
 
       val version = deltaLog.update().version
@@ -827,7 +832,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
       s"rowTrackingEnabled=$rowTrackingEnabled") {
       sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA " +
         s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
-      sql(s"INSERT INTO delta.`$tempPath` VALUES (1), (2), (3)")
+      addSingleFile(Seq(1, 2, 3), ByteType)
       enableTypeWidening(tempPath)
       sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
       assert(getNumAddFilesSinceVersion(version = 0) === 1)
@@ -852,7 +857,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
       s"rowTrackingEnabled=$rowTrackingEnabled") {
       sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
       sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
-      sql(s"INSERT INTO delta.`$tempPath` VALUES (1), (2), (3)")
+      addSingleFile(Seq(1, 2, 3), IntegerType)
       assert(getNumAddFilesSinceVersion(version = 0) === 1)
 
       // We could actually drop the table feature directly here instead of failing by checking that
@@ -877,7 +882,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
     test(s"drop table feature on table with data added before type change, " +
       s"rowTrackingEnabled=$rowTrackingEnabled") {
       sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
-      sql(s"INSERT INTO delta.`$tempDir` VALUES (1), (2), (3)")
+      addSingleFile(Seq(1, 2, 3), ByteType)
       sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
       assert(getNumAddFilesSinceVersion(version = 0) === 1)
 
@@ -900,7 +905,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
     test(s"drop table feature on table with data added before type change and fully rewritten " +
       s"after, rowTrackingEnabled=$rowTrackingEnabled") {
       sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
-      sql(s"INSERT INTO delta.`$tempDir` VALUES (1), (2), (3)")
+      addSingleFile(Seq(1, 2, 3), ByteType)
       sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
       sql(s"UPDATE delta.`$tempDir` SET a = a + 10")
       assert(getNumAddFilesSinceVersion(version = 0) === 2)
@@ -926,8 +931,8 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
       s"rewritten after, rowTrackingEnabled=$rowTrackingEnabled") {
       withRowTrackingEnabled(rowTrackingEnabled) {
         sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
-        sql(s"INSERT INTO delta.`$tempDir` VALUES (1), (2), (3)")
-        sql(s"INSERT INTO delta.`$tempDir` VALUES (4), (5), (6)")
+        addSingleFile(Seq(1, 2, 3), ByteType)
+        addSingleFile(Seq(4, 5, 6), ByteType)
         sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
         assert(getNumAddFilesSinceVersion(version = 0) === 2)
         sql(s"UPDATE delta.`$tempDir` SET a = a + 10 WHERE a < 4")
