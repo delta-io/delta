@@ -135,8 +135,9 @@ class HudiConversionTransaction(
         new HoodieInstant(HoodieInstant.State.REQUESTED, HoodieTimeline.REPLACE_COMMIT_ACTION,
           instantTime),
         HudiOption.empty[Array[Byte]])
-      val syncMetadata: Map[String, String] =
-        Map(HudiConverter.DELTA_VERSION_PROPERTY -> version.toString)
+      val syncMetadata: Map[String, String] = Map(
+        HudiConverter.DELTA_VERSION_PROPERTY -> version.toString,
+        HudiConverter.DELTA_TIMESTAMP_PROPERTY -> postCommitSnapshot.timestamp.toString)
       writeClient.commit(instantTime,
         writeStatuses,
         HudiOption.of(syncMetadata.asJava),

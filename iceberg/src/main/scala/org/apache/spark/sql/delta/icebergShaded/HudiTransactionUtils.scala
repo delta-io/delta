@@ -84,7 +84,7 @@ object HudiTransactionUtils extends DeltaLogging {
    * @return {@link HoodieTableMetaClient} for the existing table or that was created
    */
   def loadTableMetaClient(tableDataPath: String,
-                          tableName: String,
+                          tableName: Option[String],
                           partitionFields: Seq[String],
                           conf: Configuration): HoodieTableMetaClient = {
     try HoodieTableMetaClient.builder
@@ -94,7 +94,10 @@ object HudiTransactionUtils extends DeltaLogging {
     catch {
       case ex: TableNotFoundException =>
         log.debug("Hudi table does not exist, creating now.")
-        initializeHudiTable(tableDataPath, tableName, partitionFields, conf)
+        if (tableName.isEmpty) {
+          throw new IllegalArgumentException("Table name is required to create a new Hudi table.")
+        }
+        initializeHudiTable(tableDataPath, tableName.get, partitionFields, conf)
     }
   }
 

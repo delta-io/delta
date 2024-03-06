@@ -157,6 +157,7 @@ class HudiConverter(spark: SparkSession)
           "replacedVersion" -> previouslyQueued._1.version)
       )
     }
+    // scalastyle:on println
   }
 
   /**
@@ -170,7 +171,7 @@ class HudiConverter(spark: SparkSession)
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
-    convertSnapshot(snapshotToConvert, None, catalogTable)
+    convertSnapshot(snapshotToConvert, None, Option.apply(catalogTable.identifier.table))
   }
 
   /**
@@ -186,20 +187,7 @@ class HudiConverter(spark: SparkSession)
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
-    txn.catalogTable match {
-      case Some(table) => convertSnapshot(snapshotToConvert, Some(txn), table)
-      case _ =>
-        logWarning(s"CatalogTable for table ${snapshotToConvert.deltaLog.tableId} " +
-          s"is empty in txn. Skip hudi conversion.")
-        recordDeltaEvent(
-          snapshotToConvert.deltaLog,
-          "delta.hudi.conversion.skipped.emptyCatalogTable",
-          data = Map(
-            "version" -> snapshotToConvert.version
-          )
-        )
-      None
-    }
+    convertSnapshot(snapshotToConvert, Some(txn), txn.catalogTable.map(_.identifier.table))
   }
 
   /**
@@ -214,11 +202,11 @@ class HudiConverter(spark: SparkSession)
   private def convertSnapshot(
       snapshotToConvert: Snapshot,
       txnOpt: Option[OptimisticTransactionImpl],
-      catalogTable: CatalogTable): Option[(Long, Long)] =
+      tableName: Option[String]): Option[(Long, Long)] =
       recordFrameProfile("Delta", "HudiConverter.convertSnapshot") {
     val log = snapshotToConvert.deltaLog
     val metaClient = loadTableMetaClient(snapshotToConvert.deltaLog.dataPath.toString,
-      catalogTable.identifier.table, snapshotToConvert.metadata.partitionColumns,
+      tableName, snapshotToConvert.metadata.partitionColumns,
       log.newDeltaHadoopConf())
     val lastDeltaVersionConverted: Option[Long] = loadLastDeltaVersionConverted(metaClient)
     val maxCommitsToConvert =
@@ -252,11 +240,6 @@ class HudiConverter(spark: SparkSession)
       case (Some(_), Some(_)) => WRITE_TABLE
       case (Some(_), None) => REPLACE_TABLE
       case (None, None) => CREATE_TABLE
-    }
-
-    UniversalFormat.enforceSupportInCatalog(catalogTable, snapshotToConvert.metadata) match {
-      case Some(updatedTable) => spark.sessionState.catalog.alterTable(updatedTable)
-      case _ =>
     }
 
     val hudiTxn = new HudiConversionTransaction(log.newDeltaHadoopConf(),
@@ -323,7 +306,7 @@ class HudiConverter(spark: SparkSession)
 
   def loadLastDeltaVersionConverted(snapshot: Snapshot, table: CatalogTable): Option[Long] = {
     val metaClient = loadTableMetaClient(snapshot.deltaLog.dataPath.toString,
-      table.identifier.table, snapshot.metadata.partitionColumns,
+      Option.apply(table.identifier.table), snapshot.metadata.partitionColumns,
       snapshot.deltaLog.newDeltaHadoopConf())
     loadLastDeltaVersionConverted(metaClient)
   }

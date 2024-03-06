@@ -16,7 +16,9 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
 import org.apache.hudi.common.config.HoodieMetadataConfig
 import org.apache.hudi.common.engine.HoodieLocalEngineContext
 import org.apache.hudi.common.fs.FSUtils
@@ -26,13 +28,18 @@ import org.apache.hudi.metadata.HoodieMetadataFileSystemView
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.avro.SchemaConverters
+import org.apache.spark.sql.catalyst.util.IntervalUtils
+import org.apache.spark.sql.delta.DeltaOperations.Truncate
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.Utils
+import org.apache.spark.unsafe.types.UTF8String
+import org.apache.spark.util.{ManualClock, Utils}
 import org.scalatest.concurrent.Eventually
 import org.scalatest.time.SpanSugar._
 
 import java.io.File
 import java.time.Instant
+import java.util.{Calendar, TimeZone}
 import java.util.stream.Collectors
 import scala.collection.JavaConverters
 
@@ -78,9 +85,13 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
         .option("path", testTablePath)
         .saveAsTable(testTableName)
     }
-    _sparkSession.range(10, 20, 1)
-      .write.format("delta").mode("append")
-      .save(testTablePath)
+    verifyFilesAndSchemaMatch()
+
+    withDefaultTablePropsInSQLConf {
+      _sparkSession.range(10, 20, 1)
+        .write.format("delta").mode("append")
+        .save(testTablePath)
+    }
     verifyFilesAndSchemaMatch()
   }
 
@@ -143,13 +154,67 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
   }
 
   test("validate Hudi timeline archival and cleaning") {
+    val testOp = Truncate()
+    withDefaultTablePropsInSQLConf {
+      withTempDir { tempDir =>
+        // scalastyle:off println
+        val startTime = getStartTimeForRetentionTest
+        val clock = new ManualClock(startTime)
+        val actualTestStartTime = System.currentTimeMillis()
+        val log = DeltaLog.forTable(_sparkSession, new Path(tempDir.getCanonicalPath), clock)
+        (1 to 5).foreach { i =>
+          val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
+          val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+          val delete: Seq[Action] = if (i > 1) {
+            val timestamp = startTime + (System.currentTimeMillis() - actualTestStartTime)
+            RemoveFile(i - 1 toString, Some(timestamp), true) :: Nil
+          } else {
+            Nil
+          }
+          txn.commit(delete ++ file, testOp)
+        }
 
+        val metaClient: HoodieTableMetaClient = HoodieTableMetaClient.builder
+          .setConf(log.newDeltaHadoopConf()).setBasePath(log.dataPath.toString)
+          .setLoadActiveTimelineOnLoad(true)
+          .build
+        System.out.println(s"${metaClient.reloadActiveTimeline.getInstants}")
+        clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
+          intervalStringToMillis("interval 8 day"))
+
+        // txn.commit(AddFile("6", Map.empty, 1, 1, true) :: Nil, testOp)
+
+        System.out.println(s"${metaClient.reloadActiveTimeline.getInstants}")
+
+        // scalastyle: on println
+      }
+      // TODO check vacuum here as well?
+    }
   }
 
-  test("validate Delta Vacuum does not impact Hudi table") {
-    // TODO
+  // TODO find best ways to reuse helpers
+  protected def startTxnWithManualLogCleanup(log: DeltaLog): OptimisticTransaction = {
+    val txn = log.startTransaction()
+    // This will pick up `spark.databricks.delta.properties.defaults.enableExpiredLogCleanup` to
+    // disable log cleanup.
+    txn.updateMetadata(Metadata())
+    txn
+  }
+  
+  protected def getStartTimeForRetentionTest: Long = {
+    val currentTime = System.currentTimeMillis()
+    val date = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+    date.setTimeInMillis(currentTime)
+    val dayStartTimeStamp = DateUtils.truncate(date, Calendar.DAY_OF_MONTH)
+    dayStartTimeStamp.add(Calendar.HOUR_OF_DAY, 1);
+    dayStartTimeStamp.getTimeInMillis
   }
 
+  protected def intervalStringToMillis(str: String): Long = {
+    DeltaConfigs.getMilliSeconds(
+      IntervalUtils.safeStringToInterval(UTF8String.fromString(str)))
+  }
+  
   test("validate various data types") {
     _sparkSession.sql(
       s"""CREATE TABLE `$testTableName` (col1 BIGINT, col2 BOOLEAN, col3 DATE,
@@ -210,15 +275,12 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
   def createSparkSession(): SparkSession = {
     SparkSession.clearActiveSession()
     SparkSession.clearDefaultSession()
-    val sparkSession = SparkSession.builder()
+    SparkSession.builder()
       .master("local[*]")
       .appName("UniformSession")
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
       .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
       .getOrCreate()
-    SparkSession.clearActiveSession()
-    SparkSession.clearDefaultSession()
-    sparkSession
   }
 }
