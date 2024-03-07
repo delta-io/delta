@@ -703,7 +703,6 @@ class DeltaLogSuite extends QueryTest
       // directory ourselves if we want to apply permissions.
       fs.mkdirs(log.logPath, new FsPermission(444))
 
-
       val e = intercept[DeltaIOException] {
         log.ensureLogDirectoryExist()
       }
