@@ -473,7 +473,6 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assembly / test := {},
     assembly / assemblyShadeRules := Seq(
       ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll,
-      ShadeRule.rename("org.apache.hudi.**" -> "shadedForDelta.@0").inAll,
     ),
     assemblyPackageScala / assembleArtifact := false,
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.

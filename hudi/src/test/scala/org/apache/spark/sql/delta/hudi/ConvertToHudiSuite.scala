@@ -16,11 +16,23 @@
 
 package org.apache.spark.sql.delta.hudi
 
-import java.io.File
-import java.time.Instant
-import java.util.UUID
-import java.util.stream.Collectors
-import scala.collection.JavaConverters
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
+import org.apache.hudi.common.config.HoodieMetadataConfig
+import org.apache.hudi.common.engine.HoodieLocalEngineContext
+import org.apache.hudi.common.fs.FSUtils
+import org.apache.hudi.common.model.HoodieBaseFile
+import org.apache.hudi.common.table.{HoodieTableMetaClient, TableSchemaResolver}
+import org.apache.hudi.metadata.HoodieMetadataFileSystemView
+import org.apache.spark.SparkContext
+import org.apache.spark.sql.{QueryTest, SparkSession}
+import org.apache.spark.sql.avro.SchemaConverters
+import org.apache.spark.sql.delta.DeltaOperations.Truncate
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, RemoveFile}
+import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.{ManualClock, Utils}
+import org.scalatest.concurrent.Eventually
+import org.scalatest.time.SpanSugar._
 
 class ConvertToHudiSuite extends QueryTest with Eventually {
 

@@ -16,10 +16,23 @@
 
 package org.apache.spark.sql.delta.hudi
 
+import org.apache.commons.lang3.exception.ExceptionUtils
+import org.apache.hudi.common.model.{HoodieCommitMetadata, HoodieReplaceCommitMetadata}
+import org.apache.hudi.common.table.HoodieTableMetaClient
+import org.apache.hudi.common.table.timeline.{HoodieInstant, HoodieTimeline}
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.hooks.HudiConverterHook
 import org.apache.spark.sql.delta.hudi.HudiTransactionUtils._
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta._
 
 import java.io.{IOException, UncheckedIOException}
 import java.util.concurrent.atomic.AtomicReference
+import javax.annotation.concurrent.GuardedBy
+import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 object HudiConverter {
