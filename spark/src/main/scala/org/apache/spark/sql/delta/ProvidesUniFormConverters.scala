@@ -52,7 +52,7 @@ trait ProvidesUniFormConverters { self: DeltaLog =>
   } catch {
     case e: ClassNotFoundException =>
       logError(s"Failed to find Hudi converter class", e)
-      throw DeltaErrors.icebergClassMissing(spark.sparkContext.getConf, e)
+      throw DeltaErrors.hudiClassMissing(spark.sparkContext.getConf, e)
     case e: InvocationTargetException =>
       logError(s"Got error when creating an Hudi converter", e)
       // The better error is within the cause

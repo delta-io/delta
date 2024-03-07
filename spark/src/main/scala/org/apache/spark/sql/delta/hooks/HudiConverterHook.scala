@@ -40,7 +40,6 @@ object HudiConverterHook extends PostCommitHook with DeltaLogging {
         !UniversalFormat.hudiEnabled(postCommitSnapshot.metadata)) {
       return
     }
-
     postCommitSnapshot
       .deltaLog
       .hudiConverter

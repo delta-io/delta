@@ -265,10 +265,8 @@ class HudiConversionTransaction(
     archiver.archiveIfRequired(engineContext, true)
   }
 
-  private def getWriteConfig(schema: Schema,
-                             numCommitsToKeep: Int,
-                             maxNumDeltaCommitsBeforeCompaction: Int,
-                             timelineRetentionInHours: Int) = {
+  private def getWriteConfig(schema: Schema, numCommitsToKeep: Int,
+      maxNumDeltaCommitsBeforeCompaction: Int, timelineRetentionInHours: Int) = {
     val properties = new Properties
     properties.setProperty(HoodieMetadataConfig.AUTO_INITIALIZE.key, "false")
     HoodieWriteConfig.newBuilder
