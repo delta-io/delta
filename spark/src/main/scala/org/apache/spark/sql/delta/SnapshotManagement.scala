@@ -567,7 +567,6 @@ trait SnapshotManagement { self: DeltaLog =>
         version = segment.version,
         logSegment = segment,
         deltaLog = this,
-        inCommitTimestampOpt = None,
         checksumOpt = checksumOpt.orElse(
           readChecksum(segment.version, lastSeenChecksumFileStatusOpt))
       )
