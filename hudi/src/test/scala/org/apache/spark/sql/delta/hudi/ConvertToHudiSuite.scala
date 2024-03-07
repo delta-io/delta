@@ -28,11 +28,18 @@ import org.apache.spark.SparkContext
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.avro.SchemaConverters
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.{ManualClock, Utils}
 import org.scalatest.concurrent.Eventually
 import org.scalatest.time.SpanSugar._
+
+import java.io.File
+import java.time.Instant
+import java.util.UUID
+import java.util.stream.Collectors
+import scala.collection.JavaConverters
 
 class ConvertToHudiSuite extends QueryTest with Eventually {
 
