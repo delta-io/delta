@@ -171,7 +171,7 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
         "Archived timeline should have 2 instants")
     })
   }
-  
+
   test("validate various data types") {
     _sparkSession.sql(
       s"""CREATE TABLE `$testTableName` (col1 BIGINT, col2 BOOLEAN, col3 DATE,
