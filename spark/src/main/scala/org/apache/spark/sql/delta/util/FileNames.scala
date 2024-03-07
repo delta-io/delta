@@ -30,8 +30,6 @@ object FileNames {
   val checksumFileRegex = raw"(\d+)\.crc".r
   val checkpointFileRegex = raw"(\d+)\.checkpoint((\.\d+\.\d+)?\.parquet|\.[^.]+\.(json|parquet))".r
 
-  private val deltaFilePattern = deltaFileRegex.pattern
-  private val uuidDeltaFilePattern = deltaFileRegex.pattern
   private val compactedDeltaFilePattern = compactedDeltaFileRegex.pattern
   private val checksumFilePattern = checksumFileRegex.pattern
   private val checkpointFilePattern = checkpointFileRegex.pattern
@@ -46,10 +44,10 @@ object FileNames {
    * @param version The version of the delta file.
    * @return The path to the un-backfilled delta file: <logPath>/_commits/<version>.<uuid>.json
    */
-  def uuidDeltaFile(logPath: Path, version: Long): Path = {
+  def uuidDeltaFile(logPath: Path, version: Long, uuidString: Option[String] = None): Path = {
     val basePath = commitDirPath(logPath)
-    val uuid = UUID.randomUUID
-    new Path(basePath, f"$version%020d.$uuid.commit.json")
+    val uuid = uuidString.getOrElse(UUID.randomUUID.toString)
+    new Path(basePath, f"$version%020d.$uuid.json")
   }
 
   /** Returns the path for a given sample file */

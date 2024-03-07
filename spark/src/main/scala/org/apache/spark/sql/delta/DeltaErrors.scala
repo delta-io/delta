@@ -186,6 +186,18 @@ trait DeltaErrorsBase
       cause = cause)
   }
 
+  def missingCommitInfo(featureName: String, commitVersion: String): DeltaIllegalStateException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_COMMIT_INFO",
+      messageParameters = Array(featureName, commitVersion))
+  }
+
+  def missingCommitTimestamp(commitVersion: String): DeltaIllegalStateException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_COMMIT_TIMESTAMP",
+      messageParameters = Array(InCommitTimestampTableFeature.name, commitVersion))
+  }
+
   def failOnCheckpointRename(src: Path, dest: Path): DeltaIllegalStateException = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_CANNOT_RENAME_PATH",
@@ -566,7 +578,12 @@ trait DeltaErrorsBase
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
       messageParameters = Array(name))
   }
-
+  def invalidInventorySchema(expectedSchema: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_INVENTORY_SCHEMA",
+      messageParameters = Array(expectedSchema)
+    )
+  }
   def invalidIsolationLevelException(s: String): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_INVALID_ISOLATION_LEVEL",
@@ -610,10 +627,37 @@ trait DeltaErrorsBase
     )
   }
 
-  def alterTableChangeColumnException(oldColumns: String, newColumns: String): Throwable = {
-    new AnalysisException(
-      "ALTER TABLE CHANGE COLUMN is not supported for changing column " + oldColumns + " to "
-      + newColumns)
+  def addCommentToMapArrayException(fieldPath: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
+      messageParameters = Array(fieldPath)
+    )
+  }
+
+  def alterTableChangeColumnException(
+      fieldPath: String,
+      oldField: StructField,
+      newField: StructField): Throwable = {
+    def fieldToString(field: StructField): String =
+      field.dataType.sql + (if (!field.nullable) " NOT NULL" else "")
+
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+      messageParameters = Array(
+        fieldPath,
+        fieldToString(oldField),
+        fieldToString(newField))
+    )
+  }
+
+  def alterTableReplaceColumnsException(
+      oldSchema: StructType,
+      newSchema: StructType,
+      reason: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP",
+      messageParameters = Array(reason, formatSchema(oldSchema), formatSchema(newSchema))
+    )
   }
 
   def cannotWriteIntoView(table: TableIdentifier): Throwable = {
@@ -685,16 +729,6 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_COLUMN_STRUCT_TYPE_MISMATCH",
       messageParameters = Array(source, targetType, target, tableName))
-  }
-
-  def alterTableReplaceColumnsException(
-      oldSchema: StructType,
-      newSchema: StructType,
-      reason: String): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP",
-      messageParameters = Array(reason, formatSchema(oldSchema), formatSchema(newSchema))
-    )
   }
 
   def ambiguousPartitionColumnException(
@@ -2022,6 +2056,12 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES",
       messageParameters = invalidColumnNames.toArray)
+
+  def foundInvalidColumnNamesWhenRemovingColumnMapping(columnNames: Seq[String])
+    : Throwable =
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
+      messageParameters = columnNames.toArray)
 
   def foundViolatingConstraintsForColumnChange(
       operation: String,

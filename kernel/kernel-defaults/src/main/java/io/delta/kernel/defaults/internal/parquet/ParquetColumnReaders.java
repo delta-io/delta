@@ -31,46 +31,50 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.*;
 
-class ParquetConverters {
+/**
+ * Parquet column readers for materializing the column values from Parquet files into Kernels
+ * {@link ColumnVector}.
+ */
+class ParquetColumnReaders {
     public static Converter createConverter(
         int initialBatchSize,
         DataType typeFromClient,
         Type typeFromFile
     ) {
         if (typeFromClient instanceof StructType) {
-            return new RowConverter(
+            return new RowColumnReader(
                 initialBatchSize,
                 (StructType) typeFromClient,
                 (GroupType) typeFromFile);
         } else if (typeFromClient instanceof ArrayType) {
-            return new ArrayConverter(
+            return new ArrayColumnReader(
                 initialBatchSize,
                 (ArrayType) typeFromClient,
                 (GroupType) typeFromFile
             );
         } else if (typeFromClient instanceof MapType) {
-            return new MapConverter(
+            return new MapColumnReader(
                 initialBatchSize,
                 (MapType) typeFromClient,
                 (GroupType) typeFromFile);
         } else if (typeFromClient instanceof StringType || typeFromClient instanceof BinaryType) {
-            return new BinaryColumnConverter(typeFromClient, initialBatchSize);
+            return new BinaryColumnReader(typeFromClient, initialBatchSize);
         } else if (typeFromClient instanceof BooleanType) {
-            return new BooleanColumnConverter(initialBatchSize);
+            return new BooleanColumnReader(initialBatchSize);
         } else if (typeFromClient instanceof IntegerType || typeFromClient instanceof DateType) {
-            return new IntColumnConverter(typeFromClient, initialBatchSize);
+            return new IntColumnReader(typeFromClient, initialBatchSize);
         } else if (typeFromClient instanceof ByteType) {
-            return new ByteColumnConverter(initialBatchSize);
+            return new ByteColumnReader(initialBatchSize);
         } else if (typeFromClient instanceof ShortType) {
-            return new ShortColumnConverter(initialBatchSize);
+            return new ShortColumnReader(initialBatchSize);
         } else if (typeFromClient instanceof LongType) {
-            return new LongColumnConverter(typeFromClient, initialBatchSize);
+            return new LongColumnReader(typeFromClient, initialBatchSize);
         } else if (typeFromClient instanceof FloatType) {
-            return new FloatColumnConverter(initialBatchSize);
+            return new FloatColumnReader(initialBatchSize);
         } else if (typeFromClient instanceof DoubleType) {
-            return new DoubleColumnConverter(initialBatchSize);
+            return new DoubleColumnReader(initialBatchSize);
         } else if (typeFromClient instanceof DecimalType) {
-            return DecimalConverters.createDecimalConverter(
+            return DecimalColumnReader.createDecimalConverter(
                 initialBatchSize, (DecimalType) typeFromClient, typeFromFile);
         } else if (typeFromClient instanceof TimestampType) {
             return TimestampConverters.createTimestampConverter(initialBatchSize, typeFromFile);
@@ -95,14 +99,14 @@ class ParquetConverters {
     }
 
     /**
-     * Base converter for all implementations of Parquet {@link Converter} to return data in
+     * Base column reader for all implementations of Parquet {@link Converter} to return data in
      * columnar batch. General operation flow is:
-     *  - each converter implementation allocates state to receive a fixed number of column values
+     *  - each reader implementation allocates state to receive a fixed number of column values
      *  - before accepting a new value the state is resized if it is not of sufficient size
      *  - after each row, {@link #finalizeCurrentRow(long)} is called to finalize the state of
      *    the last read row column value.
      */
-    public interface BaseConverter {
+    public interface BaseColumnReader {
         ColumnVector getDataColumnVector(int batchSize);
 
         /**
@@ -122,12 +126,12 @@ class ParquetConverters {
         default void resetWorkingState() {}
     }
 
-    public static class NonExistentColumnConverter
+    public static class NonExistentColumnReader
         extends PrimitiveConverter
-        implements BaseConverter {
+        implements BaseColumnReader {
         private final DataType dataType;
 
-        NonExistentColumnConverter(DataType dataType) {
+        NonExistentColumnReader(DataType dataType) {
             this.dataType = Objects.requireNonNull(dataType, "dataType is null");
         }
 
@@ -140,14 +144,14 @@ class ParquetConverters {
         public void finalizeCurrentRow(long currentRowIndex) {}
     }
 
-    public abstract static class BasePrimitiveColumnConverter
+    public abstract static class BasePrimitiveColumnReader
         extends PrimitiveConverter
-        implements BaseConverter {
+        implements BaseColumnReader {
         // working state
         protected int currentRowIndex;
         protected boolean[] nullability;
 
-        BasePrimitiveColumnConverter(int initialBatchSize) {
+        BasePrimitiveColumnReader(int initialBatchSize) {
             checkArgument(initialBatchSize > 0, "invalid initialBatchSize: %s", initialBatchSize);
             // Initialize the working state
             this.nullability = initNullabilityVector(initialBatchSize);
@@ -160,11 +164,11 @@ class ParquetConverters {
         }
     }
 
-    public static class BooleanColumnConverter extends BasePrimitiveColumnConverter {
+    public static class BooleanColumnReader extends BasePrimitiveColumnReader {
         // working state
         private boolean[] values;
 
-        BooleanColumnConverter(int initialBatchSize) {
+        BooleanColumnReader(int initialBatchSize) {
             super(initialBatchSize);
             this.values = new boolean[initialBatchSize];
         }
@@ -197,11 +201,11 @@ class ParquetConverters {
         }
     }
 
-    public static class ByteColumnConverter extends BasePrimitiveColumnConverter {
+    public static class ByteColumnReader extends BasePrimitiveColumnReader {
         // working state
         private byte[] values;
 
-        ByteColumnConverter(int initialBatchSize) {
+        ByteColumnReader(int initialBatchSize) {
             super(initialBatchSize);
             this.values = new byte[initialBatchSize];
         }
@@ -234,11 +238,11 @@ class ParquetConverters {
         }
     }
 
-    public static class ShortColumnConverter extends BasePrimitiveColumnConverter {
+    public static class ShortColumnReader extends BasePrimitiveColumnReader {
         // working state
         private short[] values;
 
-        ShortColumnConverter(int initialBatchSize) {
+        ShortColumnReader(int initialBatchSize) {
             super(initialBatchSize);
             this.values = new short[initialBatchSize];
         }
@@ -271,12 +275,12 @@ class ParquetConverters {
         }
     }
 
-    public static class IntColumnConverter extends BasePrimitiveColumnConverter {
+    public static class IntColumnReader extends BasePrimitiveColumnReader {
         private final DataType dataType;
         // working state
         private int[] values;
 
-        IntColumnConverter(DataType dataType, int initialBatchSize) {
+        IntColumnReader(DataType dataType, int initialBatchSize) {
             super(initialBatchSize);
             checkArgument(dataType instanceof IntegerType || dataType instanceof DataType);
             this.dataType = dataType;
@@ -311,12 +315,12 @@ class ParquetConverters {
         }
     }
 
-    public static class LongColumnConverter extends BasePrimitiveColumnConverter {
+    public static class LongColumnReader extends BasePrimitiveColumnReader {
         private final DataType dataType;
         // working state
         private long[] values;
 
-        LongColumnConverter(DataType dataType, int initialBatchSize) {
+        LongColumnReader(DataType dataType, int initialBatchSize) {
             super(initialBatchSize);
             checkArgument(dataType instanceof LongType || dataType instanceof TimestampType);
             this.dataType = dataType;
@@ -351,11 +355,11 @@ class ParquetConverters {
         }
     }
 
-    public static class FloatColumnConverter extends BasePrimitiveColumnConverter {
+    public static class FloatColumnReader extends BasePrimitiveColumnReader {
         // working state
         private float[] values;
 
-        FloatColumnConverter(int initialBatchSize) {
+        FloatColumnReader(int initialBatchSize) {
             super(initialBatchSize);
             this.values = new float[initialBatchSize];
         }
@@ -388,11 +392,11 @@ class ParquetConverters {
         }
     }
 
-    public static class DoubleColumnConverter extends BasePrimitiveColumnConverter {
+    public static class DoubleColumnReader extends BasePrimitiveColumnReader {
         // working state
         private double[] values;
 
-        DoubleColumnConverter(int initialBatchSize) {
+        DoubleColumnReader(int initialBatchSize) {
             super(initialBatchSize);
             this.values = new double[initialBatchSize];
         }
@@ -426,13 +430,13 @@ class ParquetConverters {
         }
     }
 
-    public static class BinaryColumnConverter extends BasePrimitiveColumnConverter {
+    public static class BinaryColumnReader extends BasePrimitiveColumnReader {
         private final DataType dataType;
 
         // working state
         private byte[][] values;
 
-        BinaryColumnConverter(DataType dataType, int initialBatchSize) {
+        BinaryColumnReader(DataType dataType, int initialBatchSize) {
             super(initialBatchSize);
             this.dataType = dataType;
             this.values = new byte[initialBatchSize][];
@@ -466,8 +470,8 @@ class ParquetConverters {
         }
     }
 
-    public static class FileRowIndexColumnConverter extends LongColumnConverter {
-        FileRowIndexColumnConverter(int initialBatchSize) {
+    public static class FileRowIndexColumnReader extends LongColumnReader {
+        FileRowIndexColumnReader(int initialBatchSize) {
             super(LongType.LONG, initialBatchSize);
         }
 

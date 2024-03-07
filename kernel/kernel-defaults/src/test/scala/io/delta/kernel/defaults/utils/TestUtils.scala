@@ -15,24 +15,27 @@
  */
 package io.delta.kernel.defaults.utils
 
-import java.io.File
+import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.nio.file.Files
 import java.util.{Optional, TimeZone, UUID}
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
+
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.client.TableClient
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
-import io.delta.kernel.expressions.Predicate
+import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.internal.data.ScanStateRow
+import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.utils.{CloseableIterator, DataFileStatus}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.SparkSession
@@ -94,12 +97,24 @@ trait TestUtils extends Assertions with SQLHelper {
       new FilteredColumnarBatch(batch, Optional.empty())
     }
 
-    def toFiltered(predicate: Predicate): FilteredColumnarBatch = {
-      val predicateEvaluator = defaultTableClient.getExpressionHandler
-        .getPredicateEvaluator(batch.getSchema, predicate)
-      val selVector = predicateEvaluator.eval(batch, Optional.empty())
-      new FilteredColumnarBatch(batch, Optional.of(selVector))
+    def toFiltered(predicate: Option[Predicate]): FilteredColumnarBatch = {
+      if (predicate.isEmpty) {
+        new FilteredColumnarBatch(batch, Optional.empty())
+      } else {
+        val predicateEvaluator = defaultTableClient.getExpressionHandler
+          .getPredicateEvaluator(batch.getSchema, predicate.get)
+        val selVector = predicateEvaluator.eval(batch, Optional.empty())
+        new FilteredColumnarBatch(batch, Optional.of(selVector))
+      }
     }
+  }
+
+  implicit class ColumnOps(column: Column) {
+    def toPath: String = column.getNames.mkString(".")
+  }
+
+  implicit object ResourceLoader {
+    lazy val classLoader: ClassLoader = ResourceLoader.getClass.getClassLoader
   }
 
   def withGoldenTable(tableName: String)(testFunc: String => Unit): Unit = {
@@ -110,6 +125,35 @@ trait TestUtils extends Assertions with SQLHelper {
   def latestSnapshot(path: String, tableClient: TableClient = defaultTableClient): Snapshot = {
     Table.forPath(tableClient, path)
       .getLatestSnapshot(tableClient)
+  }
+
+  def tableSchema(path: String): StructType = {
+    Table.forPath(defaultTableClient, path)
+      .getLatestSnapshot(defaultTableClient)
+      .getSchema(defaultTableClient)
+  }
+
+  def hasColumnMappingId(str: String): Boolean = {
+    val table = Table.forPath(defaultTableClient, str)
+    val schema = table.getLatestSnapshot(defaultTableClient).getSchema(defaultTableClient)
+    schema.fields().asScala.exists { field =>
+      field.getMetadata.contains(ColumnMapping.COLUMN_MAPPING_ID_KEY)
+    }
+  }
+
+  /** Get the list of all leaf-level primitive column references in the given `structType` */
+  def leafLevelPrimitiveColumns(basePath: Seq[String], structType: StructType): Seq[Column] = {
+    structType.fields.asScala.flatMap {
+      case field if field.getDataType.isInstanceOf[StructType] =>
+        leafLevelPrimitiveColumns(
+          basePath :+ field.getName,
+          field.getDataType.asInstanceOf[StructType])
+      case field if !field.getDataType.isInstanceOf[ArrayType] &&
+        !field.getDataType.isInstanceOf[MapType] =>
+        // for all primitive types
+        Seq(new Column((basePath :+ field.getName).asJava.toArray(new Array[String](0))));
+      case _ => Seq.empty
+    }
   }
 
   def collectScanFileRows(scan: Scan, tableClient: TableClient = defaultTableClient): Seq[Row] = {
@@ -252,14 +296,21 @@ trait TestUtils extends Assertions with SQLHelper {
     expectedSchema: StructType = null,
     filter: Predicate = null,
     version: Option[Long] = None,
+    timestamp: Option[Long] = None,
     expectedRemainingFilter: Predicate = null,
     expectedVersion: Option[Long] = None
   ): Unit = {
+    assert(version.isEmpty || timestamp.isEmpty, "Cannot provide both a version and timestamp")
 
-    val snapshot = version.map { v =>
+    val snapshot = if (version.isDefined) {
       Table.forPath(tableClient, path)
-        .getSnapshotAtVersion(tableClient, v)
-    }.getOrElse(latestSnapshot(path, tableClient))
+        .getSnapshotAtVersion(tableClient, version.get)
+    } else if (timestamp.isDefined) {
+      Table.forPath(tableClient, path)
+        .getSnapshotAtTimestamp(tableClient, timestamp.get)
+    } else {
+      latestSnapshot(path, tableClient)
+    }
 
     val readSchema = if (readCols == null) {
       null
@@ -574,5 +625,16 @@ trait TestUtils extends Assertions with SQLHelper {
           )
         })
     }
+  }
+
+  /**
+   * Returns a URI encoded path of the resource.
+   */
+  def getTestResourceFilePath(resourcePath: String): String = {
+    val resource = ResourceLoader.classLoader.getResource(resourcePath)
+    if (resource == null) {
+      throw new FileNotFoundException("resource not found")
+    }
+    resource.getFile
   }
 }

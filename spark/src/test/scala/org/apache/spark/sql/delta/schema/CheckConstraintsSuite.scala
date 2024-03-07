@@ -22,18 +22,19 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 import org.apache.spark.TaskFailedReason
 import org.apache.spark.scheduler.{SparkListener, SparkListenerTaskEnd}
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.parser.ParseException
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructField, StructType}
 
 class CheckConstraintsSuite extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with SQLTestUtils {
+    with DeltaSQLTestUtils {
 
 
   import testImplicits._

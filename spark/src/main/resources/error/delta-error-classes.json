@@ -1137,6 +1137,15 @@
     ],
     "sqlState" : "22KD1"
   },
+  "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING" : {
+    "message" : [
+      "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema.",
+      "Invalid column names: <invalidColumnNames>.",
+      "Column mapping cannot be removed when there are invalid characters in the column names.",
+      "Please rename the columns to remove the invalid characters and execute this command again."
+    ],
+    "sqlState" : "42K05"
+  },
   "DELTA_INVALID_COMMITTED_VERSION" : {
     "message" : [
       "The committed version is <committedVersion> but the current version is <currentVersion>."
@@ -1166,6 +1175,12 @@
       "<interval> is not a valid INTERVAL."
     ],
     "sqlState" : "22006"
+  },
+  "DELTA_INVALID_INVENTORY_SCHEMA" : {
+    "message" : [
+      "The schema for the specified INVENTORY does not contain all of the required fields. Required fields are: <expectedSchema>"
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_INVALID_ISOLATION_LEVEL" : {
     "message" : [
@@ -1372,6 +1387,18 @@
       "Cannot find <columName> in table columns: <columnList>"
     ],
     "sqlState" : "42703"
+  },
+  "DELTA_MISSING_COMMIT_INFO" : {
+    "message" : [
+      "This table has the feature <featureName> enabled which requires the presence of the CommitInfo action in every commit. However, the CommitInfo action is missing from commit version <version>."
+    ],
+    "sqlState" : "KD004"
+  },
+  "DELTA_MISSING_COMMIT_TIMESTAMP" : {
+    "message" : [
+      "This table has the feature <featureName> enabled which requires the presence of commitTimestamp in the CommitInfo action. However, this field has not been set in commit version <version>."
+    ],
+    "sqlState" : "KD004"
   },
   "DELTA_MISSING_DELTA_TABLE" : {
     "message" : [
@@ -2254,6 +2281,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP" : {
+    "message" : [
+      "ALTER TABLE CHANGE COLUMN is not supported for changing column <fieldPath> from <oldField> to <newField>"
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP" : {
     "message" : [
       "Unsupported ALTER TABLE REPLACE COLUMNS operation. Reason: <details>",
@@ -2320,6 +2353,12 @@
   "DELTA_UNSUPPORTED_COLUMN_TYPE_IN_BLOOM_FILTER" : {
     "message" : [
       "Creating a bloom filter index on a column with type <dataType> is unsupported: <columnName>"
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY" : {
+    "message" : [
+      "Can't add a comment to <fieldPath>. Adding a comment to a map key/value or array element is not supported."
     ],
     "sqlState" : "0AKDC"
   },

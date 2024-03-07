@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.tables.DeltaTable
 import org.scalatest.GivenWhenThen
 
@@ -38,13 +39,13 @@ import org.apache.spark.sql.catalyst.expressions.{Alias, Cast, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 class SchemaUtilsSuite extends QueryTest
   with SharedSparkSession
   with GivenWhenThen
-  with SQLTestUtils
+  with DeltaSQLTestUtils
   with DeltaSQLCommandTest {
   import SchemaUtils._
   import testImplicits._
@@ -1095,6 +1096,14 @@ class SchemaUtilsSuite extends QueryTest
         keyType = new StructType().add(k),
         valueType = new StructType().add(v).add(x))))
 
+    // Adding to map key/value.
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema, x, Seq(0, MAP_KEY_INDEX))
+    }
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema, x, Seq(0, MAP_VALUE_INDEX))
+    }
+    // Invalid map access.
     expectFailure("parent is not a structtype") {
       SchemaUtils.addColumn(schema, x, Seq(0, MAP_KEY_INDEX - 1, 0))
     }
@@ -1143,6 +1152,13 @@ class SchemaUtilsSuite extends QueryTest
     assert(SchemaUtils.addColumn(schema(), x, Seq(0, MAP_VALUE_INDEX, MAP_VALUE_INDEX, 1)) ===
       schema(vv = new StructType().add("vv", IntegerType).add(x)))
 
+    // Adding to map key/value.
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema(), x, Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX))
+    }
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema(), x, Seq(0, MAP_KEY_INDEX, MAP_VALUE_INDEX))
+    }
     // Invalid map access.
     expectFailure("parent is not a structtype") {
       SchemaUtils.addColumn(schema(), x, Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX - 1, 0))
@@ -1172,6 +1188,10 @@ class SchemaUtilsSuite extends QueryTest
     assert(SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, 1)) ===
       new StructType().add("a", ArrayType(new StructType().add(e).add(x))))
 
+    // Adding to array element.
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX))
+    }
     // Invalid array access.
     expectFailure("Incorrectly accessing an ArrayType") {
       SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX - 1, 0))
@@ -1195,6 +1215,10 @@ class SchemaUtilsSuite extends QueryTest
     assert(SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX, 1)) ===
       new StructType().add("a", ArrayType(ArrayType(new StructType().add(e).add(x)))))
 
+    // Adding to array element.
+    expectFailure("parent is not a structtype") {
+      SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX))
+    }
     // Invalid array access.
     expectFailure("Incorrectly accessing an ArrayType") {
       SchemaUtils.addColumn(schema, x, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX - 1, 0))
@@ -1307,6 +1331,14 @@ class SchemaUtilsSuite extends QueryTest
         valueType = new StructType().add(c))),
       d))
 
+    // Dropping map key/value.
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema, Seq(0, MAP_KEY_INDEX))
+    }
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema, Seq(0, MAP_VALUE_INDEX))
+    }
+    // Invalid map access.
     expectFailure("can only drop nested columns from structtype") {
       SchemaUtils.dropColumn(schema, Seq(0, MAP_KEY_INDEX - 1, 0))
     }
@@ -1373,6 +1405,13 @@ class SchemaUtilsSuite extends QueryTest
       initialSchema = schema(vv = new StructType().add("vv", IntegerType).add(a)),
       position = Seq(0, MAP_VALUE_INDEX, MAP_VALUE_INDEX, 1))
 
+    // Dropping map key/value.
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema(), Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX))
+    }
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema(), Seq(0, MAP_KEY_INDEX, MAP_VALUE_INDEX))
+    }
     // Invalid map access.
     expectFailure("can only drop nested columns from structtype") {
       SchemaUtils.dropColumn(schema(), Seq(0, MAP_KEY_INDEX, MAP_KEY_INDEX - 1, 0))
@@ -1402,6 +1441,10 @@ class SchemaUtilsSuite extends QueryTest
     assert(SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, 1)) ===
       (new StructType().add("a", ArrayType(new StructType().add(e))), f))
 
+    // Dropping array element.
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX))
+    }
     // Invalid array access.
     expectFailure("Incorrectly accessing an ArrayType") {
       SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX - 1, 0))
@@ -1425,6 +1468,10 @@ class SchemaUtilsSuite extends QueryTest
     assert(SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX, 1)) ===
       (new StructType().add("a", ArrayType(ArrayType(new StructType().add(e)))), f))
 
+    // Dropping array element.
+    expectFailure("can only drop nested columns from structtype") {
+      SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX))
+    }
     // Invalid array access.
     expectFailure("Incorrectly accessing an ArrayType") {
       SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX, ARRAY_ELEMENT_INDEX - 1, 0))

@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -38,7 +39,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.JsonToStructs
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 
@@ -47,7 +48,7 @@ class DeltaLogSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaCheckpointTestUtils
-  with SQLTestUtils {
+  with DeltaSQLTestUtils {
 
 
   protected val testOp = Truncate()
@@ -452,7 +453,7 @@ class DeltaLogSuite extends QueryTest
               }.map(_.json)
             log.store.write(checkpointPath, filteredActions.toIterator, overwrite = true, conf)
           } else {
-            withTempDir(removeActionFromParquetCheckpoint)
+            withTempDir { f => removeActionFromParquetCheckpoint(f) }
           }
         }
 
@@ -641,6 +642,36 @@ class DeltaLogSuite extends QueryTest
         })
       }
       assert(e.getMessage.contains("FAILFAST"))
+    }
+  }
+
+  test("DeltaLog cache size should honor config limit") {
+    def assertCacheSize(expected: Long): Unit = {
+      for (_ <- 1 to 6) {
+        withTempDir(dir => {
+          val path = dir.getCanonicalPath
+          spark.range(10).write.format("delta").mode("append").save(path)
+        })
+      }
+      assert(DeltaLog.cacheSize === expected)
+    }
+    DeltaLog.unsetCache()
+    withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "4") {
+      assertCacheSize(4)
+      DeltaLog.unsetCache()
+      // the larger of SQLConf and env var is adopted
+      try {
+        System.getProperties.setProperty("delta.log.cacheSize", "5")
+        assertCacheSize(5)
+      } finally {
+        System.getProperties.remove("delta.log.cacheSize")
+      }
+    }
+
+    // assert timeconf returns correct value
+    withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES.key -> "100") {
+      assert(spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES) === 100)
     }
   }
 }

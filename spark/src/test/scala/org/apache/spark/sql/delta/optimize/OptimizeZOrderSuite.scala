@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta.optimize
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
-import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, TestsStatistics}
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.Path
@@ -42,6 +42,7 @@ trait OptimizePartitionTableHelper extends QueryTest {
 trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
   with TestsStatistics
   with SharedSparkSession
+  with DeltaSQLTestUtils
   with DeltaColumnMappingTestUtils {
   import testImplicits._
 

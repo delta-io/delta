@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.managedcommit
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaConfigs, ManagedCommitTableFeature, SerializableFileStatus, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeltaConfigs, InitialSnapshot, ManagedCommitTableFeature, SerializableFileStatus, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
@@ -26,13 +26,11 @@ import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.internal.Logging
 
-
 /** Representation of a commit file */
 case class Commit(
   version: Long,
-  serializableFileStatus: SerializableFileStatus,
+  fileStatus: FileStatus,
   commitTimestamp: Long)
-
 
 /**
  * Exception raised by [[CommitStore.commit]] method.
@@ -43,7 +41,7 @@ case class Commit(
  *  |   yes     |   yes     | physical conflict (allowed to rebase and retry)                 |
  */
 class CommitFailedException(
-    retryable: Boolean, conflict: Boolean, message: String) extends Exception(message)
+    val retryable: Boolean, val conflict: Boolean, message: String) extends Exception(message)
 
 /** Response container for [[CommitStore.commit]] API */
 case class CommitResponse(commit: Commit)
@@ -62,22 +60,22 @@ case class UpdatedActions(
  */
 trait CommitStore {
   /**
-   * API to commit the given set of `actions` to the table represented by given `tablePath` at the
+   * API to commit the given set of `actions` to the table represented by given `logPath` at the
    * given `commitVersion`.
    * @return CommitResponse which contains the file status of the commit file. If the commit is
    *         already backfilled, then the fileStatus could be omitted from response and the client
    *         could get the info by themselves.
    */
   def commit(
-    logStore: LogStore,
-    hadoopConf: Configuration,
-    tablePath: Path,
-    commitVersion: Long,
-    actions: Iterator[String],
-    updatedActions: UpdatedActions): CommitResponse
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      logPath: Path,
+      commitVersion: Long,
+      actions: Iterator[String],
+      updatedActions: UpdatedActions): CommitResponse
 
   /**
-   * API to get the un-backfilled commits for the table represented by the given `tablePath`.
+   * API to get the un-backfilled commits for the table represented by the given `logPath`.
    * Commits older than `startVersion`, or newer than `endVersion` (if given), are ignored. The
    * returned commits are contiguous and in ascending version order.
    * Note that the first version returned by this API may not be equal to the `startVersion`. This
@@ -87,9 +85,9 @@ trait CommitStore {
    * @return a sequence of [[Commit]] which are tracked by [[CommitStore]].
    */
   def getCommits(
-    tablePath: Path,
-    startVersion: Long,
-    endVersion: Option[Long] = None): Seq[Commit]
+      logPath: Path,
+      startVersion: Long,
+      endVersion: Option[Long] = None): Seq[Commit]
 }
 
 /** A builder interface for CommitStore */
@@ -126,17 +124,13 @@ object CommitStoreProvider {
   }
 
   def getCommitStore(snapshotDescriptor: SnapshotDescriptor): Option[CommitStore] = {
-    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(snapshotDescriptor.metadata) match {
-      case Some(commitOwnerStr) =>
+    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME
+      .fromMetaData(snapshotDescriptor.metadata)
+      .map { commitOwnerStr =>
         assert(snapshotDescriptor.protocol.isFeatureSupported(ManagedCommitTableFeature))
         val conf = DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.fromMetaData(snapshotDescriptor.metadata)
-        Some(CommitStoreProvider.getCommitStore(commitOwnerStr, conf))
-      case None =>
-        assert(!snapshotDescriptor.protocol.isFeatureSupported(ManagedCommitTableFeature),
-          s"Snapshot version ${snapshotDescriptor.version} doesn't have ManagedCommitTableFeature" +
-            s" but it has commitStore defined. Snapshot: $snapshotDescriptor")
-        None
-    }
+        CommitStoreProvider.getCommitStore(commitOwnerStr, conf)
+      }
   }
 
   // Visible only for UTs

@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
@@ -43,14 +44,14 @@ import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
   with SharedSparkSession
   with DeltaColumnMappingTestUtils
-  with SQLTestUtils
+  with DeltaSQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._

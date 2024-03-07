@@ -21,7 +21,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -256,6 +256,10 @@ def normalizeColumnNamesInDataType(
           keyType = normalizedKeyType,
           valueType = normalizedValueType
         )
+      case (_: NullType, _) =>
+        // When schema evolution adds a new column during MERGE, it can be represented with
+        // a NullType in the schema of the data written by the MERGE.
+        sourceDataType
       case _ =>
         if (Utils.isTesting) {
           assert(sourceDataType == tableDataType,
@@ -337,8 +341,7 @@ def normalizeColumnNamesInDataType(
   def isPartitionCompatible(
       newPartitionColumns: Seq[String] = Seq.empty,
       oldPartitionColumns: Seq[String] = Seq.empty): Boolean = {
-    (newPartitionColumns.isEmpty && oldPartitionColumns.isEmpty) ||
-      (newPartitionColumns == oldPartitionColumns)
+    newPartitionColumns == oldPartitionColumns
   }
 
   /**
@@ -785,7 +788,9 @@ def normalizeColumnNamesInDataType(
    */
   def addColumn(schema: StructType, column: StructField, position: Seq[Int]): StructType = {
     def addColumnInChild(parent: DataType, column: StructField, position: Seq[Int]): DataType = {
-      require(position.nonEmpty, s"Don't know where to add the column $column")
+      if (position.isEmpty) {
+          throw DeltaErrors.addColumnParentNotStructException(column, parent)
+      }
       parent match {
         case struct: StructType =>
           addColumn(struct, column, position)
@@ -853,7 +858,9 @@ def normalizeColumnNamesInDataType(
    */
   def dropColumn(schema: StructType, position: Seq[Int]): (StructType, StructField) = {
     def dropColumnInChild(parent: DataType, position: Seq[Int]): (DataType, StructField) = {
-      require(position.nonEmpty, s"Don't know where to drop the column")
+      if (position.isEmpty) {
+          throw DeltaErrors.dropNestedColumnsFromNonStructTypeException(parent)
+      }
       parent match {
         case struct: StructType =>
           dropColumn(struct, position)
@@ -904,6 +911,8 @@ def normalizeColumnNamesInDataType(
    * @param failOnAmbiguousChanges Throw an error if a StructField both has columns dropped and new
    *                               columns added. These are ambiguous changes, because we don't
    *                               know if a column needs to be renamed, dropped, or added.
+   * @param allowTypeWidening      Whether widening type changes as defined in [[TypeWidening]]
+   *                               can be applied.
    * @return None if the data types can be changed, otherwise Some(err) containing the reason.
    */
   def canChangeDataType(
@@ -912,7 +921,8 @@ def normalizeColumnNamesInDataType(
       resolver: Resolver,
       columnMappingMode: DeltaColumnMappingMode,
       columnPath: Seq[String] = Nil,
-      failOnAmbiguousChanges: Boolean = false): Option[String] = {
+      failOnAmbiguousChanges: Boolean = false,
+      allowTypeWidening: Boolean = false): Option[String] = {
     def verify(cond: Boolean, err: => String): Unit = {
       if (!cond) {
         throw DeltaErrors.cannotChangeDataType(err)
@@ -963,6 +973,11 @@ def normalizeColumnNamesInDataType(
                 (if (columnPath.nonEmpty) s" from $columnName" else ""))
           }
 
+        case (fromDataType: AtomicType, toDataType: AtomicType) if allowTypeWidening =>
+          verify(TypeWidening.isTypeChangeSupported(fromDataType, toDataType),
+            s"changing data type of ${UnresolvedAttribute(columnPath).name} " +
+              s"from $fromDataType to $toDataType")
+
         case (fromDataType, toDataType) =>
           verify(fromDataType == toDataType,
             s"changing data type of ${UnresolvedAttribute(columnPath).name} " +
@@ -1010,38 +1025,51 @@ def normalizeColumnNamesInDataType(
   }
 
   /**
-   * Transform (nested) columns in a schema. Runs the transform function on all nested StructTypes
-   *
-   * If `colName` is defined, we also check if the struct to process contains the column name.
-   *
+   * Runs the transform function `tf` on all nested StructTypes, MapTypes and ArrayTypes in the
+   * schema.
+   * If `colName` is defined, the transform function is only applied to all the fields with the
+   * given name. There may be multiple matches if nested fields with the same name exist in the
+   * schema, it is the responsibility of the caller to check the full field path before transforming
+   * a field.
    * @param schema to transform.
    * @param colName Optional name to match for
    * @param tf function to apply on the StructType.
    * @return the transformed schema.
    */
-  def transformColumnsStructs(
+  def transformSchema(
       schema: StructType,
       colName: Option[String] = None)(
-      tf: (Seq[String], StructType, Resolver) => Seq[StructField]): StructType = {
+      tf: (Seq[String], DataType, Resolver) => DataType): StructType = {
     def transform[E <: DataType](path: Seq[String], dt: E): E = {
       val newDt = dt match {
         case struct @ StructType(fields) =>
-          val newFields = if (colName.isEmpty || fields.exists(f => colName.contains(f.name))) {
-            tf(path, struct, DELTA_COL_RESOLVER)
+          val newStruct = if (colName.isEmpty || fields.exists(f => colName.contains(f.name))) {
+            tf(path, struct, DELTA_COL_RESOLVER).asInstanceOf[StructType]
           } else {
-            fields.toSeq
+            struct
           }
 
-          StructType(newFields.map { field =>
+          StructType(newStruct.fields.map { field =>
             field.copy(dataType = transform(path :+ field.name, field.dataType))
           })
-        case ArrayType(elementType, containsNull) =>
-          ArrayType(transform(path :+ "element", elementType), containsNull)
-        case MapType(keyType, valueType, valueContainsNull) =>
-          MapType(
-            transform(path :+ "key", keyType),
-            transform(path :+ "value", valueType),
-            valueContainsNull)
+        case array: ArrayType =>
+          val newArray =
+            if (colName.isEmpty || colName.contains("element")) {
+              tf(path, array, DELTA_COL_RESOLVER).asInstanceOf[ArrayType]
+            } else {
+              array
+            }
+          newArray.copy(elementType = transform(path :+ "element", newArray.elementType))
+        case map: MapType =>
+          val newMap =
+            if (colName.isEmpty || colName.contains("key") || colName.contains("value")) {
+              tf(path, map, DELTA_COL_RESOLVER).asInstanceOf[MapType]
+            } else {
+              map
+            }
+          newMap.copy(
+            keyType = transform(path :+ "key", newMap.keyType),
+            valueType = transform(path :+ "value", newMap.valueType))
         case other => other
       }
       newDt.asInstanceOf[E]
@@ -1113,8 +1141,12 @@ def normalizeColumnNamesInDataType(
   }
 
   /**
-   * Finds columns with illegal names, i.e. names containing any of the ' ,;{}()\n\t=' characters.
+   * Finds columns with invalid names, i.e. names containing any of the ' ,;{}()\n\t=' characters.
    */
+  def findInvalidColumnNamesInSchema(schema: StructType): Seq[String] = {
+    findInvalidColumnNames(SchemaMergingUtils.explodeNestedFieldNames(schema))
+  }
+
   private def findInvalidColumnNames(columnNames: Seq[String]): Seq[String] = {
     val badChars = Seq(' ', ',', ';', '{', '}', '(', ')', '\n', '\t', '=')
     columnNames.filter(colName => badChars.map(_.toString).exists(colName.contains))
