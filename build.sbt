@@ -385,7 +385,7 @@ lazy val iceberg = (project in file("iceberg"))
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
-      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.4.0" % "provided" exclude("org.apache.hadoop", "hadoop-common") exclude("org.apache.hadoop", "hadoop-auth"),
+      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.4.0" % "provided",
       "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3"
     ),
     Compile / unmanagedJars += (icebergShaded / assembly).value,
@@ -489,7 +489,7 @@ lazy val hudi = (project in file("hudi"))
     libraryDependencies ++= Seq(
       "org.apache.hudi" % "hudi-java-client" % "0.14.0" % "compile" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
       "org.apache.spark" % "spark-avro_2.12" % sparkVersion % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
-      "org.apache.parquet" % "parquet-avro" % "1.12.0" % "provided"
+      "org.apache.parquet" % "parquet-avro" % "1.12.3" % "provided"
     ),
   )
 
