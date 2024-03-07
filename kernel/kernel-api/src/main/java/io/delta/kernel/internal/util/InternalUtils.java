@@ -17,34 +17,39 @@ package io.delta.kernel.internal.util;
 
 import java.io.IOException;
 import java.sql.Date;
+import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.FileDataReadResult;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.utils.CloseableIterator;
 
 public class InternalUtils {
-    private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
+    private static final LocalDate EPOCH_DAY = LocalDate.ofEpochDay(0);
+    private static final LocalDateTime EPOCH_DATETIME =
+        LocalDateTime.ofEpochSecond(0, 0, ZoneOffset.UTC);
 
     private InternalUtils() {}
 
     /**
-     * Utility method to read at most one row from the given data {@link FileDataReadResult}
+     * Utility method to read at most one row from the given data {@link ColumnarBatch}
      * iterator. If there is more than one row, an exception will be thrown.
      *
      * @param dataIter
      * @return
      */
-    public static Optional<Row> getSingularRow(CloseableIterator<FileDataReadResult> dataIter)
+    public static Optional<Row> getSingularRow(CloseableIterator<ColumnarBatch> dataIter)
         throws IOException {
         Row row = null;
         while (dataIter.hasNext()) {
-            try (CloseableIterator<Row> rows = dataIter.next().getData().getRows()) {
+            try (CloseableIterator<Row> rows = dataIter.next().getRows()) {
                 while (rows.hasNext()) {
                     if (row != null) {
                         throw new IllegalArgumentException(
@@ -83,7 +88,16 @@ public class InternalUtils {
      */
     public static int daysSinceEpoch(Date date) {
         LocalDate localDate = date.toLocalDate();
-        return (int) ChronoUnit.DAYS.between(EPOCH, localDate);
+        return (int) localDate.toEpochDay();
+    }
+
+    /**
+     * Utility method to get the number of microseconds since the unix epoch for the given timestamp
+     * interpreted in UTC.
+     */
+    public static long microsSinceEpoch(Timestamp timestamp) {
+        LocalDateTime localTimestamp = timestamp.toLocalDateTime();
+        return ChronoUnit.MICROS.between(EPOCH_DATETIME, localTimestamp);
     }
 
     /**

@@ -17,7 +17,7 @@ package io.delta.kernel.defaults.internal.expressions
 
 import java.lang.{Boolean => BooleanJ}
 import java.math.{BigDecimal => BigDecimalJ}
-import java.sql.Date
+import java.sql.{Date, Timestamp}
 import java.util
 import java.util.Optional
 
@@ -191,9 +191,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val rightColumn = booleanVector(
       Seq[BooleanJ](true, false, false, true, true, null, false, null, null))
     val expAndOutputVector = booleanVector(
-      Seq[BooleanJ](true, false, false, false, null, null, null, null, null))
+      Seq[BooleanJ](true, false, false, false, null, null, false, false, null))
     val expOrOutputVector = booleanVector(
-      Seq[BooleanJ](true, true, false, true, null, null, null, null, null))
+      Seq[BooleanJ](true, true, false, true, true, true, null, null, null))
 
     val schema = new StructType()
       .add("left", BooleanType.BOOLEAN)
@@ -212,6 +212,97 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val orExpression = or(left, right)
     val actOrOutputVector = evaluator(schema, orExpression, BooleanType.BOOLEAN).eval(batch)
     checkBooleanVectors(actOrOutputVector, expOrOutputVector)
+  }
+
+  test("evaluate expression: not") {
+    val childColumn = booleanVector(Seq[BooleanJ](true, false, null))
+
+    val schema = new StructType().add("child", BooleanType.BOOLEAN)
+    val batch = new DefaultColumnarBatch(childColumn.getSize, schema, Array(childColumn))
+
+    val notExpression = new Predicate(
+      "NOT",
+      comparator("=", new Column("child"), Literal.ofBoolean(true))
+    )
+    val expOutputVector = booleanVector(Seq[BooleanJ](false, true, null))
+    val actOutputVector = evaluator(schema, notExpression, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector, expOutputVector)
+  }
+
+  test("evaluate expression: is not null") {
+    val childColumn = booleanVector(Seq[BooleanJ](true, false, null))
+
+    val schema = new StructType().add("child", BooleanType.BOOLEAN)
+    val batch = new DefaultColumnarBatch(childColumn.getSize, schema, Array(childColumn))
+
+    val isNotNullExpression = new Predicate("IS_NOT_NULL", new Column("child"))
+    val expOutputVector = booleanVector(Seq[BooleanJ](true, true, false))
+    val actOutputVector = evaluator(schema, isNotNullExpression, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector, expOutputVector)
+  }
+
+  test("evaluate expression: is null") {
+    val childColumn = booleanVector(Seq[BooleanJ](true, false, null))
+
+    val schema = new StructType().add("child", BooleanType.BOOLEAN)
+    val batch = new DefaultColumnarBatch(childColumn.getSize, schema, Array(childColumn))
+
+    val isNullExpression = new Predicate("IS_NULL", new Column("child"))
+    val expOutputVector = booleanVector(Seq[BooleanJ](false, false, true))
+    val actOutputVector = evaluator(schema, isNullExpression, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector, expOutputVector)
+  }
+
+  test("evaluate expression: coalesce") {
+    val col1 = booleanVector(Seq[BooleanJ](true, null, null, null))
+    val col2 = booleanVector(Seq[BooleanJ](false, false, null, null))
+    val col3 = booleanVector(Seq[BooleanJ](true, true, true, null))
+
+    val schema = new StructType()
+      .add("col1", BooleanType.BOOLEAN)
+      .add("col2", BooleanType.BOOLEAN)
+      .add("col3", BooleanType.BOOLEAN)
+
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2, col3))
+
+    val coalesceEpxr1 = new ScalarExpression(
+      "COALESCE",
+      util.Arrays.asList(new Column("col1")))
+    val expOutputVector1 = booleanVector(Seq[BooleanJ](true, null, null, null))
+    val actOutputVector1 = evaluator(schema, coalesceEpxr1, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector1, expOutputVector1)
+
+    val coalesceEpxr3 = new ScalarExpression(
+      "COALESCE",
+      util.Arrays.asList(
+        new Column("col1"), new Column("col2"), new Column("col3")))
+    val expOutputVector3 = booleanVector(Seq[BooleanJ](true, false, true, null))
+    val actOutputVector3 = evaluator(schema, coalesceEpxr3, BooleanType.BOOLEAN).eval(batch)
+    checkBooleanVectors(actOutputVector3, expOutputVector3)
+
+    def checkUnsupportedTypes(
+          col1Type: DataType, col2Type: DataType, messageContains: String): Unit = {
+      val schema = new StructType()
+        .add("col1", col1Type)
+        .add("col2", col2Type)
+      val batch = new DefaultColumnarBatch(5, schema,
+        Array(testColumnVector(5, col1Type), testColumnVector(5, col2Type)))
+      val e = intercept[UnsupportedOperationException] {
+        evaluator(
+          schema,
+          new ScalarExpression("COALESCE",
+            util.Arrays.asList(new Column("col1"), new Column("col2"))),
+          col1Type
+        ).eval(batch)
+      }
+      assert(e.getMessage.contains(messageContains))
+    }
+    // TODO support least-common-type resolution
+    checkUnsupportedTypes(LongType.LONG, IntegerType.INTEGER,
+      "Coalesce is only supported for arguments of the same type")
+    // TODO support other types besides boolean
+    checkUnsupportedTypes(IntegerType.INTEGER, IntegerType.INTEGER,
+      "Coalesce is only supported for boolean type expressions")
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
@@ -493,9 +584,11 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       ("null", BinaryType.BINARY, null),
       ("2021-11-18", DateType.DATE, InternalUtils.daysSinceEpoch(Date.valueOf("2021-11-18"))),
       ("null", DateType.DATE, null),
-      ("2021-11-18", DateType.DATE, InternalUtils.daysSinceEpoch(Date.valueOf("2021-11-18"))),
-      ("null", DateType.DATE, null)
-      // TODO: timestamp partition value types are not yet supported in reading
+      ("2020-02-18 22:00:10", TimestampType.TIMESTAMP,
+        InternalUtils.microsSinceEpoch(Timestamp.valueOf("2020-02-18 22:00:10"))),
+      ("2020-02-18 00:00:10.023", TimestampType.TIMESTAMP,
+        InternalUtils.microsSinceEpoch(Timestamp.valueOf("2020-02-18 00:00:10.023"))),
+      ("null", TimestampType.TIMESTAMP, null)
     )
 
     val inputBatch = zeroColumnBatch(rowCount = 1)
@@ -528,90 +621,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     assert(ex.getMessage.contains(serializedPartVal))
   }
 
-  /**
-   * Utility method to generate a [[dataType]] column vector of given size.
-   * The nullability of rows is determined by the [[testIsNullValue(dataType, rowId)]].
-   * The row values are determined by [[testColumnValue(dataType, rowId)]].
-   */
-  private def testColumnVector(size: Int, dataType: DataType): ColumnVector = {
-    new ColumnVector {
-      override def getDataType: DataType = dataType
-
-      override def getSize: Int = size
-
-      override def close(): Unit = {}
-
-      override def isNullAt(rowId: Int): Boolean = testIsNullValue(dataType, rowId)
-
-      override def getBoolean(rowId: Int): Boolean =
-        testColumnValue(dataType, rowId).asInstanceOf[Boolean]
-
-      override def getByte(rowId: Int): Byte = testColumnValue(dataType, rowId).asInstanceOf[Byte]
-
-      override def getShort(rowId: Int): Short =
-        testColumnValue(dataType, rowId).asInstanceOf[Short]
-
-      override def getInt(rowId: Int): Int = testColumnValue(dataType, rowId).asInstanceOf[Int]
-
-      override def getLong(rowId: Int): Long = testColumnValue(dataType, rowId).asInstanceOf[Long]
-
-      override def getFloat(rowId: Int): Float =
-        testColumnValue(dataType, rowId).asInstanceOf[Float]
-
-      override def getDouble(rowId: Int): Double =
-        testColumnValue(dataType, rowId).asInstanceOf[Double]
-
-      override def getBinary(rowId: Int): Array[Byte] =
-        testColumnValue(dataType, rowId).asInstanceOf[Array[Byte]]
-
-      override def getString(rowId: Int): String =
-        testColumnValue(dataType, rowId).asInstanceOf[String]
-
-      override def getDecimal(rowId: Int): BigDecimalJ =
-        testColumnValue(dataType, rowId).asInstanceOf[BigDecimalJ]
-    }
-  }
-
-  /** Utility method to generate a consistent `isNull` value for given column type and row id */
-  private def testIsNullValue(dataType: DataType, rowId: Int): Boolean = {
-    dataType match {
-      case BooleanType.BOOLEAN => rowId % 4 == 0
-      case ByteType.BYTE => rowId % 8 == 0
-      case ShortType.SHORT => rowId % 12 == 0
-      case IntegerType.INTEGER => rowId % 20 == 0
-      case LongType.LONG => rowId % 25 == 0
-      case FloatType.FLOAT => rowId % 5 == 0
-      case DoubleType.DOUBLE => rowId % 10 == 0
-      case StringType.STRING => rowId % 2 == 0
-      case BinaryType.BINARY => rowId % 3 == 0
-      case DateType.DATE => rowId % 5 == 0
-      case TimestampType.TIMESTAMP => rowId % 3 == 0
-      case _ =>
-        if (dataType.isInstanceOf[DecimalType]) rowId % 6 == 0
-        else throw new UnsupportedOperationException(s"$dataType is not supported")
-    }
-  }
-
-  /** Utility method to generate a consistent column value for given column type and row id */
-  private def testColumnValue(dataType: DataType, rowId: Int): Any = {
-    dataType match {
-      case BooleanType.BOOLEAN => rowId % 7 == 0
-      case ByteType.BYTE => (rowId * 7 / 17).toByte
-      case ShortType.SHORT => (rowId * 9 / 87).toShort
-      case IntegerType.INTEGER => rowId * 2876 / 176
-      case LongType.LONG => rowId * 287623L / 91
-      case FloatType.FLOAT => rowId * 7651.2323f / 91
-      case DoubleType.DOUBLE => rowId * 23423.23d / 17
-      case StringType.STRING => (rowId % 19).toString
-      case BinaryType.BINARY => Array[Byte]((rowId % 21).toByte, (rowId % 7 - 1).toByte)
-      case DateType.DATE => (rowId * 28234) % 2876
-      case TimestampType.TIMESTAMP => (rowId * 2342342L) % 23
-      case _ =>
-        if (dataType.isInstanceOf[DecimalType]) new BigDecimalJ(rowId * 22342.23)
-        else throw new UnsupportedOperationException(s"$dataType is not supported")
-    }
-  }
-
   private def evaluator(inputSchema: StructType, expression: Expression, outputType: DataType)
   : DefaultExpressionEvaluator = {
     new DefaultExpressionEvaluator(inputSchema, expression, outputType)
@@ -619,7 +628,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
   private def testComparator(
     comparator: String, left: Expression, right: Expression, expResult: BooleanJ): Unit = {
-    val expression = new Predicate(comparator, util.Arrays.asList(left, right))
+    val expression = new Predicate(comparator, left, right)
     val batch = zeroColumnBatch(rowCount = 1)
     val outputVector = evaluator(batch.getSchema, expression, BooleanType.BOOLEAN).eval(batch)
 

@@ -68,16 +68,11 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
         return Seq.empty
       }
 
-      // Expression to update metrics
-      val incrSourceRowCountExpr = incrementMetricAndReturnBool(numSourceRowsMetric, true)
       // source DataFrame
-      var sourceDF = getSourceDF().filter(Column(incrSourceRowCountExpr))
-      // If there is only one insert clause, then filter out the source rows that do not
-      // satisfy the clause condition because those rows will not be written out.
-      if (notMatchedClauses.size == 1 && notMatchedClauses.head.condition.isDefined) {
-        sourceDF =
-          sourceDF.filter(Column(notMatchedClauses.head.condition.get))
-      }
+      val mergeSource = getMergeSource
+      // Expression to update metrics.
+      val incrSourceRowCountExpr = incrementMetricAndReturnBool(numSourceRowsMetric, true)
+      val sourceDF = filterSource(mergeSource.df.filter(Column(incrSourceRowCountExpr)))
 
       var dataSkippedFiles: Option[Seq[AddFile]] = None
       val preparedSourceDF = if (filterMatchedRows) {
@@ -101,7 +96,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
         sourceDF
       }
 
-      val outputDF = generateInsertsOnlyOutputDF(preparedSourceDF, deltaTxn)
+      val outputDF = generateInsertsOnlyOutputDF(spark, preparedSourceDF, deltaTxn)
       logDebug(s"$extraOpType: output plan:\n" + outputDF.queryExecution)
 
       val newFiles = writeFiles(spark, deltaTxn, outputDF)
@@ -129,6 +124,16 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
     }
   }
 
+  private def filterSource(source: DataFrame): DataFrame = {
+    // If there is only one insert clause, then filter out the source rows that do not
+    // satisfy the clause condition because those rows will not be written out.
+    if (notMatchedClauses.size == 1 && notMatchedClauses.head.condition.isDefined) {
+      source.filter(Column(notMatchedClauses.head.condition.get))
+    } else {
+      source
+    }
+  }
+
   /**
    * Generate the DataFrame to write out for merges that contains only inserts - either, insert-only
    * clauses or inserts when no matches were found.
@@ -137,10 +142,11 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
    * and when there are multiple insert clauses.
    */
   private def generateInsertsOnlyOutputDF(
+      spark: SparkSession,
       preparedSourceDF: DataFrame,
       deltaTxn: OptimisticTransaction): DataFrame = {
 
-    val targetOutputColNames = getTargetOutputCols(deltaTxn).map(_.name)
+    val targetOutputColNames = getTargetOutputCols(spark, deltaTxn).map(_.name)
 
     // When there is only one insert clause, there is no need for ROW_DROPPED_COL and
     // output df can be generated without CaseWhen.

@@ -30,19 +30,20 @@ import org.apache.spark.sql.delta.constraints.Constraints.NotNull
 import org.apache.spark.sql.delta.constraints.Invariants.PersistedExpression
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.streaming.StreamingQueryException
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 class InvariantEnforcementSuite extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with SQLTestUtils {
+    with DeltaSQLTestUtils {
 
 
   import testImplicits._

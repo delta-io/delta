@@ -21,6 +21,7 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
@@ -32,7 +33,7 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveM
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.functions.{lit, struct}
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.{LegacyBehaviorPolicy, SQLConf}
 import org.apache.spark.sql.internal.SQLConf.{LEAF_NODE_DEFAULT_PARALLELISM, PARTITION_OVERWRITE_MODE, PartitionOverwriteMode}
 import org.apache.spark.sql.test.{SharedSparkSession, TestSparkSession}
 import org.apache.spark.sql.types._
@@ -131,6 +132,35 @@ class DeltaInsertIntoSQLSuite
       assert(intercept[AnalysisException](
         sql(s"INSERT OVERWRITE $t1(data, data) VALUES(5)")).getMessage.nonEmpty)
     }
+  }
+
+  test("insertInto should throw an AnalysisError on name mismatch") {
+    def testInsertByNameError(targetSchema: String, expectedErrorClass: String): Unit = {
+      val sourceTableName = "source"
+      val targetTableName = "target"
+      val format = "delta"
+      withTable(sourceTableName, targetTableName) {
+        sql(s"CREATE TABLE $sourceTableName (a int, b int) USING $format")
+        sql(s"CREATE TABLE $targetTableName $targetSchema USING $format")
+        val e = intercept[AnalysisException] {
+          sql(s"INSERT INTO $targetTableName BY NAME SELECT * FROM $sourceTableName")
+        }
+        assert(e.getErrorClass === expectedErrorClass)
+      }
+    }
+
+    // NOTE: We use upper case in the target schema so that needsSchemaAdjustmentByName returns
+    // true (due to case sensitivity) so that we call resolveQueryColumnsByName and hit the right
+    // code path.
+
+    // when the number of columns does not match, throw an arity mismatch error.
+    testInsertByNameError(
+      targetSchema = "(A int)",
+      expectedErrorClass = "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS")
+
+    // when the number of columns matches, but the names do not, throw a missing column error.
+    testInsertByNameError(
+      targetSchema = "(A int, c int)", expectedErrorClass = "DELTA_MISSING_COLUMN")
   }
 
   dynamicOverwriteTest("insertInto: dynamic overwrite by name") {
@@ -441,6 +471,386 @@ abstract class DeltaInsertIntoTestsWithTempViews(
     Seq(Row(0, 3), Row(1, 2))
   )
 
+}
+
+class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQLCommandTest {
+
+  import testImplicits._
+
+  override val supportsDynamicOverwrite = true
+  override val includeSQLOnlyTests = true
+
+  val tblPropertiesAllowDefaults =
+    """tblproperties (
+      |  'delta.feature.allowColumnDefaults' = 'enabled',
+      |  'delta.columnMapping.mode' = 'name'
+      |)""".stripMargin
+
+  test("Column DEFAULT value support with Delta Lake, positive tests") {
+    Seq(
+      PartitionOverwriteMode.STATIC.toString,
+      PartitionOverwriteMode.DYNAMIC.toString
+    ).foreach { partitionOverwriteMode =>
+      withSQLConf(
+        SQLConf.ENABLE_DEFAULT_COLUMNS.key -> "true",
+        SQLConf.PARTITION_OVERWRITE_MODE.key -> partitionOverwriteMode,
+        // Set these configs to allow writing test values like timestamps of Jan. 1, year 1, etc.
+        SQLConf.PARQUET_REBASE_MODE_IN_WRITE.key -> LegacyBehaviorPolicy.LEGACY.toString,
+        SQLConf.PARQUET_INT96_REBASE_MODE_IN_WRITE.key -> LegacyBehaviorPolicy.LEGACY.toString) {
+        withTable("t1", "t2", "t3", "t4") {
+          // Positive tests:
+          // Create some columns with default values and then insert into them.
+          sql("create table t1(" +
+            s"a int default 42, b boolean default true, c string default 'abc') using $v2Format " +
+            s"partitioned by (a) $tblPropertiesAllowDefaults")
+          sql("insert into t1 values (1, false, default)")
+          sql("insert into t1 values (1, default, default)")
+          sql("alter table t1 alter column c set default 'def'")
+          sql("insert into t1 values (default, default, default)")
+          sql("alter table t1 alter column c drop default")
+          // Exercise INSERT INTO commands with VALUES lists mapping columns positionally.
+          sql("insert into t1 values (default, default, default)")
+          // Write the data in the table 't1' to new table 't4' and then perform an INSERT OVERWRITE
+          // back to 't1' here, to exercise static and dynamic partition overwrites.
+          sql(f"create table t4(a int, b boolean, c string) using $v2Format " +
+            s"partitioned by (a) $tblPropertiesAllowDefaults")
+          // Exercise INSERT INTO commands with SELECT queries mapping columns by name.
+          sql("insert into t4(a, b, c) select a, b, c from t1")
+          sql("insert overwrite table t1 select * from t4")
+          checkAnswer(spark.table("t1"), Seq(
+            Row(1, false, "abc"),
+            Row(1, true, "abc"),
+            Row(42, true, "def"),
+            Row(42, true, null)
+          ))
+          // Insert default values with all supported types.
+          sql("create table t2(" +
+            "s boolean default true, " +
+            "t byte default cast(null as byte), " +
+            "u short default cast(42 as short), " +
+            "v float default 0, " +
+            "w double default 0, " +
+            "x date default date'0000', " +
+            "y timestamp default timestamp'0000', " +
+            "z decimal(5, 2) default 123.45," +
+            "a1 bigint default 43," +
+            "a2 smallint default cast(5 as smallint)," +
+            s"a3 tinyint default cast(6 as tinyint)) using $v2Format " +
+            tblPropertiesAllowDefaults)
+          sql("insert into t2 values (default, default, default, default, default, default, " +
+            "default, default, default, default, default)")
+          val result: Array[Row] = spark.table("t2").collect()
+          assert(result.length == 1)
+          val row: Row = result(0)
+          assert(row.length == 11)
+          assert(row(0) == true)
+          assert(row(1) == null)
+          assert(row(2) == 42)
+          assert(row(3) == 0.0f)
+          assert(row(4) == 0.0d)
+          assert(row(5).toString == "0001-01-01")
+          assert(row(6).toString == "0001-01-01 00:00:00.0")
+          assert(row(7).toString == "123.45")
+          assert(row(8) == 43L)
+          assert(row(9) == 5)
+          assert(row(10) == 6)
+        }
+        withTable("t3") {
+          // Set a default value for a partitioning column.
+          sql(s"create table t3(i boolean, s bigint, q int default 42) using $v2Format " +
+            s"partitioned by (i) $tblPropertiesAllowDefaults")
+          sql("alter table t3 alter column i set default true")
+          sql("insert into t3(i, s, q) values (default, default, default)")
+          checkAnswer(spark.table("t3"), Seq(
+            Row(true, null, 42)))
+          // Drop the column and add it again without the default. Querying the column now returns
+          // NULL.
+          sql("alter table t3 drop column q")
+          sql("alter table t3 add column q int")
+          checkAnswer(spark.table("t3"), Seq(
+            Row(true, null, null)))
+        }
+      }
+    }
+  }
+
+  test("Column DEFAULT value support with Delta Lake, negative tests") {
+    withSQLConf(SQLConf.ENABLE_DEFAULT_COLUMNS.key -> "true") {
+      // The table feature is not enabled via TBLPROPERTIES.
+      withTable("createTableWithDefaultFeatureNotEnabled") {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql(s"create table createTableWithDefaultFeatureNotEnabled(" +
+              s"i boolean, s bigint, q int default 42) using $v2Format " +
+              "partitioned by (i)")
+          },
+          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          parameters = Map("commandType" -> "CREATE TABLE")
+        )
+      }
+      withTable("alterTableSetDefaultFeatureNotEnabled") {
+        sql(s"create table alterTableSetDefaultFeatureNotEnabled(a int) using $v2Format")
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("alter table alterTableSetDefaultFeatureNotEnabled alter column a set default 42")
+          },
+          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          parameters = Map("commandType" -> "ALTER TABLE")
+        )
+      }
+      // Adding a new column with a default value to an existing table is not allowed.
+      withTable("alterTableTest") {
+        sql(s"create table alterTableTest(i boolean, s bigint, q int default 42) using $v2Format " +
+          s"partitioned by (i) $tblPropertiesAllowDefaults")
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("alter table alterTableTest add column z int default 42")
+          },
+          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED"
+        )
+      }
+      // The default value fails to analyze.
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"create table t4 (s int default badvalue) using $v2Format " +
+            s"$tblPropertiesAllowDefaults")
+        },
+        errorClass = "INVALID_DEFAULT_VALUE.UNRESOLVED_EXPRESSION",
+        parameters = Map(
+          "statement" -> "CREATE TABLE",
+          "colName" -> "`s`",
+          "defaultValue" -> "badvalue"))
+
+      // The default value analyzes to a table not in the catalog.
+      // The error message reports that we failed to execute the command because subquery
+      // expressions are not allowed in DEFAULT values.
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"create table t4 (s int default (select min(x) from badtable)) using $v2Format " +
+            tblPropertiesAllowDefaults)
+        },
+        errorClass = "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
+        parameters = Map(
+          "statement" -> "CREATE TABLE",
+          "colName" -> "`s`",
+          "defaultValue" -> "(select min(x) from badtable)"))
+      // The default value has an explicit alias. It fails to evaluate when inlined into the
+      // VALUES list at the INSERT INTO time.
+      // The error message reports that we failed to execute the command because subquery
+      // expressions are not allowed in DEFAULT values.
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"create table t4 (s int default (select 42 as alias)) using $v2Format " +
+            tblPropertiesAllowDefaults)
+        },
+        errorClass = "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
+        parameters = Map(
+          "statement" -> "CREATE TABLE",
+          "colName" -> "`s`",
+          "defaultValue" -> "(select 42 as alias)"))
+      // The default value parses but the type is not coercible.
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"create table t4 (s bigint default false) " +
+            s"using $v2Format $tblPropertiesAllowDefaults")
+        },
+        errorClass = "INVALID_DEFAULT_VALUE.DATA_TYPE",
+        parameters = Map(
+          "statement" -> "CREATE TABLE",
+          "colName" -> "`s`",
+          "expectedType" -> "\"BIGINT\"",
+          "actualType" -> "\"BOOLEAN\"",
+          "defaultValue" -> "false"))
+      // It is possible to create a table with NOT NULL constraint and a DEFAULT value of NULL.
+      // However, future inserts into that table will fail.
+      withTable("t4") {
+        sql(s"create table t4(i boolean, s bigint, q int default null not null) using $v2Format " +
+          s"partitioned by (i) $tblPropertiesAllowDefaults")
+        // The InvariantViolationException is not a SparkThrowable, so just check we receive one.
+        assert(intercept[InvariantViolationException] {
+          sql("insert into t4 values (default, default, default)")
+        }.getMessage.nonEmpty)
+      }
+      // It is possible to create a table with a check constraint and a DEFAULT value that does not
+      // conform. However, future inserts into that table will fail.
+      withTable("t4") {
+        sql(s"create table t4(i boolean, s bigint, q int default 42) using $v2Format " +
+          s"partitioned by (i) $tblPropertiesAllowDefaults")
+        sql("alter table t4 add constraint smallq check (q < 10)")
+        assert(intercept[InvariantViolationException] {
+          sql("insert into t4 values (default, default, default)")
+        }.getMessage.nonEmpty)
+      }
+    }
+    // Column default values are disabled per configuration in general.
+    withSQLConf(SQLConf.ENABLE_DEFAULT_COLUMNS.key -> "false") {
+      checkError(
+        exception = intercept[ParseException] {
+          sql(s"create table t4 (s int default 41 + 1) using $v2Format " +
+            tblPropertiesAllowDefaults)
+        },
+        errorClass = "UNSUPPORTED_DEFAULT_VALUE.WITH_SUGGESTION",
+        parameters = Map.empty,
+        context = ExpectedContext(fragment = "s int default 41 + 1", start = 17, stop = 36))
+    }
+  }
+
+  test("Exercise column defaults with dataframe writes") {
+    // There are three column types exercising various combinations of implicit and explicit
+    // default column value references in the 'insert into' statements. Note these tests depend on
+    // enabling the configuration to use NULLs for missing DEFAULT column values.
+    withSQLConf(SQLConf.USE_NULLS_FOR_MISSING_DEFAULT_COLUMN_VALUES.key -> "true") {
+      for (useDataFrames <- Seq(false, true)) {
+        withTable("t1", "t2") {
+          sql(s"create table t1(j int, s bigint default 42, x bigint default 43) using $v2Format " +
+            tblPropertiesAllowDefaults)
+          if (useDataFrames) {
+            // Use 'saveAsTable' to exercise mapping columns by name. Note that we have to specify
+            // values for all columns of the target table here whether we use 'saveAsTable' or
+            // 'insertInto', since the DataFrame generates a LogicalPlan equivalent to a SQL INSERT
+            // INTO command without any explicit user-specified column list. For example, if we
+            // used Seq((1)).toDF("j", "s", "x").write.mode("append") here instead, it would
+            // generate an unresolved LogicalPlan equivalent to the SQL query
+            // "INSERT INTO t1 VALUES (1)". This would fail with an error reporting the VALUES
+            // list is not long enough, since the analyzer would consider this equivalent to
+            // "INSERT INTO t1 (j, s, x) VALUES (1)".
+            Seq((1, 42L, 43L)).toDF("j", "s", "x").write.mode("append")
+              .format("delta").saveAsTable("t1")
+            Seq((2, 42L, 43L)).toDF("j", "s", "x").write.mode("append")
+              .format("delta").saveAsTable("t1")
+            Seq((3, 42L, 43L)).toDF("j", "s", "x").write.mode("append")
+              .format("delta").saveAsTable("t1")
+            Seq((4, 44L, 43L)).toDF("j", "s", "x").write.mode("append")
+              .format("delta").saveAsTable("t1")
+            Seq((5, 44L, 45L)).toDF("j", "s", "x")
+              .write.mode("append").format("delta").saveAsTable("t1")
+          } else {
+            sql("insert into t1(j) values(1)")
+            sql("insert into t1(j, s) values(2, default)")
+            sql("insert into t1(j, s, x) values(3, default, default)")
+            sql("insert into t1(j, s) values(4, 44)")
+            sql("insert into t1(j, s, x) values(5, 44, 45)")
+          }
+          sql(s"create table t2(j int, s bigint default 42, x bigint default 43) using $v2Format " +
+            tblPropertiesAllowDefaults)
+          if (useDataFrames) {
+            // Use 'insertInto' to exercise mapping columns positionally.
+            spark.table("t1").where("j = 1").write.insertInto("t2")
+            spark.table("t1").where("j = 2").write.insertInto("t2")
+            spark.table("t1").where("j = 3").write.insertInto("t2")
+            spark.table("t1").where("j = 4").write.insertInto("t2")
+            spark.table("t1").where("j = 5").write.insertInto("t2")
+          } else {
+            sql("insert into t2(j) select j from t1 where j = 1")
+            sql("insert into t2(j, s) select j, default from t1 where j = 2")
+            sql("insert into t2(j, s, x) select j, default, default from t1 where j = 3")
+            sql("insert into t2(j, s) select j, s from t1 where j = 4")
+            sql("insert into t2(j, s, x) select j, s, 45L from t1 where j = 5")
+          }
+          checkAnswer(
+            spark.table("t2"),
+            Row(1, 42L, 43L) ::
+              Row(2, 42L, 43L) ::
+              Row(3, 42L, 43L) ::
+              Row(4, 44L, 43L) ::
+              Row(5, 44L, 45L) :: Nil)
+          // Also exercise schema evolution with DataFrames.
+          if (useDataFrames) {
+            Seq((5, 44L, 45L, 46L)).toDF("j", "s", "x", "y")
+              .write.mode("append").format("delta").option("mergeSchema", "true")
+              .saveAsTable("t2")
+            checkAnswer(
+              spark.table("t2"),
+              Row(1, 42L, 43L, null) ::
+                Row(2, 42L, 43L, null) ::
+                Row(3, 42L, 43L, null) ::
+                Row(4, 44L, 43L, null) ::
+                Row(5, 44L, 45L, null) ::
+                Row(5, 44L, 45L, 46L) :: Nil)
+          }
+        }
+      }
+    }
+  }
+
+  test("ReplaceWhere with column defaults with dataframe writes") {
+    withTable("t1", "t2", "t3") {
+      sql(s"create table t1(j int, s bigint default 42, x bigint default 43) using $v2Format " +
+        tblPropertiesAllowDefaults)
+      Seq((1, 42L, 43L)).toDF.write.insertInto("t1")
+      Seq((2, 42L, 43L)).toDF.write.insertInto("t1")
+      Seq((3, 42L, 43L)).toDF.write.insertInto("t1")
+      Seq((4, 44L, 43L)).toDF.write.insertInto("t1")
+      Seq((5, 44L, 45L)).toDF.write.insertInto("t1")
+      spark.table("t1")
+        .write.format("delta")
+        .mode("overwrite")
+        .option("replaceWhere", "j = default and s = default and x = default")
+        .saveAsTable("t2")
+      Seq("t1", "t2").foreach { t =>
+        checkAnswer(
+          spark.table(t),
+          Row(1, 42L, 43L) ::
+            Row(2, 42L, 43L) ::
+            Row(3, 42L, 43L) ::
+            Row(4, 44L, 43L) ::
+            Row(5, 44L, 45L) :: Nil)
+      }
+    }
+  }
+
+  test("DESCRIBE and SHOW CREATE TABLE with column defaults") {
+    withTable("t") {
+      spark.sql(s"CREATE TABLE t (id bigint default 42) " +
+        s"using $v2Format $tblPropertiesAllowDefaults")
+      val descriptionDf = spark.sql(s"DESCRIBE TABLE EXTENDED t")
+      assert(descriptionDf.schema.map { field =>
+        (field.name, field.dataType)
+      } === Seq(
+        ("col_name", StringType),
+        ("data_type", StringType),
+        ("comment", StringType)))
+      QueryTest.checkAnswer(
+        descriptionDf.filter(
+          "!(col_name in ('Catalog', 'Created Time', 'Created By', 'Database', " +
+            "'index', 'Is_managed_location', 'Location', 'Name', 'Owner', 'Partition Provider'," +
+            "'Provider', 'Table', 'Table Properties',  'Type', '_partition', 'Last Access', " +
+            "'Statistics', ''))"),
+        Seq(
+          Row("# Column Default Values", "", ""),
+          Row("# Detailed Table Information", "", ""),
+          Row("id", "bigint", "42"),
+          Row("id", "bigint", null)
+        ))
+    }
+    withTable("t") {
+      sql(
+        s"""
+           |CREATE TABLE t (
+           |  a bigint NOT NULL,
+           |  b bigint DEFAULT 42,
+           |  c string DEFAULT 'abc, "def"' COMMENT 'comment'
+           |)
+           |USING parquet
+           |COMMENT 'This is a comment'
+           |$tblPropertiesAllowDefaults
+        """.stripMargin)
+      val currentCatalog = spark.sessionState.catalogManager.currentCatalog.name()
+      QueryTest.checkAnswer(sql("SHOW CREATE TABLE T"),
+        Seq(
+          Row(
+            s"""CREATE TABLE ${currentCatalog}.default.T (
+               |  a BIGINT,
+               |  b BIGINT DEFAULT 42,
+               |  c STRING DEFAULT 'abc, "def"' COMMENT 'comment')
+               |USING parquet
+               |COMMENT 'This is a comment'
+               |TBLPROPERTIES (
+               |  'delta.columnMapping.mode' = 'name',
+               |  'delta.feature.allowColumnDefaults' = 'enabled')
+               |""".stripMargin)))
+    }
+  }
 }
 
 /** These tests come from Apache Spark with some modifications to match Delta behavior. */

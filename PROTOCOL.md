@@ -46,6 +46,8 @@
   - [Writer Requirement for Deletion Vectors](#writer-requirement-for-deletion-vectors)
 - [Iceberg Compatibility V1](#iceberg-compatibility-v1)
   - [Writer Requirements for IcebergCompatV1](#writer-requirements-for-icebergcompatv1)
+- [Iceberg Compatibility V2](#iceberg-compatibility-v2)
+  - [Writer Requirement for IcebergCompatV2](#iceberg-compatibility-v2)
 - [Timestamp without timezone (TimestampNtz)](#timestamp-without-timezone-timestampntz)
 - [V2 Checkpoint Table Feature](#v2-checkpoint-table-feature)
 - [Row Tracking](#row-tracking)
@@ -101,8 +103,6 @@
       - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
-
-<font color="red">THIS IS AN IN-PROGRESS DRAFT</font>
 
 # Overview
 This document is a specification for the Delta Transaction Protocol, which brings [ACID](https://en.wikipedia.org/wiki/ACID) properties to large collections of data, stored as files, in a distributed file system or object store. The protocol was designed with the following goals in mind:
@@ -264,36 +264,36 @@ These files reside in the `_delta_log/_sidecars` directory.
 ### Log Compaction Files
 
 Log compaction files reside in the `_delta_log` directory. A log compaction file from a start version `x` to an end version `y` will have the following name:
-`<x>.<y>.compact.json`. This contains the aggregated
+`<x>.<y>.compacted.json`. This contains the aggregated
 actions for commit range `[x, y]`. Similar to commits, each row in the log
 compaction file represents an [action](#actions).
 The commit files for a given range are created by doing [Action Reconciliation](#action-reconciliation)
 of the corresponding commits.
 Instead of reading the individual commit files in range `[x, y]`, an implementation could choose to read
-the log compaction file `<x>.<y>.compact.json` to speed up the snapshot construction.
+the log compaction file `<x>.<y>.compacted.json` to speed up the snapshot construction.
 
 Example:
-Suppose we have `4.json` as:
+Suppose we have `00000000000000000004.json` as:
 ```
 {"commitInfo":{...}}
 {"add":{"path":"f2",...}}
 {"remove":{"path":"f1",...}}
 ```
-`5.json` as:
+`00000000000000000005.json` as:
 ```
 {"commitInfo":{...}}
 {"add":{"path":"f3",...}}
 {"add":{"path":"f4",...}}
 {"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4389}}
 ```
-`6.json` as:
+`00000000000000000006.json` as:
 ```
 {"commitInfo":{...}}
 {"remove":{"path":"f3",...}}
 {"txn":{"appId":"3ae45b72-24e1-865a-a211-34987ae02f2a","version":4390}}
 ```
 
-Then `4.6.compact.json` will have the following content:
+Then `00000000000000000004.00000000000000000006.compacted.json` will have the following content:
 ```
 {"add":{"path":"f2",...}}
 {"add":{"path":"f4",...}}
@@ -408,8 +408,9 @@ tags | Map[String, String] | Map containing metadata about this logical file | o
 deletionVector | [DeletionVectorDescriptor Struct](#Deletion-Vectors) | Either null (or absent in JSON) when no DV is associated with this data file, or a struct (described below) that contains necessary information about the DV that is part of this logical file. | optional
 baseRowId | Long  | Default generated Row ID of the first row in the file. The default generated Row IDs of the other rows in the file can be reconstructed by adding the physical index of the row within the file to the base Row ID. See also [Row IDs](#row-ids) | optional
 defaultRowCommitVersion | Long | First commit version in which an `add` action with the same `path` was committed to the table. | optional
+clusteringProvider | String | The name of the clustering implementation. See also [Clustered Table](#clustered-table)| optional
 
-The following is an example `add` action:
+The following is an example `add` action for a partitioned table:
 ```json
 {
   "add": {
@@ -420,6 +421,23 @@ The following is an example `add` action:
     "dataChange": true,
     "baseRowId": 4071,
     "defaultRowCommitVersion": 41,
+    "stats": "{\"numRecords\":1,\"minValues\":{\"val..."
+  }
+}
+```
+
+The following is an example `add` action for a clustered table:
+```json
+{
+  "add": {
+    "path": "date=2017-12-10/part-000...c000.gz.parquet",
+    "partitionValues": {},
+    "size": 841454,
+    "modificationTime": 1512909768000,
+    "dataChange": true,
+    "baseRowId": 4071,
+    "defaultRowCommitVersion": 41,
+    "clusteringProvider": "liquid",
     "stats": "{\"numRecords\":1,\"minValues\":{\"val..."
   }
 }
@@ -492,12 +510,16 @@ When available, change data readers should use the `cdc` actions in a given tabl
 Specifically, to read the row-level changes made in a version, the following strategy should be used:
 1. If there are `cdc` actions in this version, then read only those to get the row-level changes, and skip the remaining `add` and `remove` actions in this version.
 2. Otherwise, if there are no `cdc` actions in this version, read and treat all the rows in the `add` and `remove` actions as inserted and deleted rows, respectively.
-3. The following extra columns should also be generated:
+3. Change data readers should return the following extra columns:
 
-Field Name | Data Type | Description
--|-|-
-_commit_version|`Long`| The table version containing the change. This can be got from the name of the Delta log file that contains actions.
-_commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. This can be got from the file modification time of the Delta log file that contains actions.
+    Field Name | Data Type | Description
+    -|-|-
+    _commit_version|`Long`| The table version containing the change. This can be derived from the name of the Delta log file that contains actions.
+    _commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. This can be derived from the file modification time of the Delta log file that contains actions.
+
+##### Note for non-change data readers
+
+In a table with Change Data Feed enabled, the data Parquet files referenced by `add` and `remove` actions are allowed to contain an extra column `_change_type`. This column is not present in the table's schema and will consistently have a `null` value. When accessing these files, readers should disregard this column and only process columns defined within the table's schema.
 
 ### Transaction Identifiers
 Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
@@ -883,9 +905,7 @@ To support this feature:
 - The table must be on Writer Version 7.
 - The feature `icebergCompatV1` must exist in the table `protocol`'s `writerFeatures`.
 
-Activation: Set table property `delta.enableIcebergCompatV1` to `true`.
-
-Deactivation: Unset table property `delta.enableIcebergCompatV1`, or set it to `false`.
+This table feature is enabled when the table property `delta.enableIcebergCompatV1` is set to `true`.
 
 ## Writer Requirements for IcebergCompatV1
 
@@ -899,6 +919,109 @@ When supported and active, writers must:
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
 
+# Iceberg Compatibility V2
+
+This table feature (`icebergCompatV2`) ensures that Delta tables can be converted to Apache Iceberg™ format, though this table feature does not implement or specify that conversion.
+
+To support this feature:
+- Since this table feature depends on Column Mapping, the table must be on Reader Version = 2, or it must be on Reader Version >= 3 and the feature `columnMapping` must exist in the `protocol`'s `readerFeatures`.
+- The table must be on Writer Version 7.
+- The feature `icebergCompatV2` must exist in the table protocol's `writerFeatures`.
+
+This table feature is enabled when the table property `delta.enableIcebergCompatV2` is set to `true`. 
+
+## Writer Requirements for IcebergCompatV2
+
+When this feature is supported and enabled, writers must:
+- Require that Column Mapping be enabled and set to either `name` or `id` mode
+- Require that the nested `element` field of ArrayTypes and the nested `key` and `value` fields of MapTypes be assigned 32 bit integer identifiers. These identifiers must be unique and different from those used in [Column Mapping](#column-mapping), and must be stored in the metadata of their nearest ancestor [StructField](#struct-field) of the Delta table schema. Identifiers belonging to the same `StructField` must be organized as a `Map[String, Long]` and stored in metadata with key `parquet.field.nested.ids`. The keys of the map are "element", "key", or "value", prefixed by the name of the nearest ancestor StructField, separated by dots. The values are the identifiers. The keys for fields in nested arrays or nested maps are prefixed by their parents' key, separated by dots. An [example](#example-of-storing-identifiers-for-nested-fields-in-arraytype-and-maptype) is provided below to demonstrate how the identifiers are stored. These identifiers must be also written to the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift) when writing parquet files.
+- Require that IcebergCompatV1 is not active, which means either the `icebergCompatV1` table feature is not present in the table protocol or the table property `delta.enableIcebergCompatV1` is not set to `true`
+- Require that Deletion Vectors are not active, which means either the `deletionVectors` table feature is not present in the table protocol or the table property `delta.enableDeletionVectors` is not set to `true`
+- Require that partition column values be materialized when writing Parquet data files
+- Require that all new `AddFile`s committed to the table have the `numRecords` statistic populated in their `stats` field
+- Require writing timestamp columns as int64
+- Require that the table schema contains only data types in the following allow-list: [`byte`, `short`, `integer`, `long`, `float`, `double`, `decimal`, `string`, `binary`, `boolean`, `timestamp`, `timestampNTZ`, `date`, `array`, `map`, `struct`].
+- Block replacing partitioned tables with a differently-named partition spec
+  - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
+  - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
+
+### Example of storing identifiers for nested fields in ArrayType and MapType
+The following is an example of storing the identifiers for nested fields in `ArrayType` and `MapType`, of a table with the following schema,
+```
+|-- col1: array[array[int]] 
+|-- col2: map[int, array[int]]    
+|-- col3: map[int, struct]
+                     |-- subcol1: array[int]
+```
+The identifiers for the nested fields are stored in the metadata as follows: 
+```json
+[
+  {
+    "name": "col1",
+    "type": {
+      "type": "array",
+      "elementType": {
+        "type": "array",
+        "elementType": "int"
+      }
+    },
+    "metadata": {
+      "parquet.field.nested.ids": {
+        "col1.element": 100,
+        "col1.element.element": 101
+      }
+    }
+  },
+  {
+    "name": "col2",
+    "type": {
+      "type": "map",
+      "keyType": "int",
+      "valueType": {
+        "type": "array",
+        "elementType": "int"
+      }
+    },
+    "metadata": {
+      "parquet.field.nested.ids": {
+        "col2.key": 102,
+        "col2.value": 103,
+        "col2.value.element": 104
+      }
+    }
+  },
+  {
+    "name": "col3",
+    "type": {
+      "type": "map",
+      "keyType": "int",
+      "valueType": {
+        "type": "struct",
+        "fields": [
+          {
+            "name": "subcol1",
+            "type": {
+              "type": "array",
+              "elementType": "int"
+            },
+            "metadata": {
+              "parquet.field.nested.ids": {
+                "subcol1.element": 107
+              }
+            }
+          }
+        ]
+      }
+    },
+    "metadata": {
+      "parquet.field.nested.ids": {
+        "col3.key": 105,
+        "col3.value": 106
+      }
+    }
+  }
+]
+```
 # Timestamp without timezone (TimestampNtz)
 This feature introduces a new data type to support timestamps without timezone information. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`.
 The serialization method is described in Sections [Partition Value Serialization](#partition-value-serialization) and [Schema Serialization Format](#schema-serialization-format).
@@ -1060,7 +1183,7 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
 
 The Clustered Table feature facilitates the physical clustering of rows that share similar values on a predefined set of clustering columns.
 This enhances query performance when selective filters are applied to these clustering columns through data skipping.
-Clustering columns must be specified during the initial definition of a clustered table, and they can be modified after the table has been created.
+Clustering columns can be specified during the initial creation of a table, or they can be added later, provided that the table doesn't have partition columns.
 
 A table is defined as a clustered table through the following criteria:
 - When the feature `clustering` exists in the table `protocol`'s `writerFeatures`, then we say that the table is a clustered table.
@@ -1068,19 +1191,40 @@ A table is defined as a clustered table through the following criteria:
 
 Enablement:
 - The table must be on Writer Version 7.
-- The feature `clustering` must exist in the table `protocol`'s `writerFeatures`.
+- The feature `clustering` must exist in the table `protocol`'s `writerFeatures`, either during its creation or at a later stage, provided the table does not have partition columns.
 
 ## Writer Requirements for Clustered Table
 
 When the Clustered Table is supported (when the `writerFeatures` field of a table's `protocol` action contains `clustering`), then:
-- Writers must write out [per-file statistics](#per-file-statistics) and per-column statistics for clustering columns in `add` action. 
-  Failure to collect per-column statistics for clustering columns will result in an error when defining a clustered table or making changes to the clustering columns.
 - Writers must track clustering column names in a `domainMetadata` action with `delta.clustering` as the `domain` and a `configuration` containing all clustering column names.
   If [Column Mapping](#column-mapping) is enabled, the physical column names should be used.
-- When a clustering implementation clusters files, writers must incorporate a `tag`  with `CLUSTERED_BY` as the key and the name of the clustering implementation as the corresponding value in `add` action.
-  - A clustering implementation must only cluster files that belong to the implementation or files that do not have the `CLUSTERED_BY` tag (i.e., unclustered).
-  - Writer is not required to cluster a specific file at any specific moment though it is still obligated to record accurate statistics. However, if it decides to cluster a particular file, it must include the CLUSTERED_BY tag.
+- Writers must write out [per-file statistics](#per-file-statistics) and per-column statistics for clustering columns in `add` action. 
+  If a new column is included in the clustering columns list, it is required for all table files to have statistics for these added columns.
+- When a clustering implementation clusters files, writers must set the name of the clustering implementation in the `clusteringProvider` field when adding `add` actions for clustered files.
+  - By default, a clustering implementation must only recluster files that have the field `clusteringProvider` set to the name of the same clustering implementation, or to the names of other clustering implementations that are superseded by the current clustering implementation. In addition, a clustering implementation may cluster any files with an unset `clusteringProvider` field (i.e., unclustered files).
+  - Writer is not required to cluster a specific file at any specific moment.
   - A clustering implementation is free to add additional information such as adding a new user-controlled metadata domain to keep track of its metadata.
+- Writers must not define clustered and partitioned table at the same time.
+
+The following is an example for the `domainMetadata` action defintion of a table that leverages column mapping.
+```json
+{
+  "domainMetadata": {
+    "domain": "delta.clustering",
+    "configuration": "{\"clusteringColumns\":[\"col-daadafd7-7c20-4697-98f8-bff70199b1f9\", \"col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e\"]}",
+    "removed": false
+  }
+}
+```
+The example above converts `configuration` field into JSON format, including escaping characters. Here's how it looks in plain JSON for better understanding.
+```json
+{
+  "clusteringColumns": [
+    "col-daadafd7-7c20-4697-98f8-bff70199b1f9",
+    "col-5abe0e80-cf57-47ac-9ffc-a861a3d1077e"
+  ]
+}
+```
 
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.

@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
+import java.nio.file.{Files, Paths, StandardOpenOption}
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -35,11 +36,10 @@ import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames.{deltaFile, DeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
 
-import org.apache.spark.{SparkConf, SparkThrowable}
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.util.DateTimeConstants
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
@@ -422,6 +422,38 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("Vacuum checks the write protocol") {
+    withTempDir { path =>
+      spark.range(10).write.format("delta").save(path.getCanonicalPath)
+      val log = DeltaLog.forTable(spark, path)
+
+      sql(s"INSERT INTO delta.`${path.getCanonicalPath}` VALUES (10)")
+      val vacuumCommandsToTry = Seq(
+        s"vacuum delta.`${path.getCanonicalPath}` RETAIN 10000 HOURS",
+        s"vacuum delta.`${path.getCanonicalPath}` RETAIN 10000 HOURS DRY RUN"
+      )
+      // Both vacuum and vacuum dry run works as expected
+      vacuumCommandsToTry.foreach(spark.sql(_).collect())
+
+      val snapshot = log.update()
+      val newProtocol = Protocol(
+        TABLE_FEATURES_MIN_READER_VERSION,
+        TABLE_FEATURES_MIN_WRITER_VERSION).withWriterFeatures(Seq("newUnsupportedWriterFeature"))
+      log.store.write(
+        deltaFile(log.logPath, snapshot.version + 1),
+        Iterator(Metadata().json, newProtocol.json),
+        overwrite = false,
+        log.newDeltaHadoopConf())
+
+      // Both vacuum and vacuum dry run fails as expected
+      vacuumCommandsToTry.foreach { command =>
+        intercept[DeltaUnsupportedTableFeatureException] {
+          spark.sql(command).collect()
+        }
+      }
+    }
+  }
+
   test("InvalidProtocolVersionException - error message with protocol too high - table path") {
     withTempDir { path =>
       spark.range(1).write.format("delta").save(path.getCanonicalPath)
@@ -435,10 +467,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val exceptionRead = intercept[InvalidProtocolVersionException] {
         spark.read.format("delta").load(path.getCanonicalPath)
       }
-      assert(exceptionRead.getMessage == getExpectedProtocolErrorMessage(
+
+      validateInvalidProtocolVersionException(
+        exceptionRead,
         deltaLog.dataPath.toString,
         tableReaderVersion,
-        tableWriterVersion))
+        tableWriterVersion)
 
       tableReaderVersion = 3
       tableWriterVersion = 8
@@ -452,10 +486,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           .format("delta")
           .save(path.getCanonicalPath)
       }
-      assert(exceptionWrite.getMessage == getExpectedProtocolErrorMessage(
+
+      validateInvalidProtocolVersionException(
+        exceptionWrite,
         deltaLog.dataPath.toString,
         tableReaderVersion,
-        tableWriterVersion))
+        tableWriterVersion)
     }
   }
 
@@ -480,12 +516,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       }
 
       var pathInErrorMessage = "default." + protocolTableName
-      val readErrorMessage = getExpectedProtocolErrorMessage(
+
+      validateInvalidProtocolVersionException(
+        exceptionRead,
         pathInErrorMessage,
         tableReaderVersion,
         tableWriterVersion)
-
-      assert(exceptionRead.getMessage == readErrorMessage)
 
       tableReaderVersion = 3
       tableWriterVersion = 8
@@ -503,8 +539,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           .saveAsTable(protocolTableName)
       }
 
-      assert(exceptionWrite.getMessage ==
-        getExpectedProtocolErrorMessage(pathInErrorMessage, tableReaderVersion, tableWriterVersion))
+      validateInvalidProtocolVersionException(
+        exceptionWrite,
+        pathInErrorMessage,
+        tableReaderVersion,
+        tableWriterVersion)
 
       // Restore the protocol version or the clean-up fails
       version = version + 1
@@ -542,12 +581,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         }
 
         var pathInErrorMessage = "default." + tableName
-        val errorMessage = getExpectedProtocolErrorMessage(
+
+        validateInvalidProtocolVersionException(
+          exception,
           pathInErrorMessage,
           incompatibleProtocol.minReaderVersion,
           incompatibleProtocol.minWriterVersion)
-
-        assert(exception.getMessage == errorMessage)
       }
     }
   }
@@ -577,17 +616,203 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       log.newDeltaHadoopConf())
   }
 
-  def getExpectedProtocolErrorMessage(
+  def validateInvalidProtocolVersionException(
+      exception: InvalidProtocolVersionException,
       tableNameOrPath: String,
-      requiredReaderVersion: Int,
-      requiredWriterVersion: Int): String = {
-    // When testing flag is enabled Action.supportedReaderVersionNumbers includes 0.
-    "[DELTA_INVALID_PROTOCOL_VERSION] " +
-      s"""Unsupported Delta protocol version: table "$tableNameOrPath" requires """ +
-      s"reader version $requiredReaderVersion and " +
-      s"writer version $requiredWriterVersion, " +
-      s"""but Delta Lake "${io.delta.VERSION}" supports reader versions 0, 1, 2, 3 """ +
-      "and writer versions 0, 1, 2, 3, 4, 5, 7. Please upgrade to a newer release."
+      readerRequiredVersion: Int,
+      writerRequiredVersion: Int): Unit = {
+    assert(exception.getErrorClass == "DELTA_INVALID_PROTOCOL_VERSION")
+    assert(exception.tableNameOrPath == tableNameOrPath)
+    assert(exception.readerRequiredVersion == readerRequiredVersion)
+    assert(exception.writerRequiredVersion == writerRequiredVersion)
+  }
+
+  test("DeltaUnsupportedTableFeatureException - error message - table path") {
+    withTempDir { path =>
+      spark.range(1).write.format("delta").save(path.getCanonicalPath)
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, path.getCanonicalPath)
+
+      var version = snapshot.version + 1
+      val invalidReaderFeatures = Seq("NonExistingReaderFeature1", "NonExistingReaderFeature2")
+      val protocolReaderFeatures = Protocol(
+        TABLE_FEATURES_MIN_READER_VERSION,
+        TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withReaderFeatures(invalidReaderFeatures)
+      untrackedChangeProtocolVersion(deltaLog, version, protocolReaderFeatures)
+
+      val exceptionRead = intercept[DeltaUnsupportedTableFeatureException] {
+        spark.read.format("delta").load(path.getCanonicalPath)
+      }
+
+      validateUnsupportedTableReadFeatureException(
+        exceptionRead,
+        deltaLog.dataPath.toString,
+        invalidReaderFeatures)
+
+      version = version + 1
+      val invalidWriterFeatures = Seq("NonExistingWriterFeature1", "NonExistingWriterFeature2")
+      val protocolWriterFeatures = Protocol(
+        TABLE_FEATURES_MIN_READER_VERSION,
+        TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withWriterFeatures(invalidWriterFeatures)
+      untrackedChangeProtocolVersion(deltaLog, version, protocolWriterFeatures)
+
+      val exceptionWrite = intercept[DeltaUnsupportedTableFeatureException] {
+        spark.range(1).write
+          .mode("append")
+          .option("mergeSchema", "true")
+          .format("delta")
+          .save(path.getCanonicalPath)
+      }
+
+      validateUnsupportedTableWriteFeatureException(
+        exceptionWrite,
+        deltaLog.dataPath.toString,
+        invalidWriterFeatures)
+    }
+  }
+
+  def testTableFeatureErrorMessageWithTableName(warm: Boolean): Unit = {
+    val featureTable = "mytablefeaturesnotsupported"
+    withTable(featureTable) {
+      spark.range(1).write.format("delta").saveAsTable(featureTable)
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(featureTable))
+
+      var version = snapshot.version + 1
+      val invalidReaderFeatures = Seq("NonExistingReaderFeature1", "NonExistingReaderFeature2")
+      val protocolReaderFeatures = Protocol(
+        TABLE_FEATURES_MIN_READER_VERSION,
+        TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withReaderFeatures(invalidReaderFeatures)
+      untrackedChangeProtocolVersion(deltaLog, version, protocolReaderFeatures)
+      if (!warm) {
+        DeltaLog.clearCache()
+      }
+
+      val exceptionRead = intercept[DeltaUnsupportedTableFeatureException] {
+        spark.read.format("delta").table(featureTable)
+      }
+      val pathInErrorMessage = "default." + featureTable
+
+      validateUnsupportedTableReadFeatureException(
+        exceptionRead,
+        pathInErrorMessage,
+        invalidReaderFeatures)
+
+      version = version + 1
+      val invalidWriterFeatures = Seq("NonExistingWriterFeature1", "NonExistingWriterFeature2")
+      val protocolWriterFeatures = Protocol(
+        TABLE_FEATURES_MIN_READER_VERSION,
+        TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withWriterFeatures(invalidWriterFeatures)
+      untrackedChangeProtocolVersion(deltaLog, version, protocolWriterFeatures)
+      if (!warm) {
+        DeltaLog.clearCache()
+      }
+
+      val exceptionWrite = intercept[DeltaUnsupportedTableFeatureException] {
+        spark.range(1).write
+          .mode("append")
+          .option("mergeSchema", "true")
+          .format("delta")
+          .saveAsTable(featureTable)
+      }
+
+      validateUnsupportedTableWriteFeatureException(
+        exceptionWrite,
+        pathInErrorMessage,
+        invalidWriterFeatures)
+
+      // Restore the protocol version or the clean-up fails
+      version = version + 1
+      untrackedChangeProtocolVersion(deltaLog, version, 1, 2)
+    }
+  }
+
+  test("DeltaUnsupportedTableFeatureException - error message with table name - warm") {
+    testTableFeatureErrorMessageWithTableName(warm = true)
+  }
+
+  test("DeltaUnsupportedTableFeatureException - error message with table name - cold") {
+    testTableFeatureErrorMessageWithTableName(warm = false)
+  }
+
+  test("DeltaUnsupportedTableFeatureException - " +
+    "incompatible protocol change during the transaction - table name") {
+    for ((incompatibleProtocol, read) <- Seq(
+        (Protocol(
+          TABLE_FEATURES_MIN_READER_VERSION,
+          TABLE_FEATURES_MIN_WRITER_VERSION)
+          .withReaderFeatures(Seq("NonExistingReaderFeature1", "NonExistingReaderFeature2")),
+          true),
+        (Protocol(
+          TABLE_FEATURES_MIN_READER_VERSION,
+          TABLE_FEATURES_MIN_WRITER_VERSION)
+          .withWriterFeatures(Seq("NonExistingWriterFeature1", "NonExistingWriterFeature2")),
+          false)
+    )) {
+      val tableName = "mytablefeaturesnotsupported"
+      withTable(tableName) {
+        spark.range(0).write.format("delta").saveAsTable(tableName)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val catalogTable = DeltaTableV2(spark, TableIdentifier(tableName)).catalogTable
+        val txn = deltaLog.startTransaction(catalogTable)
+        val currentVersion = txn.snapshot.version
+        untrackedChangeProtocolVersion(deltaLog, currentVersion + 1, incompatibleProtocol)
+
+        // Should detect the above incompatible feature and fail
+        val exception = intercept[DeltaUnsupportedTableFeatureException] {
+          txn.commit(AddFile("test", Map.empty, 1, 1, dataChange = true) :: Nil, ManualUpdate)
+        }
+
+        var pathInErrorMessage = "default." + tableName
+
+        read match {
+          case true =>
+            validateUnsupportedTableReadFeatureException(
+              exception,
+              pathInErrorMessage,
+              incompatibleProtocol.readerFeatures.get)
+          case false =>
+            validateUnsupportedTableWriteFeatureException(
+              exception,
+              pathInErrorMessage,
+              incompatibleProtocol.writerFeatures.get)
+        }
+      }
+    }
+  }
+
+  def validateUnsupportedTableReadFeatureException(
+      exception: DeltaUnsupportedTableFeatureException,
+      tableNameOrPath: String,
+      unsupportedFeatures: Iterable[String]): Unit = {
+    validateUnsupportedTableFeatureException(
+      exception,
+      "DELTA_UNSUPPORTED_FEATURES_FOR_READ",
+      tableNameOrPath,
+      unsupportedFeatures)
+  }
+
+  def validateUnsupportedTableWriteFeatureException(
+      exception: DeltaUnsupportedTableFeatureException,
+      tableNameOrPath: String,
+      unsupportedFeatures: Iterable[String]): Unit = {
+    validateUnsupportedTableFeatureException(
+      exception,
+      "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE",
+      tableNameOrPath,
+      unsupportedFeatures)
+  }
+
+  def validateUnsupportedTableFeatureException(
+      exception: DeltaUnsupportedTableFeatureException,
+      errorClass: String,
+      tableNameOrPath: String,
+      unsupportedFeatures: Iterable[String]): Unit = {
+    assert(exception.getErrorClass == errorClass)
+    assert(exception.tableNameOrPath == tableNameOrPath)
+    assert(exception.unsupported.toSeq.sorted == unsupportedFeatures.toSeq.sorted)
   }
 
   test("protocol downgrade is a no-op") {
@@ -2222,7 +2447,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         spark.range(0).toDF)
       assert(intercept[DeltaTableFeatureException] {
         sql(s"INSERT INTO delta.`${dir.getCanonicalPath}` VALUES (9)")
-      }.getMessage.contains(s"unsupported by this version of Delta Lake: $featureName"))
+      }.getMessage.contains(s"""unsupported by Delta Lake "${io.delta.VERSION}": $featureName"""))
     }
   }
 
@@ -2387,13 +2612,13 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         } else {
           deltaLog.deltaRetentionMillis(deltaLog.update().metadata)
         }
-        clock.advance(clockAdvanceMillis + TimeUnit.HOURS.toMillis(1))
+        clock.advance(clockAdvanceMillis + TimeUnit.MINUTES.toMillis(5))
       }
 
       val dropCommand = AlterTableDropFeatureDeltaCommand(
         DeltaTableV2(spark, deltaLog.dataPath),
         feature.name,
-        truncateHistory)
+        truncateHistory = truncateHistory)
 
       if (advanceClockPastRetentionPeriod) {
         // History is now clean. We should be able to remove the feature.
@@ -2715,7 +2940,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // The retention period has passed since the disablement.
       clock.advance(
-        deltaRetentionMillis - TimeUnit.DAYS.toMillis(10) + TimeUnit.HOURS.toMillis(1))
+        deltaRetentionMillis - TimeUnit.DAYS.toMillis(10) + TimeUnit.MINUTES.toMillis(5))
 
       // Cleanup logs.
       deltaLog.cleanUpExpiredLogs(deltaLog.update())
@@ -2802,7 +3027,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // Pretend retention period has passed.
       clock.advance(
         deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
-        TimeUnit.HOURS.toMillis(1))
+        TimeUnit.MINUTES.toMillis(5))
 
       // History is now clean. We should be able to remove the feature.
       AlterTableDropFeatureDeltaCommand(
@@ -2906,7 +3131,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // Pretend retention period has passed.
       clock.advance(deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
-        TimeUnit.HOURS.toMillis(1))
+        TimeUnit.MINUTES.toMillis(5))
 
       // Perform an unrelated metadata change.
       sql(s"ALTER TABLE delta.`${deltaLog.dataPath}` ADD COLUMN (value INT)")
@@ -2960,6 +3185,78 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       }
       // Test that the write downgrade command was invoked.
       val expectedOpType = "delta.test.TestWriterFeaturePreDowngradeCommand"
+      val blob = logs.collectFirst {
+        case r if r.metric == MetricDefinitions.EVENT_TAHOE.name &&
+          r.tags.get("opType").contains(expectedOpType) => r.blob
+      }
+      assert(blob.nonEmpty, s"Expecting an '$expectedOpType' event but didn't see any.")
+    }
+  }
+
+  for {
+    withCatalog <- BOOLEAN_DOMAIN
+    quoteWith <- if (withCatalog) Seq("none", "single", "backtick") else Seq("none")
+  } test(s"Drop feature DDL TRUNCATE HISTORY - withCatalog=$withCatalog, quoteWith=$quoteWith") {
+    withTempDir { dir =>
+      val table: String = if (withCatalog) {
+        s"${spark.sessionState.catalog.getCurrentDatabase}.table"
+      } else {
+        s"delta.`${dir.getCanonicalPath}`"
+      }
+      if (withCatalog) sql(s"DROP TABLE IF EXISTS $table")
+      sql(
+        s"""CREATE TABLE $table (id bigint) USING delta
+           |TBLPROPERTIES (
+           |delta.feature.${TestRemovableReaderWriterFeature.name} = 'supported',
+           |${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = "true",
+           |${DeltaConfigs.TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION.key} = "0 hours"
+           |)""".stripMargin)
+
+      // We need to use a Delta log object with the ManualClock created in this test instead of
+      // the default SystemClock. However, we can't pass the Delta log to use directly in the SQL
+      // command. Instead, we will
+      //  1. Clear the Delta log cache to remove the log associated with table creation.
+      //  2. Populate the Delta log cache with the Delta log object that has the ManualClock we
+      //  want to use
+      // TODO(c27kwan): Refactor this and provide a better way to control clocks in Delta tests.
+      val clock = new ManualClock(System.currentTimeMillis())
+      val deltaLog = if (withCatalog) {
+        val tableIdentifier =
+          TableIdentifier("table", Some(spark.sessionState.catalog.getCurrentDatabase))
+        // We need to hack the Delta log cache with path based access to setup the right key.
+        val path = DeltaLog.forTable(spark, tableIdentifier, clock).dataPath
+        DeltaLog.clearCache()
+        DeltaLog.forTable(spark, path, clock)
+      } else {
+        DeltaLog.clearCache()
+        DeltaLog.forTable(spark, dir, clock)
+      }
+
+      val protocol = deltaLog.update().protocol
+      assert(protocol === protocolWithReaderFeature(TestRemovableReaderWriterFeature))
+
+      val logs = Log4jUsageLogger.track {
+        val featureName = quoteWith match {
+          case "none" => s"${TestRemovableReaderWriterFeature.name}"
+          case "single" => s"'${TestRemovableReaderWriterFeature.name}'"
+          case "backtick" => s"`${TestRemovableReaderWriterFeature.name}`"
+        }
+
+        // Expect an exception when dropping a reader writer feature on a table that
+        // still has traces of the feature.
+        intercept[DeltaTableFeatureException] {
+          sql(s"ALTER TABLE $table DROP FEATURE $featureName")
+        }
+
+        // Move past retention period.
+        clock.advance(TimeUnit.HOURS.toMillis(1))
+
+        sql(s"ALTER TABLE $table DROP FEATURE $featureName TRUNCATE HISTORY")
+        assert(deltaLog.update().protocol === Protocol(1, 1))
+      }
+
+      // Validate the correct downgrade command was invoked.
+      val expectedOpType = "delta.test.TestReaderWriterFeaturePreDowngradeCommand"
       val blob = logs.collectFirst {
         case r if r.metric == MetricDefinitions.EVENT_TAHOE.name &&
           r.tags.get("opType").contains(expectedOpType) => r.blob
@@ -3241,7 +3538,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         // Pretend retention period has passed.
         clock.advance(
           targetLog.deltaRetentionMillis(targetLog.update().metadata) +
-            TimeUnit.HOURS.toMillis(1))
+            TimeUnit.MINUTES.toMillis(5))
 
         // History is now clean. We should be able to remove the feature.
         dropV2CheckpointsTableFeature(spark, targetLog)
@@ -3272,6 +3569,85 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     s"Remove v2 Checkpoints Feature [v2CheckpointFormat: ${V2Checkpoint.Format.PARQUET.name}; " +
       s"withInitialV2Checkpoint: true; forceMultiPartCheckpoint: true]") {
     testV2CheckpointTableFeatureDrop(V2Checkpoint.Format.PARQUET, true, true)
+  }
+
+  // Create a table for testing that has an unsupported feature.
+  private def withTestTableWithUnsupportedWriterFeature(
+      emptyTable: Boolean)(testCode: String => Unit): Unit = {
+    val tableName = "test_table"
+    withTable(tableName) {
+      if (emptyTable) {
+        sql(s"CREATE TABLE $tableName(id INT) USING DELTA")
+      } else {
+        sql(s"CREATE TABLE $tableName USING DELTA AS SELECT 1 AS id")
+      }
+
+      sql(s"""ALTER TABLE $tableName
+              SET TBLPROPERTIES ('delta.minReaderVersion' = '3', 'delta.minWriterVersion' = '7')""")
+
+      val deltaLogPath = DeltaLog.forTable(spark, TableIdentifier(tableName)).logPath
+        .toString.stripPrefix("file:")
+
+      // scalastyle:off
+      val commitJson =
+        """{"metaData":{"id":"testId","format":{"provider":"parquet","options":{}},"schemaString":"{\"type\":\"struct\",\"fields\":[{\"name\":\"id\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}}]}","partitionColumns":[],"configuration":{},"createdTime":1702304249309}}
+          |{"protocol":{"minReaderVersion":3,"minWriterVersion":7,"readerFeatures":[],"writerFeatures":["unsupportedWriter"]}}""".stripMargin
+      // scalastyle:on
+
+      Files.write(Paths.get(deltaLogPath, "00000000000000000002.json"), commitJson.getBytes)
+
+      testCode(tableName)
+    }
+  }
+
+  // Test that write commands error out when unsupported features in the table protocol.
+  private def testUnsupportedFeature(
+      commandName: String, emptyTable: Boolean)(command: String => Unit): Unit = {
+    test(s"Writes using $commandName error out when unsupported writer features are present") {
+      withTestTableWithUnsupportedWriterFeature(emptyTable) { tableName =>
+        intercept[DeltaUnsupportedTableFeatureException] {
+          command(tableName)
+        }
+      }
+    }
+  }
+
+  testUnsupportedFeature("INSERT", emptyTable = true) { testTableName =>
+    sql(s"INSERT INTO $testTableName VALUES (2)")
+  }
+
+  testUnsupportedFeature("UPDATE", emptyTable = false) { testTableName =>
+    sql(s"UPDATE $testTableName SET id = 2")
+  }
+
+  testUnsupportedFeature("DELETE", emptyTable = false) { testTableName =>
+    sql(s"DELETE FROM $testTableName WHERE id > 0")
+  }
+
+  testUnsupportedFeature("MERGE", emptyTable = false) { testTableName =>
+    sql(s"""MERGE INTO $testTableName t
+           |USING $testTableName s
+           |ON s.id = t.id + 100
+           |WHEN NOT MATCHED THEN INSERT *""".stripMargin)
+  }
+
+  testUnsupportedFeature("CREATE OR REPLACE TABLE", emptyTable = false) { testTableName =>
+    sql(s"CREATE OR REPLACE TABLE $testTableName  (other_column INT) USING DELTA")
+  }
+
+  testUnsupportedFeature("ManualUpdate commit", emptyTable = true) { testTableName =>
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+    deltaLog.startTransaction(None)
+      .commit(Seq(DeltaTestUtils.createTestAddFile()), DeltaOperations.ManualUpdate)
+  }
+
+  testUnsupportedFeature("SHALLOW CLONE", emptyTable = true) { testTableName =>
+    val cloneSourceTableName = "clone_source_table"
+    withTable(cloneSourceTableName) {
+      sql(s"DELETE FROM $testTableName")
+      sql(s"CREATE TABLE $cloneSourceTableName USING delta AS SELECT 1337 as id")
+      sql(s"CREATE OR REPLACE TABLE $testTableName SHALLOW CLONE $cloneSourceTableName")
+    }
   }
 
   private def assertPropertiesAndShowTblProperties(

@@ -16,7 +16,6 @@
 
 package io.delta.kernel.internal.replay;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Iterator;
@@ -24,29 +23,25 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
-import io.delta.kernel.client.FileReadContext;
-import io.delta.kernel.client.JsonHandler;
-import io.delta.kernel.client.ParquetHandler;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.data.FileDataReadResult;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
-import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
-import io.delta.kernel.internal.InternalScanFileUtils;
-import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Utils;
+import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 /**
  * This class takes as input a list of delta files (.json, .checkpoint.parquet) and produces an
- * iterator of (FileDataReadResult, isFromCheckpoint) tuples, where the schema of the
- * FileDataReadResult semantically represents actions (or, a subset of action fields) parsed from
+ * iterator of (ColumnarBatch, isFromCheckpoint) tuples, where the schema of the
+ * ColumnarBatch semantically represents actions (or, a subset of action fields) parsed from
  * the Delta Log.
  * <p>
  * Users must pass in a `readSchema` to select which actions and sub-fields they want to consume.
  */
-class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Boolean>> {
+class ActionsIterator implements CloseableIterator<ActionWrapper> {
     private final TableClient tableClient;
 
     /**
@@ -59,19 +54,19 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
     private final StructType readSchema;
 
     /**
-     * The current (FileDataReadResult, isFromCheckpoint) tuple. Whenever this iterator
+     * The current (ColumnarBatch, isFromCheckpoint) tuple. Whenever this iterator
      * is exhausted, we will try and fetch the next one from the `filesIter`.
      * <p>
      * If it is ever empty, that means there are no more batches to produce.
      */
-    private Optional<CloseableIterator<Tuple2<FileDataReadResult, Boolean>>> actionsIter;
+    private Optional<CloseableIterator<ActionWrapper>> actionsIter;
 
     private boolean closed;
 
     ActionsIterator(
-        TableClient tableClient,
-        List<FileStatus> files,
-        StructType readSchema) {
+            TableClient tableClient,
+            List<FileStatus> files,
+            StructType readSchema) {
         this.tableClient = tableClient;
         this.filesIter = files.iterator();
         this.readSchema = readSchema;
@@ -93,11 +88,11 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
     }
 
     /**
-     * @return a tuple of (FileDataReadResult, isFromCheckpoint), where FileDataReadResult conforms
+     * @return a tuple of (ColumnarBatch, isFromCheckpoint), where ColumnarBatch conforms
      * to the instance {@link #readSchema}.
      */
     @Override
-    public Tuple2<FileDataReadResult, Boolean> next() {
+    public ActionWrapper next() {
         if (closed) {
             throw new IllegalStateException("Can't call `next` on a closed iterator.");
         }
@@ -160,73 +155,41 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
      * <p>
      * Requires that `filesIter.hasNext` is true.
      */
-    private CloseableIterator<Tuple2<FileDataReadResult, Boolean>> getNextActionsIter() {
+    private CloseableIterator<ActionWrapper> getNextActionsIter() {
         final FileStatus nextFile = filesIter.next();
-        final Closeable[] iteratorsToClose = new Closeable[2];
 
-        // TODO: [#1965] It should be possible to contextualize our JSON and parquet files
+        // TODO: [#1965] It should be possible to read our JSON and parquet files
         //       many-at-once instead of one at a time.
 
         try {
             if (nextFile.getPath().endsWith(".json")) {
-                final JsonHandler jsonHandler = tableClient.getJsonHandler();
-
-                // Convert the `nextFile` FileStatus into an internal ScanFile Row and then
-                // allow the connector to contextualize it (i.e. perform any splitting)
-                final CloseableIterator<FileReadContext> fileReadContextIter =
-                    jsonHandler.contextualizeFileReads(
-                        Utils.singletonCloseableIterator(
-                            InternalScanFileUtils.generateScanFileRow(nextFile)),
-                        ALWAYS_TRUE
-                    );
-
-                iteratorsToClose[0] = fileReadContextIter;
+                final long fileVersion = FileNames.deltaVersion(nextFile.getPath());
 
                 // Read that file
-                final CloseableIterator<FileDataReadResult> fileReadDataIter =
+                final CloseableIterator<ColumnarBatch> dataIter =
                     tableClient.getJsonHandler().readJsonFiles(
-                        // We are passing ownership of this CloseableIterator to `readJsonFiles`.
-                        // Under normal circumstances, `readJsonFiles` will close it. However, we
-                        // still need to keep a reference to it to close it in case of exceptions.
-                        fileReadContextIter,
-                        readSchema);
+                        singletonCloseableIterator(nextFile),
+                        readSchema,
+                        Optional.empty());
 
-                iteratorsToClose[1] = fileReadDataIter;
-
-                return combine(fileReadDataIter, false /* isFromCheckpoint */);
+                return combine(dataIter, false /* isFromCheckpoint */, fileVersion);
             } else if (nextFile.getPath().endsWith(".parquet")) {
-                final ParquetHandler parquetHandler = tableClient.getParquetHandler();
-
-                // Convert the `nextFile` FileStatus into an internal ScanFile Row and then
-                // allow the connector to contextualize it (i.e. perform any splitting)
-                final CloseableIterator<FileReadContext> fileReadContextIter =
-                    parquetHandler.contextualizeFileReads(
-                        Utils.singletonCloseableIterator(
-                            InternalScanFileUtils.generateScanFileRow(nextFile)),
-                        ALWAYS_TRUE);
-
-                iteratorsToClose[0] = fileReadContextIter;
+                final long fileVersion = FileNames.checkpointVersion(nextFile.getPath());
 
                 // Read that file
-                final CloseableIterator<FileDataReadResult> fileReadDataIter =
+                final CloseableIterator<ColumnarBatch> dataIter =
                     tableClient.getParquetHandler().readParquetFiles(
-                        // We are passing ownership of this CloseableIterator to `readParquetFiles`.
-                        // Under normal circumstances, `readParquetFiles` will close it. However, we
-                        // still need to keep a reference to it to close it in case of exceptions.
-                        fileReadContextIter,
-                        readSchema);
+                        singletonCloseableIterator(nextFile),
+                        readSchema,
+                        Optional.empty());
 
-                iteratorsToClose[1] = fileReadDataIter;
-
-                return combine(fileReadDataIter, true /* isFromCheckpoint */);
+                return combine(dataIter, true /* isFromCheckpoint */, fileVersion);
             } else {
                 throw new IllegalStateException(
                     String.format("Unexpected log file path: %s", nextFile.getPath())
                 );
             }
         } catch (IOException ex) {
-            // Close the opened iterators to avoid resource leak
-            Utils.closeCloseablesSilently(iteratorsToClose);
             throw new UncheckedIOException(ex);
         }
     }
@@ -234,18 +197,19 @@ class ActionsIterator implements CloseableIterator<Tuple2<FileDataReadResult, Bo
     /**
      * Take input (iterator<T>, boolean) and produce an iterator<T, boolean>.
      */
-    private CloseableIterator<Tuple2<FileDataReadResult, Boolean>> combine(
-        CloseableIterator<FileDataReadResult> fileReadDataIter,
-        boolean isFromCheckpoint) {
-        return new CloseableIterator<Tuple2<FileDataReadResult, Boolean>>() {
+    private CloseableIterator<ActionWrapper> combine(
+            CloseableIterator<ColumnarBatch> fileReadDataIter,
+            boolean isFromCheckpoint,
+            long version) {
+        return new CloseableIterator<ActionWrapper>() {
             @Override
             public boolean hasNext() {
                 return fileReadDataIter.hasNext();
             }
 
             @Override
-            public Tuple2<FileDataReadResult, Boolean> next() {
-                return new Tuple2<>(fileReadDataIter.next(), isFromCheckpoint);
+            public ActionWrapper next() {
+                return new ActionWrapper(fileReadDataIter.next(), isFromCheckpoint, version);
             }
 
             @Override

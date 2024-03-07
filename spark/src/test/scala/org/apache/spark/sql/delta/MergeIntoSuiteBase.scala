@@ -25,6 +25,7 @@ import scala.language.implicitConversions
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.commands.merge.MergeStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.ScanReportHelper
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -33,14 +34,14 @@ import org.apache.spark.sql.{functions, AnalysisException, DataFrame, QueryTest,
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 abstract class MergeIntoSuiteBase
     extends QueryTest
     with SharedSparkSession
-    with SQLTestUtils
+    with DeltaSQLTestUtils
     with ScanReportHelper
     with DeltaTestUtilsForTempViews
     with MergeIntoTestUtils
@@ -669,6 +670,35 @@ abstract class MergeIntoSuiteBase
       }.getMessage
 
       errorContains(e, "Aggregate functions are not supported in the search condition")
+    }
+  }
+
+  test("Merge should use the same SparkSession consistently") {
+    withTempDir { dir =>
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
+        val r = dir.getCanonicalPath
+        val sourcePath = s"$r/source"
+        val targetPath = s"$r/target"
+        val numSourceRecords = 20
+        spark.range(numSourceRecords)
+          .withColumn("x", $"id")
+          .withColumn("y", $"id")
+          .write.mode("overwrite").format("delta").save(sourcePath)
+        spark.range(1)
+          .withColumn("x", $"id")
+          .write.mode("overwrite").format("delta").save(targetPath)
+        val spark2 = spark.newSession
+        spark2.conf.set(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")
+        val target = io.delta.tables.DeltaTable.forPath(spark2, targetPath)
+        val source = spark.read.format("delta").load(sourcePath).alias("s")
+        val merge = target.alias("t")
+          .merge(source, "t.id = s.id")
+          .whenMatched.updateExpr(Map("t.x" -> "t.x + 1"))
+          .whenNotMatched.insertAll()
+          .execute()
+        // The target table should have the same number of rows as the source after the merge
+        assert(spark.read.format("delta").load(targetPath).count() == numSourceRecords)
+      }
     }
   }
 
@@ -2207,8 +2237,10 @@ abstract class MergeIntoSuiteBase
       .collect().head.getMap(0).asInstanceOf[Map[String, String]]
     assert(metrics.contains("numTargetFilesRemoved"))
     // If insert-only code path is not used, then the general code path will rewrite existing
-    // target files.
-    assert(metrics("numTargetFilesRemoved").toInt > 0)
+    // target files when DVs are not enabled.
+    if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
+      assert(metrics("numTargetFilesRemoved").toInt > 0)
+    }
   }
 
   test("insert only merge - multiple matches when feature flag off") {
@@ -2548,7 +2580,9 @@ abstract class MergeIntoSuiteBase
             assert(stats.targetBeforeSkipping.files.get > stats.targetAfterSkipping.files.get)
           }
         } else {
-          assert(stats.targetFilesRemoved > 0)
+          if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
+            assert(stats.targetFilesRemoved > 0)
+          }
           // If there is no insert clause and the flag is enabled, data skipping should be
           // performed on targetOnly predicates.
           // However, with insert clauses, it's expected that no additional data skipping
@@ -3120,6 +3154,37 @@ abstract class MergeIntoSuiteBase
     expectedErrorMsgForSQLTempView = "Attribute(s) with the same name appear",
     expectedErrorMsgForDataSetTempView = null
   )
+
+  test("merge correctly handle field metadata") {
+    withTable("source", "target") {
+      // Create a target table with user metadata (comments) and internal metadata (column mapping
+      // information) on both a top-level column and a nested field.
+      sql(
+        """
+          |CREATE TABLE target(
+          |  key int not null COMMENT 'data column',
+          |  value int not null,
+          |  cstruct struct<foo int COMMENT 'foo field'>)
+          |USING DELTA
+          |TBLPROPERTIES (
+          |  'delta.minReaderVersion' = '2',
+          |  'delta.minWriterVersion' = '5',
+          |  'delta.columnMapping.mode' = 'name')
+        """.stripMargin
+      )
+      sql(s"INSERT INTO target VALUES (0, 0, null)")
+
+      sql("CREATE TABLE source (key int not null, value int not null) USING DELTA")
+      sql(s"INSERT INTO source VALUES (1, 1)")
+
+      executeMerge(
+        tgt = "target",
+        src = "source",
+        cond = "source.key = target.key",
+        update(condition = "target.key = 1", set = "target.value = 42"),
+        updateNotMatched(condition = "target.key = 100", set = "target.value = 22"))
+    }
+  }
 
   test("UDT Data Types - simple and nested") {
     withTable("source") {

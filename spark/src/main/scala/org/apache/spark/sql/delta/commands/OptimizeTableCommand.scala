@@ -19,10 +19,9 @@ package org.apache.spark.sql.delta.commands
 import java.util.ConcurrentModificationException
 
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.parallel.ForkJoinTaskSupport
-import scala.collection.parallel.immutable.ParVector
 
 import org.apache.spark.sql.delta.skipping.MultiDimClustering
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, FileAction, RemoveFile}
@@ -147,6 +146,17 @@ case class OptimizeTableCommand(
       throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
     }
 
+    if (ClusteredTableUtils.isSupported(txn.protocol)) {
+      // Validate that the preview is enabled if we are optimizing a clustered table.
+      ClusteredTableUtils.validatePreviewEnabled(txn.snapshot.protocol)
+      if (userPartitionPredicates.nonEmpty) {
+        throw DeltaErrors.clusteringWithPartitionPredicatesException(userPartitionPredicates)
+      }
+      if (zOrderBy.nonEmpty) {
+        throw DeltaErrors.clusteringWithZOrderByException(zOrderBy)
+      }
+    }
+
     val partitionColumns = txn.snapshot.metadata.partitionColumns
     // Parse the predicate expression into Catalyst expression and verify only simple filters
     // on partition columns are present
@@ -163,34 +173,38 @@ case class OptimizeTableCommand(
     validateZorderByColumns(sparkSession, txn, zOrderBy)
     val zOrderByColumns = zOrderBy.map(_.name).toSeq
 
-    new OptimizeExecutor(sparkSession, txn, partitionPredicates, zOrderByColumns, optimizeContext)
-      .optimize()
+    new OptimizeExecutor(
+      sparkSession,
+      txn,
+      partitionPredicates,
+      zOrderByColumns,
+      isAutoCompact = false,
+      optimizeContext
+    ).optimize()
   }
 }
 
 /**
  * Stored all runtime context information that can control the execution of optimize.
  *
- * @param isPurge Whether the rewriting task is only for purging soft-deleted data instead of
- *                for compaction. If [[isPurge]] is true, only files with DVs will be selected
- *                for compaction.
+ * @param reorg The REORG operation that triggered the rewriting task, if any.
  * @param minFileSize Files which are smaller than this threshold will be selected for compaction.
  *                    If not specified, [[DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE]] will be used.
- *                    This parameter must be set to `0` when [[isPurge]] is true.
+ *                    This parameter must be set to `0` when [[reorg]] is set.
  * @param maxDeletedRowsRatio Files with a ratio of soft-deleted rows to the total rows larger than
  *                            this threshold will be rewritten by the OPTIMIZE command. If not
  *                            specified, [[DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO]]
- *                            will be used. This parameter must be set to `0` when [[isPurge]] is
- *                            true.
+ *                            will be used. This parameter must be set to `0` when [[reorg]] is set.
  */
 case class DeltaOptimizeContext(
-    isPurge: Boolean = false,
+    reorg: Option[DeltaReorgOperation] = None,
     minFileSize: Option[Long] = None,
+    maxFileSize: Option[Long] = None,
     maxDeletedRowsRatio: Option[Double] = None) {
-  if (isPurge) {
+  if (reorg.nonEmpty) {
     require(
       minFileSize.contains(0L) && maxDeletedRowsRatio.contains(0d),
-      "minFileSize and maxDeletedRowsRatio must be 0 when running PURGE.")
+      "minFileSize and maxDeletedRowsRatio must be 0 when running REORG TABLE.")
   }
 }
 
@@ -207,27 +221,52 @@ class OptimizeExecutor(
     txn: OptimisticTransaction,
     partitionPredicate: Seq[Expression],
     zOrderByColumns: Seq[String],
+    isAutoCompact: Boolean,
     optimizeContext: DeltaOptimizeContext)
   extends DeltaCommand with SQLMetricsReporting with Serializable {
 
   /** Timestamp to use in [[FileAction]] */
   private val operationTimestamp = new SystemClock().getTimeMillis()
 
-  private val isMultiDimClustering = zOrderByColumns.nonEmpty
+  private val isClusteredTable = ClusteredTableUtils.isSupported(txn.snapshot.protocol)
+
+  private val isMultiDimClustering = isClusteredTable || zOrderByColumns.nonEmpty
+
+  private val clusteringColumns: Seq[String] = {
+    if (zOrderByColumns.nonEmpty) {
+      zOrderByColumns
+    } else if (isClusteredTable) {
+      ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
+    } else {
+      Nil
+    }
+  }
+
+  private lazy val curve: String = {
+    if (zOrderByColumns.nonEmpty) {
+      "zorder"
+    } else {
+      assert(isClusteredTable)
+      "hilbert"
+    }
+  }
 
   def optimize(): Seq[Row] = {
     recordDeltaOperation(txn.deltaLog, "delta.optimize") {
       val minFileSize = optimizeContext.minFileSize.getOrElse(
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE))
-      val maxFileSize =
-        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE)
+      val maxFileSize = optimizeContext.maxFileSize.getOrElse(
+        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE))
       val maxDeletedRowsRatio = optimizeContext.maxDeletedRowsRatio.getOrElse(
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO))
 
       val candidateFiles = txn.filterFiles(partitionPredicate, keepNumRecords = true)
       val partitionSchema = txn.metadata.partitionSchema
 
-      val filesToProcess = pruneCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
+      val filesToProcess = optimizeContext.reorg match {
+        case Some(reorgOperation) => reorgOperation.filterFilesToReorg(candidateFiles)
+        case None => filterCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
+      }
       val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
 
       val jobs = groupFilesIntoBins(partitionsToCompact, maxFileSize)
@@ -302,7 +341,7 @@ class OptimizeExecutor(
    * Helper method to prune the list of selected files based on fileSize and ratio of
    * deleted rows according to the deletion vector in [[AddFile]].
    */
-  private def pruneCandidateFileList(
+  private def filterCandidateFileList(
       minFileSize: Long, maxDeletedRowsRatio: Double, files: Seq[AddFile]): Seq[AddFile] = {
 
     // Select all files in case of multi-dimensional clustering
@@ -363,7 +402,7 @@ class OptimizeExecutor(
 
         bins.filter { bin =>
           bin.size > 1 || // bin has more than one file or
-          (bin.size == 1 && bin(0).deletionVector != null) || // single file in the bin has a DV or
+          bin.size == 1 && optimizeContext.reorg.nonEmpty || // always rewrite files during reorg
           isMultiDimClustering // multi-clustering
         }.map(b => (partition, b))
     }
@@ -391,7 +430,8 @@ class OptimizeExecutor(
       MultiDimClustering.cluster(
         input,
         approxNumFiles,
-        zOrderByColumns)
+        clusteringColumns,
+        curve)
     } else {
       val useRepartition = sparkSession.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_OPTIMIZE_REPARTITION_ENABLED)
@@ -412,7 +452,11 @@ class OptimizeExecutor(
 
     val addFiles = txn.writeFiles(repartitionDF, None, isOptimize = true, Nil).collect {
       case a: AddFile =>
-        a.copy(dataChange = false)
+        (if (isClusteredTable) {
+          a.copy(clusteringProvider = Some(ClusteredTableUtils.clusteringProvider))
+        } else {
+          a
+        }).copy(dataChange = false)
       case other =>
         throw new IllegalStateException(
           s"Unexpected action $other with type ${other.getClass}. File compaction job output" +
@@ -454,10 +498,10 @@ class OptimizeExecutor(
 
   /** Create the appropriate [[Operation]] object for txn commit history */
   private def getOperation(): Operation = {
-    if (optimizeContext.isPurge) {
+    if (optimizeContext.reorg.nonEmpty) {
       DeltaOperations.Reorg(partitionPredicate)
     } else {
-      DeltaOperations.Optimize(partitionPredicate, zOrderByColumns)
+      DeltaOperations.Optimize(partitionPredicate, clusteringColumns, auto = isAutoCompact)
     }
   }
 

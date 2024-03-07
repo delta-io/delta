@@ -358,7 +358,7 @@ class DeltaSinkSuite
 
         val e = intercept[AnalysisException] {
           spark.range(100)
-            .select('id.cast("integer"), 'id % 4 as 'by4, 'id.cast("integer") * 1000 as 'value)
+            .select('id.cast("integer"), 'id % 4 as "by4", 'id.cast("integer") * 1000 as "value")
             .write
             .format("delta")
             .partitionBy("id", "by4")
@@ -393,7 +393,7 @@ class DeltaSinkSuite
         }
 
         val e = intercept[AnalysisException] {
-          spark.range(100).select('id, ('id * 3).cast("string") as 'value)
+          spark.range(100).select('id, ('id * 3).cast("string") as "value")
             .write
             .partitionBy("id")
             .format("delta")
@@ -417,7 +417,7 @@ class DeltaSinkSuite
           .writeStream
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .format("delta")
-      spark.range(100).select('id, ('id * 3).cast("string") as 'value)
+      spark.range(100).select('id, ('id * 3).cast("string") as "value")
         .write
         .format("delta")
         .mode("append")

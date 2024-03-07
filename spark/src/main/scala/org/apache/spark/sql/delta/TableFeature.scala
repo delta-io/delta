@@ -322,6 +322,7 @@ object TableFeature {
    */
   private[delta] val allSupportedFeaturesMap: Map[String, TableFeature] = {
     var features: Set[TableFeature] = Set(
+      AllowColumnDefaultsTableFeature,
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
       CheckConstraintsTableFeature,
@@ -332,6 +333,7 @@ object TableFeature {
       ColumnMappingTableFeature,
       TimestampNTZTableFeature,
       IcebergCompatV1TableFeature,
+      IcebergCompatV2TableFeature,
       DeletionVectorsTableFeature,
       V2CheckpointTableFeature)
     if (DeltaUtils.isTesting) {
@@ -350,8 +352,12 @@ object TableFeature {
         TestFeatureWithDependency,
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency,
+        // managed-commits are under development and only available in testing.
+        ManagedCommitTableFeature,
         // Row IDs are still under development and only available in testing.
-        RowTrackingFeature)
+        RowTrackingFeature,
+        InCommitTimestampTableFeature,
+        TypeWideningTableFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -521,12 +527,46 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }
 
+object IcebergCompatV2TableFeature extends WriterFeature(name = "icebergCompatV2")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = IcebergCompatV2.isEnabled(metadata)
+
+  override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
+}
+
 /**
  * Clustering table feature is enabled when a table is created with CLUSTER BY clause.
  */
 object ClusteringTableFeature extends WriterFeature("clustering") {
   override val requiredFeatures: Set[TableFeature] = Set(DomainMetadataTableFeature)
 }
+
+/**
+ * This table feature represents support for column DEFAULT values for Delta Lake. With this
+ * feature, it is possible to assign default values to columns either at table creation time or
+ * later by using commands of the form: ALTER TABLE t ALTER COLUMN c SET DEFAULT v. Thereafter,
+ * queries from the table will return the specified default value instead of NULL when the
+ * corresponding field is not present in storage.
+ *
+ * We create this as a writer-only feature rather than a reader/writer feature in order to simplify
+ * the query execution implementation for scanning Delta tables. This means that commands of the
+ * following form are not allowed: ALTER TABLE t ADD COLUMN c DEFAULT v. The reason is that when
+ * commands of that form execute (such as for other data sources like CSV or JSON), then the data
+ * source scan implementation must take responsibility to return the supplied default value for all
+ * rows, including those previously present in the table before the command executed. We choose to
+ * avoid this complexity for Delta table scans, so we make this a writer-only feature instead.
+ * Therefore, the analyzer can take care of the entire job when processing commands that introduce
+ * new rows into the table by injecting the column default value (if present) into the corresponding
+ * query plan. This comes at the expense of preventing ourselves from easily adding a default value
+ * to an existing non-empty table, because all data files would need to be rewritten to include the
+ * new column value in an expensive backfill.
+ */
+object AllowColumnDefaultsTableFeature extends WriterFeature(name = "allowColumnDefaults")
 
 
 /**
@@ -571,6 +611,49 @@ object V2CheckpointTableFeature
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     V2CheckpointPreDowngradeCommand(table)
+}
+
+/** Table feature to represent tables whose commits are managed by separate commit-store */
+object ManagedCommitTableFeature
+  extends ReaderWriterFeature(name = "managed-commit-dev")
+    with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(metadata).nonEmpty
+  }
+}
+
+object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening-dev")
+    with FeatureAutomaticallyEnabledByMetadata {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  private def isTypeWideningSupportNeededByMetadata(metadata: Metadata): Boolean =
+    DeltaConfigs.ENABLE_TYPE_WIDENING.fromMetaData(metadata)
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = isTypeWideningSupportNeededByMetadata(metadata)
+}
+
+/**
+ * inCommitTimestamp table feature is a writer feature that makes
+ * every writer write a monotonically increasing timestamp inside the commit file.
+ */
+object InCommitTimestampTableFeature
+  extends WriterFeature(name = "inCommitTimestamp-dev")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata)
+  }
 }
 
 /**

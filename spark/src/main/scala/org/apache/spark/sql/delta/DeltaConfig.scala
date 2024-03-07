@@ -19,9 +19,11 @@ package org.apache.spark.sql.delta
 import java.util.{HashMap, Locale}
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -80,6 +82,11 @@ case class DeltaConfig[T](
  * Contains list of reservoir configs and validation checks.
  */
 trait DeltaConfigsBase extends DeltaLogging {
+
+  // Special properties stored in the Hive MetaStore that specifies which version last updated
+  // the entry in the MetaStore with the latest schema and table property information
+  val METASTORE_LAST_UPDATE_VERSION = "delta.lastUpdateVersion"
+  val METASTORE_LAST_COMMIT_TIMESTAMP = "delta.lastCommitTimestamp"
 
   /**
    * Convert a string to [[CalendarInterval]]. This method is case-insensitive and will throw
@@ -388,6 +395,21 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ > 0,
     "needs to be a positive integer.")
 
+  /**
+   * Enable auto compaction for a Delta table. When enabled, we will check if files already
+   * written to a Delta table can leverage compaction after a commit. If so, we run a post-commit
+   * hook to compact the files.
+   *  It can be enabled by setting the property to `true`
+   * Note that the behavior from table property can be overridden by the config:
+   * [[org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED]]
+   */
+  val AUTO_COMPACT = buildConfig[Option[String]](
+    "autoOptimize.autoCompact",
+    null,
+    v => Option(v).map(_.toLowerCase(Locale.ROOT)),
+    v => v.isEmpty || AutoCompactType.ALLOWED_VALUES.contains(v.get),
+      s""""needs to be one of: ${AutoCompactType.ALLOWED_VALUES.mkString(",")}""")
+
   /** Whether to clean up expired checkpoints and delta logs. */
   val ENABLE_EXPIRED_LOG_CLEANUP = buildConfig[Boolean](
     "enableExpiredLogCleanup",
@@ -683,6 +705,14 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a boolean."
   )
 
+  val ICEBERG_COMPAT_V2_ENABLED = buildConfig[Option[Boolean]](
+    key = "enableIcebergCompatV2",
+    defaultValue = null,
+    fromString = v => Option(v).map(_.toBoolean),
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean."
+  )
+
   /**
    * Enable optimized writes into a Delta table. Optimized writes adds an adaptive shuffle before
    * the write to write compacted files into a Delta table during a write.
@@ -694,6 +724,67 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "needs to be a boolean."
   )
+
+  /**
+   * Whether widening the type of an existing column or field is allowed, either manually using
+   * ALTER TABLE CHANGE COLUMN or automatically if automatic schema evolution is enabled.
+   */
+  val ENABLE_TYPE_WIDENING = buildConfig[Boolean](
+    key = "enableTypeWidening",
+    defaultValue = false.toString,
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
+  val MANAGED_COMMIT_OWNER_NAME = buildConfig[Option[String]](
+    "managedCommits.commitOwner-dev",
+    null,
+    v => Option(v),
+    _ => true,
+    """The managed commit owner name for this table. This is used to determine which
+      |implementation of CommitStore to use when committing to this table. If this property is not
+      |set, the table will be considered as file system table and commits will be done via
+      |atomically publishing the commit file.
+      |""".stripMargin)
+
+  val MANAGED_COMMIT_OWNER_CONF = buildConfig[Map[String, String]](
+    "managedCommits.commitOwnerConf-dev",
+    null,
+    v => JsonUtils.fromJson[Map[String, String]](Option(v).getOrElse("{}")),
+    _ => true,
+    "A string-to-string map of configuration properties for the managed commit owner.")
+
+  val IN_COMMIT_TIMESTAMPS_ENABLED = buildConfig[Boolean](
+    "enableInCommitTimestamps-dev",
+    false.toString,
+    _.toBoolean,
+    validationFunction = _ => true,
+    "needs to be a boolean."
+  )
+
+  /**
+   * This table property is used to track the version of the table at which
+   * inCommitTimestamps were enabled.
+   */
+  val IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION = buildConfig[Option[Long]](
+    "inCommitTimestampEnablementVersion-dev",
+    null,
+    v => Option(v).map(_.toLong),
+    validationFunction = _ => true,
+    "needs to be a long."
+  )
+
+  /**
+   * This table property is used to track the timestamp at which inCommitTimestamps
+   * were enabled. More specifically, it is the inCommitTimestamp of the commit with
+   * the version specified in [[IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION]].
+   */
+  val IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP = buildConfig[Option[Long]](
+    "inCommitTimestampEnablementTimestamp-dev",
+    null,
+    v => Option(v).map(_.toLong),
+    validationFunction = _ => true,
+    "needs to be a long.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase

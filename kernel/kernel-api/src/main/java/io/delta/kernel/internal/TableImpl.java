@@ -25,9 +25,8 @@ import io.delta.kernel.client.TableClient;
 
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
-import io.delta.kernel.internal.util.Logging;
 
-public class TableImpl implements Table, Logging {
+public class TableImpl implements Table {
     public static Table forPath(TableClient tableClient, String path)
         throws TableNotFoundException {
         // Resolve the path to fully qualified table path using the `TableClient` APIs
@@ -39,22 +38,38 @@ public class TableImpl implements Table, Logging {
         } catch (IOException io) {
             throw new RuntimeException(io);
         }
-        final Path dataPath = new Path(resolvedPath);
-        final Path logPath = new Path(dataPath, "_delta_log");
-
-        return new TableImpl(logPath, dataPath);
+        return new TableImpl(resolvedPath);
     }
 
-    private final Path logPath;
-    private final Path dataPath;
+    private final SnapshotManager snapshotManager;
+    private final String tablePath;
 
-    public TableImpl(Path logPath, Path dataPath) {
-        this.logPath = logPath;
-        this.dataPath = dataPath;
+    public TableImpl(String tablePath) {
+        this.tablePath = tablePath;
+        final Path dataPath = new Path(tablePath);
+        final Path logPath = new Path(dataPath, "_delta_log");
+        this.snapshotManager = new SnapshotManager(logPath, dataPath);
     }
 
     @Override
     public Snapshot getLatestSnapshot(TableClient tableClient) throws TableNotFoundException {
-        return new SnapshotManager().buildLatestSnapshot(tableClient, logPath, dataPath);
+        return snapshotManager.buildLatestSnapshot(tableClient);
+    }
+
+    @Override
+    public String getPath() {
+        return tablePath;
+    }
+
+    @Override
+    public Snapshot getSnapshotAtVersion(TableClient tableClient, long versionId)
+        throws TableNotFoundException {
+        return snapshotManager.getSnapshotAt(tableClient, versionId);
+    }
+
+    @Override
+    public Snapshot getSnapshotAtTimestamp(TableClient tableClient, long millisSinceEpochUTC)
+        throws TableNotFoundException {
+        return snapshotManager.getSnapshotForTimestamp(tableClient, millisSinceEpochUTC);
     }
 }

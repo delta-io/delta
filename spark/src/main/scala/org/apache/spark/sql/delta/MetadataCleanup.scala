@@ -21,7 +21,7 @@ import java.util.{Calendar, TimeZone}
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
-import org.apache.spark.sql.delta.TruncationGranularity.{DAY, HOUR, TruncationGranularity}
+import org.apache.spark.sql.delta.TruncationGranularity.{DAY, HOUR, MINUTE, TruncationGranularity}
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
@@ -31,7 +31,7 @@ import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 private[delta] object TruncationGranularity extends Enumeration {
   type TruncationGranularity = Value
-  val DAY, HOUR = Value
+  val DAY, HOUR, MINUTE = Value
 }
 
 /** Cleans up expired Delta table metadata. */
@@ -133,9 +133,10 @@ trait MetadataCleanup extends DeltaLogging {
   }
 
   /**
-   * Truncates a timestamp down to a given unit. The unit can be either DAY or HOUR.
+   * Truncates a timestamp down to a given unit. The unit can be either DAY, HOUR or MINUTE.
    * - DAY: The timestamp it truncated to the previous midnight.
    * - HOUR: The timestamp it truncated to the last hour.
+   * - MINUTE: The timestamp it truncated to the last minute.
    */
   private[delta] def truncateDate(timeMillis: Long, unit: TruncationGranularity): Calendar = {
     val date = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
@@ -144,6 +145,7 @@ trait MetadataCleanup extends DeltaLogging {
     val calendarUnit = unit match {
       case DAY => Calendar.DAY_OF_MONTH
       case HOUR => Calendar.HOUR_OF_DAY
+      case MINUTE => Calendar.MINUTE
     }
 
     DateUtils.truncate(date, calendarUnit)

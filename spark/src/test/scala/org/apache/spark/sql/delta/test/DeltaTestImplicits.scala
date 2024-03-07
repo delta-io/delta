@@ -22,6 +22,8 @@ import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.hadoop.fs.Path
 
@@ -131,6 +133,18 @@ object DeltaTestImplicits {
   implicit class DeltaTableV2TestHelper(deltaTable: DeltaTableV2) {
     /** For backward compatibility with existing unit tests */
     def snapshot: Snapshot = deltaTable.initialSnapshot
+  }
+
+  implicit class AutoCompactObjectTestHelper(ac: AutoCompact.type) {
+    private[delta] def compact(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      partitionPredicates: Seq[Expression] = Nil,
+      opType: String = AutoCompact.OP_TYPE): Seq[OptimizeMetrics] = {
+      AutoCompact.compact(
+        spark, deltaLog, catalogTable = None,
+        partitionPredicates, opType)
+    }
   }
 
   implicit class StatisticsCollectionObjectTestHelper(sc: StatisticsCollection.type) {

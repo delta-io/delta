@@ -69,8 +69,8 @@ public final class S3LogStoreUtil {
                                 .withPrefix(s3afs.pathToKey(parentPath))
                                 .withStartAfter(keyBefore(s3afs.pathToKey(resolvedPath)))
                 ), ACCEPT_ALL,
-                new Listing.AcceptAllButSelfAndS3nDirs(parentPath)
-        );
+                new Listing.AcceptAllButSelfAndS3nDirs(parentPath),
+                s3afs.getActiveAuditSpan());
     }
 
     /**

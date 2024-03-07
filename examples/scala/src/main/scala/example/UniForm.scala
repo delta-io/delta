@@ -66,6 +66,7 @@ object UniForm {
       s"""CREATE TABLE `${testTableName}` (col1 INT) using DELTA
          |TBLPROPERTIES (
          |  'delta.columnMapping.mode' = 'name',
+         |  'delta.enableIcebergCompatV1' = 'true',
          |  'delta.universalFormat.enabledFormats' = 'iceberg'
          |)""".stripMargin)
     deltaSpark.sql(s"INSERT INTO `$testTableName` VALUES (123)")

@@ -15,16 +15,15 @@
  */
 package io.delta.kernel.defaults.internal.expressions
 
-import java.lang.{Boolean => BooleanJ}
 import java.util
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.defaults.utils.TestUtils
+import io.delta.kernel.defaults.utils.{TestUtils, VectorTestUtils}
 import io.delta.kernel.expressions._
 import io.delta.kernel.types._
 
-trait ExpressionSuiteBase extends TestUtils {
+trait ExpressionSuiteBase extends TestUtils with VectorTestUtils {
   /** create a columnar batch of given `size` with zero columns in it. */
   protected def zeroColumnBatch(rowCount: Int): ColumnarBatch = {
     new DefaultColumnarBatch(rowCount, new StructType(), new Array[ColumnVector](0))
@@ -39,7 +38,7 @@ trait ExpressionSuiteBase extends TestUtils {
   }
 
   protected def comparator(symbol: String, left: Expression, right: Expression): Predicate = {
-    new Predicate(symbol, util.Arrays.asList(left, right))
+    new Predicate(symbol, left, right)
   }
 
   protected def checkBooleanVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
@@ -53,20 +52,6 @@ trait ExpressionSuiteBase extends TestUtils {
           s"unexpected value at $rowId"
         )
       }
-    }
-  }
-
-  protected def booleanVector(values: Seq[BooleanJ]): ColumnVector = {
-    new ColumnVector {
-      override def getDataType: DataType = BooleanType.BOOLEAN
-
-      override def getSize: Int = values.length
-
-      override def close(): Unit = {}
-
-      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
-
-      override def getBoolean(rowId: Int): Boolean = values(rowId)
     }
   }
 }

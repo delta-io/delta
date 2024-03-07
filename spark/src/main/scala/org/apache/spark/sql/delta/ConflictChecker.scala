@@ -23,10 +23,14 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.managedcommit.UpdatedActions
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.hadoop.fs.FileStatus
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet, Or}
 import org.apache.spark.sql.types.StructType
 
@@ -64,12 +68,18 @@ private[delta] case class CurrentTransactionInfo(
    */
   lazy val finalActionsToCommit: Seq[Action] = commitInfo ++: actions
 
-  /** Whether this transaction wants to make any [[Metadata]] update */
-  lazy val metadataChanged: Boolean = actions.exists {
-    case _: Metadata => true
-    case _ => false
-  }
+  var newMetadata: Option[Metadata] = None
+  var newProtocol: Option[Protocol] = None
 
+  actions.foreach {
+    case m: Metadata => newMetadata = Some(m)
+    case p: Protocol => newProtocol = Some(p)
+    case _ => // do nothing
+  }
+  def getUpdateActions(): UpdatedActions = UpdatedActions(commitInfo.get, newMetadata, newProtocol)
+
+  /** Whether this transaction wants to make any [[Metadata]] update */
+  lazy val metadataChanged: Boolean = newMetadata.nonEmpty
 
   /**
    * Partition schema corresponding to the read snapshot for this transaction.
@@ -118,9 +128,10 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
 private[delta] class ConflictChecker(
     spark: SparkSession,
     initialCurrentTransactionInfo: CurrentTransactionInfo,
-    winningCommitVersion: Long,
-    isolationLevel: IsolationLevel) extends DeltaLogging {
+    winningCommitFileStatus: FileStatus,
+    isolationLevel: IsolationLevel) extends DeltaLogging with ConflictCheckerPredicateElimination {
 
+  protected val winningCommitVersion = FileNames.deltaVersion(winningCommitFileStatus)
   protected val startTimeMs = System.currentTimeMillis()
   protected val timingStats = mutable.HashMap[String, Long]()
   protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
@@ -135,15 +146,27 @@ private[delta] class ConflictChecker(
    * the transaction as if it had started while reading the `winningCommitVersion`.
    */
   def checkConflicts(): CurrentTransactionInfo = {
+    // Check early the protocol and metadata compatibility that is required for subsequent
+    // file-level checks.
     checkProtocolCompatibility()
     checkNoMetadataUpdates()
+    checkIfDomainMetadataConflict()
+
+    // Perform cheap check for transaction dependencies before we start checks files.
+    checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
+
+    // Row Tracking reconciliation. We perform this before the file checks to ensure that
+    // no files have duplicate row IDs and avoid interacting with files that don't comply with
+    // the protocol.
+    reassignOverlappingRowIds()
+    reassignRowCommitVersions()
+
+    // Data file checks.
     checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn()
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
-    checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
-    reassignOverlappingRowIds()
-    reassignRowCommitVersions()
-    checkIfDomainMetadataConflict()
+    resolveTimestampOrderingConflicts()
+
     logMetrics()
     currentTransactionInfo
   }
@@ -155,7 +178,7 @@ private[delta] class ConflictChecker(
   protected def createWinningCommitSummary(): WinningCommitSummary = {
     recordTime("initialize-old-commit") {
       val winningCommitActions = deltaLog.store.read(
-        FileNames.deltaFile(deltaLog.logPath, winningCommitVersion),
+        winningCommitFileStatus,
         deltaLog.newDeltaHadoopConf()
       ).map(Action.fromJson)
       new WinningCommitSummary(winningCommitActions, winningCommitVersion)
@@ -223,24 +246,89 @@ private[delta] class ConflictChecker(
    * and returns the first file that is matching.
    */
   protected def getFirstFileMatchingPartitionPredicates(files: Seq[AddFile]): Option[AddFile] = {
+    // Blind appends do not read the table.
+    if (currentTransactionInfo.commitInfo.flatMap(_.isBlindAppend).getOrElse(false)) {
+      assert(currentTransactionInfo.readPredicates.isEmpty)
+      return None
+    }
+
+    // There is no reason to filter files if the table is not partitioned.
+    if (currentTransactionInfo.readWholeTable ||
+        currentTransactionInfo.readSnapshot.metadata.partitionColumns.isEmpty) {
+      return files.headOption
+    }
+
     import org.apache.spark.sql.delta.implicits._
     val filesDf = files.toDF(spark)
+
+    spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_WIDEN_NONDETERMINISTIC_PREDICATES) match {
+      case DeltaSQLConf.NonDeterministicPredicateWidening.OFF =>
+        getFirstFileMatchingPartitionPredicatesInternal(
+          filesDf, shouldWidenNonDeterministicPredicates = false, shouldWidenAllUdf = false)
+      case wideningMode =>
+        val fileWithWidening = getFirstFileMatchingPartitionPredicatesInternal(
+          filesDf, shouldWidenNonDeterministicPredicates = true, shouldWidenAllUdf = true)
+
+        fileWithWidening.flatMap { fileWithWidening =>
+          val fileWithoutWidening =
+            getFirstFileMatchingPartitionPredicatesInternal(
+              filesDf, shouldWidenNonDeterministicPredicates = false, shouldWidenAllUdf = false)
+          if (fileWithoutWidening.isEmpty) {
+            // Conflict due to widening of non-deterministic predicate.
+            recordDeltaEvent(deltaLog,
+              opType = "delta.conflictDetection.partitionLevelConcurrency." +
+                "additionalConflictDueToWideningOfNonDeterministicPredicate",
+              data = Map(
+                "wideningMode" -> wideningMode,
+                "predicate" ->
+                  currentTransactionInfo.readPredicates.map(_.partitionPredicate.toString),
+                "deterministicUDFs" -> containsDeterministicUDF(
+                  currentTransactionInfo.readPredicates, partitionedOnly = true))
+            )
+          }
+          if (wideningMode == DeltaSQLConf.NonDeterministicPredicateWidening.ON) {
+            Some(fileWithWidening)
+          } else {
+            fileWithoutWidening
+          }
+        }
+    }
+  }
+
+  private def getFirstFileMatchingPartitionPredicatesInternal(
+      filesDf: DataFrame,
+      shouldWidenNonDeterministicPredicates: Boolean,
+      shouldWidenAllUdf: Boolean): Option[AddFile] = {
+
+    def rewritePredicateFn(
+        predicate: Expression,
+        shouldRewriteFilter: Boolean): DeltaTableReadPredicate = {
+      val rewrittenPredicate = if (shouldWidenNonDeterministicPredicates) {
+        val checkDeterministicOptions =
+          CheckDeterministicOptions(allowDeterministicUdf = !shouldWidenAllUdf)
+        eliminateNonDeterministicPredicates(Seq(predicate), checkDeterministicOptions).newPredicates
+      } else {
+        Seq(predicate)
+      }
+      DeltaTableReadPredicate(
+        partitionPredicates = rewrittenPredicate,
+        shouldRewriteFilter = shouldRewriteFilter)
+    }
 
     // we need to canonicalize the partition predicates per each group of rewrites vs. nonRewrites
     val canonicalPredicates = currentTransactionInfo.readPredicates
       .partition(_.shouldRewriteFilter) match {
         case (rewrites, nonRewrites) =>
           val canonicalRewrites =
-            ExpressionSet(rewrites.map(_.partitionPredicate)).map { e =>
-              DeltaTableReadPredicate(partitionPredicates = Seq(e))
-            }
+            ExpressionSet(rewrites.map(_.partitionPredicate)).map(
+              predicate => rewritePredicateFn(predicate, shouldRewriteFilter = true))
           val canonicalNonRewrites =
-            ExpressionSet(nonRewrites.map(_.partitionPredicate)).map { e =>
-              DeltaTableReadPredicate(partitionPredicates = Seq(e), shouldRewriteFilter = false)
-            }
+            ExpressionSet(nonRewrites.map(_.partitionPredicate)).map(
+              predicate => rewritePredicateFn(predicate, shouldRewriteFilter = false))
           canonicalRewrites ++ canonicalNonRewrites
       }
 
+    import org.apache.spark.sql.delta.implicits._
     val filesMatchingPartitionPredicates = canonicalPredicates.iterator
       .flatMap { readPredicate =>
         DeltaLog.filterFileList(
@@ -465,6 +553,53 @@ private[delta] class ConflictChecker(
     }
 
     currentTransactionInfo = currentTransactionInfo.copy(actions = newActions)
+  }
+
+  /**
+   * Adjust the current transaction's commit timestamp to account for the winning
+   * transaction's commit timestamp. If this transaction newly enabled ICT, also update
+   * the table properties to reflect the adjusted enablement version and timestamp.
+   */
+  private def resolveTimestampOrderingConflicts(): Unit = {
+    if (!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(currentTransactionInfo.metadata)) {
+      return
+    }
+
+    val winningCommitTimestamp =
+      if (InCommitTimestampUtils.didCurrentTransactionEnableICT(
+              currentTransactionInfo.metadata, currentTransactionInfo.readSnapshot)) {
+        // Since the current transaction enabled inCommitTimestamps, we should use the file
+        // timestamp from the winning transaction as its commit timestamp.
+        winningCommitFileStatus.getModificationTime
+    } else {
+      // Get the inCommitTimestamp from the winning transaction.
+      CommitInfo.getRequiredInCommitTimestamp(
+        winningCommitSummary.commitInfo, winningCommitVersion.toString)
+    }
+    val currentTransactionTimestamp = CommitInfo.getRequiredInCommitTimestamp(
+      currentTransactionInfo.commitInfo, "NEW_COMMIT")
+    // getRequiredInCommitTimestamp will throw an exception if commitInfo is None.
+    val currentTransactionCommitInfo = currentTransactionInfo.commitInfo.get
+    val updatedCommitTimestamp = Math.max(currentTransactionTimestamp, winningCommitTimestamp + 1)
+    val updatedCommitInfo =
+      currentTransactionCommitInfo.copy(inCommitTimestamp = Some(updatedCommitTimestamp))
+    currentTransactionInfo = currentTransactionInfo.copy(commitInfo = Some(updatedCommitInfo))
+    val nextAvailableVersion = winningCommitVersion + 1L
+    val updatedMetadata =
+      InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+        updatedCommitTimestamp,
+        currentTransactionInfo.readSnapshot,
+        currentTransactionInfo.metadata,
+        nextAvailableVersion)
+    updatedMetadata.foreach { updatedMetadata =>
+      currentTransactionInfo = currentTransactionInfo.copy(
+        metadata = updatedMetadata,
+        actions = currentTransactionInfo.actions.map {
+          case _: Metadata => updatedMetadata
+          case other => other
+        }
+      )
+    }
   }
 
   /** A helper function for pretty printing a specific partition directory. */

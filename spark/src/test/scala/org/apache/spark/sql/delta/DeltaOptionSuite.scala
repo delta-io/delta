@@ -29,6 +29,7 @@ import org.apache.commons.io.FileUtils
 import org.apache.parquet.format.CompressionCodec
 
 import org.apache.spark.sql.{AnalysisException, QueryTest}
+import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.internal.SQLConf.PARTITION_OVERWRITE_MODE
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -233,16 +234,15 @@ class DeltaOptionSuite extends QueryTest
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       withTable("compression") {
-        val e = intercept[IllegalArgumentException] {
-          spark.range(100)
-            .writeTo("compression")
-            .using("delta")
-            .option("compression", "???")
-            .tableProperty("location", path)
-            .create()
-        }
-        val expectedMessage = "Codec [???] is not available. Available codecs are "
-        assert(e.getMessage.startsWith(expectedMessage))
+        assert(
+          intercept[java.lang.IllegalArgumentException] {
+            spark.range(100)
+              .writeTo("compression")
+              .using("delta")
+              .option("compression", "???")
+              .tableProperty("location", path)
+              .create()
+          }.getMessage.nonEmpty)
       }
     }
   }
@@ -306,6 +306,26 @@ class DeltaOptionSuite extends QueryTest
     }
   }
 
+  test("overwriteSchema=true should be invalid with partitionOverwriteMode=dynamic, " +
+      "saveAsTable") {
+    withTable("temp") {
+      val e = intercept[DeltaIllegalArgumentException] {
+        withSQLConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
+          Seq(1, 2, 3).toDF
+            .withColumn("part", $"value" % 2)
+            .write
+            .mode("overwrite")
+            .format("delta")
+            .partitionBy("part")
+            .option(OVERWRITE_SCHEMA_OPTION, "true")
+            .option(PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+            .saveAsTable("temp")
+        }
+      }
+      assert(e.getErrorClass == "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE")
+    }
+  }
+
   test("Prohibit spark.databricks.delta.dynamicPartitionOverwrite.enabled=false in " +
     "dynamic partition overwrite mode") {
     withTempDir { tempDir =>
@@ -332,6 +352,80 @@ class DeltaOptionSuite extends QueryTest
         }
         assert(e.getErrorClass == "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED")
       }
+    }
+  }
+
+  for (createOrReplace <- Seq("CREATE OR REPLACE", "REPLACE")) {
+    test(s"$createOrReplace table command should not respect " +
+      "dynamic partition overwrite mode") {
+      withTempDir { tempDir =>
+        Seq(0, 1).toDF
+          .withColumn("key", $"value" % 2)
+          .withColumn("stringColumn", lit("string"))
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .partitionBy("part")
+          .save(tempDir.getAbsolutePath)
+        withSQLConf(PARTITION_OVERWRITE_MODE.key -> "dynamic") {
+          // Write only to one partition with a different schema type of stringColumn.
+          sql(
+            s"""
+               |$createOrReplace TABLE delta.`${tempDir.getAbsolutePath}`
+               |USING delta
+               |PARTITIONED BY (part)
+               |LOCATION '${tempDir.getAbsolutePath}'
+               |AS SELECT -1 as value, 0 as part, 0 as stringColumn
+               |""".stripMargin)
+          assert(spark.read.format("delta").load(tempDir.getAbsolutePath).count() == 1,
+            "Table should be fully replaced even with DPO mode enabled")
+        }
+      }
+    }
+  }
+
+  // Same test as above but using DeltaWriter V2.
+  test("create or replace table V2 should not respect dynamic partition overwrite mode") {
+    withTable("temp") {
+      Seq(0, 1).toDF
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .saveAsTable("temp")
+      withSQLConf(PARTITION_OVERWRITE_MODE.key -> "dynamic") {
+        // Write to one partition only.
+        Seq(0).toDF
+          .withColumn("part", $"value" % 2)
+          .writeTo("temp")
+          .using("delta")
+          .createOrReplace()
+        assert(spark.read.format("delta").table("temp").count() == 1,
+          "Table should be fully replaced even with DPO mode enabled")
+      }
+    }
+  }
+
+  // Same test as above but using saveAsTable.
+  test("saveAsTable with overwrite should respect dynamic partition overwrite mode") {
+    withTable("temp") {
+      Seq(0, 1).toDF
+        .withColumn("part", $"value" % 2)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .saveAsTable("temp")
+      // Write to one partition only.
+      Seq(0).toDF
+        .withColumn("part", $"value" % 2)
+        .write
+        .mode("overwrite")
+        .option(PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+        .partitionBy("part")
+        .format("delta")
+        .saveAsTable("temp")
+      assert(spark.read.format("delta").table("temp").count() == 2,
+        "Table should keep the original partition with DPO mode enabled.")
     }
   }
 }

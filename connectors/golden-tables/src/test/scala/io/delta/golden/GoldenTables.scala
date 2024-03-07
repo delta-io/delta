@@ -407,9 +407,14 @@ class GoldenTables extends QueryTest with SharedSparkSession {
   generateGoldenTable("deltalog-getChanges") { tablePath =>
     val log = DeltaLog.forTable(spark, new Path(tablePath))
 
+    val schema = new StructType()
+      .add("part", IntegerType)
+      .add("id", IntegerType)
+    val metadata = Metadata(schemaString = schema.json)
+
     val add1 = AddFile("fake/path/1", Map.empty, 1, 1, dataChange = true)
     val txn1 = log.startTransaction()
-    txn1.commitManually(Metadata() :: add1 :: Nil: _*)
+    txn1.commitManually(metadata :: add1 :: Nil: _*)
 
     val addCDC2 = AddCDCFile("fake/path/2", Map("partition_foo" -> "partition_bar"), 1,
       Map("tag_foo" -> "tag_bar"))
@@ -419,7 +424,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
     val setTransaction3 = SetTransaction("fakeAppId", 3L, Some(200))
     val txn3 = log.startTransaction()
-    txn3.commitManually(Protocol() :: setTransaction3 :: Nil: _*)
+    txn3.commitManually(Protocol(1, 2) :: setTransaction3 :: Nil: _*)
   }
 
   ///////////////////////////////////////////////////////////////////////////
@@ -526,7 +531,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
   private def writeDataWithSchema(tblLoc: String, data: Seq[Row], schema: StructType): Unit = {
     val df = spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
-    df.write.format("delta").save(tblLoc)
+    df.write.format("delta").mode("append").save(tblLoc)
   }
 
   /** TEST: DeltaDataReaderSuite > read - primitives */
@@ -611,6 +616,118 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       .partitionBy("as_int", "as_long", "as_byte", "as_short", "as_boolean", "as_float",
         "as_double", "as_string", "as_string_lit_null", "as_date", "as_timestamp", "as_big_decimal")
       .save(tablePath)
+  }
+
+  Seq("name", "id").foreach { columnMappingMode =>
+    generateGoldenTable(s"table-with-columnmapping-mode-$columnMappingMode") { tablePath =>
+      withSQLConf(
+          ("spark.databricks.delta.properties.defaults.columnMapping.mode", columnMappingMode)) {
+        val timeZone = java.util.TimeZone.getTimeZone("UTC")
+        java.util.TimeZone.setDefault(timeZone)
+        import java.sql._
+
+        val decimalType = DecimalType(10, 2)
+
+        val allDataTypes = Seq(
+          ByteType,
+          ShortType,
+          IntegerType,
+          LongType,
+          FloatType,
+          DoubleType,
+          decimalType,
+          BooleanType,
+          StringType,
+          BinaryType,
+          DateType,
+          TimestampType
+        )
+
+        var fields = allDataTypes.map(dt => {
+          val name = if (dt.isInstanceOf[DecimalType]) {
+            "decimal"
+          } else {
+            dt.toString
+          }
+          StructField(name, dt)
+        })
+
+        fields = fields :+ StructField("nested_struct", new StructType()
+          .add("aa", StringType)
+          .add("ac", new StructType()
+            .add("aca", IntegerType)
+          )
+        )
+
+        fields = fields :+ StructField("array_of_prims", ArrayType(IntegerType))
+        fields = fields :+ StructField("array_of_arrays", ArrayType(ArrayType(IntegerType)))
+        fields = fields :+ StructField(
+          "array_of_structs",
+          ArrayType(new StructType().add("ab", LongType)))
+
+        fields = fields :+ StructField(
+          "map_of_prims",
+          MapType(IntegerType, LongType)
+        )
+        fields = fields :+ StructField(
+          "map_of_rows",
+          MapType(IntegerType, new StructType().add("ab", LongType))
+        )
+        fields = fields :+ StructField(
+          "map_of_arrays",
+          MapType(LongType, ArrayType(IntegerType))
+        )
+
+        val schema = StructType(fields)
+
+        def createRow(i: Int): Row = {
+          Row(
+            i.byteValue(),
+            i.shortValue(),
+            i,
+            i.longValue(),
+            i.floatValue(),
+            i.doubleValue(),
+            new java.math.BigDecimal(i),
+            i % 2 == 0, // boolean type
+            i.toString,
+            i.toString.getBytes,
+            Date.valueOf("2021-11-18"),
+            new Timestamp(i),
+            Row(i.toString, Row(i)), // nested_struct
+            scala.Array(i, i + 1), // array_of_prims
+            scala.Array(scala.Array(i, i + 1), scala.Array(i + 2, i + 3)), // array_of_arrays
+            scala.Array(Row(i.longValue()), null), // array_of_structs
+            Map(
+              i -> (i + 1).longValue(),
+              (i + 2) -> (i + 3).longValue()
+            ), // map_of_prims
+            Map(i + 1 -> Row((i * 20).longValue())), // map_of_rows
+            {
+              val val1 = scala.Array(i, null, i + 1)
+              val val2 = scala.Array[Integer]()
+              Map(
+                i.longValue() -> val1,
+                (i + 1).longValue() -> val2
+              ) // map_of_arrays
+            }
+          )
+        }
+
+        def createNullRow(): Row = {
+          Row(null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+            null, null, null, null, null)
+        }
+
+        val rows = Seq.range(0, 5).map(i => createRow(i)) ++ Seq(createNullRow())
+
+        val df = spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
+        df.repartition(2)
+          .write
+          .format("delta")
+          .save(tablePath)
+      }
+    }
   }
 
   /** TEST: DeltaDataReaderSuite > read - date types */
@@ -1054,7 +1171,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     val df = spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
     df.repartition(1)
       .write
-      .format("parquet")
+      .format("delta")
       .mode("append")
       .save(tablePath)
   }
@@ -1276,6 +1393,104 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     spark.range(100, 200).write.format("delta").mode("append").save(tablePath)
     spark.range(500, 1000).write.format("delta").mode("overwrite").save(tablePath)
     sql(s"RESTORE TABLE delta.`$tablePath` TO VERSION AS OF 1")
+  }
+
+  /* ----- Data skipping tables for Kernel ------ */
+
+  def writeBasicStatsAllTypesTable(tablePath: String): Unit = {
+    val schema = new StructType()
+      .add("as_int", IntegerType)
+      .add("as_long", LongType)
+      .add("as_byte", ByteType)
+      .add("as_short", ShortType)
+      .add("as_float", FloatType)
+      .add("as_double", DoubleType)
+      .add("as_string", StringType)
+      .add("as_date", DateType)
+      .add("as_timestamp", TimestampType)
+      .add("as_big_decimal", DecimalType(1, 0))
+
+    writeDataWithSchema(
+      tablePath,
+      Row(0, 0.longValue, 0.byteValue, 0.shortValue, 0.floatValue, 0.doubleValue, "0",
+        java.sql.Date.valueOf("2000-01-01"), Timestamp.valueOf("2000-01-01 00:00:00"),
+        new JBigDecimal(0)) :: Nil,
+      schema
+    )
+  }
+  generateGoldenTable("data-skipping-basic-stats-all-types") { tablePath =>
+    writeBasicStatsAllTypesTable(tablePath)
+  }
+  Seq("name", "id").foreach { columnMappingMode =>
+    generateGoldenTable(s"data-skipping-basic-stats-all-types-columnmapping-$columnMappingMode") {
+      tablePath =>
+        withSQLConf(
+          ("spark.databricks.delta.properties.defaults.columnMapping.mode", columnMappingMode)) {
+          writeBasicStatsAllTypesTable(tablePath)
+        }
+    }
+  }
+  generateGoldenTable("data-skipping-basic-stats-all-types-checkpoint") { tablePath =>
+    withSQLConf(
+      ("spark.databricks.delta.properties.defaults.checkpointInterval", "1")
+    ) {
+      writeBasicStatsAllTypesTable(tablePath)
+    }
+  }
+
+  generateGoldenTable("data-skipping-change-stats-collected-across-versions") { tablePath =>
+    val schema = new StructType()
+      .add("col1", IntegerType)
+      .add("col2", IntegerType)
+    // write stats for all columns
+    writeDataWithSchema(
+      tablePath,
+      Row(0, 0) :: Nil,
+      schema
+    )
+    // write stats for just 1 column
+    sql(
+      s"""
+        |ALTER TABLE delta.`$tablePath`
+        |SET TBLPROPERTIES('delta.dataSkippingNumIndexedCols' = 1)
+        |""".stripMargin)
+    writeDataWithSchema(
+      tablePath,
+      Row(0, 0) :: Nil,
+      schema)
+    // write stats for no columns
+    sql(
+      s"""
+         |ALTER TABLE delta.`$tablePath`
+         |SET TBLPROPERTIES('delta.dataSkippingNumIndexedCols' = 0)
+         |""".stripMargin)
+    writeDataWithSchema(
+      tablePath,
+      Row(0, 0) :: Nil,
+      schema)
+  }
+
+  generateGoldenTable("data-skipping-partition-and-data-column") { tablePath =>
+    val schema = new StructType()
+      .add("part", IntegerType)
+      .add("id", IntegerType)
+    writeDataWithSchema(
+      tablePath,
+      Row(1, 0) :: Nil,
+      schema
+    )
+    writeDataWithSchema(
+      tablePath,
+      Row(1, 1) :: Nil,
+      schema)
+    writeDataWithSchema(
+      tablePath,
+      Row(0, 1) :: Nil,
+      schema)
+    writeDataWithSchema(
+      tablePath,
+      Row(0, 0) :: Nil,
+      schema)
   }
 }
 

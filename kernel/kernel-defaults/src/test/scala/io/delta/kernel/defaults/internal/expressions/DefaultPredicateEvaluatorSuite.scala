@@ -49,7 +49,7 @@ class DefaultPredicateEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBas
   private val orPredicate = or(left, right)
 
   private val expOrOutput = booleanVector(
-    Seq[BooleanJ](true, true, false, true, true, false, null, null, null, null, null))
+    Seq[BooleanJ](true, true, false, true, true, false, true, true, null, null, null))
 
   test("evaluate predicate: with no starting selection vector") {
     val batch = new DefaultColumnarBatch(

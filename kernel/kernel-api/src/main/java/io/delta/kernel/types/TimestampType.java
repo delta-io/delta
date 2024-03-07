@@ -22,7 +22,10 @@ import io.delta.kernel.annotation.Evolving;
  * where the left/right-bound is a date and time of the proleptic Gregorian
  * calendar in UTC+00:00.
  * Internally, this is represented as the number of microseconds since the Unix epoch,
- * 1970-01-01 00:00:00 UTC..
+ * 1970-01-01 00:00:00 UTC.
+ * <p>
+ * Due to historical reasons timestamp partition columns do not store timezone information. Kernel
+ * interprets all timestamp partition columns in UTC.
  *
  * @since 3.0.0
  */

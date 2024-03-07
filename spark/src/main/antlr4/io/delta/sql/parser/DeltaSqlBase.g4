@@ -73,6 +73,7 @@ singleStatement
 // If you add keywords here that should not be reserved, add them to 'nonReserved' list.
 statement
     : VACUUM (path=STRING | table=qualifiedName)
+        (USING INVENTORY (inventoryTable=qualifiedName | LEFT_PAREN inventoryQuery=subQuery RIGHT_PAREN))?
         (RETAIN number HOURS)? (DRY RUN)?                               #vacuumTable
     | (DESC | DESCRIBE) DETAIL (path=STRING | table=qualifiedName)      #describeDeltaDetail
     | GENERATE modeName=identifier FOR TABLE table=qualifiedName        #generate
@@ -88,15 +89,20 @@ statement
         DROP CONSTRAINT (IF EXISTS)? name=identifier                    #dropTableConstraint
     | ALTER TABLE table=qualifiedName
         DROP FEATURE featureName=featureNameValue (TRUNCATE HISTORY)?   #alterTableDropFeature
+    | ALTER TABLE table=qualifiedName
+        (clusterBySpec | CLUSTER BY NONE)                               #alterTableClusterBy
     | OPTIMIZE (path=STRING | table=qualifiedName)
         (WHERE partitionPredicate=predicateToken)?
         (zorderSpec)?                                                   #optimizeTable
     | REORG TABLE table=qualifiedName
-        (WHERE partitionPredicate=predicateToken)?
-        APPLY LEFT_PAREN PURGE RIGHT_PAREN                              #reorgTable
+        (
+            (WHERE partitionPredicate=predicateToken)? APPLY LEFT_PAREN PURGE RIGHT_PAREN |
+            APPLY LEFT_PAREN UPGRADE UNIFORM LEFT_PAREN ICEBERG_COMPAT_VERSION EQ version=INTEGER_VALUE RIGHT_PAREN RIGHT_PAREN
+        )                                                               #reorgTable
     | cloneTableHeader SHALLOW CLONE source=qualifiedName clause=temporalClause?
        (TBLPROPERTIES tableProps=propertyList)?
        (LOCATION location=stringLit)?                                   #clone
+    | .*? clusterBySpec+ .*?                                            #clusterBy
     | .*?                                                               #passThrough
     ;
 
@@ -116,6 +122,10 @@ cloneTableHeader
 zorderSpec
     : ZORDER BY LEFT_PAREN interleave+=qualifiedName (COMMA interleave+=qualifiedName)* RIGHT_PAREN
     | ZORDER BY interleave+=qualifiedName (COMMA interleave+=qualifiedName)*
+    ;
+
+clusterBySpec
+    : CLUSTER BY LEFT_PAREN interleave+=qualifiedName (COMMA interleave+=qualifiedName)* RIGHT_PAREN
     ;
 
 temporalClause
@@ -206,6 +216,14 @@ predicateToken
     ;
 
 // We don't have an expression rule in our grammar here, so we just grab the tokens and defer
+// parsing them to later. Although this is the same as `exprToken`, `predicateToken`, we have to re-define it to
+// workaround an ANTLR issue (https://github.com/delta-io/delta/issues/1205). Should we remove this after
+// https://github.com/delta-io/delta/pull/1800
+subQuery
+    :  .+?
+    ;
+
+// We don't have an expression rule in our grammar here, so we just grab the tokens and defer
 // parsing them to later.
 exprToken
     :  .+?
@@ -214,16 +232,17 @@ exprToken
 // Add keywords here so that people's queries don't break if they have a column name as one of
 // these tokens
 nonReserved
-    : VACUUM | RETAIN | HOURS | DRY | RUN
+    : VACUUM | USING | INVENTORY | RETAIN | HOURS | DRY | RUN
     | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
-    | REORG | APPLY | PURGE
+    | REORG | APPLY | PURGE | UPGRADE | UNIFORM | ICEBERG_COMPAT_VERSION
     | RESTORE | AS | OF
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
     | NO | STATISTICS
     | CLONE | SHALLOW
     | FEATURE | TRUNCATE
+    | CLUSTER | NONE
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -234,6 +253,7 @@ AS: 'AS';
 BY: 'BY';
 CHECK: 'CHECK';
 CLONE: 'CLONE';
+CLUSTER: 'CLUSTER';
 COMMA: ',';
 COMMENT: 'COMMENT';
 CONSTRAINT: 'CONSTRAINT';
@@ -253,12 +273,15 @@ FOR: 'FOR';
 GENERATE: 'GENERATE';
 HISTORY: 'HISTORY';
 HOURS: 'HOURS';
+ICEBERG_COMPAT_VERSION: 'ICEBERG_COMPAT_VERSION';
 IF: 'IF';
+INVENTORY: 'INVENTORY';
 LEFT_PAREN: '(';
 LIMIT: 'LIMIT';
 LOCATION: 'LOCATION';
 MINUS: '-';
 NO: 'NO';
+NONE: 'NONE';
 NOT: 'NOT' | '!';
 NULL: 'NULL';
 OF: 'OF';
@@ -281,6 +304,9 @@ TIMESTAMP: 'TIMESTAMP';
 TRUNCATE: 'TRUNCATE';
 TO: 'TO';
 TRUE: 'TRUE';
+UNIFORM: 'UNIFORM';
+UPGRADE: 'UPGRADE';
+USING: 'USING';
 VACUUM: 'VACUUM';
 VERSION: 'VERSION';
 WHERE: 'WHERE';

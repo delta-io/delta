@@ -55,6 +55,13 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
   val notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause]
   val migratedSchema: Option[StructType]
 
+  protected def shouldWritePersistentDeletionVectors(
+      spark: SparkSession,
+      txn: OptimisticTransaction): Boolean = {
+    spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS) &&
+      DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
+  }
+
   override val (canMergeSchema, canOverwriteSchema) = {
     // Delta options can't be passed to MERGE INTO currently, so they'll always be empty.
     // The methods in options check if the auto migration flag is on, in which case schema evolution
@@ -173,7 +180,10 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     "scanTimeMs" ->
       createTimingMetric(sc, "time taken to scan the files for matches"),
     "rewriteTimeMs" ->
-      createTimingMetric(sc, "time taken to rewrite the matched files")
+      createTimingMetric(sc, "time taken to rewrite the matched files"),
+    "numTargetDeletionVectorsAdded" -> createMetric(sc, "number of deletion vectors added"),
+    "numTargetDeletionVectorsRemoved" -> createMetric(sc, "number of deletion vectors removed"),
+    "numTargetDeletionVectorsUpdated" -> createMetric(sc, "number of deletion vectors updated")
   )
 
   /**
@@ -281,7 +291,7 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     fileIndex: TahoeFileIndex,
     columnsToDrop: Seq[String]): LogicalPlan = {
 
-    val targetOutputCols = getTargetOutputCols(deltaTxn)
+    val targetOutputCols = getTargetOutputCols(spark, deltaTxn)
 
     val plan = {
 
@@ -329,8 +339,16 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
    *    this transaction, since new columns will have a value of null for all existing rows.
    */
   protected def getTargetOutputCols(
-      txn: OptimisticTransaction, makeNullable: Boolean = false): Seq[NamedExpression] = {
-    txn.metadata.schema.map { col =>
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      makeNullable: Boolean = false)
+    : Seq[NamedExpression] = {
+    // Internal metadata attached to the table schema must not leak into the the target plan to
+    // prevent inconsistencies - e.p. metadata matters when comparing data type of struct with
+    // nested fields.
+    val schema = DeltaColumnMapping.dropColumnMappingMetadata(
+        DeltaTableUtils.removeInternalMetadata(spark, txn.metadata.schema))
+    schema.map { col =>
       targetOutputAttributesMap
         .get(col.name)
         .map { a =>

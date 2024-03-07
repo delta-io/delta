@@ -24,19 +24,19 @@ import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.util.ManualClock
 
 // scalastyle:off: removeFile
 class DeltaRetentionSuite extends QueryTest
   with DeltaRetentionSuiteBase
-  with SQLTestUtils
+  with DeltaSQLTestUtils
   with DeltaSQLCommandTest {
 
   protected override def sparkConf: SparkConf = super.sparkConf

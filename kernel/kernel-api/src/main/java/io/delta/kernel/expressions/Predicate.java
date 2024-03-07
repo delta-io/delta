@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.expressions;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -84,6 +85,24 @@ import io.delta.kernel.client.ExpressionHandler;
  *    <li>Since version: 3.0.0</li>
  *   </ul>
  *  </li>
+ *  <li>Name: <code>NOT</code>
+ *   <ul>
+ *    <li>SQL semantic: <code>NOT expr</code></li>
+ *    <li>Since version: 3.1.0</li>
+ *   </ul>
+ *  </li>
+ *  <li>Name: <code>IS_NOT_NULL</code>
+ *   <ul>
+ *    <li>SQL semantic: <code>expr IS NOT NULL</code></li>
+ *    <li>Since version: 3.1.0</li>
+ *   </ul>
+ *  </li>
+ *  <li>Name: <code>IS_NULL</code>
+ *   <ul>
+ *    <li>SQL semantic: <code>expr IS NULL</code></li>
+ *    <li>Since version: 3.2.0</li>
+ *   </ul>
+ *  </li>
  * </ol>
  *
  * @since 3.0.0
@@ -93,6 +112,17 @@ public class Predicate extends ScalarExpression {
     public Predicate(String name, List<Expression> children) {
         super(name, children);
     }
+
+    /** Constructor for a unary Predicate expression */
+    public Predicate(String name, Expression child) {
+        this(name, Arrays.asList(child));
+    }
+
+    /** Constructor for a binary Predicate expression */
+    public Predicate(String name, Expression left, Expression right) {
+        this(name, Arrays.asList(left, right));
+    }
+
 
     @Override
     public String toString() {

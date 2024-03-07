@@ -528,7 +528,7 @@ object Protocol {
     }
     if (manifestGenerationEnabled) {
       // Only allow enabling this, if there are no DVs present.
-      if (!DeletionVectorUtils.isTableDVFree(spark, snapshot)) {
+      if (!DeletionVectorUtils.isTableDVFree(snapshot)) {
         throw new DeltaTablePropertyValidationFailedException(
           table = tableName,
           subClass = ExistingDeletionVectorsWithIncrementalManifestGeneration)
@@ -682,7 +682,8 @@ case class AddFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    defaultRowCommitVersion: Option[Long] = None
+    defaultRowCommitVersion: Option[Long] = None,
+    clusteringProvider: Option[String] = None
 ) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 
@@ -843,14 +844,9 @@ object AddFile {
     /** [[OPTIMIZE_TARGET_SIZE]]: target file size the file was optimized to. */
     object OPTIMIZE_TARGET_SIZE extends AddFile.Tags.KeyType("OPTIMIZE_TARGET_SIZE")
 
-    /**
-     * [[CLUSTERED_BY]]: the name of the clustering implementation.
-     *
-     * A clustering implementation should only cluster files that belong to the implementation
-     * or files that do not have the [[CLUSTERED_BY]] tag (i.e., unclustered).
-     */
-    object CLUSTERED_BY extends AddFile.Tags.KeyType("CLUSTERED_BY")
 
+    /** [[ICEBERG_COMPAT_VERSION]]: IcebergCompat version */
+    object ICEBERG_COMPAT_VERSION extends AddFile.Tags.KeyType("ICEBERG_COMPAT_VERSION")
   }
 
   /** Convert a [[Tags.KeyType]] to a string to be used in the AddMap.tags Map[String, String]. */
@@ -1055,6 +1051,9 @@ trait CommitMarker {
  * is not stored in the checkpoint and has reduced compatibility guarantees.
  * Information stored in it is best effort (i.e. can be falsified by the writer).
  *
+ * @param inCommitTimestamp A monotonically increasing timestamp that represents the time since
+ *                          epoch in milliseconds when the commit write was started. This should
+ *                          only be set when the feature inCommitTimestamps is enabled.
  * @param isBlindAppend Whether this commit has blindly appended without caring about existing files
  * @param engineInfo The information for the engine that makes the commit.
  *                   If a commit is made by Delta Lake 1.1.0 or above, it will be
@@ -1065,6 +1064,7 @@ case class CommitInfo(
     // infer the commit version from the file name and fill in this field then.
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     version: Option[Long],
+    inCommitTimestamp: Option[Long],
     timestamp: Timestamp,
     userId: Option[String],
     userName: Option[String],
@@ -1127,14 +1127,34 @@ object NotebookInfo {
 
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
-    CommitInfo(version, null, None, None, null, null, None, None,
+    CommitInfo(version, None, null, None, None, null, null, None, None,
       None, None, None, None, None, None, None, None, None)
   }
 
   // scalastyle:off argcount
+
   def apply(
       time: Long,
       operation: String,
+      inCommitTimestamp: Option[Long] = None,
+      operationParameters: Map[String, String],
+      commandContext: Map[String, String],
+      readVersion: Option[Long],
+      isolationLevel: Option[String],
+      isBlindAppend: Option[Boolean],
+      operationMetrics: Option[Map[String, String]],
+      userMetadata: Option[String],
+      tags: Option[Map[String, String]],
+      txnId: Option[String]): CommitInfo = {
+    apply(None, time, operation, inCommitTimestamp, operationParameters, commandContext,
+      readVersion, isolationLevel, isBlindAppend, operationMetrics, userMetadata, tags, txnId)
+  }
+
+  def apply(
+      version: Option[Long],
+      time: Long,
+      operation: String,
+      inCommitTimestamp: Option[Long],
       operationParameters: Map[String, String],
       commandContext: Map[String, String],
       readVersion: Option[Long],
@@ -1151,7 +1171,8 @@ object CommitInfo {
     }
 
     CommitInfo(
-      None,
+      version,
+      inCommitTimestamp,
       new Timestamp(time),
       commandContext.get("userId"),
       getUserName,
@@ -1173,6 +1194,19 @@ object CommitInfo {
 
   private def getEngineInfo: Option[String] = {
     Some(s"Apache-Spark/${org.apache.spark.SPARK_VERSION} Delta-Lake/${io.delta.VERSION}")
+  }
+
+  /**
+   * Returns the `inCommitTimestamp` of the given `commitInfoOpt` if it is defined.
+   * Throws an exception if `commitInfoOpt` is empty or contains an empty `inCommitTimestamp`.
+   */
+  def getRequiredInCommitTimestamp(commitInfoOpt: Option[CommitInfo], version: String): Long = {
+    val commitInfo = commitInfoOpt.getOrElse {
+      throw DeltaErrors.missingCommitInfo(InCommitTimestampTableFeature.name, version)
+    }
+    commitInfo.inCommitTimestamp.getOrElse {
+      throw DeltaErrors.missingCommitTimestamp(version)
+    }
   }
 
 }

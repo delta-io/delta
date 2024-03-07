@@ -45,10 +45,34 @@ object InnerInvariantViolationException {
 }
 
 object DeltaInvariantViolationException {
-  def apply(constraint: Constraints.NotNull): DeltaInvariantViolationException = {
+  def getNotNullInvariantViolationException(colName: String): DeltaInvariantViolationException = {
     new DeltaInvariantViolationException(
       errorClass = "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
-      messageParameters = Array(UnresolvedAttribute(constraint.column).name)
+      messageParameters = Array(colName)
+    )
+  }
+
+  def apply(constraint: Constraints.NotNull): DeltaInvariantViolationException = {
+    getNotNullInvariantViolationException(UnresolvedAttribute(constraint.column).name)
+  }
+
+  def getCharVarcharLengthInvariantViolationException(
+      exprStr: String
+  ): DeltaInvariantViolationException = {
+    new DeltaInvariantViolationException(
+      errorClass = "DELTA_EXCEED_CHAR_VARCHAR_LIMIT",
+      messageParameters = Array(exprStr)
+    )
+  }
+
+  def getConstraintViolationWithValuesException(
+      constraintName: String,
+      sqlStr: String,
+      valueLines: String
+  ): DeltaInvariantViolationException = {
+    new DeltaInvariantViolationException(
+      errorClass = "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES",
+      messageParameters = Array(constraintName, sqlStr, valueLines)
     )
   }
 
@@ -62,9 +86,7 @@ object DeltaInvariantViolationException {
       constraint: Constraints.Check,
       values: Map[String, Any]): DeltaInvariantViolationException = {
     if (constraint.name == CharVarcharConstraint.INVARIANT_NAME) {
-      return new DeltaInvariantViolationException(
-        errorClass = "DELTA_EXCEED_CHAR_VARCHAR_LIMIT",
-        messageParameters = Array(constraint.expression.toString))
+      return getCharVarcharLengthInvariantViolationException(constraint.expression.toString)
     }
 
     // Sort by the column name to generate consistent error messages in Scala 2.12 and 2.13.
@@ -72,9 +94,12 @@ object DeltaInvariantViolationException {
       case (column, value) =>
         s" - $column : $value"
     }.mkString("\n")
-    new DeltaInvariantViolationException(
-      errorClass = "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES",
-      messageParameters = Array(constraint.name, constraint.expression.sql, valueLines))
+
+    getConstraintViolationWithValuesException(
+      constraint.name,
+      constraint.expression.sql,
+      valueLines
+    )
   }
 
   /**
