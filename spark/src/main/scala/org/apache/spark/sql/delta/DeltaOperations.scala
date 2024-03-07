@@ -273,7 +273,7 @@ object DeltaOperations {
         notMatchedPredicates: Seq[MergePredicate],
         notMatchedBySourcePredicates: Seq[MergePredicate],
         metaData: Metadata
-             ): Merge = Merge(
+    ): Merge = Merge(
           predicate,
           updatePredicate = None,
           deletePredicate = None,
@@ -480,8 +480,8 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.RESTORE
   }
 
-  sealed abstract class OptimizeOrReorg(override val name: String, predicates: Seq[Expression]
-                                        , metadata: Metadata)
+  sealed abstract class OptimizeOrReorg(override val name: String, predicates: Seq[Expression],
+                                        metadata: Metadata)
     extends OperationWithPredicates(name, predicates, metadata)
   /** parameter key to indicate whether it's an Auto Compaction */
   val AUTO_COMPACTION_PARAMETER_KEY = "auto"
