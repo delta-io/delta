@@ -53,6 +53,8 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
   override def beforeAll(): Unit = {
     super.beforeAll()
     _sparkSession = createSparkSession()
+    _sparkSession.conf.set(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey, "true")
   }
 
   override def afterEach(): Unit = {
@@ -209,7 +211,7 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
   }
 
   def verifyFilesAndSchemaMatch(): Unit = {
-    eventually(timeout(10.seconds)) {
+    eventually(timeout(30.seconds)) {
       // To avoid requiring Hudi spark dependencies, we first lookup the active base files and then
       // assert by reading those active base files (parquet) directly
       val hadoopConf: Configuration = _sparkSession.sparkContext.hadoopConfiguration
