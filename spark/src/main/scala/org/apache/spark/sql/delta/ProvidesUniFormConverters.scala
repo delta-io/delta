@@ -46,7 +46,7 @@ trait ProvidesUniFormConverters { self: DeltaLog =>
 
   protected lazy val _hudiConverter: UniversalFormatConverter = try {
     val clazz =
-      Utils.classForName("org.apache.spark.sql.delta.icebergShaded.HudiConverter")
+      Utils.classForName("org.apache.spark.sql.delta.hudi.HudiConverter")
     val constructor = clazz.getConstructor(classOf[SparkSession])
     constructor.newInstance(spark)
   } catch {
