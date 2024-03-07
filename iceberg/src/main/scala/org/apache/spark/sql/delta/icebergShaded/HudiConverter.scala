@@ -36,24 +36,21 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 object HudiConverter {
-
-
   /**
-   * Property to be set in translated Iceberg metadata files.
+   * Property to be set in translated Hudi commit metadata.
    * Indicates the delta commit version # that it corresponds to.
    */
   val DELTA_VERSION_PROPERTY = "delta-version"
 
   /**
-   * Property to be set in translated Iceberg metadata files.
+   * Property to be set in translated Hudi commit metadata.
    * Indicates the timestamp (milliseconds) of the delta commit that it corresponds to.
    */
   val DELTA_TIMESTAMP_PROPERTY = "delta-timestamp"
-
 }
 
 /**
- * This class manages the transformation of delta snapshots into their Iceberg equivalent.
+ * This class manages the transformation of delta snapshots into their Hudi equivalent.
  */
 class HudiConverter(spark: SparkSession)
     extends UniversalFormatConverter(spark)
@@ -105,7 +102,7 @@ class HudiConverter(spark: SparkSession)
                     val prevTxn = snapshotAndTxn._2
                     try {
                       logInfo(s"Converting Delta table [path=${log.logPath}, " +
-                        s"tableId=${log.tableId}, version=${snapshotVal.version}] into Iceberg")
+                        s"tableId=${log.tableId}, version=${snapshotVal.version}] into Hudi")
                       convertSnapshot(snapshotVal, prevTxn)
                     } catch {
                       case NonFatal(e) =>
@@ -157,7 +154,6 @@ class HudiConverter(spark: SparkSession)
           "replacedVersion" -> previouslyQueued._1.version)
       )
     }
-    // scalastyle:on println
   }
 
   /**
@@ -210,7 +206,7 @@ class HudiConverter(spark: SparkSession)
       log.newDeltaHadoopConf())
     val lastDeltaVersionConverted: Option[Long] = loadLastDeltaVersionConverted(metaClient)
     val maxCommitsToConvert =
-      spark.sessionState.conf.getConf(DeltaSQLConf.ICEBERG_MAX_COMMITS_TO_CONVERT)
+      spark.sessionState.conf.getConf(DeltaSQLConf.HUDI_MAX_COMMITS_TO_CONVERT)
 
     // Nth to convert
     if (lastDeltaVersionConverted.exists(_ == snapshotToConvert.version)) {
@@ -236,20 +232,14 @@ class HudiConverter(spark: SparkSession)
       case (_, _) => None
     }
 
-    val tableOp = (lastDeltaVersionConverted, prevConvertedSnapshotOpt) match {
-      case (Some(_), Some(_)) => WRITE_TABLE
-      case (Some(_), None) => REPLACE_TABLE
-      case (None, None) => CREATE_TABLE
-    }
-
     val hudiTxn = new HudiConversionTransaction(log.newDeltaHadoopConf(),
-      snapshotToConvert, tableOp, metaClient, lastDeltaVersionConverted)
+      snapshotToConvert, metaClient, lastDeltaVersionConverted)
 
     // Write out the actions taken since the last conversion (or since table creation).
     // This is done in batches, with each batch corresponding either to one delta file,
     // or to the specified batch size.
     val actionBatchSize =
-      spark.sessionState.conf.getConf(DeltaSQLConf.ICEBERG_MAX_ACTIONS_TO_CONVERT)
+      spark.sessionState.conf.getConf(DeltaSQLConf.HUDI_MAX_COMMITS_TO_CONVERT)
     prevConvertedSnapshotOpt match {
       case Some(prevSnapshot) =>
         // Read the actions directly from the delta json files.

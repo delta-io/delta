@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hudi.common.config.HoodieMetadataConfig
@@ -28,18 +27,16 @@ import org.apache.hudi.metadata.HoodieMetadataFileSystemView
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.avro.SchemaConverters
-import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 import org.scalatest.concurrent.Eventually
 import org.scalatest.time.SpanSugar._
 
 import java.io.File
 import java.time.Instant
-import java.util.{Calendar, TimeZone}
+import java.util.UUID
 import java.util.stream.Collectors
 import scala.collection.JavaConverters
 
@@ -47,7 +44,7 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
 
   private var _sparkSession: SparkSession = null
   private val TMP_DIR = Utils.createTempDir().getCanonicalPath
-  private val testTableName: String = "deltatable"
+  private val testTableName: String = UUID.randomUUID().toString.replace("-", "_")
   private val testTablePath: String = s"$TMP_DIR/$testTableName"
 
   override def spark: SparkSession = _sparkSession
@@ -80,80 +77,55 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
   }
 
   test("basic test - catalog table created with DataFrame") {
-    withDefaultTablePropsInSQLConf {
+    withDefaultTablePropsInSQLConf(false, {
       _sparkSession.range(10).write.format("delta")
         .option("path", testTablePath)
         .saveAsTable(testTableName)
-    }
+    })
     verifyFilesAndSchemaMatch()
 
-    withDefaultTablePropsInSQLConf {
+    withDefaultTablePropsInSQLConf(false, {
       _sparkSession.range(10, 20, 1)
         .write.format("delta").mode("append")
         .save(testTablePath)
-    }
+    })
     verifyFilesAndSchemaMatch()
   }
 
-  test("validate multiple commits (non-partitioned)") {
-    _sparkSession.sql(
-      s"""CREATE TABLE `$testTableName` (col1 INT, col2 STRING) USING DELTA
-       |LOCATION '$testTablePath'
-       |TBLPROPERTIES (
-       |  'delta.universalFormat.enabledFormats' = 'hudi',
-       |  'delta.enableDeletionVectors' = false
-       |)""".stripMargin)
-    // perform some inserts
-    _sparkSession.sql(s"INSERT INTO `$testTableName` VALUES (1, 'instant1'), (2, 'instant1')")
-    verifyFilesAndSchemaMatch()
-    
-    _sparkSession.sql(s"INSERT INTO `$testTableName` VALUES (3, 'instant2'), (4, 'instant2')")
-    verifyFilesAndSchemaMatch()
-
-    _sparkSession.sql(s"INSERT INTO `$testTableName` VALUES (5, 'instant3'), (6, 'instant3')")
-    verifyFilesAndSchemaMatch()
-
-    // update the data from the first instant
-    _sparkSession.sql(s"UPDATE `$testTableName` SET col2 = 'instant4' WHERE col2 = 'instant1'")
-    verifyFilesAndSchemaMatch()
-
-    // delete a single row
-    _sparkSession.sql(s"DELETE FROM `$testTableName` WHERE col1 = 5")
-    verifyFilesAndSchemaMatch()
-  }
-
-  test("validate multiple commits (partitioned)") {
-    _sparkSession.sql(
-      s"""CREATE TABLE `$testTableName` (col1 INT, col2 STRING, col3 STRING) USING DELTA
-         |PARTITIONED BY (col3)
+  for (isPartitioned <- Seq(true, false)) {
+    test(s"validate multiple commits (partitioned = $isPartitioned)") {
+      _sparkSession.sql(
+        s"""CREATE TABLE `$testTableName` (col1 INT, col2 STRING, col3 STRING) USING DELTA
+         |${if (isPartitioned) "PARTITIONED BY (col3)" else ""}
          |LOCATION '$testTablePath'
          |TBLPROPERTIES (
          |  'delta.universalFormat.enabledFormats' = 'hudi',
          |  'delta.enableDeletionVectors' = false
          |)""".stripMargin)
-    // perform some inserts
-    _sparkSession.sql(
-      s"INSERT INTO `$testTableName` VALUES (1, 'instant1', 'a'), (2, 'instant1', 'a')")
-    verifyFilesAndSchemaMatch()
+      // perform some inserts
+      _sparkSession.sql(
+        s"INSERT INTO `$testTableName` VALUES (1, 'instant1', 'a'), (2, 'instant1', 'a')")
+      verifyFilesAndSchemaMatch()
 
-    _sparkSession.sql(
-      s"INSERT INTO `$testTableName` VALUES (3, 'instant2', 'b'), (4, 'instant2', 'b')")
-    verifyFilesAndSchemaMatch()
+      _sparkSession.sql(
+        s"INSERT INTO `$testTableName` VALUES (3, 'instant2', 'b'), (4, 'instant2', 'b')")
+      verifyFilesAndSchemaMatch()
 
-    _sparkSession.sql(
-      s"INSERT INTO `$testTableName` VALUES (5, 'instant3', 'b'), (6, 'instant3', 'a')")
-    verifyFilesAndSchemaMatch()
+      _sparkSession.sql(
+        s"INSERT INTO `$testTableName` VALUES (5, 'instant3', 'b'), (6, 'instant3', 'a')")
+      verifyFilesAndSchemaMatch()
 
-    // update the data from the first instant
-    _sparkSession.sql(s"UPDATE `$testTableName` SET col2 = 'instant4' WHERE col2 = 'instant1'")
-    verifyFilesAndSchemaMatch()
+      // update the data from the first instant
+      _sparkSession.sql(s"UPDATE `$testTableName` SET col2 = 'instant4' WHERE col2 = 'instant1'")
+      verifyFilesAndSchemaMatch()
 
-    // delete a single row
-    _sparkSession.sql(s"DELETE FROM `$testTableName` WHERE col1 = 5")
-    verifyFilesAndSchemaMatch()
+      // delete a single row
+      _sparkSession.sql(s"DELETE FROM `$testTableName` WHERE col1 = 5")
+      verifyFilesAndSchemaMatch()
+    }
   }
 
-  test("Enabling Delete Vector fails") {
+  test("Enabling Delete Vector Throws Exception") {
     intercept[DeltaUnsupportedOperationException] {
       _sparkSession.sql(
         s"""CREATE TABLE `$testTableName` (col1 INT, col2 STRING) USING DELTA
@@ -167,21 +139,22 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
 
   test("validate Hudi timeline archival and cleaning") {
     val testOp = Truncate()
-    withDefaultTablePropsInSQLConf {
-      val startTime = System.currentTimeMillis() - 8 * 24 * 60 * 60 * 1000
+    withDefaultTablePropsInSQLConf(true, {
+      val startTime = System.currentTimeMillis() - 12 * 24 * 60 * 60 * 1000
       val clock = new ManualClock(startTime)
       val actualTestStartTime = System.currentTimeMillis()
       val log = DeltaLog.forTable(_sparkSession, new Path(testTablePath), clock)
-      (1 to 12).foreach { i =>
+      (1 to 20).foreach { i =>
         val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
-        val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        val file = AddFile(i.toString + ".parquet", Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
           val timestamp = startTime + (System.currentTimeMillis() - actualTestStartTime)
-          RemoveFile(i - 1 toString, Some(timestamp), true) :: Nil
+          RemoveFile((i - 1).toString + ".parquet", Some(timestamp), true) :: Nil
         } else {
           Nil
         }
         txn.commit(delete ++ file, testOp)
+        clock.advance(12.hours.toMillis)
         // wait for each Hudi sync to complete
         verifyNumHudiCommits(i)
       }
@@ -190,27 +163,13 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
         .setConf(log.newDeltaHadoopConf()).setBasePath(log.dataPath.toString)
         .setLoadActiveTimelineOnLoad(true)
         .build
-      clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
-        intervalStringToMillis("interval 8 day"))
-
-      val txn = log.startTransaction()
-      txn.commit(AddFile("13", Map.empty, 1, 1, true) :: Nil, testOp)
-      verifyNumHudiCommits(13)
-    }
-  }
-
-  // TODO find best ways to reuse helpers
-  protected def startTxnWithManualLogCleanup(log: DeltaLog): OptimisticTransaction = {
-    val txn = log.startTransaction()
-    // This will pick up `spark.databricks.delta.properties.defaults.enableExpiredLogCleanup` to
-    // disable log cleanup.
-    txn.updateMetadata(Metadata())
-    txn
-  }
-
-  protected def intervalStringToMillis(str: String): Long = {
-    DeltaConfigs.getMilliSeconds(
-      IntervalUtils.safeStringToInterval(UTF8String.fromString(str)))
+      // Timeline requires a clean commit for proper removal of entries from the Hudi Metadata Table
+      assert(metaClient.getActiveTimeline.getCleanerTimeline.countInstants() == 1,
+        "Cleaner timeline should have 1 instant")
+      // Older commits should move from active to archive timeline
+      assert(metaClient.getArchivedTimeline.getCommitsTimeline.filterInflights.countInstants == 2,
+        "Archived timeline should have 2 instants")
+    })
   }
   
   test("validate various data types") {
@@ -238,10 +197,13 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
   }
 
   def verifyNumHudiCommits(count: Integer): Unit = {
-    eventually(timeout(600.seconds)) {
+    eventually(timeout(30.seconds)) {
       val metaClient: HoodieTableMetaClient = buildHudiMetaClient()
-      val commits = metaClient.getActiveTimeline.filterCompletedInstants
-      assert(commits.countInstants() == count)
+      val activeCommits = metaClient.getActiveTimeline.getCommitsTimeline
+        .filterCompletedInstants.countInstants
+      val archivedCommits = metaClient.getArchivedTimeline.getCommitsTimeline
+        .filterCompletedInstants.countInstants
+      assert(activeCommits + archivedCommits == count)
     }
   }
 
@@ -276,11 +238,21 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
     }
   }
 
-  def withDefaultTablePropsInSQLConf(f: => Unit): Unit = {
+  def withDefaultTablePropsInSQLConf(enableInCommitTimestamp: Boolean, f: => Unit): Unit = {
     withSQLConf(
       DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> "name",
-      DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.defaultTablePropertyKey -> "hudi"
+      DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.defaultTablePropertyKey -> "hudi",
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey ->
+        enableInCommitTimestamp.toString
     ) { f }
+  }
+
+  protected def startTxnWithManualLogCleanup(log: DeltaLog): OptimisticTransaction = {
+    val txn = log.startTransaction()
+    // This will pick up `spark.databricks.delta.properties.defaults.enableExpiredLogCleanup` to
+    // disable log cleanup.
+    txn.updateMetadata(Metadata())
+    txn
   }
 
   def createSparkSession(): SparkSession = {

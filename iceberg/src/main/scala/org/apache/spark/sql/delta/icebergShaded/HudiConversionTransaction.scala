@@ -63,18 +63,16 @@ import collection.mutable._
 import scala.collection.JavaConverters._
 
 /**
- * Used to prepare (convert) and then commit a set of Delta actions into the Iceberg table located
+ * Used to prepare (convert) and then commit a set of Delta actions into the Hudi table located
  * at the same path as [[postCommitSnapshot]]
  *
  *
- * @param conf Configuration for Iceberg Hadoop interactions.
- * @param postCommitSnapshot Latest Delta snapshot associated with this Iceberg commit.
- * @param tableOp How to instantiate the underlying Iceberg table. Defaults to WRITE_TABLE.
+ * @param conf Configuration for Hudi Hadoop interactions.
+ * @param postCommitSnapshot Latest Delta snapshot associated with this Hudi commit.
  */
 class HudiConversionTransaction(
     protected val conf: Configuration,
     protected val postCommitSnapshot: Snapshot,
-    protected val tableOp: IcebergTableOp = WRITE_TABLE,
     protected val providedMetaClient: HoodieTableMetaClient,
     protected val lastConvertedDeltaVersion: Option[Long] = None) extends DeltaLogging {
 
@@ -179,8 +177,7 @@ class HudiConversionTransaction(
   }
 
   private def markInstantsAsCleaned(table: HoodieJavaTable[_],
-                                    writeConfig: HoodieWriteConfig,
-                                    engineContext: HoodieEngineContext): Unit = {
+      writeConfig: HoodieWriteConfig, engineContext: HoodieEngineContext): Unit = {
     val planner = new CleanPlanner(engineContext, table, writeConfig)
     val earliestInstant = planner.getEarliestCommitToRetain
     // since we're retaining based on time, we should exit early if earliestInstant is empty
@@ -262,8 +259,7 @@ class HudiConversionTransaction(
   }
 
   private def runArchiver(table: HoodieJavaTable[_ <: HoodieAvroPayload],
-                          config: HoodieWriteConfig,
-                          engineContext: HoodieEngineContext): Unit = {
+      config: HoodieWriteConfig, engineContext: HoodieEngineContext): Unit = {
     // trigger archiver manually
     val archiver = new HoodieTimelineArchiver(config, table)
     archiver.archiveIfRequired(engineContext, true)
@@ -350,7 +346,6 @@ class HudiConversionTransaction(
       data = Map(
         "version" -> postCommitSnapshot.version,
         "timestamp" -> postCommitSnapshot.timestamp,
-        "tableOp" -> tableOp.getClass.getSimpleName.stripSuffix("$"),
         "prevConvertedDeltaVersion" -> lastConvertedDeltaVersion
       ) ++ errorData
     )

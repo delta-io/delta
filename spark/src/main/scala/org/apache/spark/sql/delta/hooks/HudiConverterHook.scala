@@ -21,7 +21,7 @@ import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.{OptimisticTransactionImpl, Snapshot, UniversalFormat}
 
-/** Write a new Iceberg metadata file at the version committed by the txn, if required. */
+/** Write a new Hudi commit for the version committed by the txn, if required. */
 object HudiConverterHook extends PostCommitHook with DeltaLogging {
   override val name: String = "Post-commit Hudi metadata conversion"
 
@@ -33,14 +33,13 @@ object HudiConverterHook extends PostCommitHook with DeltaLogging {
       committedVersion: Long,
       postCommitSnapshot: Snapshot,
       committedActions: Seq[Action]): Unit = {
-    // Only convert to Iceberg if the snapshot matches the version committed.
+    // Only convert to Hudi if the snapshot matches the version committed.
     // This is to skip converting the same actions multiple times - they'll be written out
     // by another commit anyways.
     if (committedVersion != postCommitSnapshot.version ||
         !UniversalFormat.hudiEnabled(postCommitSnapshot.metadata)) {
       return
     }
-
 
     postCommitSnapshot
       .deltaLog
