@@ -80,8 +80,23 @@ object UniversalFormat extends DeltaLogging {
       newestMetadata: Metadata,
       isCreatingOrReorgTable: Boolean,
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
+    enforceHudiDependencies(newestMetadata)
     enforceIcebergInvariantsAndDependencies(
       snapshot, newestProtocol, newestMetadata, isCreatingOrReorgTable, actions)
+  }
+
+  /**
+   * If you are enabling Hudi, this method ensures that Deletion Vectors are not enabled. New
+   * conditions may be added here in the future to make sure the source is compatible with Hudi.
+   * @param newestMetadata the newest metadata
+   * @return N/A, throws exception if condition is not met
+   */
+  def enforceHudiDependencies(newestMetadata: Metadata): Any = {
+    if (hudiEnabled(newestMetadata)) {
+      if (DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(newestMetadata)) {
+        throw DeltaErrors.uniFormHudiDeleteVectorCompat()
+      }
+    }
   }
 
   /**

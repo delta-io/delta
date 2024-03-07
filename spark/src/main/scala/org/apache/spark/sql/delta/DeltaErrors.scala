@@ -3036,6 +3036,16 @@ trait DeltaErrorsBase
     )
   }
 
+  def uniFormHudiDeleteVectorCompat(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+      messageParameters = Array(
+        UniversalFormat.HUDI_FORMAT,
+        "Requires delete vectors to be disabled."
+      )
+    )
+  }
+
   def icebergCompatVersionMutualExclusive(version: Int): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.VERSION_MUTUAL_EXCLUSIVE",

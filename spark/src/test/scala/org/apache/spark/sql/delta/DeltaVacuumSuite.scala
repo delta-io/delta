@@ -1036,6 +1036,21 @@ class DeltaVacuumSuite
     }
   }
 
+  test("hudi metadata dir") {
+    withEnvironment { (tempDir, clock) =>
+      spark.emptyDataset[Int].write.format("delta").save(tempDir)
+      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
+      gcTest(deltaLog, clock)(
+        CreateDirectory(".hoodie"),
+        CreateFile(".hoodie/00001.commit", false),
+
+        AdvanceClock(defaultTombstoneInterval + 1000),
+        GC(dryRun = false, Seq(tempDir)),
+        CheckFiles(Seq(".hoodie", ".hoodie/00001.commit"))
+      )
+    }
+  }
+
   // Helper method to remove the DVs in Delta table and rewrite the data files
   def purgeDVs(tableName: String): Unit = {
     withSQLConf(

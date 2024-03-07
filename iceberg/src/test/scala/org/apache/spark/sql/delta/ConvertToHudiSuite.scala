@@ -154,18 +154,25 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
   }
 
   test("Enabling Delete Vector fails") {
-    // Create table with delete vectors enabled will throw an exception
+    intercept[DeltaUnsupportedOperationException] {
+      _sparkSession.sql(
+        s"""CREATE TABLE `$testTableName` (col1 INT, col2 STRING) USING DELTA
+           |LOCATION '$testTablePath'
+           |TBLPROPERTIES (
+           |  'delta.universalFormat.enabledFormats' = 'hudi',
+           |  'delta.enableDeletionVectors' = true
+           |)""".stripMargin)
+    }
   }
 
   test("validate Hudi timeline archival and cleaning") {
     val testOp = Truncate()
     withDefaultTablePropsInSQLConf {
-      // scalastyle:off println
-      val startTime = getStartTimeForRetentionTest
+      val startTime = System.currentTimeMillis() - 8 * 24 * 60 * 60 * 1000
       val clock = new ManualClock(startTime)
       val actualTestStartTime = System.currentTimeMillis()
       val log = DeltaLog.forTable(_sparkSession, new Path(testTablePath), clock)
-      (1 to 5).foreach { i =>
+      (1 to 12).foreach { i =>
         val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
         val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
@@ -183,14 +190,12 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
         .setConf(log.newDeltaHadoopConf()).setBasePath(log.dataPath.toString)
         .setLoadActiveTimelineOnLoad(true)
         .build
-      System.out.println(s"${metaClient.reloadActiveTimeline.getInstants}")
       clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
         intervalStringToMillis("interval 8 day"))
 
-      log.startTransaction().commit(AddFile("6", Map.empty, 1, 1, true) :: Nil, testOp)
-      verifyNumHudiCommits(6)
-
-      System.out.println(s"${metaClient.reloadActiveTimeline.getInstants}")
+      val txn = log.startTransaction()
+      txn.commit(AddFile("13", Map.empty, 1, 1, true) :: Nil, testOp)
+      verifyNumHudiCommits(13)
     }
   }
 
@@ -201,15 +206,6 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
     // disable log cleanup.
     txn.updateMetadata(Metadata())
     txn
-  }
-  
-  protected def getStartTimeForRetentionTest: Long = {
-    val currentTime = System.currentTimeMillis()
-    val date = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
-    date.setTimeInMillis(currentTime)
-    val dayStartTimeStamp = DateUtils.truncate(date, Calendar.DAY_OF_MONTH)
-    dayStartTimeStamp.add(Calendar.HOUR_OF_DAY, 1);
-    dayStartTimeStamp.getTimeInMillis
   }
 
   protected def intervalStringToMillis(str: String): Long = {
@@ -242,7 +238,7 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
   }
 
   def verifyNumHudiCommits(count: Integer): Unit = {
-    eventually(timeout(360.seconds)) {
+    eventually(timeout(600.seconds)) {
       val metaClient: HoodieTableMetaClient = buildHudiMetaClient()
       val commits = metaClient.getActiveTimeline.filterCompletedInstants
       assert(commits.countInstants() == count)
