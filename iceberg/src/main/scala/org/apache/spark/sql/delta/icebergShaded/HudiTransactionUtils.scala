@@ -95,9 +95,10 @@ object HudiTransactionUtils extends DeltaLogging {
       case ex: TableNotFoundException =>
         log.debug("Hudi table does not exist, creating now.")
         if (tableName.isEmpty) {
-          throw new IllegalArgumentException("Table name is required to create a new Hudi table.")
+          log.warn("No name is specified for the table. "
+            + "Creating a new Hudi table with a default name: 'table'.")
         }
-        initializeHudiTable(tableDataPath, tableName.get, partitionFields, conf)
+        initializeHudiTable(tableDataPath, tableName.getOrElse("table"), partitionFields, conf)
     }
   }
 

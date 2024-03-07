@@ -153,42 +153,44 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
     verifyFilesAndSchemaMatch()
   }
 
+  test("Enabling Delete Vector fails") {
+    // Create table with delete vectors enabled will throw an exception
+  }
+
   test("validate Hudi timeline archival and cleaning") {
     val testOp = Truncate()
     withDefaultTablePropsInSQLConf {
-      withTempDir { tempDir =>
-        // scalastyle:off println
-        val startTime = getStartTimeForRetentionTest
-        val clock = new ManualClock(startTime)
-        val actualTestStartTime = System.currentTimeMillis()
-        val log = DeltaLog.forTable(_sparkSession, new Path(tempDir.getCanonicalPath), clock)
-        (1 to 5).foreach { i =>
-          val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
-          val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
-          val delete: Seq[Action] = if (i > 1) {
-            val timestamp = startTime + (System.currentTimeMillis() - actualTestStartTime)
-            RemoveFile(i - 1 toString, Some(timestamp), true) :: Nil
-          } else {
-            Nil
-          }
-          txn.commit(delete ++ file, testOp)
+      // scalastyle:off println
+      val startTime = getStartTimeForRetentionTest
+      val clock = new ManualClock(startTime)
+      val actualTestStartTime = System.currentTimeMillis()
+      val log = DeltaLog.forTable(_sparkSession, new Path(testTablePath), clock)
+      (1 to 5).foreach { i =>
+        val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
+        val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        val delete: Seq[Action] = if (i > 1) {
+          val timestamp = startTime + (System.currentTimeMillis() - actualTestStartTime)
+          RemoveFile(i - 1 toString, Some(timestamp), true) :: Nil
+        } else {
+          Nil
         }
-
-        val metaClient: HoodieTableMetaClient = HoodieTableMetaClient.builder
-          .setConf(log.newDeltaHadoopConf()).setBasePath(log.dataPath.toString)
-          .setLoadActiveTimelineOnLoad(true)
-          .build
-        System.out.println(s"${metaClient.reloadActiveTimeline.getInstants}")
-        clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
-          intervalStringToMillis("interval 8 day"))
-
-        // txn.commit(AddFile("6", Map.empty, 1, 1, true) :: Nil, testOp)
-
-        System.out.println(s"${metaClient.reloadActiveTimeline.getInstants}")
-
-        // scalastyle: on println
+        txn.commit(delete ++ file, testOp)
+        // wait for each Hudi sync to complete
+        verifyNumHudiCommits(i)
       }
-      // TODO check vacuum here as well?
+
+      val metaClient: HoodieTableMetaClient = HoodieTableMetaClient.builder
+        .setConf(log.newDeltaHadoopConf()).setBasePath(log.dataPath.toString)
+        .setLoadActiveTimelineOnLoad(true)
+        .build
+      System.out.println(s"${metaClient.reloadActiveTimeline.getInstants}")
+      clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
+        intervalStringToMillis("interval 8 day"))
+
+      log.startTransaction().commit(AddFile("6", Map.empty, 1, 1, true) :: Nil, testOp)
+      verifyNumHudiCommits(6)
+
+      System.out.println(s"${metaClient.reloadActiveTimeline.getInstants}")
     }
   }
 
@@ -231,15 +233,28 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
     verifyFilesAndSchemaMatch()
   }
 
+  def buildHudiMetaClient(): HoodieTableMetaClient = {
+    val hadoopConf: Configuration = _sparkSession.sparkContext.hadoopConfiguration
+    HoodieTableMetaClient.builder
+      .setConf(hadoopConf).setBasePath(testTablePath)
+      .setLoadActiveTimelineOnLoad(true)
+      .build
+  }
+
+  def verifyNumHudiCommits(count: Integer): Unit = {
+    eventually(timeout(360.seconds)) {
+      val metaClient: HoodieTableMetaClient = buildHudiMetaClient()
+      val commits = metaClient.getActiveTimeline.filterCompletedInstants
+      assert(commits.countInstants() == count)
+    }
+  }
+
   def verifyFilesAndSchemaMatch(): Unit = {
     eventually(timeout(10.seconds)) {
       // To avoid requiring Hudi spark dependencies, we first lookup the active base files and then
       // assert by reading those active base files (parquet) directly
       val hadoopConf: Configuration = _sparkSession.sparkContext.hadoopConfiguration
-      val metaClient: HoodieTableMetaClient = HoodieTableMetaClient.builder
-        .setConf(hadoopConf).setBasePath(testTablePath)
-        .setLoadActiveTimelineOnLoad(true)
-        .build
+      val metaClient: HoodieTableMetaClient = buildHudiMetaClient()
       val engContext: HoodieLocalEngineContext = new HoodieLocalEngineContext(hadoopConf)
       val fsView: HoodieMetadataFileSystemView = new HoodieMetadataFileSystemView(engContext,
         metaClient, metaClient.getActiveTimeline.getCommitsTimeline.filterCompletedInstants,
