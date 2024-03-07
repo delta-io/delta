@@ -88,7 +88,7 @@ trait CommitStore {
    * Note that returning latestTableVersion as -1 is acceptable only if the commit-owner never
    * ratified any version i.e. it never accepted any un-backfilled commit.
    *
-   * @return GetCommitsResponse which has a list of [[Commit]] and the latestTableVersion which are
+   * @return GetCommitsResponse which has a list of [[Commit]]s and the latestTableVersion which is
    *         tracked by [[CommitStore]].
    */
   def getCommits(

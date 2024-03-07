@@ -26,8 +26,6 @@ import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
-import com.databricks.sql.acl.TrustedScalaUDFRegistry
-import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
@@ -36,27 +34,24 @@ import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
-import org.apache.spark.sql.delta.hooks.{ChecksumHook, MinorCompactionHook, UpdateMACHook}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitResponse, CommitStore, GetCommitsResponse, UpdatedActions}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats._
-import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
-import org.apache.spark.SparkException
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
 import org.apache.spark.sql.types.{StructField, StructType}
-import org.apache.spark.sql.types.VariantType
 import org.apache.spark.util.{Clock, Utils}
 
 /** Record metrics about a successful commit. */
