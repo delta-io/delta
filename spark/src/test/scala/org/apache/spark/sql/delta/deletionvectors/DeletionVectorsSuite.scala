@@ -684,7 +684,8 @@ class DeletionVectorsSuite extends QueryTest
   }
 
   test("absolute DV path with encoded special characters") {
-    withTempDir { dir =>
+    // This test uses hand-crafted path with special characters.
+    withTempDir("spark") { dir =>
       writeTableHavingSpecialCharInDVPath(dir, pathIsEncoded = true)
       checkAnswer(
         spark.read.format("delta").load(dir.getCanonicalPath),
@@ -693,7 +694,8 @@ class DeletionVectorsSuite extends QueryTest
   }
 
   test("absolute DV path with not-encoded special characters") {
-    withTempDir { dir =>
+    // This test uses hand-crafted path with special characters.
+    withTempDir("spark") { dir =>
       writeTableHavingSpecialCharInDVPath(dir, pathIsEncoded = false)
       val e = intercept[SparkException] {
         spark.read.format("delta").load(dir.getCanonicalPath).collect()

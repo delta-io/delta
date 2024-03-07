@@ -20,12 +20,14 @@ import java.io.File
 
 import org.apache.spark.sql.delta.actions.Format
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.StructType
 
-trait DeltaSourceSuiteBase extends StreamTest {
+trait DeltaSourceSuiteBase extends StreamTest
+  with DeltaSQLTestUtils {
 
   /**
    * Creates 3 temporary directories for use within a function.

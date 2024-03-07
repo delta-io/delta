@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescri
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.util.PathWithFileSystem
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
@@ -33,7 +34,7 @@ import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.test.SharedSparkSession
 
 /** Collection of test utilities related with persistent Deletion Vectors. */
-trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
+trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with DeltaSQLTestUtils {
 
   def enableDeletionVectors(
       spark: SparkSession,
@@ -99,6 +100,16 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
     }
   }
 
+  /** Create a temp path which contains special characters. */
+  override def withTempPath(f: File => Unit): Unit = {
+    super.withTempPath("s p a r k %2a")(f)
+  }
+
+  /** Create a temp path which contains special characters. */
+  override protected def withTempDir(f: File => Unit): Unit = {
+    super.withTempDir("s p a r k %2a")(f)
+  }
+
   /** Helper that verifies whether a defined number of DVs exist */
   def verifyDVsExist(targetLog: DeltaLog, filesWithDVsSize: Int): Unit = {
     val filesWithDVs = getFilesWithDeletionVectors(targetLog)
@@ -128,8 +139,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession {
 
       // Check that DV exists.
       val dvPath = dv.absolutePath(tablePath)
-      val dvPathStr = DeletionVectorStore.pathToEscapedString(dvPath)
-      assert(new File(dvPathStr).exists(), s"DV not found $dvPath")
+      assert(new File(dvPath.toString).exists(), s"DV not found $dvPath")
 
       // Check that cardinality is correct.
       val bitmap = newDVStore.read(dvPath, dv.offset.get, dv.sizeInBytes)

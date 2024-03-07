@@ -458,10 +458,8 @@ trait CloneTableSuiteBase extends QueryTest
       val df1 = Seq(1, 2, 3, 4, 5).toDF("id")
       df1.write.format("delta").mode("append").save(source)
 
-      val baseS3 = new URI("s3", null, source, null, null).toString
-
       runAndValidateClone(
-        baseS3,
+        s"s3:$source",
         s"file:$clone"
       )()
 

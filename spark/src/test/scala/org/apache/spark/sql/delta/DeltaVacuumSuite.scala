@@ -66,6 +66,15 @@ trait DeltaVacuumSuiteBase extends QueryTest
     }
   }
 
+  protected def withEnvironment(prefix: String)(f: (File, ManualClock) => Unit): Unit = {
+    withTempDir(prefix) { file =>
+      val clock = new ManualClock()
+      withSQLConf("spark.databricks.delta.retentionDurationCheck.enabled" -> "false") {
+        f(file, clock)
+      }
+    }
+  }
+
   protected def defaultTombstoneInterval: Long = {
     DeltaConfigs.getMilliSeconds(
       IntervalUtils.safeStringToInterval(
@@ -798,8 +807,10 @@ class DeltaVacuumSuite
     }
   }
 
+  // TODO: There is somewhere in the code calling CanonicalPathFunction with an unescaped path
+  //  string. To be fixed.
   testQuietly("correctness test") {
-    withEnvironment { (tempDir, clock) =>
+    withEnvironment("spark") { (tempDir, clock) =>
 
       val reservoirDir = new File(tempDir.getAbsolutePath, "reservoir")
       assert(reservoirDir.mkdirs())
