@@ -148,30 +148,32 @@ class InMemoryCommitStoreSuite extends QueryTest
       val logPath = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
       val cs = InMemoryCommitStoreBuilder(batchSize = 3).build(Map.empty)
 
+      assert(cs.getCommits(logPath, 0) == GetCommitsResponse(Seq.empty, -1))
+
       // Commit 0 is always immediately backfilled
       val c0 = commit(0, 0, cs, logPath)
-      assert(cs.getCommits(logPath, 0) == Seq.empty)
+      assert(cs.getCommits(logPath, 0) == GetCommitsResponse(Seq.empty, 0))
       assertBackfilled(0, logPath, Some(0))
 
       val c1 = commit(1, 1, cs, logPath)
       val c2 = commit(2, 2, cs, logPath)
-      assert(cs.getCommits(logPath, 0).takeRight(2) == Seq(c1, c2))
+      assert(cs.getCommits(logPath, 0).commits.takeRight(2) == Seq(c1, c2))
 
       // All 3 commits are backfilled since batchSize == 3
       val c3 = commit(3, 3, cs, logPath)
-      assert(cs.getCommits(logPath, 0) == Seq.empty)
+      assert(cs.getCommits(logPath, 0) == GetCommitsResponse(Seq.empty, 3))
       (1 to 3).foreach(i => assertBackfilled(i, logPath, Some(i)))
 
       // Test that startVersion and endVersion are respected in getCommits
       val c4 = commit(4, 4, cs, logPath)
       val c5 = commit(5, 5, cs, logPath)
-      assert(cs.getCommits(logPath, 4) == Seq(c4, c5))
-      assert(cs.getCommits(logPath, 4, Some(4)) == Seq(c4))
-      assert(cs.getCommits(logPath, 5) == Seq(c5))
+      assert(cs.getCommits(logPath, 4) == GetCommitsResponse(Seq(c4, c5), 5))
+      assert(cs.getCommits(logPath, 4, Some(4)) == GetCommitsResponse(Seq(c4), 5))
+      assert(cs.getCommits(logPath, 5) == GetCommitsResponse(Seq(c5), 5))
 
       // Commit [4, 6] are backfilled since batchSize == 3
       val c6 = commit(6, 6, cs, logPath)
-      assert(cs.getCommits(logPath, 0) == Seq.empty)
+      assert(cs.getCommits(logPath, 0) == GetCommitsResponse(Seq.empty, 6))
       (4 to 6).foreach(i => assertBackfilled(i, logPath, Some(i)))
       assertInvariants(logPath, cs.asInstanceOf[InMemoryCommitStore])
     }
@@ -186,7 +188,7 @@ class InMemoryCommitStoreSuite extends QueryTest
       // Test that all commits are immediately backfilled
       (0 to 3).foreach { version =>
         commit(version, version, cs, logPath)
-        assert(cs.getCommits(logPath, 0) == Seq.empty)
+        assert(cs.getCommits(logPath, 0) == GetCommitsResponse(Seq.empty, version))
         assertBackfilled(version, logPath, Some(version))
       }
 
@@ -215,7 +217,7 @@ class InMemoryCommitStoreSuite extends QueryTest
 
       // Verify that the conflict-checker still works even when everything has been backfilled
       commit(5, 5, cs, logPath)
-      assert(cs.getCommits(logPath, 0) == Seq.empty)
+      assert(cs.getCommits(logPath, 0) == GetCommitsResponse(Seq.empty, 5))
       assertCommitFail(5, 6, retryable = true, commit(5, 5, cs, logPath))
       assertCommitFail(7, 6, retryable = false, commit(7, 7, cs, logPath))
 
@@ -259,8 +261,6 @@ class InMemoryCommitStoreSuite extends QueryTest
       val runningTimestamp = new AtomicInteger(0)
       val commitFailedExceptions = new AtomicInteger(0)
       val totalCommits = numberOfWriters * numberOfCommitsPerWriter
-      // actualCommits is used to determine version of next commit when getCommits is empty.
-      val actualCommits = new AtomicInteger(0)
       val commitTimestamp: Array[Long] = new Array[Long](totalCommits)
 
       try {
@@ -269,16 +269,11 @@ class InMemoryCommitStoreSuite extends QueryTest
             override def run(): Unit = {
               var currentWriterCommits = 0
               while (currentWriterCommits < numberOfCommitsPerWriter) {
-                val nextVersion =
-                  cs
-                    .getCommits(logPath, 0)
-                    .lastOption.map(_.version + 1)
-                    .getOrElse(actualCommits.get().toLong)
+                val nextVersion = cs.getCommits(logPath, 0).latestTableVersion + 1
                 try {
                   val currentTimestamp = runningTimestamp.getAndIncrement()
                   val commitResponse = commit(nextVersion, currentTimestamp, cs, logPath)
                   currentWriterCommits += 1
-                  actualCommits.getAndIncrement()
                   assert(commitResponse.commitTimestamp == currentTimestamp)
                   assert(commitResponse.version == nextVersion)
                   commitTimestamp(commitResponse.version.toInt) = commitResponse.commitTimestamp

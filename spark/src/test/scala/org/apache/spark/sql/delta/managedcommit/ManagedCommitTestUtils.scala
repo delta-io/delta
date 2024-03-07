@@ -89,7 +89,7 @@ case class TrackingInMemoryCommitStore(
   override def getCommits(
       logPath: Path,
       startVersion: Long,
-      endVersion: Option[Long] = None): Seq[Commit] = recordOperation("getCommits") {
+      endVersion: Option[Long] = None): GetCommitsResponse = recordOperation("getCommits") {
     super.getCommits(logPath, startVersion, endVersion)
   }
 

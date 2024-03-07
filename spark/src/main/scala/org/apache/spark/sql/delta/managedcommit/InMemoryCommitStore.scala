@@ -100,14 +100,14 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
   override def getCommits(
       logPath: Path,
       startVersion: Long,
-      endVersion: Option[Long]): Seq[Commit] = {
-    withReadLock[Seq[Commit]](logPath) {
+      endVersion: Option[Long]): GetCommitsResponse = {
+    withReadLock[GetCommitsResponse](logPath) {
       val tableData = perTableMap.get(logPath)
       // Calculate the end version for the range, or use the last key if endVersion is not provided
       val effectiveEndVersion =
         endVersion.getOrElse(tableData.commitsMap.lastOption.map(_._1).getOrElse(startVersion))
       val commitsInRange = tableData.commitsMap.range(startVersion, effectiveEndVersion + 1)
-      commitsInRange.values.toSeq
+      GetCommitsResponse(commitsInRange.values.toSeq, tableData.maxCommitVersion)
     }
   }
 
