@@ -19,11 +19,16 @@ package org.apache.spark.sql.delta.commands.columnmapping
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 
-import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.types.StructType
 
-class RemoveColumnMappingCommand(deltaLog: DeltaLog, catalogOpt: Option[CatalogTable])
+/**
+ * A command to remove the column mapping from a table.
+ */
+class RemoveColumnMappingCommand(
+    val deltaLog: DeltaLog,
+    val catalogOpt: Option[CatalogTable])
   extends ImplicitMetadataOperation {
   override protected val canMergeSchema: Boolean = false
   override protected val canOverwriteSchema: Boolean = true
@@ -41,12 +46,20 @@ class RemoveColumnMappingCommand(deltaLog: DeltaLog, catalogOpt: Option[CatalogT
   /**
    * Verify none of the schema fields contain invalid column names.
    */
-  private def verifySchemaFieldNames(schema: StructType) = {
+  protected def verifySchemaFieldNames(schema: StructType) = {
     val invalidColumnNames =
       SchemaUtils.findInvalidColumnNamesInSchema(schema)
     if (invalidColumnNames.nonEmpty) {
       throw DeltaErrors
         .foundInvalidColumnNamesWhenRemovingColumnMapping(invalidColumnNames)
     }
+  }
+}
+
+object RemoveColumnMappingCommand {
+  def apply(
+      deltaLog: DeltaLog,
+      catalogOpt: Option[CatalogTable]): RemoveColumnMappingCommand = {
+    new RemoveColumnMappingCommand(deltaLog, catalogOpt)
   }
 }

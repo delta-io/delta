@@ -186,6 +186,18 @@ trait DeltaErrorsBase
       cause = cause)
   }
 
+  def missingCommitInfo(featureName: String, commitVersion: String): DeltaIllegalStateException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_COMMIT_INFO",
+      messageParameters = Array(featureName, commitVersion))
+  }
+
+  def missingCommitTimestamp(commitVersion: String): DeltaIllegalStateException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_COMMIT_TIMESTAMP",
+      messageParameters = Array(InCommitTimestampTableFeature.name, commitVersion))
+  }
+
   def failOnCheckpointRename(src: Path, dest: Path): DeltaIllegalStateException = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_CANNOT_RENAME_PATH",
@@ -566,7 +578,12 @@ trait DeltaErrorsBase
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
       messageParameters = Array(name))
   }
-
+  def invalidInventorySchema(expectedSchema: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_INVENTORY_SCHEMA",
+      messageParameters = Array(expectedSchema)
+    )
+  }
   def invalidIsolationLevelException(s: String): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_INVALID_ISOLATION_LEVEL",

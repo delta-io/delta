@@ -214,7 +214,7 @@ class DeltaTable(object):
         """
         if source is None:
             raise ValueError("'source' in merge cannot be None")
-        elif type(source) is not DataFrame:
+        elif not isinstance(source, DataFrame):
             raise TypeError("Type of 'source' in merge must be DataFrame.")
         if condition is None:
             raise ValueError("'condition' in merge cannot be None")

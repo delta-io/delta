@@ -17,17 +17,17 @@
 package org.apache.spark.sql.delta.test
 
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.execution.{ColumnarToRowExec, FileSourceScanExec, InputAdapter, SparkPlan}
 import org.apache.spark.sql.functions.from_json
 import org.apache.spark.sql.{Column, DataFrame}
-import org.apache.spark.sql.test.SQLTestUtils
 
 /**
  * Provides utilities for testing StatisticsCollection.
  */
-trait TestsStatistics { self: SQLTestUtils =>
+trait TestsStatistics { self: DeltaSQLTestUtils =>
 
   /** A function to get the reconciled statistics DataFrame from the DeltaLog */
   protected var getStatsDf: (DeltaLog, Seq[Column]) => DataFrame = _

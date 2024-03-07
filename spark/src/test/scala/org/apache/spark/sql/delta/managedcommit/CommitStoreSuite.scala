@@ -16,24 +16,25 @@
 
 package org.apache.spark.sql.delta.managedcommit
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, ManagedCommitTableFeature, SerializableFileStatus}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, ManagedCommitTableFeature}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 
-class CommitStoreSuite extends QueryTest with SQLTestUtils with SharedSparkSession
+class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
   with DeltaSQLCommandTest {
 
   trait TestCommitStoreBase extends CommitStore {
     override def commit(
         logStore: LogStore,
         hadoopConf: Configuration,
-        tablePath: Path,
+        logPath: Path,
         commitVersion: Long,
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
@@ -41,7 +42,7 @@ class CommitStoreSuite extends QueryTest with SQLTestUtils with SharedSparkSessi
     }
 
     override def getCommits(
-      tablePath: Path,
+      logPath: Path,
       startVersion: Long,
       endVersion: Option[Long] = None): Seq[Commit] = Seq.empty
   }
@@ -52,6 +53,7 @@ class CommitStoreSuite extends QueryTest with SQLTestUtils with SharedSparkSessi
   override def beforeEach(): Unit = {
     super.beforeEach()
     CommitStoreProvider.clearNonDefaultBuilders()
+    CommitStoreProvider.registerBuilder(InMemoryCommitStoreBuilder(batchSize = 1))
   }
 
   test("registering multiple commit store builders with same name") {
@@ -166,7 +168,7 @@ class CommitStoreSuite extends QueryTest with SQLTestUtils with SharedSparkSessi
       val path = dir.getCanonicalPath
       spark.range(10).write.format("delta").mode("append").save(path)
       val metadata =
-        Metadata(configuration = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> "name"))
+        Metadata(configuration = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> "in-memory"))
       val deltaLog = DeltaLog.forTable(spark, path)
 
       def getWriterFeatures(log: DeltaLog): Set[String] = {

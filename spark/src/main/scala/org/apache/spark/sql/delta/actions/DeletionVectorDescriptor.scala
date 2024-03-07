@@ -25,6 +25,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, Encoder}
 import org.apache.spark.sql.functions.{concat, lit, when}
 import org.apache.spark.sql.types._
@@ -132,7 +133,9 @@ case class DeletionVectorDescriptor(
     storageType match {
       case UUID_DV_MARKER =>
         val absolutePath = this.absolutePath(tableLocation)
-        this.copy(storageType = PATH_DV_MARKER, pathOrInlineDv = absolutePath.toString)
+        this.copy(
+          storageType = PATH_DV_MARKER,
+          pathOrInlineDv = SparkPath.fromPath(absolutePath).urlEncoded)
       case PATH_DV_MARKER | INLINE_DV_MARKER => this.copy()
     }
   }
