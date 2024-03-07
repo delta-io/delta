@@ -14,14 +14,9 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.icebergShaded
-
-import org.apache.avro.{LogicalTypes, Schema}
-import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.types._
+package org.apache.spark.sql.delta.hudi
 
 import java.util
-import scala.collection.JavaConverters._
 
 object HudiSchemaUtils extends DeltaLogging {
 

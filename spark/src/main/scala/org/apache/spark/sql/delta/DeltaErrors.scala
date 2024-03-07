@@ -2821,7 +2821,7 @@ trait DeltaErrorsBase
           sparkConf, "/delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
       cause = cause)
   }
-  
+
   def hudiClassMissing(sparkConf: SparkConf, cause: Throwable): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_MISSING_HUDI_CLASS",

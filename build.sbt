@@ -344,12 +344,6 @@ val icebergSparkRuntimeArtifactName = {
  s"iceberg-spark-runtime-$expMaj.$expMin"
 }
 
-val hudiSparkRuntimeArtifactName = {
-  val (expMaj, expMin, _) = getMajorMinorPatch(sparkVersion)
-  val expMinFinal = if (expMin.toInt >= 5) "4" else expMin
-  s"hudi-spark$expMaj.$expMinFinal-bundle"
-}
-
 lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
   // delta-iceberg depends on delta-spark! So, we need to include it during our test.
   .dependsOn(spark % "test")
@@ -392,9 +386,6 @@ lazy val iceberg = (project in file("iceberg"))
       // due to legacy scala.
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
       "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.4.0" % "provided" exclude("org.apache.hadoop", "hadoop-common") exclude("org.apache.hadoop", "hadoop-auth"),
-      "org.apache.hudi" % "hudi-java-client" % "0.14.0" % "provided" exclude("org.apache.hadoop", "hadoop-common") exclude("org.apache.hadoop", "hadoop-auth"),
-      "org.apache.spark" % "spark-avro_2.12" % sparkVersion % "provided" exclude("org.apache.hadoop", "hadoop-common") exclude("org.apache.hadoop", "hadoop-auth"),
-      "org.apache.parquet" % "parquet-avro" % "1.12.0" % "provided",
       "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3"
     ),
     Compile / unmanagedJars += (icebergShaded / assembly).value,
@@ -486,6 +477,20 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     ),
     assemblyPackageScala / assembleArtifact := false,
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
+  )
+
+lazy val hudi = (project in file("hudi"))
+  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .settings (
+    name := "delta-hudi",
+    commonSettings,
+    scalaStyleSettings,
+    releaseSettings,
+    libraryDependencies ++= Seq(
+      "org.apache.hudi" % "hudi-java-client" % "0.14.0" % "compile" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
+      "org.apache.spark" % "spark-avro_2.12" % sparkVersion % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
+      "org.apache.parquet" % "parquet-avro" % "1.12.0" % "provided"
+    ),
   )
 
 lazy val hive = (project in file("connectors/hive"))

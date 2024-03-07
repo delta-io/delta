@@ -14,17 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.icebergShaded
-
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
-import org.apache.hudi.client.WriteStatus
-import org.apache.hudi.common.model.{HoodieAvroPayload, HoodieTableType, HoodieTimelineTimeZone, HoodieDeltaWriteStat}
-import org.apache.hudi.common.table.HoodieTableMetaClient
-import org.apache.hudi.common.util.ExternalFilePathUtil
-import org.apache.hudi.exception.TableNotFoundException
-import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.metering.DeltaLogging
+package org.apache.spark.sql.delta.hudi
 
 object HudiTransactionUtils extends DeltaLogging {
 
