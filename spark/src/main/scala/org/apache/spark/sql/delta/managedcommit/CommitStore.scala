@@ -46,6 +46,9 @@ class CommitFailedException(
 /** Response container for [[CommitStore.commit]] API */
 case class CommitResponse(commit: Commit)
 
+/** Response container for [[CommitStore.getCommits]] API */
+case class GetCommitsResponse(commits: Seq[Commit], latestTableVersion: Long)
+
 /** A container class to inform the CommitStore about any changes in Protocol/Metadata */
 case class UpdatedActions(
   commitInfo: CommitInfo,
@@ -81,13 +84,17 @@ trait CommitStore {
    * Note that the first version returned by this API may not be equal to the `startVersion`. This
    * happens when few versions starting from `startVersion` are already backfilled and so
    * CommitStore may have stopped tracking them.
+   * The returned latestTableVersion is the maximum commit version ratified by the Commit-Owner.
+   * Note that returning latestTableVersion as -1 is acceptable only if the commit-owner never
+   * ratified any version i.e. it never accepted any un-backfilled commit.
    *
-   * @return a sequence of [[Commit]] which are tracked by [[CommitStore]].
+   * @return GetCommitsResponse which has a list of [[Commit]] and the latestTableVersion which are
+   *         tracked by [[CommitStore]].
    */
   def getCommits(
-      logPath: Path,
-      startVersion: Long,
-      endVersion: Option[Long] = None): Seq[Commit]
+    logPath: Path,
+    startVersion: Long,
+    endVersion: Option[Long] = None): GetCommitsResponse
 }
 
 /** A builder interface for CommitStore */

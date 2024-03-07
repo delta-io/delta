@@ -167,7 +167,7 @@ trait SnapshotManagement { self: DeltaLog =>
     //   are replaced with this method.
     val resultFromCommitStore = recordFrameProfile("DeltaLog", "CommitStore.getCommits") {
       commitStoreOpt match {
-        case Some(cs) => cs.getCommits(logPath, startVersion, endVersion = versionToLoad)
+        case Some(cs) => cs.getCommits(logPath, startVersion, endVersion = versionToLoad).commits
         case None => Seq.empty
       }
     }
