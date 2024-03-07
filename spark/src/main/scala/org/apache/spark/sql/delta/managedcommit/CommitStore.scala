@@ -46,6 +46,9 @@ class CommitFailedException(
 /** Response container for [[CommitStore.commit]] API */
 case class CommitResponse(commit: Commit)
 
+/** Response container for [[CommitStore.getCommits]] API */
+case class GetCommitsResponse(commits: Seq[Commit], latestTableVersion: Long)
+
 /** A container class to inform the CommitStore about any changes in Protocol/Metadata */
 case class UpdatedActions(
   commitInfo: CommitInfo,
@@ -60,34 +63,38 @@ case class UpdatedActions(
  */
 trait CommitStore {
   /**
-   * API to commit the given set of `actions` to the table represented by given `tablePath` at the
+   * API to commit the given set of `actions` to the table represented by given `logPath` at the
    * given `commitVersion`.
    * @return CommitResponse which contains the file status of the commit file. If the commit is
    *         already backfilled, then the fileStatus could be omitted from response and the client
    *         could get the info by themselves.
    */
   def commit(
-    logStore: LogStore,
-    hadoopConf: Configuration,
-    tablePath: Path,
-    commitVersion: Long,
-    actions: Iterator[String],
-    updatedActions: UpdatedActions): CommitResponse
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      logPath: Path,
+      commitVersion: Long,
+      actions: Iterator[String],
+      updatedActions: UpdatedActions): CommitResponse
 
   /**
-   * API to get the un-backfilled commits for the table represented by the given `tablePath`.
+   * API to get the un-backfilled commits for the table represented by the given `logPath`.
    * Commits older than `startVersion`, or newer than `endVersion` (if given), are ignored. The
    * returned commits are contiguous and in ascending version order.
    * Note that the first version returned by this API may not be equal to the `startVersion`. This
    * happens when few versions starting from `startVersion` are already backfilled and so
    * CommitStore may have stopped tracking them.
+   * The returned latestTableVersion is the maximum commit version ratified by the Commit-Owner.
+   * Note that returning latestTableVersion as -1 is acceptable only if the commit-owner never
+   * ratified any version i.e. it never accepted any un-backfilled commit.
    *
-   * @return a sequence of [[Commit]] which are tracked by [[CommitStore]].
+   * @return GetCommitsResponse which has a list of [[Commit]]s and the latestTableVersion which is
+   *         tracked by [[CommitStore]].
    */
   def getCommits(
-    tablePath: Path,
+    logPath: Path,
     startVersion: Long,
-    endVersion: Option[Long] = None): Seq[Commit]
+    endVersion: Option[Long] = None): GetCommitsResponse
 }
 
 /** A builder interface for CommitStore */

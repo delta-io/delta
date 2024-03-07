@@ -112,6 +112,15 @@ case class AlterTableSetPropertiesDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
+
+    val rowTrackingPropertyKey = DeltaConfigs.ROW_TRACKING_ENABLED.key
+    val enableRowTracking = configuration.keySet.contains(rowTrackingPropertyKey) &&
+      configuration(rowTrackingPropertyKey).toBoolean
+
+    if (enableRowTracking) {
+      // TODO(longvu-db): This will be removed once we support backfill.
+      throw new UnsupportedOperationException("Cannot enable Row IDs on an existing table.")
+    }
     val columnMappingPropertyKey = DeltaConfigs.COLUMN_MAPPING_MODE.key
     val disableColumnMapping = configuration.get(columnMappingPropertyKey).contains("none")
     val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
@@ -614,8 +623,11 @@ case class AlterTableChangeColumnDeltaCommand(
       val newConfiguration = metadata.configuration ++
         StatisticsCollection.renameDeltaStatsColumn(metadata, oldColumnPath, newColumnPath)
 
+      val newSchemaWithTypeWideningMetadata =
+        TypeWideningMetadata.addTypeWideningMetadata(txn, schema = newSchema, oldSchema = oldSchema)
+
       val newMetadata = metadata.copy(
-        schemaString = newSchema.json,
+        schemaString = newSchemaWithTypeWideningMetadata.json,
         partitionColumns = newPartitionColumns,
         configuration = newConfiguration
       )
@@ -816,7 +828,13 @@ case class AlterTableReplaceColumnsDeltaCommand(
       SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
       SchemaUtils.checkSchemaFieldNames(newSchema, metadata.columnMappingMode)
 
-      val newMetadata = metadata.copy(schemaString = newSchema.json)
+      val newSchemaWithTypeWideningMetadata = TypeWideningMetadata.addTypeWideningMetadata(
+        txn,
+        schema = newSchema,
+        oldSchema = existingSchema
+      )
+
+      val newMetadata = metadata.copy(schemaString = newSchemaWithTypeWideningMetadata.json)
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.ReplaceColumns(columns))
 

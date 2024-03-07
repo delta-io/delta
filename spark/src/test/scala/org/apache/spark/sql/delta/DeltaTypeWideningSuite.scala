@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Encoder, QueryTest, Row}
@@ -38,6 +39,7 @@ class DeltaTypeWideningSuite
     with DeltaTypeWideningTestMixin
     with DeltaTypeWideningAlterTableTests
     with DeltaTypeWideningNestedFieldsTests
+    with DeltaTypeWideningMetadataTests
     with DeltaTypeWideningTableFeatureTests
 
 /**
@@ -249,7 +251,16 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase {
     append(Seq(1, 2).toDF("value").select($"value".cast(ShortType)))
     assert(readDeltaTable(tempPath).schema === new StructType().add("value", ShortType))
     sql(s"ALTER TABLE delta.`$tempPath` REPLACE COLUMNS (value INT)")
-    assert(readDeltaTable(tempPath).schema === new StructType().add("value", IntegerType))
+    assert(readDeltaTable(tempPath).schema ===
+      new StructType()
+        .add("value", IntegerType, nullable = true, metadata = new MetadataBuilder()
+          .putMetadataArray("delta.typeChanges", Array(
+            new MetadataBuilder()
+              .putString("toType", "integer")
+              .putString("fromType", "short")
+              .putLong("tableVersion", 1)
+              .build()
+          )).build()))
     checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2)))
     append(Seq(3, 4).toDF("value"))
     checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3), Row(4)))
@@ -337,9 +348,39 @@ trait DeltaTypeWideningNestedFieldsTests {
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a.element TYPE int")
 
     assert(readDeltaTable(tempPath).schema === new StructType()
-      .add("s", new StructType().add("a", ShortType))
-      .add("m", MapType(IntegerType, IntegerType))
-      .add("a", ArrayType(IntegerType)))
+      .add("s", new StructType()
+        .add("a", ShortType, nullable = true, metadata = new MetadataBuilder()
+          .putMetadataArray("delta.typeChanges", Array(
+            new MetadataBuilder()
+              .putString("toType", "short")
+              .putString("fromType", "byte")
+              .putLong("tableVersion", 2)
+              .build()
+          )).build()))
+      .add("m", MapType(IntegerType, IntegerType), nullable = true, metadata = new MetadataBuilder()
+          .putMetadataArray("delta.typeChanges", Array(
+            new MetadataBuilder()
+              .putString("toType", "integer")
+              .putString("fromType", "byte")
+              .putLong("tableVersion", 3)
+              .putString("fieldPath", "key")
+              .build(),
+            new MetadataBuilder()
+              .putString("toType", "integer")
+              .putString("fromType", "short")
+              .putLong("tableVersion", 4)
+              .putString("fieldPath", "value")
+              .build()
+          )).build())
+      .add("a", ArrayType(IntegerType), nullable = true, metadata = new MetadataBuilder()
+          .putMetadataArray("delta.typeChanges", Array(
+            new MetadataBuilder()
+              .putString("toType", "integer")
+              .putString("fromType", "short")
+              .putLong("tableVersion", 5)
+              .putString("fieldPath", "element")
+              .build()
+          )).build()))
 
     append(Seq((5, 6, 7, 8))
       .toDF("a", "b", "c", "d")
@@ -357,9 +398,39 @@ trait DeltaTypeWideningNestedFieldsTests {
     sql(s"ALTER TABLE delta.`$tempPath` REPLACE COLUMNS " +
       "(s struct<a: short>, m map<int, int>, a array<int>)")
     assert(readDeltaTable(tempPath).schema === new StructType()
-      .add("s", new StructType().add("a", ShortType))
-      .add("m", MapType(IntegerType, IntegerType))
-      .add("a", ArrayType(IntegerType)))
+      .add("s", new StructType()
+        .add("a", ShortType, nullable = true, metadata = new MetadataBuilder()
+          .putMetadataArray("delta.typeChanges", Array(
+            new MetadataBuilder()
+              .putString("toType", "short")
+              .putString("fromType", "byte")
+              .putLong("tableVersion", 2)
+              .build()
+          )).build()))
+      .add("m", MapType(IntegerType, IntegerType), nullable = true, metadata = new MetadataBuilder()
+          .putMetadataArray("delta.typeChanges", Array(
+            new MetadataBuilder()
+              .putString("toType", "integer")
+              .putString("fromType", "byte")
+              .putLong("tableVersion", 2)
+              .putString("fieldPath", "key")
+              .build(),
+            new MetadataBuilder()
+              .putString("toType", "integer")
+              .putString("fromType", "short")
+              .putLong("tableVersion", 2)
+              .putString("fieldPath", "value")
+              .build()
+          )).build())
+      .add("a", ArrayType(IntegerType), nullable = true, metadata = new MetadataBuilder()
+          .putMetadataArray("delta.typeChanges", Array(
+            new MetadataBuilder()
+              .putString("toType", "integer")
+              .putString("fromType", "short")
+              .putLong("tableVersion", 2)
+              .putString("fieldPath", "element")
+              .build()
+          )).build()))
 
     append(Seq((5, 6, 7, 8))
       .toDF("a", "b", "c", "d")
@@ -371,6 +442,164 @@ trait DeltaTypeWideningNestedFieldsTests {
         .toDF("a", "b", "c", "d")
         .selectExpr("named_struct('a', cast(a as short)) as s", "map(b, c) as m", "array(d) as a"))
   }
+}
+
+/**
+ * Tests related to recording type change information as metadata in the table schema. For
+ * lower-level tests, see [[DeltaTypeWideningMetadataSuite]].
+ */
+trait DeltaTypeWideningMetadataTests {
+  self: QueryTest with ParquetTest with DeltaTypeWideningTestMixin with DeltaDMLTestUtils =>
+
+  def testTypeWideningMetadata(name: String)(
+      initialSchema: String,
+      typeChanges: Seq[(String, String)],
+      expectedJsonSchema: String): Unit =
+    test(name) {
+      sql(s"CREATE TABLE delta.`$tempPath` ($initialSchema) USING DELTA")
+      typeChanges.foreach { case (fieldName, newType) =>
+        sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN $fieldName TYPE $newType")
+      }
+
+      // Parse the schemas as JSON to ignore whitespaces and field order.
+      val actualSchema = JsonUtils.fromJson[Map[String, Any]](readDeltaTable(tempPath).schema.json)
+      val expectedSchema = JsonUtils.fromJson[Map[String, Any]](expectedJsonSchema)
+      assert(actualSchema === expectedSchema,
+        s"${readDeltaTable(tempPath).schema.prettyJson} did not equal $expectedJsonSchema"
+      )
+    }
+
+  testTypeWideningMetadata("change top-level column type short->int")(
+    initialSchema = "a short",
+    typeChanges = Seq("a" -> "int"),
+    expectedJsonSchema =
+      """{
+      "type": "struct",
+      "fields": [{
+        "name": "a",
+        "type": "integer",
+        "nullable": true,
+        "metadata": {
+          "delta.typeChanges": [{
+            "toType": "integer",
+            "fromType": "short",
+            "tableVersion": 1
+          }]
+        }
+      }]}""".stripMargin)
+
+  testTypeWideningMetadata("change top-level column type twice byte->short->int")(
+    initialSchema = "a byte",
+    typeChanges = Seq("a" -> "short", "a" -> "int"),
+    expectedJsonSchema =
+      """{
+      "type": "struct",
+      "fields": [{
+        "name": "a",
+        "type": "integer",
+        "nullable": true,
+        "metadata": {
+          "delta.typeChanges": [{
+            "toType": "short",
+            "fromType": "byte",
+            "tableVersion": 1
+          },{
+            "toType": "integer",
+            "fromType": "short",
+            "tableVersion": 2
+          }]
+        }
+      }]}""".stripMargin)
+
+  testTypeWideningMetadata("change type in map key and in struct in map value")(
+    initialSchema = "a map<byte, struct<b: byte>>",
+    typeChanges = Seq("a.key" -> "int", "a.value.b" -> "short"),
+    expectedJsonSchema =
+      """{
+      "type": "struct",
+      "fields": [{
+        "name": "a",
+        "type": {
+          "type": "map",
+          "keyType": "integer",
+          "valueType": {
+            "type": "struct",
+            "fields": [{
+              "name": "b",
+              "type": "short",
+              "nullable": true,
+              "metadata": {
+                "delta.typeChanges": [{
+                  "toType": "short",
+                  "fromType": "byte",
+                  "tableVersion": 2
+                }]
+              }
+            }]
+          },
+          "valueContainsNull": true
+        },
+        "nullable": true,
+        "metadata": {
+          "delta.typeChanges": [{
+            "toType": "integer",
+            "fromType": "byte",
+            "tableVersion": 1,
+            "fieldPath": "key"
+          }]
+        }
+      }
+    ]}""".stripMargin)
+
+
+  testTypeWideningMetadata("change type in array and in struct in array")(
+    initialSchema = "a array<byte>, b array<struct<c: short>>",
+    typeChanges = Seq("a.element" -> "short", "b.element.c" -> "int"),
+    expectedJsonSchema =
+      """{
+      "type": "struct",
+      "fields": [{
+        "name": "a",
+        "type": {
+          "type": "array",
+          "elementType": "short",
+          "containsNull": true
+        },
+        "nullable": true,
+        "metadata": {
+          "delta.typeChanges": [{
+            "toType": "short",
+            "fromType": "byte",
+            "tableVersion": 1,
+            "fieldPath": "element"
+          }]
+        }
+      },
+      {
+        "name": "b",
+        "type": {
+          "type": "array",
+          "elementType":{
+            "type": "struct",
+            "fields": [{
+              "name": "c",
+              "type": "integer",
+              "nullable": true,
+              "metadata": {
+                "delta.typeChanges": [{
+                  "toType": "integer",
+                  "fromType": "short",
+                  "tableVersion": 2
+                }]
+              }
+            }]
+          },
+          "containsNull": true
+        },
+        "nullable": true,
+        "metadata": { }
+      }
+    ]}""".stripMargin)
 }
 
 trait DeltaTypeWideningTableFeatureTests {

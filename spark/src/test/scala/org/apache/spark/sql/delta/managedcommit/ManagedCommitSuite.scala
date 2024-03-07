@@ -63,16 +63,16 @@ class ManagedCommitSuite
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
-              tablePath: Path,
+              logPath: Path,
               commitVersion: Long,
               actions: Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
             val uuidFile =
-              FileNames.uuidDeltaFile(new Path(tablePath, "_delta_log"), commitVersion)
+              FileNames.uuidDeltaFile(logPath, commitVersion)
             logStore.write(uuidFile, actions, overwrite = false, hadoopConf)
             val uuidFileStatus = uuidFile.getFileSystem(hadoopConf).getFileStatus(uuidFile)
             val commitTime = uuidFileStatus.getModificationTime
-            commitImpl(logStore, hadoopConf, tablePath, commitVersion, uuidFileStatus, commitTime)
+            commitImpl(logStore, hadoopConf, logPath, commitVersion, uuidFileStatus, commitTime)
 
             CommitResponse(Commit(commitVersion, uuidFileStatus, commitTime))
           }
@@ -113,6 +113,59 @@ class ManagedCommitSuite
           }
       assert(unbackfilledCommitVersions === Array(0, 1, 2))
       checkAnswer(sql(s"SELECT * FROM delta.`$tablePath`"), Seq(Row(2), Row(3)))
+    }
+  }
+
+  testWithDifferentBackfillInterval("post commit snapshot creation") { backfillInterval =>
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+
+      def getDeltasInPostCommitSnapshot(log: DeltaLog): Seq[String] = {
+        log
+          .unsafeVolatileSnapshot
+          .logSegment.deltas
+          .map(_.getPath.getName.replace("0000000000000000000", ""))
+      }
+
+      // Commit 0
+      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath)
+      val log = DeltaLog.forTable(spark, tablePath)
+      assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json"))
+      log.update()
+      assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json"))
+
+      // Commit 1
+      Seq(2).toDF.write.format("delta").mode("append").save(tablePath) // version 1
+      val commit1 = if (backfillInterval < 2) "1.json" else "1.uuid-1.json"
+      assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1))
+      log.update()
+      assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1))
+
+      // Commit 2
+      Seq(3).toDF.write.format("delta").mode("append").save(tablePath) // version 2
+      val commit2 = if (backfillInterval < 2) "2.json" else "2.uuid-2.json"
+      assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1, commit2))
+      log.update()
+      if (backfillInterval <= 2) {
+        // backfill would have happened at commit 2. Next deltaLog.update will pickup the backfilled
+        // files.
+        assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", "1.json", "2.json"))
+      } else {
+        assert(getDeltasInPostCommitSnapshot(log) ===
+          Seq("0.json", "1.uuid-1.json", "2.uuid-2.json"))
+      }
+
+      // Commit 3
+      Seq(4).toDF.write.format("delta").mode("append").save(tablePath)
+      val commit3 = if (backfillInterval < 2) "3.json" else "3.uuid-3.json"
+      if (backfillInterval <= 2) {
+        assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", "1.json", "2.json", commit3))
+      } else {
+        assert(getDeltasInPostCommitSnapshot(log) ===
+          Seq("0.json", "1.uuid-1.json", "2.uuid-2.json", commit3))
+      }
+
+      checkAnswer(sql(s"SELECT * FROM delta.`$tablePath`"), Seq(Row(1), Row(2), Row(3), Row(4)))
     }
   }
 }

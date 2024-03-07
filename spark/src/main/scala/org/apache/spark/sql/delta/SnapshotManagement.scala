@@ -166,9 +166,10 @@ trait SnapshotManagement { self: DeltaLog =>
     // TODO(managed-commits): Make sure all usage of `listDeltaCompactedDeltaAndCheckpointFiles`
     //   are replaced with this method.
     val resultFromCommitStore = recordFrameProfile("DeltaLog", "CommitStore.getCommits") {
-      commitStoreOpt
-        .map(_.getCommits(dataPath, startVersion, endVersion = versionToLoad))
-        .getOrElse(Seq.empty)
+      commitStoreOpt match {
+        case Some(cs) => cs.getCommits(logPath, startVersion, endVersion = versionToLoad).commits
+        case None => Seq.empty
+      }
     }
 
     var maxDeltaVersionSeen = startVersion - 1
@@ -657,7 +658,33 @@ trait SnapshotManagement { self: DeltaLog =>
     }
   }
 
-  /** Used to compute the LogSegment after a commit */
+  /**
+   * Used to compute the LogSegment after a commit, by adding the delta file with the specified
+   * version to the preCommitLogSegment (which must match the immediately preceding version).
+   */
+  protected[delta] def getLogSegmentAfterCommit(
+      committedVersion: Long,
+      newChecksumOpt: Option[VersionChecksum],
+      preCommitLogSegment: LogSegment,
+      commit: Commit,
+      commitStoreOpt: Option[CommitStore],
+      oldCheckpointProvider: CheckpointProvider): LogSegment = recordFrameProfile(
+    "Delta", "SnapshotManagement.getLogSegmentAfterCommit") {
+    // If the table doesn't have any competing updates, then go ahead and use the optimized
+    // incremental logSegment computation to fetch the LogSegment for the committedVersion.
+    // See the comment in the getLogSegmentAfterCommit overload for why we can't always safely
+    // return the committedVersion's snapshot when there is contention.
+    val useFastSnapshotConstruction = !snapshotLock.hasQueuedThreads
+    if (useFastSnapshotConstruction) {
+      SnapshotManagement.appendCommitToLogSegment(
+        preCommitLogSegment, commit.fileStatus, committedVersion)
+    } else {
+      val latestCheckpointProvider =
+        Seq(preCommitLogSegment.checkpointProvider, oldCheckpointProvider).maxBy(_.version)
+      getLogSegmentAfterCommit(commitStoreOpt, latestCheckpointProvider)
+    }
+  }
+
   protected[delta] def getLogSegmentAfterCommit(
       commitStoreOpt: Option[CommitStore],
       oldCheckpointProvider: UninitializedCheckpointProvider): LogSegment = {
@@ -958,12 +985,14 @@ trait SnapshotManagement { self: DeltaLog =>
    * Called after committing a transaction and updating the state of the table.
    *
    * @param committedVersion the version that was committed
+   * @param commit information about the commit file.
    * @param newChecksumOpt the checksum for the new commit, if available.
    *                       Usually None, since the commit would have just finished.
    * @param preCommitLogSegment the log segment of the table prior to commit
    */
   def updateAfterCommit(
       committedVersion: Long,
+      commit: Commit,
       newChecksumOpt: Option[VersionChecksum],
       preCommitLogSegment: LogSegment): Snapshot = withSnapshotLockInterruptibly {
     recordDeltaOperation(this, "delta.log.updateAfterCommit") {
@@ -972,6 +1001,10 @@ trait SnapshotManagement { self: DeltaLog =>
       // Somebody else could have already updated the snapshot while we waited for the lock
       if (committedVersion <= previousSnapshot.version) return previousSnapshot
       val segment = getLogSegmentAfterCommit(
+        committedVersion,
+        newChecksumOpt,
+        preCommitLogSegment,
+        commit,
         previousSnapshot.commitStoreOpt,
         previousSnapshot.checkpointProvider)
 
