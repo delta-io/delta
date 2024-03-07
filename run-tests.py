@@ -69,9 +69,6 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
         # when no scala version is specified, run test with only the specified scala version
         cmd += ["++ %s" % scala_version, test_cmd]  # build/sbt ... "++ 2.13.8" "project/test" ...
 
-    if is_running_spark_tests:
-        cmd += ["unidoc"]
-
     if coverage:
         cmd += ["coverageAggregate", "coverageOff"]
     cmd += ["-v"]  # show java options used
