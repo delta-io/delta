@@ -772,7 +772,7 @@
   },
   "DELTA_FAILED_TO_MERGE_FIELDS" : {
     "message" : [
-      "Failed to merge fields '<field>' and '<fieldRoot>'. <fieldChild>"
+      "Failed to merge fields '<currentField>' and '<updateField>'"
     ],
     "sqlState" : "22005"
   },
@@ -1322,6 +1322,12 @@
       "Total time spent attempting this commit: <timeSpent> ms"
     ],
     "sqlState" : "40000"
+  },
+  "DELTA_MERGE_INCOMPATIBLE_DATATYPE" : {
+    "message" : [
+      "Failed to merge incompatible data types <currentDataType> and <updateDataType>"
+    ],
+    "sqlState" : "42K09"
   },
   "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE" : {
     "message" : [

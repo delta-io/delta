@@ -973,13 +973,19 @@ trait DeltaErrorsSuiteBase
         "expression for each column"))
     }
     {
-      val e = intercept[AnalysisException] {
+      val e = intercept[DeltaAnalysisException] {
         val s1 = StructType(Seq(StructField("c0", IntegerType)))
         val s2 = StructType(Seq(StructField("c0", StringType)))
         SchemaMergingUtils.mergeSchemas(s1, s2)
       }
-      assert(e.getMessage == "Failed to merge fields 'c0' and 'c0'. Failed to merge " +
-        "incompatible data types IntegerType and StringType")
+      assert(e.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
+      assert(
+        SparkUtils
+          .exceptionString(e)
+          .contains("Failed to merge incompatible data types IntegerType and StringType")
+        && SparkUtils.exceptionString(e)
+          .contains("Failed to merge fields 'c0' and 'c0'")
+      )
     }
     {
       val e = intercept[DeltaAnalysisException] {
