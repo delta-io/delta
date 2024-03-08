@@ -16,6 +16,7 @@ jobs:
         with:
           PATTERNS: |
             **
+            .github/workflows/**
             !kernel/**
             !connectors/**
       - name: install java
@@ -56,9 +57,9 @@ jobs:
           pipenv run pip install cryptography==37.0.4
           pipenv run pip install twine==4.0.1
           pipenv run pip install wheel==0.33.4
-          pipenv run pip install setuptools==41.0.1
+          pipenv run pip install setuptools==41.1.0
           pipenv run pip install pydocstyle==3.0.0
-          pipenv run pip install pandas==1.0.5
+          pipenv run pip install pandas==1.1.3
           pipenv run pip install pyarrow==8.0.0
           pipenv run pip install numpy==1.20.3
         if: steps.git-diff.outputs.diff
