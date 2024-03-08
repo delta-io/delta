@@ -196,6 +196,14 @@ class DeltaCatalog extends DelegatingCatalogExtension
             new Path(v1.catalogTable.location),
             catalogTable = Some(v1.catalogTable),
             tableIdentifier = Some(ident.toString))
+        case dt: DeltaTableV2 if dt.catalogTable.isEmpty =>
+          val tableIdent = TableIdentifier(ident.name(), ident.namespace().lastOption)
+          if (isPathIdentifier(tableIdent)) {
+            dt
+          } else {
+            val catalogTable = getExistingTableIfExists(tableIdent)
+            dt.copy(catalogTable = catalogTable)
+          }
         case o => o
       }
     } catch {
