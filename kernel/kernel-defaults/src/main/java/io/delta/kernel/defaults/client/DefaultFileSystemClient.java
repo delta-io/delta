@@ -15,14 +15,9 @@
  */
 package io.delta.kernel.defaults.client;
 
-import java.io.ByteArrayInputStream;
-import java.io.DataInputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.Iterator;
+import java.io.*;
 
+import io.delta.storage.LogStore;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -34,41 +29,58 @@ import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.util.Utils;
 
+import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
+
 /**
- * Default implementation of {@link FileSystemClient} based on Hadoop APIs.
+ * Default implementation of {@link FileSystemClient} based on Hadoop APIs. It takes a Hadoop
+ * {@link Configuration} object to interact with the file system. The following optional
+ * configurations can be set to customize the behavior of the client:
+ * <ul>
+ *     <li>{@code io.delta.kernel.logStore.&lt;scheme&gt;.impl} - The class name of the custom
+ *     {@link LogStore} implementation to use for operations on storage systems with the
+ *     specified &lt;scheme&gt;. For example, to use a custom LogStore for S3 storage objects:
+ *     <pre>{@code
+ *     <property>
+ *       <name>io.delta.kernel.logStore.s3.impl</name>
+ *       <value>com.example.S3LogStore</value>
+ *     </property>
+ *     }</pre>
+ *     If not set, the default LogStore implementation for the scheme will be used.
+ *     </li>
+ *     <li>{@code delta.enableFastS3AListFrom} - Set to {@code true} to enable fast listing
+ *     functionality when using a {@link LogStore} created for S3 storage objects.
+ *     </li>
+ * </ul>
+ *
+ * The above list of options is not exhaustive. For a complete list of options, refer to the
+ * specific implementation of {@link FileSystem}.
  */
 public class DefaultFileSystemClient
-    implements FileSystemClient {
+        implements FileSystemClient {
     private final Configuration hadoopConf;
 
+    /**
+     * Create an instance of the default {@link FileSystemClient} implementation.
+     *
+     * @param hadoopConf Configuration to use. List of options to customize the behavior of
+     *                   the client can be found in the class documentation.
+     */
     public DefaultFileSystemClient(Configuration hadoopConf) {
         this.hadoopConf = hadoopConf;
     }
 
     @Override
     public CloseableIterator<FileStatus> listFrom(String filePath) throws IOException {
-        Iterator<org.apache.hadoop.fs.FileStatus> iter;
-
         Path path = new Path(filePath);
-        FileSystem fs = path.getFileSystem(hadoopConf);
-        if (!fs.exists(path.getParent())) {
-            throw new FileNotFoundException(
-                String.format("No such file or directory: %s", path.getParent())
-            );
-        }
-        org.apache.hadoop.fs.FileStatus[] files = fs.listStatus(path.getParent());
-        iter = Arrays.stream(files)
-            .filter(f -> f.getPath().getName().compareTo(path.getName()) >= 0)
-            .sorted(Comparator.comparing(o -> o.getPath().getName()))
-            .iterator();
+        LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
 
-        return Utils.toCloseableIterator(iter)
-            .map(hadoopFileStatus ->
-                FileStatus.of(
-                    hadoopFileStatus.getPath().toString(),
-                    hadoopFileStatus.getLen(),
-                    hadoopFileStatus.getModificationTime())
-            );
+        return Utils.toCloseableIterator(logStore.listFrom(path, hadoopConf))
+                .map(hadoopFileStatus ->
+                        FileStatus.of(
+                                hadoopFileStatus.getPath().toString(),
+                                hadoopFileStatus.getLen(),
+                                hadoopFileStatus.getModificationTime())
+                );
     }
 
     @Override
@@ -81,7 +93,7 @@ public class DefaultFileSystemClient
 
     @Override
     public CloseableIterator<ByteArrayInputStream> readFiles(
-        CloseableIterator<FileReadRequest> readRequests) {
+            CloseableIterator<FileReadRequest> readRequests) {
         return readRequests.map(elem ->
                 getStream(elem.getPath(), elem.getStartOffset(), elem.getReadLength()));
     }
@@ -97,12 +109,12 @@ public class DefaultFileSystemClient
                 return new ByteArrayInputStream(buff);
             } catch (IOException ex) {
                 throw new RuntimeException(String.format(
-                    "IOException reading from file %s at offset %s size %s",
-                    filePath, offset, size), ex);
+                        "IOException reading from file %s at offset %s size %s",
+                        filePath, offset, size), ex);
             }
         } catch (IOException ex) {
             throw new RuntimeException(String.format(
-                "Could not resolve the FileSystem for path %s", filePath), ex);
+                    "Could not resolve the FileSystem for path %s", filePath), ex);
         }
     }
 }
