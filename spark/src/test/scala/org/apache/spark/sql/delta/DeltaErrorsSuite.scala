@@ -58,6 +58,7 @@ import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
+import org.apache.spark.util.Utils.exceptionString
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
@@ -980,10 +981,9 @@ trait DeltaErrorsSuiteBase
       }
       assert(e.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
       assert(
-        SparkUtils
-          .exceptionString(e)
+          exceptionString(e)
           .contains("Failed to merge incompatible data types IntegerType and StringType")
-        && SparkUtils.exceptionString(e)
+        && exceptionString(e)
           .contains("Failed to merge fields 'c0' and 'c0'")
       )
     }
