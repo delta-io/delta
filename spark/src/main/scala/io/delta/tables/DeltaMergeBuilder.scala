@@ -105,6 +105,7 @@ import org.apache.spark.sql.internal.SQLConf
  *     .merge(
  *       source.as("source"),
  *       "target.key = source.key")
+ *     .withSchemaEvolution()
  *     .whenMatched()
  *     .updateExpr(Map(
  *       "value" -> "source.value"))
@@ -125,6 +126,7 @@ import org.apache.spark.sql.internal.SQLConf
  *     .merge(
  *       source.as("source"),
  *       "target.key = source.key")
+ *     .withSchemaEvolution()
  *     .whenMatched()
  *     .updateExpr(
  *        new HashMap<String, String>() {{
@@ -154,6 +156,8 @@ class DeltaMergeBuilder private(
   extends AnalysisHelper
   with Logging
   {
+
+  private var schemaEvolutionEnabled: Boolean = false
 
   /**
    * Build the actions to perform when the merge condition was matched.  This returns
@@ -260,6 +264,22 @@ class DeltaMergeBuilder private(
   }
 
   /**
+   * Enable schema evolution for the merge operation. This allows the schema of the target table
+   * to be automatically updated based on the schema of the source table.
+   *
+   * @since 3.2.0
+   */
+  def withSchemaEvolution(): DeltaMergeBuilder = {
+    val builder = new DeltaMergeBuilder(
+      this.targetTable,
+      this.source,
+      this.onCondition,
+      this.whenClauses)
+      builder.schemaEvolutionEnabled = true
+    builder
+  }
+
+  /**
    * Execute the merge operation based on the built matched and not matched actions.
    *
    * @since 0.3.0
@@ -337,7 +357,12 @@ class DeltaMergeBuilder private(
     // `updateAll()`, so there is no way to represent `update()` with zero column assignments
     // (possible in Scala API, but syntactically not possible in SQL). This issue is tracked
     // by https://issues.apache.org/jira/browse/SPARK-34962.
-    val merge = DeltaMergeInto(targetPlan, sourcePlan, onCondition.expr, whenClauses)
+    val merge = DeltaMergeInto(
+      targetPlan,
+      sourcePlan,
+      onCondition.expr,
+      whenClauses,
+      withSchemaEvolution = schemaEvolutionEnabled)
     val finalMerge = if (duplicateResolvedRefs.nonEmpty) {
       // If any expression contain duplicate, pre-resolved references, we can't simply
       // replace the references in the same way as the target because we don't know

@@ -44,7 +44,7 @@ object ResolveDeltaMergeInto {
       matchedClauses,
       notMatchedClauses,
       notMatchedBySourceClauses,
-      _,
+      withSchemaEvolution,
       _) = merge
 
     /**
@@ -82,7 +82,7 @@ object ResolveDeltaMergeInto {
       }
     }
 
-    val canAutoMigrate = conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
+    val canAutoMigrate = withSchemaEvolution || conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
     /**
      * Resolves a clause using the given plans (used for resolving the action exprs) and
      * returns the resolved clause.
@@ -295,7 +295,7 @@ object ResolveDeltaMergeInto {
       resolvedMatchedClauses,
       resolvedNotMatchedClauses,
       resolvedNotMatchedBySourceClauses,
-      migrateSchema = canAutoMigrate,
+      withSchemaEvolution = canAutoMigrate,
       finalSchema = Some(finalSchema))
 
     // Its possible that pre-resolved expressions (e.g. `sourceDF("key") = targetDF("key")`) have

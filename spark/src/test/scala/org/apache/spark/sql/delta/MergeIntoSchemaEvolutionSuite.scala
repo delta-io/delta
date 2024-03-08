@@ -62,54 +62,49 @@ trait MergeIntoSchemaEvolutionMixin {
       expectErrorWithoutEvolutionContains: String = null,
       confs: Seq[(String, String)] = Seq(),
       partitionCols: Seq[String] = Seq.empty): Unit = {
-    test(s"schema evolution - $name - with evolution disabled") {
-      withSQLConf(confs: _*) {
-        append(targetData, partitionCols)
-        withTempView("source") {
-          sourceData.createOrReplaceTempView("source")
 
-          if (expectErrorWithoutEvolutionContains != null) {
-            val ex = intercept[AnalysisException] {
-              executeMerge(s"delta.`$tempPath` t", s"source s", cond,
-                clauses.toSeq: _*)
-            }
-            errorContains(ex.getMessage, expectErrorWithoutEvolutionContains)
-          } else {
-            executeMerge(s"delta.`$tempPath` t", s"source s", cond,
-              clauses.toSeq: _*)
-            checkAnswer(
-              spark.read.format("delta").load(tempPath),
-              expectedWithoutEvolution.collect())
-            assert(
-              spark.read.format("delta").load(tempPath).schema.asNullable ===
-                expectedWithoutEvolution.schema.asNullable)
+    def executeMergeAndAssert(
+        df: DataFrame,
+        error: String,
+        // Ideally we would like to use `MergeClause*` instead of `Seq[MergeClause]` but it's not
+        // allowed in Scala 2.13. The error message is:
+        //    Repeated parameters are only allowed in method signatures. Use `Seq` instead.
+        executeMergeFunction: (String, String, String, Seq[MergeClause]) => Unit): Unit = {
+      append(targetData, partitionCols)
+      withTempView("source") {
+        sourceData.createOrReplaceTempView("source")
+
+        if (error != null) {
+          val ex = intercept[AnalysisException] {
+            executeMergeFunction(s"delta.`$tempPath` t", s"source s", cond, clauses.toSeq)
           }
+          errorContains(ex.getMessage, error)
+        } else {
+          executeMergeFunction(s"delta.`$tempPath` t", s"source s", cond, clauses.toSeq)
+          checkAnswer(
+            spark.read.format("delta").load(tempPath),
+            df.collect())
+          assert(spark.read.format("delta").load(tempPath).schema.asNullable ===
+            df.schema.asNullable)
         }
       }
     }
 
-    test(s"schema evolution - $name") {
-      withSQLConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
-        append(targetData, partitionCols)
-        withTempView("source") {
-          sourceData.createOrReplaceTempView("source")
+    test(s"schema evolution - $name - with evolution disabled") {
+      withSQLConf(confs: _*) {
+        executeMergeAndAssert(
+          expectedWithoutEvolution,
+          expectErrorWithoutEvolutionContains,
+          (tgt, src, cond, clauses) => executeMerge(tgt, src, cond, clauses: _*))
+      }
+    }
 
-          if (expectErrorContains != null) {
-            val ex = intercept[AnalysisException] {
-              executeMerge(s"delta.`$tempPath` t", s"source s", cond,
-                clauses.toSeq: _*)
-            }
-            errorContains(ex.getMessage, expectErrorContains)
-          } else {
-            executeMerge(s"delta.`$tempPath` t", s"source s", cond,
-              clauses.toSeq: _*)
-            checkAnswer(
-              spark.read.format("delta").load(tempPath),
-              expected.collect())
-            assert(spark.read.format("delta").load(tempPath).schema.asNullable ===
-              expected.schema.asNullable)
-          }
-        }
+    test(s"schema evolution - $name - on via DeltaSQLConf") {
+      withSQLConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
+        executeMergeAndAssert(
+          expected,
+          expectErrorContains,
+          (tgt, src, cond, clauses) => executeMerge(tgt, src, cond, clauses: _*))
       }
     }
   }
