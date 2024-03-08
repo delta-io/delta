@@ -395,12 +395,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
 trait VacuumCommandImpl extends DeltaCommand {
 
-  private val supportedFsForLogging = Seq(
-    "wasbs", "wasbss", "abfs", "abfss", "adl", "gs", "file", "hdfs"
-  )
-
   /**
    * Returns whether we should record vacuum metrics in the delta log.
+   * Logging is enabled by default.
    */
   private def shouldLogVacuum(
       spark: SparkSession,
@@ -412,19 +409,7 @@ trait VacuumCommandImpl extends DeltaCommand {
     if (logVacuumConf.nonEmpty) {
       return logVacuumConf.get
     }
-
-    val logStore = deltaLog.store
-
-    try {
-      val rawResolvedUri: URI = logStore.resolvePathOnPhysicalStorage(path, hadoopConf).toUri
-      val scheme = rawResolvedUri.getScheme
-      supportedFsForLogging.contains(scheme)
-    } catch {
-      case _: UnsupportedOperationException =>
-        logWarning("Vacuum event logging" +
-          " not enabled on this file system because we cannot detect your cloud storage type.")
-        false
-    }
+    true
   }
 
   /**
