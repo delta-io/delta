@@ -63,7 +63,7 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
     testTableName = UUID.randomUUID().toString.replace("-", "_")
     testTablePath = s"$TMP_DIR/$testTableName"
   }
-  
+
   override def afterEach(): Unit = {
     super.afterEach()
     _sparkSession.sql(s"DROP TABLE IF EXISTS $testTableName")
