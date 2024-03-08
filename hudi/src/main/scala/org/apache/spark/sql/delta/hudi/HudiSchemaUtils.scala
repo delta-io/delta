@@ -44,7 +44,7 @@ object HudiSchemaUtils extends DeltaLogging {
         finalizeSchema(
           Schema.createRecord(elem.typeName, null, null, false, avroFields),
           isNullable)
-
+      // TODO: Add List and Map support: https://github.com/delta-io/delta/issues/2738
       case ArrayType(elementType, containsNull) =>
         throw new UnsupportedOperationException("UniForm doesn't support Array columns")
 

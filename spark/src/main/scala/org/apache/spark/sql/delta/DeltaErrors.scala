@@ -3055,6 +3055,16 @@ trait DeltaErrorsBase
     )
   }
 
+  def uniFormHudiSchemaCompat(unsupportedType: DataType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+      messageParameters = Array(
+        UniversalFormat.HUDI_FORMAT,
+        s"DataType: $unsupportedType is not currently supported."
+      )
+    )
+  }
+
   def icebergCompatVersionMutualExclusive(version: Int): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.VERSION_MUTUAL_EXCLUSIVE",

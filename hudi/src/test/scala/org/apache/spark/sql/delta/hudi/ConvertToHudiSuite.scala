@@ -147,6 +147,20 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
     }
   }
 
+  for (invalidFieldDef <- Seq("col3 ARRAY<STRING>", "col3 MAP<STRING, STRING>")) {
+    test(s"Table Throws Exception for Unsupported Type ($invalidFieldDef)") {
+      intercept[DeltaUnsupportedOperationException] {
+        _sparkSession.sql(
+          s"""CREATE TABLE `$testTableName` (col1 INT, col2 STRING, $invalidFieldDef) USING DELTA
+             |LOCATION '$testTablePath'
+             |TBLPROPERTIES (
+             |  'delta.universalFormat.enabledFormats' = 'hudi',
+             |  'delta.enableDeletionVectors' = false
+             |)""".stripMargin)
+      }
+    }
+  }
+
   test("validate Hudi timeline archival and cleaning") {
     val testOp = Truncate()
     withDefaultTablePropsInSQLConf(true, {

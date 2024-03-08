@@ -17,11 +17,11 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
-import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
-
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.types.{ArrayType, NullType, MapType}
 
 /**
  * Utils to validate the Universal Format (UniForm) Delta feature (NOT a table feature).
@@ -80,7 +80,7 @@ object UniversalFormat extends DeltaLogging {
       newestMetadata: Metadata,
       isCreatingOrReorgTable: Boolean,
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
-    enforceHudiDependencies(newestMetadata)
+    enforceHudiDependencies(newestMetadata, snapshot)
     enforceIcebergInvariantsAndDependencies(
       snapshot, newestProtocol, newestMetadata, isCreatingOrReorgTable, actions)
   }
@@ -89,12 +89,21 @@ object UniversalFormat extends DeltaLogging {
    * If you are enabling Hudi, this method ensures that Deletion Vectors are not enabled. New
    * conditions may be added here in the future to make sure the source is compatible with Hudi.
    * @param newestMetadata the newest metadata
+   * @param snapshot current snapshot
    * @return N/A, throws exception if condition is not met
    */
-  def enforceHudiDependencies(newestMetadata: Metadata): Any = {
+  def enforceHudiDependencies(newestMetadata: Metadata, snapshot: Snapshot): Any = {
     if (hudiEnabled(newestMetadata)) {
       if (DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(newestMetadata)) {
         throw DeltaErrors.uniFormHudiDeleteVectorCompat()
+      }
+      // TODO: remove once map/list support is added https://github.com/delta-io/delta/issues/2738
+      SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
+        f.isInstanceOf[MapType] || f.isInstanceOf[ArrayType] || f.isInstanceOf[NullType]
+      } match {
+        case Some(unsupportedType) =>
+          throw DeltaErrors.uniFormHudiSchemaCompat(unsupportedType)
+        case _ =>
       }
     }
   }
