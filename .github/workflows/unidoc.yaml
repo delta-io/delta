@@ -1,5 +1,5 @@
   name: "Unidoc generation"
-  on: [pull_request]
+  on: [push, pull_request]
   jobs:
     build:
       name: "Generate unidoc"
