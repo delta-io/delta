@@ -180,9 +180,10 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
         RetryHandling.ExhaustedRetries
       }
 
-    // Record if we ran out of executor disk space.
+    // Record if we ran out of executor disk space when we materialized the source.
     case s: SparkException
-      if s.getMessage.contains("java.io.IOException: No space left on device") =>
+      if materializedSourceRDD.nonEmpty &&
+        s.getMessage.contains("java.io.IOException: No space left on device") =>
       // Record situations where we ran out of disk space, possibly because of the space took
       // by the materialized RDD.
       recordDeltaEvent(
