@@ -44,9 +44,9 @@ import scala.collection.JavaConverters
 class ConvertToHudiSuite extends QueryTest with Eventually {
 
   private var _sparkSession: SparkSession = null
-  private val TMP_DIR = Utils.createTempDir().getCanonicalPath
-  private val testTableName: String = UUID.randomUUID().toString.replace("-", "_")
-  private val testTablePath: String = s"$TMP_DIR/$testTableName"
+  private var TMP_DIR: String = ""
+  private var testTableName: String = ""
+  private var testTablePath: String = ""
 
   override def spark: SparkSession = _sparkSession
 
@@ -57,6 +57,13 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey, "true")
   }
 
+  override def beforeEach(): Unit = {
+    super.beforeEach()
+    TMP_DIR = Utils.createTempDir().getCanonicalPath
+    testTableName = UUID.randomUUID().toString.replace("-", "_")
+    testTablePath = s"$TMP_DIR/$testTableName"
+  }
+  
   override def afterEach(): Unit = {
     super.afterEach()
     _sparkSession.sql(s"DROP TABLE IF EXISTS $testTableName")
