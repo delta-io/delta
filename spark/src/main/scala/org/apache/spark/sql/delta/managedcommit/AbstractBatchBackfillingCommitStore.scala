@@ -112,7 +112,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path): Unit = {
-    getCommits(logPath, startVersion = 0).foreach { commit =>
+    getCommits(logPath, startVersion = 0).commits.foreach { commit =>
       backfill(logStore, hadoopConf, logPath, commit.version, commit.fileStatus)
     }
   }

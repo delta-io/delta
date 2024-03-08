@@ -44,7 +44,7 @@ class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSpark
     override def getCommits(
       logPath: Path,
       startVersion: Long,
-      endVersion: Option[Long] = None): Seq[Commit] = Seq.empty
+      endVersion: Option[Long] = None): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
   }
 
   class TestCommitStore1 extends TestCommitStoreBase

@@ -35,7 +35,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
-import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitResponse, CommitStore, UpdatedActions}
+import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitResponse, CommitStore, GetCommitsResponse, UpdatedActions}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -1911,9 +1911,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       logPath.getFileSystem(hadoopConf).getFileStatus(commitFile)
     }
 
-
     override def getCommits(
-      tablePath: Path, startVersion: Long, endVersion: Option[Long]): Seq[Commit] = Seq.empty
+        logPath: Path, startVersion: Long, endVersion: Option[Long]): GetCommitsResponse =
+      GetCommitsResponse(Seq.empty, -1)
   }
 
   /**
