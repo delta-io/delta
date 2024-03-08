@@ -46,15 +46,15 @@ object HudiSchemaUtils extends DeltaLogging {
           isNullable)
       // TODO: Add List and Map support: https://github.com/delta-io/delta/issues/2738
       case ArrayType(elementType, containsNull) =>
-        throw new UnsupportedOperationException("UniForm doesn't support Array columns")
+        throw new UnsupportedOperationException("UniForm Hudi doesn't support Array columns")
 
       case MapType(keyType, valueType, valueContainsNull) =>
-        throw new UnsupportedOperationException("UniForm doesn't support Map columns")
+        throw new UnsupportedOperationException("UniForm Hudi doesn't support Map columns")
 
       case atomicType: AtomicType => convertAtomic(atomicType, isNullable)
 
       case other =>
-        throw new UnsupportedOperationException(s"Cannot convert Delta type $other to Iceberg")
+        throw new UnsupportedOperationException(s"Cannot convert Delta type $other to Hudi")
     }
 
     transform(deltaSchema, false)
