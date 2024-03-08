@@ -487,7 +487,7 @@ lazy val hudi = (project in file("hudi"))
     releaseSettings,
     libraryDependencies ++= Seq(
       "org.apache.hudi" % "hudi-java-client" % "0.14.0" % "compile" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
-      "org.apache.spark" % "spark-avro_2.12" % sparkVersion % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
+      "org.apache.spark" %% "spark-avro" % sparkVersion % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
       "org.apache.parquet" % "parquet-avro" % "1.12.3" % "provided"
     ),
   )
