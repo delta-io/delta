@@ -86,8 +86,8 @@ public final class DeltaErrors {
         return new RuntimeException(message);
     }
 
-     // TODO: Change the exception to proper type as part of the exception framework
-     // (see delta-io/delta#2231)
+    // TODO: Change the exception to proper type as part of the exception framework
+    // (see delta-io/delta#2231)
     /**
      * Exception thrown when the expression evaluator doesn't support the given expression.
      * @param expression
