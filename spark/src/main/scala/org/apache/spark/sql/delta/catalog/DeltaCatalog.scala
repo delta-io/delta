@@ -47,6 +47,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType}
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
@@ -197,7 +198,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
             catalogTable = Some(v1.catalogTable),
             tableIdentifier = Some(ident.toString))
         case dt: DeltaTableV2 if dt.catalogTable.isEmpty =>
-          val tableIdent = TableIdentifier(ident.name(), ident.namespace().lastOption)
+          val tableIdent = ident.asTableIdentifier
           if (isPathIdentifier(tableIdent)) {
             dt
           } else {
