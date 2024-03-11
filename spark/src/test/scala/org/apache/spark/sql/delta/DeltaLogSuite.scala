@@ -480,7 +480,7 @@ class DeltaLogSuite extends QueryTest
 
       // Store these for later usage
       val actions = deltaLog.snapshot.stateDS.collect()
-      val commitTimestamp = deltaLog.snapshot.logSegment.lastCommitTimestamp
+      val commitTimestamp = deltaLog.snapshot.logSegment.lastCommitFileModificationTimestamp
 
       checkAnswer(
         spark.read.format("delta").load(path),
