@@ -805,7 +805,7 @@ class DeltaVacuumSuite
   // TODO: There is somewhere in the code calling CanonicalPathFunction with an unescaped path
   //  string, which needs investigation. Do not test special characters until that is fixed.
   testQuietly("correctness test") {
-    withEnvironment("spark") { (tempDir, clock) =>
+    withEnvironment(prefix = "spark") { (tempDir, clock) =>
 
       val reservoirDir = new File(tempDir.getAbsolutePath, "reservoir")
       assert(reservoirDir.mkdirs())
