@@ -57,12 +57,10 @@ trait DeltaVacuumSuiteBase extends QueryTest
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews {
 
-  protected def withEnvironment(f: (File, ManualClock) => Unit): Unit = {
-    withTempDir { file =>
-      val clock = new ManualClock()
-      withSQLConf("spark.databricks.delta.retentionDurationCheck.enabled" -> "false") {
-        f(file, clock)
-      }
+  private def executeWithEnvironment(file: File)(f: (File, ManualClock) => Unit): Unit = {
+    val clock = new ManualClock()
+    withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+      f(file, clock)
     }
   }
 
@@ -74,6 +72,12 @@ trait DeltaVacuumSuiteBase extends QueryTest
       }
     }
   }
+
+  protected def withEnvironment(f: (File, ManualClock) => Unit): Unit =
+    withTempDir(file => executeWithEnvironment(file)(f))
+
+  protected def withEnvironment(prefix: String)(f: (File, ManualClock) => Unit): Unit =
+    withTempDir(prefix)(file => executeWithEnvironment(file)(f))
 
   protected def defaultTombstoneInterval: Long = {
     DeltaConfigs.getMilliSeconds(

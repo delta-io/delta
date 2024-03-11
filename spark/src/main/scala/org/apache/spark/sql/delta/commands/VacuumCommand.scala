@@ -123,8 +123,10 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
       actions.flatMap {
         _.unwrap match {
+          // Existing tables may not store canonicalized paths, so we check both the canonicalized
+          // and non-canonicalized paths to ensure we don't accidentally delete wrong files.
           case fa: FileAction if checkAbsolutePathOnly &&
-            !fa.path.contains(canonicalizedBasePath) => Nil
+            !fa.path.contains(basePath) && !fa.path.contains(canonicalizedBasePath) => Nil
           case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp => Nil
           case fa: FileAction =>
             getValidRelativePathsAndSubdirs(

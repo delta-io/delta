@@ -102,12 +102,12 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
 
   /** Create a temp path which contains special characters. */
   override def withTempPath(f: File => Unit): Unit = {
-    super.withTempPath("s p a r k %2a")(f)
+    super.withTempPath(prefix = "s p a r k %2a")(f)
   }
 
   /** Create a temp path which contains special characters. */
   override protected def withTempDir(f: File => Unit): Unit = {
-    super.withTempDir("s p a r k %2a")(f)
+    super.withTempDir(prefix = "s p a r k %2a")(f)
   }
 
   /** Helper that verifies whether a defined number of DVs exist */
