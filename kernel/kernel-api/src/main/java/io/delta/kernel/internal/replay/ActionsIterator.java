@@ -151,9 +151,8 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
     }
 
     /**
-     * Get the next file from `filesList` (.json or .checkpoint.parquet), contextualize it
-     * (allow the connector to split it), and then read it + inject the `isFromCheckpoint`
-     * information.
+     * Get the next file from `filesList` (.json or .checkpoint.parquet)
+     * read it + inject the `isFromCheckpoint` information.
      * <p>
      * Requires that `filesList.isEmpty` is false.
      */
@@ -165,7 +164,9 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
                 // We can not read multiple JSON files in parallel (like the checkpoint files),
                 // because each one has a different version, and we need to associate the version
-                // with actions read from the JSON file for further optimizations later on.
+                // with actions read from the JSON file for further optimizations later on (faster
+                // metadata & protocol loading in subsequent runs by remembering the version of
+                // the last version where the metadata and protocol are found).
 
                 final CloseableIterator<ColumnarBatch> dataIter =
                     tableClient.getJsonHandler().readJsonFiles(
@@ -241,14 +242,13 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
         // Add the already retrieved checkpoint file to the list.
         checkpointFiles.add(checkpointFile);
 
-        while (filesList.peek() != null &&
-                filesList.peek().getPath().endsWith(".parquet") &&
-                checkpointVersion(filesList.peek().getPath()) == version) {
+        FileStatus peek = filesList.peek();
+        while (peek != null &&
+                peek.getPath().endsWith(".parquet") &&
+                checkpointVersion(peek.getPath()) == version) {
             checkpointFiles.add(filesList.pop());
+            peek = filesList.peek();
         }
-
-        // Remove the files from the list
-        filesList.removeAll(checkpointFiles);
 
         return toCloseableIterator(checkpointFiles.iterator());
     }
