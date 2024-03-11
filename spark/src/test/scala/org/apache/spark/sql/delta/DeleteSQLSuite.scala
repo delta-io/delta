@@ -103,7 +103,7 @@ class DeleteSQLSuite extends DeleteSuiteBase
     }
   }
 
-  test("DELETE with huge predicate defualt Case - with default limit") {
+  test("DELETE with huge predicate - with default limit") {
     withTempDir { dirName =>
       val path = dirName.getAbsolutePath
       spark.range(0, 10, step = 1).withColumn("id2", col("id") + 10
