@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaOperationMetrics.MetricsTransformer
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 
@@ -135,6 +134,14 @@ object DeltaOperations {
     }
     override def changesData: Boolean = true
   }
+
+  case class RemoveColumnMapping(
+      override val userMetadata: Option[String] = None) extends Operation("REMOVE COLUMN MAPPING") {
+    override def parameters: Map[String, Any] = Map()
+
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.REMOVE_COLUMN_MAPPING
+  }
+
   /** Recorded during streaming inserts. */
   case class StreamingUpdate(
       outputMode: OutputMode,
@@ -610,6 +617,14 @@ private[delta] object DeltaOperationMetrics {
     "numFiles", // number of files written
     "numOutputBytes", // size in bytes of the written contents
     "numOutputRows" // number of rows written
+  )
+
+  val REMOVE_COLUMN_MAPPING: Set[String] = Set(
+    "numRewrittenFiles",
+    "numOutputBytes",
+    "numRemovedBytes",
+    "numCopiedRows",
+    "numDeletionVectorsRemoved"
   )
 
   val STREAMING_UPDATE = Set(
