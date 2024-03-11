@@ -113,15 +113,15 @@ public class BenchmarkParallelCheckpointReading {
     @BenchmarkMode(Mode.AverageTime)
     public void benchmark(BenchmarkData benchmarkData, Blackhole blackhole) throws Exception {
         TableClient tableClient = createTableClient(benchmarkData.parallelReaderCount);
-        Table table = Table.forPath(
-                createTableClient(benchmarkData.parallelReaderCount),
-                testTablePath);
+        Table table = Table.forPath(tableClient, testTablePath);
 
         Snapshot snapshot = table.getLatestSnapshot(tableClient);
         ScanBuilder scanBuilder = snapshot.getScanBuilder(tableClient);
         Scan scan = scanBuilder.build();
 
+        // Scan state is not used, but get it so that we simulate the real use case.
         Row row = scan.getScanState(tableClient);
+        blackhole.consume(row); // To avoid dead code elimination by the JIT compiler
         long fileSize = 0;
         try (CloseableIterator<FilteredColumnarBatch> batchIter = scan.getScanFiles(tableClient)) {
             while (batchIter.hasNext()) {

@@ -26,9 +26,11 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Utils;
-import static io.delta.kernel.internal.util.FileNames.checkpointVersion;
+import static io.delta.kernel.internal.fs.Path.getName;
+import static io.delta.kernel.internal.util.FileNames.*;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
@@ -158,9 +160,10 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
      */
     private CloseableIterator<ActionWrapper> getNextActionsIter() {
         final FileStatus nextFile = filesList.pop();
+        final Path nextFilePath = new Path(nextFile.getPath());
         try {
-            if (nextFile.getPath().endsWith(".json")) {
-                final long fileVersion = FileNames.deltaVersion(nextFile.getPath());
+            if (isCommitFile(nextFilePath.getName())) {
+                final long fileVersion = FileNames.deltaVersion(nextFilePath);
 
                 // We can not read multiple JSON files in parallel (like the checkpoint files),
                 // because each one has a different version, and we need to associate the version
@@ -175,8 +178,8 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                         Optional.empty());
 
                 return combine(dataIter, false /* isFromCheckpoint */, fileVersion);
-            } else if (nextFile.getPath().endsWith(".parquet")) {
-                final long fileVersion = checkpointVersion(nextFile.getPath());
+            } else if (isCheckpointFile(nextFilePath.getName())) {
+                final long fileVersion = checkpointVersion(nextFilePath);
 
                 // Try to retrieve the remaining checkpoint files (if there are any) and issue
                 // read request for all in one go, so that the {@link ParquetHandler} can do
@@ -236,7 +239,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
             FileStatus checkpointFile,
             long version) {
 
-        // Filter out all the files that are not part of the same checkpoint
+        // Find the contiguous parquet files that are part of the same checkpoint
         final List<FileStatus> checkpointFiles = new ArrayList<>();
 
         // Add the already retrieved checkpoint file to the list.
@@ -244,7 +247,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
         FileStatus peek = filesList.peek();
         while (peek != null &&
-                peek.getPath().endsWith(".parquet") &&
+                isCheckpointFile(getName(peek.getPath())) &&
                 checkpointVersion(peek.getPath()) == version) {
             checkpointFiles.add(filesList.pop());
             peek = filesList.peek();
