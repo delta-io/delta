@@ -52,7 +52,7 @@ case class DeletionVectorDescriptor(
      *                            The deletion vector is stored inline in the log.
      * - `storageType="p"` format: `<absolute path>`
      *                             The DV is stored in a file with an absolute path given by this
-     *                             url.
+     *                             url. Special characters in this path must be escaped.
      */
     pathOrInlineDv: String,
     /**
