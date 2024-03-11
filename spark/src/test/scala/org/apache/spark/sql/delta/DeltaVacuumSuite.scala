@@ -64,15 +64,6 @@ trait DeltaVacuumSuiteBase extends QueryTest
     }
   }
 
-  protected def withEnvironment(prefix: String)(f: (File, ManualClock) => Unit): Unit = {
-    withTempDir(prefix) { file =>
-      val clock = new ManualClock()
-      withSQLConf("spark.databricks.delta.retentionDurationCheck.enabled" -> "false") {
-        f(file, clock)
-      }
-    }
-  }
-
   protected def withEnvironment(f: (File, ManualClock) => Unit): Unit =
     withTempDir(file => executeWithEnvironment(file)(f))
 
