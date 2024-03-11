@@ -157,7 +157,7 @@ trait DeltaCommand extends DeltaLogging {
    *
    * @param basePath The path of the table. Must not be escaped.
    * @param escapedFilePath The path to a file that can be either absolute or relative. All special
-   *                        chars in this path must be already escaped.
+   *                        chars in this path must be already escaped by URI standards.
    * @param nameToAddFileMap Map generated through `generateCandidateFileMap()`.
    */
   def getTouchedFile(

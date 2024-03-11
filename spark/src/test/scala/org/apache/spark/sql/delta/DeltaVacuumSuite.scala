@@ -812,7 +812,7 @@ class DeltaVacuumSuite
   }
 
   // TODO: There is somewhere in the code calling CanonicalPathFunction with an unescaped path
-  //  string. To be fixed.
+  //  string, which needs investigation. Do not test special characters until that is fixed.
   testQuietly("correctness test") {
     withEnvironment("spark") { (tempDir, clock) =>
 
