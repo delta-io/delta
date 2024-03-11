@@ -44,11 +44,30 @@ import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
 /**
  * Benchmark to measure the performance of reading multi-part checkpoint files, using a custom
  * ParquetHandler that reads the files in parallel. To run this benchmark (from delta repo root):
- * 1) Generate the test table by following the instructions at `testTablePath` member variable.
- * $ build/sbt
- * sbt:delta> project kernelDefaults
- * sbt:delta> set fork in run := true
- * sbt:delta> test:runMain io.delta.kernel.defaults.benchmarks.BenchmarkParallelCheckpointReading
+ * <ul>
+ *     <li>Generate the test table by following the instructions at `testTablePath` member variable.
+ *     </li>
+ *     <li>
+ *         <pre>{@code
+ *          build/sbt sbt:delta> project kernelDefaults
+ *          sbt:delta> set fork in run := true sbt:delta>
+ *          sbt:delta> test:runMain \
+ *            io.delta.kernel.defaults.benchmarks.BenchmarkParallelCheckpointReading.
+ *         }</pre>
+ *     </li>
+ * </ul>
+ * <p>
+ * Sample benchmarks on a table with checkpoint (13) parts containing total of 1.3mil actions on
+ * Macbook Pro M2 Max with table stored locally.
+ * <pre>{@code
+ * Benchmark  (parallelReaderCount)  Mode  Cnt Score Error  Units
+ * benchmark                      0  avgt    5  1565.520 ±  20.551  ms/op
+ * benchmark                      1  avgt    5  1064.850 ±  19.699  ms/op
+ * benchmark                      2  avgt    5   785.918 ± 176.285  ms/op
+ * benchmark                      4  avgt    5   729.487 ±  51.470  ms/op
+ * benchmark                     10  avgt    5   693.757 ±  41.252  ms/op
+ * benchmark                     20  avgt    5   702.656 ±  19.145  ms/op
+ * }</pre>
  */
 @State(Scope.Benchmark)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
@@ -58,27 +77,27 @@ public class BenchmarkParallelCheckpointReading {
 
     /**
      * Following are the steps to generate a simple large table with multi-part checkpoint files
-     * <p>
-     * bin/spark-shell --packages io.delta:delta-spark_2.12:3.1.0 \ --conf
-     * "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" \ --conf
-     * "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog" \ --conf
-     * "spark.databricks.delta.checkpoint.partSize=100000"
-     * <p>
+     * <pre>{@code
+     * bin/spark-shell --packages io.delta:delta-spark_2.12:3.1.0 \
+     *   --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" \
+     *   --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog" \
+     *   --conf "spark.databricks.delta.checkpoint.partSize=100000"
+     *
      * # Within the Spark shell, run the following commands
-     * <p>
-     * spark.range(0, 100000) .withColumn("pCol", 'id % 100000) .repartition(10)
-     * .write.format("delta") .partitionBy("pCol") .mode("append")
-     * .save("~/test-tables/large-table")
-     * <p>
+     * scala> spark.range(0, 100000) .withColumn("pCol", 'id % 100000) .repartition(10)
+     *   .write.format("delta") .partitionBy("pCol") .mode("append")
+     *   .save("~/test-tables/large-table")
+     *
      * # Repeat the above steps for each of the next ranges # 100000 to 200000, 200000 to 300000 etc
      * until enough log entries are reached.
-     * <p>
-     * # Then create a checkpoint import org.apache.spark.sql.delta.DeltaLog
-     * <p>
+     *
+     * # Then create a checkpoint
      * # This step create a multi-part checkpoint with each checkpoint containing 100K records.
-     * DeltaLog.forTable(spark, "~/test-tables/large-table").checkpoint()
+     * scala> import org.apache.spark.sql.delta.DeltaLog
+     * scala> DeltaLog.forTable(spark, "~/test-tables/large-table").checkpoint()
+     * }</pre>
      */
-    private static final String testTablePath = "<TODO> fill the path here";
+    public static final String testTablePath = "<TODO> fill the path here";
 
     @State(Scope.Benchmark)
     public static class BenchmarkData {
