@@ -398,7 +398,7 @@ trait FileReadMetrics { self: Object =>
     }
   }
 
-  def getVersionsRead: Seq[Long] = versionsRead
+  def getVersionsRead: Seq[Long] = versionsRead.toSeq
 
   def getLastCheckpointMetadataReadCalls: Int = lastCheckpointMetadataReadCalls
 

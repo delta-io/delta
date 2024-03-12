@@ -316,12 +316,12 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       Seq(TestRow(2), TestRow(2), TestRow(2)),
       TestRow("2", "2", TestRow(2, 2L)),
       "2"
-    ) :: Nil)
+    ) :: Nil).toSeq
 
     checkTable(
       path = path,
       expectedAnswer = expectedAnswer,
-      readCols = readCols
+      readCols = readCols.toSeq
     )
   }
 

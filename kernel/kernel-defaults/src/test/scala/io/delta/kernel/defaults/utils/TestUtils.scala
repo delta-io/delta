@@ -24,6 +24,7 @@ import scala.collection.mutable.ArrayBuffer
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, MapValue, Row}
+import io.delta.kernel.defaults.VariantShims
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.engine.Engine
@@ -71,7 +72,7 @@ trait TestUtils extends Assertions with SQLHelper {
         while (iter.hasNext) {
           result.append(iter.next())
         }
-        result
+        result.toSeq
       } finally {
         iter.close()
       }
@@ -173,7 +174,7 @@ trait TestUtils extends Assertions with SQLHelper {
         // for all primitive types
         Seq(new Column((basePath :+ field.getName).asJava.toArray(new Array[String](0))));
       case _ => Seq.empty
-    }
+    }.toSeq
   }
 
   def collectScanFileRows(scan: Scan, engine: Engine = defaultEngine): Seq[Row] = {
@@ -251,7 +252,7 @@ trait TestUtils extends Assertions with SQLHelper {
         }
       }
     }
-    result
+    result.toSeq
   }
 
   def readTableUsingKernel(
@@ -700,7 +701,8 @@ trait TestUtils extends Assertions with SQLHelper {
             toSparkType(field.getDataType),
             field.isNullable
           )
-        })
+        }.toSeq)
+      case VariantType.VARIANT => VariantShims.getSparkVariantType()
     }
   }
 

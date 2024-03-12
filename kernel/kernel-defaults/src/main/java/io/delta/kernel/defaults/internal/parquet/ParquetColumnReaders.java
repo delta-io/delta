@@ -70,6 +70,13 @@ class ParquetColumnReaders {
     } else if (typeFromClient instanceof TimestampNTZType) {
       return createTimestampConverter(
           initialBatchSize, typeFromFile, TimestampNTZType.TIMESTAMP_NTZ);
+    } else if (typeFromClient instanceof VariantType) {
+      return new RowColumnReader(
+          initialBatchSize,
+          new StructType()
+              .add("value", BinaryType.BINARY, false)
+              .add("metadata", BinaryType.BINARY, false),
+          (GroupType) typeFromFile);
     }
 
     throw new UnsupportedOperationException(typeFromClient + " is not supported");

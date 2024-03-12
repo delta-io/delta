@@ -21,6 +21,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.data.VariantValue;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.util.Map;
@@ -132,6 +133,12 @@ public class GenericRow implements Row {
 
   private Object getValue(int ordinal) {
     return ordinalToValue.get(ordinal);
+  }
+
+  @Override
+  public VariantValue getVariant(int ordinal) {
+    throwIfUnsafeAccess(ordinal, VariantType.class, "variant");
+    return (VariantValue) getValue(ordinal);
   }
 
   private void throwIfUnsafeAccess(

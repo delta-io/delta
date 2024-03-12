@@ -16,9 +16,11 @@
 package io.delta.kernel.defaults.utils
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.{Seq => MutableSeq}
 import org.apache.spark.sql.{types => sparktypes}
 import org.apache.spark.sql.{Row => SparkRow}
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
+import io.delta.kernel.defaults.VariantShims
 import io.delta.kernel.types._
 
 import java.sql.Timestamp
@@ -44,7 +46,7 @@ import java.time.{Instant, LocalDate, LocalDateTime, ZoneOffset}
  * - ArrayType --> Seq[Any]
  * - MapType --> Map[Any, Any]
  * - StructType --> TestRow
- *
+ * - VariantType --> VariantVal
  * For complex types array and map, the inner elements types should align with this mapping.
  */
 class TestRow(val values: Array[Any]) {
@@ -108,9 +110,10 @@ object TestRow {
         case _: ArrayType => arrayValueToScalaSeq(row.getArray(i))
         case _: MapType => mapValueToScalaMap(row.getMap(i))
         case _: StructType => TestRow(row.getStruct(i))
+        case _: VariantType => row.getVariant(i)
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
-    })
+    }.toSeq)
   }
 
   def apply(row: SparkRow): TestRow = {
@@ -133,13 +136,14 @@ object TestRow {
         case _: sparktypes.BinaryType => obj.asInstanceOf[Array[Byte]]
         case _: sparktypes.DecimalType => obj.asInstanceOf[java.math.BigDecimal]
         case arrayType: sparktypes.ArrayType =>
-          obj.asInstanceOf[Seq[Any]]
+          obj.asInstanceOf[MutableSeq[Any]]
             .map(decodeCellValue(arrayType.elementType, _))
         case mapType: sparktypes.MapType => obj.asInstanceOf[Map[Any, Any]].map {
           case (k, v) =>
             decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)
         }
         case _: sparktypes.StructType => TestRow(obj.asInstanceOf[SparkRow])
+        case t if VariantShims.isVariantType(t) => VariantShims.convertToKernelVariant(obj)
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     }
@@ -173,6 +177,7 @@ object TestRow {
             decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)
           }
         case _: sparktypes.StructType => TestRow(row.getStruct(i))
+        case t if VariantShims.isVariantType(t) => VariantShims.getVariantAndConvertToKernel(row, i)
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     })
@@ -204,6 +209,7 @@ object TestRow {
         TestRow.fromSeq(Seq.range(0, dataType.length()).map { ordinal =>
           getAsTestObject(vector.getChild(ordinal), rowId)
         })
+      case _: VariantType => vector.getVariant(rowId)
       case _ => throw new UnsupportedOperationException("unrecognized data type")
     }
   }
