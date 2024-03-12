@@ -105,7 +105,8 @@ class Snapshot(
    * is retrieved from the CommitInfo of the latest commit which
    * can result in an IO operation.
    */
-  def timestamp: Long = getInCommitTimestampOpt.getOrElse(logSegment.lastCommitTimestamp)
+  def timestamp: Long =
+    getInCommitTimestampOpt.getOrElse(logSegment.lastCommitFileModificationTimestamp)
 
   /**
    * Returns the inCommitTimestamp if ICT is enabled, otherwise returns None.

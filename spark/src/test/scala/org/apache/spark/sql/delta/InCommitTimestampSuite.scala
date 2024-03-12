@@ -75,7 +75,7 @@ class InCommitTimestampSuite
         // File timestamp should be the same as snapshot.getTimestamp when inCommitTimestamp is not
         // enabled
         assert(
-          ver1Snapshot.logSegment.lastCommitTimestamp == ver1Snapshot.timestamp)
+          ver1Snapshot.logSegment.lastCommitFileModificationTimestamp == ver1Snapshot.timestamp)
 
         spark.sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}`" +
           s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
