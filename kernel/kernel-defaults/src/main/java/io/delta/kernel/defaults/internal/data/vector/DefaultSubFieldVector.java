@@ -23,6 +23,7 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.data.VariantValue;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -153,6 +154,12 @@ public class DefaultSubFieldVector implements ColumnVector {
     public ArrayValue getArray(int rowId) {
         assertValidRowId(rowId);
         return rowIdToRowAccessor.apply(rowId).getArray(columnOrdinal);
+    }
+
+    @Override
+    public VariantValue getVariant(int rowId) {
+        assertValidRowId(rowId);
+        return rowIdToRowAccessor.apply(rowId).getVariant(columnOrdinal);
     }
 
     @Override

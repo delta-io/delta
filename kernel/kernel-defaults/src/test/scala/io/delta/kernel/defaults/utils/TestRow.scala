@@ -109,6 +109,7 @@ object TestRow {
         case _: ArrayType => arrayValueToScalaSeq(row.getArray(i))
         case _: MapType => mapValueToScalaMap(row.getMap(i))
         case _: StructType => TestRow(row.getStruct(i))
+        case _: VariantType => row.getVariant(i)
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     }.toSeq)
@@ -174,6 +175,7 @@ object TestRow {
             decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)
           }
         case _: sparktypes.StructType => TestRow(row.getStruct(i))
+        case _: sparktypes.VariantType => row.getAs[Row](i)
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     })

@@ -701,6 +701,7 @@ trait TestUtils extends Assertions with SQLHelper {
             field.isNullable
           )
         }.toSeq)
+      case VariantType.VARIANT => sparktypes.DataTypes.VariantType
     }
   }
 

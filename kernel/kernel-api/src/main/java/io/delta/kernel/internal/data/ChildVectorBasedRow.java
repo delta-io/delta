@@ -21,6 +21,7 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.data.VariantValue;
 import io.delta.kernel.types.StructType;
 
 /**
@@ -109,6 +110,11 @@ public abstract class ChildVectorBasedRow implements Row {
     @Override
     public MapValue getMap(int ordinal) {
         return getChild(ordinal).getMap(rowId);
+    }
+
+    @Override
+    public VariantValue getVariant(int ordinal) {
+        return getChild(ordinal).getVariant(rowId);
     }
 
     protected abstract ColumnVector getChild(int ordinal);

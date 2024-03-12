@@ -64,6 +64,7 @@ public abstract class BasePrimitiveType extends DataType {
                 put("timestamp_ntz", TimestampNTZType.TIMESTAMP_NTZ);
                 put("binary", BinaryType.BINARY);
                 put("string", StringType.STRING);
+                put("variant", VariantType.VARIANT);
             }
         });
 

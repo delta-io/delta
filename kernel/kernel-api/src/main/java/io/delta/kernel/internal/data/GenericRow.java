@@ -23,6 +23,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.data.VariantValue;
 import io.delta.kernel.types.*;
 
 /**
@@ -132,6 +133,13 @@ public class GenericRow implements Row {
         // TODO: not sufficient check, also need to check the element types
         throwIfUnsafeAccess(ordinal, MapType.class, "map");
         return (MapValue) getValue(ordinal);
+    }
+
+    @Override
+    public VariantValue getVariant(int ordinal) {
+        // TODO(r.chen): test this path somehow?
+        throwIfUnsafeAccess(ordinal, VariantType.class, "variant");
+        return (VariantValue) getValue(ordinal);
     }
 
     private Object getValue(int ordinal) {
