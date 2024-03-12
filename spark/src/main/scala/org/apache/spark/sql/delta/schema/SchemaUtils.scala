@@ -1264,6 +1264,13 @@ def normalizeColumnNamesInDataType(
   }
 
   /**
+   * Find VariantType columns in the table schema.
+   */
+  def checkForVariantTypeColumnsRecursively(schema: StructType): Boolean = {
+    SchemaUtils.typeExistsRecursively(schema)(_.isInstanceOf[VariantType])
+  }
+
+  /**
    * Find TimestampNTZ columns in the table schema.
    */
   def checkForTimestampNTZColumnsRecursively(schema: StructType): Boolean = {
@@ -1302,6 +1309,7 @@ def normalizeColumnNamesInDataType(
     case DateType =>
     case TimestampType =>
     case TimestampNTZType =>
+    case VariantType =>
     case BinaryType =>
     case _: DecimalType =>
     case a: ArrayType =>
