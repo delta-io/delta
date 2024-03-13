@@ -357,7 +357,8 @@ object TableFeature {
         // Row IDs are still under development and only available in testing.
         RowTrackingFeature,
         InCommitTimestampTableFeature,
-        TypeWideningTableFeature)
+        TypeWideningTableFeature,
+        VacuumProtocolCheckTableFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -655,6 +656,19 @@ object InCommitTimestampTableFeature
     DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata)
   }
 }
+
+/**
+ * A ReaderWriter table feature for VACUUM. If this feature is enabled:
+ * A writer should follow one of the following:
+ *   1. Non-Support for Vacuum: Writers can explicitly state that they do not support VACUUM for
+ *      any table, regardless of whether the Vacuum Protocol Check Table feature exists.
+ *   2. Implement Writer Protocol Check: Ensure that the VACUUM implementation includes a writer
+ *      protocol check before any file deletions occur.
+ * Readers don't need to understand or change anything new; they just need to acknowledge the
+ * feature exists
+ */
+object VacuumProtocolCheckTableFeature
+  extends ReaderWriterFeature(name = "vacuumProtocolCheck-dev")
 
 /**
  * Features below are for testing only, and are being registered to the system only in the testing
