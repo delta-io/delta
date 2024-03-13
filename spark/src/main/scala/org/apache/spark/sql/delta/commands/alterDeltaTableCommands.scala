@@ -128,6 +128,10 @@ case class AlterTableSetPropertiesDeltaCommand(
     if (disableColumnMapping && columnMappingRemovalAllowed) {
       RemoveColumnMappingCommand(deltaLog, table.catalogTable)
         .run(sparkSession, removeColumnMappingTableProperty = false)
+      // Not changing anything else, so we can return early.
+      if (configuration.size == 1) {
+        return Seq.empty[Row]
+      }
     }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.setProperties") {
       val txn = startTransaction()
@@ -187,6 +191,10 @@ case class AlterTableUnsetPropertiesDeltaCommand(
     if (disableColumnMapping && columnMappingRemovalAllowed) {
       RemoveColumnMappingCommand(deltaLog, table.catalogTable)
         .run(sparkSession, removeColumnMappingTableProperty = true)
+      if (propKeys.size == 1) {
+        // Not unsetting anything else, so we can return early.
+        return Seq.empty[Row]
+      }
     }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.unsetProperties") {
       val txn = startTransaction()

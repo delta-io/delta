@@ -432,7 +432,7 @@ class OptimisticTransactionSuite
 
       // preCommitLogSegment should not get updated until a commit is triggered
       assert(testTxn.preCommitLogSegment.version == 1)
-      assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnStartTs)
+      assert(testTxn.preCommitLogSegment.lastCommitFileModificationTimestamp < testTxnStartTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointProvider.isEmpty)
 
@@ -440,7 +440,7 @@ class OptimisticTransactionSuite
 
       // preCommitLogSegment should get updated to the version right before the txn commits
       assert(testTxn.preCommitLogSegment.version == 12)
-      assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnEndTs)
+      assert(testTxn.preCommitLogSegment.lastCommitFileModificationTimestamp < testTxnEndTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointProvider.version == 10)
     }

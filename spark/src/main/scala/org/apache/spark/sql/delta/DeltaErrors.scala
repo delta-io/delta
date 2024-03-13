@@ -1557,10 +1557,11 @@ trait DeltaErrorsBase
       messageParameters = Array(itableIdentifier.toString))
   }
 
-  def cannotCreateLogPathException(logPath: String): Throwable = {
+  def cannotCreateLogPathException(logPath: String, cause: Throwable = null): Throwable = {
     new DeltaIOException(
       errorClass = "DELTA_CANNOT_CREATE_LOG_PATH",
-      messageParameters = Array(logPath))
+      messageParameters = Array(logPath),
+      cause = cause)
   }
 
   def cannotChangeProvider(): Throwable = {

@@ -1303,7 +1303,8 @@ class DeltaSuite extends QueryTest
           .mode("append")
           .save(tempDir.toString)
       }
-      assert(e.getMessage.contains("incompatible"))
+      assert(e.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
+      assert(Utils.exceptionString(e).contains("incompatible"))
     }
   }
 

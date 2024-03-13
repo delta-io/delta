@@ -54,6 +54,7 @@ case class VersionChecksum(
     numFiles: Long,
     numMetadata: Long,
     numProtocol: Long,
+    inCommitTimestampOpt: Option[Long],
     setTransactions: Option[Seq[SetTransaction]],
     domainMetadata: Option[Seq[DomainMetadata]],
     metadata: Metadata,
