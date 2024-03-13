@@ -102,7 +102,7 @@ trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
       cond: String,
       clauses: MergeClause*): Unit = {
     val clausesStr = clauses.map(_.sql).mkString("\n")
-    sql(s"MERGE INTO $tgt USING $src ON $cond\n$clausesStr")
+    sql(s"MERGE INTO $tgt USING $src ON $cond\n" + clausesStr)
   }
 }
 

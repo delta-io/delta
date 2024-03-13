@@ -81,11 +81,11 @@ trait MergeIntoSchemaEvolutionMixin {
 
         if (error != null) {
           val ex = intercept[AnalysisException] {
-            executeMergeFunction(s"delta.`$tempPath` t", s"source s", cond, clauses.toSeq)
+            executeMergeFunction(s"delta.`$tempPath` t", "source s", cond, clauses.toSeq)
           }
           errorContains(Utils.exceptionString(ex), error)
         } else {
-          executeMergeFunction(s"delta.`$tempPath` t", s"source s", cond, clauses.toSeq)
+          executeMergeFunction(s"delta.`$tempPath` t", "source s", cond, clauses.toSeq)
           checkAnswer(
             spark.read.format("delta").load(tempPath),
             df.collect())

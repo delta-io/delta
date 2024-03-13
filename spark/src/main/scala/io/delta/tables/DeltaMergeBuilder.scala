@@ -275,7 +275,7 @@ class DeltaMergeBuilder private(
       this.source,
       this.onCondition,
       this.whenClauses)
-      builder.schemaEvolutionEnabled = true
+    builder.schemaEvolutionEnabled = true
     builder
   }
 
