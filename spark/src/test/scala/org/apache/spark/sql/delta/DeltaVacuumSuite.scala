@@ -57,14 +57,18 @@ trait DeltaVacuumSuiteBase extends QueryTest
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews {
 
-  protected def withEnvironment(f: (File, ManualClock) => Unit): Unit = {
-    withTempDir { file =>
-      val clock = new ManualClock()
-      withSQLConf("spark.databricks.delta.retentionDurationCheck.enabled" -> "false") {
-        f(file, clock)
-      }
+  private def executeWithEnvironment(file: File)(f: (File, ManualClock) => Unit): Unit = {
+    val clock = new ManualClock()
+    withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+      f(file, clock)
     }
   }
+
+  protected def withEnvironment(f: (File, ManualClock) => Unit): Unit =
+    withTempDir(file => executeWithEnvironment(file)(f))
+
+  protected def withEnvironment(prefix: String)(f: (File, ManualClock) => Unit): Unit =
+    withTempDir(prefix)(file => executeWithEnvironment(file)(f))
 
   protected def defaultTombstoneInterval: Long = {
     DeltaConfigs.getMilliSeconds(
@@ -798,8 +802,10 @@ class DeltaVacuumSuite
     }
   }
 
+  // TODO: There is somewhere in the code calling CanonicalPathFunction with an unescaped path
+  //  string, which needs investigation. Do not test special characters until that is fixed.
   testQuietly("correctness test") {
-    withEnvironment { (tempDir, clock) =>
+    withEnvironment(prefix = "spark") { (tempDir, clock) =>
 
       val reservoirDir = new File(tempDir.getAbsolutePath, "reservoir")
       assert(reservoirDir.mkdirs())

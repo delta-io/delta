@@ -74,8 +74,8 @@ private[delta] trait DeltaEncoders {
   private lazy val _removeFileEncoder = new DeltaEncoder[RemoveFile]
   implicit def removeFileEncoder: Encoder[RemoveFile] = _removeFileEncoder.get
 
-  private lazy val _pmvEncoder = new DeltaEncoder[(Protocol, Metadata, Long)]
-  implicit def pmvEncoder: Encoder[(Protocol, Metadata, Long)] = _pmvEncoder.get
+  private lazy val _pmtvEncoder = new DeltaEncoder[(Protocol, Metadata, Option[Long], Long)]
+  implicit def pmtvEncoder: Encoder[(Protocol, Metadata, Option[Long], Long)] = _pmtvEncoder.get
 
   private lazy val _v2CheckpointActionsEncoder = new DeltaEncoder[(CheckpointMetadata, SidecarFile)]
   implicit def v2CheckpointActionsEncoder: Encoder[(CheckpointMetadata, SidecarFile)] =

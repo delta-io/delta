@@ -26,6 +26,11 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, LongType, MapType, NullType, StringType, StructType}
+import org.apache.spark.util.Utils
+
+
+
+
 
 
 /**
@@ -78,7 +83,7 @@ trait MergeIntoSchemaEvolutionMixin {
           val ex = intercept[AnalysisException] {
             executeMergeFunction(s"delta.`$tempPath` t", s"source s", cond, clauses.toSeq)
           }
-          errorContains(ex.getMessage, error)
+          errorContains(Utils.exceptionString(ex), error)
         } else {
           executeMergeFunction(s"delta.`$tempPath` t", s"source s", cond, clauses.toSeq)
           checkAnswer(

@@ -567,7 +567,6 @@ trait SnapshotManagement { self: DeltaLog =>
         version = segment.version,
         logSegment = segment,
         deltaLog = this,
-        inCommitTimestampOpt = None,
         checksumOpt = checksumOpt.orElse(
           readChecksum(segment.version, lastSeenChecksumFileStatusOpt))
       )
@@ -1137,7 +1136,7 @@ object SnapshotManagement {
     oldLogSegment.copy(
       version = committedVersion,
       deltas = oldLogSegment.deltas :+ commitFileStatus,
-      lastCommitTimestamp = commitFileStatus.getModificationTime)
+      lastCommitFileModificationTimestamp = commitFileStatus.getModificationTime)
   }
 }
 
@@ -1187,7 +1186,7 @@ object SerializableFileStatus {
  * @param version The Snapshot version to generate
  * @param deltas The delta commit files (.json) to read
  * @param checkpointProvider provider to give information about Checkpoint files.
- * @param lastCommitTimestamp The "unadjusted" file modification timestamp of the
+ * @param lastCommitFileModificationTimestamp The "unadjusted" file modification timestamp of the
  *          last commit within this segment. By unadjusted, we mean that the commit timestamps may
  *          not necessarily be monotonically increasing for the commits within this segment.
  */
@@ -1196,9 +1195,10 @@ case class LogSegment(
     version: Long,
     deltas: Seq[FileStatus],
     checkpointProvider: UninitializedCheckpointProvider,
-    lastCommitTimestamp: Long) {
+    lastCommitFileModificationTimestamp: Long) {
 
-  override def hashCode(): Int = logPath.hashCode() * 31 + (lastCommitTimestamp % 10000).toInt
+  override def hashCode(): Int =
+    logPath.hashCode() * 31 + (lastCommitFileModificationTimestamp % 10000).toInt
 
   /**
    * An efficient way to check if a cached Snapshot's contents actually correspond to a new
@@ -1207,7 +1207,8 @@ case class LogSegment(
   override def equals(obj: Any): Boolean = {
     obj match {
       case other: LogSegment =>
-        version == other.version && lastCommitTimestamp == other.lastCommitTimestamp &&
+        version == other.version &&
+          lastCommitFileModificationTimestamp == other.lastCommitFileModificationTimestamp &&
           logPath == other.logPath && checkpointProvider.version == other.checkpointProvider.version
       case _ => false
     }

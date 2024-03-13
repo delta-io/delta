@@ -16,10 +16,11 @@
 
 package org.apache.spark.sql.delta.commands.columnmapping
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
+import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.types.StructType
 
@@ -39,20 +40,88 @@ class RemoveColumnMappingCommand(
    *                                         the table instead of setting it to 'none'
    */
   def run(spark: SparkSession, removeColumnMappingTableProperty: Boolean): Unit = {
-    val schema = deltaLog.update().schema
-    verifySchemaFieldNames(schema)
+    deltaLog.withNewTransaction(catalogOpt) { txn =>
+      val originalFiles = txn.filterFiles()
+      val originalData = buildDataFrame(txn, originalFiles)
+      val originalSchema = txn.snapshot.schema
+      val newSchema = DeltaColumnMapping.dropColumnMappingMetadata(originalSchema)
+      verifySchemaFieldNames(newSchema)
+
+      updateMetadata(removeColumnMappingTableProperty, txn, newSchema)
+
+      val deltaOptions = getDeltaOptionsForWrite(spark)
+      val addedFiles = writeData(txn, originalData, deltaOptions)
+      val removeFileActions = originalFiles.map(_.removeWithTimestamp(dataChange = false))
+
+      txn.commit(removeFileActions ++ addedFiles,
+        DeltaOperations.RemoveColumnMapping()
+      )
+    }
   }
 
   /**
    * Verify none of the schema fields contain invalid column names.
    */
-  protected def verifySchemaFieldNames(schema: StructType) = {
+  def verifySchemaFieldNames(schema: StructType): Unit = {
     val invalidColumnNames =
       SchemaUtils.findInvalidColumnNamesInSchema(schema)
     if (invalidColumnNames.nonEmpty) {
       throw DeltaErrors
         .foundInvalidColumnNamesWhenRemovingColumnMapping(invalidColumnNames)
     }
+  }
+
+  /**
+   * Update the metadata to remove the column mapping table properties and
+   * update the schema to remove the column mapping metadata.
+   */
+  def updateMetadata(
+      removeColumnMappingTableProperty: Boolean,
+      txn: OptimisticTransaction,
+      newSchema: StructType): Unit = {
+    val newConfiguration =
+      getConfigurationWithoutColumnMapping(txn, removeColumnMappingTableProperty)
+    val newMetadata = txn.metadata.copy(
+      schemaString = newSchema.json,
+      configuration = newConfiguration)
+    txn.updateMetadata(newMetadata)
+  }
+
+  def getConfigurationWithoutColumnMapping(
+      txn: OptimisticTransaction,
+      removeColumnMappingTableProperty: Boolean): Map[String, String] = {
+    // Scanned schema does not include the column mapping metadata and can be reused as is.
+    val columnMappingPropertyKey = DeltaConfigs.COLUMN_MAPPING_MODE.key
+    val columnMappingMaxIdPropertyKey = DeltaConfigs.COLUMN_MAPPING_MAX_ID.key
+    // Unset or overwrite the column mapping mode to none and remove max id property
+    // while keeping other properties.
+    (if (removeColumnMappingTableProperty) {
+      txn.metadata.configuration - columnMappingPropertyKey
+    } else {
+      txn.metadata.configuration + (columnMappingPropertyKey -> "none")
+    }) - columnMappingMaxIdPropertyKey
+  }
+
+  def getDeltaOptionsForWrite(spark: SparkSession): DeltaOptions = {
+    new DeltaOptions(
+      // Prevent files from being split by writers.
+      Map(DeltaOptions.MAX_RECORDS_PER_FILE -> "0"),
+      spark.sessionState.conf)
+  }
+
+  def buildDataFrame(
+      txn: OptimisticTransaction,
+      originalFiles: Seq[AddFile]): DataFrame =
+    recordDeltaOperation(txn.deltaLog, "delta.removeColumnMapping.setupDataFrame") {
+      txn.deltaLog.createDataFrame(txn.snapshot, originalFiles)
+    }
+
+  def writeData(
+      txn: OptimisticTransaction,
+      data: DataFrame,
+      deltaOptions: DeltaOptions): Seq[AddFile] = {
+    txn.writeFiles(data, Some(deltaOptions), isOptimize = true, additionalConstraints = Seq.empty)
+      .asInstanceOf[Seq[AddFile]]
   }
 }
 
