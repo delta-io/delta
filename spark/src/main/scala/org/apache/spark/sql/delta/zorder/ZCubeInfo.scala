@@ -56,7 +56,7 @@ object ZCubeInfo extends DeltaCommand {
 
   private val ZCUBE_ID_KEY = AddFile.tag(ZCUBE_ID)
   private val ZORDER_BY_KEY = AddFile.tag(ZCUBE_ZORDER_BY)
-  private[sql] val ZORDER_CURVE = AddFile.tag(ZCUBE_ZORDER_CURVE)
+  private val ZORDER_CURVE = AddFile.tag(ZCUBE_ZORDER_CURVE)
 
   /**
    * Serializes the given `zCubeInfo` to a Map[String, String] that can be used as or merged into
