@@ -3438,6 +3438,15 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       expectedDowngradedProtocol = protocolWithReaderFeature(TestRemovableReaderWriterFeature))
   }
 
+  test("Downgrade protocol version (1, 4) for CDF tables") {
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 3,
+      initialMinWriterVersion = 7,
+      featuresToAdd = Seq(TestRemovableWriterFeature, ChangeDataFeedTableFeature),
+      featuresToRemove = Seq(TestRemovableWriterFeature),
+      expectedDowngradedProtocol = Protocol(1, 4))
+  }
+
   private def dropV2CheckpointsTableFeature(spark: SparkSession, log: DeltaLog): Unit = {
     spark.sql(s"ALTER TABLE delta.`${log.dataPath}` DROP FEATURE " +
       s"`${V2CheckpointTableFeature.name}`")

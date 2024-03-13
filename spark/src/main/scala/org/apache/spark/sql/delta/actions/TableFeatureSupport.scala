@@ -264,11 +264,12 @@ trait TableFeatureSupport { this: Protocol =>
     // remove a legacy feature in a table that only contains legacy features.
     if (to.readerAndWriterFeatureNames.isEmpty) {
       val featureNames = readerAndWriterFeatureNames - droppedFeatureName
-      val sameLegacyFeaturesSupported = featureNames == to.implicitlySupportedFeatures.map(_.name)
+      val toFeatureNames = to.implicitlySupportedFeatures.map(_.name)
+      val legacyFeaturesSupportedByDowngradedPotocol = featureNames.forall(toFeatureNames.contains)
       val minRequiredVersions = TableFeatureProtocolUtils.minimumRequiredVersions(
         featureNames.flatMap(TableFeature.featureNameToFeature).toSeq)
 
-      return sameLegacyFeaturesSupported &&
+      return legacyFeaturesSupportedByDowngradedPotocol &&
         (to.minReaderVersion, to.minWriterVersion) == minRequiredVersions &&
         readerAndWriterFeatures.filterNot(_.isLegacyFeature).size <= 1
     }
@@ -378,9 +379,9 @@ trait TableFeatureSupport { this: Protocol =>
       !newProtocol.supportsReaderFeatures && !newProtocol.supportsWriterFeatures,
       s"Downgraded protocol should not support table features, but got $newProtocol.")
 
-    // Ensure the legacy protocol supports features exactly as the current protocol.
-    if (this.implicitlyAndExplicitlySupportedFeatures ==
-      newProtocol.implicitlyAndExplicitlySupportedFeatures) {
+    // Ensure the legacy protocol supports a superset of features of the current protocol.
+    if (this.implicitlyAndExplicitlySupportedFeatures.forall(
+      newProtocol.implicitlyAndExplicitlySupportedFeatures.contains)) {
       newProtocol
     } else {
       this
