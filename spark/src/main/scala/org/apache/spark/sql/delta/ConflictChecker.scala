@@ -161,10 +161,14 @@ private[delta] class ConflictChecker(
     reassignOverlappingRowIds()
     reassignRowCommitVersions()
 
+    // Update the table version in newly added type widening metadata.
+    updateTypeWideningMetadata()
+
     // Data file checks.
     checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn()
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
+    resolveTimestampOrderingConflicts()
 
     logMetrics()
     currentTransactionInfo
@@ -487,6 +491,26 @@ private[delta] class ConflictChecker(
   }
 
   /**
+   * Metadata is recorded in the table schema on type changes. This includes the table version that
+   * the change was made in, which needs to be updated when there's a conflict.
+   */
+  private def updateTypeWideningMetadata(): Unit = {
+    if (!TypeWidening.isEnabled(currentTransactionInfo.protocol, currentTransactionInfo.metadata)) {
+      return
+    }
+    val newActions = currentTransactionInfo.actions.map {
+      case metadata: Metadata =>
+        val updatedSchema = TypeWideningMetadata.updateTypeChangeVersion(
+          schema = metadata.schema,
+          fromVersion = winningCommitVersion,
+          toVersion = winningCommitVersion + 1L)
+        metadata.copy(schemaString = updatedSchema.json)
+      case a => a
+    }
+    currentTransactionInfo = currentTransactionInfo.copy(actions = newActions)
+  }
+
+  /**
    * Checks whether the Row IDs assigned by the current transaction overlap with the Row IDs
    * assigned by the winning transaction. I.e. this function checks whether both the winning and the
    * current transaction assigned new Row IDs. If this the case, then this check assigns new Row IDs
@@ -552,6 +576,53 @@ private[delta] class ConflictChecker(
     }
 
     currentTransactionInfo = currentTransactionInfo.copy(actions = newActions)
+  }
+
+  /**
+   * Adjust the current transaction's commit timestamp to account for the winning
+   * transaction's commit timestamp. If this transaction newly enabled ICT, also update
+   * the table properties to reflect the adjusted enablement version and timestamp.
+   */
+  private def resolveTimestampOrderingConflicts(): Unit = {
+    if (!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(currentTransactionInfo.metadata)) {
+      return
+    }
+
+    val winningCommitTimestamp =
+      if (InCommitTimestampUtils.didCurrentTransactionEnableICT(
+              currentTransactionInfo.metadata, currentTransactionInfo.readSnapshot)) {
+        // Since the current transaction enabled inCommitTimestamps, we should use the file
+        // timestamp from the winning transaction as its commit timestamp.
+        winningCommitFileStatus.getModificationTime
+    } else {
+      // Get the inCommitTimestamp from the winning transaction.
+      CommitInfo.getRequiredInCommitTimestamp(
+        winningCommitSummary.commitInfo, winningCommitVersion.toString)
+    }
+    val currentTransactionTimestamp = CommitInfo.getRequiredInCommitTimestamp(
+      currentTransactionInfo.commitInfo, "NEW_COMMIT")
+    // getRequiredInCommitTimestamp will throw an exception if commitInfo is None.
+    val currentTransactionCommitInfo = currentTransactionInfo.commitInfo.get
+    val updatedCommitTimestamp = Math.max(currentTransactionTimestamp, winningCommitTimestamp + 1)
+    val updatedCommitInfo =
+      currentTransactionCommitInfo.copy(inCommitTimestamp = Some(updatedCommitTimestamp))
+    currentTransactionInfo = currentTransactionInfo.copy(commitInfo = Some(updatedCommitInfo))
+    val nextAvailableVersion = winningCommitVersion + 1L
+    val updatedMetadata =
+      InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+        updatedCommitTimestamp,
+        currentTransactionInfo.readSnapshot,
+        currentTransactionInfo.metadata,
+        nextAvailableVersion)
+    updatedMetadata.foreach { updatedMetadata =>
+      currentTransactionInfo = currentTransactionInfo.copy(
+        metadata = updatedMetadata,
+        actions = currentTransactionInfo.actions.map {
+          case _: Metadata => updatedMetadata
+          case other => other
+        }
+      )
+    }
   }
 
   /** A helper function for pretty printing a specific partition directory. */

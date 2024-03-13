@@ -255,22 +255,34 @@ class DeltaHistoryManager(
 
 /** Contains many utility methods that can also be executed on Spark executors. */
 object DeltaHistoryManager extends DeltaLogging {
-  /** Get the persisted commit info for the given delta file. */
+  /** Get the persisted commit info (if available) for the given delta file. */
+  def getCommitInfoOpt(
+      logStore: LogStore,
+      basePath: Path,
+      version: Long,
+      hadoopConf: Configuration): Option[CommitInfo] = {
+    val logs = logStore.readAsIterator(FileNames.deltaFile(basePath, version), hadoopConf)
+    try {
+      logs
+        .map(Action.fromJson)
+        .collectFirst { case c: CommitInfo => c.copy(version = Some(version)) }
+    } finally {
+      logs.close()
+    }
+  }
+
+  /**
+   * Get the persisted commit info for the given delta file. If commit info
+   * is not found in the commit, a mostly empty [[CommitInfo]] object with only
+   * the version populated will be returned.
+   */
   private def getCommitInfo(
       logStore: LogStore,
       basePath: Path,
       version: Long,
       hadoopConf: Configuration): CommitInfo = {
-    val logs = logStore.readAsIterator(FileNames.deltaFile(basePath, version), hadoopConf)
-    try {
-      val info = logs.map(Action.fromJson).collectFirst { case c: CommitInfo => c }
-      if (info.isEmpty) {
-        CommitInfo.empty(Some(version))
-      } else {
-        info.head.copy(version = Some(version))
-      }
-    } finally {
-      logs.close()
+    getCommitInfoOpt(logStore, basePath, version, hadoopConf).getOrElse {
+      CommitInfo.empty(Some(version))
     }
   }
 

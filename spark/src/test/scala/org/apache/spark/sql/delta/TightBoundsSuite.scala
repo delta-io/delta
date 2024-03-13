@@ -241,6 +241,49 @@ class TightBoundsSuite
       assert(statsAfterFirstDelete === expectedStatsAfterFirstDelete)
     }
   }
+
+  test("Update file without minValue and maxValue stats to wide bounds") {
+    // The table has only binary columns, for which Delta does not collect minValue or maxValue
+    // stats. The file stats should still include numRecords, nullCount, and tightBounds.
+    withTempDeltaTable(
+      dataDF = spark.range(0, 10, 1, 1).toDF("id")
+        .select(col("id").cast("string").cast("binary").as("b")),
+      enableDVs = true
+    ) { (targetTable, targetLog) =>
+      val statsBeforeDelete = getStatsInPartitionOrder(targetLog.update())
+      val expectedStatsBeforeDelete = Seq(Row(10, Row(0), true))
+      assert(statsBeforeDelete === expectedStatsBeforeDelete)
+
+      // The DELETE command updates file stats to wide bounds.
+      targetTable().delete(col("b") === lit("1").cast("string").cast("binary"))
+
+      val statsAfterDelete = getStatsInPartitionOrder(targetLog.update())
+      val expectedStatsAfterDelete = Seq(Row(10, Row(0), false))
+      assert(statsAfterDelete === expectedStatsAfterDelete)
+    }
+  }
+
+  test("Update file without column stats to wide bounds") {
+    // We disable gathering stats for any of the columns in this table.
+    // In this case, the file stats should include numRecords and tightBounds only,
+    // but not minValue, maxValue or nullCount.
+    withTempDeltaTable(
+      dataDF = spark.range(0, 10, 1, 1).toDF("id"),
+      conf = Map(DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultTablePropertyKey -> "0").toSeq,
+      enableDVs = true
+    ) { (targetTable, targetLog) =>
+      val statsBeforeDelete = getStatsInPartitionOrder(targetLog.update())
+      val expectedStatsBeforeDelete = Seq(Row(10, true))
+      assert(statsBeforeDelete === expectedStatsBeforeDelete)
+
+      // The DELETE command updates file stats to wide bounds.
+      targetTable().delete("id = 1")
+
+      val statsAfterDelete = getStatsInPartitionOrder(targetLog.update())
+      val expectedStatsAfterDelete = Seq(Row(10, false))
+      assert(statsAfterDelete === expectedStatsAfterDelete)
+    }
+  }
 }
 
 class TightBoundsColumnMappingSuite extends TightBoundsSuite with DeltaColumnMappingEnableIdMode

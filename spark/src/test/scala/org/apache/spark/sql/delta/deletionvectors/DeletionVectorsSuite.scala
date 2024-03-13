@@ -683,6 +683,29 @@ class DeletionVectorsSuite extends QueryTest
     }
   }
 
+  test("absolute DV path with encoded special characters") {
+    // This test uses hand-crafted path with special characters.
+    // Do not test with a prefix that needs URL standard escaping.
+    withTempDir(prefix = "spark") { dir =>
+      writeTableHavingSpecialCharInDVPath(dir, pathIsEncoded = true)
+      checkAnswer(
+        spark.read.format("delta").load(dir.getCanonicalPath),
+        Seq(1, 3, 5, 7, 9).toDF())
+    }
+  }
+
+  test("absolute DV path with not-encoded special characters") {
+    // This test uses hand-crafted path with special characters.
+    // Do not test with a prefix that needs URL standard escaping.
+    withTempDir(prefix = "spark") { dir =>
+      writeTableHavingSpecialCharInDVPath(dir, pathIsEncoded = false)
+      val e = intercept[SparkException] {
+        spark.read.format("delta").load(dir.getCanonicalPath).collect()
+      }
+      assert(e.getMessage.contains("URISyntaxException: Malformed escape pair"))
+    }
+  }
+
   private sealed case class DeleteUsingDVWithResults(
       scale: String,
       sqlRule: String,
@@ -791,4 +814,20 @@ object DeletionVectorsSuite {
   val table5Sum = 21975159654L
   val table5CountByValues = (0 to 20).map(_ -> 99900000L).toMap + (21 -> 47436174L)
   val table5SumByValues = (0 to 20).map(v => v -> v * 99900000L).toMap + (21 -> 21 * 47436174L)
+
+  // Generate a table with special characters in DV path.
+  // Content of this table is range(0, 10) with all even numbers deleted.
+  def writeTableHavingSpecialCharInDVPath(path: File, pathIsEncoded: Boolean): Unit = {
+    val tableHavingSpecialCharInDVTemplate = "src/test/resources/delta/table-with-dv-special-char"
+    FileUtils.copyDirectory(new File(tableHavingSpecialCharInDVTemplate), path)
+    val fullPath = new File(
+      path,
+      if (pathIsEncoded) "folder&with%25special%20char" else "folder&with%special char")
+      .getCanonicalPath
+    val logJson = new File(path, "_delta_log/00000000000000000000.json")
+    val logJsonContent = FileUtils.readFileToString(logJson, "UTF-8")
+    val newLogJsonContent = logJsonContent.replace(
+      "{{FOLDER_WITH_SPECIAL_CHAR}}", fullPath)
+    FileUtils.write(logJson, newLogJsonContent, "UTF-8")
+  }
 }

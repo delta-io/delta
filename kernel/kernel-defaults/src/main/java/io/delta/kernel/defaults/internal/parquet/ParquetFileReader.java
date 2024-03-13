@@ -40,11 +40,11 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-public class ParquetBatchReader {
+public class ParquetFileReader {
     private final Configuration configuration;
     private final int maxBatchSize;
 
-    public ParquetBatchReader(Configuration configuration) {
+    public ParquetFileReader(Configuration configuration) {
         this.configuration = requireNonNull(configuration, "configuration is null");
         this.maxBatchSize =
             configuration.getInt("delta.kernel.default.parquet.reader.batch-size", 1024);
@@ -163,7 +163,7 @@ public class ParquetBatchReader {
 
     /**
      * Collects the records given by the Parquet reader as columnar data. Parquet reader allows
-     * reading data row by row, but {@link ParquetBatchReader} wants to expose the data as a
+     * reading data row by row, but {@link ParquetFileReader} wants to expose the data as a
      * columnar batch. Parquet reader takes an implementation of {@link RecordMaterializer}
      * to which it gives data for each column one row a time. This {@link RecordMaterializer}
      * implementation collects the column values for multiple rows and returns a
@@ -172,10 +172,11 @@ public class ParquetBatchReader {
     public static class RowRecordCollector
         extends RecordMaterializer<Object> {
         private static final Object FAKE_ROW_RECORD = new Object();
-        private final RowConverter rowRecordGroupConverter;
+        private final RowColumnReader rowRecordGroupConverter;
 
         public RowRecordCollector(int maxBatchSize, StructType readSchema, MessageType fileSchema) {
-            this.rowRecordGroupConverter = new RowConverter(maxBatchSize, readSchema, fileSchema);
+            this.rowRecordGroupConverter =
+                    new RowColumnReader(maxBatchSize, readSchema, fileSchema);
         }
 
         @Override
@@ -184,7 +185,7 @@ public class ParquetBatchReader {
         }
 
         /**
-         * Return a fake object. This is not used by {@link ParquetBatchReader}, instead
+         * Return a fake object. This is not used by {@link ParquetFileReader}, instead
          * {@link #getDataAsColumnarBatch}} once a sufficient number of rows are collected.
          */
         @Override
