@@ -610,13 +610,12 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
           errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED"
         )
       }
-      // The default value fails to analyze.
       checkError(
         exception = intercept[AnalysisException] {
           sql(s"create table t4 (s int default badvalue) using $v2Format " +
             s"$tblPropertiesAllowDefaults")
         },
-        errorClass = "INVALID_DEFAULT_VALUE.UNRESOLVED_EXPRESSION",
+        errorClass = "INVALID_DEFAULT_VALUE.NOT_CONSTANT",
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
