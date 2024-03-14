@@ -435,7 +435,8 @@ abstract class DeltaInsertIntoTestsWithTempViews(
           checkAnswer(spark.table("v"), expectedResult)
         } catch {
           case e: AnalysisException =>
-            assert(e.getMessage.contains("Inserting into a view is not allowed") ||
+            assert(e.getMessage.contains("[EXPECT_TABLE_NOT_VIEW.NO_ALTERNATIVE]") ||
+              e.getMessage.contains("Inserting into a view is not allowed") ||
               e.getMessage.contains("Inserting into an RDD-based table is not allowed") ||
               e.getMessage.contains("Table default.v not found") ||
               e.getMessage.contains("Table or view 'v' not found in database 'default'") ||
