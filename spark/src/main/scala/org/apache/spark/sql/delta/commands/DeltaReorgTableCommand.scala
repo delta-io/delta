@@ -77,7 +77,6 @@ case class DeltaReorgTableCommand(
     case DeltaReorgTableSpec(DeltaReorgTableMode.UNIFORM_ICEBERG, Some(icebergCompatVersion)) =>
       val table = getDeltaTable(target, "REORG")
       upgradeUniformIcebergCompatVersion(table, sparkSession, icebergCompatVersion)
-
   }
 
   protected def reorgOperation: DeltaReorgOperation = reorgTableSpec match {
