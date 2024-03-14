@@ -49,7 +49,6 @@ public class DefaultVariantVector
         ColumnVector value,
         ColumnVector metadata) {
         super(size, type, nullability);
-        // checkArgument(offsets.length >= size + 1, "invalid offset array size");
         this.valueVector = requireNonNull(value, "value is null");
         this.metadataVector = requireNonNull(metadata, "metadata is null");
     }

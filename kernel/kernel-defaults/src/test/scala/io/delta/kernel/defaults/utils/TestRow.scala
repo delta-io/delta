@@ -19,6 +19,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.{Seq => MutableSeq}
 import org.apache.spark.sql.{types => sparktypes}
 import org.apache.spark.sql.{Row => SparkRow}
+import org.apache.spark.unsafe.types.VariantVal
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
 import io.delta.kernel.types._
 
@@ -45,7 +46,7 @@ import java.time.{Instant, LocalDate, LocalDateTime, ZoneOffset}
  * - ArrayType --> Seq[Any]
  * - MapType --> Map[Any, Any]
  * - StructType --> TestRow
- *
+ * - VariantType --> VariantVal
  * For complex types array and map, the inner elements types should align with this mapping.
  */
 class TestRow(val values: Array[Any]) {
@@ -109,7 +110,9 @@ object TestRow {
         case _: ArrayType => arrayValueToScalaSeq(row.getArray(i))
         case _: MapType => mapValueToScalaMap(row.getMap(i))
         case _: StructType => TestRow(row.getStruct(i))
-        case _: VariantType => row.getVariant(i)
+        case _: VariantType =>
+          val kernelVariant = row.getVariant(i)
+          new VariantVal(kernelVariant.getValue(), kernelVariant.getMetadata())
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     }.toSeq)
@@ -142,6 +145,7 @@ object TestRow {
             decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)
         }
         case _: sparktypes.StructType => TestRow(obj.asInstanceOf[SparkRow])
+        case _: sparktypes.VariantType => obj.asInstanceOf[VariantVal]
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     }
@@ -175,7 +179,7 @@ object TestRow {
             decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)
           }
         case _: sparktypes.StructType => TestRow(row.getStruct(i))
-        case _: sparktypes.VariantType => row.getAs[Row](i)
+        case _: sparktypes.VariantType => row.getAs[VariantVal](i)
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     })
@@ -207,6 +211,9 @@ object TestRow {
         TestRow.fromSeq(Seq.range(0, dataType.length()).map { ordinal =>
           getAsTestObject(vector.getChild(ordinal), rowId)
         })
+      case _: VariantType =>
+        val kernelVariant = vector.getVariant(rowId)
+        new VariantVal(kernelVariant.getValue(), kernelVariant.getMetadata())
       case _ => throw new UnsupportedOperationException("unrecognized data type")
     }
   }

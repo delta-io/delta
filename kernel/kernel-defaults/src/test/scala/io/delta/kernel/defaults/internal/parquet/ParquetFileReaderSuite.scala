@@ -16,6 +16,9 @@
 package io.delta.kernel.defaults.internal.parquet
 
 import java.math.BigDecimal
+
+import org.apache.spark.sql.DataFrame
+
 import io.delta.golden.GoldenTableUtils.goldenTableFile
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
 import io.delta.kernel.test.VectorTestUtils
@@ -154,6 +157,57 @@ class ParquetFileReaderSuite extends AnyFunSuite
 
     checkAnswer(actResult2, expResult2)
   }
+
+  private def testReadVariant(testName: String)(df: => DataFrame): Unit = {
+    test(testName) {
+      withTable("test_variant_table") {
+        df.write
+          .format("delta")
+          .mode("overwrite")
+          .saveAsTable("test_variant_table")
+        val path = spark.sql("describe table extended `test_variant_table`")
+          .where("col_name = 'Location'")
+          .collect()(0)
+          .getString(1)
+          .replace("file:", "")
+
+        val kernelSchema = tableSchema(path)
+        val actResult = readParquetFilesUsingKernel(path, kernelSchema)
+        val expResult = readParquetFilesUsingSpark(path, kernelSchema)
+        checkAnswer(actResult, expResult)
+      }
+    }
+  }
+
+  testReadVariant("basic read variant") {
+    spark.range(0, 10, 1, 1).selectExpr(
+      "parse_json(cast(id as string)) as basic_v",
+      "named_struct('v', parse_json(cast(id as string))) as struct_v",
+      """array(
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string))
+      ) as array_v""",
+      "map('test', parse_json(cast(id as string))) as map_value_v",
+      "map(parse_json(cast(id as string)), parse_json(cast(id as string))) as map_key_v"
+    )
+  }
+
+  testReadVariant("basic null variant") {
+    spark.range(0, 10, 1, 1).selectExpr(
+      "cast(null as variant) basic_v",
+      "named_struct('v', cast(null as variant)) as struct_v",
+      """array(
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string)),
+        null
+      ) as array_v""",
+      "map('test', cast(null as variant)) as map_value_v",
+      "map(cast(null as variant), parse_json(cast(id as string))) as map_key_v",
+    )
+  }
+
+  // TODO(richardc-db): Add nested variant tests once `parse_json` expression is implemented.
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Test compatibility with Parquet legacy format files                                         //
