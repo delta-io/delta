@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.AnalysisHelper
@@ -34,7 +35,7 @@ import org.apache.spark.sql.types._
  * Trait with helper functions to generate expressions to update target columns, even if they are
  * nested fields.
  */
-trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper {
+trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with DeltaLogging {
   /**
    * Specifies an operation that updates a target column with the given expression.
    * The target column may or may not be a nested field and it is specified as a full quoted name
@@ -49,9 +50,8 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper {
    * @param fromExpression the expression to cast
    * @param dataType The data type to cast to.
    * @param allowStructEvolution Whether to allow structs to evolve. When this is false (default),
-   *                             struct casting will throw an error if there's any mismatch between
-   *                             column names. For example, (b, c, a) -> (a, b, c) is always a valid
-   *                             cast, but (a, b) -> (a, b, c) is valid only with this flag set.
+   *                             struct casting will throw an error if the target struct type
+   *                             contains more fields than the expression to cast.
    * @param columnName The name of the column written to. It is used for the error message.
    */
   protected def castIfNeeded(
@@ -201,22 +201,26 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper {
    *
    * For update operations to nested struct fields, this method recursively walks down schema tree
    * and apply the update expressions along the way.
-   * For example, assume table `target` has two attributes a and z, where a is of struct type
-   * with 3 fields: b, c and d, and z is of integer type.
+   * For example, assume table `target` has the following schema:
+   *   s1 struct<a: int, b: int, c: int>, s2 struct<a: int, b: int>, z int
    *
    * Given an update command:
    *
-   *  - UPDATE target SET a.b = 1, a.c = 2, z = 3
+   *  - UPDATE target SET s1.a = 1, s1.b = 2, z = 3
    *
    * this method works as follows:
    *
    * generateUpdateExpressions(
-   *   targetSchema=[a,z], originalExprs=[a, z], updateOps=[(a.b, 1), (a.c, 2), (z, 3)])
+   *   targetSchema=[s1,s2,z], defaultExprs=[s1,s2, z], updateOps=[(s1.a, 1), (s1.b, 2), (z, 3)])
+   *   -> generates expression for s1 - build recursively from child assignments
    *   generateUpdateExpressions(
-   *     targetSchema=[b,c,d], originalExprs=[b, c, d], updateOps=[(b, 1),(c, 2)], pathPrefix=["a"])
+   *     targetSchema=[a,b,c], defaultExprs=[a, b, c], updateOps=[(a, 1),(b, 2)], pathPrefix=["s1"])
    *     end-of-recursion
-   *   -> returns (1, 2, d)
-   * -> return ((1, 2, d), 3)
+   *   -> returns (1, 2, a.d)
+   *   -> generates expression for s2 - no child assignment and no update expression: use
+   *      default expression `s2`
+   *   -> generates expression for z - use available update expression `3`
+   * -> returns ((1, 2, a.d), s2, 3)
    *
    * @param targetSchema schema to follow to generate update expressions. Due to schema evolution,
    *                     it may contain additional columns or fields not present in the original
@@ -226,10 +230,8 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper {
    *                      or field. This is typically the output from the base table.
    * @param pathPrefix the path from root to the current (nested) column. Only used for printing out
    *                   full column path in error messages.
-   * @param allowStructEvolution Whether to allow structs to evolve. When this is false (default),
-   *                             struct casting will throw an error if there's any mismatch between
-   *                             column names. For example, (b, c, a) -> (a, b, c) is always a valid
-   *                             cast, but (a, b) -> (a, b, c) is valid only with this flag set.
+   * @param allowSchemaEvolution Whether to allow generating expressions for new columns or fields
+   *                             added by schema evolution.
    * @param generatedColumns the list of the generated columns in the table. When a column is a
    *                         generated column and the user doesn't provide a update expression, its
    *                         update expression in the return result will be None.
@@ -248,7 +250,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper {
       defaultExprs: Seq[NamedExpression],
       resolver: Resolver,
       pathPrefix: Seq[String] = Nil,
-      allowStructEvolution: Boolean = false,
+      allowSchemaEvolution: Boolean = false,
       generatedColumns: Seq[StructField] = Nil): Seq[Option[Expression]] = {
     // Check that the head of nameParts in each update operation can match a target col. This avoids
     // silently ignoring invalid column names specified in update operations.
@@ -279,6 +281,14 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper {
         } else {
           // This is a new column or field added by schema evolution that doesn't have an assignment
           // in this MERGE clause. Set it to null.
+
+          // Log an assertion for now (and fail in test) if schema evolution is disabled. We should
+          // turn this into an error in the future.
+          deltaAssert(allowSchemaEvolution,
+            name = "generateUpdateExpressions.allowSchemaEvolution",
+            msg = "Generating an expression for a new column or field but schema evolution is " +
+              "disabled."
+          )
           Some(Literal(null))
         }
       } else {
@@ -297,7 +307,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper {
           Some(castIfNeeded(
             fullyMatchedOp.get.updateExpr,
             targetCol.dataType,
-            allowStructEvolution,
+            allowSchemaEvolution,
             targetCol.name))
         } else {
           // So there are prefix-matched update operations, but none of them is a full match. Then
@@ -319,7 +329,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper {
                 defaultChildExprs,
                 resolver,
                 pathPrefix :+ targetCol.name,
-                allowStructEvolution,
+                allowSchemaEvolution,
                 // Set `generatedColumns` to Nil because they are only valid in the top level.
                 generatedColumns = Nil)
                 .map(_.getOrElse {
@@ -354,10 +364,10 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper {
       case (nameParts, expr) => UpdateOperation(nameParts, expr)
     }
     generateUpdateExpressions(
-      targetSchema,
-      updateOps,
-      defaultExprs,
-      resolver,
+      targetSchema = targetSchema,
+      updateOps = updateOps,
+      defaultExprs = defaultExprs,
+      resolver = resolver,
       generatedColumns = generatedColumns
     )
   }
@@ -380,19 +390,19 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper {
    *
    * @param updateTarget The logical plan of the table to be updated.
    * @param generatedColumns A list of generated columns.
-   * @param updateExprs  The aligned (with `finalSchemaExprs` if not None, or `updateTarget.output`
-   *                     otherwise) update actions.
-   * @param finalSchemaExprs In case of UPDATE in MERGE when schema evolution happened, this is
-   *                         the final schema of the target table. This might not be the same as
-   *                         the output of `updateTarget`.
+   * @param updateExprs  The aligned (with `postEvolutionTargetSchema` if not None, or
+   *                     `updateTarget.output` otherwise) update actions.
+   * @param postEvolutionTargetSchema In case of UPDATE in MERGE when schema evolution happened,
+   *                                  this is the final schema of the target table. This might not
+   *                                  be the same as the output of `updateTarget`.
    * @return a sequence of update expressions for all of columns in the table.
    */
   protected def generateUpdateExprsForGeneratedColumns(
       updateTarget: LogicalPlan,
       generatedColumns: Seq[StructField],
       updateExprs: Seq[Option[Expression]],
-      finalSchema: Option[StructType] = None): Seq[Expression] = {
-    val targetSchema = finalSchema.getOrElse(updateTarget.schema)
+      postEvolutionTargetSchema: Option[StructType] = None): Seq[Expression] = {
+    val targetSchema = postEvolutionTargetSchema.getOrElse(updateTarget.schema)
     assert(
       targetSchema.size == updateExprs.length,
       s"'generateUpdateExpressions' should return expressions that are aligned with the column " +

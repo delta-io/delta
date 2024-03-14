@@ -225,7 +225,7 @@ object ResolveDeltaMergeInto {
       resolveClause(_, plansToResolveAction = Seq(target))
     }
 
-    val finalSchema = if (canAutoMigrate) {
+    val postEvolutionTargetSchema = if (canAutoMigrate) {
       // When schema evolution is enabled, add to the target table new columns or nested fields that
       // are assigned to in merge actions and not already part of the target schema. This is done by
       // collecting all assignments from merge actions and using them to filter out the source
@@ -296,7 +296,7 @@ object ResolveDeltaMergeInto {
       resolvedNotMatchedClauses,
       resolvedNotMatchedBySourceClauses,
       migrateSchema = canAutoMigrate,
-      finalSchema = Some(finalSchema))
+      finalSchema = Some(postEvolutionTargetSchema))
 
     // Its possible that pre-resolved expressions (e.g. `sourceDF("key") = targetDF("key")`) have
     // attribute references that are not present in the output attributes of the children (i.e.,

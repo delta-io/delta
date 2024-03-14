@@ -75,10 +75,10 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
   @transient protected lazy val targetDeltaLog: DeltaLog = targetFileIndex.deltaLog
 
   /**
-   * Map to get target output attributes by name.
-   * The case sensitivity of the map is set accordingly to Spark configuration.
+   * Map to get target read attributes by name. The case sensitivity of the map is set accordingly
+   * to Spark configuration.
    */
-  @transient private lazy val targetOutputAttributesMap: Map[String, Attribute] = {
+  @transient private lazy val preEvolutionTargetAttributesMap: Map[String, Attribute] = {
     val attrMap: Map[String, Attribute] = target
       .outputSet.view
       .map(attr => attr.name -> attr).toMap
@@ -86,6 +86,40 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       attrMap
     } else {
       CaseInsensitiveMap(attrMap)
+    }
+  }
+
+  /**
+   * Output expressions from the target adjusted after applying schema evolution. There are two
+   * kinds of expressions here:
+   *  * References to existing columns in the target dataframe. Note that these references may have
+   *    a different data type than they originally did due to schema evolution so we add a cast that
+   *    supports schema evolution. The references will be marked as nullable if `makeNullable` is
+   *    set to true, which allows the attributes to reference the output of an outer join.
+   *  * Literal nulls, for new columns which are being added to the target table as part of
+   *    this transaction, since new columns will have a value of null for all existing rows.
+   */
+  protected def postEvolutionTargetExpressions(makeNullable: Boolean = false)
+    : Seq[NamedExpression] = {
+    val schema = if (makeNullable) {
+      migratedSchema.getOrElse(target.schema).asNullable
+    } else {
+      migratedSchema.getOrElse(target.schema)
+    }
+    schema.map { col =>
+      preEvolutionTargetAttributesMap
+        .get(col.name)
+        .map { attr =>
+          Alias(
+            castIfNeeded(
+              attr.withNullability(attr.nullable || makeNullable),
+              col.dataType,
+              allowStructEvolution = canMergeSchema,
+              col.name),
+            col.name
+          )()
+        }
+        .getOrElse(Alias(Literal(null), col.name)())
     }
   }
 
@@ -292,39 +326,6 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     var newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
     newTarget = DeltaTableUtils.dropColumns(spark, newTarget, columnsToDrop)
     newTarget
-  }
-
-  /**
-   * Get the expression references for the output columns of the target table relative to
-   * the transaction. Due to schema evolution, there are two kinds of expressions here:
-   *  * References to columns in the target dataframe. Note that these references may have a
-   *    different data type than they originally did due to schema evolution so we add a cast that
-   *    supports schema evolution. The references will be marked as nullable if `makeNullable` is
-   *    set to true, which allows the attributes to reference the output of an outer join.
-   *  * Literal nulls, for new columns which are being added to the target table as part of
-   *    this transaction, since new columns will have a value of null for all existing rows.
-   */
-  protected def getTargetOutputCols(makeNullable: Boolean = false): Seq[NamedExpression] = {
-    val schema = if (makeNullable) {
-      migratedSchema.getOrElse(target.schema).asNullable
-    } else {
-      migratedSchema.getOrElse(target.schema)
-    }
-    schema.map { col =>
-      targetOutputAttributesMap
-        .get(col.name)
-        .map { a =>
-          Alias(
-            castIfNeeded(
-              a.withNullability(a.nullable || makeNullable),
-              col.dataType,
-              allowStructEvolution = true,
-              col.name),
-            col.name
-          )()
-        }
-        .getOrElse(Alias(Literal(null), col.name)())
-    }
   }
 
   /** @return An `Expression` to increment a SQL metric */

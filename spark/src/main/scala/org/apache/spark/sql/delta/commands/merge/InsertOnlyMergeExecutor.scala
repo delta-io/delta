@@ -146,12 +146,12 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       preparedSourceDF: DataFrame,
       deltaTxn: OptimisticTransaction): DataFrame = {
 
-    val targetOutputColNames = deltaTxn.metadata.schema.map(_.name)
+    val targetWriteColNames = deltaTxn.metadata.schema.map(_.name)
 
     // When there is only one insert clause, there is no need for ROW_DROPPED_COL and
     // output df can be generated without CaseWhen.
     if (notMatchedClauses.size == 1) {
-      val outputCols = generateOneInsertOutputCols(targetOutputColNames)
+      val outputCols = generateOneInsertOutputCols(targetWriteColNames)
       return preparedSourceDF.select(outputCols: _*)
     }
 
@@ -162,7 +162,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
 
     // Generate output cols.
     val outputCols = generateInsertsOnlyOutputCols(
-      targetOutputColNames,
+      targetWriteColNames,
       insertClausesWithPrecompConditions
         .collect { case c: DeltaMergeIntoNotMatchedInsertClause => c })
 
@@ -181,14 +181,13 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
    * the output target table rows.
    */
   private def generateOneInsertOutputCols(
-      targetOutputColNames: Seq[String]
+      targetWriteColNames: Seq[String]
     ): Seq[Column] = {
 
-    val outputColNames = targetOutputColNames
     val outputExprs = notMatchedClauses.head.resolvedActions.map(_.expr)
     assert(outputExprs.nonEmpty)
     // generate the outputDF without `CaseWhen` expressions.
-    outputExprs.zip(outputColNames).zipWithIndex.map { case ((expr, name), i) =>
+    outputExprs.zip(targetWriteColNames).zipWithIndex.map { case ((expr, name), i) =>
       val exprAfterPassthru = if (i == 0) {
         IncrementMetric(expr, metrics("numTargetRowsInserted"))
       } else {
@@ -213,7 +212,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
    *        ELSE [mark the source row to be dropped]
    */
   private def generateInsertsOnlyOutputCols(
-      targetOutputColNames: Seq[String],
+      targetWriteColNames: Seq[String],
       insertClausesWithPrecompConditions: Seq[DeltaMergeIntoNotMatchedClause]
     ): Seq[Column] = {
     // ==== Generate the expressions to generate the target rows from the source rows ====
@@ -222,7 +221,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
     // - ROW_DROPPED_COL to define whether the generated row should be dropped or written out
     // To generate these N + 1 columns, we will generate N + 1 expressions
 
-    val outputColNames = targetOutputColNames :+ ROW_DROPPED_COL
+    val outputColNames = targetWriteColNames :+ ROW_DROPPED_COL
     val numOutputCols = outputColNames.size
 
     // Generate the sequence of N + 1 expressions from the sequence of INSERT clauses
@@ -235,7 +234,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
     // Expressions to drop the source row when it does not match any of the insert clause
     // conditions. Note that it sets the N+1-th column ROW_DROPPED_COL to true.
     val dropSourceRowExprs =
-      targetOutputColNames.map { _ => Literal(null)} :+ Literal.TrueLiteral
+      targetWriteColNames.map { _ => Literal(null)} :+ Literal.TrueLiteral
 
     // Generate the final N + 1 expressions to generate the final target output rows.
     // There are multiple not match clauses. Use `CaseWhen` to conditionally evaluate the right
