@@ -1607,6 +1607,20 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("support Java8 time objects") {
+    withSQLConf(SQLConf.DATETIME_JAVA8API_ENABLED.key -> "true") {
+      val tableName = "my_table"
+      withTable(tableName) {
+        spark.sql(s"CREATE TABLE $tableName (id STRING, date DATE) USING DELTA;")
+        spark.sql(
+          s"""
+             |INSERT INTO $tableName REPLACE
+             |where (DATE IN (DATE('2024-03-11'), DATE('2024-03-13')))
+             |VALUES ('2', DATE('2024-03-13')), ('3', DATE('2024-03-11'))
+             |""".stripMargin)
+      }
+    }
+  }
 
   test("all operations with special characters in path") {
     withTempDir { dir =>
