@@ -16,20 +16,17 @@
 
 package org.apache.spark.sql.delta.columnmapping
 
-import org.apache.spark.sql.delta.DeltaAnalysisException
-import org.apache.spark.sql.delta.DeltaColumnMappingUnsupportedException
-import org.apache.spark.sql.delta.DeltaConfigs
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.schema.DeltaInvariantViolationException
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 
 /**
  * Test removing column mapping from a table.
  */
-class RemoveColumnMappingSuite
-  extends RemoveColumnMappingSuiteUtils
-  {
+class RemoveColumnMappingSuite extends RemoveColumnMappingSuiteUtils {
 
   test("column mapping cannot be removed without the feature flag") {
     withSQLConf(ALLOW_COLUMN_MAPPING_REMOVAL.key -> "false") {
@@ -48,6 +45,16 @@ class RemoveColumnMappingSuite
     }
   }
 
+  test("table without column mapping enabled") {
+    sql(s"""CREATE TABLE $testTableName
+           |USING delta
+           |TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'none')
+           |AS SELECT 1 as a
+           |""".stripMargin)
+
+    unsetColumnMappingProperty(useUnset = true)
+  }
+
   test("invalid column names") {
     val invalidColName1 = colName("col1")
     val invalidColName2 = colName("col2")
@@ -58,7 +65,7 @@ class RemoveColumnMappingSuite
          |""".stripMargin)
     val e = intercept[DeltaAnalysisException] {
       // Try to remove column mapping.
-      sql(s"ALTER TABLE $testTableName SET TBLPROPERTIES ('delta.columnMapping.mode' = 'none')")
+      unsetColumnMappingProperty(useUnset = true)
     }
     assert(e.errorClass
       .contains("DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING"))
@@ -216,5 +223,90 @@ class RemoveColumnMappingSuite
     // Read from the table, ensure none of the original values of secondColumn are present.
     assert(sql(s"SELECT $secondColumn FROM $testTableName WHERE $secondColumn IS NOT NULL").count()
       == 0)
+  }
+
+  test("remove column mapping from a table with deletion vectors") {
+    sql(
+      s"""CREATE TABLE $testTableName
+         |USING delta
+         |TBLPROPERTIES (
+         |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name',
+         |  '${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = true)
+         |AS SELECT id as $logicalColumnName, id + 1 as $secondColumn
+         |  FROM RANGE(0, $totalRows, 1, $numFiles)
+         |""".stripMargin)
+    sql(s"DELETE FROM $testTableName WHERE $logicalColumnName % 2 = 0")
+    testRemovingColumnMapping()
+  }
+
+  test("remove column mapping from a table with a generated column") {
+    // Note: generate expressions are using logical column names and renaming referenced columns
+    // is forbidden.
+    sql(
+      s"""CREATE TABLE $testTableName ($logicalColumnName BIGINT,
+         |  $secondColumn BIGINT GENERATED ALWAYS AS ($logicalColumnName + 1)
+         |)
+         |USING delta
+         |TBLPROPERTIES (
+         |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name')
+         |""".stripMargin)
+    // Insert data into the table.
+    spark.range(totalRows)
+      .selectExpr(s"id as $logicalColumnName")
+      .writeTo(testTableName)
+      .append()
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName = testTableName))
+    assert(GeneratedColumn.getGeneratedColumns(deltaLog.update()).head.name == secondColumn)
+    testRemovingColumnMapping()
+    // Verify the generated column is still there.
+    assert(GeneratedColumn.getGeneratedColumns(deltaLog.update()).head.name == secondColumn)
+    // Insert more rows.
+    spark.range(totalRows)
+      .selectExpr(s"id + $totalRows as $logicalColumnName")
+      .writeTo(testTableName)
+      .append()
+    // Verify the generated column values are correct.
+    checkAnswer(sql(s"SELECT $logicalColumnName, $secondColumn FROM $testTableName"),
+      (0 until totalRows * 2).map(i => Row(i, i + 1)))
+  }
+
+  test("column constraints are preserved") {
+    // Note: constraints are using logical column names and renaming is forbidden until
+    // constraint is dropped.
+    sql(
+      s"""CREATE TABLE $testTableName
+         |USING delta
+         |TBLPROPERTIES (
+         |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name')
+         |AS SELECT id as $logicalColumnName, id + 1 as $secondColumn
+         |  FROM RANGE(0, $totalRows, 1, $numFiles)
+         |""".stripMargin)
+    val constraintName = "secondcolumnaddone"
+    val constraintExpr = s"$secondColumn = $logicalColumnName + 1"
+    sql(s"ALTER TABLE $testTableName ADD CONSTRAINT " +
+      s"$constraintName CHECK ($constraintExpr)")
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName = testTableName))
+    assert(deltaLog.update().metadata.configuration(s"delta.constraints.$constraintName") ==
+      constraintExpr)
+    testRemovingColumnMapping()
+    // Verify the constraint is still there.
+    assert(deltaLog.update().metadata.configuration(s"delta.constraints.$constraintName") ==
+      constraintExpr)
+    // Verify the constraint is still enforced.
+    intercept[DeltaInvariantViolationException] {
+      sql(s"INSERT INTO $testTableName VALUES (0, 0)")
+    }
+  }
+
+  test("remove column mapping in id mode") {
+    sql(
+      s"""CREATE TABLE $testTableName
+         |USING delta
+         |TBLPROPERTIES (
+         |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'id')
+         |AS SELECT id as $logicalColumnName, id + 1 as $secondColumn
+         |  FROM RANGE(0, $totalRows, 1, $numFiles)
+         |""".stripMargin)
+    testRemovingColumnMapping()
   }
 }
