@@ -36,7 +36,7 @@ class DeltaAnalysisException(
   startPosition: Option[Int] = None,
   cause: Option[Throwable] = None,
   errorClass: Option[String] = None,
-  messageParameters: Map[String, String] = Map.empty,
+  messageParameters: Array[String] = Array.empty,
   context: Array[QueryContext] = Array.empty)
   extends AnalysisException(
     message,
@@ -44,16 +44,16 @@ class DeltaAnalysisException(
     startPosition,
     cause,
     errorClass,
-    messageParameters,
+    messageParameters = DeltaThrowableHelper
+      .getParameterNames(errorClass, errorSubClass = None)
+      .zip(messageParameters)
+      .toMap,
     context)
     with DeltaThrowable {
 
   /* Implemented for testing */
   private[delta] def getMessageParametersArray: Array[String] = errorClass match {
-    case Some(eClass) =>
-      DeltaThrowableHelper
-        .getParameterNames(eClass, errorSubClass = null)
-        .map(messageParameters(_))
+    case Some(_) => messageParameters
     case None => Array.empty
   }
 
@@ -62,10 +62,7 @@ class DeltaAnalysisException(
     messageParameters: Array[String]) =
     this(
       message = DeltaThrowableHelper.getMessage(errorClass, messageParameters),
-      messageParameters = DeltaThrowableHelper
-        .getParameterNames(errorClass, errorSubClass = null)
-        .zip(messageParameters)
-        .toMap,
+      messageParameters = messageParameters,
       errorClass = Some(errorClass)
     )
 
@@ -75,10 +72,7 @@ class DeltaAnalysisException(
     cause: Option[Throwable]) =
     this(
       message = DeltaThrowableHelper.getMessage(errorClass, messageParameters),
-      messageParameters = DeltaThrowableHelper
-        .getParameterNames(errorClass, errorSubClass = null)
-        .zip(messageParameters)
-        .toMap,
+      messageParameters = messageParameters,
       errorClass = Some(errorClass),
       cause = cause)
 
@@ -89,10 +83,7 @@ class DeltaAnalysisException(
     origin: Option[Origin]) =
     this(
       message = DeltaThrowableHelper.getMessage(errorClass, messageParameters),
-      messageParameters = DeltaThrowableHelper
-        .getParameterNames(errorClass, errorSubClass = null)
-        .zip(messageParameters)
-        .toMap,
+      messageParameters = messageParameters,
       errorClass = Some(errorClass),
       line = origin.flatMap(_.line),
       startPosition = origin.flatMap(_.startPosition),
@@ -111,7 +102,7 @@ class DeltaIllegalArgumentException(
   def getMessageParametersArray: Array[String] = messageParameters
 
   override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)
+    DeltaThrowableHelper.getParameterNames(Option(errorClass), errorSubClass = None)
       .zip(messageParameters).toMap.asJava
   }
 }
@@ -126,7 +117,7 @@ class DeltaUnsupportedOperationException(
   def getMessageParametersArray: Array[String] = messageParameters
 
   override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)
+    DeltaThrowableHelper.getParameterNames(Option(errorClass), errorSubClass = None)
       .zip(messageParameters).toMap.asJava
   }
 }
@@ -152,7 +143,7 @@ class DeltaArithmeticException(
   override def getErrorClass: String = errorClass
 
   override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)
+    DeltaThrowableHelper.getParameterNames(Option(errorClass), errorSubClass = None)
       .zip(messageParameters).toMap.asJava
   }
 }

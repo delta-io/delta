@@ -1940,7 +1940,7 @@ class DeltaColumnMappingSuite extends QueryTest
           exception = e,
           errorClass = errorClass,
           parameters = DeltaThrowableHelper
-            .getParameterNames(errorClass, errorSubClass = null)
+            .getParameterNames(Option(errorClass), errorSubClass = None)
             .zip(invalidColumns).toMap
         )
       }
