@@ -52,7 +52,7 @@ public class TimestampConverters {
                 "TimestampType must have parquet TimeType(isAdjustedToUTC=true)");
 
             if (timestamp.getUnit() == LogicalTypeAnnotation.TimeUnit.MICROS) {
-                return new ParquetConverters.LongColumnConverter(
+                return new ParquetColumnReaders.LongColumnReader(
                     TimestampType.TIMESTAMP, initialBatchSize);
             } else if (timestamp.getUnit() == LogicalTypeAnnotation.TimeUnit.MILLIS) {
                 return new TimestampMillisConverter(initialBatchSize);
@@ -68,7 +68,7 @@ public class TimestampConverters {
         }
     }
 
-    public static class TimestampMillisConverter extends ParquetConverters.LongColumnConverter {
+    public static class TimestampMillisConverter extends ParquetColumnReaders.LongColumnReader {
 
         TimestampMillisConverter( int initialBatchSize) {
             super(TimestampType.TIMESTAMP, initialBatchSize);
@@ -80,7 +80,7 @@ public class TimestampConverters {
         }
     }
 
-    public static class TimestampBinaryConverter extends ParquetConverters.LongColumnConverter {
+    public static class TimestampBinaryConverter extends ParquetColumnReaders.LongColumnReader {
 
         TimestampBinaryConverter( int initialBatchSize) {
             super(TimestampType.TIMESTAMP, initialBatchSize);

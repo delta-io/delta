@@ -89,6 +89,18 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       StructField("numOutputCubes", LongType, nullable = false),
       StructField("mergedNumCubes", LongType, nullable = true)
     ))
+
+    val clusteringFileStatsSchema = StructType(Seq(
+      StructField("numFiles", LongType, nullable = false),
+      StructField("size", LongType, nullable = false)))
+
+    val clusteringStatsSchema = StructType(Seq(
+      StructField("inputZCubeFiles", clusteringFileStatsSchema, nullable = true),
+      StructField("inputOtherFiles", clusteringFileStatsSchema, nullable = true),
+      StructField("inputNumZCubes", LongType, nullable = false),
+      StructField("mergedFiles", clusteringFileStatsSchema, nullable = true),
+      StructField("numOutputZCubes", LongType, nullable = false)))
+
     val fileSizeMetricsSchema = StructType(Seq(
       StructField("min", LongType, nullable = true),
       StructField("max", LongType, nullable = true),
@@ -115,6 +127,7 @@ trait OptimizeMetricsSuiteBase extends QueryTest
       StructField("filesRemoved", fileSizeMetricsSchema, nullable = true),
       StructField("partitionsOptimized", LongType, nullable = false),
       StructField("zOrderStats", zOrderStatsSchema, nullable = true),
+      StructField("clusteringStats", clusteringStatsSchema, nullable = true),
       StructField("numBatches", LongType, nullable = false),
       StructField("totalConsideredFiles", LongType, nullable = false),
       StructField("totalFilesSkipped", LongType, nullable = false),

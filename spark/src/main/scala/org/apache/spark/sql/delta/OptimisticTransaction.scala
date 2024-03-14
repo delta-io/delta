@@ -35,11 +35,14 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
-import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitStore, UpdatedActions}
+import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitResponse, CommitStore, GetCommitsResponse, UpdatedActions}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats._
+import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.spark.sql.util.ScalaExtensions._
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkException
@@ -296,7 +299,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * Tracks the start time since we started trying to write a particular commit.
    * Used for logging duration of retried transactions.
    */
-  protected var commitAttemptStartTime: Long = _
+  protected var commitAttemptStartTimeMillis: Long = _
 
   /**
    * Tracks actions within the transaction, will commit along with the passed-in actions in the
@@ -370,6 +373,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   // The commit store of a table shouldn't change. If it is changed by a concurrent commit, then it
   // will be detected as a conflict and the transaction will anyway fail.
   private[delta] val preCommitCommitStoreOpt: Option[CommitStore] = snapshot.commitStoreOpt
+
+  /**
+   * Generates a timestamp which is greater than the commit timestamp
+   * of the last snapshot. Note that this is only needed when the
+   * feature `inCommitTimestamps` is enabled.
+   */
+  protected[delta] def generateInCommitTimestampForFirstCommitAttempt(
+      currentTimestamp: Long): Option[Long] =
+    Option.when(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata)) {
+      val lastCommitTimestamp = snapshot.timestamp
+      math.max(currentTimestamp, lastCommitTimestamp + 1)
+    }
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
@@ -595,9 +610,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       protocol, oldMetadata = snapshot.metadata, newMetadataTmp)
     newMetadataTmp = MaterializedRowCommitVersion.updateMaterializedColumnName(
       protocol, oldMetadata = snapshot.metadata, newMetadataTmp)
-
-    RowId.verifyMetadata(
-      snapshot.protocol, protocol, snapshot.metadata, newMetadataTmp, isCreatingNewTable)
 
     assertMetadata(newMetadataTmp)
     logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")
@@ -1086,31 +1098,50 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val readRowIdHighWatermark =
         RowId.extractHighWatermark(snapshot).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
 
+      commitAttemptStartTimeMillis = clock.getTimeMillis()
       commitInfo = CommitInfo(
-        clock.getTimeMillis(),
-        op.name,
-        op.jsonEncodedValues,
-        Map.empty,
-        Some(readVersion).filter(_ >= 0),
-        Option(isolationLevelToUse.toString),
-        Some(isBlindAppend),
-        getOperationMetrics(op),
-        getUserMetadata(op),
+        time = commitAttemptStartTimeMillis,
+        operation = op.name,
+        inCommitTimestamp =
+          generateInCommitTimestampForFirstCommitAttempt(commitAttemptStartTimeMillis),
+        operationParameters = op.jsonEncodedValues,
+        commandContext = Map.empty,
+        readVersion = Some(readVersion).filter(_ >= 0),
+        isolationLevel = Option(isolationLevelToUse.toString),
+        isBlindAppend = Some(isBlindAppend),
+        operationMetrics = getOperationMetrics(op),
+        userMetadata = getUserMetadata(op),
         tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
       // Validate that the [[DeltaConfigs.MANAGED_COMMIT_PROVIDER_CONF]] is json parse-able.
       DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.fromMetaData(metadata)
 
+      val firstAttemptVersion = getFirstAttemptVersion
+      val updatedMetadataOpt = commitInfo.inCommitTimestamp.flatMap { inCommitTimestamp =>
+        InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+          inCommitTimestamp,
+          snapshot,
+          metadata,
+          firstAttemptVersion)
+      }
+      val updatedActions = updatedMetadataOpt.map { updatedMetadata =>
+          preparedActions.map {
+            case _: Metadata => updatedMetadata
+            case other => other
+          }
+        }
+        .getOrElse(preparedActions)
+      val updatedMetadata = updatedMetadataOpt.getOrElse(metadata)
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.toSeq,
         readFiles = readFiles.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
-        metadata = metadata,
+        metadata = updatedMetadata,
         protocol = protocol,
-        actions = preparedActions,
+        actions = updatedActions,
         readSnapshot = snapshot,
         commitInfo = Option(commitInfo),
         readRowIdHighWatermark = readRowIdHighWatermark,
@@ -1125,7 +1156,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         registerPostCommitHook(GenerateSymlinkManifest)
       }
 
-      commitAttemptStartTime = clock.getTimeMillis()
       if (preparedActions.isEmpty && canSkipEmptyCommits &&
           skipRecordingEmptyCommitAllowed(isolationLevelToUse)) {
         return None
@@ -1133,7 +1163,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
       val (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo) =
         doCommitRetryIteratively(
-          getFirstAttemptVersion, currentTransactionInfo, isolationLevelToUse)
+          firstAttemptVersion, currentTransactionInfo, isolationLevelToUse)
       logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")
       (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo.actions)
     } catch {
@@ -1182,15 +1212,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       newProtocolOpt: Option[Protocol],
       op: DeltaOperations.Operation,
       context: Map[String, String],
-      metrics: Map[String, String]): (Long, Snapshot) = {
+      metrics: Map[String, String]
+  ): (Long, Snapshot) = recordDeltaOperation(deltaLog, "delta.commit.large") {
     assert(!committed, "Transaction already committed.")
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
     try {
       val tags = Map.empty[String, String]
       val commitInfo = CommitInfo(
-        time = clock.getTimeMillis(),
+        NANOSECONDS.toMillis(commitStartNano),
         operation = op.name,
+        generateInCommitTimestampForFirstCommitAttempt(NANOSECONDS.toMillis(commitStartNano)),
         operationParameters = op.jsonEncodedValues,
         context,
         readVersion = Some(readVersion),
@@ -1215,8 +1247,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Initialize everything needed to maintain auto-compaction stats.
       partitionsAddedToOpt = Some(new mutable.HashSet[Map[String, String]])
       val acStatsCollector = createAutoCompactStatsCollector()
+      val updatedMetadataOpt = commitInfo.inCommitTimestamp.flatMap { inCommitTimestamp =>
+          InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+            inCommitTimestamp,
+            snapshot,
+            metadata,
+            attemptVersion)
+        }
       var allActions =
-        Seq(commitInfo, metadata).toIterator ++
+        Seq(commitInfo, updatedMetadataOpt.getOrElse(metadata)).toIterator ++
           nonProtocolMetadataActions ++
           newProtocolOpt.toIterator
       allActions = allActions.map { action =>
@@ -1269,27 +1308,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val fsWriteStartNano = System.nanoTime()
       val jsonActions = allActions.map(_.json)
       val hadoopConf = deltaLog.newDeltaHadoopConf()
-      val commitOpt = preCommitCommitStoreOpt match {
-        case Some(preCommitCommitStore) =>
-          val commitResponse = preCommitCommitStore.commit(
-            deltaLog.store,
-            hadoopConf,
-            deltaLog.dataPath,
-            attemptVersion,
-            jsonActions,
-            UpdatedActions(commitInfo, newMetadata, newProtocolOpt))
-          // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
-          //  merged.
-          Some(commitResponse.commit)
-        case None =>
-          deltaLog.store.write(
-            deltaFile(deltaLog.logPath, attemptVersion),
-            jsonActions,
-            overwrite = false,
-            hadoopConf)
-          None
-      }
-
+      val commitStore = preCommitCommitStoreOpt.getOrElse(new FileSystemBasedCommitStore(deltaLog))
+      val commitResponse = commitStore.commit(
+        deltaLog.store,
+        hadoopConf,
+        deltaLog.logPath,
+        attemptVersion,
+        jsonActions,
+        UpdatedActions(commitInfo, newMetadata, newProtocolOpt))
+      // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
+      //  merged.
       acStatsCollector.finalizeStats(deltaLog.tableId)
       spark.sessionState.conf.setConf(
         DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
@@ -1299,7 +1327,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // NOTE: commitLarge cannot run postCommitHooks (such as the CheckpointHook).
       // Instead, manually run any necessary actions in updateAndCheckpoint.
       val postCommitSnapshot = updateAndCheckpoint(
-        spark, deltaLog, commitSize, attemptVersion, commitOpt, txnId)
+        spark, deltaLog, commitSize, attemptVersion, commitResponse.commit, txnId)
       val postCommitReconstructionTime = System.nanoTime()
       var stats = CommitStats(
         startVersion = readVersion,
@@ -1368,9 +1396,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       deltaLog: DeltaLog,
       commitSize: Int,
       attemptVersion: Long,
-      commitOpt: Option[Commit],
+      commit: Commit,
       txnId: String): Snapshot = {
-    val currentSnapshot = deltaLog.update()
+
+    val currentSnapshot = deltaLog.updateAfterCommit(
+      attemptVersion,
+      commit,
+      newChecksumOpt = None,
+      preCommitLogSegment = preCommitLogSegment)
     if (currentSnapshot.version != attemptVersion) {
       throw DeltaErrors.invalidCommittedVersion(attemptVersion, currentSnapshot.version)
     }
@@ -1719,7 +1752,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
     }
     // retries all failed
-    val totalCommitAttemptTime = clock.getTimeMillis() - commitAttemptStartTime
+    val totalCommitAttemptTime = clock.getTimeMillis() - commitAttemptStartTimeMillis
     throw DeltaErrors.maxCommitRetriesExceededException(
       maxRetryAttempts + 1,
       commitVersion,
@@ -1760,7 +1793,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val fsWriteStartNano = System.nanoTime()
     val jsonActions = actions.map(_.json)
 
-    val (newChecksumOpt, commitOpt) =
+    val (newChecksumOpt, commit) =
       writeCommitFile(attemptVersion, jsonActions.toIterator, currentTransactionInfo)
 
     spark.sessionState.conf.setConf(
@@ -1771,6 +1804,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     val postCommitSnapshot = deltaLog.updateAfterCommit(
       attemptVersion,
+      commit,
       newChecksumOpt,
       preCommitLogSegment
     )
@@ -1847,6 +1881,41 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     postCommitSnapshot
   }
 
+  class FileSystemBasedCommitStore(deltaLog: DeltaLog) extends CommitStore {
+    override def commit(
+        logStore: LogStore,
+        hadoopConf: Configuration,
+        logPath: Path,
+        commitVersion: Long,
+        actions: Iterator[String],
+        updatedActions: UpdatedActions): CommitResponse = {
+      val commitFile = util.FileNames.deltaFile(logPath, commitVersion)
+      val commitFileStatus =
+        doCommit(logStore, hadoopConf, logPath, commitFile, commitVersion, actions)
+      // TODO(managed-commits): Integrate with ICT and pass the correct commitTimestamp
+      CommitResponse(Commit(
+        commitVersion,
+        fileStatus = commitFileStatus,
+        commitTimestamp = commitFileStatus.getModificationTime
+      ))
+    }
+
+    protected def doCommit(
+        logStore: LogStore,
+        hadoopConf: Configuration,
+        logPath: Path,
+        commitFile: Path,
+        commitVersion: Long,
+        actions: Iterator[String]): FileStatus = {
+      logStore.write(commitFile, actions, overwrite = false, hadoopConf)
+      logPath.getFileSystem(hadoopConf).getFileStatus(commitFile)
+    }
+
+    override def getCommits(
+        logPath: Path, startVersion: Long, endVersion: Option[Long]): GetCommitsResponse =
+      GetCommitsResponse(Seq.empty, -1)
+  }
+
   /**
    * Writes the json actions provided to the commit file corresponding to attemptVersion.
    * If managed-commits are enabled, this method must return a non-empty [[Commit]]
@@ -1856,35 +1925,39 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       attemptVersion: Long,
       jsonActions: Iterator[String],
       currentTransactionInfo: CurrentTransactionInfo)
-      : (Option[VersionChecksum], Option[Commit]) = preCommitCommitStoreOpt match {
-    case Some(preCommitCommitStore) =>
-      // managed-commit
-      val updatedActions = currentTransactionInfo.getUpdateActions()
-      val commitResponse = preCommitCommitStore.commit(
-        deltaLog.store,
-        deltaLog.newDeltaHadoopConf(),
-        deltaLog.dataPath,
-        attemptVersion,
-        jsonActions,
-        updatedActions)
-      if (attemptVersion == 0L) {
-        val expectedPathForCommitZero = deltaFile(deltaLog.logPath, version = 0L).toUri
-        val actualCommitPath = new Path(commitResponse.commit.serializableFileStatus.path).toUri
-        if (actualCommitPath != expectedPathForCommitZero) {
-          throw new IllegalStateException("Expected 0th commit to be written to " +
-            s"$expectedPathForCommitZero but was written to $actualCommitPath")
-        }
+      : (Option[VersionChecksum], Commit) = {
+    val commitStore = preCommitCommitStoreOpt.getOrElse(new FileSystemBasedCommitStore(deltaLog))
+    val commitFile =
+      writeCommitFileImpl(attemptVersion, jsonActions, commitStore, currentTransactionInfo)
+    (None, commitFile)
+  }
+
+  protected def writeCommitFileImpl(
+    attemptVersion: Long,
+    jsonActions: Iterator[String],
+    commitStore: CommitStore,
+    currentTransactionInfo: CurrentTransactionInfo
+  ): Commit = {
+    val commitResponse = commitStore.commit(
+      deltaLog.store,
+      deltaLog.newDeltaHadoopConf(),
+      deltaLog.logPath,
+      attemptVersion,
+      jsonActions,
+      currentTransactionInfo.getUpdateActions())
+    // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
+    //  merged.
+    val commitTimestamp = commitResponse.commit.fileStatus.getModificationTime
+    val commitFile = commitResponse.commit.copy(commitTimestamp = commitTimestamp)
+    if (attemptVersion == 0L) {
+      val expectedPathForCommitZero = deltaFile(deltaLog.logPath, version = 0L).toUri
+      val actualCommitPath = commitResponse.commit.fileStatus.getPath.toUri
+      if (actualCommitPath != expectedPathForCommitZero) {
+        throw new IllegalStateException("Expected 0th commit to be written to " +
+          s"$expectedPathForCommitZero but was written to $actualCommitPath")
       }
-      (None, Some(commitResponse.commit))
-    case None =>
-      // filesystem based commit
-      deltaLog.store.write(
-        deltaFile(deltaLog.logPath, attemptVersion),
-        jsonActions,
-        overwrite = false,
-        deltaLog.newDeltaHadoopConf())
-      // No VersionChecksum and commitInfo available yet
-      (None, None)
+    }
+    commitFile
   }
 
   /**
@@ -1939,12 +2012,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           otherCommitFileStatus,
           commitIsolationLevel)
         logInfo(s"$logPrefixStr No conflicts in version $otherCommitVersion, " +
-          s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start")
+          s"${clock.getTimeMillis() - commitAttemptStartTimeMillis} ms since start")
       }
 
       logInfo(s"$logPrefixStr No conflicts with versions [$checkVersion, $nextAttemptVersion) " +
         s"with current txn having $txnDetailsLogStr, " +
-        s"${clock.getTimeMillis() - commitAttemptStartTime} ms since start")
+        s"${clock.getTimeMillis() - commitAttemptStartTimeMillis} ms since start")
       (nextAttemptVersion, updatedCurrentTransactionInfo)
     }
   }
@@ -2086,5 +2159,4 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case _ =>
     }
   }
-
 }

@@ -27,6 +27,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 
+import io.delta.kernel.internal.DeltaErrors;
 import static io.delta.kernel.internal.util.ExpressionUtils.getLeft;
 import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
 import static io.delta.kernel.internal.util.ExpressionUtils.getUnaryChild;
@@ -63,8 +64,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ExpressionTransformResult transformResult =
             new ExpressionTransformer(inputSchema).visit(expression);
         if (!transformResult.outputType.equivalent(outputType)) {
-            throw new UnsupportedOperationException(format("Can not create an expression handler " +
-                "for expression `%s` returns result of type %s", expression, outputType));
+            String reason = format(
+                    "Can not create an expression handler returns result of type %s", outputType);
+            throw DeltaErrors.unsupportedExpression(expression, Optional.of(reason));
         }
         this.expression = transformResult.expression;
     }
@@ -149,8 +151,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                         transformBinaryComparator(predicate),
                         BooleanType.BOOLEAN);
                 default:
-                    throw new UnsupportedOperationException(
-                        "unsupported expression encountered: " + predicate);
+                    throw DeltaErrors.unsupportedExpression(
+                            predicate, Optional.of("unsupported expression encountered"));
             }
         }
 
@@ -191,8 +193,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             if (partitionColType instanceof StructType ||
                 partitionColType instanceof ArrayType ||
                 partitionColType instanceof MapType) {
-                throw new UnsupportedOperationException(
-                    "unsupported partition data type: " + partitionColType);
+                throw DeltaErrors.unsupportedExpression(
+                        partitionValue,
+                        Optional.of("unsupported partition data type: " + partitionColType));
             }
             return new ExpressionTransformResult(
                 new PartitionValueExpression(serializedPartValueInput.expression, partitionColType),
@@ -248,16 +251,17 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 .map(this::visit)
                 .collect(Collectors.toList());
             if (children.size() == 0) {
-                throw new UnsupportedOperationException(
-                    "Coalesce requires at least one expression");
+                throw DeltaErrors.unsupportedExpression(
+                    coalesce, Optional.of("Coalesce requires at least one expression"));
             }
             // TODO support least-common-type resolution
             long numDistinctTypes = children.stream().map(e -> e.outputType)
                 .distinct()
                 .count();
             if (numDistinctTypes > 1) {
-                throw new UnsupportedOperationException(
-                    "Coalesce is only supported for arguments of the same type");
+                throw DeltaErrors.unsupportedExpression(
+                        coalesce,
+                        Optional.of("Coalesce is only supported for arguments of the same type"));
             }
             // TODO support other data types besides boolean (just needs tests)
             if (!(children.get(0).outputType instanceof BooleanType)) {
@@ -298,10 +302,10 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 } else if (canCastTo(rightResult.outputType, leftResult.outputType)) {
                     right = new ImplicitCastExpression(right, leftResult.outputType);
                 } else {
-                    String msg = format("%s: operands are of different types which are not " +
+                    String msg = format("operands are of different types which are not " +
                             "comparable: left type=%s, right type=%s",
-                        predicate, leftResult.outputType, rightResult.outputType);
-                    throw new UnsupportedOperationException(msg);
+                            leftResult.outputType, rightResult.outputType);
+                    throw DeltaErrors.unsupportedExpression(predicate, Optional.of(msg));
                 }
             }
             return new Predicate(predicate.getName(), left, right);
@@ -433,8 +437,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                     }
                     break;
                 default:
-                    throw new UnsupportedOperationException(
-                        "unsupported expression encountered: " + predicate);
+                    throw DeltaErrors.unsupportedExpression(
+                            predicate,
+                            Optional.of("unsupported expression encountered"));
             }
 
             return new DefaultBooleanVector(numRows, Optional.of(nullability), result);

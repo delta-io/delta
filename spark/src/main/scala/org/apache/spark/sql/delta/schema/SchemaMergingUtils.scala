@@ -199,8 +199,11 @@ object SchemaMergingUtils {
                     currentField.metadata)
                 } catch {
                   case NonFatal(e) =>
-                    throw new AnalysisException(s"Failed to merge fields '${currentField.name}' " +
-                      s"and '${updateField.name}'. " + e.getMessage)
+                    throw new DeltaAnalysisException(
+                      errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+                      messageParameters = Array(currentField.name, updateField.name),
+                      cause = Some(e)
+                    )
                 }
               case None =>
                 // Retain the old field.
@@ -274,8 +277,8 @@ object SchemaMergingUtils {
         case (_, NullType) =>
           current
         case _ =>
-          throw new AnalysisException(
-            s"Failed to merge incompatible data types $current and $update")
+          throw new DeltaAnalysisException(errorClass = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+            messageParameters = Array(current.toString, update.toString))
       }
     }
     merge(tableSchema, dataSchema, fixedTypeColumns.map(_.toLowerCase(Locale.ROOT)))

@@ -67,25 +67,6 @@ object RowId {
   }
 
   /**
-   * Verifies that row IDs are only set as readable when a new table is created.
-   */
-  private[delta] def verifyMetadata(
-      oldProtocol: Protocol,
-      newProtocol: Protocol,
-      oldMetadata: Metadata,
-      newMetadata: Metadata,
-      isCreatingNewTable: Boolean): Unit = {
-
-    val rowIdsEnabledBefore = isEnabled(oldProtocol, oldMetadata)
-    val rowIdsEnabledAfter = isEnabled(newProtocol, newMetadata)
-
-    if (rowIdsEnabledAfter && !rowIdsEnabledBefore && !isCreatingNewTable) {
-      throw new UnsupportedOperationException(
-        "Cannot enable Row IDs on an existing table.")
-    }
-  }
-
-  /**
    * Assigns fresh row IDs to all AddFiles inside `actions` that do not have row IDs yet and emits
    * a [[RowIdHighWaterMark]] action with the new high-water mark.
    */

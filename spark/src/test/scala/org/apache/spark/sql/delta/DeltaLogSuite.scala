@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.{BufferedReader, File, InputStreamReader}
+import java.io.{BufferedReader, File, InputStreamReader, IOException}
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 
@@ -27,18 +27,20 @@ import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.permission.FsPermission
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.JsonToStructs
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 
@@ -47,7 +49,7 @@ class DeltaLogSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaCheckpointTestUtils
-  with SQLTestUtils {
+  with DeltaSQLTestUtils {
 
 
   protected val testOp = Truncate()
@@ -452,7 +454,7 @@ class DeltaLogSuite extends QueryTest
               }.map(_.json)
             log.store.write(checkpointPath, filteredActions.toIterator, overwrite = true, conf)
           } else {
-            withTempDir(removeActionFromParquetCheckpoint)
+            withTempDir { f => removeActionFromParquetCheckpoint(f) }
           }
         }
 
@@ -478,7 +480,7 @@ class DeltaLogSuite extends QueryTest
 
       // Store these for later usage
       val actions = deltaLog.snapshot.stateDS.collect()
-      val commitTimestamp = deltaLog.snapshot.logSegment.lastCommitTimestamp
+      val commitTimestamp = deltaLog.snapshot.logSegment.lastCommitFileModificationTimestamp
 
       checkAnswer(
         spark.read.format("delta").load(path),
@@ -671,6 +673,64 @@ class DeltaLogSuite extends QueryTest
     withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES.key -> "100") {
       assert(spark.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES) === 100)
+    }
+  }
+
+  test("DeltaLog should create log directory when ensureLogDirectory is called") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      val log = DeltaLog.forTable(spark, new Path(path))
+      log.ensureLogDirectoryExist()
+
+      val logPath = log.logPath
+      val fs = logPath.getFileSystem(log.newDeltaHadoopConf())
+      assert(fs.exists(logPath), "Log path should exist.")
+      assert(fs.getFileStatus(logPath).isDirectory, "Log path should be a directory")
+    }
+  }
+
+  test("DeltaLog should throw exception when unable to create log directory " +
+    "with silent filesystem failure") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      val log = DeltaLog.forTable(spark, new Path(path))
+      val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+
+      // Set parent directory to be read-only.
+      // Attempting to create a child file/directory should fail.
+      // Both the log directory and commit directory are typically created as part
+      // of ensureLogDirectoryExist(), so we need to create the log
+      // directory ourselves if we want to apply permissions.
+      fs.mkdirs(log.logPath, new FsPermission(444))
+
+      val e = intercept[DeltaIOException] {
+        log.ensureLogDirectoryExist()
+      }
+      checkError(e, "DELTA_CANNOT_CREATE_LOG_PATH")
+    }
+  }
+
+  test("DeltaLog should throw exception when unable to create log directory " +
+    "with filesystem IO Exception") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      val log = DeltaLog.forTable(spark, new Path(path))
+      val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+
+      // create a file in place of what should be the directory.
+      // Attempting to create a child file/directory should fail and throw an IOException.
+      fs.create(log.logPath)
+
+      val e = intercept[DeltaIOException] {
+        log.ensureLogDirectoryExist()
+      }
+      checkError(e, "DELTA_CANNOT_CREATE_LOG_PATH")
+      e.getCause match {
+        case e: IOException =>
+          assert(e.getMessage.contains("Parent path is not a directory"))
+        case _ =>
+          fail(s"Expected IOException, got ${e.getCause}")
+      }
     }
   }
 }

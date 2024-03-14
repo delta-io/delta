@@ -112,13 +112,26 @@ case class AlterTableSetPropertiesDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
+
+    val rowTrackingPropertyKey = DeltaConfigs.ROW_TRACKING_ENABLED.key
+    val enableRowTracking = configuration.keySet.contains(rowTrackingPropertyKey) &&
+      configuration(rowTrackingPropertyKey).toBoolean
+
+    if (enableRowTracking) {
+      // TODO(longvu-db): This will be removed once we support backfill.
+      throw new UnsupportedOperationException("Cannot enable Row IDs on an existing table.")
+    }
     val columnMappingPropertyKey = DeltaConfigs.COLUMN_MAPPING_MODE.key
     val disableColumnMapping = configuration.get(columnMappingPropertyKey).contains("none")
     val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
       DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL)
     if (disableColumnMapping && columnMappingRemovalAllowed) {
-      new RemoveColumnMappingCommand(deltaLog, table.catalogTable)
+      RemoveColumnMappingCommand(deltaLog, table.catalogTable)
         .run(sparkSession, removeColumnMappingTableProperty = false)
+      // Not changing anything else, so we can return early.
+      if (configuration.size == 1) {
+        return Seq.empty[Row]
+      }
     }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.setProperties") {
       val txn = startTransaction()
@@ -176,8 +189,12 @@ case class AlterTableUnsetPropertiesDeltaCommand(
     val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
       DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL)
     if (disableColumnMapping && columnMappingRemovalAllowed) {
-      new RemoveColumnMappingCommand(deltaLog, table.catalogTable)
+      RemoveColumnMappingCommand(deltaLog, table.catalogTable)
         .run(sparkSession, removeColumnMappingTableProperty = true)
+      if (propKeys.size == 1) {
+        // Not unsetting anything else, so we can return early.
+        return Seq.empty[Row]
+      }
     }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.unsetProperties") {
       val txn = startTransaction()
