@@ -85,8 +85,8 @@ case class DeltaReorgTableCommand(
       new DeltaPurgeOperation()
     case DeltaReorgTableSpec(DeltaReorgTableMode.UNIFORM_ICEBERG, Some(icebergCompatVersion)) =>
       new DeltaUpgradeUniformOperation(icebergCompatVersion)
-      case DeltaReorgTableSpec(DeltaReorgTableMode.REWRITE_TYPE_WIDENING, None) =>
-        new DeltaRewriteTypeWideningOperation()
+    case DeltaReorgTableSpec(DeltaReorgTableMode.REWRITE_TYPE_WIDENING, None) =>
+      new DeltaRewriteTypeWideningOperation()
   }
 }
 

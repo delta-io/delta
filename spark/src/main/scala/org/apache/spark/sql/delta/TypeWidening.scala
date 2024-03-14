@@ -83,7 +83,6 @@ object TypeWidening {
     }
 
 
-
   /**
    * Return the number of files that were written before the latest type change and that then
    * contain a column or field with a type that is different from the current able schema.

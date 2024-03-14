@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta
 
 import java.util.concurrent.TimeUnit
 
-
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand

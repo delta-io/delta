@@ -17,11 +17,12 @@
 package org.apache.spark.sql.delta
 import java.util.concurrent.TimeUnit
 
-import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaReorgTableCommand, DeltaReorgTableMode, DeltaReorgTableSpec}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+
+import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 
 /**
  * A base class for implementing a preparation command for removing table features.
