@@ -86,9 +86,7 @@ trait MergeIntoSchemaEvolutionMixin {
           errorContains(Utils.exceptionString(ex), error)
         } else {
           executeMergeFunction(s"delta.`$tempPath` t", "source s", cond, clauses.toSeq)
-          checkAnswer(
-            spark.read.format("delta").load(tempPath),
-            df.collect())
+          checkAnswer(spark.read.format("delta").load(tempPath), df.collect())
           assert(spark.read.format("delta").load(tempPath).schema.asNullable ===
             df.schema.asNullable)
         }
