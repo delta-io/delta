@@ -16,10 +16,11 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.{OptimisticTransactionImpl, Snapshot, UniversalFormat}
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.{OptimisticTransactionImpl, Snapshot, UniversalFormat}
+
+import org.apache.spark.sql.SparkSession
 
 /** Write a new Hudi commit for the version committed by the txn, if required. */
 object HudiConverterHook extends PostCommitHook with DeltaLogging {

@@ -17,11 +17,13 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.types.{ArrayType, NullType, MapType}
+import org.apache.spark.sql.types.{ArrayType, MapType, NullType}
 
 /**
  * Utils to validate the Universal Format (UniForm) Delta feature (NOT a table feature).
