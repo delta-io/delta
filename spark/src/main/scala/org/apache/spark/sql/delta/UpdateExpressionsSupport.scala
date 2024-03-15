@@ -69,7 +69,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
           conf.getConf(DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME)
 
         (fromExpression.dataType, dataType) match {
-          case (ArrayType(_: StructType, _), ArrayType(toEt: StructType, toContainsNull)) =>
+          case (ArrayType(_: StructType, _), to @ ArrayType(toEt: StructType, toContainsNull)) =>
             fromExpression match {
               // If fromExpression is an array function returning an array, cast the
               // underlying array first and then perform the function on the transformed array.
@@ -126,7 +126,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
                 // containsNull as true to avoid casting failures.
                 cast(
                   ArrayTransform(fromExpression, transformLambdaFunc),
-                  ArrayType(toEt, containsNull = true),
+                  to.asNullable,
                   columnName
                 )
             }
@@ -154,7 +154,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
                   (_, value) => castIfNeeded(value, to.valueType, allowStructEvolution, columnName)
                 })
             }
-            cast(transformedKeysAndValues, to, columnName)
+            cast(transformedKeysAndValues, to.asNullable, columnName)
           case (from: StructType, to: StructType)
             if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
             // All from fields must be present in the final schema, or we'll silently lose data.
