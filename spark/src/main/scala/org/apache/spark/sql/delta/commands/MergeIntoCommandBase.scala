@@ -90,8 +90,10 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
   }
 
   /**
-   * Output expressions from the target adjusted after applying schema evolution. There are two
-   * kinds of expressions here:
+   * Expressions to convert from a pre-evolution target row to the post-evolution target row. These
+   * expressions are used for columns that are not modified in updated rows or to copy rows that are
+   * not modified.
+   * There are two kinds of expressions here:
    *  * References to existing columns in the target dataframe. Note that these references may have
    *    a different data type than they originally did due to schema evolution so we add a cast that
    *    supports schema evolution. The references will be marked as nullable if `makeNullable` is

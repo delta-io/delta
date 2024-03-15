@@ -216,11 +216,11 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
    *   generateUpdateExpressions(
    *     targetSchema=[a,b,c], defaultExprs=[a, b, c], updateOps=[(a, 1),(b, 2)], pathPrefix=["s1"])
    *     end-of-recursion
-   *   -> returns (1, 2, a.d)
+   *   -> returns (1, 2, a.c)
    *   -> generates expression for s2 - no child assignment and no update expression: use
    *      default expression `s2`
    *   -> generates expression for z - use available update expression `3`
-   * -> returns ((1, 2, a.d), s2, 3)
+   * -> returns ((1, 2, a.c), s2, 3)
    *
    * @param targetSchema schema to follow to generate update expressions. Due to schema evolution,
    *                     it may contain additional columns or fields not present in the original
