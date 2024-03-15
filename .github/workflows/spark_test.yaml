@@ -2,7 +2,7 @@ name: "Delta Spark Tests"
 on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-20.04
+    runs-on: delta-spark-tests-runner-8-core
     strategy:
       matrix:
         # These Scala versions must match those in the build.sbt
