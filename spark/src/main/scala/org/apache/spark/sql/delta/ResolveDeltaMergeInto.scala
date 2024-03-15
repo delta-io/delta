@@ -82,7 +82,9 @@ object ResolveDeltaMergeInto {
       }
     }
 
-    val canAutoMigrate = withSchemaEvolution || conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
+    val canEvolveSchema =
+      withSchemaEvolution || conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
+
     /**
      * Resolves a clause using the given plans (used for resolving the action exprs) and
      * returns the resolved clause.
@@ -122,7 +124,7 @@ object ResolveDeltaMergeInto {
       val resolvedActions: Seq[DeltaMergeAction] = clause.actions.flatMap { action =>
         action match {
           // For actions like `UPDATE SET *` or `INSERT *`
-          case _: UnresolvedStar if !canAutoMigrate =>
+          case _: UnresolvedStar if !canEvolveSchema =>
             // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every target
             // column name. The target columns do not need resolution. The right hand side
             // expression (i.e. sourceColumnBySameName) needs to be resolved only by the source
@@ -136,7 +138,7 @@ object ResolveDeltaMergeInto {
               .map { (resolvedExpr, targetColName) =>
                 DeltaMergeAction(Seq(targetColName), resolvedExpr, targetColNameResolved = true)
               }
-          case _: UnresolvedStar if canAutoMigrate =>
+          case _: UnresolvedStar if canEvolveSchema =>
             clause match {
               case _: DeltaMergeIntoNotMatchedInsertClause =>
                 // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
@@ -177,7 +179,7 @@ object ResolveDeltaMergeInto {
               // Allow schema evolution for update and insert non-star when the column is not in
               // the target.
               case _: AnalysisException
-                if canAutoMigrate && (clause.isInstanceOf[DeltaMergeIntoMatchedUpdateClause] ||
+                if canEvolveSchema && (clause.isInstanceOf[DeltaMergeIntoMatchedUpdateClause] ||
                   clause.isInstanceOf[DeltaMergeIntoNotMatchedClause]) =>
                 resolveSingleExprOrFail(
                   expr = unresolvedAttrib,
@@ -225,7 +227,7 @@ object ResolveDeltaMergeInto {
       resolveClause(_, plansToResolveAction = Seq(target))
     }
 
-    val finalSchema = if (canAutoMigrate) {
+    val finalSchema = if (canEvolveSchema) {
       // When schema evolution is enabled, add to the target table new columns or nested fields that
       // are assigned to in merge actions and not already part of the target schema. This is done by
       // collecting all assignments from merge actions and using them to filter out the source
@@ -295,7 +297,7 @@ object ResolveDeltaMergeInto {
       resolvedMatchedClauses,
       resolvedNotMatchedClauses,
       resolvedNotMatchedBySourceClauses,
-      withSchemaEvolution = canAutoMigrate,
+      withSchemaEvolution = canEvolveSchema,
       finalSchema = Some(finalSchema))
 
     // Its possible that pre-resolved expressions (e.g. `sourceDF("key") = targetDF("key")`) have

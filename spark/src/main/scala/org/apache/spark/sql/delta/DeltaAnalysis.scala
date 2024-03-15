@@ -533,7 +533,7 @@ class DeltaAnalysis(session: SparkSession)
           merge.sourceTable,
           merge.mergeCondition,
           matchedActions ++ notMatchedActions ++ notMatchedBySourceActions,
-          // We are waiting for Spark to support the SQL "WITH SCHEMA EVOLUTION" syntax.
+          // TODO: We are waiting for Spark to support the SQL "WITH SCHEMA EVOLUTION" syntax.
           // After that this argument will be `merge.withSchemaEvolution`.
           withSchemaEvolution = false
         )

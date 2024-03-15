@@ -264,8 +264,8 @@ class DeltaMergeBuilder private(
   }
 
   /**
-   * Enable schema evolution for the merge operation. This allows the schema of the target table
-   * to be automatically updated based on the schema of the source table.
+   * Enable schema evolution for the merge operation. This allows the schema of the target
+   * table/columns to be automatically updated based on the schema of the source table/columns.
    *
    * @since 3.2.0
    */

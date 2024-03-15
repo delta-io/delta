@@ -28,11 +28,6 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, LongType, MapType, NullType, StringType, StructType}
 import org.apache.spark.util.Utils
 
-
-
-
-
-
 /**
  * Trait collecting all other schema evolution test traits for convenience.
  */
@@ -68,24 +63,18 @@ trait MergeIntoSchemaEvolutionMixin {
       confs: Seq[(String, String)] = Seq(),
       partitionCols: Seq[String] = Seq.empty): Unit = {
 
-    def executeMergeAndAssert(
-        df: DataFrame,
-        error: String,
-        // Ideally we would like to use `MergeClause*` instead of `Seq[MergeClause]` but it's not
-        // allowed in Scala 2.13. The error message is:
-        //    Repeated parameters are only allowed in method signatures. Use `Seq` instead.
-        executeMergeFunction: (String, String, String, Seq[MergeClause]) => Unit): Unit = {
+    def executeMergeAndAssert(df: DataFrame, error: String): Unit = {
       append(targetData, partitionCols)
       withTempView("source") {
         sourceData.createOrReplaceTempView("source")
 
         if (error != null) {
           val ex = intercept[AnalysisException] {
-            executeMergeFunction(s"delta.`$tempPath` t", "source s", cond, clauses.toSeq)
+            executeMerge(s"delta.`$tempPath` t", "source s", cond, clauses: _*)
           }
           errorContains(Utils.exceptionString(ex), error)
         } else {
-          executeMergeFunction(s"delta.`$tempPath` t", "source s", cond, clauses.toSeq)
+          executeMerge(s"delta.`$tempPath` t", "source s", cond, clauses: _*)
           checkAnswer(spark.read.format("delta").load(tempPath), df.collect())
           assert(spark.read.format("delta").load(tempPath).schema.asNullable ===
             df.schema.asNullable)
@@ -95,19 +84,13 @@ trait MergeIntoSchemaEvolutionMixin {
 
     test(s"schema evolution - $name - with evolution disabled") {
       withSQLConf(confs: _*) {
-        executeMergeAndAssert(
-          expectedWithoutEvolution,
-          expectErrorWithoutEvolutionContains,
-          (tgt, src, cond, clauses) => executeMerge(tgt, src, cond, clauses: _*))
+        executeMergeAndAssert(expectedWithoutEvolution, expectErrorWithoutEvolutionContains)
       }
     }
 
     test(s"schema evolution - $name - on via DeltaSQLConf") {
       withSQLConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
-        executeMergeAndAssert(
-          expected,
-          expectErrorContains,
-          (tgt, src, cond, clauses) => executeMerge(tgt, src, cond, clauses: _*))
+        executeMergeAndAssert(expected, expectErrorContains)
       }
     }
   }
