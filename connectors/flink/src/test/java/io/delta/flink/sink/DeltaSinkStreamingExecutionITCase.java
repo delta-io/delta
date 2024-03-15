@@ -193,8 +193,8 @@ public class DeltaSinkStreamingExecutionITCase extends DeltaSinkExecutionITCaseB
      * @param exceptionMode whether to throw an exception before or after Delta log commit.
      */
     @Disabled(
-      "This test is flaky, for some runs it fails with unexpected numbers of files. " +
-      "Investigation of if this is a connector or test issue is ongoing")
+        "This test is flaky, for some runs it fails with unexpected numbers of files. "
+            + "Investigation of if this is a connector or test issue is ongoing")
     @ResourceLock("StreamingFailoverDeltaGlobalCommitter")
     @ParameterizedTest(name = "isPartitioned = {0}, exceptionMode = {1}")
     @CsvSource({
@@ -339,8 +339,8 @@ public class DeltaSinkStreamingExecutionITCase extends DeltaSinkExecutionITCaseB
     }
 
     @Disabled(
-      "This test is flaky, for some runs it fails with 'Seems there was a duplicated AddFile in Delta log'. " +
-      "Investigation of if this is a connector or test issue is ongoing")
+        "This test is flaky, for some runs it fails with 'Seems there was a duplicated AddFile in"
+            + " Delta log. Investigation of if this is a connector or test issue is ongoing")
     @ParameterizedTest(
         name = "init parallelism level = {0}, parallelism level after resuming job = {1}")
     @CsvSource({"3, 3", "3, 6", "6, 3"})
