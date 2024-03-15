@@ -137,7 +137,7 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
    * Unset the type widening table property to prevent new type changes to be applied to the table,
    * then removes traces of the feature:
    * - Rewrite files that have columns or fields with a different type than in the current table
-   *   schema. These are all files added or modified after the last type change.
+   *   schema. These are all files not added or modified after the last type change.
    * - Remove the type widening metadata attached to fields in the current table schema.
    *
    * @return Return true if files were rewritten or metadata was removed. False otherwise.
@@ -165,7 +165,7 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
 
   /**
    * Rewrite files that have columns or fields with a different type than in the current table
-   *   schema. These are all files added or modified after the last type change.
+   * schema. These are all files not added or modified after the last type change.
    * @return Return the number of files rewritten.
    */
   private def rewriteFilesIfNeeded(): Long = {
