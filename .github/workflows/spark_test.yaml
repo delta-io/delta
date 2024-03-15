@@ -65,6 +65,6 @@ jobs:
         if: steps.git-diff.outputs.diff
       - name: Run Scala/Java and Python tests
         run: |
-          pipenv run python run-tests.py --group spark
+          TEST_PARALLELISM_COUNT=4 pipenv run python run-tests.py --group spark
           cd examples/scala && build/sbt "++ $SCALA_VERSION compile"
         if: steps.git-diff.outputs.diff
