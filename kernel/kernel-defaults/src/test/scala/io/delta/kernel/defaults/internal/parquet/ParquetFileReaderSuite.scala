@@ -158,14 +158,18 @@ class ParquetFileReaderSuite extends AnyFunSuite
     checkAnswer(actResult2, expResult2)
   }
 
-  private def testReadVariant(testName: String)(df: => DataFrame): Unit = {
+  /**
+   * Writes a table using Spark, reads it back using the Delta Kernel implementation, and asserts
+   * that the results are the same.
+   */
+  private def testRead(testName: String)(df: => DataFrame): Unit = {
     test(testName) {
-      withTable("test_variant_table") {
+      withTable("test_table") {
         df.write
           .format("delta")
           .mode("overwrite")
-          .saveAsTable("test_variant_table")
-        val path = spark.sql("describe table extended `test_variant_table`")
+          .saveAsTable("test_table")
+        val path = spark.sql("describe table extended `test_table`")
           .where("col_name = 'Location'")
           .collect()(0)
           .getString(1)
@@ -179,7 +183,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
     }
   }
 
-  testReadVariant("basic read variant") {
+  testRead("basic read variant") {
     spark.range(0, 10, 1, 1).selectExpr(
       "parse_json(cast(id as string)) as basic_v",
       "named_struct('v', parse_json(cast(id as string))) as struct_v",
@@ -193,7 +197,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
     )
   }
 
-  testReadVariant("basic null variant") {
+  testRead("basic null variant") {
     spark.range(0, 10, 1, 1).selectExpr(
       "cast(null as variant) basic_v",
       "named_struct('v', cast(null as variant)) as struct_v",
