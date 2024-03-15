@@ -63,8 +63,8 @@ object DeltaSourceUtils {
     case v: Boolean => expressions.Literal.create(v)
     case v: java.sql.Date => expressions.Literal.create(v)
     case v: java.sql.Timestamp => expressions.Literal.create(v)
+    case v: java.time.Instant => expressions.Literal.create(v)
     case v: java.time.LocalDate => expressions.Literal.create(v)
-    case v: java.time.LocalDateTime => expressions.Literal.create(v)
     case v: BigDecimal => expressions.Literal.create(v)
   }
 
