@@ -220,7 +220,7 @@ class DeltaTypeWideningMetadataSuite extends QueryTest with DeltaSQLCommandTest 
     ))
   }
 
-  test("addTypeWideningMetadata with no type changes") {
+  test("addTypeWideningMetadata/removeTypeWideningMetadata with no type changes") {
     for {
       (oldSchema, newSchema) <- Seq(
         ("a short", "a short"),
@@ -240,19 +240,21 @@ class DeltaTypeWideningMetadataSuite extends QueryTest with DeltaSQLCommandTest 
       withClue(s"oldSchema = $oldSchema, newSchema = $newSchema") {
         val schema = TypeWideningMetadata.addTypeWideningMetadata(txn, newSchema, oldSchema)
         assert(schema === newSchema)
+        assert(TypeWideningMetadata.removeTypeWideningMetadata(schema) === schema -> Seq.empty)
       }
     }
   }
 
-  test("addTypeWideningMetadata on top-level fields") {
-    var schema =
+  test("addTypeWideningMetadata/removeTypeWideningMetadata on top-level fields") {
+    val schemaWithoutMetadata =
       StructType.fromDDL("i long, d decimal(15, 4), a array<double>, m map<short, int>")
     val firstOldSchema =
       StructType.fromDDL("i short, d decimal(6, 2), a array<byte>, m map<byte, int>")
     val secondOldSchema =
       StructType.fromDDL("i int, d decimal(10, 4), a array<int>, m map<short, byte>")
 
-    schema = TypeWideningMetadata.addTypeWideningMetadata(txn, schema, firstOldSchema)
+    var schema =
+      TypeWideningMetadata.addTypeWideningMetadata(txn, schemaWithoutMetadata, firstOldSchema)
 
     assert(schema("i") === StructField("i", LongType,
       metadata = new MetadataBuilder()
@@ -282,6 +284,13 @@ class DeltaTypeWideningMetadataSuite extends QueryTest with DeltaSQLCommandTest 
         )).build()
     ))
 
+    assert(TypeWideningMetadata.removeTypeWideningMetadata(schema) ===
+      schemaWithoutMetadata -> Seq(
+        Seq.empty -> schema("i"),
+        Seq.empty -> schema("d"),
+        Seq.empty -> schema("a"),
+        Seq.empty -> schema("m")
+      ))
     // Second type change on all fields.
     schema = TypeWideningMetadata.addTypeWideningMetadata(txn, schema, secondOldSchema)
 
@@ -316,10 +325,18 @@ class DeltaTypeWideningMetadataSuite extends QueryTest with DeltaSQLCommandTest 
           typeChangeMetadata(version = 1, "byte", "integer", "value")
         )).build()
     ))
+
+    assert(TypeWideningMetadata.removeTypeWideningMetadata(schema) ===
+      schemaWithoutMetadata -> Seq(
+        Seq.empty -> schema("i"),
+        Seq.empty -> schema("d"),
+        Seq.empty -> schema("a"),
+        Seq.empty -> schema("m")
+      ))
   }
 
-  test("addTypeWideningMetadata on nested fields") {
-    var schema = StructType.fromDDL(
+  test("addTypeWideningMetadata/removeTypeWideningMetadata on nested fields") {
+    val schemaWithoutMetadata = StructType.fromDDL(
       "s struct<i: long, a: array<map<int, long>>, m: map<map<long, int>, array<long>>>")
     val firstOldSchema = StructType.fromDDL(
       "s struct<i: short, a: array<map<byte, long>>, m: map<map<int, int>, array<long>>>")
@@ -327,7 +344,8 @@ class DeltaTypeWideningMetadataSuite extends QueryTest with DeltaSQLCommandTest 
       "s struct<i: int, a: array<map<int, int>>, m: map<map<long, int>, array<int>>>")
 
     // First type change on all struct fields.
-    schema = TypeWideningMetadata.addTypeWideningMetadata(txn, schema, firstOldSchema)
+    var schema =
+      TypeWideningMetadata.addTypeWideningMetadata(txn, schemaWithoutMetadata, firstOldSchema)
     var struct = schema("s").dataType.asInstanceOf[StructType]
 
     assert(struct("i") === StructField("i", LongType,
@@ -351,6 +369,13 @@ class DeltaTypeWideningMetadataSuite extends QueryTest with DeltaSQLCommandTest 
           typeChangeMetadata(version = 1, "integer", "long", "key.key")
         )).build()
     ))
+
+    assert(TypeWideningMetadata.removeTypeWideningMetadata(schema) ===
+      schemaWithoutMetadata -> Seq(
+        Seq("s") -> struct("i"),
+        Seq("s") -> struct("a"),
+        Seq("s") -> struct("m")
+      ))
 
     // Second type change on all struct fields.
     schema = TypeWideningMetadata.addTypeWideningMetadata(txn, schema, secondOldSchema)
@@ -380,9 +405,15 @@ class DeltaTypeWideningMetadataSuite extends QueryTest with DeltaSQLCommandTest 
           typeChangeMetadata(version = 1, "integer", "long", "value.element")
         )).build()
     ))
+    assert(TypeWideningMetadata.removeTypeWideningMetadata(schema) ===
+      schemaWithoutMetadata -> Seq(
+        Seq("s") -> struct("i"),
+        Seq("s") -> struct("a"),
+        Seq("s") -> struct("m")
+      ))
   }
 
-  test("addTypeWideningMetadata with added and removed fields") {
+  test("addTypeWideningMetadata/removeTypeWideningMetadata with added and removed fields") {
     val newSchema = StructType.fromDDL("a int, b long, d int")
     val oldSchema = StructType.fromDDL("a int, b int, c int")
 
@@ -397,13 +428,16 @@ class DeltaTypeWideningMetadataSuite extends QueryTest with DeltaSQLCommandTest 
           typeChangeMetadata(version = 1, "integer", "long")
         )).build()
     ))
+    assert(TypeWideningMetadata.removeTypeWideningMetadata(schema) ===
+      newSchema -> Seq(Seq.empty -> schema("b"))
+    )
   }
 
-  test("addTypeWideningMetadata with different field position") {
-    val initialSchema = StructType.fromDDL("a short, b int, s struct<c: int, d: long>")
-    val secondSchema = StructType.fromDDL("b int, a short, s struct<d: long, c: int>")
+  test("addTypeWideningMetadata/removeTypeWideningMetadata with different field position") {
+    val newSchema = StructType.fromDDL("a short, b int, s struct<c: int, d: long>")
+    val oldSchema = StructType.fromDDL("b int, a short, s struct<d: long, c: int>")
 
-    val schema = TypeWideningMetadata.addTypeWideningMetadata(txn, initialSchema, secondSchema)
+    val schema = TypeWideningMetadata.addTypeWideningMetadata(txn, newSchema, oldSchema)
     // No type widening metadata is added.
     assert(schema("a") === StructField("a", ShortType))
     assert(schema("b") === StructField("b", IntegerType))
@@ -411,6 +445,7 @@ class DeltaTypeWideningMetadataSuite extends QueryTest with DeltaSQLCommandTest 
       StructField("s", new StructType()
         .add("c", IntegerType)
         .add("d", LongType)))
+    assert(TypeWideningMetadata.removeTypeWideningMetadata(schema) === newSchema -> Seq.empty)
   }
 
   test("updateTypeChangeVersion with no type changes") {

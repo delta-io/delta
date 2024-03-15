@@ -16,17 +16,26 @@
 
 package org.apache.spark.sql.delta
 
+import java.util.concurrent.TimeUnit
+
+import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
+import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.hadoop.fs.Path
+import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Encoder, QueryTest, Row}
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
-import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
+import org.apache.spark.util.ManualClock
 
 /**
  * Suite covering the type widening table feature.
@@ -35,6 +44,7 @@ class DeltaTypeWideningSuite
   extends QueryTest
     with ParquetTest
     with DeltaDMLTestUtils
+    with RowTrackingTestUtils
     with DeltaSQLCommandTest
     with DeltaTypeWideningTestMixin
     with DeltaTypeWideningAlterTableTests
@@ -602,19 +612,103 @@ trait DeltaTypeWideningMetadataTests {
     ]}""".stripMargin)
 }
 
-trait DeltaTypeWideningTableFeatureTests {
-    self: QueryTest with ParquetTest with DeltaDMLTestUtils with DeltaTypeWideningTestMixin
-      with SharedSparkSession =>
+/**
+ * Tests covering adding and removing the type widening table feature. Dropping the table feature
+ * also includes rewriting data files with the old type and removing type widening metadata.
+ */
+trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
+  self: QueryTest
+    with ParquetTest
+    with DeltaDMLTestUtils
+    with RowTrackingTestUtils
+    with DeltaTypeWideningTestMixin =>
+
+  import testImplicits._
+
+  /** Clock used to advance past the retention period when dropping the table feature. */
+  var clock: ManualClock = _
+
+  override protected def beforeEach(): Unit = {
+    super.beforeEach()
+    clock = new ManualClock(System.currentTimeMillis())
+    // Override the (cached) delta log with one using our manual clock.
+    DeltaLog.clearCache()
+    deltaLog = DeltaLog.forTable(spark, new Path(tempPath), clock)
+  }
 
   def isTypeWideningSupported: Boolean = {
-    val snapshot = DeltaLog.forTable(spark, tempPath).unsafeVolatileSnapshot
-    TypeWidening.isSupported(snapshot.protocol)
+    TypeWidening.isSupported(deltaLog.update().protocol)
   }
 
   def isTypeWideningEnabled: Boolean = {
-    val snapshot = DeltaLog.forTable(spark, tempPath).unsafeVolatileSnapshot
+    val snapshot = deltaLog.update()
     TypeWidening.isEnabled(snapshot.protocol, snapshot.metadata)
   }
+
+  /** Expected outcome of dropping the type widening table feature. */
+  object ExpectedOutcome extends Enumeration {
+    val SUCCESS, FAIL_CURRENT_VERSION_USES_FEATURE, FAIL_HISTORICAL_VERSION_USES_FEATURE = Value
+  }
+
+  /** Helper method to drop the type widening table feature and check for an expected outcome. */
+  def dropTableFeature(expectedOutcome: ExpectedOutcome.Value): Unit = {
+    // Need to directly call ALTER TABLE command to pass our deltaLog with manual clock.
+    val dropFeature = AlterTableDropFeatureDeltaCommand(
+      DeltaTableV2(spark, deltaLog.dataPath),
+      TypeWideningTableFeature.name)
+
+    expectedOutcome match {
+      case ExpectedOutcome.SUCCESS =>
+        dropFeature.run(spark)
+      case ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE =>
+        checkError(
+          exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
+          errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+          parameters = Map(
+            "feature" -> TypeWideningTableFeature.name,
+            "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
+            "logRetentionPeriod" -> DeltaConfigs.LOG_RETENTION
+              .fromMetaData(deltaLog.unsafeVolatileMetadata).toString,
+            "truncateHistoryLogRetentionPeriod" ->
+              DeltaConfigs.TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION
+                .fromMetaData(deltaLog.unsafeVolatileMetadata).toString)
+        )
+      case ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE =>
+        checkError(
+          exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
+          errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+          parameters = Map(
+            "feature" -> TypeWideningTableFeature.name,
+            "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
+            "logRetentionPeriod" -> DeltaConfigs.LOG_RETENTION
+              .fromMetaData(deltaLog.unsafeVolatileMetadata).toString,
+            "truncateHistoryLogRetentionPeriod" ->
+              DeltaConfigs.TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION
+                .fromMetaData(deltaLog.unsafeVolatileMetadata).toString)
+        )
+    }
+  }
+
+  /**
+   * Use this after dropping the table feature to artificially move the current time to after
+   * the table retention period.
+   */
+  def advancePastRetentionPeriod(): Unit = {
+    clock.advance(
+      deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
+        TimeUnit.MINUTES.toMillis(5))
+  }
+
+  def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
+      append(values.toDF("a").select(col("a").cast(dataType)).repartition(1))
+
+  /** Get the number of AddFile actions committed since the given table version (included). */
+  def getNumAddFilesSinceVersion(version: Long): Long =
+    deltaLog
+      .getChanges(startVersion = version)
+      .flatMap { case (_, actions) => actions }
+      .collect { case a: AddFile => a }
+      .size
 
   test("enable type widening at table creation then disable it") {
     sql(s"CREATE TABLE delta.`$tempPath` (a int) USING DELTA " +
@@ -710,5 +804,157 @@ trait DeltaTypeWideningTableFeatureTests {
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
     enableTypeWidening(tempPath, enabled = false)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
+  }
+
+  test("drop unused table feature on empty table") {
+    sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
+    dropTableFeature(ExpectedOutcome.SUCCESS)
+    assert(getNumAddFilesSinceVersion(version = 0) === 0)
+    checkAnswer(readDeltaTable(tempPath), Seq.empty)
+  }
+
+  // Rewriting the data when dropping the table feature relies on the default row commit version
+  // being set even when row tracking isn't enabled.
+  for(rowTrackingEnabled <- BOOLEAN_DOMAIN) {
+    test(s"drop unused table feature on table with data, rowTrackingEnabled=$rowTrackingEnabled") {
+      sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
+      addSingleFile(Seq(1, 2, 3), ByteType)
+      assert(getNumAddFilesSinceVersion(version = 0) === 1)
+
+      val version = deltaLog.update().version
+      dropTableFeature(ExpectedOutcome.SUCCESS)
+      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3)))
+    }
+
+    test(s"drop unused table feature on table with data inserted before adding the table feature," +
+      s"rowTrackingEnabled=$rowTrackingEnabled") {
+      sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA " +
+        s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
+      addSingleFile(Seq(1, 2, 3), ByteType)
+      enableTypeWidening(tempPath)
+      sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
+      assert(getNumAddFilesSinceVersion(version = 0) === 1)
+
+      var version = deltaLog.update().version
+      dropTableFeature(ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE)
+      assert(getNumAddFilesSinceVersion(version + 1) === 1)
+      assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
+
+      version = deltaLog.update().version
+      dropTableFeature(ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE)
+      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+
+      version = deltaLog.update().version
+      advancePastRetentionPeriod()
+      dropTableFeature(ExpectedOutcome.SUCCESS)
+      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3)))
+    }
+
+    test(s"drop table feature on table with data added only after type change, " +
+      s"rowTrackingEnabled=$rowTrackingEnabled") {
+      sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
+      sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
+      addSingleFile(Seq(1, 2, 3), IntegerType)
+      assert(getNumAddFilesSinceVersion(version = 0) === 1)
+
+      // We could actually drop the table feature directly here instead of failing by checking that
+      // there were no files added before the type change. This may be an expensive check for a rare
+      // scenario so we don't do it.
+      var version = deltaLog.update().version
+      dropTableFeature(ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE)
+      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
+
+      version = deltaLog.update().version
+      dropTableFeature(ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE)
+      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+
+      advancePastRetentionPeriod()
+      version = deltaLog.update().version
+      dropTableFeature(ExpectedOutcome.SUCCESS)
+      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3)))
+    }
+
+    test(s"drop table feature on table with data added before type change, " +
+      s"rowTrackingEnabled=$rowTrackingEnabled") {
+      sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
+      addSingleFile(Seq(1, 2, 3), ByteType)
+      sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
+      assert(getNumAddFilesSinceVersion(version = 0) === 1)
+
+      var version = deltaLog.update().version
+      dropTableFeature(ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE)
+      assert(getNumAddFilesSinceVersion(version + 1) === 1)
+      assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
+
+      version = deltaLog.update().version
+      dropTableFeature(ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE)
+      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+
+      version = deltaLog.update().version
+      advancePastRetentionPeriod()
+      dropTableFeature(ExpectedOutcome.SUCCESS)
+      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3)))
+    }
+
+    test(s"drop table feature on table with data added before type change and fully rewritten " +
+      s"after, rowTrackingEnabled=$rowTrackingEnabled") {
+      sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
+      addSingleFile(Seq(1, 2, 3), ByteType)
+      sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
+      sql(s"UPDATE delta.`$tempDir` SET a = a + 10")
+      assert(getNumAddFilesSinceVersion(version = 0) === 2)
+
+      var version = deltaLog.update().version
+      dropTableFeature(ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE)
+      // The file was already rewritten in UPDATE.
+      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
+
+      version = deltaLog.update().version
+      dropTableFeature(ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE)
+      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+
+      version = deltaLog.update().version
+      advancePastRetentionPeriod()
+      dropTableFeature(ExpectedOutcome.SUCCESS)
+      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      checkAnswer(readDeltaTable(tempPath), Seq(Row(11), Row(12), Row(13)))
+    }
+
+    test(s"drop table feature on table with data added before type change and partially " +
+      s"rewritten after, rowTrackingEnabled=$rowTrackingEnabled") {
+      withRowTrackingEnabled(rowTrackingEnabled) {
+        sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
+        addSingleFile(Seq(1, 2, 3), ByteType)
+        addSingleFile(Seq(4, 5, 6), ByteType)
+        sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
+        assert(getNumAddFilesSinceVersion(version = 0) === 2)
+        sql(s"UPDATE delta.`$tempDir` SET a = a + 10 WHERE a < 4")
+        assert(getNumAddFilesSinceVersion(version = 0) === 3)
+
+        var version = deltaLog.update().version
+        dropTableFeature(ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE)
+        // One file was already rewritten in UPDATE, leaving 1 file to rewrite.
+        assert(getNumAddFilesSinceVersion(version + 1) === 1)
+        assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
+
+        version = deltaLog.update().version
+        dropTableFeature(ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE)
+        assert(getNumAddFilesSinceVersion(version + 1) === 0)
+
+        version = deltaLog.update().version
+        advancePastRetentionPeriod()
+        dropTableFeature(ExpectedOutcome.SUCCESS)
+        assert(getNumAddFilesSinceVersion(version + 1) === 0)
+        checkAnswer(
+          readDeltaTable(tempPath),
+          Seq(Row(11), Row(12), Row(13), Row(4), Row(5), Row(6)))
+      }
+    }
   }
 }

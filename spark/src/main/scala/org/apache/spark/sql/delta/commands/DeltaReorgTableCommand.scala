@@ -16,13 +16,14 @@
 
 package org.apache.spark.sql.delta.commands
 
+import org.apache.spark.sql.delta.{Snapshot, TypeWidening}
 import org.apache.spark.sql.delta.actions.AddFile
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LeafCommand, LogicalPlan, UnaryCommand}
 
 object DeltaReorgTableMode extends Enumeration {
-  val PURGE, UNIFORM_ICEBERG = Value
+  val PURGE, UNIFORM_ICEBERG, REWRITE_TYPE_WIDENING = Value
 }
 
 case class DeltaReorgTableSpec(
@@ -70,7 +71,8 @@ case class DeltaReorgTableCommand(
   }
 
   override def run(sparkSession: SparkSession): Seq[Row] = reorgTableSpec match {
-    case DeltaReorgTableSpec(DeltaReorgTableMode.PURGE, None) =>
+    case DeltaReorgTableSpec(
+        DeltaReorgTableMode.PURGE | DeltaReorgTableMode.REWRITE_TYPE_WIDENING, None) =>
       optimizeByReorg(sparkSession)
     case DeltaReorgTableSpec(DeltaReorgTableMode.UNIFORM_ICEBERG, Some(icebergCompatVersion)) =>
       val table = getDeltaTable(target, "REORG")
@@ -82,6 +84,8 @@ case class DeltaReorgTableCommand(
       new DeltaPurgeOperation()
     case DeltaReorgTableSpec(DeltaReorgTableMode.UNIFORM_ICEBERG, Some(icebergCompatVersion)) =>
       new DeltaUpgradeUniformOperation(icebergCompatVersion)
+    case DeltaReorgTableSpec(DeltaReorgTableMode.REWRITE_TYPE_WIDENING, None) =>
+      new DeltaRewriteTypeWideningOperation()
   }
 }
 
@@ -93,14 +97,14 @@ sealed trait DeltaReorgOperation {
    * Collects files that need to be processed by the reorg operation from the list of candidate
    * files.
    */
-  def filterFilesToReorg(files: Seq[AddFile]): Seq[AddFile]
+  def filterFilesToReorg(snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile]
 }
 
 /**
  * Reorg operation to purge files with soft deleted rows.
  */
 class DeltaPurgeOperation extends DeltaReorgOperation {
-  override def filterFilesToReorg(files: Seq[AddFile]): Seq[AddFile] =
+  override def filterFilesToReorg(snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile] =
     files.filter { file =>
       (file.deletionVector != null && file.numPhysicalRecords.isEmpty) ||
         file.numDeletedRecords > 0L
@@ -111,7 +115,7 @@ class DeltaPurgeOperation extends DeltaReorgOperation {
  * Reorg operation to upgrade the iceberg compatibility version of a table.
  */
 class DeltaUpgradeUniformOperation(icebergCompatVersion: Int) extends DeltaReorgOperation {
-  override def filterFilesToReorg(files: Seq[AddFile]): Seq[AddFile] = {
+  override def filterFilesToReorg(snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile] = {
     def shouldRewriteToBeIcebergCompatible(file: AddFile): Boolean = {
       if (file.tags == null) return true
       val icebergCompatVersion = file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
@@ -119,4 +123,13 @@ class DeltaUpgradeUniformOperation(icebergCompatVersion: Int) extends DeltaReorg
     }
     files.filter(shouldRewriteToBeIcebergCompatible)
   }
+}
+
+/**
+ * Internal reorg operation to rewrite files to conform to the current table schema when dropping
+ * the type widening table feature.
+ */
+class DeltaRewriteTypeWideningOperation extends DeltaReorgOperation {
+  override def filterFilesToReorg(snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile] =
+    TypeWidening.filterFilesRequiringRewrite(snapshot, files)
 }
