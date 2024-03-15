@@ -158,12 +158,12 @@ class DeltaMergeBuilder private(
   with Logging
   {
 
-    def this(
-        targetTable: DeltaTable,
-        source: DataFrame,
-        onCondition: Column,
-        whenClauses: Seq[DeltaMergeIntoClause]) =
-      this(targetTable, source, onCondition, whenClauses, schemaEvolutionEnabled = false)
+  def this(
+      targetTable: DeltaTable,
+      source: DataFrame,
+      onCondition: Column,
+      whenClauses: Seq[DeltaMergeIntoClause]) =
+    this(targetTable, source, onCondition, whenClauses, schemaEvolutionEnabled = false)
 
   /**
    * Build the actions to perform when the merge condition was matched.  This returns
