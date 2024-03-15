@@ -328,7 +328,11 @@ class DeltaMergeBuilder private(
   @Unstable
   private[delta] def withClause(clause: DeltaMergeIntoClause): DeltaMergeBuilder = {
     new DeltaMergeBuilder(
-      this.targetTable, this.source, this.onCondition, this.whenClauses :+ clause)
+      this.targetTable,
+      this.source,
+      this.onCondition,
+      this.whenClauses :+ clause,
+      this.schemaEvolutionEnabled)
   }
 
   private def mergePlan: DeltaMergeInto = {
