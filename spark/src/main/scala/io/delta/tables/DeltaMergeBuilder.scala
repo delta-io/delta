@@ -152,12 +152,18 @@ class DeltaMergeBuilder private(
     private val targetTable: DeltaTable,
     private val source: DataFrame,
     private val onCondition: Column,
-    private val whenClauses: Seq[DeltaMergeIntoClause])
+    private val whenClauses: Seq[DeltaMergeIntoClause],
+    private val schemaEvolutionEnabled: Boolean)
   extends AnalysisHelper
   with Logging
   {
 
-  private var schemaEvolutionEnabled: Boolean = false
+    def this(
+        targetTable: DeltaTable,
+        source: DataFrame,
+        onCondition: Column,
+        whenClauses: Seq[DeltaMergeIntoClause]) =
+      this(targetTable, source, onCondition, whenClauses, schemaEvolutionEnabled = false)
 
   /**
    * Build the actions to perform when the merge condition was matched.  This returns
@@ -270,13 +276,12 @@ class DeltaMergeBuilder private(
    * @since 3.2.0
    */
   def withSchemaEvolution(): DeltaMergeBuilder = {
-    val builder = new DeltaMergeBuilder(
+    new DeltaMergeBuilder(
       this.targetTable,
       this.source,
       this.onCondition,
-      this.whenClauses)
-    builder.schemaEvolutionEnabled = true
-    builder
+      this.whenClauses,
+      schemaEvolutionEnabled = true)
   }
 
   /**
