@@ -248,7 +248,7 @@ class RemoveColumnMappingSuite extends RemoveColumnMappingSuiteUtils {
          |)
          |USING delta
          |TBLPROPERTIES (
-         |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name'
+         |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name',
          |  'delta.minReaderVersion' = '2',
          |  'delta.minWriterVersion' = '5')
          |""".stripMargin)
