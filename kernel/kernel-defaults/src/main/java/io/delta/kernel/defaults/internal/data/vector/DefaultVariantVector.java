@@ -82,11 +82,13 @@ public class DefaultVariantVector
         };
     }
 
-    public ColumnVector getValueVector() {
-        return valueVector;
-    }
-
-    public ColumnVector getMetadataVector() {
-        return metadataVector;
+    @Override
+    public ColumnVector getChild(int ordinal) {
+        checkArgument(ordinal >= 0 && ordinal < 2, "Invalid ordinal " + ordinal);
+        if (ordinal == 0) {
+            return valueVector;
+        } else {
+            return metadataVector;
+        }
     }
 }
