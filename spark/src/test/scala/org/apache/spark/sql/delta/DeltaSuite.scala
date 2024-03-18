@@ -1622,7 +1622,7 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("support Java8 time object") {
+  test("support Java8 API for TIMESTAMP type") {
     withSQLConf(SQLConf.DATETIME_JAVA8API_ENABLED.key -> "true") {
       val tableName = "my_table"
       withTable(tableName) {
