@@ -1422,11 +1422,9 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalStateException] {
-        throw DeltaErrors.nonGeneratedColumnMissingUpdateExpression(
-          AttributeReference("attr1", IntegerType)(ExprId(1234567L)))
+        throw DeltaErrors.nonGeneratedColumnMissingUpdateExpression("attr1")
       }
-      val msg = "attr1#1234567 is not a generated column but is missing " +
-            "its update expression"
+      val msg = "attr1 is not a generated column but is missing its update expression"
       checkErrorMessage(e, Some("DELTA_NON_GENERATED_COLUMN_MISSING_UPDATE_EXPR"), Some("XXKDS"),
         Some(msg))
     }
