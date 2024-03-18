@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, Remove
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.commons.io.FileUtils
@@ -44,7 +45,7 @@ import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{col, expr, lit}
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.ManualClock
@@ -52,18 +53,22 @@ import org.apache.spark.util.ManualClock
 trait DeltaVacuumSuiteBase extends QueryTest
   with SharedSparkSession
   with GivenWhenThen
-  with SQLTestUtils
+  with DeltaSQLTestUtils
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews {
 
-  protected def withEnvironment(f: (File, ManualClock) => Unit): Unit = {
-    withTempDir { file =>
-      val clock = new ManualClock()
-      withSQLConf("spark.databricks.delta.retentionDurationCheck.enabled" -> "false") {
-        f(file, clock)
-      }
+  private def executeWithEnvironment(file: File)(f: (File, ManualClock) => Unit): Unit = {
+    val clock = new ManualClock()
+    withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+      f(file, clock)
     }
   }
+
+  protected def withEnvironment(f: (File, ManualClock) => Unit): Unit =
+    withTempDir(file => executeWithEnvironment(file)(f))
+
+  protected def withEnvironment(prefix: String)(f: (File, ManualClock) => Unit): Unit =
+    withTempDir(prefix)(file => executeWithEnvironment(file)(f))
 
   protected def defaultTombstoneInterval: Long = {
     DeltaConfigs.getMilliSeconds(
@@ -797,8 +802,10 @@ class DeltaVacuumSuite
     }
   }
 
+  // TODO: There is somewhere in the code calling CanonicalPathFunction with an unescaped path
+  //  string, which needs investigation. Do not test special characters until that is fixed.
   testQuietly("correctness test") {
-    withEnvironment { (tempDir, clock) =>
+    withEnvironment(prefix = "spark") { (tempDir, clock) =>
 
       val reservoirDir = new File(tempDir.getAbsolutePath, "reservoir")
       assert(reservoirDir.mkdirs())

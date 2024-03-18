@@ -27,7 +27,7 @@ public abstract class BasePrimitiveType extends DataType {
      * Create a primitive type {@link DataType}
      *
      * @param primitiveTypeName Primitive type name.
-     * @return
+     * @return {@link DataType} for given primitive type name
      */
     public static DataType createPrimitive(String primitiveTypeName) {
         return Optional.ofNullable(nameToPrimitiveTypeMap.get().get(primitiveTypeName))

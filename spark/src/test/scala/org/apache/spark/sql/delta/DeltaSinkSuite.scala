@@ -400,7 +400,8 @@ class DeltaSinkSuite
             .mode("append")
             .save(outputDir.getCanonicalPath)
         }
-        assert(e.getMessage.contains("incompatible"))
+        assert(e.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
+        assert(Utils.exceptionString(e).contains("incompatible"))
       } finally {
         query.stop()
       }
@@ -429,7 +430,9 @@ class DeltaSinkSuite
         q.processAllAvailable()
       }
       assert(wrapperException.cause.isInstanceOf[AnalysisException])
-      assert(wrapperException.cause.getMessage.contains("incompatible"))
+      assert(wrapperException.cause.asInstanceOf[AnalysisException]
+        .getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
+      assert(Utils.exceptionString(wrapperException.cause).contains("incompatible"))
     }
   }
 

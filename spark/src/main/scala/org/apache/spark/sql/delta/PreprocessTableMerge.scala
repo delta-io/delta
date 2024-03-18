@@ -58,7 +58,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       matched,
       notMatched,
       notMatchedBySource,
-      migrateSchema,
+      withSchemaEvolution,
       finalSchemaOpt) = mergeInto
 
     if (finalSchemaOpt.isEmpty) {
@@ -108,7 +108,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           whenClauses = matched ++ notMatched ++ notMatchedBySource,
           identityColumns = additionalColumns,
           generatedColumns = generatedColumns,
-          allowSchemaEvolution = migrateSchema,
+          allowStructEvolution = withSchemaEvolution,
           postEvolutionTargetSchema = postEvolutionTargetSchema)
         m.copy(m.condition, alignedActions)
       case m: DeltaMergeIntoMatchedDeleteClause => m // Delete does not need reordering
@@ -120,9 +120,9 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           m.resolvedActions,
           whenClauses = matched ++ notMatched ++ notMatchedBySource,
           identityColumns = additionalColumns,
-          generatedColumns,
-          migrateSchema,
-          postEvolutionTargetSchema)
+          generatedColumns = generatedColumns,
+          allowStructEvolution = withSchemaEvolution,
+          postEvolutionTargetSchema = postEvolutionTargetSchema)
         m.copy(m.condition, alignedActions)
       case m: DeltaMergeIntoNotMatchedBySourceDeleteClause => m // Delete does not need reordering
     }
@@ -178,7 +178,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
             castIfNeeded(
               a.expr,
               targetAttrib.dataType,
-              allowStructEvolution = migrateSchema,
+              allowStructEvolution = withSchemaEvolution,
               targetAttrib.name),
             targetColNameResolved = true)
         }.getOrElse {
@@ -215,7 +215,8 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           processedMatched,
           processedNotMatched,
           processedNotMatchedBySource,
-          finalSchemaOpt),
+          migratedSchema = finalSchemaOpt,
+          schemaEvolutionEnabled = withSchemaEvolution),
         now)
     } else {
       DeltaMergeInto(
@@ -225,7 +226,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         processedMatched,
         processedNotMatched,
         processedNotMatchedBySource,
-        migrateSchema,
+        withSchemaEvolution,
         finalSchemaOpt)
     }
   }

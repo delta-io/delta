@@ -105,6 +105,7 @@ import org.apache.spark.sql.internal.SQLConf
  *     .merge(
  *       source.as("source"),
  *       "target.key = source.key")
+ *     .withSchemaEvolution()
  *     .whenMatched()
  *     .updateExpr(Map(
  *       "value" -> "source.value"))
@@ -125,6 +126,7 @@ import org.apache.spark.sql.internal.SQLConf
  *     .merge(
  *       source.as("source"),
  *       "target.key = source.key")
+ *     .withSchemaEvolution()
  *     .whenMatched()
  *     .updateExpr(
  *        new HashMap<String, String>() {{
@@ -150,10 +152,18 @@ class DeltaMergeBuilder private(
     private val targetTable: DeltaTable,
     private val source: DataFrame,
     private val onCondition: Column,
-    private val whenClauses: Seq[DeltaMergeIntoClause])
+    private val whenClauses: Seq[DeltaMergeIntoClause],
+    private val schemaEvolutionEnabled: Boolean)
   extends AnalysisHelper
   with Logging
   {
+
+  def this(
+      targetTable: DeltaTable,
+      source: DataFrame,
+      onCondition: Column,
+      whenClauses: Seq[DeltaMergeIntoClause]) =
+    this(targetTable, source, onCondition, whenClauses, schemaEvolutionEnabled = false)
 
   /**
    * Build the actions to perform when the merge condition was matched.  This returns
@@ -260,6 +270,21 @@ class DeltaMergeBuilder private(
   }
 
   /**
+   * Enable schema evolution for the merge operation. This allows the schema of the target
+   * table/columns to be automatically updated based on the schema of the source table/columns.
+   *
+   * @since 3.2.0
+   */
+  def withSchemaEvolution(): DeltaMergeBuilder = {
+    new DeltaMergeBuilder(
+      this.targetTable,
+      this.source,
+      this.onCondition,
+      this.whenClauses,
+      schemaEvolutionEnabled = true)
+  }
+
+  /**
    * Execute the merge operation based on the built matched and not matched actions.
    *
    * @since 0.3.0
@@ -303,7 +328,11 @@ class DeltaMergeBuilder private(
   @Unstable
   private[delta] def withClause(clause: DeltaMergeIntoClause): DeltaMergeBuilder = {
     new DeltaMergeBuilder(
-      this.targetTable, this.source, this.onCondition, this.whenClauses :+ clause)
+      this.targetTable,
+      this.source,
+      this.onCondition,
+      this.whenClauses :+ clause,
+      this.schemaEvolutionEnabled)
   }
 
   private def mergePlan: DeltaMergeInto = {
@@ -337,7 +366,12 @@ class DeltaMergeBuilder private(
     // `updateAll()`, so there is no way to represent `update()` with zero column assignments
     // (possible in Scala API, but syntactically not possible in SQL). This issue is tracked
     // by https://issues.apache.org/jira/browse/SPARK-34962.
-    val merge = DeltaMergeInto(targetPlan, sourcePlan, onCondition.expr, whenClauses)
+    val merge = DeltaMergeInto(
+      targetPlan,
+      sourcePlan,
+      onCondition.expr,
+      whenClauses,
+      withSchemaEvolution = schemaEvolutionEnabled)
     val finalMerge = if (duplicateResolvedRefs.nonEmpty) {
       // If any expression contain duplicate, pre-resolved references, we can't simply
       // replace the references in the same way as the target because we don't know

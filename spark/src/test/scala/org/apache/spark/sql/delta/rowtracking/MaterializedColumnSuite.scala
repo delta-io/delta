@@ -164,7 +164,7 @@ class MaterializedColumnSuite extends RowIdTestUtils
       }
     }
 
-    test(s"clone does not assign a materialized $name column when table property is not set") {
+    test(s"clone assigns a materialized $name column when source enables row tracking") {
       val sourceTableName = "source"
       val targetTableName = "target"
 
@@ -178,10 +178,10 @@ class MaterializedColumnSuite extends RowIdTestUtils
           val targetTableColumnName = getMaterializedColumnName(targetTableName)
 
           assert(sourceTableColumnName.isDefined)
-          assert(targetTableColumnName.isEmpty)
+          assert(targetTableColumnName.isDefined)
+          assert(sourceTableColumnName !== targetTableColumnName)
         }
       }
     }
-
   }
 }

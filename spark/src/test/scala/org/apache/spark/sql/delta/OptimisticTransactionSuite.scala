@@ -22,7 +22,7 @@ import java.nio.file.FileAlreadyExistsException
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
-import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitResponse, CommitStore, CommitStoreBuilder, CommitStoreProvider, UpdatedActions}
+import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitResponse, CommitStore, CommitStoreBuilder, CommitStoreProvider, GetCommitsResponse, UpdatedActions}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -432,7 +432,7 @@ class OptimisticTransactionSuite
 
       // preCommitLogSegment should not get updated until a commit is triggered
       assert(testTxn.preCommitLogSegment.version == 1)
-      assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnStartTs)
+      assert(testTxn.preCommitLogSegment.lastCommitFileModificationTimestamp < testTxnStartTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointProvider.isEmpty)
 
@@ -440,7 +440,7 @@ class OptimisticTransactionSuite
 
       // preCommitLogSegment should get updated to the version right before the txn commits
       assert(testTxn.preCommitLogSegment.version == 12)
-      assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnEndTs)
+      assert(testTxn.preCommitLogSegment.lastCommitFileModificationTimestamp < testTxnEndTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointProvider.version == 10)
     }
@@ -477,7 +477,7 @@ class OptimisticTransactionSuite
           override def getCommits(
               tablePath: Path,
               startVersion: Long,
-              endVersion: Option[Long]): Seq[Commit] = Seq.empty
+              endVersion: Option[Long]): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
         }
       }
     }
@@ -523,7 +523,7 @@ class OptimisticTransactionSuite
           override def getCommits(
               tablePath: Path,
               startVersion: Long,
-              endVersion: Option[Long]): Seq[Commit] = Seq.empty
+              endVersion: Option[Long]): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
         }
       }
     }

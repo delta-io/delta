@@ -166,9 +166,10 @@ trait SnapshotManagement { self: DeltaLog =>
     // TODO(managed-commits): Make sure all usage of `listDeltaCompactedDeltaAndCheckpointFiles`
     //   are replaced with this method.
     val resultFromCommitStore = recordFrameProfile("DeltaLog", "CommitStore.getCommits") {
-      commitStoreOpt
-        .map(_.getCommits(dataPath, startVersion, endVersion = versionToLoad))
-        .getOrElse(Seq.empty)
+      commitStoreOpt match {
+        case Some(cs) => cs.getCommits(logPath, startVersion, endVersion = versionToLoad).commits
+        case None => Seq.empty
+      }
     }
 
     var maxDeltaVersionSeen = startVersion - 1
@@ -200,7 +201,7 @@ trait SnapshotManagement { self: DeltaLog =>
     val resultFromCommitStoreFiltered = resultFromCommitStore
       .dropWhile(_.version <= maxDeltaVersionSeen)
       .takeWhile(commit => versionToLoad.forall(commit.version <= _))
-      .map(_.serializableFileStatus.toFileStatus)
+      .map(_.fileStatus)
       .toArray
     if (resultTuplesFromFsListingOpt.isEmpty && resultFromCommitStoreFiltered.nonEmpty) {
       throw new IllegalStateException("No files found from the file system listing, but " +
@@ -566,7 +567,6 @@ trait SnapshotManagement { self: DeltaLog =>
         version = segment.version,
         logSegment = segment,
         deltaLog = this,
-        timestamp = segment.lastCommitTimestamp,
         checksumOpt = checksumOpt.orElse(
           readChecksum(segment.version, lastSeenChecksumFileStatusOpt))
       )
@@ -657,7 +657,33 @@ trait SnapshotManagement { self: DeltaLog =>
     }
   }
 
-  /** Used to compute the LogSegment after a commit */
+  /**
+   * Used to compute the LogSegment after a commit, by adding the delta file with the specified
+   * version to the preCommitLogSegment (which must match the immediately preceding version).
+   */
+  protected[delta] def getLogSegmentAfterCommit(
+      committedVersion: Long,
+      newChecksumOpt: Option[VersionChecksum],
+      preCommitLogSegment: LogSegment,
+      commit: Commit,
+      commitStoreOpt: Option[CommitStore],
+      oldCheckpointProvider: CheckpointProvider): LogSegment = recordFrameProfile(
+    "Delta", "SnapshotManagement.getLogSegmentAfterCommit") {
+    // If the table doesn't have any competing updates, then go ahead and use the optimized
+    // incremental logSegment computation to fetch the LogSegment for the committedVersion.
+    // See the comment in the getLogSegmentAfterCommit overload for why we can't always safely
+    // return the committedVersion's snapshot when there is contention.
+    val useFastSnapshotConstruction = !snapshotLock.hasQueuedThreads
+    if (useFastSnapshotConstruction) {
+      SnapshotManagement.appendCommitToLogSegment(
+        preCommitLogSegment, commit.fileStatus, committedVersion)
+    } else {
+      val latestCheckpointProvider =
+        Seq(preCommitLogSegment.checkpointProvider, oldCheckpointProvider).maxBy(_.version)
+      getLogSegmentAfterCommit(commitStoreOpt, latestCheckpointProvider)
+    }
+  }
+
   protected[delta] def getLogSegmentAfterCommit(
       commitStoreOpt: Option[CommitStore],
       oldCheckpointProvider: UninitializedCheckpointProvider): LogSegment = {
@@ -958,12 +984,14 @@ trait SnapshotManagement { self: DeltaLog =>
    * Called after committing a transaction and updating the state of the table.
    *
    * @param committedVersion the version that was committed
+   * @param commit information about the commit file.
    * @param newChecksumOpt the checksum for the new commit, if available.
    *                       Usually None, since the commit would have just finished.
    * @param preCommitLogSegment the log segment of the table prior to commit
    */
   def updateAfterCommit(
       committedVersion: Long,
+      commit: Commit,
       newChecksumOpt: Option[VersionChecksum],
       preCommitLogSegment: LogSegment): Snapshot = withSnapshotLockInterruptibly {
     recordDeltaOperation(this, "delta.log.updateAfterCommit") {
@@ -972,6 +1000,10 @@ trait SnapshotManagement { self: DeltaLog =>
       // Somebody else could have already updated the snapshot while we waited for the lock
       if (committedVersion <= previousSnapshot.version) return previousSnapshot
       val segment = getLogSegmentAfterCommit(
+        committedVersion,
+        newChecksumOpt,
+        preCommitLogSegment,
+        commit,
         previousSnapshot.commitStoreOpt,
         previousSnapshot.checkpointProvider)
 
@@ -1104,7 +1136,7 @@ object SnapshotManagement {
     oldLogSegment.copy(
       version = committedVersion,
       deltas = oldLogSegment.deltas :+ commitFileStatus,
-      lastCommitTimestamp = commitFileStatus.getModificationTime)
+      lastCommitFileModificationTimestamp = commitFileStatus.getModificationTime)
   }
 }
 
@@ -1154,18 +1186,19 @@ object SerializableFileStatus {
  * @param version The Snapshot version to generate
  * @param deltas The delta commit files (.json) to read
  * @param checkpointProvider provider to give information about Checkpoint files.
- * @param lastCommitTimestamp The "unadjusted" timestamp of the last commit within this segment. By
- *                            unadjusted, we mean that the commit timestamps may not necessarily be
- *                            monotonically increasing for the commits within this segment.
+ * @param lastCommitFileModificationTimestamp The "unadjusted" file modification timestamp of the
+ *          last commit within this segment. By unadjusted, we mean that the commit timestamps may
+ *          not necessarily be monotonically increasing for the commits within this segment.
  */
 case class LogSegment(
     logPath: Path,
     version: Long,
     deltas: Seq[FileStatus],
     checkpointProvider: UninitializedCheckpointProvider,
-    lastCommitTimestamp: Long) {
+    lastCommitFileModificationTimestamp: Long) {
 
-  override def hashCode(): Int = logPath.hashCode() * 31 + (lastCommitTimestamp % 10000).toInt
+  override def hashCode(): Int =
+    logPath.hashCode() * 31 + (lastCommitFileModificationTimestamp % 10000).toInt
 
   /**
    * An efficient way to check if a cached Snapshot's contents actually correspond to a new
@@ -1174,7 +1207,8 @@ case class LogSegment(
   override def equals(obj: Any): Boolean = {
     obj match {
       case other: LogSegment =>
-        version == other.version && lastCommitTimestamp == other.lastCommitTimestamp &&
+        version == other.version &&
+          lastCommitFileModificationTimestamp == other.lastCommitFileModificationTimestamp &&
           logPath == other.logPath && checkpointProvider.version == other.checkpointProvider.version
       case _ => false
     }
