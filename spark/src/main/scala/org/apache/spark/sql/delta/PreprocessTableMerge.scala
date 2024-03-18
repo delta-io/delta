@@ -108,7 +108,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           whenClauses = matched ++ notMatched ++ notMatchedBySource,
           identityColumns = additionalColumns,
           generatedColumns = generatedColumns,
-          allowStructEvolution = withSchemaEvolution,
+          allowSchemaEvolution = withSchemaEvolution,
           postEvolutionTargetSchema = postEvolutionTargetSchema)
         m.copy(m.condition, alignedActions)
       case m: DeltaMergeIntoMatchedDeleteClause => m // Delete does not need reordering
@@ -121,7 +121,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           whenClauses = matched ++ notMatched ++ notMatchedBySource,
           identityColumns = additionalColumns,
           generatedColumns = generatedColumns,
-          allowStructEvolution = withSchemaEvolution,
+          allowSchemaEvolution = withSchemaEvolution,
           postEvolutionTargetSchema = postEvolutionTargetSchema)
         m.copy(m.condition, alignedActions)
       case m: DeltaMergeIntoNotMatchedBySourceDeleteClause => m // Delete does not need reordering
