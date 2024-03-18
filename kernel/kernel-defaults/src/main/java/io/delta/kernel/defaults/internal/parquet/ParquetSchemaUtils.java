@@ -254,7 +254,7 @@ class ParquetSchemaUtils {
         } else if (dataType instanceof StructType) {
             type = toParquetStructType((StructType) dataType, name, repetition);
         } else if (dataType instanceof VariantType) {
-            type = toParquetVariantType((VariantType) dataType, name, repetition);
+            type = toParquetVariantType(name, repetition);
         } else {
             throw new UnsupportedOperationException(
                     "Writing given type data to Parquet is not supported: " + dataType);
@@ -316,13 +316,11 @@ class ParquetSchemaUtils {
         return new GroupType(repetition, name, fields);
     }
 
-    private static Type toParquetVariantType(VariantType structType, String name,
-                                             Repetition repetition) {
-        List<Type> fields = Arrays.asList(
-            toParquetType(BinaryType.BINARY, "value", REQUIRED, Optional.empty()),
-            toParquetType(BinaryType.BINARY, "metadata", REQUIRED, Optional.empty())
-        );
-        return new GroupType(repetition, name, fields);
+    private static Type toParquetVariantType(String name, Repetition repetition) {
+        return Types.buildGroup(repetition)
+          .addField(toParquetType(BinaryType.BINARY, "value", REQUIRED, Optional.empty()))
+          .addField(toParquetType(BinaryType.BINARY, "metadata", REQUIRED, Optional.empty()))
+          .named(name);
     }
 
     /**
