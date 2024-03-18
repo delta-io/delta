@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.columnmapping
 
+import io.delta.tables.DeltaTable
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.schema.DeltaInvariantViolationException
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
@@ -242,16 +244,16 @@ class RemoveColumnMappingSuite extends RemoveColumnMappingSuiteUtils {
   test("remove column mapping from a table with a generated column") {
     // Note: generate expressions are using logical column names and renaming referenced columns
     // is forbidden.
-    sql(
-      s"""CREATE TABLE $testTableName ($logicalColumnName BIGINT,
-         |  $secondColumn BIGINT GENERATED ALWAYS AS ($logicalColumnName + 1)
-         |)
-         |USING delta
-         |TBLPROPERTIES (
-         |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name',
-         |  'delta.minReaderVersion' = '2',
-         |  'delta.minWriterVersion' = '5')
-         |""".stripMargin)
+    DeltaTable.create(spark)
+      .tableName(testTableName)
+      .addColumn(logicalColumnName, "LONG")
+      .addColumn(
+        DeltaTable.columnBuilder(secondColumn)
+          .dataType("LONG")
+          .generatedAlwaysAs(s"$logicalColumnName + 1")
+          .build())
+      .property(DeltaConfigs.COLUMN_MAPPING_MODE.key, "name")
+      .execute()
     // Insert data into the table.
     spark.range(totalRows)
       .selectExpr(s"id as $logicalColumnName")
