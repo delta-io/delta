@@ -386,8 +386,10 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
 
 trait MergeIntoSQLColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
   override protected def runOnlyTests: Seq[String] =
-    Seq("schema evolution - new nested column with update non-* and insert * - " +
-      "array of struct - longer target")
+    Seq(
+      "schema evolution - new nested column with update non-* and insert * - " +
+        "array of struct - longer target - on via DeltaSQLConf"
+    )
 }
 
 class MergeIntoSQLIdColumnMappingSuite extends MergeIntoSQLSuite

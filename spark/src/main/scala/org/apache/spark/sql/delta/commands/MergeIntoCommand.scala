@@ -66,7 +66,8 @@ case class MergeIntoCommand(
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
-    migratedSchema: Option[StructType])
+    migratedSchema: Option[StructType],
+    schemaEvolutionEnabled: Boolean = false)
   extends MergeIntoCommandBase
   with InsertOnlyMergeExecutor
   with ClassicMergeExecutor {

@@ -269,7 +269,7 @@ case class DeltaMergeIntoNotMatchedBySourceDeleteClause(condition: Option[Expres
  *
  * The syntax of the MERGE statement is as follows.
  * {{{
- *    MERGE INTO <target_table_with_alias>
+ *    MERGE [WITH SCHEMA EVOLUTION] INTO <target_table_with_alias>
  *    USING <source_table_with_alias>
  *    ON <search_condition>
  *    [ WHEN MATCHED [ AND <condition> ] THEN <matched_action> ]
@@ -319,7 +319,7 @@ case class DeltaMergeInto(
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
-    migrateSchema: Boolean,
+    withSchemaEvolution: Boolean,
     finalSchema: Option[StructType])
   extends Command with SupportsSubquery {
 
@@ -338,7 +338,8 @@ object DeltaMergeInto {
       target: LogicalPlan,
       source: LogicalPlan,
       condition: Expression,
-      whenClauses: Seq[DeltaMergeIntoClause]): DeltaMergeInto = {
+      whenClauses: Seq[DeltaMergeIntoClause],
+      withSchemaEvolution: Boolean): DeltaMergeInto = {
     val notMatchedClauses = whenClauses.collect { case x: DeltaMergeIntoNotMatchedClause => x }
     val matchedClauses = whenClauses.collect { case x: DeltaMergeIntoMatchedClause => x }
     val notMatchedBySourceClauses =
@@ -381,7 +382,7 @@ object DeltaMergeInto {
       matchedClauses,
       notMatchedClauses,
       notMatchedBySourceClauses,
-      migrateSchema = false,
+      withSchemaEvolution,
       finalSchema = Some(target.schema))
   }
 }
