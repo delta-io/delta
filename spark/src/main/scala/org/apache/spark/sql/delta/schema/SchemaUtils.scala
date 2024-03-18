@@ -228,55 +228,58 @@ def normalizeColumnNamesInDataType(
       }
     }
 
-    (sourceDataType, tableDataType) match {
-      case (sourceStruct: StructType, tableStruct: StructType) =>
-        val tableFields = toFieldMap(tableStruct.fields, caseSensitive = false)
-        val normalizedFields = sourceStruct.fields.map { sourceField =>
-          val tableField = getMatchingTableField(sourceField, tableFields)
-          val normalizedDataType =
-            normalizeColumnNamesInDataType(deltaLog, sourceField.dataType, tableField.dataType,
-              sourceParentFields :+ sourceField.name, tableSchema)
-          val normalizedName = tableField.name
-          sourceField.copy(
-            name = normalizedName,
-            dataType = normalizedDataType
-          )
-        }
-        sourceStruct.copy(fields = normalizedFields)
-      case (sourceArray: ArrayType, tableArray: ArrayType) =>
-        val normalizedElementType = normalizeColumnNamesInDataType(deltaLog,
-          sourceArray.elementType, tableArray.elementType, sourceParentFields, tableSchema)
-        sourceArray.copy(elementType = normalizedElementType)
-      case (sourceMap: MapType, tableMap: MapType) =>
-        val normalizedKeyType = normalizeColumnNamesInDataType(deltaLog, sourceMap.keyType,
-          tableMap.keyType, sourceParentFields, tableSchema)
-        val normalizedValueType = normalizeColumnNamesInDataType(deltaLog, sourceMap.valueType,
-          tableMap.valueType, sourceParentFields, tableSchema)
-        sourceMap.copy(
-          keyType = normalizedKeyType,
-          valueType = normalizedValueType
+  (sourceDataType, tableDataType) match {
+    case (sourceStruct: StructType, tableStruct: StructType) =>
+      val tableFields = toFieldMap(tableStruct.fields, caseSensitive = false)
+      val normalizedFields = sourceStruct.fields.map { sourceField =>
+        val tableField = getMatchingTableField(sourceField, tableFields)
+        val normalizedDataType =
+          normalizeColumnNamesInDataType(deltaLog, sourceField.dataType, tableField.dataType,
+            sourceParentFields :+ sourceField.name, tableSchema)
+        val normalizedName = tableField.name
+        sourceField.copy(
+          name = normalizedName,
+          dataType = normalizedDataType
         )
-      case (_: NullType, _) =>
-        // When schema evolution adds a new column during MERGE, it can be represented with
-        // a NullType in the schema of the data written by the MERGE.
-        sourceDataType
-      case _ =>
-        if (Utils.isTesting) {
-          assert(sourceDataType == tableDataType,
-            s"Types without nesting should match but $sourceDataType != $tableDataType")
-        } else if (sourceDataType != tableDataType) {
-          recordDeltaEvent(
-            deltaLog = deltaLog,
-            opType = "delta.assertions.schemaNormalization.nonNestedTypeMismatch",
-            tags = Map.empty,
-            data = Map(
-              "sourceDataType" -> sourceDataType.json,
-              "tableDataType" -> tableDataType.json
-            ),
-            path = None)
-        }
-        // The data types are compatible.
-        sourceDataType
+      }
+      sourceStruct.copy(fields = normalizedFields)
+    case (sourceArray: ArrayType, tableArray: ArrayType) =>
+      val normalizedElementType = normalizeColumnNamesInDataType(deltaLog,
+        sourceArray.elementType, tableArray.elementType, sourceParentFields, tableSchema)
+      sourceArray.copy(elementType = normalizedElementType)
+    case (sourceMap: MapType, tableMap: MapType) =>
+      val normalizedKeyType = normalizeColumnNamesInDataType(deltaLog, sourceMap.keyType,
+        tableMap.keyType, sourceParentFields, tableSchema)
+      val normalizedValueType = normalizeColumnNamesInDataType(deltaLog, sourceMap.valueType,
+        tableMap.valueType, sourceParentFields, tableSchema)
+      sourceMap.copy(
+        keyType = normalizedKeyType,
+        valueType = normalizedValueType
+      )
+    case (_: NullType, _) =>
+      // When schema evolution adds a new column during MERGE, it can be represented with
+      // a NullType in the schema of the data written by the MERGE.
+      sourceDataType
+    case (_: NumericType, _: NumericType) =>
+      // The numeric types can be cast to each without problem later on.
+      sourceDataType
+    case _ =>
+      if (Utils.isTesting) {
+        assert(sourceDataType == tableDataType,
+          s"Types without nesting should match but $sourceDataType != $tableDataType")
+      } else if (sourceDataType != tableDataType) {
+        recordDeltaEvent(
+          deltaLog = deltaLog,
+          opType = "delta.assertions.schemaNormalization.nonNestedTypeMismatch",
+          tags = Map.empty,
+          data = Map(
+            "sourceDataType" -> sourceDataType.json,
+            "tableDataType" -> tableDataType.json
+          ),
+          path = None)
+      }
+      // The data types are compatible.
+      sourceDataType
     }
   }
 
