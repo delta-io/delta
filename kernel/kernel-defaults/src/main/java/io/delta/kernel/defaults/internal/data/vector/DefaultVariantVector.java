@@ -22,6 +22,8 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.VariantValue;
 import io.delta.kernel.types.DataType;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for variant type data.
  */
