@@ -1548,7 +1548,7 @@ class SchemaUtilsSuite extends QueryTest
       .add("b", StringType)
     val table = new StructType()
       .add("B", StringType)
-      .add("A", LongType) // LongType != IntType
+      .add("A", StringType) // StringType != IntegerType
     val exception = intercept[AssertionError] {
       normalizeColumnNamesInDataType(
         deltaLog = null,
@@ -1558,6 +1558,19 @@ class SchemaUtilsSuite extends QueryTest
         tableSchema = new StructType())
     }
     assert(exception.getMessage.contains("Types without nesting should match"))
+  }
+
+  test("normalize column names in data type - different integral types") {
+    val source = new StructType()
+      .add("a", IntegerType)
+      .add("b", StringType)
+    val table = new StructType()
+      .add("B", StringType)
+      .add("A", LongType) // LongType != IntegerType
+    val expected = new StructType()
+      .add("A", IntegerType)
+      .add("B", StringType)
+    checkNormalizedColumnNamesInDataType(source, table, expected)
   }
 
   test("normalize column names in data type - nested structs") {
