@@ -23,7 +23,9 @@ import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 import com.fasterxml.jackson.databind.ObjectMapper
 
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
 
@@ -52,12 +54,9 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
 
   import testImplicits._
 
-  protected def testRemovingColumnMapping(
-    unsetTableProperty: Boolean = false): Any = {
+  protected def testRemovingColumnMapping(unsetTableProperty: Boolean = false): Any = {
     // Verify the input data is as expected.
-    checkAnswer(
-      spark.table(tableName = testTableName).select(logicalColumnName),
-      spark.range(totalRows).select(col("id").as(logicalColumnName)))
+    val originalData = spark.table(tableName = testTableName).select(logicalColumnName).collect()
     // Add a schema comment and verify it is preserved after the rewrite.
     val comment = "test comment"
     sql(s"ALTER TABLE $testTableName ALTER COLUMN $logicalColumnName COMMENT '$comment'")
@@ -73,10 +72,11 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
     unsetColumnMappingProperty(useUnset = unsetTableProperty)
 
     verifyRewrite(
-      unsetTableProperty,
+      unsetTableProperty = unsetTableProperty,
       deltaLog,
       originalFiles,
-      startingVersion)
+      startingVersion,
+      originalData = originalData)
     // Verify the schema comment is preserved after the rewrite.
     assert(deltaLog.update().schema.head.getComment().get == comment,
       "Should preserve the schema comment.")
@@ -90,10 +90,11 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
       unsetTableProperty: Boolean,
       deltaLog: DeltaLog,
       originalFiles: Array[AddFile],
-      startingVersion: Long): Unit = {
+      startingVersion: Long,
+      originalData: Array[Row]): Unit = {
     checkAnswer(
       spark.table(tableName = testTableName).select(logicalColumnName),
-      spark.range(totalRows).select(col("id").as(logicalColumnName)))
+      originalData)
 
     val newSnapshot = deltaLog.update()
     assert(newSnapshot.version - startingVersion == 1, "Should rewrite the table in one commit.")
