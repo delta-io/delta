@@ -278,13 +278,10 @@ object ResolveDeltaMergeInto {
         })
 
       val migrationSchema = filterSchema(source.schema, Seq.empty)
-      val allowTypeWidening = EliminateSubqueryAliases(target) match {
-        case DeltaFullTable(_, index) =>
-          TypeWidening.isEnabled(
-            index.snapshotAtAnalysis.protocol,
-            index.snapshotAtAnalysis.metadata
-          )
-        case other => throw DeltaErrors.notADeltaSourceException("MERGE", Some(other))
+      val allowTypeWidening = target.exists {
+        case DeltaTable(fileIndex) =>
+          TypeWidening.isEnabled(fileIndex.protocol, fileIndex.metadata)
+        case _ => false
       }
 
       // The implicit conversions flag allows any type to be merged from source to target if Spark

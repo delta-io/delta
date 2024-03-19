@@ -294,7 +294,7 @@ trait DeltaMergeIntoTypeWideningSchemaEvolutionTests
           version = 1,
           from = ShortType,
           to = IntegerType,
-          path =Seq("element")))
+          path = Seq("element")))
   )
 
   testTypeEvolution("multiple automatic widening")(
