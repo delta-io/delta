@@ -68,14 +68,15 @@ trait DeltaTypeWideningTestMixin extends SharedSparkSession {
     sql(s"ALTER TABLE delta.`$tablePath` " +
           s"SET TBLPROPERTIES('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = '${enabled.toString}')")
 
-  protected def metadata(
+  /** Short-hand to create type widening metadata for struct fields. */
+  protected def typeWideningMetadata(
       version: Long,
-      fromType: AtomicType,
-      toType: AtomicType,
+      from: AtomicType,
+      to: AtomicType,
       path: Seq[String] = Seq.empty): Metadata =
     new MetadataBuilder()
       .putMetadataArray(
-        "delta.typeChanges", Array(TypeChange(version, fromType, toType, path).toMetadata))
+        "delta.typeChanges", Array(TypeChange(version, from, to, path).toMetadata))
       .build()
 }
 

@@ -284,7 +284,7 @@ object ResolveDeltaMergeInto {
             index.snapshotAtAnalysis.protocol,
             index.snapshotAtAnalysis.metadata
           )
-        case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
+        case other => throw DeltaErrors.notADeltaSourceException("MERGE", Some(other))
       }
 
       // The implicit conversions flag allows any type to be merged from source to target if Spark

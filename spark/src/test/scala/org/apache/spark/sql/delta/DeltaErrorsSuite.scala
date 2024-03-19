@@ -1435,7 +1435,9 @@ trait DeltaErrorsSuiteBase
         SchemaMergingUtils.mergeSchemas(s1, s2,
           allowImplicitConversions = false,
           keepExistingType = false,
-          allowTypeWidening = false, Set("c0"))
+          allowTypeWidening = false,
+          Set("c0")
+        )
       }
       checkErrorMessage(e, Some("DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH"), Some("42K09"),
         Some("Column c0 is a generated column or a column used by a generated " +

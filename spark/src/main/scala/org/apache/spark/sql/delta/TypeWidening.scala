@@ -63,10 +63,10 @@ object TypeWidening {
     }
 
   /**
-   * Returns whether the given type change is eligible for **automatic** widening. Only a subset of
-   * supported type changes are considered for automatic widening.
+   * Returns whether the given type change can be applied during schema evolution. Only a
+   * subset of supported type changes are considered for schema evolution.
    */
-  def isAutomaticTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
+  def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
     (fromType, toType) match {
       case (from, to) if !isTypeChangeSupported(from, to) => false
       case (from, to) if from == to => true

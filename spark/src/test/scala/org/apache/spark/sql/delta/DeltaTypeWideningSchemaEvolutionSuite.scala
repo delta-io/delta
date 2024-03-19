@@ -31,12 +31,12 @@ import org.apache.spark.sql.types._
  * Suite covering widening columns and fields type as part of automatic schema evolution when the
  * type widening table feature is supported.
  */
-class DeltaTypeWideningAutomaticSuite
+class DeltaTypeWideningSchemaEvolutionSuite
     extends QueryTest
     with DeltaDMLTestUtils
     with DeltaSQLCommandTest
     with DeltaTypeWideningTestMixin
-    with DeltaMergeIntoAutomaticTypeEvolutionTests {
+    with DeltaMergeIntoTypeWideningSchemaEvolutionTests {
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf
@@ -47,7 +47,7 @@ class DeltaTypeWideningAutomaticSuite
 /**
  * Tests covering type widening during schema evolution in MERGE INTO.
  */
-trait DeltaMergeIntoAutomaticTypeEvolutionTests
+trait DeltaMergeIntoTypeWideningSchemaEvolutionTests
     extends MergeIntoSQLTestUtils
     with MergeIntoSchemaEvolutionMixin
     with DeltaTypeWideningTestCases {
@@ -171,7 +171,8 @@ trait DeltaMergeIntoAutomaticTypeEvolutionTests
     clauses = update("a = s.a + 1") :: Nil,
     result = Seq("""{ "a": 1 }""", """{ "a": 10 }"""),
     resultSchema = new StructType()
-      .add("a", IntegerType, nullable = true, metadata(1, ShortType, IntegerType))
+      .add("a", IntegerType, nullable = true,
+        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
   )
 
   testTypeEvolution("change top-level column short -> int with insert")(
@@ -183,7 +184,8 @@ trait DeltaMergeIntoAutomaticTypeEvolutionTests
     clauses = insert("(a) VALUES (s.a)") :: Nil,
     result = Seq("""{ "a": 0 }""", """{ "a": 10 }""", """{ "a": 20 }"""),
     resultSchema = new StructType()
-      .add("a", IntegerType, nullable = true, metadata(1, ShortType, IntegerType))
+      .add("a", IntegerType, nullable = true,
+        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
   )
 
   testTypeEvolution("updating using narrower value doesn't evolve schema")(
@@ -211,7 +213,8 @@ trait DeltaMergeIntoAutomaticTypeEvolutionTests
     result = Seq(
       """{ "a": 1, "b": 5 }""", """{ "a": 10, "b": 15 }"""),
     resultSchema = new StructType()
-      .add("a", IntegerType, nullable = true, metadata(1, ShortType, IntegerType))
+      .add("a", IntegerType, nullable = true,
+        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
       .add("b", ShortType)
   )
 
@@ -229,7 +232,8 @@ trait DeltaMergeIntoAutomaticTypeEvolutionTests
     result = Seq("""{ "s": { "a": 2 } }""", """{ "s": { "a": 10 } }"""),
     resultSchema = new StructType()
       .add("s", new StructType()
-        .add("a", IntegerType, nullable = true, metadata(1, ShortType, IntegerType)))
+        .add("a", IntegerType, nullable = true,
+        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))
   )
 
   testTypeEvolution("automatic widening of struct field with field assignment")(
@@ -246,7 +250,8 @@ trait DeltaMergeIntoAutomaticTypeEvolutionTests
     result = Seq("""{ "s": { "a": 2 } }""", """{ "s": { "a": 10 } }"""),
     resultSchema = new StructType()
       .add("s", new StructType()
-        .add("a", IntegerType, nullable = true, metadata(1, ShortType, IntegerType)))
+        .add("a", IntegerType, nullable = true,
+        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))
   )
 
   testTypeEvolution("automatic widening of map value")(
@@ -264,7 +269,11 @@ trait DeltaMergeIntoAutomaticTypeEvolutionTests
       .add("m",
         MapType(StringType, IntegerType),
         nullable = true,
-        metadata(1, ShortType, IntegerType, Seq("value")))
+        metadata = typeWideningMetadata(
+          version = 1,
+          from = ShortType,
+          to = IntegerType,
+          path = Seq("value")))
   )
 
   testTypeEvolution("automatic widening of array element")(
@@ -281,7 +290,11 @@ trait DeltaMergeIntoAutomaticTypeEvolutionTests
       .add("a",
         ArrayType(IntegerType),
         nullable = true,
-        metadata(1, ShortType, IntegerType, Seq("element")))
+        metadata = typeWideningMetadata(
+          version = 1,
+          from = ShortType,
+          to = IntegerType,
+          path =Seq("element")))
   )
 
   testTypeEvolution("multiple automatic widening")(
@@ -297,7 +310,9 @@ trait DeltaMergeIntoAutomaticTypeEvolutionTests
     clauses = update("*") :: insert("*")  :: Nil,
     result = Seq("""{ "a": 1, "b": 4  }""", """{ "a": 5, "b": 6  }"""),
     resultSchema = new StructType()
-      .add("a", ShortType, nullable = true, metadata(1, ByteType, ShortType))
-      .add("b", IntegerType, nullable = true, metadata(1, ShortType, IntegerType))
+      .add("a", ShortType, nullable = true,
+        metadata = typeWideningMetadata(version = 1, from = ByteType, to = ShortType))
+      .add("b", IntegerType, nullable = true,
+        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
   )
 }
