@@ -48,6 +48,12 @@ trait MergeIntoTestUtils extends DeltaDMLTestUtils with MergeHelpers {
       cond: String,
       clauses: MergeClause*): Unit
 
+  protected def executeMergeWithSchemaEvolution(
+      tgt: String,
+      src: String,
+      cond: String,
+      clauses: MergeClause*): Unit
+
   protected def withCrossJoinEnabled(body: => Unit): Unit = {
     withSQLConf(SQLConf.CROSS_JOINS_ENABLED.key -> "true") { body }
   }
@@ -104,6 +110,15 @@ trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
     val clausesStr = clauses.map(_.sql).mkString("\n")
     sql(s"MERGE INTO $tgt USING $src ON $cond\n" + clausesStr)
   }
+
+  override protected def executeMergeWithSchemaEvolution(
+      tgt: String,
+      src: String,
+      cond: String,
+      clauses: MergeClause*): Unit = {
+    throw new UnsupportedOperationException(
+      "The SQL syntax [WITH SCHEMA EVOLUTION] is not yet supported.")
+  }
 }
 
 trait MergeIntoScalaTestUtils extends MergeIntoTestUtils {
@@ -129,6 +144,13 @@ trait MergeIntoScalaTestUtils extends MergeIntoTestUtils {
       cond: String,
       clauses: MergeClause*): Unit =
     getMergeBuilder(tgt, src, cond, clauses: _*).execute()
+
+  override protected def executeMergeWithSchemaEvolution(
+      tgt: String,
+      src: String,
+      cond: String,
+      clauses: MergeClause*): Unit =
+    getMergeBuilder(tgt, src, cond, clauses: _*).withSchemaEvolution().execute()
 
   private def getMergeBuilder(
       tgt: String,
