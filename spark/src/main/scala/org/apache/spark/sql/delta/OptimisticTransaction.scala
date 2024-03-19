@@ -1599,7 +1599,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           dataChanged = true
         }
       // Row tracking is able to resolve write conflicts regardless of isolation level.
-      case d: DomainMetadata if RowTrackingMetadataDomain.isRowTrackingDomain(d) =>
+      case d: DomainMetadata if RowTrackingMetadataDomain.isSameDomain(d) =>
         // Do nothing
       case _ =>
         hasIncompatibleActions = true

@@ -467,7 +467,7 @@ private[delta] class ConflictChecker(
         winningDomainMetadataMap.get(domainMetadataFromCurrentTransaction.domain)) match {
         // No-conflict case.
         case (domain, None) => domain
-        case (domain, _) if RowTrackingMetadataDomain.isRowTrackingDomain(domain) => domain
+        case (domain, _) if RowTrackingMetadataDomain.isSameDomain(domain) => domain
         case (_, Some(_)) =>
           // Any conflict not specifically handled by a previous case must fail the transaction.
           throw new io.delta.exceptions.ConcurrentTransactionException(
@@ -541,7 +541,7 @@ private[delta] class ConflictChecker(
         }
         Some(a.copy(baseRowId = Some(newBaseRowId)))
       // The row ID high water mark will be replaced if it exists.
-      case d: DomainMetadata if RowTrackingMetadataDomain.isRowTrackingDomain(d) => None
+      case d: DomainMetadata if RowTrackingMetadataDomain.isSameDomain(d) => None
       case a => Some(a)
     }
     currentTransactionInfo = currentTransactionInfo.copy(
