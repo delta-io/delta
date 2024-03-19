@@ -1630,7 +1630,7 @@ class DeltaSuite extends QueryTest
         spark.sql(
           s"""
              |INSERT INTO $tableName REPLACE
-             |where 
+             |where
              | (timestamp IN (TIMESTAMP('2022-12-22 15:50:00'), TIMESTAMP('2022-12-23 15:50:00')))
              | VALUES
              | ('2', TIMESTAMP('2022-12-22 15:50:00')), ('3', TIMESTAMP('2022-12-23 15:50:00'))
