@@ -29,6 +29,8 @@ import org.apache.spark.sql.delta.commands.VacuumCommand.getDeltaTable
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.types.StringType
 
+import foo.bar.UnresolvedTableShim
+
 /**
  * The `vacuum` command implementation for Spark SQL. Example SQL:
  * {{{
@@ -77,7 +79,8 @@ object VacuumTableCommand {
       dryRun: Boolean): VacuumTableCommand = {
     val child = UnresolvedDeltaPathOrIdentifier(path, table, "VACUUM")
     val unresolvedInventoryTable = inventoryTable.map(rt =>
-      UnresolvedTableShim.createUnresolvedTable(rt.nameParts, "VACUUM", relationTypeMismatchHint = None))
+      UnresolvedTableShim.createUnresolvedTable(
+        rt.nameParts, "VACUUM", relationTypeMismatchHint = None))
     VacuumTableCommand(child, horizonHours, unresolvedInventoryTable, inventoryQuery, dryRun)
   }
 }

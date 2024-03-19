@@ -116,7 +116,7 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
     ),
-    Compile / unmanagedSourceDirectories := Seq((baseDirectory in Compile).value, "src", "shim-spark-3.5"),
+    Compile / unmanagedSourceDirectories ++= Seq((baseDirectory in Compile).value / "src" / "shim-spark-3.5"),
     // For adding staged Spark RC versions, Ex:
     // resolvers += "Apche Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
