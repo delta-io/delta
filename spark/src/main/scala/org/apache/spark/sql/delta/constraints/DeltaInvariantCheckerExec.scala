@@ -17,9 +17,11 @@
 package org.apache.spark.sql.delta.constraints
 
 import scala.collection.mutable
+
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaIllegalStateException}
 import org.apache.spark.sql.delta.constraints.Constraints.{Check, NotNull}
 import org.apache.spark.sql.delta.schema.SchemaUtils
+
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
