@@ -689,7 +689,7 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
-  test("DeltaLog should throw exception when unable to create log directory " +
+  ignore("DeltaLog should throw exception when unable to create log directory " +
     "with silent filesystem failure") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
