@@ -36,7 +36,7 @@ class DeltaVariantSuite
     withTable("tbl") {
       sql("CREATE TABLE tbl(s STRING, v VARIANT) USING DELTA")
       sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
-      // TODO(r.chen): Enable once `parse_json` is properly implemented in OSS Spark.
+      // TODO(r.chen): Enable once variant casting is properly implemented in OSS Spark.
       // assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
       assert(
         getProtocolForTable("tbl") ==
@@ -97,7 +97,7 @@ class DeltaVariantSuite
       )
 
       sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
-      // TODO(r.chen): Enable once `parse_json` is properly implemented in OSS Spark.
+      // TODO(r.chen): Enable once variant casting is properly implemented in OSS Spark.
       // assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
 
       assert(
