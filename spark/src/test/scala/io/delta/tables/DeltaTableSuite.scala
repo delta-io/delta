@@ -22,7 +22,7 @@ import java.util.Locale
 import scala.language.postfixOps
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaIllegalArgumentException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, TestReaderWriterFeature, TestWriterFeature}
+import org.apache.spark.sql.delta.{DeltaIllegalArgumentException, DeltaIllegalStateException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, TestReaderWriterFeature, TestWriterFeature}
 import org.apache.spark.sql.delta.actions.{ Metadata, Protocol }
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -188,7 +188,7 @@ class DeltaTableSuite extends QueryTest
     }
 
     // DeltaTable can be passed to executor but method call causes exception.
-    val e = intercept[SparkException] {
+    val e = intercept[DeltaIllegalStateException] {
       withTempDir { dir =>
         testData.write.format("delta").mode("append").save(dir.getAbsolutePath)
         val dt: DeltaTable = DeltaTable.forPath(dir.getAbsolutePath)

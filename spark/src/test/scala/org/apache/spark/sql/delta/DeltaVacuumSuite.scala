@@ -36,7 +36,7 @@ import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.{SparkConf, SparkException}
+import org.apache.spark.{SparkConf, SparkException, SparkFileNotFoundException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Literal
@@ -385,7 +385,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         checkAnswer(sql(s"SELECT * FROM delta.`${dir.getAbsolutePath}`"), df1)
 
         // try reading cdc data
-        val e = intercept[SparkException] {
+        val e = intercept[SparkFileNotFoundException] {
           spark.read
             .format("delta")
             .option(DeltaOptions.CDC_READ_OPTION, "true")
@@ -443,7 +443,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         assert(getCDCFiles(deltaLog).size === 1) // still just the one cdc file from before.
 
         // try reading cdc data
-        val e = intercept[SparkException] {
+        val e = intercept[SparkFileNotFoundException] {
           spark.read
             .format("delta")
             .option(DeltaOptions.CDC_READ_OPTION, "true")
@@ -507,6 +507,8 @@ class DeltaVacuumSuite
           vacuumSQLTest(tablePath, viewName)
         }
         assert(
+          e.getMessage.contains("'VACUUM' expects a table but `v` is a view") ||
+            e.getMessage.contains("EXPECT_TABLE_NOT_VIEW.NO_ALTERNATIVE") ||
           e.getMessage.contains("v is a temp view. 'VACUUM' expects a table."))
       }
     }

@@ -31,6 +31,8 @@ import org.apache.spark.sql.delta.util.FileNames.deltaFile
 import org.apache.hadoop.fs.{FileSystem, FSDataInputStream, Path, PathHandle}
 
 import org.apache.spark.SparkException
+import org.apache.spark.SparkFileNotFoundException
+import org.apache.spark.SparkThrowable
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -1487,7 +1489,10 @@ class DeltaSuite extends QueryTest
         val thrown = intercept[SparkException] {
           data.toDF().collect()
         }
-        assert(thrown.getMessage.contains("is not a Parquet file"))
+        assert(
+          thrown.getMessage.contains("is not a Parquet file") // Spark 3.5
+            || thrown.getMessage.contains("[FAILED_READ_FILE]") // Spark 4.0
+        )
       }
     }
   }
@@ -1536,10 +1541,14 @@ class DeltaSuite extends QueryTest
         tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf()), pathToDelete)
       assert(deleted)
 
-      val thrown = intercept[SparkException] {
+      intercept[SparkThrowable] {
         data.toDF().collect()
+      } match {
+        case _: SparkFileNotFoundException => // Spark 4.0
+        case thrown: SparkException =>
+          assert(thrown.getMessage.contains("FileNotFound"))
       }
-      assert(thrown.getMessage.contains("FileNotFound"))
+
     }
   }
 
@@ -1667,11 +1676,15 @@ class DeltaSuite extends QueryTest
             spark.emptyDataFrame
           )
         }
-        var cause = ex.getCause
-        while (cause.getCause != null) {
-          cause = cause.getCause
+        ex match {
+          case _: SparkFileNotFoundException => // Spark 4.0
+          case _ => // Spark 3.5
+            var cause = ex.getCause
+            while (cause.getCause != null) {
+              cause = cause.getCause
+            }
+            assert(cause.getMessage.contains(".parquet does not exist"))
         }
-        assert(cause.getMessage.contains(".parquet does not exist"))
     }
   }
 
