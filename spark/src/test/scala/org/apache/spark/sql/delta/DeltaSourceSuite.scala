@@ -1957,7 +1957,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("fail on data loss - starting from missing files") {
-    withTempDirs { case (srcData, targetData, chkLocation) =>
+    withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
       }
@@ -1992,7 +1992,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("fail on data loss - gaps of files") {
-    withTempDirs { case (srcData, targetData, chkLocation) =>
+    withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
       }
@@ -2027,7 +2027,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("fail on data loss - starting from missing files with option off") {
-    withTempDirs { case (srcData, targetData, chkLocation) =>
+    withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
       }
@@ -2063,7 +2063,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("fail on data loss - gaps of files with option off") {
-    withTempDirs { case (srcData, targetData, chkLocation) =>
+    withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
       }
@@ -2352,7 +2352,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   test("handling nullability schema changes") {
     withTable("srcTable") {
-      withTempDirs { case (srcTblDir, checkpointDir, checkpointDir2) =>
+      withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>
         def readStream(startingVersion: Option[Long] = None): DataFrame = {
           var dsr = spark.readStream
           startingVersion.foreach { v =>

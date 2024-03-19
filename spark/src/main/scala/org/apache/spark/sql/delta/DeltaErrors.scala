@@ -186,6 +186,18 @@ trait DeltaErrorsBase
       cause = cause)
   }
 
+  def missingCommitInfo(featureName: String, commitVersion: String): DeltaIllegalStateException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_COMMIT_INFO",
+      messageParameters = Array(featureName, commitVersion))
+  }
+
+  def missingCommitTimestamp(commitVersion: String): DeltaIllegalStateException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_COMMIT_TIMESTAMP",
+      messageParameters = Array(InCommitTimestampTableFeature.name, commitVersion))
+  }
+
   def failOnCheckpointRename(src: Path, dest: Path): DeltaIllegalStateException = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_CANNOT_RENAME_PATH",
@@ -1552,10 +1564,11 @@ trait DeltaErrorsBase
       messageParameters = Array(itableIdentifier.toString))
   }
 
-  def cannotCreateLogPathException(logPath: String): Throwable = {
+  def cannotCreateLogPathException(logPath: String, cause: Throwable = null): Throwable = {
     new DeltaIOException(
       errorClass = "DELTA_CANNOT_CREATE_LOG_PATH",
-      messageParameters = Array(logPath))
+      messageParameters = Array(logPath),
+      cause = cause)
   }
 
   def cannotChangeProvider(): Throwable = {
@@ -2497,10 +2510,10 @@ trait DeltaErrorsBase
     )
   }
 
-  def nonGeneratedColumnMissingUpdateExpression(column: Attribute): Throwable = {
+  def nonGeneratedColumnMissingUpdateExpression(columnName: String): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_NON_GENERATED_COLUMN_MISSING_UPDATE_EXPR",
-      messageParameters = Array(column.toString)
+      messageParameters = Array(columnName)
     )
   }
 

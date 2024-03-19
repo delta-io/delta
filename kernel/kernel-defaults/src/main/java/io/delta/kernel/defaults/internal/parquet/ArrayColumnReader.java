@@ -24,12 +24,16 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.ArrayType;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultArrayVector;
-import static io.delta.kernel.defaults.internal.parquet.ParquetConverters.createConverter;
+import static io.delta.kernel.defaults.internal.parquet.ParquetColumnReaders.createConverter;
 
-class ArrayConverter extends RepeatedValueConverter {
+/**
+ * Array column reader for materializing the column values from Parquet files into Kernels
+ * {@link ColumnVector}.
+ */
+class ArrayColumnReader extends RepeatedValueConverter {
     private final ArrayType typeFromClient;
 
-    ArrayConverter(int initialBatchSize, ArrayType typeFromClient, GroupType typeFromFile) {
+    ArrayColumnReader(int initialBatchSize, ArrayType typeFromClient, GroupType typeFromFile) {
         super(
             initialBatchSize,
             createElementConverter(initialBatchSize, typeFromClient, typeFromFile));

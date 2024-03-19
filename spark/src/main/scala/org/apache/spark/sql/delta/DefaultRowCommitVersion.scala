@@ -24,7 +24,8 @@ object DefaultRowCommitVersion {
       protocol: Protocol,
       actions: Iterator[Action],
       version: Long): Iterator[Action] = {
-    if (!RowTracking.isSupported(protocol)) {
+    // Type Widening relies on default row commit versions to be set.
+    if (!RowTracking.isSupported(protocol) && !TypeWidening.isSupported(protocol)) {
       return actions
     }
     actions.map {

@@ -29,7 +29,6 @@ import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.{ArrayType, DataType, MapType, StructType}
 import io.delta.kernel.utils.{DataFileStatus, FileStatus}
 import org.apache.hadoop.fs.Path
-import org.apache.parquet.hadoop.ParquetFileReader
 import org.apache.parquet.hadoop.metadata.ParquetMetadata
 
 trait ParquetSuiteBase extends TestUtils {
@@ -243,7 +242,7 @@ trait ParquetSuiteBase extends TestUtils {
 
   def footer(path: String): ParquetMetadata = {
     try {
-      ParquetFileReader.readFooter(configuration, new Path(path))
+      org.apache.parquet.hadoop.ParquetFileReader.readFooter(configuration, new Path(path))
     } catch {
       case NonFatal(e) => fail(s"Failed to read footer for file: $path", e)
     }

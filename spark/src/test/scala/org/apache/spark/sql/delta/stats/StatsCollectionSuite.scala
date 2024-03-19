@@ -24,7 +24,7 @@ import java.time.LocalDateTime
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, TestsStatistics}
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -44,6 +44,7 @@ class StatsCollectionSuite
     with DeltaColumnMappingTestUtils
     with TestsStatistics
     with DeltaSQLCommandTest
+    with DeltaSQLTestUtils
     with DeletionVectorsTestUtils {
 
   import testImplicits._
@@ -503,17 +504,18 @@ class StatsCollectionSuite
     val tableName = "delta_table_1"
     withTable(tableName) {
       sql(
-        s"create table $tableName (col1 LONG, col2 struct<col20 INT, coL21 LONG>, col3 LONG) " +
-        s"using delta TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'coL1, COL2.Col20, cOl3');"
+        s"create table $tableName (cOl1 LONG, COL2 struct<COL20 INT, CoL21 LONG>, CoL3 LONG) " +
+        s"using delta TBLPROPERTIES" +
+        s"('delta.dataSkippingStatsColumns' = 'coL1, COL2.col20, COL2.col21, cOl3');"
       )
       (1 to 10).foreach { _ =>
         sql(
           s"""insert into $tableName values
-             |(1, struct(1, 1), 1), (2, struct(2, 2), 2), (3, struct(3, 3), 3),
-             |(4, struct(4, 4), 4), (5, struct(5, 5), 5), (6, struct(6, 6), 6),
-             |(7, struct(7, 7), 7), (8, struct(8, 8), 8), (9, struct(9, 9), 9),
-             |(10, struct(10, 10), 10), (null, struct(null, null), null), (-1, struct(-1, -1), -1),
-             |(null, struct(null, null), null);""".stripMargin
+             |(1, struct(1, 10), 1), (2, struct(2, 20), 2), (3, struct(3, 30), 3),
+             |(4, struct(4, 40), 4), (5, struct(5, 50), 5), (6, struct(6, 60), 6),
+             |(7, struct(7, 70), 7), (8, struct(8, 80), 8), (9, struct(9, 90), 9),
+             |(10, struct(10, 100), 10), (null, struct(null, null), null),
+             |(-1, struct(-1, -100), -1), (null, struct(null, null), null);""".stripMargin
         )
       }
       sql(s"optimize $tableName")
@@ -525,9 +527,9 @@ class StatsCollectionSuite
         .collect()
         .foreach { row =>
           assert(row(0) == 130)
-          assert(row(1).asInstanceOf[GenericRow] == Row(20, Row(20), 20))
-          assert(row(2) == Row(-1, Row(-1), -1))
-          assert(row(3) == Row(10, Row(10), 10))
+          assert(row(1).asInstanceOf[GenericRow] == Row(20, Row(20, 20), 20))
+          assert(row(2) == Row(-1, Row(-1, -100), -1))
+          assert(row(3) == Row(10, Row(10, 100), 10))
         }
     }
   }

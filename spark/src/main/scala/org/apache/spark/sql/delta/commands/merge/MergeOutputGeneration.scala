@@ -97,18 +97,18 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
    * increment metric expression and filtering on ROW_DROPPED_COL.
    */
   protected def generateWriteAllChangesOutputCols(
-      targetOutputCols: Seq[Expression],
-      outputColNames: Seq[String],
+      targetWriteCols: Seq[Expression],
+      targetWriteColNames: Seq[String],
       noopCopyExprs: Seq[Expression],
       clausesWithPrecompConditions: Seq[DeltaMergeIntoClause],
       cdcEnabled: Boolean,
       shouldCountDeletedRows: Boolean = true): IndexedSeq[Column] = {
 
-    val numOutputCols = outputColNames.size
+    val numOutputCols = targetWriteColNames.size
 
     // ==== Generate N + 2 (N + 4 preserving Row Tracking) expressions for MATCHED clauses ====
     val processedMatchClauses: Seq[ProcessedClause] = generateAllActionExprs(
-      targetOutputCols,
+      targetWriteCols,
       clausesWithPrecompConditions.collect { case c: DeltaMergeIntoMatchedClause => c },
       cdcEnabled,
       shouldCountDeletedRows)
@@ -120,12 +120,12 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // N + 1 (or N + 2 with CDC, N + 4 preserving Row Tracking and CDC) expressions to delete the
     // unmatched source row when it should not be inserted. `target.output` will produce NULLs
     // which will get deleted eventually.
-    val deleteSourceRowExprs = (targetOutputCols :+ Literal.TrueLiteral) ++
+    val deleteSourceRowExprs = (targetWriteCols :+ Literal.TrueLiteral) ++
       (if (cdcEnabled) Seq(CDC_TYPE_NOT_CDC) else Nil)
 
     // ==== Generate N + 2 (N + 4 preserving Row Tracking) expressions for NOT MATCHED clause ====
     val processedNotMatchClauses: Seq[ProcessedClause] = generateAllActionExprs(
-      targetOutputCols,
+      targetWriteCols,
       clausesWithPrecompConditions.collect { case c: DeltaMergeIntoNotMatchedClause => c },
       cdcEnabled,
       shouldCountDeletedRows)
@@ -136,7 +136,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
 
     // === Generate N + 2 (N + 4 with Row Tracking) expressions for NOT MATCHED BY SOURCE clause ===
     val processedNotMatchBySourceClauses: Seq[ProcessedClause] = generateAllActionExprs(
-      targetOutputCols,
+      targetWriteCols,
       clausesWithPrecompConditions.collect { case c: DeltaMergeIntoNotMatchedBySourceClause => c },
       cdcEnabled,
       shouldCountDeletedRows)
@@ -153,7 +153,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     val ifSourceRowNull = col(SOURCE_ROW_PRESENT_COL).isNull.expr
     val ifTargetRowNull = col(TARGET_ROW_PRESENT_COL).isNull.expr
 
-    val outputCols = outputColNames.zipWithIndex.map { case (name, i) =>
+    val outputCols = targetWriteColNames.zipWithIndex.map { case (name, i) =>
       // Coupled with the clause conditions, the resultant possibly-nested CaseWhens can
       // be the following for every i-th column. (In the case with single matched/not-matched
       // clauses, instead of nested CaseWhens, there will be If/Else.)
@@ -204,8 +204,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
   /**
    * Generate expressions for every output column and every merge clause based on the corresponding
    * UPDATE, DELETE and/or INSERT action(s).
-   * @param targetOutputCols List of output column expressions from the target table. Used to
-   *                         generate CDC data for DELETE.
+   * @param targetWriteCols List of output column expressions from the target table. Used to
+   *                        generate CDC data for DELETE.
    * @param clausesWithPrecompConditions List of merge clauses with precomputed conditions. Action
    *                                     expressions are generated for each of these clauses.
    * @param cdcEnabled Whether the generated expressions should include CDC information.
@@ -216,7 +216,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
    *         [[CDC_TYPE_COLUMN_NAME]]) to apply on a row when that clause matches.
    */
   protected def generateAllActionExprs(
-      targetOutputCols: Seq[Expression],
+      targetWriteCols: Seq[Expression],
       clausesWithPrecompConditions: Seq[DeltaMergeIntoClause],
       cdcEnabled: Boolean,
       shouldCountDeletedRows: Boolean): Seq[ProcessedClause] = {
@@ -251,7 +251,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             }
           }
           // Generate expressions to set the ROW_DROPPED_COL = true and mark as a DELETE
-          targetOutputCols ++
+          targetWriteCols ++
             Seq(incrCountExpr) ++
             (if (cdcEnabled) Some(CDC_TYPE_DELETE) else None)
         case _: DeltaMergeIntoNotMatchedBySourceDeleteClause =>
@@ -265,7 +265,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             }
           }
           // Generate expressions to set the ROW_DROPPED_COL = true and mark as a DELETE
-          targetOutputCols ++
+          targetWriteCols ++
             Seq(incrCountExpr) ++
             (if (cdcEnabled) Some(CDC_TYPE_DELETE) else None)
         case i: DeltaMergeIntoNotMatchedInsertClause =>

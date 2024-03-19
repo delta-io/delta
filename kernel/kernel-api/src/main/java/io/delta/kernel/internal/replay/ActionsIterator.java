@@ -18,10 +18,7 @@ package io.delta.kernel.internal.replay;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.Iterator;
-import java.util.List;
-import java.util.NoSuchElementException;
-import java.util.Optional;
+import java.util.*;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
@@ -29,9 +26,13 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Utils;
+import static io.delta.kernel.internal.fs.Path.getName;
+import static io.delta.kernel.internal.util.FileNames.*;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
+import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 /**
  * This class takes as input a list of delta files (.json, .checkpoint.parquet) and produces an
@@ -45,17 +46,19 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
     private final TableClient tableClient;
 
     /**
-     * Iterator over the files.
+     * Linked list of iterator files (commit files and/or checkpoint files)
+     * {@link LinkedList} to allow removing the head of the list and also to peek at the head
+     * of the list. The {@link Iterator} doesn't provide a way to peek.
      * <p>
-     * Each file will be split (by 1, or more) to yield an iterator of FileDataReadResults.
+     * Each of these files return an iterator of {@link ColumnarBatch} containing the actions
      */
-    private final Iterator<FileStatus> filesIter;
+    private final LinkedList<FileStatus> filesList;
 
     private final StructType readSchema;
 
     /**
      * The current (ColumnarBatch, isFromCheckpoint) tuple. Whenever this iterator
-     * is exhausted, we will try and fetch the next one from the `filesIter`.
+     * is exhausted, we will try and fetch the next one from the `filesList`.
      * <p>
      * If it is ever empty, that means there are no more batches to produce.
      */
@@ -68,7 +71,8 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
             List<FileStatus> files,
             StructType readSchema) {
         this.tableClient = tableClient;
-        this.filesIter = files.iterator();
+        this.filesList = new LinkedList<>();
+        this.filesList.addAll(files);
         this.readSchema = readSchema;
         this.actionsIter = Optional.empty();
     }
@@ -115,7 +119,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
     /**
      * If the current `actionsIter` has no more elements, this function finds the next
-     * non-empty file in `filesIter` and uses it to set `actionsIter`.
+     * non-empty file in `filesList` and uses it to set `actionsIter`.
      */
     private void tryEnsureNextActionsIterIsReady() {
         if (actionsIter.isPresent()) {
@@ -132,7 +136,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
         }
 
         // Search for the next non-empty file and use that iter
-        while (filesIter.hasNext()) {
+        while (!filesList.isEmpty()) {
             actionsIter = Optional.of(getNextActionsIter());
 
             if (actionsIter.get().hasNext()) {
@@ -149,23 +153,24 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
     }
 
     /**
-     * Get the next file from `filesIter` (.json or .checkpoint.parquet), contextualize it
-     * (allow the connector to split it), and then read it + inject the `isFromCheckpoint`
-     * information.
+     * Get the next file from `filesList` (.json or .checkpoint.parquet)
+     * read it + inject the `isFromCheckpoint` information.
      * <p>
-     * Requires that `filesIter.hasNext` is true.
+     * Requires that `filesList.isEmpty` is false.
      */
     private CloseableIterator<ActionWrapper> getNextActionsIter() {
-        final FileStatus nextFile = filesIter.next();
-
-        // TODO: [#1965] It should be possible to read our JSON and parquet files
-        //       many-at-once instead of one at a time.
-
+        final FileStatus nextFile = filesList.pop();
+        final Path nextFilePath = new Path(nextFile.getPath());
         try {
-            if (nextFile.getPath().endsWith(".json")) {
-                final long fileVersion = FileNames.deltaVersion(nextFile.getPath());
+            if (isCommitFile(nextFilePath.getName())) {
+                final long fileVersion = FileNames.deltaVersion(nextFilePath);
 
-                // Read that file
+                // We can not read multiple JSON files in parallel (like the checkpoint files),
+                // because each one has a different version, and we need to associate the version
+                // with actions read from the JSON file for further optimizations later on (faster
+                // metadata & protocol loading in subsequent runs by remembering the version of
+                // the last version where the metadata and protocol are found).
+
                 final CloseableIterator<ColumnarBatch> dataIter =
                     tableClient.getJsonHandler().readJsonFiles(
                         singletonCloseableIterator(nextFile),
@@ -173,13 +178,18 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                         Optional.empty());
 
                 return combine(dataIter, false /* isFromCheckpoint */, fileVersion);
-            } else if (nextFile.getPath().endsWith(".parquet")) {
-                final long fileVersion = FileNames.checkpointVersion(nextFile.getPath());
+            } else if (isCheckpointFile(nextFilePath.getName())) {
+                final long fileVersion = checkpointVersion(nextFilePath);
 
-                // Read that file
+                // Try to retrieve the remaining checkpoint files (if there are any) and issue
+                // read request for all in one go, so that the {@link ParquetHandler} can do
+                // optimizations like reading multiple files in parallel.
+                CloseableIterator<FileStatus> checkpointFilesIter =
+                        retrieveRemainingCheckpointFiles(nextFile, fileVersion);
+
                 final CloseableIterator<ColumnarBatch> dataIter =
                     tableClient.getParquetHandler().readParquetFiles(
-                        singletonCloseableIterator(nextFile),
+                        checkpointFilesIter,
                         readSchema,
                         Optional.empty());
 
@@ -217,5 +227,32 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                 fileReadDataIter.close();
             }
         };
+    }
+
+    /**
+     * Given a checkpoint file, retrieve all the files that are part of the same checkpoint.
+     * <p>
+     * This is done by looking at the file name and finding all the files that have the same
+     * version number.
+     */
+    private CloseableIterator<FileStatus> retrieveRemainingCheckpointFiles(
+            FileStatus checkpointFile,
+            long version) {
+
+        // Find the contiguous parquet files that are part of the same checkpoint
+        final List<FileStatus> checkpointFiles = new ArrayList<>();
+
+        // Add the already retrieved checkpoint file to the list.
+        checkpointFiles.add(checkpointFile);
+
+        FileStatus peek = filesList.peek();
+        while (peek != null &&
+                isCheckpointFile(getName(peek.getPath())) &&
+                checkpointVersion(peek.getPath()) == version) {
+            checkpointFiles.add(filesList.pop());
+            peek = filesList.peek();
+        }
+
+        return toCloseableIterator(checkpointFiles.iterator());
     }
 }

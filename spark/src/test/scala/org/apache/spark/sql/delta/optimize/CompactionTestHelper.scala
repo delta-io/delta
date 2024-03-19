@@ -21,16 +21,16 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.test.SQLTestUtils
 
 /**
  * A trait used by unit tests to trigger compaction over a table.
  */
-private[delta] trait CompactionTestHelper extends QueryTest with SQLTestUtils {
+private[delta] trait CompactionTestHelper extends QueryTest with DeltaSQLTestUtils {
 
   /**
    * Compact files under the given `tablePath` using AutoCompaction/OPTIMIZE and

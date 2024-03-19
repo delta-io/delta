@@ -631,7 +631,8 @@ object StatisticsCollection extends DeltaCommand {
     // Find the unique column names at this nesting depth, each with its path remainders (if any)
     val cols = statsColPaths.groupBy(_.head).mapValues(_.map(_.tail))
     val newSchema = schema.flatMap { field =>
-      cols.get(field.name).flatMap { paths =>
+      val lowerCaseFieldName = field.name.toLowerCase(Locale.ROOT)
+      cols.get(lowerCaseFieldName).flatMap { paths =>
         field.dataType match {
           case _ if paths.forall(_.isEmpty) =>
             // Convert full path to lower cases to avoid schema name contains upper case
