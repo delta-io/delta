@@ -63,6 +63,19 @@ object TypeWidening {
     }
 
   /**
+   * Returns whether the given type change is eligible for **automatic** widening. Only a subset of
+   * supported type changes are considered for automatic widening.
+   */
+  def isAutomaticTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
+    (fromType, toType) match {
+      case (from, to) if !isTypeChangeSupported(from, to) => false
+      case (from, to) if from == to => true
+      case (ByteType, ShortType) => true
+      case (ByteType | ShortType, IntegerType) => true
+      case _ => false
+    }
+
+  /**
    * Filter the given list of files to only keep files that were written before the latest type
    * change, if any. These older files contain a column or field with a type that is different than
    * in the current table schema and must be rewritten when dropping the type widening table feature

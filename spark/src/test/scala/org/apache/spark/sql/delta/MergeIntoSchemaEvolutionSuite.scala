@@ -83,13 +83,13 @@ trait MergeIntoSchemaEvolutionMixin {
     }
 
     test(s"schema evolution - $name - with evolution disabled") {
-      withSQLConf(confs: _*) {
+      withSQLConf(confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "false"): _*) {
         executeMergeAndAssert(expectedWithoutEvolution, expectErrorWithoutEvolutionContains)
       }
     }
 
     test(s"schema evolution - $name - on via DeltaSQLConf") {
-      withSQLConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
+      withSQLConf(confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true"): _*) {
         executeMergeAndAssert(expected, expectErrorContains)
       }
     }

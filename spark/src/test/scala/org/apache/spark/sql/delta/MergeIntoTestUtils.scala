@@ -20,10 +20,8 @@ import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.tables._
 
 import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.catalyst.util.FailFastMode
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.StructType
 
 /**
  * Base trait collecting helper methods to run MERGE tests. Merge test suite will want to mix in
@@ -32,8 +30,6 @@ import org.apache.spark.sql.types.StructType
  */
 trait MergeIntoTestUtils extends DeltaDMLTestUtils with MergeHelpers {
   self: SharedSparkSession =>
-
-  import testImplicits._
 
   protected def executeMerge(
       target: String,
@@ -50,23 +46,6 @@ trait MergeIntoTestUtils extends DeltaDMLTestUtils with MergeHelpers {
 
   protected def withCrossJoinEnabled(body: => Unit): Unit = {
     withSQLConf(SQLConf.CROSS_JOINS_ENABLED.key -> "true") { body }
-  }
-
-  /**
-   * Parse the input JSON data into a dataframe, one row per input element.
-   * Throws an exception on malformed inputs or records that don't comply with the provided schema.
-   */
-  protected def readFromJSON(data: Seq[String], schema: StructType = null): DataFrame = {
-    if (schema != null) {
-      spark.read
-        .schema(schema)
-        .option("mode", FailFastMode.name)
-        .json(data.toDS)
-    } else {
-      spark.read
-        .option("mode", FailFastMode.name)
-        .json(data.toDS)
-    }
   }
 }
 

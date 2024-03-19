@@ -41,10 +41,11 @@ import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.util.quietly
+import org.apache.spark.sql.catalyst.util.{quietly, FailFastMode}
 import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.util.Utils
 
@@ -467,6 +468,8 @@ trait DeltaDMLTestUtils
   with BeforeAndAfterEach {
   self: SharedSparkSession =>
 
+  import testImplicits._
+
   protected var tempDir: File = _
 
   protected var deltaLog: DeltaLog = _
@@ -512,6 +515,23 @@ trait DeltaDMLTestUtils
     withTempView("source") {
       source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
       thunk("source", s"delta.`$tempPath`")
+    }
+  }
+
+  /**
+   * Parse the input JSON data into a dataframe, one row per input element.
+   * Throws an exception on malformed inputs or records that don't comply with the provided schema.
+   */
+  protected def readFromJSON(data: Seq[String], schema: StructType = null): DataFrame = {
+    if (schema != null) {
+      spark.read
+        .schema(schema)
+        .option("mode", FailFastMode.name)
+        .json(data.toDS)
+    } else {
+      spark.read
+        .option("mode", FailFastMode.name)
+        .json(data.toDS)
     }
   }
 

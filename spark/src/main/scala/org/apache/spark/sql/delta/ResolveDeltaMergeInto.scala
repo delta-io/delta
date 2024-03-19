@@ -234,7 +234,7 @@ object ResolveDeltaMergeInto {
       // schema before merging it with the target schema. We don't consider NOT MATCHED BY SOURCE
       // clauses since these can't by definition reference source columns and thus can't introduce
       // new columns in the target schema.
-      val actions = (matchedClauses ++ notMatchedClauses).flatMap(_.actions)
+      val actions = (resolvedMatchedClauses ++ resolvedNotMatchedClauses).flatMap(_.actions)
       val assignments = actions.collect { case a: DeltaMergeAction => a.targetColNameParts }
       val containsStarAction = actions.exists {
         case _: UnresolvedStar => true
@@ -278,6 +278,15 @@ object ResolveDeltaMergeInto {
         })
 
       val migrationSchema = filterSchema(source.schema, Seq.empty)
+      val allowTypeWidening = EliminateSubqueryAliases(target) match {
+        case DeltaFullTable(_, index) =>
+          TypeWidening.isEnabled(
+            index.snapshotAtAnalysis.protocol,
+            index.snapshotAtAnalysis.metadata
+          )
+        case o => throw DeltaErrors.notADeltaSourceException("MERGE", Some(o))
+      }
+
       // The implicit conversions flag allows any type to be merged from source to target if Spark
       // SQL considers the source type implicitly castable to the target. Normally, mergeSchemas
       // enforces Parquet-level write compatibility, which would mean an INT source can't be merged
@@ -285,7 +294,9 @@ object ResolveDeltaMergeInto {
       SchemaMergingUtils.mergeSchemas(
         target.schema,
         migrationSchema,
-        allowImplicitConversions = true)
+        allowImplicitConversions = true,
+        allowTypeWidening = allowTypeWidening
+      )
     } else {
       target.schema
     }
