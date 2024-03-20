@@ -60,7 +60,7 @@ class SchemaUtilsSuite extends QueryTest
   }
 
   private def expectAnalysisErrorClass(errorClass: String, params: Map[String, String])
-                              (f: => Unit): Unit = {
+                                      (f: => Unit): Unit = {
     val e = intercept[AnalysisException] {
       f
     }
