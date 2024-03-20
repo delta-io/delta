@@ -59,6 +59,16 @@ class SchemaUtilsSuite extends QueryTest
       s"Error message '$msg' didn't contain: $shouldContain")
   }
 
+  private def expectFailurePattern(shouldContainPatterns: String*)(f: => Unit): Unit = {
+    val e = intercept[AnalysisException] {
+      f
+    }
+    val patterns =
+      shouldContainPatterns.map(regex => Pattern.compile(regex, Pattern.CASE_INSENSITIVE))
+    assert(patterns.forall(_.matcher(e.getMessage).find()),
+      s"Error message '${e.getMessage}' didn't contain the patterns: $shouldContainPatterns")
+  }
+
   private def expectAnalysisErrorClass(errorClass: String, params: Map[String, String])
                                       (f: => Unit): Unit = {
     val e = intercept[AnalysisException] {
