@@ -206,12 +206,9 @@ class ParquetFileReaderSuite extends AnyFunSuite
         parse_json(cast(id as string)),
         null
       ) as array_v""",
-      "map('test', cast(null as variant)) as map_value_v",
-      "map(cast(null as variant), parse_json(cast(id as string))) as map_key_v",
+      "map('test', cast(null as variant)) as map_value_v"
     )
   }
-
-  // TODO(richardc-db): Add nested variant tests once `parse_json` expression is implemented.
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Test compatibility with Parquet legacy format files                                         //

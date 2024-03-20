@@ -34,10 +34,12 @@ class VariantConverter
     private final BinaryColumnConverter valueConverter;
     private final BinaryColumnConverter metadataConverter;
 
-    // Working state
-    private boolean isCurrentValueNull = true;
+    // working state
     private int currentRowIndex;
     private boolean[] nullability;
+    // If the value is null, start/end never get called which is a signal for null
+    // Set the initial state to true and when start() is called set it to false.
+    private boolean isCurrentValueNull = true;
 
     /**
      * Create converter for {@link VariantType} column.
@@ -46,10 +48,8 @@ class VariantConverter
      */
     VariantConverter(int initialBatchSize) {
         checkArgument(initialBatchSize > 0, "invalid initialBatchSize: %s", initialBatchSize);
-        // Initialize the working state
         this.nullability = ParquetConverters.initNullabilityVector(initialBatchSize);
 
-        int parquetOrdinal = 0;
         this.valueConverter = new BinaryColumnConverter(BinaryType.BINARY, initialBatchSize);
         this.metadataConverter = new BinaryColumnConverter(BinaryType.BINARY, initialBatchSize);
     }

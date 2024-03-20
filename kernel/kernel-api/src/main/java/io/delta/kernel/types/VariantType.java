@@ -18,9 +18,7 @@ package io.delta.kernel.types;
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * A variant type.
- * <p>
- * todo: more comments
+ * A logical variant type.
  * @since 4.0.0
  */
 @Evolving

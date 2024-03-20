@@ -37,12 +37,12 @@ public class DefaultVariantVector
      * Create an instance of {@link io.delta.kernel.data.ColumnVector} for array type.
      *
      * @param size          number of elements in the vector.
+     * @param type          {@code variant} datatype definition.
      * @param nullability   Optional array of nullability value for each element in the vector.
      *                      All values in the vector are considered non-null when parameter is
      *                      empty.
-     * @param offsets       Offsets into element vector on where the index of particular row
-     *                      values start and end.
-     * @param elementVector Vector containing the array elements.
+     * @param value         The child binary column vector representing each variant's values.
+     * @param metadata         The child binary column vector representing each variant's metadata.
      */
     public DefaultVariantVector(
         int size,
@@ -84,6 +84,13 @@ public class DefaultVariantVector
         };
     }
 
+    /**
+     * Get the child column vector at the given {@code ordinal}. Variants should only have two
+     * child vectors, one for value and one for metadata.
+     *
+     * @param ordinal
+     * @return
+     */
     @Override
     public ColumnVector getChild(int ordinal) {
         checkArgument(ordinal >= 0 && ordinal < 2, "Invalid ordinal " + ordinal);

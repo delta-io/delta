@@ -137,7 +137,6 @@ public class GenericRow implements Row {
 
     @Override
     public VariantValue getVariant(int ordinal) {
-        // TODO(r.chen): test this path somehow?
         throwIfUnsafeAccess(ordinal, VariantType.class, "variant");
         return (VariantValue) getValue(ordinal);
     }
