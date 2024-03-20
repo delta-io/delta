@@ -554,7 +554,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val ex = intercept[UnsupportedOperationException] {
       evaluator(inputSchema, elementAtExpr, StringType.STRING)
     }
-    assert(ex.getMessage.contains("ELEMENT_AT(column(`as_map`), 24): " +
+    assert(ex.getMessage.contains(
       "lookup key type (short) is different from the map key type (string)"))
   }
 

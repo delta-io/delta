@@ -38,6 +38,11 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
 
   import testImplicits._
 
+  override def excluded: Seq[String] = super.excluded ++ Seq(
+    // Schema evolution SQL syntax is not yet supported
+    "schema evolution enabled for the current command"
+  )
+
   test("CTE as a source in MERGE") {
     withTable("source") {
       Seq((1, 1), (0, 3)).toDF("key1", "value").write.saveAsTable("source")

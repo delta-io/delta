@@ -34,6 +34,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.checkpoints.CheckpointMetaData;
@@ -121,7 +122,7 @@ public class SnapshotManager {
      */
     public Snapshot getSnapshotAt(
             TableClient tableClient,
-            Long version) throws TableNotFoundException {
+            long version) throws TableNotFoundException {
 
         Optional<LogSegment> logSegmentOpt = getLogSegmentForVersion(
             tableClient,
@@ -131,6 +132,22 @@ public class SnapshotManager {
         return logSegmentOpt
             .map(logSegment -> createSnapshot(logSegment, tableClient))
             .orElseThrow(() -> new TableNotFoundException(dataPath.toString()));
+    }
+
+    /**
+     * Construct the snapshot for the given table at the provided timestamp.
+     *
+     * @param tableClient         Instance of {@link TableClient} to use.
+     * @param millisSinceEpochUTC timestamp to fetch the snapshot for in milliseconds since the
+     *                            unix epoch
+     * @return a {@link Snapshot} of the table at the provided timestamp
+     * @throws TableNotFoundException
+     */
+    public Snapshot getSnapshotForTimestamp(
+            TableClient tableClient, long millisSinceEpochUTC) throws TableNotFoundException {
+        long versionToRead = DeltaHistoryManager.getActiveCommitAtTimestamp(
+            tableClient, logPath, millisSinceEpochUTC);
+        return getSnapshotAt(tableClient, versionToRead);
     }
 
     ////////////////////

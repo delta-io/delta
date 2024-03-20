@@ -54,7 +54,7 @@ public class DefaultTableClient
      * Create an instance of {@link DefaultTableClient}.
      *
      * @param hadoopConf Hadoop configuration to use.
-     * @return
+     * @return an instance of {@link DefaultTableClient}.
      */
     public static DefaultTableClient create(Configuration hadoopConf) {
         return new DefaultTableClient(hadoopConf);

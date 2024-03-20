@@ -388,7 +388,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
 
     // The target output columns need to be marked as nullable here, as they are going to be used
     // to reference the output of an outer join.
-    val targetOutputCols = getTargetOutputCols(spark, deltaTxn, makeNullable = true)
+    val targetWriteCols = postEvolutionTargetExpressions(makeNullable = true)
 
     // If there are N columns in the target table, the full outer join output will have:
     // - N columns for target table
@@ -397,19 +397,19 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     //   in a particular row
     // (N+1 or N+2 columns depending on CDC disabled / enabled)
     val outputColNames =
-      targetOutputCols.map(_.name) ++
+      targetWriteCols.map(_.name) ++
         Seq(ROW_DROPPED_COL) ++
         (if (cdcEnabled) Some(CDC_TYPE_COLUMN_NAME) else None)
 
     // Copy expressions to copy the existing target row and not drop it (ROW_DROPPED_COL=false),
     // and in case CDC is enabled, set it to CDC_TYPE_NOT_CDC.
     // (N+1 or N+2 or N+3 columns depending on CDC disabled / enabled and if Row IDs are preserved)
-      var noopCopyExprs = (targetOutputCols :+ incrNoopCountExpr) ++
+      var noopCopyExprs = (targetWriteCols :+ incrNoopCountExpr) ++
       (if (cdcEnabled) Some(CDC_TYPE_NOT_CDC) else None)
 
     // Generate output columns.
     val outputCols = generateWriteAllChangesOutputCols(
-      targetOutputCols,
+      targetWriteCols,
       outputColNames,
       noopCopyExprs,
       clausesWithPrecompConditions,

@@ -16,12 +16,13 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.tables._
 
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.util.FailFastMode
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -42,6 +43,12 @@ trait MergeIntoTestUtils extends DeltaDMLTestUtils with MergeHelpers {
       insert: String): Unit
 
   protected def executeMerge(
+      tgt: String,
+      src: String,
+      cond: String,
+      clauses: MergeClause*): Unit
+
+  protected def executeMergeWithSchemaEvolution(
       tgt: String,
       src: String,
       cond: String,
@@ -69,7 +76,7 @@ trait MergeIntoTestUtils extends DeltaDMLTestUtils with MergeHelpers {
   }
 }
 
-trait MergeIntoSQLTestUtils extends SQLTestUtils with MergeIntoTestUtils {
+trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
   self: SharedSparkSession =>
 
   protected def basicMergeStmt(
@@ -95,18 +102,23 @@ trait MergeIntoSQLTestUtils extends SQLTestUtils with MergeIntoTestUtils {
       insert: String): Unit =
     sql(basicMergeStmt(target, source, condition, update, insert))
 
-  protected def mergeStmt(
-      target: String,
-      source: String,
-      condition: String,
-      clauses: MergeClause*): String =
-    s"MERGE INTO $target USING $source ON $condition\n" + clauses.map(_.sql).mkString("\n")
-
   override protected def executeMerge(
       tgt: String,
       src: String,
       cond: String,
-      clauses: MergeClause*): Unit = sql(mergeStmt(tgt, src, cond, clauses: _*))
+      clauses: MergeClause*): Unit = {
+    val clausesStr = clauses.map(_.sql).mkString("\n")
+    sql(s"MERGE INTO $tgt USING $src ON $cond\n" + clausesStr)
+  }
+
+  override protected def executeMergeWithSchemaEvolution(
+      tgt: String,
+      src: String,
+      cond: String,
+      clauses: MergeClause*): Unit = {
+    throw new UnsupportedOperationException(
+      "The SQL syntax [WITH SCHEMA EVOLUTION] is not yet supported.")
+  }
 }
 
 trait MergeIntoScalaTestUtils extends MergeIntoTestUtils {
@@ -130,8 +142,21 @@ trait MergeIntoScalaTestUtils extends MergeIntoTestUtils {
       tgt: String,
       src: String,
       cond: String,
-      clauses: MergeClause*): Unit = {
+      clauses: MergeClause*): Unit =
+    getMergeBuilder(tgt, src, cond, clauses: _*).execute()
 
+  override protected def executeMergeWithSchemaEvolution(
+      tgt: String,
+      src: String,
+      cond: String,
+      clauses: MergeClause*): Unit =
+    getMergeBuilder(tgt, src, cond, clauses: _*).withSchemaEvolution().execute()
+
+  private def getMergeBuilder(
+      tgt: String,
+      src: String,
+      cond: String,
+      clauses: MergeClause*): DeltaMergeBuilder = {
     def buildClause(clause: MergeClause, mergeBuilder: DeltaMergeBuilder)
       : DeltaMergeBuilder = clause match {
       case _: MatchedClause =>
@@ -197,8 +222,7 @@ trait MergeIntoScalaTestUtils extends MergeIntoTestUtils {
     clauses.foreach { clause =>
       mergeBuilder = buildClause(clause, mergeBuilder)
     }
-    mergeBuilder.execute()
-    deltaTable.toDF
+    mergeBuilder
   }
 
   protected def parseUpdate(update: Seq[String]): Map[String, String] = {

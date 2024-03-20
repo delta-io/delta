@@ -36,9 +36,13 @@ import io.delta.kernel.types.DecimalType;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultDecimalVector;
-import io.delta.kernel.defaults.internal.parquet.ParquetConverters.BasePrimitiveColumnConverter;
+import io.delta.kernel.defaults.internal.parquet.ParquetColumnReaders.BasePrimitiveColumnReader;
 
-public class DecimalConverters {
+/**
+ * Decimal column readers for materializing the column values from Parquet files into Kernels
+ * {@link ColumnVector}.
+ */
+public class DecimalColumnReader {
 
     public static Converter createDecimalConverter(
             int initialBatchSize,
@@ -54,12 +58,12 @@ public class DecimalConverters {
             if (typeAnnotation instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) {
                 LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimalType =
                         (LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) typeAnnotation;
-                return new IntDictionaryAwareDecimalConverter(typeFromClient,
+                return new IntDictionaryAwareDecimalColumnReader(typeFromClient,
                         decimalType.getPrecision(), decimalType.getScale(), initialBatchSize);
             } else {
                 // If the column is a plain INT32, we should pick the precision that can host
                 // the largest INT32 value.
-                return new IntDictionaryAwareDecimalConverter(typeFromClient,
+                return new IntDictionaryAwareDecimalColumnReader(typeFromClient,
                         10, 0, initialBatchSize);
             }
         } else if (primType.getPrimitiveTypeName() == INT64) {
@@ -67,12 +71,12 @@ public class DecimalConverters {
             if (typeAnnotation instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) {
                 LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimalType =
                         (LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) typeAnnotation;
-                return new LongDictionaryAwareDecimalConverter(typeFromClient,
+                return new LongDictionaryAwareDecimalColumnReader(typeFromClient,
                         decimalType.getPrecision(), decimalType.getScale(), initialBatchSize);
             } else {
                 // If the column is a plain INT64, we should pick the precision that can host
                 // the largest INT64 value.
-                return new LongDictionaryAwareDecimalConverter(typeFromClient,
+                return new LongDictionaryAwareDecimalColumnReader(typeFromClient,
                         20, 0, initialBatchSize);
             }
         } else if (primType.getPrimitiveTypeName() == FIXED_LEN_BYTE_ARRAY ||
@@ -81,7 +85,7 @@ public class DecimalConverters {
             if (typeAnnotation instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) {
                 LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimalType =
                         (LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) typeAnnotation;
-                return new BinaryDictionaryAwareDecimalConverter(typeFromClient,
+                return new BinaryDictionaryAwareDecimalColumnReader(typeFromClient,
                         decimalType.getPrecision(), decimalType.getScale(), initialBatchSize);
             } else {
                 throw new RuntimeException(String.format(
@@ -98,7 +102,7 @@ public class DecimalConverters {
         }
     }
 
-    public abstract static class BaseDecimalConverter extends BasePrimitiveColumnConverter {
+    public abstract static class BaseDecimalColumnReader extends BasePrimitiveColumnReader {
         // working state
         private BigDecimal[] values;
 
@@ -106,7 +110,7 @@ public class DecimalConverters {
         private final int scale;
         protected BigDecimal[] expandedDictionary;
 
-        BaseDecimalConverter(DataType dataType, int precision, int scale, int initialBatchSize) {
+        BaseDecimalColumnReader(DataType dataType, int precision, int scale, int initialBatchSize) {
             super(initialBatchSize);
             DecimalType decimalType = (DecimalType) dataType;
             checkArgument(
@@ -144,7 +148,7 @@ public class DecimalConverters {
         public ColumnVector getDataColumnVector(int batchSize) {
             ColumnVector vector = new DefaultDecimalVector(dataType, batchSize, values);
             // re-initialize the working space
-            this.nullability = ParquetConverters.initNullabilityVector(nullability.length);
+            this.nullability = ParquetColumnReaders.initNullabilityVector(nullability.length);
             this.values = new BigDecimal[values.length];
             this.currentRowIndex = 0;
             return vector;
@@ -156,7 +160,7 @@ public class DecimalConverters {
                 int newSize = values.length * 2;
                 this.values = Arrays.copyOf(this.values, newSize);
                 this.nullability = Arrays.copyOf(this.nullability, newSize);
-                ParquetConverters.setNullabilityToTrue(this.nullability, newSize / 2, newSize);
+                ParquetColumnReaders.setNullabilityToTrue(this.nullability, newSize / 2, newSize);
             }
         }
 
@@ -169,8 +173,8 @@ public class DecimalConverters {
         }
     }
 
-    public static class IntDictionaryAwareDecimalConverter extends BaseDecimalConverter {
-        IntDictionaryAwareDecimalConverter(
+    public static class IntDictionaryAwareDecimalColumnReader extends BaseDecimalColumnReader {
+        IntDictionaryAwareDecimalColumnReader(
                 DataType dataType, int precision, int scale, int initialBatchSize) {
             super(dataType, precision, scale, initialBatchSize);
         }
@@ -190,8 +194,8 @@ public class DecimalConverters {
         }
     }
 
-    public static class LongDictionaryAwareDecimalConverter extends BaseDecimalConverter {
-        LongDictionaryAwareDecimalConverter(
+    public static class LongDictionaryAwareDecimalColumnReader extends BaseDecimalColumnReader {
+        LongDictionaryAwareDecimalColumnReader(
                 DataType dataType, int precision, int scale, int initialBatchSize) {
             super(dataType, precision, scale, initialBatchSize);
         }
@@ -211,8 +215,8 @@ public class DecimalConverters {
         }
     }
 
-    public static class BinaryDictionaryAwareDecimalConverter extends BaseDecimalConverter {
-        BinaryDictionaryAwareDecimalConverter(
+    public static class BinaryDictionaryAwareDecimalColumnReader extends BaseDecimalColumnReader {
+        BinaryDictionaryAwareDecimalColumnReader(
                 DataType dataType, int precision, int scale, int initialBatchSize) {
             super(dataType, precision, scale, initialBatchSize);
         }

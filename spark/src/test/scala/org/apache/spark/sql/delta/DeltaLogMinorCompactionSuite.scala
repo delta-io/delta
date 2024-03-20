@@ -20,18 +20,19 @@ import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions.col
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 
 // scalastyle:off: removeFile
 class DeltaLogMinorCompactionSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
-  with SQLTestUtils {
+  with DeltaSQLTestUtils {
 
   /** Helper method to do minor compaction of [[DeltaLog]] from [startVersion, endVersion] */
   private def minorCompactDeltaLog(
