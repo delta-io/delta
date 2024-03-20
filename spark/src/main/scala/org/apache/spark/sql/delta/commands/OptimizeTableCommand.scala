@@ -239,7 +239,9 @@ class OptimizeExecutor(
 
   private val isClusteredTable = ClusteredTableUtils.isSupported(txn.snapshot.protocol)
 
-  private val isMultiDimClustering = isClusteredTable || zOrderByColumns.nonEmpty
+  private val isMultiDimClustering =
+    optimizeStrategy.isInstanceOf[ClusteringStrategy] ||
+    optimizeStrategy.isInstanceOf[ZOrderStrategy]
 
   private val clusteringColumns: Seq[String] = {
     if (zOrderByColumns.nonEmpty) {
