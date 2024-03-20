@@ -54,7 +54,8 @@ public class LogStoreProvider {
      *                                  instantiated.
      */
     public static LogStore getLogStore(Configuration hadoopConf, String scheme) {
-        String schemeLower = scheme.toLowerCase(Locale.ROOT);
+        String schemeLower = Optional.ofNullable(scheme)
+                .map(String::toLowerCase).orElse(null);
 
         // Check if the LogStore implementation is set in the configuration.
         String classNameFromConfig = hadoopConf.get(getLogStoreSchemeConfKey(schemeLower));

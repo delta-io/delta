@@ -79,8 +79,7 @@ public class DefaultFileSystemClient
                         FileStatus.of(
                                 hadoopFileStatus.getPath().toString(),
                                 hadoopFileStatus.getLen(),
-                                hadoopFileStatus.getModificationTime())
-                );
+                                hadoopFileStatus.getModificationTime()));
     }
 
     @Override
