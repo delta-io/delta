@@ -78,11 +78,12 @@ case class DeltaInvariantCheckerExec(
     // We resolve currentTime for all invariants together to make sure we use the same timestamp.
     val invariantsFakePlan = AnalysisHelper.FakeLogicalPlan(invariantChecks, Nil)
     val newInvariantsPlan = optimizer.ComputeCurrentTime(invariantsFakePlan)
+    val localOutput = child.output
 
     child.execute().mapPartitionsInternal { rows =>
       val boundRefs = newInvariantsPlan.expressions
         .asInstanceOf[Seq[CheckDeltaInvariant]]
-        .map(_.withBoundReferences(child.output))
+        .map(_.withBoundReferences(localOutput))
       val assertions = UnsafeProjection.create(boundRefs)
       rows.map { row =>
         assertions(row)
