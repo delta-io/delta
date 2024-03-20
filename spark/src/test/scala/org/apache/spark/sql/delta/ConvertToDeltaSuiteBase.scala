@@ -359,7 +359,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
         case ae: AnalysisException => ae
       }
       assert(realCause.getMessage.contains("Failed to merge"))
-      assert(exception.isInstanceOf[AnalysisException] ||
+      assert(realCause.isInstanceOf[AnalysisException] ||
         realCause.getMessage.contains("/part="),
         "Error message should contain the file name")
     }

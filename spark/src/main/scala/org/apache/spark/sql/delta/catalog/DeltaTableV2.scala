@@ -278,7 +278,11 @@ case class DeltaTableV2(
   def withOptions(newOptions: Map[String, String]): DeltaTableV2 = {
     val ttSpec = DeltaDataSource.getTimeTravelVersion(newOptions)
     if (timeTravelOpt.nonEmpty && ttSpec.nonEmpty) {
-      throw DeltaErrors.multipleTimeTravelSyntaxUsed
+      // If the options match the spec on the table, we ignore the error.
+      if (timeTravelOpt.get.version != ttSpec.get.version ||
+          timeTravelOpt.get.timestamp != ttSpec.get.timestamp) {
+        throw DeltaErrors.multipleTimeTravelSyntaxUsed
+      }
     }
 
     val caseInsensitiveNewOptions = new CaseInsensitiveStringMap(newOptions.asJava)

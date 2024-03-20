@@ -224,8 +224,15 @@ trait DescribeDeltaHistorySuiteBase
       val e = intercept[AnalysisException] {
         sql(s"DESCRIBE HISTORY $viewName").collect()
       }
-      assert(e.getMessage.contains("spark_catalog.default.delta_view is a view. " +
-        "'DESCRIBE HISTORY' expects a table"))
+      // Error message varies slightly between Spark versions because Spark 3.5 still uses
+      // QueryCompilationErrors.expectTableNotViewError instead of
+      // QueryCompilationErrors.unsupportedViewOperationError
+      assert(
+        e.getMessage.contains( // 3.5
+          "spark_catalog.default.delta_view is a view. 'DESCRIBE HISTORY' expects a table") ||
+        e.getMessage.contains( // 4.0
+          "'DESCRIBE HISTORY' expects a table but `spark_catalog`.`default`.`delta_view` is a view")
+      )
     }
   }
 
@@ -238,7 +245,15 @@ trait DescribeDeltaHistorySuiteBase
         val e = intercept[AnalysisException] {
           sql(s"DESCRIBE HISTORY $viewName").collect()
         }
-        assert(e.getMessage.contains("v is a temp view. 'DESCRIBE HISTORY' expects a table"))
+        // Error message varies slightly between Spark versions because Spark 3.5 still uses
+        // QueryCompilationErrors.expectTableNotViewError instead of
+        // QueryCompilationErrors.unsupportedViewOperationError
+        assert(
+          e.getMessage.contains( // 3.5
+            "v is a temp view. 'DESCRIBE HISTORY' expects a table") ||
+          e.getMessage.contains( // 4.0
+            "'DESCRIBE HISTORY' expects a table but `v` is a view")
+        )
       }
   }
 

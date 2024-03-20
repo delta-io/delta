@@ -38,7 +38,7 @@ Global / default_scala_version := scala213
 // Dependent library versions
 val sparkVersion = "4.0.0-SNAPSHOT"
 val flinkVersion = "1.16.1"
-val hadoopVersion = "3.3.4"
+val hadoopVersion = "3.3.6"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -91,6 +91,20 @@ lazy val commonSettings = Seq(
   unidocSourceFilePatterns := Nil,
 )
 
+// Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
+val extraJavaTestArgs = Seq(
+  "--add-opens=java.base/java.lang=ALL-UNNAMED",
+  "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+  "--add-opens=java.base/java.io=ALL-UNNAMED",
+  "--add-opens=java.base/java.net=ALL-UNNAMED",
+  "--add-opens=java.base/java.nio=ALL-UNNAMED",
+  "--add-opens=java.base/java.util=ALL-UNNAMED",
+  "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+  "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+  "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+  "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+  "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED")
+
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
   .enablePlugins(Antlr4Plugin)
@@ -129,6 +143,7 @@ lazy val spark = (project in file("spark"))
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+    Test / javaOptions ++= extraJavaTestArgs, // Required for UTs with Java 17
 
     // Copied from SparkBuild.scala to support Java 17 (see apache/spark#34153)
     (Test / javaOptions) ++= Seq(
@@ -253,7 +268,8 @@ lazy val sharing = (project in file("sharing"))
       "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
-    )
+    ),
+    Test / javaOptions ++= extraJavaTestArgs // Required for UTs with Java 17
   ).configureUnidoc()
 
 lazy val kernelApi = (project in file("kernel/kernel-api"))

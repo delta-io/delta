@@ -183,7 +183,8 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
           // Guava cache wraps the root cause
           assert(e.isInstanceOf[SparkException] &&
             e.getMessage.contains("0001.checkpoint") &&
-            e.getMessage.contains(".parquet is not a Parquet file"))
+            (e.getMessage.contains(".parquet is not a Parquet file") ||
+              e.getMessage.contains("Encountered error while reading file")))
         }
       }
     }
@@ -240,7 +241,8 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         val e = intercept[SparkException] { staleLog.update() }
         val version = if (testEmptyCheckpoint) 0 else 1
         assert(e.getMessage.contains(f"$version%020d.checkpoint") &&
-          e.getMessage.contains(".parquet is not a Parquet file"))
+          (e.getMessage.contains(".parquet is not a Parquet file") ||
+            e.getMessage.contains("Encountered error while reading file")))
       }
     }
   }

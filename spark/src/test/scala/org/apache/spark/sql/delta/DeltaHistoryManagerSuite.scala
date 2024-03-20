@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.{SparkConf, SparkException}
+import org.apache.spark.{SparkConf, SparkException, SparkFileNotFoundException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
@@ -567,12 +567,14 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
           DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "false",
           DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
           sql(s"vacuum $tblName retain 0 hours")
-          intercept[SparkException] {
+          var e = intercept[SparkThrowable] {
             sql(s"select * from ${versionAsOf(tblName, 0)}").collect()
           }
-          intercept[SparkException] {
+          assert(e.isInstanceOf[SparkException] || e.isInstanceOf[SparkFileNotFoundException])
+          e = intercept[SparkThrowable] {
             sql(s"select count(*) from ${versionAsOf(tblName, 1)}").collect()
           }
+          assert(e.isInstanceOf[SparkException] || e.isInstanceOf[SparkFileNotFoundException])
         }
       }
     }
@@ -593,13 +595,15 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
       }
       assert(e1.getMessage.contains("[0, 2]"))
 
-      val e2 = intercept[IllegalArgumentException] {
+      val e2 = intercept[AnalysisException] {
         spark.read.format("delta")
           .option("versionAsOf", 3)
           .option("timestampAsOf", "2020-10-22 23:20:11")
           .table(tblName).collect()
       }
-      assert(e2.getMessage.contains("either provide 'timestampAsOf' or 'versionAsOf'"))
+      assert(e2.getMessage.contains(
+        "Cannot specify both version and timestamp when time travelling the table"))
+      assert(e2.errorClass.isDefined && e2.errorClass.get == "INVALID_TIME_TRAVEL_SPEC")
 
     }
   }

@@ -95,7 +95,8 @@ object DeltaInvariantCheckerExec {
   // Specialized optimizer to run necessary rules so that the check expressions can be evaluated.
   object DeltaInvariantCheckerOptimizer extends RuleExecutor[LogicalPlan] {
     final override protected def batches = Seq(
-      Batch("Finish Analysis", Once, ReplaceExpressions)
+      Batch("Finish Analysis", Once, ReplaceExpressions), Batch("Rewrite With expression", Once,
+        org.apache.spark.sql.catalyst.optimizer.RewriteWithExpression)
     )
   }
 
