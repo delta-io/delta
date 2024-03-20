@@ -689,27 +689,6 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
-  ignore("DeltaLog should throw exception when unable to create log directory " +
-    "with silent filesystem failure") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      val log = DeltaLog.forTable(spark, new Path(path))
-      val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
-
-      // Set parent directory to be read-only.
-      // Attempting to create a child file/directory should fail.
-      // Both the log directory and commit directory are typically created as part
-      // of ensureLogDirectoryExist(), so we need to create the log
-      // directory ourselves if we want to apply permissions.
-      fs.mkdirs(log.logPath, new FsPermission(444))
-
-      val e = intercept[DeltaIOException] {
-        log.ensureLogDirectoryExist()
-      }
-      checkError(e, "DELTA_CANNOT_CREATE_LOG_PATH")
-    }
-  }
-
   test("DeltaLog should throw exception when unable to create log directory " +
     "with filesystem IO Exception") {
     withTempDir { dir =>
