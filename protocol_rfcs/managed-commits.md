@@ -161,11 +161,13 @@ Even after a commit succeeds, Delta clients can only discover the commit through
 have no way to determine which file in `_delta_log/_commits` directory corresponds to the actual commit `v`.
 
 The commit-owner is responsible to implement an API (defined by the Delta client) that Delta clients can use to retrieve information about un-backfilled commits maintained
-by the commit-owner. The API must also return the latest version of the table ratified by commit-owner (if any).
+by the commit-owner. The API must also return the latest version of the table ratified by the commit-owner (if any).
 Providing the latest ratified table version helps address potential race conditions between listing commits and contacting the commit-owner.
 For example, if a client performs a listing before a recently ratified commit is backfilled, and then contacts the commit-owner after the backfill completes,
 the commit-owner may return an empty list of un-backfilled commits. Without knowing the latest ratified version, the client might incorrectly assume their listing was complete
-and read a stale snapshot. Delta clients who are unaware of the commit-owner (or unwilling to talk to it), may not see recent un-backfilled commits and thus may encounter stale reads.
+and read a stale snapshot.
+
+Delta clients who are unaware of the commit-owner (or unwilling to talk to it), may not see recent un-backfilled commits and thus may encounter stale reads.
 
 
 ## Sample Commit Owner API
@@ -200,8 +202,8 @@ interface CommitStore {
      * Note that returning latestTableVersion as -1 is acceptable only if the commit-owner never
      * ratified any version i.e. it never accepted any un-backfilled commit.
      *
-     * @return GetCommitsResponse which has a list of `Commit` and the latestTableVersion which are
-     *         tracked by commit-owner.
+     * @return GetCommitsResponse which contains a list of `Commit`s and the latestTableVersion
+     *         tracked by the commit-owner.
      */
     def getCommits(
         startVersion: Long,
