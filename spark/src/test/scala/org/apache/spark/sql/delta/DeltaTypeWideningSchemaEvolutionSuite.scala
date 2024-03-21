@@ -352,14 +352,8 @@ trait DeltaMergeIntoTypeWideningSchemaEvolutionTests
     // The MERGE operation was created with type widening enabled, which will apply during analysis.
     // Disable type widening so that the actual execution runs with type widening disabled.
     enableTypeWidening(tempPath, enabled)
-    checkError(
-      exception = intercept[DeltaRuntimeException] { merge.execute() },
-      errorClass = "DELTA_TABLE_PROPERTY_CHANGED",
-      parameters = Map(
-        "key" -> "delta.enableTypeWidening",
-        "oldValue" -> (!enabled).toString,
-        "newValue" -> enabled.toString
-      )
-    )
+    intercept[MetadataChangedException] {
+      merge.execute()
+    }
   }
 }
