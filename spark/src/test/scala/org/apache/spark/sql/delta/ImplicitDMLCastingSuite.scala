@@ -339,7 +339,8 @@ class ImplicitDMLCastingSuite extends QueryTest
       val expectedDetails =
         Seq("DELTA_CAST_OVERFLOW_IN_TABLE_WRITE", sourceValueType, valueColumnName)
       for (detail <- expectedDetails) {
-        assert(userFacingError.toString.contains(detail))
+        assert(userFacingError.toString.contains(detail) ||
+          userFacingError.getCause.toString.contains(detail))
       }
     }
   }

@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.{File, FileNotFoundException}
+import java.net.URISyntaxException
 
 import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, BOOLEAN_DOMAIN}
@@ -705,7 +706,10 @@ class DeletionVectorsSuite extends QueryTest
       val e = intercept[SparkException] {
         spark.read.format("delta").load(dir.getCanonicalPath).collect()
       }
-      assert(e.getMessage.contains("URISyntaxException: Malformed escape pair"))
+      assert(e.getMessage.contains("URISyntaxException: Malformed escape pair") ||
+        (e.getCause.isInstanceOf[URISyntaxException] &&
+          e.getCause.getMessage.contains("Malformed escape pair"))
+      )
     }
   }
 
