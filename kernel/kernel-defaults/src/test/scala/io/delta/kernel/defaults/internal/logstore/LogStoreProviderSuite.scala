@@ -73,7 +73,7 @@ class LogStoreProviderSuite extends AnyFunSuite {
  * Sample user-defined log store implementing [[LogStore]].
  */
 class UserDefinedLogStore(override val initHadoopConf: Configuration)
-  extends LogStore(initHadoopConf) {
+    extends LogStore(initHadoopConf) {
 
   private val logStoreInternal = new HDFSLogStore(initHadoopConf)
 
@@ -82,10 +82,10 @@ class UserDefinedLogStore(override val initHadoopConf: Configuration)
   }
 
   override def write(
-    path: Path,
-    actions: java.util.Iterator[String],
-    overwrite: java.lang.Boolean,
-    hadoopConf: Configuration): Unit = {
+      path: Path,
+      actions: java.util.Iterator[String],
+      overwrite: java.lang.Boolean,
+      hadoopConf: Configuration): Unit = {
     logStoreInternal.write(path, actions, overwrite, hadoopConf)
   }
 
