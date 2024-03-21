@@ -36,9 +36,10 @@ import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
  * {@link Configuration} object to interact with the file system. The following optional
  * configurations can be set to customize the behavior of the client:
  * <ul>
- *     <li>{@code io.delta.kernel.logStore.&lt;scheme&gt;.impl} - The class name of the custom
+ *     <li>{@code io.delta.kernel.logStore.<scheme>.impl} - The class name of the custom
  *     {@link LogStore} implementation to use for operations on storage systems with the
- *     specified &lt;scheme&gt;. For example, to use a custom LogStore for S3 storage objects:
+ *     specified {@code scheme}. For example, to use a custom {@link LogStore} for S3 storage
+ *     objects:
  *     <pre>{@code
  *     <property>
  *       <name>io.delta.kernel.logStore.s3.impl</name>

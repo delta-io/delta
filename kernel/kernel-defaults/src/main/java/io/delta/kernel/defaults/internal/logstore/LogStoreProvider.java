@@ -28,23 +28,24 @@ import io.delta.kernel.defaults.internal.DefaultTableClientErrors;
 public class LogStoreProvider {
 
     // Supported schemes per storage system.
-    private static final Set<String> s3Schemes = unmodifiableSet("s3", "s3a", "s3n");
-    private static final Set<String> azureSchemes =
+    private static final Set<String> S3_SCHEMES = unmodifiableSet("s3", "s3a", "s3n");
+    private static final Set<String> AZURE_SCHEMES =
             unmodifiableSet("abfs", "abfss", "adl", "wasb", "wasbs");
-    private static final Set<String> gsSchemes = unmodifiableSet("gs");
+    private static final Set<String> GCS_SCHEMES = unmodifiableSet("gs");
 
     /**
-     * Get the {@link LogStore} instance for the given schema and configuration. Callers can set
-     * {code io.delta.kernel.logStore.class} to specify the LogStore implementation to use. If not
-     * set, the default LogStore implementation for the scheme will be used. Default LogStore
-     * implementations for different schemes are:
+     * Get the {@link LogStore} instance for the given scheme and configuration. Callers can set
+     * {@code io.delta.kernel.logStore.<scheme>.impl} to specify the {@link LogStore}
+     * implementation to use for {@code scheme}.
+     * <p>
+     * If not set, the default {@link LogStore} implementation (given below) for the scheme will
+     * be used.
      * <ul>
-     *     <li>s3, s3a, s3n: {@link S3SingleDriverLogStore}</li>
-     *     <li>abfs, abfss, adl, wasb, wasbs: {@link AzureLogStore}</li>
-     *     <li>gs: {@link GCSLogStore}</li>
-     *     <li>hdfs: {@link HDFSLogStore}</li>
-     *     <li>file: {@link HDFSLogStore}</li>
-     *     <li>other: {@link HDFSLogStore}</li>
+     *     <li>{@code s3, s3a, s3n}: {@link S3SingleDriverLogStore}</li>
+     *     <li>{@code abfs, abfss, adl, wasb, wasbs}: {@link AzureLogStore}</li>
+     *     <li>{@code gs}: {@link GCSLogStore}</li>
+     *     <li>{@code hdfs, file}: {@link HDFSLogStore}</li>
+     *     <li>remaining: {@link HDFSLogStore}</li>
      * </ul>
      *
      * @param hadoopConf {@link Configuration} to use for creating the LogStore.
@@ -71,11 +72,11 @@ public class LogStoreProvider {
 
         // Create default LogStore based on the scheme.
         String defaultClassName = HDFSLogStore.class.getName();
-        if (s3Schemes.contains(schemeLower)) {
+        if (S3_SCHEMES.contains(schemeLower)) {
             defaultClassName = S3SingleDriverLogStore.class.getName();
-        } else if (azureSchemes.contains(schemeLower)) {
+        } else if (AZURE_SCHEMES.contains(schemeLower)) {
             defaultClassName = AzureLogStore.class.getName();
-        } else if (gsSchemes.contains(schemeLower)) {
+        } else if (GCS_SCHEMES.contains(schemeLower)) {
             defaultClassName = GCSLogStore.class.getName();
         }
 
