@@ -237,7 +237,8 @@ trait MergeIntoMetricsBase
       mergeCmdFn: MergeCmd,
       expectedOpMetrics: Map[String, Int],
       testConfig: MergeTestConfiguration,
-      overrideExpectedOpMetrics: Seq[((Boolean, Boolean), (String, Int))] = Seq.empty
+      overrideExpectedOpMetrics: Seq[((Boolean, Boolean), (String, Int))] = Seq.empty,
+      customMetricsChecker: Option[Map[String, String] => Unit] = None
   ): Unit = {
     withSQLConf(
       DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
@@ -307,6 +308,8 @@ trait MergeIntoMetricsBase
         checkOperationTimeMetricsInvariant(mergeTimeMetrics, operationMetrics)
         // Check CDF metrics invariants.
         checkMergeOperationCdfMetricsInvariants(operationMetrics, testConfig.cdfEnabled)
+        // Perform custom checks on operationMetrics.
+        customMetricsChecker.map(f => f(operationMetrics))
       }
     }
   }
@@ -1002,7 +1005,6 @@ trait MergeIntoMetricsBase
       "numTargetRowsMatchedDeleted" -> 50,
       "numTargetRowsRemoved" -> -1,
       "numTargetRowsCopied" -> 10,
-      "numTargetFilesAdded" -> 2,
       "numTargetFilesRemoved" -> 3
     )
     runMergeCmdAndTestMetrics(
@@ -1011,13 +1013,20 @@ trait MergeIntoMetricsBase
       mergeCmdFn = mergeCmdFn,
       expectedOpMetrics = expectedOpMetrics,
       testConfig = testConfig,
-      // When cdf=true in this test we hit the corner case where there are duplicate matches with a
-      // delete clause and we generate duplicate cdc data. This is further detailed in
-      // MergeIntoCommand at the definition of isDeleteWithDuplicateMatchesAndCdc. Our fix for this
-      // scenario includes deduplicating the output data which reshuffles the output data.
-      // Thus when the table is not partitioned, the data is rewritten into 1 new file rather than 2
-      overrideExpectedOpMetrics = Seq(((false, true), ("numTargetFilesAdded", 1)))
-    )
+      customMetricsChecker = Some(operationMetrics => {
+        val metricValue = operationMetrics("numTargetFilesAdded")
+        (testConfig.partitioned, testConfig.cdfEnabled) match {
+          // When cdf=true in this test we hit the corner case where there are duplicate matches
+          // with a delete clause and we generate duplicate cdc data. This is further detailed in
+          // MergeIntoCommand at the definition of isDeleteWithDuplicateMatchesAndCdc. Our fix for
+          // this scenario includes deduplicating the output data which reshuffles the output data.
+          // Thus when the table is not partitioned, the data is rewritten into 1 new file rather
+          // than 2.
+          case (false, true) => assert(metricValue == "1")
+          // Depending on the Spark version, for non-partitioned tables we may add 1 or 2 files.
+          case (false, false) => assert(metricValue == "1" || metricValue == "2")
+          case _ => assert(metricValue == "2")
+        }}))
   }}
 
   /////////////////////////////
