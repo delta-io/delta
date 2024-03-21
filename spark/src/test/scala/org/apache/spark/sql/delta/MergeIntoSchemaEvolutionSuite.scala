@@ -88,8 +88,8 @@ trait MergeIntoSchemaEvolutionMixin {
       }
     }
 
-    test(s"schema evolution - $name - on via DeltaSQLConf") {
-      withSQLConf(confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true"): _*) {
+    test(s"schema evolution - $name") {
+      withSQLConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
         executeMergeAndAssert(expected, expectErrorContains)
       }
     }
@@ -1002,6 +1002,39 @@ trait MergeIntoSchemaEvolutionBaseTests {
     expected = ((0, 0) +: (3, 30) +: (1, 1) +: Nil)
       .toDF("key", "value"),
     expectErrorWithoutEvolutionContains = "cannot resolve s.value in UPDATE clause")
+
+  test("schema evolution enabled for the current command") {
+    withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
+      withTable("target", "source") {
+        Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value")
+          .write.format("delta").saveAsTable("target")
+        Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra")
+          .write.format("delta").saveAsTable("source")
+
+        // Should fail without schema evolution
+        val e = intercept[org.apache.spark.sql.AnalysisException] {
+          executeMerge(
+            "target",
+            "source",
+            "target.key = source.key",
+            update("extra = -1"), insert("*"))
+        }
+        assert(e.getErrorClass === "DELTA_MERGE_UNRESOLVED_EXPRESSION")
+        assert(e.getMessage.contains("resolve extra in UPDATE clause"))
+
+        // Should succeed with schema evolution
+        executeMergeWithSchemaEvolution(
+          "target",
+          "source",
+          "target.key = source.key",
+          update("extra = -1"), insert("*"))
+        checkAnswer(
+          spark.table("target"),
+          Seq[(Integer, Integer, Integer)]((0, 0, null), (1, 10, -1), (2, 2, 2), (3, 30, null))
+            .toDF("key", "value", "extra"))
+      }
+    }
+  }
 
   testNestedStructsEvolution("nested field assignment qualified with source alias")(
     target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
