@@ -38,6 +38,11 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
 
   import testImplicits._
 
+  override def excluded: Seq[String] = super.excluded ++ Seq(
+    // Schema evolution SQL syntax is not yet supported
+    "schema evolution enabled for the current command"
+  )
+
   test("CTE as a source in MERGE") {
     withTable("source") {
       Seq((1, 1), (0, 3)).toDF("key1", "value").write.saveAsTable("source")
@@ -386,10 +391,8 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
 
 trait MergeIntoSQLColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
   override protected def runOnlyTests: Seq[String] =
-    Seq(
-      "schema evolution - new nested column with update non-* and insert * - " +
-        "array of struct - longer target - on via DeltaSQLConf"
-    )
+    Seq("schema evolution - new nested column with update non-* and insert * - " +
+      "array of struct - longer target")
 }
 
 class MergeIntoSQLIdColumnMappingSuite extends MergeIntoSQLSuite
