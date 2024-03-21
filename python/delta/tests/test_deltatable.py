@@ -335,6 +335,20 @@ class DeltaTableTestsMixin:
             .execute()
         self.__checkAnswer(dt.toDF(), ([('a', -1), ('b', 2), ('c', 3), ('d', 4), ('e', -5)]))
 
+        # Schema evolution
+        reset_table()
+        dt.alias("t") \
+            .merge(source.toDF("key", "extra").alias("s"), expr("t.key = s.key")) \
+            .whenMatchedUpdate(set={"extra": "-1"}) \
+            .whenNotMatchedInsertAll() \
+            .withSchemaEvolution() \
+            .execute()
+        self.__checkAnswer(
+            DeltaTable.forPath(self.spark, self.tempFile).toDF(),  # reload the table
+            ([('a', 1, -1), ('b', 2, -1), ('c', 3, None), ('d', 4, None), ('e', None, -5),
+              ('f', None, -6)]),
+            ["key", "value", "extra"])
+
         # ============== Test bad args ==============
         # ---- bad args in merge()
         with self.assertRaisesRegex(TypeError, "must be DataFrame"):

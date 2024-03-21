@@ -1013,6 +1013,19 @@ class DeltaMergeBuilder(object):
         new_jbuilder = self.__getNotMatchedBySourceBuilder(condition).delete()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
+    @since(3.2)  # type: ignore[arg-type]
+    def withSchemaEvolution(self) -> "DeltaMergeBuilder":
+        """
+        Enable schema evolution for the merge operation. This allows the target table schema to
+        be automatically updated based on the schema of the source DataFrame.
+
+        See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
+
+        :return: this builder
+        """
+        new_jbuilder = self._jbuilder.withSchemaEvolution()
+        return DeltaMergeBuilder(self._spark, new_jbuilder)
+
     @since(0.4)  # type: ignore[arg-type]
     def execute(self) -> None:
         """
