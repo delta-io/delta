@@ -20,8 +20,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{DataFrame, QueryTest, SaveMode}
-import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.types._
@@ -58,7 +57,7 @@ trait DeltaMergeIntoTypeWideningSchemaEvolutionTests
   for {
     testCase <- supportedTestCases
   } {
-    test(s"automatic type widening in merge ${testCase.fromType.sql} -> ${testCase.toType.sql}") {
+    test(s"MERGE - automatic type widening ${testCase.fromType.sql} -> ${testCase.toType.sql}") {
       withTable("source") {
         testCase.additionalValuesDF.write.format("delta").saveAsTable("source")
         append(testCase.initialValuesDF)
@@ -82,7 +81,7 @@ trait DeltaMergeIntoTypeWideningSchemaEvolutionTests
   for {
     testCase <- unsupportedTestCases
   } {
-    test(s"unsupported automatic type widening in merge " +
+    test(s"MERGE - unsupported automatic type widening " +
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
       withTable("source") {
         testCase.additionalValuesDF.write.format("delta").saveAsTable("source")
@@ -104,7 +103,28 @@ trait DeltaMergeIntoTypeWideningSchemaEvolutionTests
     }
   }
 
-  test("type widening isn't applied in merge when schema evolution is disabled") {
+  test("MERGE - type widening isn't applied when it's disabled") {
+    withTable("source") {
+      sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
+      sql("CREATE TABLE source (a int) USING DELTA")
+      sql("INSERT INTO source VALUES (1), (2)")
+      enableTypeWidening(tempPath, enabled = false)
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        // Merge integer values. This should succeed and downcast the values to short.
+        executeMerge(
+          tgt = s"delta.`$tempPath` t",
+          src = "source",
+          cond = "0 = 1",
+          clauses = insert("*")
+        )
+        assert(readDeltaTable(tempPath).schema("a").dataType === ShortType)
+        checkAnswer(readDeltaTable(tempPath),
+          Seq(1, 2).toDF("a").select($"a".cast(ShortType)))
+      }
+    }
+  }
+
+  test("MERGE - type widening isn't applied when schema evolution is disabled") {
     withTable("source") {
       sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
       sql("CREATE TABLE source (a int) USING DELTA")
@@ -150,7 +170,7 @@ trait DeltaMergeIntoTypeWideningSchemaEvolutionTests
       clauses: Seq[MergeClause] = Seq.empty,
       result: Seq[String],
       resultSchema: StructType): Unit =
-    testNestedStructsEvolution(name)(
+    testNestedStructsEvolution(s"MERGE - $name")(
       target,
       source,
       targetSchema,
@@ -315,4 +335,31 @@ trait DeltaMergeIntoTypeWideningSchemaEvolutionTests
       .add("b", IntegerType, nullable = true,
         metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
   )
+
+  for (enabled <- BOOLEAN_DOMAIN)
+  test(s"MERGE - fail if type widening gets ${if (enabled) "enabled" else "disabled"} by a " +
+    "concurrent transaction") {
+    sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
+    enableTypeWidening(tempPath, !enabled)
+    val target = io.delta.tables.DeltaTable.forPath(tempPath)
+    import testImplicits._
+    val merge = target.as("target")
+      .merge(
+        source = Seq(1L).toDF("a").as("source"),
+        condition = "target.a = source.a")
+      .whenNotMatched().insertAll()
+
+    // The MERGE operation was created with type widening enabled, which will apply during analysis.
+    // Disable type widening so that the actual execution runs with type widening disabled.
+    enableTypeWidening(tempPath, enabled)
+    checkError(
+      exception = intercept[DeltaRuntimeException] { merge.execute() },
+      errorClass = "DELTA_TABLE_PROPERTY_CHANGED",
+      parameters = Map(
+        "key" -> "delta.enableTypeWidening",
+        "oldValue" -> (!enabled).toString,
+        "newValue" -> enabled.toString
+      )
+    )
+  }
 }

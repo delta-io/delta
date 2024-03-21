@@ -48,6 +48,20 @@ object TypeWidening {
   }
 
   /**
+   * Checks that the type widening table property wasn't disabled or enabled between the two given
+   * states, throws an errors if it was.
+   */
+  def ensureFeatureConsistentlyEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      otherProtocol: Protocol,
+      otherMetadata: Metadata): Unit = {
+    if (isEnabled(protocol, metadata) != isEnabled(otherProtocol, otherMetadata)) {
+      throw DeltaErrors.metadataChangedException(None)
+    }
+  }
+
+  /**
    * Returns whether the given type change is eligible for widening. This only checks atomic types.
    * It is the responsibility of the caller to recurse into structs, maps and arrays.
    */
@@ -68,8 +82,8 @@ object TypeWidening {
    */
   def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
     (fromType, toType) match {
-      case (from, to) if !isTypeChangeSupported(from, to) => false
       case (from, to) if from == to => true
+      case (from, to) if !isTypeChangeSupported(from, to) => false
       case (ByteType, ShortType) => true
       case (ByteType | ShortType, IntegerType) => true
       case _ => false
