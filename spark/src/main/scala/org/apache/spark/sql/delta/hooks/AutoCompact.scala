@@ -197,7 +197,7 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
     recordDeltaOperation(deltaLog, s"$opType.execute") {
       val txn = deltaLog.startTransaction(catalogTable)
       val optimizeContext = DeltaOptimizeContext(
-        isPurge = false,
+        reorg = None,
         minFileSizeOpt,
         maxFileSizeOpt,
         maxDeletedRowsRatio = maxDeletedRowsRatio

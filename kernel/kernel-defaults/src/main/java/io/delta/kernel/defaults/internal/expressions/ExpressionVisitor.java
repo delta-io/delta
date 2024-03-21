@@ -55,6 +55,8 @@ abstract class ExpressionVisitor<R> {
 
     abstract R visitIsNotNull(Predicate predicate);
 
+    abstract R visitIsNull(Predicate predicate);
+
     abstract R visitCoalesce(ScalarExpression ifNull);
 
     final R visit(Expression expression) {
@@ -99,6 +101,8 @@ abstract class ExpressionVisitor<R> {
                 return visitNot(new Predicate(name, children));
             case "IS_NOT_NULL":
                 return visitIsNotNull(new Predicate(name, children));
+            case "IS_NULL":
+                return visitIsNull(new Predicate(name, children));
             case "COALESCE":
                 return visitCoalesce(expression);
             default:

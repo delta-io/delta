@@ -17,6 +17,7 @@ package io.delta.kernel.internal.util;
 
 import java.math.BigDecimal;
 import java.sql.Date;
+import java.sql.Timestamp;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -268,6 +269,10 @@ public class PartitionUtils {
             DecimalType decimalType = (DecimalType) dataType;
             return Literal.ofDecimal(
                 new BigDecimal(partitionValue), decimalType.getPrecision(), decimalType.getScale());
+        }
+        if (dataType instanceof TimestampType) {
+            return Literal.ofTimestamp(
+                InternalUtils.microsSinceEpoch(Timestamp.valueOf(partitionValue)));
         }
 
         throw new UnsupportedOperationException("Unsupported partition column: " + dataType);

@@ -352,8 +352,13 @@ object TableFeature {
         TestFeatureWithDependency,
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency,
+        // managed-commits are under development and only available in testing.
+        ManagedCommitTableFeature,
         // Row IDs are still under development and only available in testing.
-        RowTrackingFeature)
+        RowTrackingFeature,
+        InCommitTimestampTableFeature,
+        TypeWideningTableFeature,
+        VacuumProtocolCheckTableFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -608,6 +613,76 @@ object V2CheckpointTableFeature
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     V2CheckpointPreDowngradeCommand(table)
 }
+
+/** Table feature to represent tables whose commits are managed by separate commit-store */
+object ManagedCommitTableFeature
+  extends ReaderWriterFeature(name = "managed-commit-dev")
+    with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(metadata).nonEmpty
+  }
+}
+
+object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening-dev")
+    with FeatureAutomaticallyEnabledByMetadata
+    with RemovableFeature {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  private def isTypeWideningSupportNeededByMetadata(metadata: Metadata): Boolean =
+    DeltaConfigs.ENABLE_TYPE_WIDENING.fromMetaData(metadata)
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = isTypeWideningSupportNeededByMetadata(metadata)
+
+  override def validateRemoval(snapshot: Snapshot): Boolean =
+    !isTypeWideningSupportNeededByMetadata(snapshot.metadata) &&
+      !TypeWideningMetadata.containsTypeWideningMetadata(snapshot.metadata.schema)
+
+  override def actionUsesFeature(action: Action): Boolean =
+    action match {
+      case m: Metadata => TypeWideningMetadata.containsTypeWideningMetadata(m.schema)
+      case _ => false
+    }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TypeWideningPreDowngradeCommand(table)
+}
+
+/**
+ * inCommitTimestamp table feature is a writer feature that makes
+ * every writer write a monotonically increasing timestamp inside the commit file.
+ */
+object InCommitTimestampTableFeature
+  extends WriterFeature(name = "inCommitTimestamp-dev")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata)
+  }
+}
+
+/**
+ * A ReaderWriter table feature for VACUUM. If this feature is enabled:
+ * A writer should follow one of the following:
+ *   1. Non-Support for Vacuum: Writers can explicitly state that they do not support VACUUM for
+ *      any table, regardless of whether the Vacuum Protocol Check Table feature exists.
+ *   2. Implement Writer Protocol Check: Ensure that the VACUUM implementation includes a writer
+ *      protocol check before any file deletions occur.
+ * Readers don't need to understand or change anything new; they just need to acknowledge the
+ * feature exists
+ */
+object VacuumProtocolCheckTableFeature
+  extends ReaderWriterFeature(name = "vacuumProtocolCheck-dev")
 
 /**
  * Features below are for testing only, and are being registered to the system only in the testing

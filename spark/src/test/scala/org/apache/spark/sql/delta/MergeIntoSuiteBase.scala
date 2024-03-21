@@ -25,6 +25,7 @@ import scala.language.implicitConversions
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.commands.merge.MergeStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.ScanReportHelper
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -33,14 +34,14 @@ import org.apache.spark.sql.{functions, AnalysisException, DataFrame, QueryTest,
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 abstract class MergeIntoSuiteBase
     extends QueryTest
     with SharedSparkSession
-    with SQLTestUtils
+    with DeltaSQLTestUtils
     with ScanReportHelper
     with DeltaTestUtilsForTempViews
     with MergeIntoTestUtils
@@ -3062,25 +3063,9 @@ abstract class MergeIntoSuiteBase
       Option("Aggregate functions are not supported in the .* condition of MERGE operation.*")
   )
 
-  testWithTempView("test merge on temp view - basic") { isSQLTempView =>
-    withTable("tab") {
-      withTempView("src") {
-        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-        createTempViewFromTable("tab", isSQLTempView)
-        sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
-        executeMerge(
-          target = "v",
-          source = "src",
-          condition = "src.a = v.key AND src.b = v.value",
-          update = "v.value = src.b + 1",
-          insert = "(v.key, v.value) VALUES (src.a, src.b)")
-        checkAnswer(spark.table("v"), Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
-      }
-    }
-  }
-
-  protected def testInvalidTempViews(name: String)(
+  protected def testTempViews(name: String)(
       text: String,
+      expectedResult: Seq[Row] = null,
       expectedErrorMsgForSQLTempView: String = null,
       expectedErrorMsgForDataSetTempView: String = null,
       expectedErrorClassForSQLTempView: String = null,
@@ -3114,26 +3099,32 @@ abstract class MergeIntoSuiteBase
               expectedErrorClassForSQLTempView,
               expectedErrorClassForDataSetTempView)
           } else {
+            require(expectedResult != null)
             executeMerge(
               target = "v",
               source = "src",
               condition = "src.a = v.key AND src.b = v.value",
               update = "v.value = src.b + 1",
               insert = "(v.key, v.value) VALUES (src.a, src.b)")
-            checkAnswer(spark.table("v"), Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
+            checkAnswer(spark.table("v"), expectedResult)
           }
         }
       }
     }
   }
 
-  testInvalidTempViews("subset cols")(
+  testTempViews("basic")(
+    text = "SELECT * FROM tab",
+    expectedResult = Seq(Row(0, 3), Row(1, 3), Row(3, 4))
+  )
+
+  testTempViews("subset cols")(
     text = "SELECT key FROM tab",
     expectedErrorMsgForSQLTempView = "cannot",
     expectedErrorMsgForDataSetTempView = "cannot"
   )
 
-  testInvalidTempViews("superset cols")(
+  testTempViews("superset cols")(
     text = "SELECT key, value, 1 FROM tab",
     // The analyzer can't tell whether the table originally had the extra column or not.
     expectedErrorMsgForSQLTempView =
@@ -3142,17 +3133,46 @@ abstract class MergeIntoSuiteBase
       "The schema of your Delta table has changed in an incompatible way"
   )
 
-  testInvalidTempViews("nontrivial projection")(
+  testTempViews("nontrivial projection")(
     text = "SELECT value as key, key as value FROM tab",
-    expectedErrorMsgForSQLTempView = "Attribute(s) with the same name appear",
-    expectedErrorMsgForDataSetTempView = "Attribute(s) with the same name appear"
+    expectedResult = Seq(Row(2, 1), Row(2, 1), Row(3, 0), Row(4, 3))
   )
 
-  testInvalidTempViews("view with too many internal aliases")(
+  testTempViews("view with too many internal aliases")(
     text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
-    expectedErrorMsgForSQLTempView = "Attribute(s) with the same name appear",
-    expectedErrorMsgForDataSetTempView = null
+    expectedResult = Seq(Row(0, 3), Row(1, 3), Row(3, 4))
   )
+
+  test("merge correctly handle field metadata") {
+    withTable("source", "target") {
+      // Create a target table with user metadata (comments) and internal metadata (column mapping
+      // information) on both a top-level column and a nested field.
+      sql(
+        """
+          |CREATE TABLE target(
+          |  key int not null COMMENT 'data column',
+          |  value int not null,
+          |  cstruct struct<foo int COMMENT 'foo field'>)
+          |USING DELTA
+          |TBLPROPERTIES (
+          |  'delta.minReaderVersion' = '2',
+          |  'delta.minWriterVersion' = '5',
+          |  'delta.columnMapping.mode' = 'name')
+        """.stripMargin
+      )
+      sql(s"INSERT INTO target VALUES (0, 0, null)")
+
+      sql("CREATE TABLE source (key int not null, value int not null) USING DELTA")
+      sql(s"INSERT INTO source VALUES (1, 1)")
+
+      executeMerge(
+        tgt = "target",
+        src = "source",
+        cond = "source.key = target.key",
+        update(condition = "target.key = 1", set = "target.value = 42"),
+        updateNotMatched(condition = "target.key = 100", set = "target.value = 22"))
+    }
+  }
 
   test("UDT Data Types - simple and nested") {
     withTable("source") {

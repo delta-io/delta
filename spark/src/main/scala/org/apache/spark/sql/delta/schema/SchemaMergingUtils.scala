@@ -32,7 +32,8 @@ import org.apache.spark.sql.types.{ArrayType, ByteType, DataType, DecimalType, I
 /**
  * Utils to merge table schema with data schema.
  * This is split from SchemaUtils, because finalSchema is introduced into DeltaMergeInto,
- * and resolving the final schema is now part of [[DeltaMergeInto.resolveReferencesAndSchema]].
+ * and resolving the final schema is now part of
+ * [[ResolveDeltaMergeInto.resolveReferencesAndSchema]].
  */
 object SchemaMergingUtils {
 
@@ -198,8 +199,11 @@ object SchemaMergingUtils {
                     currentField.metadata)
                 } catch {
                   case NonFatal(e) =>
-                    throw new AnalysisException(s"Failed to merge fields '${currentField.name}' " +
-                      s"and '${updateField.name}'. " + e.getMessage)
+                    throw new DeltaAnalysisException(
+                      errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+                      messageParameters = Array(currentField.name, updateField.name),
+                      cause = Some(e)
+                    )
                 }
               case None =>
                 // Retain the old field.
@@ -273,8 +277,8 @@ object SchemaMergingUtils {
         case (_, NullType) =>
           current
         case _ =>
-          throw new AnalysisException(
-            s"Failed to merge incompatible data types $current and $update")
+          throw new DeltaAnalysisException(errorClass = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+            messageParameters = Array(current.toString, update.toString))
       }
     }
     merge(tableSchema, dataSchema, fixedTypeColumns.map(_.toLowerCase(Locale.ROOT)))
@@ -330,6 +334,52 @@ object SchemaMergingUtils {
       newDt.asInstanceOf[E]
     }
     transform(Seq.empty, schema)
+  }
+
+  /**
+   * Transform (nested) columns in `schema` by walking down `schema` and `other` simultaneously.
+   * This allows comparing the two schemas and transforming `schema` based on the comparison.
+   * Columns or fields present only in `other` are ignored while `None` is passed to the transform
+   * function for columns or fields missing in `other`.
+   * @param schema Schema to transform.
+   * @param other Schema to compare with.
+   * @param tf Function to apply. The function arguments are the full path of the current field to
+   *           transform, the current field in `schema` and, if present, the corresponding field in
+   *           `other`.
+   */
+  def transformColumns(
+      schema: StructType,
+      other: StructType)(
+    tf: (Seq[String], StructField, Option[StructField], Resolver) => StructField): StructType = {
+    def transform[E <: DataType](path: Seq[String], dt: E, otherDt: E): E = {
+      val newDt = (dt, otherDt) match {
+        case (struct: StructType, otherStruct: StructType) =>
+          val otherFields = SchemaMergingUtils.toFieldMap(otherStruct.fields, caseSensitive = true)
+          StructType(struct.map { field =>
+            val otherField = otherFields.get(field.name)
+            val newField = tf(path, field, otherField, DELTA_COL_RESOLVER)
+            otherField match {
+              case Some(other) =>
+                newField.copy(
+                  dataType = transform(path :+ field.name, field.dataType, other.dataType)
+                )
+              case None => newField
+            }
+          })
+        case (map: MapType, otherMap: MapType) =>
+          map.copy(
+            keyType = transform(path :+ "key", map.keyType, otherMap.keyType),
+            valueType = transform(path :+ "value", map.valueType, otherMap.valueType)
+          )
+        case (array: ArrayType, otherArray: ArrayType) =>
+          array.copy(
+            elementType = transform(path :+ "element", array.elementType, otherArray.elementType)
+          )
+        case _ => dt
+      }
+      newDt.asInstanceOf[E]
+    }
+    transform(Seq.empty, schema, other)
   }
 
   /**

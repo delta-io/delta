@@ -180,9 +180,10 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
         RetryHandling.ExhaustedRetries
       }
 
-    // Record if we ran out of executor disk space.
+    // Record if we ran out of executor disk space when we materialized the source.
     case s: SparkException
-      if s.getMessage.contains("java.io.IOException: No space left on device") =>
+      if materializedSourceRDD.nonEmpty &&
+        s.getMessage.contains("java.io.IOException: No space left on device") =>
       // Record situations where we ran out of disk space, possibly because of the space took
       // by the materialized RDD.
       recordDeltaEvent(
@@ -260,6 +261,11 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
         } else if (forceMaterializationWithUnreadableFiles &&
             ignoreUnreadableFilesConfigsAreSet(source, spark)) {
           (true, MergeIntoMaterializeSourceReason.IGNORE_UNREADABLE_FILES_CONFIGS_ARE_SET)
+        } else if (planContainsUdf(source)) {
+          // Force source materialization if the source contains a User Defined Function, even if
+          // the user defined function is marked as deterministic, as it is often incorrectly marked
+          // as such.
+          (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF)
         } else {
           (false, MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO)
         }
@@ -442,6 +448,9 @@ object MergeIntoMaterializeSourceReason extends Enumeration {
   // with ignore unreadable files options.
   val IGNORE_UNREADABLE_FILES_CONFIGS_ARE_SET =
     Value("materializeIgnoreUnreadableFilesConfigsAreSet")
+  // The source query is considered non-determistic because it contains a User Defined Function.
+  val NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF =
+    Value("materializeNonDeterministicSourceWithDeterministicUdf")
   // Materialize when the configuration is invalid
   val INVALID_CONFIG = Value("invalidConfigurationFailsafe")
   // Catch-all case.
@@ -453,6 +462,7 @@ object MergeIntoMaterializeSourceReason extends Enumeration {
     NON_DETERMINISTIC_SOURCE_NON_DELTA,
     NON_DETERMINISTIC_SOURCE_OPERATORS,
     IGNORE_UNREADABLE_FILES_CONFIGS_ARE_SET,
+    NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF,
     INVALID_CONFIG
   )
 }

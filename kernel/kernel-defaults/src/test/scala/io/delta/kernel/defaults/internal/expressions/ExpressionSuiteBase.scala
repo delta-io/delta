@@ -15,8 +15,6 @@
  */
 package io.delta.kernel.defaults.internal.expressions
 
-import java.util
-
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.utils.{TestUtils, VectorTestUtils}

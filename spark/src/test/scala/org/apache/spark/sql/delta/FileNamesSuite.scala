@@ -25,11 +25,36 @@ class FileNamesSuite extends SparkFunSuite {
   import org.apache.spark.sql.delta.util.FileNames._
 
   test("isDeltaFile") {
+    assert(isDeltaFile(new Path("/a/_delta_log/123.json")))
     assert(isDeltaFile(new Path("/a/123.json")))
-    assert(!isDeltaFile(new Path("/a/123ajson")))
-    assert(!isDeltaFile(new Path("/a/123.jso")))
-    assert(!isDeltaFile(new Path("/a/123a.json")))
-    assert(!isDeltaFile(new Path("/a/a123.json")))
+    assert(!isDeltaFile(new Path("/a/_delta_log/123ajson")))
+    assert(!isDeltaFile(new Path("/a/_delta_log/123.jso")))
+    assert(!isDeltaFile(new Path("/a/_delta_log/123a.json")))
+    assert(!isDeltaFile(new Path("/a/_delta_log/a123.json")))
+
+    // UUID Files
+    assert(!isDeltaFile(new Path("/a/123.uuid.json")))
+    assert(!isDeltaFile(new Path("/a/_delta_log/123.uuid.json")))
+    assert(isDeltaFile(new Path("/a/_delta_log/_commits/123.uuid.json")))
+    assert(!isDeltaFile(new Path("/a/_delta_log/_commits/123.uuid1.uuid2.json")))
+  }
+
+  test("DeltaFile.unapply") {
+    assert(DeltaFile.unapply(new Path("/a/_delta_log/123.json")) ===
+      Some((new Path("/a/_delta_log/123.json"), 123)))
+    assert(DeltaFile.unapply(new Path("/a/123.json")) ===
+      Some((new Path("/a/123.json"), 123)))
+    assert(DeltaFile.unapply(new Path("/a/_delta_log/123ajson")).isEmpty)
+    assert(DeltaFile.unapply(new Path("/a/_delta_log/123.jso")).isEmpty)
+    assert(DeltaFile.unapply(new Path("/a/_delta_log/123a.json")).isEmpty)
+    assert(DeltaFile.unapply(new Path("/a/_delta_log/a123.json")).isEmpty)
+
+    // UUID Files
+    assert(DeltaFile.unapply(new Path("/a/123.uuid.json")).isEmpty)
+    assert(DeltaFile.unapply(new Path("/a/_delta_log/123.uuid.json")).isEmpty)
+    assert(DeltaFile.unapply(new Path("/a/_delta_log/_commits/123.uuid.json")) ===
+      Some((new Path("/a/_delta_log/_commits/123.uuid.json"), 123)))
+    assert(DeltaFile.unapply(new Path("/a/_delta_log/_commits/123.uuid1.uuid2.json")).isEmpty)
   }
 
   test("isCheckpointFile") {
@@ -69,5 +94,12 @@ class FileNamesSuite extends SparkFunSuite {
       numCheckpointParts(
         new Path("/a/00000000000000000099.checkpoint.0000000078.0000000092.parquet"))
         .contains(92))
+  }
+
+  test("commitDirPath") {
+    assert(commitDirPath(logPath = new Path("/a/_delta_log")) ===
+      new Path("/a/_delta_log/_commits"))
+    assert(commitDirPath(logPath = new Path("/a/_delta_log/")) ===
+      new Path("/a/_delta_log/_commits"))
   }
 }

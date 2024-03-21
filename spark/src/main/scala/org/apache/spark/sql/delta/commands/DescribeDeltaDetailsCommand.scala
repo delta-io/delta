@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.sql.Timestamp
 
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot, UnresolvedPathOrIdentifier}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
@@ -43,6 +44,7 @@ case class TableDetail(
     createdAt: Timestamp,
     lastModified: Timestamp,
     partitionColumns: Seq[String],
+    clusteringColumns: Seq[String],
     numFiles: java.lang.Long,
     sizeInBytes: java.lang.Long,
     properties: Map[String, String],
@@ -121,6 +123,7 @@ case class DescribeDeltaDetailCommand(
         createdAt = new Timestamp(table.createTime),
         lastModified = null,
         partitionColumns = table.partitionColumnNames,
+        clusteringColumns = null,
         numFiles = null,
         sizeInBytes = null,
         properties = table.properties,
@@ -141,6 +144,7 @@ case class DescribeDeltaDetailCommand(
         createdAt = null,
         lastModified = null,
         partitionColumns = null,
+        clusteringColumns = null,
         numFiles = null,
         sizeInBytes = null,
         properties = Map.empty,
@@ -160,6 +164,11 @@ case class DescribeDeltaDetailCommand(
     val featureNames = (
       snapshot.protocol.implicitlySupportedFeatures.map(_.name) ++
         snapshot.protocol.readerAndWriterFeatureNames).toSeq.sorted
+    val clusteringColumns = if (ClusteredTableUtils.isSupported(snapshot.protocol)) {
+      ClusteringColumnInfo.extractLogicalNames(snapshot)
+    } else {
+      Nil
+    }
     toRows(
       TableDetail(
         format = "delta",
@@ -170,6 +179,7 @@ case class DescribeDeltaDetailCommand(
         createdAt = snapshot.metadata.createdTime.map(new Timestamp(_)).orNull,
         lastModified = new Timestamp(fs.getFileStatus(currentVersionPath).getModificationTime),
         partitionColumns = snapshot.metadata.partitionColumns,
+        clusteringColumns = clusteringColumns,
         numFiles = snapshot.numOfFiles,
         sizeInBytes = snapshot.sizeInBytes,
         properties = snapshot.metadata.configuration,

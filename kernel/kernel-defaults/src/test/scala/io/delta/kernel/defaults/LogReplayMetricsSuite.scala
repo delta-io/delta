@@ -24,15 +24,20 @@ import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandle
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
 import java.util.Optional
+import scala.collection.convert.ImplicitConversions._
+import scala.collection.mutable.ArrayBuffer
 
 class LogReplayMetricsSuite extends QueryTest
     with SharedSparkSession
@@ -53,14 +58,46 @@ class LogReplayMetricsSuite extends QueryTest
     withTempDir { dir => f(dir, tableClient) }
   }
 
-  private def loadSnapshotAssertMetrics(
+  private def loadPandMCheckMetrics(
       tableClient: MetricsTableClient,
       table: Table,
       expJsonVersionsRead: Seq[Long],
-      expParquetVersionsRead: Seq[Long]): Unit = {
+      expParquetVersionsRead: Seq[Long],
+      expParquetReadSetSizes: Seq[Long] = Nil): Unit = {
     tableClient.resetMetrics()
     table.getLatestSnapshot(tableClient).getSchema(tableClient)
 
+    assertMetrics(
+      tableClient,
+      expJsonVersionsRead,
+      expParquetVersionsRead,
+      expParquetReadSetSizes)
+  }
+
+  private def loadScanFilesCheckMetrics(
+      tableClient: MetricsTableClient,
+      table: Table,
+      expJsonVersionsRead: Seq[Long],
+      expParquetVersionsRead: Seq[Long],
+      expParquetReadSetSizes: Seq[Long]): Unit = {
+    tableClient.resetMetrics()
+    val scan = table.getLatestSnapshot(tableClient).getScanBuilder(tableClient).build()
+    // get all scan files and iterate through them to trigger the metrics collection
+    val scanFiles = scan.getScanFiles(tableClient)
+    while (scanFiles.hasNext) scanFiles.next()
+
+    assertMetrics(
+      tableClient,
+      expJsonVersionsRead,
+      expParquetVersionsRead,
+      expParquetReadSetSizes)
+  }
+
+  def assertMetrics(
+      tableClient: MetricsTableClient,
+      expJsonVersionsRead: Seq[Long],
+      expParquetVersionsRead: Seq[Long],
+      expParquetReadSetSizes: Seq[Long]): Unit = {
     val actualJsonVersionsRead = tableClient.getJsonHandler.getVersionsRead
     val actualParquetVersionsRead = tableClient.getParquetHandler.getVersionsRead
 
@@ -72,10 +109,24 @@ class LogReplayMetricsSuite extends QueryTest
       actualParquetVersionsRead === expParquetVersionsRead, s"Expected to read parquet " +
         s"versions $expParquetVersionsRead but read $actualParquetVersionsRead"
     )
+
+    if (expParquetReadSetSizes.nonEmpty) {
+      val actualParquetReadSetSizes = tableClient.getParquetHandler.checkpointReadRequestSizes
+      assert(
+        actualParquetReadSetSizes === expParquetReadSetSizes, s"Expected parquet read set sizes " +
+          s"$expParquetReadSetSizes but read $actualParquetReadSetSizes"
+      )
+    }
   }
 
   private def appendCommit(path: String): Unit =
     spark.range(10).write.format("delta").mode("append").save(path)
+
+  private def checkpoint(path: String, actionsPerFile: Int): Unit = {
+    withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> actionsPerFile.toString) {
+      DeltaLog.forTable(spark, path).checkpoint()
+    }
+  }
 
   ///////////
   // Tests //
@@ -88,7 +139,7 @@ class LogReplayMetricsSuite extends QueryTest
       for (_ <- 0 to 9) { appendCommit(path) }
 
       val table = Table.forPath(tc, path)
-      loadSnapshotAssertMetrics(tc, table, 9L to 0L by -1L, Nil)
+      loadPandMCheckMetrics(tc, table, 9L to 0L by -1L, Nil)
     }
   }
 
@@ -99,7 +150,7 @@ class LogReplayMetricsSuite extends QueryTest
       for (_ <- 0 to 14) { appendCommit(path) }
 
       val table = Table.forPath(tc, path)
-      loadSnapshotAssertMetrics(tc, table, 14L to 11L by -1L, Seq(10))
+      loadPandMCheckMetrics(tc, table, 14L to 11L by -1L, Seq(10), Seq(1))
     }
   }
 
@@ -121,7 +172,7 @@ class LogReplayMetricsSuite extends QueryTest
       for (_ <- 14 to 16) { appendCommit(path) }
 
       val table = Table.forPath(tc, path)
-      loadSnapshotAssertMetrics(tc, table, 16L to 13L by -1L, Nil)
+      loadPandMCheckMetrics(tc, table, 16L to 13L by -1L, Nil)
     }
   }
 
@@ -139,7 +190,7 @@ class LogReplayMetricsSuite extends QueryTest
 
       // A hint is now saved at v14
 
-      loadSnapshotAssertMetrics(tc, table, Nil, Nil)
+      loadPandMCheckMetrics(tc, table, Nil, Nil)
     }
   }
 
@@ -157,20 +208,20 @@ class LogReplayMetricsSuite extends QueryTest
 
       // Case: only one version change
       appendCommit(path) // v15
-      loadSnapshotAssertMetrics(tc, table, Seq(15), Nil)
+      loadPandMCheckMetrics(tc, table, Seq(15), Nil)
 
       // A hint is now saved at v15
 
       // Case: several version changes
       for (_ <- 16 to 19) { appendCommit(path) }
-      loadSnapshotAssertMetrics(tc, table, 19L to 16L by -1L, Nil)
+      loadPandMCheckMetrics(tc, table, 19L to 16L by -1L, Nil)
 
       // A hint is now saved at v19
 
       // Case: [delta-io/delta#2262] [Fix me!] Read the entire checkpoint at v20, even if v20.json
       // and v19 hint are available
       appendCommit(path) // v20
-      loadSnapshotAssertMetrics(tc, table, Nil, Seq(20))
+      loadPandMCheckMetrics(tc, table, Nil, Seq(20))
     }
   }
 
@@ -195,7 +246,7 @@ class LogReplayMetricsSuite extends QueryTest
         .mode("append")
         .save(path)
 
-      loadSnapshotAssertMetrics(tc, table, Seq(4), Nil)
+      loadPandMCheckMetrics(tc, table, Seq(4), Nil)
 
       // a hint is now saved at v4
 
@@ -208,7 +259,39 @@ class LogReplayMetricsSuite extends QueryTest
           |)
           |""".stripMargin)
 
-      loadSnapshotAssertMetrics(tc, table, Seq(5), Nil)
+      loadPandMCheckMetrics(tc, table, Seq(5), Nil)
+    }
+  }
+
+  test("read a table with multi-part checkpoint") {
+    withTempDirAndTableClient { (dir, tc) =>
+      val path = dir.getAbsolutePath
+
+      for (_ <- 0 to 14) { appendCommit(path) }
+
+      // there should be one checkpoint file at version 10
+      loadScanFilesCheckMetrics(
+        tc,
+        Table.forPath(tc, path),
+        expJsonVersionsRead = 14L to 11L by -1L,
+        expParquetVersionsRead = Seq(10),
+        // we read the checkpoint twice: once for the P &M and once for the scan files
+        expParquetReadSetSizes = Seq(1, 1))
+
+      // create a multi-part checkpoint
+      checkpoint(path, actionsPerFile = 2)
+
+      // Reset metrics.
+      tc.resetMetrics()
+
+      // expect the Parquet read set to contain one request with size of 15
+      loadScanFilesCheckMetrics(
+        tc,
+        Table.forPath(tc, path),
+        expJsonVersionsRead = Nil,
+        expParquetVersionsRead = Seq(14),
+        // we read the checkpoint twice: once for the P &M and once for the scan files
+        expParquetReadSetSizes = Seq(15, 15))
     }
   }
 }
@@ -242,7 +325,10 @@ class MetricsTableClient(config: Configuration) extends TableClient {
  * 10.checkpoint.parquet) read
  */
 trait FileReadMetrics { self: Object =>
-  private val versionsRead = scala.collection.mutable.ArrayBuffer[Long]()
+  private val versionsRead = ArrayBuffer[Long]()
+
+  // Number of checkpoint files requested read in each readParquetFiles call
+  val checkpointReadRequestSizes = new ArrayBuffer[Long]()
 
   private def updateVersionsRead(fileStatus: FileStatus): Unit = {
     val path = new Path(fileStatus.getPath)
@@ -258,7 +344,10 @@ trait FileReadMetrics { self: Object =>
 
   def getVersionsRead: Seq[Long] = versionsRead
 
-  def resetMetrics(): Unit = versionsRead.clear()
+  def resetMetrics(): Unit = {
+    versionsRead.clear()
+    checkpointReadRequestSizes.clear()
+  }
 
   def collectReadFiles(fileIter: CloseableIterator[FileStatus]): CloseableIterator[FileStatus] = {
     fileIter.map(file => {
@@ -290,6 +379,11 @@ class MetricsParquetHandler(config: Configuration)
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
       predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
-    super.readParquetFiles(collectReadFiles(fileIter), physicalSchema, predicate)
+    val fileReadSet = fileIter.toSeq
+    checkpointReadRequestSizes += fileReadSet.size
+    super.readParquetFiles(
+      collectReadFiles(toCloseableIterator(fileReadSet.iterator)),
+      physicalSchema,
+      predicate)
   }
 }

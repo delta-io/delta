@@ -504,6 +504,8 @@ trait ClusteredTableDDLSuiteBase
   extends ClusteredTableCreateOrReplaceDDLSuite
     with DeltaSQLCommandTest {
 
+  import testImplicits._
+
   test("cluster by with more than 4 columns - alter table") {
     val testTable = "test_table"
     withClusteredTable(testTable, "a INT, b INT, c INT, d INT, e INT", "a") {
@@ -561,6 +563,49 @@ trait ClusteredTableDDLSuiteBase
 
       sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
       verifyClusteringColumns(tableIdentifier, "")
+    }
+  }
+
+  test("optimize clustered table and trigger regular compaction") {
+    withClusteredTable(testTable, "a INT, b STRING", "a, b") {
+      val tableIdentifier = TableIdentifier(testTable)
+      verifyClusteringColumns(tableIdentifier, "a, b")
+
+      (1 to 1000).map(i => (i, i.toString)).toDF("a", "b")
+        .write.mode("append").format("delta").saveAsTable(testTable)
+
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTable))
+      val targetFileSize = (snapshot.sizeInBytes / 10).toString
+      withSQLConf(
+        DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> targetFileSize,
+        DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE.key -> targetFileSize) {
+        runOptimize(testTable) { metrics =>
+          assert(metrics.numFilesAdded > 0)
+          assert(metrics.numFilesRemoved > 0)
+          assert(metrics.clusteringStats.nonEmpty)
+          assert(metrics.clusteringStats.get.numOutputZCubes == 1)
+        }
+      }
+
+      // ALTER TABLE CLUSTER BY NONE and then OPTIMIZE to trigger regular compaction.
+      sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
+      verifyClusteringColumns(tableIdentifier, "")
+
+      (1001 to 2000).map(i => (i, i.toString)).toDF("a", "b")
+        .repartition(10).write.mode("append").format("delta").saveAsTable(testTable)
+      val newSnapshot = deltaLog.update()
+      val newTargetFileSize = (newSnapshot.sizeInBytes / 10).toString
+      withSQLConf(
+        DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> newTargetFileSize,
+        DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE.key -> newTargetFileSize) {
+        runOptimize(testTable) { metrics =>
+          assert(metrics.numFilesAdded > 0)
+          assert(metrics.numFilesRemoved > 0)
+          // No clustering or zorder stats indicates regular compaction.
+          assert(metrics.clusteringStats.isEmpty)
+          assert(metrics.zOrderStats.isEmpty)
+        }
+      }
     }
   }
 

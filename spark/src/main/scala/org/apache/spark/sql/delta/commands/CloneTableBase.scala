@@ -223,7 +223,7 @@ abstract class CloneTableBase(
     val newProtocol = determineTargetProtocol(spark, txn, deltaOperation.name)
 
     try {
-      var actions = Iterator.single(newProtocol) ++
+      var actions: Iterator[Action] =
         addedFileList.iterator.asScala.map { fileToCopy =>
           val copiedFile = fileToCopy.copy(dataChange = dataChangeInFileAction)
           // CLONE does not preserve Row IDs and Commit Versions
@@ -246,6 +246,7 @@ abstract class CloneTableBase(
           txn.commitLarge(
             spark,
             actions,
+            Some(newProtocol),
             deltaOperation,
             context,
             commitOpMetrics.mapValues(_.toString()).toMap)
@@ -279,16 +280,10 @@ abstract class CloneTableBase(
         id = UUID.randomUUID().toString,
         name = targetSnapshot.metadata.name,
         description = targetSnapshot.metadata.description)
-    // If it's a new table, we remove the row tracking table property to create a 1:1 CLONE of
-    // the source, just without row tracking. If it's an existing table, we take whatever
-    // setting is currently on the target, as the setting should be independent between
-    // target and source.
-    if (!tableExists(targetSnapshot)) {
-      clonedMetadata = RowTracking.removeRowTrackingProperty(clonedMetadata)
-    } else {
-      clonedMetadata = RowTracking.takeRowTrackingPropertyFromTarget(
-        targetMetadata = targetSnapshot.metadata,
-        sourceMetadata = clonedMetadata)
+    // Existing target table
+    if (tableExists(targetSnapshot)) {
+      // Set the ID equal to the target ID
+      clonedMetadata = clonedMetadata.copy(id = targetSnapshot.metadata.id)
     }
     clonedMetadata
   }
@@ -355,14 +350,12 @@ abstract class CloneTableBase(
     conf.getConf(DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED) ||
       // It's not a real downgrade if the table doesn't exist before the CLONE.
       !tableExists(txn.snapshot)
-    val sourceProtocolWithoutRowTracking = RowTracking.removeRowTrackingTableFeature(sourceProtocol)
 
     if (protocolDowngradeAllowed) {
       minReaderVersion = minReaderVersion.max(sourceProtocol.minReaderVersion)
       minWriterVersion = minWriterVersion.max(sourceProtocol.minWriterVersion)
       val minProtocol = Protocol(minReaderVersion, minWriterVersion).withFeatures(enabledFeatures)
-      // Row tracking settings should be independent between target and source.
-      sourceProtocolWithoutRowTracking.merge(minProtocol)
+      sourceProtocol.merge(minProtocol)
     } else {
       // Take the maximum of all protocol versions being merged to ensure that table features
       // from table property overrides are correctly added to the table feature list or are only
@@ -372,8 +365,7 @@ abstract class CloneTableBase(
       minWriterVersion = Seq(
         targetProtocol.minWriterVersion, sourceProtocol.minWriterVersion, minWriterVersion).max
       val minProtocol = Protocol(minReaderVersion, minWriterVersion).withFeatures(enabledFeatures)
-      // Row tracking settings should be independent between target and source.
-      targetProtocol.merge(sourceProtocolWithoutRowTracking, minProtocol)
+      targetProtocol.merge(sourceProtocol, minProtocol)
     }
   }
 }

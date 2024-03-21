@@ -121,7 +121,6 @@ object Unidoc {
           "-noqualifier", "java.lang",
           "-tag", "implNote:a:Implementation Note:",
           "-tag", "apiNote:a:API Note:",
-          "-tag", "return:X",
           "-Xdoclint:none"
         ),
 

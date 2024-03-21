@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
-import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
+import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.stats.StatisticsCollection.getIndexedColumns
@@ -201,26 +201,29 @@ trait StatisticsCollection extends DeltaLogging {
     val logicalNumRecordsCol = physicalNumRecordsCol - dvCardinalityCol
     val nullCountCol = col(s"$statsColName.$NULL_COUNT")
     val tightBoundsCol = col(s"$statsColName.$TIGHT_BOUNDS")
+    val statsSchema = withStats.schema.apply(statsColName).dataType.asInstanceOf[StructType]
 
-    // Use the schema of the existing stats column. We only want to modify the existing
-    // nullCount stats. Note, when the column mapping mode is enabled, the schema uses
-    // the physical column names, not the logical names.
-    val nullCountSchema = withStats.schema
-      .apply(statsColName).dataType.asInstanceOf[StructType]
-      .apply(NULL_COUNT).dataType.asInstanceOf[StructType]
+    val allStatCols = ALL_STAT_FIELDS.flatMap {
+      case TIGHT_BOUNDS => Some(lit(false).as(TIGHT_BOUNDS))
+      case NULL_COUNT if statsSchema.names.contains(NULL_COUNT) =>
+        // Use the schema of the existing stats column. We only want to modify the existing
+        // nullCount stats. Note, when the column mapping mode is enabled, the schema uses
+        // the physical column names, not the logical names.
+        val nullCountSchema = statsSchema
+          .apply(NULL_COUNT).dataType.asInstanceOf[StructType]
 
-    // When bounds are tight and we are about to transition to wide, store the physical null count
-    // for ALL_NULLs columns.
-    val nullCountColSeq = applyFuncToStatisticsColumn(nullCountSchema, nullCountCol) {
-      case (c, _) =>
-        val allNullTightBounds = tightBoundsCol && (c === logicalNumRecordsCol)
-        Some(when(allNullTightBounds, physicalNumRecordsCol).otherwise(c))
-    }
-
-    val allStatCols = ALL_STAT_FIELDS.map {
-      case f if f == TIGHT_BOUNDS => lit(false).as(TIGHT_BOUNDS)
-      case f if f == NULL_COUNT => struct(nullCountColSeq: _*).as(NULL_COUNT)
-      case f => col(s"${statsColName}.${f}")
+        // When bounds are tight and we are about to transition to wide, store the physical null
+        // count for ALL_NULLs columns.
+        val nullCountColSeq = applyFuncToStatisticsColumn(nullCountSchema, nullCountCol) {
+          case (c, _) =>
+            val allNullTightBounds = tightBoundsCol && (c === logicalNumRecordsCol)
+            Some(when(allNullTightBounds, physicalNumRecordsCol).otherwise(c))
+        }
+        Some(struct(nullCountColSeq: _*).as(NULL_COUNT))
+      case f if statsSchema.names.contains(f) => Some(col(s"${statsColName}.${f}"))
+      case _ =>
+        // This stat is not present in the original stats schema, so we should not include it.
+        None
     }
 
     // This may be very expensive because it is rewriting JSON.
@@ -490,12 +493,12 @@ object StatisticsCollection extends DeltaCommand {
         SchemaUtils.findColumnPosition(columnFullPath, schema)
         // Delta statistics columns must be data skipping type.
         val (prefixPath, columnName) = columnFullPath.splitAt(columnFullPath.size - 1)
-        transformColumnsStructs(schema, Some(columnName.head)) {
+        transformSchema(schema, Some(columnName.head)) {
           case (`prefixPath`, struct @ StructType(_), _) =>
             val columnField = struct(columnName.head)
             validateDataSkippingType(columnAttribute.name, columnField.dataType, visitedColumns)
             struct
-          case (_, s: StructType, _) => s
+          case (_, other, _) => other
         }
       }
     }
@@ -628,7 +631,8 @@ object StatisticsCollection extends DeltaCommand {
     // Find the unique column names at this nesting depth, each with its path remainders (if any)
     val cols = statsColPaths.groupBy(_.head).mapValues(_.map(_.tail))
     val newSchema = schema.flatMap { field =>
-      cols.get(field.name).flatMap { paths =>
+      val lowerCaseFieldName = field.name.toLowerCase(Locale.ROOT)
+      cols.get(lowerCaseFieldName).flatMap { paths =>
         field.dataType match {
           case _ if paths.forall(_.isEmpty) =>
             // Convert full path to lower cases to avoid schema name contains upper case

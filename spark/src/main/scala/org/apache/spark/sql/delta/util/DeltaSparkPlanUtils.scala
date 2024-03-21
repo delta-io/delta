@@ -84,6 +84,12 @@ trait DeltaSparkPlanUtils {
     }
   }
 
+  protected def planContainsUdf(plan: LogicalPlan): Boolean = {
+    plan.collectWithSubqueries {
+      case node if node.expressions.exists(_.exists(_.isInstanceOf[UserDefinedExpression])) => ()
+    }.nonEmpty
+  }
+
   protected def findFirstNonDeterministicChildNode(
       children: Seq[Expression],
       checkDeterministicOptions: CheckDeterministicOptions): Option[PlanOrExpression] =

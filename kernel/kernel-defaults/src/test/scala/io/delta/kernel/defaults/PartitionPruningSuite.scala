@@ -16,13 +16,14 @@
 package io.delta.kernel.defaults
 
 import java.math.{BigDecimal => BigDecimalJ}
+
 import scala.collection.JavaConverters._
+
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.expressions.{Column, Expression, Predicate}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.types._
-import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.funsuite.AnyFunSuite
 
 class PartitionPruningSuite extends AnyFunSuite with TestUtils {
@@ -47,8 +48,8 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils {
     // 2021-09-08 in days since epoch 18878
     col("as_date") -> (ofDate(18878 /* daysSinceEpochUTC */), ofNull(DateType.DATE)),
     col("as_string") -> (ofString("1"), ofNull(StringType.STRING)),
-    // TODO: timestamp partition column is not yet supported
-    // col("as_timestamp") -> (ofTimestamp(1), ofNull(TimestampType.TIMESTAMP)),
+    // 2021-09-08 11:11:11 in micros since epoch UTC
+    col("as_timestamp") -> (ofTimestamp(1631099471000000L), ofNull(TimestampType.TIMESTAMP)),
     col("as_big_decimal") -> (
       ofDecimal(new BigDecimalJ(1), 1, 0),
       ofNull(new DecimalType(1, 0))))
@@ -62,22 +63,23 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils {
           test(s"partition pruning: simple filter `$partitionCol = $literal`, " +
             s"select partition predicate column = $selectPredicatePartitionCol") {
 
-            val isPartitionColDateType = literal.getDataType.isInstanceOf[DateType]
+            val isPartitionColDateOrTimestampType = literal.getDataType.isInstanceOf[DateType] ||
+              literal.getDataType.isInstanceOf[TimestampType]
 
             val filter = predicate("=", partitionCol, literal)
             val expectedResult = if (literal.getValue == null) {
               Seq.empty // part1 == null should always return false - that means no results
             } else {
               if (selectPredicatePartitionCol) {
-                if (isPartitionColDateType) {
-                  // Date type has two partitions with the same value in golden table
+                if (isPartitionColDateOrTimestampType) {
+                  // Date and timestamp type has two partitions with the same value in golden table
                   Seq((literal.getValue, 0L, "0"), (literal.getValue, 1L, "1"))
                 } else {
                   Seq((literal.getValue, 1L, "1"))
                 }
               } else {
-                if (isPartitionColDateType) {
-                  // Date type has two partitions with the same value in golden table
+                if (isPartitionColDateOrTimestampType) {
+                  // Date and timestamp type has two partitions with the same value in golden table
                   Seq((0L, "0"), (1L, "1"))
                 } else {
                   Seq((1L, "1"))

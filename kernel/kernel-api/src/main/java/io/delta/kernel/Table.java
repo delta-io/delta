@@ -49,4 +49,48 @@ public interface Table {
      */
     Snapshot getLatestSnapshot(TableClient tableClient)
         throws TableNotFoundException;
+
+    /**
+     * The fully qualified path of this {@link Table} instance.
+     *
+     * @return the table path
+     * @since 3.2.0
+     */
+    String getPath();
+
+    /**
+     * Get the snapshot at the given {@code versionId}.
+     *
+     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
+     * @param versionId snapshot version to retrieve
+     * @return an instance of {@link Snapshot}
+     * @since 3.2.0
+     */
+    Snapshot getSnapshotAtVersion(TableClient tableClient, long versionId)
+        throws TableNotFoundException;
+
+    /**
+     * Get the snapshot of the table at the given {@code timestamp}. This is the latest version of
+     * the table that was committed before or at {@code timestamp}.
+     * <p>
+     * Specifically:
+     * <ul>
+     *     <li>If a commit version exactly matches the provided timestamp, we return the table
+     *     snapshot at that version.</li>
+     *     <li>Else, we return the latest commit version with a timestamp less than the provided
+     *     one.</li>
+     *     <li>If the provided timestamp is less than the timestamp of any committed version,
+     *         we throw an error.</li>
+     *     <li>If the provided timestamp is after (strictly greater than) the timestamp of the
+     *     latest version of the table, we throw an error</li>
+     * </ul>.
+     *
+     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
+     * @param millisSinceEpochUTC timestamp to fetch the snapshot for in milliseconds since the
+     *                            unix epoch
+     * @return an instance of {@link Snapshot}
+     * @since 3.2.0
+     */
+    Snapshot getSnapshotAtTimestamp(TableClient tableClient, long millisSinceEpochUTC)
+        throws TableNotFoundException;
 }

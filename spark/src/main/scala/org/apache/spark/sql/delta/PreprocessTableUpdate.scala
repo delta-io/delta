@@ -67,11 +67,13 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
 
     val targetColNameParts = update.updateColumns.map(DeltaUpdateTable.getTargetColNameParts(_))
     val alignedUpdateExprs = generateUpdateExpressions(
-      update.child.output,
-      targetColNameParts,
-      update.updateExpressions,
-      conf.resolver,
-      generatedColumns)
+      targetSchema = update.child.schema,
+      defaultExprs = update.child.output,
+      nameParts = targetColNameParts,
+      updateExprs = update.updateExpressions,
+      resolver = conf.resolver,
+      generatedColumns = generatedColumns
+    )
     val alignedUpdateExprsAfterAddingGenerationExprs =
       if (alignedUpdateExprs.forall(_.nonEmpty)) {
         alignedUpdateExprs.map(_.get)

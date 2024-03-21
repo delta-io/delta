@@ -28,9 +28,10 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
-import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
+import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.hadoop.fs.Path
@@ -40,7 +41,7 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, QualifiedColType}
-import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, SparkCharVarcharUtils}
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
 import org.apache.spark.sql.connector.expressions.FieldReference
@@ -111,6 +112,27 @@ case class AlterTableSetPropertiesDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
+
+    val rowTrackingPropertyKey = DeltaConfigs.ROW_TRACKING_ENABLED.key
+    val enableRowTracking = configuration.keySet.contains(rowTrackingPropertyKey) &&
+      configuration(rowTrackingPropertyKey).toBoolean
+
+    if (enableRowTracking) {
+      // TODO(longvu-db): This will be removed once we support backfill.
+      throw new UnsupportedOperationException("Cannot enable Row IDs on an existing table.")
+    }
+    val columnMappingPropertyKey = DeltaConfigs.COLUMN_MAPPING_MODE.key
+    val disableColumnMapping = configuration.get(columnMappingPropertyKey).contains("none")
+    val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
+      DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL)
+    if (disableColumnMapping && columnMappingRemovalAllowed) {
+      RemoveColumnMappingCommand(deltaLog, table.catalogTable)
+        .run(sparkSession, removeColumnMappingTableProperty = false)
+      // Not changing anything else, so we can return early.
+      if (configuration.size == 1) {
+        return Seq.empty[Row]
+      }
+    }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.setProperties") {
       val txn = startTransaction()
 
@@ -129,7 +151,7 @@ case class AlterTableSetPropertiesDeltaCommand(
             ClusteringTableFeature.name)
         case _ =>
           true
-      }
+      }.toMap
 
       val newMetadata = metadata.copy(
         description = configuration.getOrElse(TableCatalog.PROP_COMMENT, metadata.description),
@@ -162,6 +184,18 @@ case class AlterTableUnsetPropertiesDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
+    val columnMappingPropertyKey = DeltaConfigs.COLUMN_MAPPING_MODE.key
+    val disableColumnMapping = propKeys.contains(columnMappingPropertyKey)
+    val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
+      DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL)
+    if (disableColumnMapping && columnMappingRemovalAllowed) {
+      RemoveColumnMappingCommand(deltaLog, table.catalogTable)
+        .run(sparkSession, removeColumnMappingTableProperty = true)
+      if (propKeys.size == 1) {
+        // Not unsetting anything else, so we can return early.
+        return Seq.empty[Row]
+      }
+    }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.unsetProperties") {
       val txn = startTransaction()
       val metadata = txn.metadata
@@ -529,7 +563,7 @@ case class AlterTableChangeColumnDeltaCommand(
       // Verify that the columnName provided actually exists in the schema
       SchemaUtils.findColumnPosition(columnPath :+ columnName, oldSchema, resolver)
 
-      val newSchema = transformColumnsStructs(oldSchema, Some(columnName)) {
+      val newSchema = transformSchema(oldSchema, Some(columnName)) {
         case (`columnPath`, struct @ StructType(fields), _) =>
           val oldColumn = struct(columnName)
           verifyColumnChange(sparkSession, struct(columnName), resolver, txn)
@@ -544,12 +578,25 @@ case class AlterTableChangeColumnDeltaCommand(
                 case Some(newDefaultValue) => result.withCurrentDefaultValue(newDefaultValue)
                 case None => result.clearCurrentDefaultValue()
               }
+              val updatedColumnMetadata =
+                if (!SparkCharVarcharUtils.hasCharVarchar(newColumn.dataType)) {
+                  // Remove the char/varchar property from the metadata that
+                  // indicates that this column is a char/varchar column.
+                  // We construct this throwaway object because
+                  // CharVarcharUtils.cleanAttrMetadata takes an AttributeReference.
+                  val throwAwayAttrRef = AttributeReference(
+                      result.name, result.dataType, nullable = result.nullable, result.metadata)()
+                  CharVarcharUtils.cleanAttrMetadata(throwAwayAttrRef).metadata
+                } else {
+                  result.metadata
+                }
               result
                 .copy(
                   name = newColumn.name,
                   dataType =
                     SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
-                  nullable = newColumn.nullable)
+                  nullable = newColumn.nullable,
+                  metadata = updatedColumnMetadata)
           }
 
           // Replace existing field with new field
@@ -561,11 +608,27 @@ case class AlterTableChangeColumnDeltaCommand(
           }
 
           // Reorder new field to correct position if necessary
-          colPosition.map { position =>
+          StructType(colPosition.map { position =>
             reorderFieldList(struct, newFieldList, newField, position, resolver)
-          }.getOrElse(newFieldList.toSeq)
+          }.getOrElse(newFieldList.toSeq))
 
-        case (_, _ @ StructType(fields), _) => fields
+        case (`columnPath`, m: MapType, _) if columnName == "key" =>
+          val originalField = StructField(columnName, m.keyType, nullable = false)
+          verifyMapArrayChange(sparkSession, originalField, resolver, txn)
+          m.copy(keyType = SchemaUtils.changeDataType(m.keyType, newColumn.dataType, resolver))
+
+        case (`columnPath`, m: MapType, _) if columnName == "value" =>
+          val originalField = StructField(columnName, m.valueType, nullable = m.valueContainsNull)
+          verifyMapArrayChange(sparkSession, originalField, resolver, txn)
+          m.copy(valueType = SchemaUtils.changeDataType(m.valueType, newColumn.dataType, resolver))
+
+        case (`columnPath`, a: ArrayType, _) if columnName == "element" =>
+          val originalField = StructField(columnName, a.elementType, nullable = a.containsNull)
+          verifyMapArrayChange(sparkSession, originalField, resolver, txn)
+          a.copy(elementType =
+            SchemaUtils.changeDataType(a.elementType, newColumn.dataType, resolver))
+
+        case (_, other @ (_: StructType | _: ArrayType | _: MapType), _) => other
       }
 
       // update `partitionColumns` if the changed column is a partition column
@@ -581,8 +644,11 @@ case class AlterTableChangeColumnDeltaCommand(
       val newConfiguration = metadata.configuration ++
         StatisticsCollection.renameDeltaStatsColumn(metadata, oldColumnPath, newColumnPath)
 
+      val newSchemaWithTypeWideningMetadata =
+        TypeWideningMetadata.addTypeWideningMetadata(txn, schema = newSchema, oldSchema = oldSchema)
+
       val newMetadata = metadata.copy(
-        schemaString = newSchema.json,
+        schemaString = newSchemaWithTypeWideningMetadata.json,
         partitionColumns = newPartitionColumns,
         configuration = newConfiguration
       )
@@ -685,15 +751,19 @@ case class AlterTableChangeColumnDeltaCommand(
     // first (original data type is already normalized as we store char/varchar as string type with
     // special metadata in the Delta log), then apply Delta-specific checks.
     val newType = CharVarcharUtils.replaceCharVarcharWithString(newColumn.dataType)
-    if (SchemaUtils.canChangeDataType(originalField.dataType, newType, resolver,
-        txn.metadata.columnMappingMode, columnPath :+ originalField.name).nonEmpty) {
+    if (SchemaUtils.canChangeDataType(
+        originalField.dataType,
+        newType,
+        resolver,
+        txn.metadata.columnMappingMode,
+        columnPath :+ originalField.name,
+        allowTypeWidening = TypeWidening.isEnabled(txn.protocol, txn.metadata)
+      ).nonEmpty) {
       throw DeltaErrors.alterTableChangeColumnException(
-        s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
-          s"'${originalField.dataType}" +
-          s" (nullable = ${originalField.nullable})'",
-        s"'${UnresolvedAttribute(Seq(newColumn.name)).name}' with type " +
-          s"'$newType" +
-          s" (nullable = ${newColumn.nullable})'")
+        fieldPath = UnresolvedAttribute(columnPath :+ originalField.name).name,
+        oldField = originalField,
+        newField = newColumn
+      )
     }
 
     if (columnName != newColumn.name) {
@@ -704,13 +774,36 @@ case class AlterTableChangeColumnDeltaCommand(
 
     if (originalField.nullable && !newColumn.nullable) {
       throw DeltaErrors.alterTableChangeColumnException(
-        s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
-          s"'${originalField.dataType}" +
-          s" (nullable = ${originalField.nullable})'",
-        s"'${UnresolvedAttribute(Seq(newColumn.name)).name}' with type " +
-          s"'${newColumn.dataType}" +
-          s" (nullable = ${newColumn.nullable})'")
+        fieldPath = UnresolvedAttribute(columnPath :+ originalField.name).name,
+        oldField = originalField,
+        newField = newColumn
+      )
     }
+  }
+
+  /**
+   * Verify whether replacing the original map key/value or array element with a new data type is a
+   * valid operation.
+   *
+   * @param originalField the original map key/value or array element to update.
+   */
+  private def verifyMapArrayChange(spark: SparkSession, originalField: StructField,
+      resolver: Resolver, txn: OptimisticTransaction): Unit = {
+    // Map key/value and array element can't have comments.
+    if (newColumn.getComment().nonEmpty) {
+      throw DeltaErrors.addCommentToMapArrayException(
+        fieldPath = UnresolvedAttribute(columnPath :+ columnName).name
+      )
+    }
+    // Changing the nullability of map key/value or array element isn't supported.
+    if (originalField.nullable != newColumn.nullable) {
+      throw DeltaErrors.alterTableChangeColumnException(
+        fieldPath = UnresolvedAttribute(columnPath :+ originalField.name).name,
+        oldField = originalField,
+        newField = newColumn
+      )
+    }
+    verifyColumnChange(spark, originalField, resolver, txn)
   }
 }
 
@@ -738,8 +831,14 @@ case class AlterTableReplaceColumnsDeltaCommand(
       val resolver = sparkSession.sessionState.conf.resolver
       val changingSchema = StructType(columns)
 
-      SchemaUtils.canChangeDataType(existingSchema, changingSchema, resolver,
-        txn.metadata.columnMappingMode, failOnAmbiguousChanges = true).foreach { operation =>
+      SchemaUtils.canChangeDataType(
+        existingSchema,
+        changingSchema,
+        resolver,
+        txn.metadata.columnMappingMode,
+        allowTypeWidening = TypeWidening.isEnabled(txn.protocol, txn.metadata),
+        failOnAmbiguousChanges = true
+      ).foreach { operation =>
         throw DeltaErrors.alterTableReplaceColumnsException(
           existingSchema, changingSchema, operation)
       }
@@ -750,7 +849,13 @@ case class AlterTableReplaceColumnsDeltaCommand(
       SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
       SchemaUtils.checkSchemaFieldNames(newSchema, metadata.columnMappingMode)
 
-      val newMetadata = metadata.copy(schemaString = newSchema.json)
+      val newSchemaWithTypeWideningMetadata = TypeWideningMetadata.addTypeWideningMetadata(
+        txn,
+        schema = newSchema,
+        oldSchema = existingSchema
+      )
+
+      val newMetadata = metadata.copy(schemaString = newSchemaWithTypeWideningMetadata.json)
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.ReplaceColumns(columns))
 

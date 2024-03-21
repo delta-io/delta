@@ -25,6 +25,7 @@ import scala.collection.concurrent
 import scala.reflect.ClassTag
 import scala.util.matching.Regex
 
+import com.databricks.spark.util.UsageRecord
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -153,6 +154,13 @@ trait DeltaTestUtilsBase {
     }
     // Spark will always log a job start/end event even when the job does not launch any task.
     jobs.values.count(_ > 0)
+  }
+
+  /** Filter `usageRecords` by the `opType` tag or field. */
+  def filterUsageRecords(usageRecords: Seq[UsageRecord], opType: String): Seq[UsageRecord] = {
+    usageRecords.filter { r =>
+      r.tags.get("opType").contains(opType) || r.opType.map(_.typeName).contains(opType)
+    }
   }
 
   protected def getfindTouchedFilesJobPlans(plans: Seq[Plans]): SparkPlan = {

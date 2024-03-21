@@ -79,6 +79,7 @@ lazy val commonSettings = Seq(
     "-Dspark.databricks.delta.snapshotPartitions=2",
     "-Dspark.sql.shuffle.partitions=5",
     "-Ddelta.log.cacheSize=3",
+    "-Dspark.databricks.delta.delta.log.cacheSize=3",
     "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
     "-Xmx1024m"
   ),
@@ -144,6 +145,7 @@ lazy val spark = (project in file("spark"))
       "-Dspark.databricks.delta.snapshotPartitions=2",
       "-Dspark.sql.shuffle.partitions=5",
       "-Ddelta.log.cacheSize=3",
+      "-Dspark.databricks.delta.delta.log.cacheSize=3",
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
       "-Xmx1024m"
     ),
@@ -201,6 +203,7 @@ lazy val contribs = (project in file("contribs"))
       "-Dspark.databricks.delta.snapshotPartitions=2",
       "-Dspark.sql.shuffle.partitions=5",
       "-Ddelta.log.cacheSize=3",
+      "-Dspark.databricks.delta.delta.log.cacheSize=3",
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
       "-Xmx1024m"
     ),
@@ -280,6 +283,11 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
+      // JMH dependencies allow writing micro-benchmarks for testing performance of components.
+      // JMH has framework to define benchmarks and takes care of many common functionalities
+      // such as warm runs, cold runs, defining benchmark parameter variables etc.
+      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
+      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
 
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",

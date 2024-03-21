@@ -16,20 +16,23 @@
 package io.delta.kernel.defaults.client;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 
 import io.delta.kernel.client.ParquetHandler;
-import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.*;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.FileStatus;
+import io.delta.kernel.utils.*;
 
 import io.delta.kernel.internal.util.Utils;
 
-import io.delta.kernel.defaults.internal.parquet.ParquetBatchReader;
+import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
+import io.delta.kernel.defaults.internal.parquet.ParquetFileWriter;
 
 /**
  * Default implementation of {@link ParquetHandler} based on Hadoop APIs.
@@ -52,7 +55,7 @@ public class DefaultParquetHandler implements ParquetHandler {
             StructType physicalSchema,
             Optional<Predicate> predicate) throws IOException {
         return new CloseableIterator<ColumnarBatch>() {
-            private final ParquetBatchReader batchReader = new ParquetBatchReader(hadoopConf);
+            private final ParquetFileReader batchReader = new ParquetFileReader(hadoopConf);
             private FileStatus currentFile;
             private CloseableIterator<ColumnarBatch> currentFileReader;
 
@@ -86,5 +89,16 @@ public class DefaultParquetHandler implements ParquetHandler {
                 return currentFileReader.next();
             }
         };
+    }
+
+    @Override
+    public CloseableIterator<DataFileStatus> writeParquetFiles(
+            String directoryPath,
+            CloseableIterator<FilteredColumnarBatch> dataIter,
+            long maxFileSize,
+            List<Column> statsColumns) throws IOException {
+        ParquetFileWriter batchWriter =
+            new ParquetFileWriter(hadoopConf, new Path(directoryPath), maxFileSize, statsColumns);
+        return batchWriter.write(dataIter);
     }
 }

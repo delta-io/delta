@@ -31,7 +31,8 @@ public class FileStatus {
     private final long size;
     private final long modificationTime;
 
-    private FileStatus(
+    // TODO add further documentation about the expected format for modificationTime?
+    protected FileStatus(
         String path,
         long size,
         long modificationTime) {
