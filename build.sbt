@@ -34,8 +34,21 @@ val all_scala_versions = Seq(scala212, scala213)
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
+val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
+val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
+val cross_spark_version = settingKey[String]("Spark version")
+spark / cross_spark_version := {
+  // e.g. build/sbt -Dcross_spark_version=4.0.0-SNAPSHOT
+  val input = sys.props.getOrElse("cross_spark_version", LATEST_RELEASED_SPARK_VERSION)
+  input match {
+    case LATEST_RELEASED_SPARK_VERSION | SPARK_MASTER_VERSION => input
+    case _ => throw new IllegalArgumentException(s"Invalid cross_spark_version: $input. Must be " +
+      s"one of {$LATEST_RELEASED_SPARK_VERSION, $SPARK_MASTER_VERSION}")
+  }
+}
+
 // Dependent library versions
-val sparkVersion = "3.5.0"
+val sparkVersion = LATEST_RELEASED_SPARK_VERSION
 val flinkVersion = "1.16.1"
 val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
@@ -99,35 +112,94 @@ lazy val spark = (project in file("spark"))
     scalaStyleSettings,
     sparkMimaSettings,
     releaseSettings,
+    scalaVersion := {
+      cross_spark_version.value match {
+        case LATEST_RELEASED_SPARK_VERSION => default_scala_version.value
+        case SPARK_MASTER_VERSION => scala213
+      }
+    },
+    crossScalaVersions := {
+      cross_spark_version.value match {
+        case LATEST_RELEASED_SPARK_VERSION => all_scala_versions
+        case SPARK_MASTER_VERSION => Seq(scala213)
+      }
+    },
+    targetJvm := {
+      cross_spark_version.value match {
+        case LATEST_RELEASED_SPARK_VERSION => "1.8"
+        case SPARK_MASTER_VERSION => "17"
+      }
+    },
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
-      "org.apache.spark" %% "spark-hive" % sparkVersion % "provided",
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided",
+      "org.apache.spark" %% "spark-hive" % cross_spark_version.value % "provided",
+      "org.apache.spark" %% "spark-sql" % cross_spark_version.value % "provided",
+      "org.apache.spark" %% "spark-core" % cross_spark_version.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % cross_spark_version.value % "provided",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.12" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % cross_spark_version.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % cross_spark_version.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % cross_spark_version.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % cross_spark_version.value % "test" classifier "tests",
     ),
-    // For adding staged Spark RC versions, Ex:
-    // resolvers += "Apche Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
+    resolvers ++= {
+      // For adding staged Spark RC versions, Ex:
+      // "Apche Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
+      cross_spark_version.value match {
+        case LATEST_RELEASED_SPARK_VERSION => Nil
+        case SPARK_MASTER_VERSION => Seq(
+          "Spark master staging" at "https://repository.apache.org/content/groups/snapshots/"
+        )
+      }
+    },
+    Compile / unmanagedSourceDirectories ++= {
+      cross_spark_version.value match {
+        // (baseDirectory in Compile).value is `<delta>/spark`
+        case LATEST_RELEASED_SPARK_VERSION =>
+          Seq((Compile / baseDirectory).value / "src" / "shims" / "spark-3.5")
+        case SPARK_MASTER_VERSION =>
+          Seq((Compile / baseDirectory).value / "src" / "shims" / "spark-4.0")
+      }
+    },
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
-    Antlr4 / antlr4Version:= "4.9.3",
+    Antlr4 / antlr4Version := {
+      cross_spark_version.value match {
+        case LATEST_RELEASED_SPARK_VERSION => "4.9.3"
+        case SPARK_MASTER_VERSION => "4.13.1"
+      }
+    },
     Antlr4 / antlr4PackageName := Some("io.delta.sql.parser"),
     Antlr4 / antlr4GenListener := true,
     Antlr4 / antlr4GenVisitor := true,
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+    Test / javaOptions ++= {
+      cross_spark_version.value match {
+        case LATEST_RELEASED_SPARK_VERSION => Nil
+        case SPARK_MASTER_VERSION => Seq(
+          // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+          "--add-opens=java.base/java.io=ALL-UNNAMED",
+          "--add-opens=java.base/java.net=ALL-UNNAMED",
+          "--add-opens=java.base/java.nio=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+          "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+          "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+          "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+          "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+        )
+      }
+    },
 
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,
