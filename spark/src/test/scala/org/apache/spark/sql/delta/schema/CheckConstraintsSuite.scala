@@ -277,18 +277,20 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
-  testQuietly("constraint with analyzer-evaluated expressions") {
+  for (expression <- Seq("year(current_date())", "unix_timestamp()"))
+  testQuietly(s"constraint with analyzer-evaluated expressions. Expression: $expression") {
     withTestTable { table =>
-      // We use current_timestamp() as the most convenient analyzer-evaluated expression - of course
-      // in a realistic use case it'd probably not be right to add a constraint on a
+      // We use current_timestamp()/current_date() as the most convenient
+      // analyzer-evaluated expressions - of course in a realistic use case
+      // it'd probably not be right to add a constraint on a
       // nondeterministic expression.
       sql(s"ALTER TABLE $table ADD CONSTRAINT maxWithAnalyzerEval " +
-        s"CHECK (num < unix_timestamp())")
+        s"CHECK (num < $expression)")
       val e = intercept[InvariantViolationException] {
         sql(s"INSERT INTO $table VALUES (${Int.MaxValue}, 'data')")
       }
       errorContains(e.getMessage,
-        "maxwithanalyzereval (num < unix_timestamp()) violated by row")
+        s"maxwithanalyzereval (num < $expression) violated by row")
     }
   }
 

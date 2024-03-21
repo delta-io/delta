@@ -41,7 +41,6 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
-import org.apache.spark.util.Utils
 
 class SchemaUtilsSuite extends QueryTest
   with SharedSparkSession
@@ -70,29 +69,26 @@ class SchemaUtilsSuite extends QueryTest
       s"Error message '${e.getMessage}' didn't contain the patterns: $shouldContainPatterns")
   }
 
-  private def expectErrorClassAndCause(errorClass: String)(shouldContain: String*)
+  private def expectAnalysisErrorClass(errorClass: String, params: Map[String, String])
                                       (f: => Unit): Unit = {
     val e = intercept[AnalysisException] {
       f
     }
-    val msg = Utils.exceptionString(e).toLowerCase(Locale.ROOT)
-    assert(e.getErrorClass == errorClass)
-    assert(
-      shouldContain.map(_.toLowerCase(Locale.ROOT)).forall(msg.contains),
-      s"Error cause didn't contain: $shouldContain"
-    )
-  }
 
-  private def expectErrorClassAndCausePattern(errorClass: String)
-                                             (shouldContainPatterns: String*)(f: => Unit): Unit = {
-    val e = intercept[AnalysisException] {
-      f
+    @tailrec
+    def getError(ex: Throwable): Option[DeltaAnalysisException] = ex match {
+      case e: DeltaAnalysisException if e.getErrorClass() == errorClass => Some(e)
+      case e: AnalysisException => getError(e.getCause)
+      case _ => None
     }
-    assert(e.getErrorClass == errorClass)
-    val patterns =
-      shouldContainPatterns.map(regex => Pattern.compile(regex, Pattern.CASE_INSENSITIVE))
-    assert(patterns.forall(_.matcher(Utils.exceptionString(e)).find()),
-      s"Error cause didn't contain the patterns: $shouldContainPatterns")
+
+    val err = getError(e)
+    assert(err.isDefined, "exception with the error class not found")
+    checkError(
+      exception = err.get,
+      errorClass = errorClass,
+      parameters = params,
+      matchPVals = true)
   }
 
   /////////////////////////////
@@ -2185,10 +2181,12 @@ class SchemaUtilsSuite extends QueryTest
         .add("b", DecimalType(18, 10))))
       .add("map", MapType(StringType, StringType))
 
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")("StringType", "IntegerType") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "StringType", "updateDataType" -> "IntegerType")) {
       mergeSchemas(base, new StructType().add("top", IntegerType))
     }
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")("IntegerType", "DateType") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "IntegerType", "updateDataType" -> "DateType")) {
       mergeSchemas(base, new StructType()
         .add("struct", new StructType().add("a", DateType)))
     }
@@ -2197,37 +2195,39 @@ class SchemaUtilsSuite extends QueryTest
     //   `StructType(StructField(a,IntegerType,true))`.
     // - In Scala 2.13, it extends `scala.collection.immutable.Seq` which returns
     //   `Seq(StructField(a,IntegerType,true))`.
-    expectErrorClassAndCausePattern("DELTA_FAILED_TO_MERGE_FIELDS")(
-      "'struct'", "StructType|Seq\\(", "MapType") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "(StructType|Seq)\\(.*", "updateDataType" -> "MapType\\(.*")) {
       mergeSchemas(base, new StructType()
         .add("struct", MapType(StringType, IntegerType)))
     }
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")(
-      "'array'", "DecimalType", "DoubleType") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "DecimalType\\(.*", "updateDataType" -> "DoubleType")) {
       mergeSchemas(base, new StructType()
         .add("array", ArrayType(new StructType().add("b", DoubleType))))
     }
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")("'array'", "scale") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+      Map("decimalRanges" -> "scale.*")) {
       mergeSchemas(base, new StructType()
         .add("array", ArrayType(new StructType().add("b", DecimalType(18, 12)))))
     }
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")("'array'", "precision") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+      Map("decimalRanges" -> "precision.*")) {
       mergeSchemas(base, new StructType()
         .add("array", ArrayType(new StructType().add("b", DecimalType(16, 10)))))
     }
     // See the above comment about `StructType`
-    expectErrorClassAndCausePattern("DELTA_FAILED_TO_MERGE_FIELDS")(
-      "'map'", "MapType", "StructType|Seq\\(") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "MapType\\(.*", "updateDataType" -> "(StructType|Seq)\\(.*")) {
       mergeSchemas(base, new StructType()
         .add("map", new StructType().add("b", StringType)))
     }
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")(
-      "'map'", "StringType", "IntegerType") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "StringType", "updateDataType" -> "IntegerType")) {
       mergeSchemas(base, new StructType()
         .add("map", MapType(StringType, IntegerType)))
     }
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")(
-      "'map'", "StringType", "IntegerType") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "StringType", "updateDataType" -> "IntegerType")) {
       mergeSchemas(base, new StructType()
         .add("map", MapType(IntegerType, StringType)))
     }
@@ -2299,9 +2299,11 @@ class SchemaUtilsSuite extends QueryTest
       val e = intercept[DeltaAnalysisException] {
           mergeSchemas(longType, sourceType)
         }
-      assert(e.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
-      assert(Utils.exceptionString(e).contains(
-        s"Failed to merge incompatible data types LongType and ${sourceType.head.dataType}"))
+      checkError(
+        exception = e.getCause.asInstanceOf[AnalysisException],
+        errorClass = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        parameters = Map("currentDataType" -> "LongType",
+          "updateDataType" -> sourceType.head.dataType.toString))
     }
   }
 
