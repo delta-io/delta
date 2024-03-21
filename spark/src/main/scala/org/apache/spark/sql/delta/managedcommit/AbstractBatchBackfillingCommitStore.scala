@@ -43,7 +43,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
    * Commit a given `commitFile` to the table represented by given `logPath` at the
    * given `commitVersion`
    */
-  protected def commitImpl(
+  private[delta] def commitImpl(
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,

@@ -43,20 +43,30 @@ trait ManagedCommitTestUtils
   }
 }
 
-case class TrackingInMemoryCommitStoreBuilder(batchSize: Long) extends CommitStoreBuilder {
-  private lazy val trackingInMemoryCommitStore = TrackingInMemoryCommitStore(batchSize)
+case class TrackingInMemoryCommitStoreBuilder(
+    batchSize: Long,
+    defaultCommitStoreOpt: Option[CommitStore] = None) extends CommitStoreBuilder {
+  private lazy val trackingInMemoryCommitStore =
+    defaultCommitStoreOpt.getOrElse {
+      new TrackingCommitStore(new PredictableUuidInMemoryCommitStore(batchSize))
+    }
 
   override def name: String = "tracking-in-memory"
   override def build(conf: Map[String, String]): CommitStore = trackingInMemoryCommitStore
 }
 
-case class TrackingInMemoryCommitStore(
-    override val batchSize: Long) extends InMemoryCommitStore(batchSize) {
+class PredictableUuidInMemoryCommitStore(batchSize: Long) extends InMemoryCommitStore(batchSize) {
+  var nextUuidSuffix = 0L
+  override def generateUUID(): String = {
+    nextUuidSuffix += 1
+    s"uuid-${nextUuidSuffix - 1}"
+  }
+}
+
+class TrackingCommitStore(delegatingCommitStore: InMemoryCommitStore) extends CommitStore {
 
   var numCommitsCalled: Int = 0
-
   var numGetCommitsCalled: Int = 0
-
   var insideOperation: Boolean = false
 
   def recordOperation[T](op: String)(f: => T): T = synchronized {
@@ -83,19 +93,25 @@ case class TrackingInMemoryCommitStore(
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = recordOperation("commit") {
-    super.commit(logStore, hadoopConf, logPath, commitVersion, actions, updatedActions)
+    delegatingCommitStore
+      .commit(logStore, hadoopConf, logPath, commitVersion, actions, updatedActions)
   }
 
   override def getCommits(
       logPath: Path,
       startVersion: Long,
       endVersion: Option[Long] = None): GetCommitsResponse = recordOperation("getCommits") {
-    super.getCommits(logPath, startVersion, endVersion)
+    delegatingCommitStore.getCommits(logPath, startVersion, endVersion)
   }
 
-  var nextUuidSuffix = 0L
-  override def generateUUID(): String = {
-    nextUuidSuffix += 1
-    s"uuid-${nextUuidSuffix - 1}"
+  def registerTable(
+      logPath: Path,
+      maxCommitVersion: Long): Unit = {
+    delegatingCommitStore.registerTable(logPath, maxCommitVersion)
+  }
+
+  def reset(): Unit = {
+    numCommitsCalled = 0
+    numGetCommitsCalled = 0
   }
 }
