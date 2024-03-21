@@ -18,8 +18,9 @@ package org.apache.spark.sql.delta.skipping
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumn, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.DeltaOperations.CLUSTERING_PARAMETER_KEY
+import org.apache.spark.sql.delta.DeltaOperations.{CLUSTERING_PARAMETER_KEY, ZORDER_PARAMETER_KEY}
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.DataFrame
@@ -45,6 +46,9 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
    */
   def runOptimize(table: String)(postHook: OptimizeMetrics => Unit): Unit = {
     postHook(optimizeTable(table).select($"metrics.*").as[OptimizeMetrics].head())
+
+    // Verify Delta history operation parameters' clusterBy
+    verifyDescribeHistoryOperationParameters(table)
   }
 
   def verifyClusteringColumnsInDomainMetadata(
@@ -65,25 +69,90 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
   protected def verifyDescribeHistoryOperationParameters(
       table: String
   ): Unit = {
-    val (deltaLog, snapshot) = if (table.startsWith("tahoe.") || table.startsWith("delta.")) {
+    val clusterBySupportedOperations = Set(
+      "CREATE TABLE",
+      "REPLACE TABLE",
+      "CREATE OR REPLACE TABLE",
+      "CREATE TABLE AS SELECT",
+      "REPLACE TABLE AS SELECT",
+      "CREATE OR REPLACE TABLE AS SELECT")
+
+    val isPathBasedTable = table.startsWith("tahoe.") || table.startsWith("delta.")
+    val (deltaLog, snapshot) = if (isPathBasedTable) {
       // Path based table.
       DeltaLog.forTableWithSnapshot(spark, table.drop(6).replace("`", ""))
     } else {
       DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))
     }
-    val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshot)
+    val isClusteredTable = ClusteredTableUtils.isSupported(snapshot.protocol)
+    val clusteringColumns =
+      ClusteringColumnInfo.extractLogicalNames(snapshot)
+    val expectedClusterBy = JsonUtils.toJson(clusteringColumns)
+    val expectClustering = isClusteredTable && clusteringColumns.nonEmpty
+
     val lastEvent = deltaLog.history.getHistory(Some(1)).head
+    val lastOperationParameters = lastEvent.operationParameters
+
+    def doAssert(assertion: => Boolean): Unit = {
+      val debugMsg = "verifyDescribeHistoryOperationParameters DEBUG: " +
+        "assert failed. Please check the expected behavior and " +
+        "add the operation to the appropriate case in " +
+        "verifyDescribeHistoryOperationParameters. " +
+        s"table: $table, lastOperation: ${lastEvent.operation} " +
+        s"lastOperationParameters: $lastOperationParameters"
+      try {
+        assert(assertion, debugMsg)
+      } catch {
+        case e: Throwable =>
+          throw new Throwable(debugMsg, e)
+      }
+    }
+
+    // Check clusterBy exists and matches the expected clusterBy.
+    def assertClusterByExists(): Unit = {
+      doAssert(lastOperationParameters(CLUSTERING_PARAMETER_KEY) === expectedClusterBy)
+    }
+
+    // Check clusterBy does not exist or is empty.
+    def assertClusterByEmptyOrNotExists(): Unit = {
+      doAssert(!lastOperationParameters.contains(CLUSTERING_PARAMETER_KEY) ||
+        lastOperationParameters(CLUSTERING_PARAMETER_KEY) === "[]")
+    }
+
+    // Check clusterBy does not exist.
+    def assertClusterByNotExist(): Unit = {
+      doAssert(!lastOperationParameters.contains(CLUSTERING_PARAMETER_KEY))
+    }
+
+    // Check clusterBy
     lastEvent.operation match {
       case "CLUSTER BY" =>
         // Operation is [[DeltaOperations.ClusterBy]] - ALTER TABLE CLUSTER BY
-        assert(
-          lastEvent.operationParameters("newClusteringColumns") === clusteringColumns.mkString(",")
+        doAssert(
+          lastOperationParameters("newClusteringColumns") === clusteringColumns.mkString(",")
         )
-      case "CREATE TABLE" | "REPLACE TABLE" | "CREATE OR REPLACE TABLE" | "CREATE TABLE AS SELECT" |
-          "REPLACE TABLE AS SELECT" | "CREATE OR REPLACE TABLE AS SELECT" =>
-        val expectedClusterBy = clusteringColumns.mkString("""["""", """","""", """"]""")
-        assert(lastEvent.operationParameters(CLUSTERING_PARAMETER_KEY) === expectedClusterBy)
+      case "OPTIMIZE" =>
+        if (expectClustering) {
+          doAssert(lastOperationParameters(CLUSTERING_PARAMETER_KEY) === expectedClusterBy)
+          doAssert(lastOperationParameters(ZORDER_PARAMETER_KEY) === "[]")
+        } else {
+          // If the table clusters by NONE, OPTIMIZE will be a regular compaction.
+          // In this case, both clustering and z-order parameters should be empty.
+          doAssert(lastOperationParameters(CLUSTERING_PARAMETER_KEY) === "[]")
+          doAssert(lastOperationParameters(ZORDER_PARAMETER_KEY) === "[]")
+        }
+      case o if clusterBySupportedOperations.contains(o) =>
+        if (expectClustering) {
+          assertClusterByExists()
+        } else if (isClusteredTable && clusteringColumns.isEmpty) {
+          assertClusterByEmptyOrNotExists()
+        } else {
+          assertClusterByNotExist()
+        }
       case _ =>
+        // Other operations are not tested yet. If the test fails here, please check the expected
+        // behavior and add the operation to the appropriate case.
+        doAssert(false)
     }
   }
 
@@ -140,42 +209,35 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
 
   def verifyClusteringColumns(
       tableIdentifier: TableIdentifier,
-      expectedLogicalClusteringColumns: String,
-      verifyDescribeHistory: Boolean = true): Unit = {
+      expectedLogicalClusteringColumns: String): Unit = {
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
     verifyClusteringColumnsInternal(
       snapshot,
       tableIdentifier.table,
-      expectedLogicalClusteringColumns,
-      verifyDescribeHistory
+      expectedLogicalClusteringColumns
     )
   }
 
   def verifyClusteringColumns(
       dataPath: String,
-      expectedLogicalClusteringColumns: String,
-      verifyDescribeHistory: Boolean): Unit = {
+      expectedLogicalClusteringColumns: String): Unit = {
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, dataPath)
     verifyClusteringColumnsInternal(
       snapshot,
       s"delta.`$dataPath`",
-      expectedLogicalClusteringColumns,
-      verifyDescribeHistory
+      expectedLogicalClusteringColumns
     )
   }
 
   def verifyClusteringColumnsInternal(
       snapshot: Snapshot,
       tableNameOrPath: String,
-      expectedLogicalClusteringColumns: String,
-      verifyDescribeHistory: Boolean): Unit = {
+      expectedLogicalClusteringColumns: String): Unit = {
     assert(ClusteredTableUtils.isSupported(snapshot.protocol) === true)
     verifyClusteringColumnsInDomainMetadata(snapshot, expectedLogicalClusteringColumns)
 
     // Verify Delta history operation parameters' clusterBy
-    if (verifyDescribeHistory) {
-      verifyDescribeHistoryOperationParameters(tableNameOrPath)
-    }
+    verifyDescribeHistoryOperationParameters(tableNameOrPath)
   }
 }
 

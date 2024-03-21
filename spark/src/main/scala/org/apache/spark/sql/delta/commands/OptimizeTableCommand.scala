@@ -492,7 +492,11 @@ class OptimizeExecutor(
     if (optimizeContext.reorg.nonEmpty) {
       DeltaOperations.Reorg(partitionPredicate)
     } else {
-      DeltaOperations.Optimize(partitionPredicate, clusteringColumns, auto = isAutoCompact)
+      DeltaOperations.Optimize(
+        predicate = partitionPredicate,
+        zOrderBy = zOrderByColumns,
+        auto = isAutoCompact,
+        clusterBy = Option(clusteringColumns).filter(_.nonEmpty))
     }
   }
 

@@ -251,8 +251,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
       locationOpt: Option[String]): Unit = {
     locationOpt.map { location =>
       verifyClusteringColumns(
-        location, expectedLogicalClusteringColumns,
-        verifyDescribeHistory = true)
+        location, expectedLogicalClusteringColumns
+      )
     }.getOrElse {
       verifyClusteringColumns(TableIdentifier(table), expectedLogicalClusteringColumns)
     }
