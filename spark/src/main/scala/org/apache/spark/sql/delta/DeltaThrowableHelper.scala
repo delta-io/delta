@@ -63,11 +63,13 @@ object DeltaThrowableHelper
 
   def isInternalError(errorClass: String): Boolean = errorClass == "INTERNAL_ERROR"
 
-  def getParameterNames(errorClass: String, errorSubClass: String): Array[String] = {
-    val wholeErrorClass = if (errorSubClass == null) {
-      errorClass
-    } else {
-      errorClass + "." + errorSubClass
+  def getParameterNames(
+      errorClass: Option[String],
+      errorSubClass: Option[String]): Array[String] = {
+    val wholeErrorClass = (errorClass, errorSubClass) match {
+      case (Some(errorClass), Some(errorSubClass)) => errorClass + "." + errorSubClass
+      case (Some(errorClass), None) => errorClass
+      case _ => return Array.empty
     }
     val parameterizedMessage = errorClassReader.getMessageTemplate(wholeErrorClass)
     val pattern = "<[a-zA-Z0-9_-]+>".r

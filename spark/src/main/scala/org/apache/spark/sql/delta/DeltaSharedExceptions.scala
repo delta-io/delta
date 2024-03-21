@@ -20,28 +20,67 @@ import scala.collection.JavaConverters._
 
 import org.antlr.v4.runtime.ParserRuleContext
 
+import org.apache.spark.QueryContext
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.parser.{ParseException, ParserUtils}
 import org.apache.spark.sql.catalyst.trees.Origin
 
 class DeltaAnalysisException(
+    message: String,
+    line: Option[Int] = None,
+    startPosition: Option[Int] = None,
+    cause: Option[Throwable] = None,
+    errorClass: Option[String] = None,
+    messageParameters: Array[String] = Array.empty,
+    context: Array[QueryContext] = Array.empty)
+  extends AnalysisException(
+    message,
+    line,
+    startPosition,
+    cause,
+    errorClass,
+    messageParameters = DeltaThrowableHelper
+      .getParameterNames(errorClass, errorSubClass = None)
+      .zip(messageParameters)
+      .toMap,
+    context)
+    with DeltaThrowable {
+
+  /* Implemented for testing */
+  private[delta] def getMessageParametersArray: Array[String] = messageParameters
+
+  def this(
+    errorClass: String,
+    messageParameters: Array[String]) =
+    this(
+      message = DeltaThrowableHelper.getMessage(errorClass, messageParameters),
+      messageParameters = messageParameters,
+      errorClass = Some(errorClass)
+    )
+
+  def this(
     errorClass: String,
     messageParameters: Array[String],
-    cause: Option[Throwable] = None,
-    origin: Option[Origin] = None)
-  extends AnalysisException(
-    message = DeltaThrowableHelper.getMessage(errorClass, messageParameters),
-    messageParameters = DeltaThrowableHelper
-        .getParameterNames(errorClass, errorSubClass = null)
-        .zip(messageParameters)
-        .toMap,
-    errorClass = Some(errorClass),
-    line = origin.flatMap(_.line),
-    startPosition = origin.flatMap(_.startPosition),
-    context = origin.map(_.getQueryContext).getOrElse(Array.empty),
-    cause = cause)
-  with DeltaThrowable {
-  def getMessageParametersArray: Array[String] = messageParameters
+    cause: Option[Throwable]) =
+    this(
+      message = DeltaThrowableHelper.getMessage(errorClass, messageParameters),
+      messageParameters = messageParameters,
+      errorClass = Some(errorClass),
+      cause = cause)
+
+  def this(
+    errorClass: String,
+    messageParameters: Array[String],
+    cause: Option[Throwable],
+    origin: Option[Origin]) =
+    this(
+      message = DeltaThrowableHelper.getMessage(errorClass, messageParameters),
+      messageParameters = messageParameters,
+      errorClass = Some(errorClass),
+      line = origin.flatMap(_.line),
+      startPosition = origin.flatMap(_.startPosition),
+      context = origin.map(_.getQueryContext).getOrElse(Array.empty),
+      cause = cause)
 }
 
 class DeltaIllegalArgumentException(
@@ -55,7 +94,7 @@ class DeltaIllegalArgumentException(
   def getMessageParametersArray: Array[String] = messageParameters
 
   override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)
+    DeltaThrowableHelper.getParameterNames(Option(errorClass), errorSubClass = None)
       .zip(messageParameters).toMap.asJava
   }
 }
@@ -70,7 +109,7 @@ class DeltaUnsupportedOperationException(
   def getMessageParametersArray: Array[String] = messageParameters
 
   override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)
+    DeltaThrowableHelper.getParameterNames(Option(errorClass), errorSubClass = None)
       .zip(messageParameters).toMap.asJava
   }
 }
@@ -96,7 +135,7 @@ class DeltaArithmeticException(
   override def getErrorClass: String = errorClass
 
   override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)
+    DeltaThrowableHelper.getParameterNames(Option(errorClass), errorSubClass = None)
       .zip(messageParameters).toMap.asJava
   }
 }
