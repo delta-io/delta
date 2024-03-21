@@ -39,7 +39,6 @@ import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.{types => sparktypes}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
-import org.apache.spark.unsafe.types.VariantVal
 import org.scalatest.Assertions
 
 trait TestUtils extends Assertions with SQLHelper {
@@ -468,7 +467,6 @@ trait TestUtils extends Assertions with SQLHelper {
         java.lang.Double.doubleToRawLongBits(a) == java.lang.Double.doubleToRawLongBits(b)
       case (a: Float, b: Float) =>
         java.lang.Float.floatToRawIntBits(a) == java.lang.Float.floatToRawIntBits(b)
-      case (a: VariantVal, b: VariantVal) => a.debugString() == b.debugString()
       case (a, b) =>
         if (!a.equals(b)) {
           val sds = 200;

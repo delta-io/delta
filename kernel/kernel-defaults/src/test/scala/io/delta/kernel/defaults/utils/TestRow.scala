@@ -21,6 +21,7 @@ import org.apache.spark.sql.{types => sparktypes}
 import org.apache.spark.sql.{Row => SparkRow}
 import org.apache.spark.unsafe.types.VariantVal
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
+import io.delta.kernel.defaults.internal.data.value.DefaultVariantValue
 import io.delta.kernel.types._
 
 import java.sql.Timestamp
@@ -110,9 +111,7 @@ object TestRow {
         case _: ArrayType => arrayValueToScalaSeq(row.getArray(i))
         case _: MapType => mapValueToScalaMap(row.getMap(i))
         case _: StructType => TestRow(row.getStruct(i))
-        case _: VariantType =>
-          val kernelVariant = row.getVariant(i)
-          new VariantVal(kernelVariant.getValue(), kernelVariant.getMetadata())
+        case _: VariantType => row.getVariant(i)
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     }.toSeq)
@@ -179,7 +178,9 @@ object TestRow {
             decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)
           }
         case _: sparktypes.StructType => TestRow(row.getStruct(i))
-        case _: sparktypes.VariantType => row.getAs[VariantVal](i)
+        case _: sparktypes.VariantType =>
+          val sparkVariant = row.getAs[VariantVal](i)
+          new DefaultVariantValue(sparkVariant.getValue(), sparkVariant.getMetadata())
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     })

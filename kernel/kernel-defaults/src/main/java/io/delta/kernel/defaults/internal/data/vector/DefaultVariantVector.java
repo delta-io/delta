@@ -23,6 +23,7 @@ import io.delta.kernel.data.VariantValue;
 import io.delta.kernel.types.DataType;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import io.delta.kernel.defaults.internal.data.value.DefaultVariantValue;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for variant type data.
@@ -68,20 +69,22 @@ public class DefaultVariantVector
         if (isNullAt(rowId)) {
             return null;
         }
-        return new VariantValue() {
-            private final byte[] value = valueVector.getBinary(rowId);
-            private final byte[] metadata = metadataVector.getBinary(rowId);
+        // return new VariantValue() {
+        //     private final byte[] value = valueVector.getBinary(rowId);
+        //     private final byte[] metadata = metadataVector.getBinary(rowId);
 
-            @Override
-            public byte[] getValue() {
-                return value;
-            }
+        //     @Override
+        //     public byte[] getValue() {
+        //         return value;
+        //     }
 
-            @Override
-            public byte[] getMetadata() {
-                return metadata;
-            }
-        };
+        //     @Override
+        //     public byte[] getMetadata() {
+        //         return metadata;
+        //     }
+        // };
+        return new DefaultVariantValue(
+            valueVector.getBinary(rowId), metadataVector.getBinary(rowId));
     }
 
     /**
