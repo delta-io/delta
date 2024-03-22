@@ -221,7 +221,7 @@ abstract class CloneTableBase(
 
     try {
       var actions: Iterator[Action] =
-          addFileIter.map { fileToCopy =>
+        addFileIter.map { fileToCopy =>
           val copiedFile = fileToCopy.copy(dataChange = dataChangeInFileAction)
           // CLONE does not preserve Row IDs and Commit Versions
           copiedFile.copy(baseRowId = None, defaultRowCommitVersion = None)
