@@ -1601,7 +1601,7 @@ Feature | Name | Readers or Writers?
 [Column Invariants](#column-invariants) | `invariants` | Writers only
 [`CHECK` constraints](#check-constraints) | `checkConstraints` | Writers only
 [Generated Columns](#generated-columns) | `generatedColumns` | Writers only
-[Default Columns](#default-columns) | `allowColumnDefaults` | Writers only
+[Default Columns](#default-columns) | `allowColumnDefaults` | Readers and Writers
 [Change Data Feed](#add-cdc-file) | `changeDataFeed` | Writers only
 [Column Mapping](#column-mapping) | `columnMapping` | Readers and writers
 [Identity Columns](#identity-columns) | `identityColumns` | Writers only
