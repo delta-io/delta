@@ -32,7 +32,8 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public class TimestampType extends BasePrimitiveType {
     private static final byte typePromotionGroup = PromotionGroup.TIME_GROUP;
-    private static final byte typePromotionPrecedenceInGroup = PromotionGroup.TIME_PRECEDENCE_TIMESTAMP;
+    private static final byte typePromotionPrecedenceInGroup =
+            PromotionGroup.TIME_PRECEDENCE_TIMESTAMP;
     public static final TimestampType TIMESTAMP = new TimestampType();
 
     private TimestampType() {

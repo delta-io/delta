@@ -25,7 +25,8 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public class DoubleType extends BasePrimitiveType {
     private static final byte typePromotionGroup = PromotionGroup.NUMBER_GROUP;
-    private static final byte typePromotionPrecedenceInGroup = PromotionGroup.NUMBER_PRECEDENCE_DOUBLE;
+    private static final byte typePromotionPrecedenceInGroup =
+            PromotionGroup.NUMBER_PRECEDENCE_DOUBLE;
     public static final DoubleType DOUBLE = new DoubleType();
 
     private DoubleType() {

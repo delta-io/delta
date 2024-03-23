@@ -25,7 +25,8 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public class LongType extends BasePrimitiveType {
     private static final byte typePromotionGroup = PromotionGroup.NUMBER_GROUP;
-    private static final byte typePromotionPrecedenceInGroup = PromotionGroup.NUMBER_PRECEDENCE_LONG;
+    private static final byte typePromotionPrecedenceInGroup =
+            PromotionGroup.NUMBER_PRECEDENCE_LONG;
     public static final LongType LONG = new LongType();
 
     private LongType() {

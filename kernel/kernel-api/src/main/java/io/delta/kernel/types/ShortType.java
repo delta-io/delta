@@ -25,7 +25,8 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public class ShortType extends BasePrimitiveType {
     private static final byte typePromotionGroup = PromotionGroup.NUMBER_GROUP;
-    private static final byte typePromotionPrecedenceInGroup = PromotionGroup.NUMBER_PRECEDENCE_SHORT;
+    private static final byte typePromotionPrecedenceInGroup =
+            PromotionGroup.NUMBER_PRECEDENCE_SHORT;
     public static final ShortType SHORT = new ShortType();
 
     private ShortType() {
