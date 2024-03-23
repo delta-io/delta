@@ -26,7 +26,7 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class MapType extends DataType {
-
+    private static final byte typePromotionGroup = PromotionGroup.MAP_GROUP;
     private final DataType keyType;
     private final DataType valueType;
     private final boolean valueContainsNull;
@@ -35,6 +35,11 @@ public class MapType extends DataType {
         this.keyType = keyType;
         this.valueType = valueType;
         this.valueContainsNull = valueContainsNull;
+    }
+
+    @Override
+    public byte getPromotionGroup(DataType dataType) {
+        return typePromotionGroup;
     }
 
     public DataType getKeyType() {

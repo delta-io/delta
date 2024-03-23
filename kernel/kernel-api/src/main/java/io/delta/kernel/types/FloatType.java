@@ -24,9 +24,22 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class FloatType extends BasePrimitiveType {
+    private static final byte typePromotionGroup = PromotionGroup.NUMBER_GROUP;
+    private static final byte typePromotionPrecedenceInGroup = PromotionGroup.NUMBER_PRECEDENCE_FLOAT;
     public static final FloatType FLOAT = new FloatType();
 
     private FloatType() {
         super("float");
     }
+
+    @Override
+    public byte getPromotionPrecedence(DataType dataType) {
+        return typePromotionPrecedenceInGroup;
+    }
+    @Override
+    public byte getPromotionGroup(DataType dataType) {
+        return typePromotionGroup;
+    }
 }
+
+

@@ -24,9 +24,15 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class StringType extends BasePrimitiveType {
+    private static final byte typePromotionGroup = PromotionGroup.STRING_GROUP;
     public static final StringType STRING = new StringType();
 
     private StringType() {
         super("string");
+    }
+
+    @Override
+    public byte getPromotionGroup(DataType dataType) {
+        return typePromotionGroup;
     }
 }

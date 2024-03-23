@@ -24,9 +24,20 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class ByteType extends BasePrimitiveType {
+    private static final byte typePromotionGroup = PromotionGroup.NUMBER_GROUP;
+    private static final byte typePromotionPrecedenceInGroup = PromotionGroup.NUMBER_PRECEDENCE_BYTE;
+
     public static final ByteType BYTE = new ByteType();
 
     private ByteType() {
         super("byte");
+    }
+    @Override
+    public byte getPromotionPrecedence(DataType dataType) {
+        return typePromotionPrecedenceInGroup;
+    }
+    @Override
+    public byte getPromotionGroup(DataType dataType) {
+        return typePromotionGroup;
     }
 }
