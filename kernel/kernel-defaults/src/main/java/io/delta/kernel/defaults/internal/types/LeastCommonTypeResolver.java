@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.types;
 
 import java.util.*;
+
 import io.delta.kernel.types.*;
 
 /**
