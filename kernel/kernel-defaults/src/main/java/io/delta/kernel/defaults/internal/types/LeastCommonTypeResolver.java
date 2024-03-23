@@ -122,7 +122,8 @@ public class LeastCommonTypeResolver {
         }
 
         if (distinctOutputGroups > 2) {
-            throw new IllegalStateException("There are not least common type for group greater than 2");
+            throw new IllegalStateException(
+                    "There are not least common type for group greater than 2");
         } else if (distinctOutputGroups == 2) {
             if (hasOutputGroupWithNoTypePromotion) {
                 throw new IllegalStateException("There are no least common type resolution");
@@ -153,15 +154,20 @@ public class LeastCommonTypeResolver {
             } else if (hasGroup5) {
                 return BooleanType.BOOLEAN;
             } else if (hasGroup6) {
-                throw new IllegalStateException("Interval is not supported yet for least common type resolution");
+                throw new IllegalStateException(
+                        "Interval is not supported yet for least common type resolution");
             } else if (hasGroup7) {
-                throw new IllegalStateException("ArrayType is not supported yet for least common type resolution");
+                throw new IllegalStateException(
+                        "ArrayType is not supported yet for least common type resolution");
             } else if (hasGroup8) {
-                throw new IllegalStateException("MapType is not supported yet for least common type resolution");
+                throw new IllegalStateException(
+                        "MapType is not supported yet for least common type resolution");
             } else if (hasGroup9) {
-                throw new IllegalStateException("StructType is not supported yet for least common type resolution");
+                throw new IllegalStateException(
+                        "StructType is not supported yet for least common type resolution");
             } else {
-                throw new IllegalStateException("There are no least common type resolution");
+                throw new IllegalStateException(
+                        "There are no least common type resolution");
             }
         } else {
             throw new IllegalStateException("There are no least common type resolution");
@@ -176,7 +182,8 @@ public class LeastCommonTypeResolver {
                 return TimestampType.TIMESTAMP;
             default:
                 String msg = String.format(
-                        "`%s` is not supported for least common type resolution for time related type`",
+                        "`%s` is not supported for least common type " +
+                                "resolution for time related type`",
                         precedence);
                 throw new IllegalStateException(msg);
         }
@@ -200,7 +207,8 @@ public class LeastCommonTypeResolver {
                 return DoubleType.DOUBLE;
             default:
                 String msg = String.format(
-                        "`%s` is not supported for least common type resolution for number related type`",
+                        "`%s` is not supported for least common type " +
+                                "resolution for number related type`",
                         precedence);
                 throw new IllegalStateException(msg);
         }

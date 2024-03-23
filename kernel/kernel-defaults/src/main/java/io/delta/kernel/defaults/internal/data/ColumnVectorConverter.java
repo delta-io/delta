@@ -17,12 +17,10 @@ package io.delta.kernel.defaults.internal.data;
 
 import java.math.BigDecimal;
 import java.util.Optional;
+
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 import io.delta.kernel.defaults.internal.data.vector.*;
-
 
 public class ColumnVectorConverter {
     public static ColumnVector convertToOutputType(ColumnVector c, DataType outputType) {
