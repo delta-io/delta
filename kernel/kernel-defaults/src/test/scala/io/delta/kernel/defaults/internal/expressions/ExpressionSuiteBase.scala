@@ -22,7 +22,12 @@ import io.delta.kernel.expressions._
 import io.delta.kernel.types._
 import java.lang.{
   Byte => ByteJ,
-  Short => ShortJ, Integer => IntegerJ, Long => LongJ, Double => DoubleJ, Float => FloatJ, String => StringJ}
+  Short => ShortJ,
+  Integer => IntegerJ,
+  Long => LongJ,
+  Double => DoubleJ,
+  Float => FloatJ,
+  String => StringJ}
 
 trait ExpressionSuiteBase extends TestUtils with VectorTestUtils {
   /** create a columnar batch of given `size` with zero columns in it. */
