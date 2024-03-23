@@ -25,7 +25,7 @@ import io.delta.kernel.types.*;
  * This class contains helper function to resolve a list of type into their least
  *     common type
  * Source of truth for type precedence is defined here
- * <a href="https://spark.apache.org/docs/latest/sql-ref-ansi-compliance.html#least-common-type-resolution">
+ * <a href="https://spark.apache.org/docs/latest/sql-ref-ansi-compliance.html#least-common-type-resolution">doc<a/>
  */
 public class LeastCommonTypeResolver {
 
