@@ -258,7 +258,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                     !(children.get(0).outputType instanceof IntegerType) &&
                     !(children.get(0).outputType instanceof LongType) &&
                     !(children.get(0).outputType instanceof FloatType) &&
-                    !(children.get(0).outputType instanceof DoubleType)) {
+                    !(children.get(0).outputType instanceof DoubleType) &&
+                    !(children.get(0).outputType instanceof StringType)) {
                 throw new UnsupportedOperationException(
                         "Coalesce is only supported for boolean and number type expressions");
             }

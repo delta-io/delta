@@ -22,7 +22,7 @@ import io.delta.kernel.expressions._
 import io.delta.kernel.types._
 import java.lang.{
   Byte => ByteJ,
-  Short => ShortJ, Integer => IntegerJ, Long => LongJ, Double => DoubleJ, Float => FloatJ}
+  Short => ShortJ, Integer => IntegerJ, Long => LongJ, Double => DoubleJ, Float => FloatJ, String => StringJ}
 
 trait ExpressionSuiteBase extends TestUtils with VectorTestUtils {
   /** create a columnar batch of given `size` with zero columns in it. */
@@ -70,6 +70,9 @@ trait ExpressionSuiteBase extends TestUtils with VectorTestUtils {
             s"unexpected value at $rowId")
           case DoubleType.DOUBLE => assert(
             actual.getDouble(rowId) === expected.getDouble(rowId),
+            s"unexpected value at $rowId")
+          case StringType.STRING => assert(
+            actual.getString(rowId) === expected.getString(rowId),
             s"unexpected value at $rowId")
           case _ => new UnsupportedOperationException("date type is not supported")
         }
@@ -137,6 +140,12 @@ trait ExpressionSuiteBase extends TestUtils with VectorTestUtils {
         case _ => null
       }
       doubleVector(copy)
+    case StringType.STRING =>
+      val copy: Seq[StringJ] = data.map {
+        case i: String => i
+        case _ => null
+      }
+      stringVector(copy)
     case null => null
   }
 
@@ -182,6 +191,11 @@ trait ExpressionSuiteBase extends TestUtils with VectorTestUtils {
         index => if (index % valueAtEveryNth != 0) null else DoubleJ.valueOf(value)
       }
       doubleVector(data)
+    case StringType.STRING =>
+      val data: Seq[StringJ] = (1 to size).map {
+        index => if (index % valueAtEveryNth != 0) null else StringJ.valueOf(value)
+      }
+      stringVector(data)
     case null => null
   }
 }

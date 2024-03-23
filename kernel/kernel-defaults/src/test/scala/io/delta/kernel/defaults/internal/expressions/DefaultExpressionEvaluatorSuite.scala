@@ -261,7 +261,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     IntegerType.INTEGER,
     LongType.LONG,
     FloatType.FLOAT,
-    DoubleType.DOUBLE).foreach(typeToTest =>
+    DoubleType.DOUBLE,
+    StringType.STRING).foreach(typeToTest =>
     test(s"evaluate expression coalesce with type: $typeToTest") {
       val sizeOfVector = 11
       // col1 -> [n,2,n,2,n,2,n,2,n,2,n]
