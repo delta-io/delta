@@ -24,7 +24,6 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.client.ExpressionHandler;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.defaults.internal.data.ColumnVectorConverter;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 
@@ -34,6 +33,7 @@ import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
 import static io.delta.kernel.internal.util.ExpressionUtils.getUnaryChild;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.defaults.internal.data.ColumnVectorConverter;
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.booleanWrapperVector;
