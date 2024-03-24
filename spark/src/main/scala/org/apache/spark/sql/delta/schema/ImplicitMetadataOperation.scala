@@ -122,7 +122,14 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       if (rearrangeOnly) {
         throw DeltaErrors.unexpectedDataChangeException("Change the Delta table schema")
       }
-      txn.updateMetadata(txn.metadata.copy(schemaString = mergedSchema.json
+
+      val schemaWithTypeWideningMetadata = TypeWideningMetadata.addTypeWideningMetadata(
+        txn,
+        schema = mergedSchema,
+        oldSchema = txn.metadata.schema
+      )
+
+      txn.updateMetadata(txn.metadata.copy(schemaString = schemaWithTypeWideningMetadata.json
       ))
     } else if (isNewSchema || isNewPartitioning
         ) {
@@ -201,7 +208,8 @@ object ImplicitMetadataOperation {
       SchemaMergingUtils.mergeSchemas(
         txn.metadata.schema,
         dataSchema,
-        fixedTypeColumns = fixedTypeColumns)
+        fixedTypeColumns = fixedTypeColumns,
+        allowTypeWidening = TypeWidening.isEnabled(txn.protocol, txn.metadata))
     }
   }
 

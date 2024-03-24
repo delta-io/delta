@@ -36,6 +36,7 @@ import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkThrowable
+import org.apache.spark.util.Utils
 
 /**
  * Convenience wrappers for logging that include delta specific options and
@@ -134,6 +135,31 @@ trait DeltaLogging
         recordFrameProfile("Delta", opType) {
             thunk
         }
+    }
+  }
+
+  /**
+   * Helper method to check invariants in Delta code. Fails when running in tests, records a delta
+   * assertion event and logs a warning otherwise.
+   */
+  protected def deltaAssert(
+      check: => Boolean,
+      name: String,
+      msg: String,
+      deltaLog: DeltaLog = null,
+      data: AnyRef = null,
+      path: Option[Path] = None)
+    : Unit = {
+    if (Utils.isTesting) {
+      assert(check, msg)
+    } else {
+      recordDeltaEvent(
+        deltaLog = deltaLog,
+        opType = s"delta.assertions.$name",
+        data = data,
+        path = path
+      )
+      logWarning(msg)
     }
   }
 

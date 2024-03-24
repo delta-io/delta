@@ -675,8 +675,11 @@ class DeltaDataFrameWriterV2Suite
     withTable(table) {
       spark.sql(s"CREATE TABLE $table(id bigint, p int) USING delta PARTITIONED BY (p)")
       def verifyNotImplicitCasting(f: => Unit): Unit = {
-        val e = intercept[AnalysisException](f).getMessage
-        assert(e.contains("Failed to merge incompatible data types LongType and IntegerType"))
+        val e = intercept[DeltaAnalysisException](f)
+        checkError(
+          exception = e.getCause.asInstanceOf[DeltaAnalysisException],
+          errorClass = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+          parameters = Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType"))
       }
       verifyNotImplicitCasting {
         Seq(1 -> 1).toDF("id", "p").write.mode("append").format("delta").saveAsTable(table)

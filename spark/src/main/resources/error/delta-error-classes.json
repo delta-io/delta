@@ -772,7 +772,7 @@
   },
   "DELTA_FAILED_TO_MERGE_FIELDS" : {
     "message" : [
-      "Failed to merge fields '<field>' and '<fieldRoot>'. <fieldChild>"
+      "Failed to merge fields '<currentField>' and '<updateField>'"
     ],
     "sqlState" : "22005"
   },
@@ -1176,6 +1176,12 @@
     ],
     "sqlState" : "22006"
   },
+  "DELTA_INVALID_INVENTORY_SCHEMA" : {
+    "message" : [
+      "The schema for the specified INVENTORY does not contain all of the required fields. Required fields are: <expectedSchema>"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_INVALID_ISOLATION_LEVEL" : {
     "message" : [
       "invalid isolation level '<isolationLevel>'"
@@ -1317,6 +1323,12 @@
     ],
     "sqlState" : "40000"
   },
+  "DELTA_MERGE_INCOMPATIBLE_DATATYPE" : {
+    "message" : [
+      "Failed to merge incompatible data types <currentDataType> and <updateDataType>"
+    ],
+    "sqlState" : "42K09"
+  },
   "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE" : {
     "message" : [
       "Failed to merge decimal types with incompatible <decimalRanges>"
@@ -1381,6 +1393,18 @@
       "Cannot find <columName> in table columns: <columnList>"
     ],
     "sqlState" : "42703"
+  },
+  "DELTA_MISSING_COMMIT_INFO" : {
+    "message" : [
+      "This table has the feature <featureName> enabled which requires the presence of the CommitInfo action in every commit. However, the CommitInfo action is missing from commit version <version>."
+    ],
+    "sqlState" : "KD004"
+  },
+  "DELTA_MISSING_COMMIT_TIMESTAMP" : {
+    "message" : [
+      "This table has the feature <featureName> enabled which requires the presence of commitTimestamp in the CommitInfo action. However, this field has not been set in commit version <version>."
+    ],
+    "sqlState" : "KD004"
   },
   "DELTA_MISSING_DELTA_TABLE" : {
     "message" : [

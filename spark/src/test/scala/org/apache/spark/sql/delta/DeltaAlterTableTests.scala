@@ -1628,6 +1628,17 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       checkColType(spark.table("t").schema(1), VarcharType(5))
     }
   }
+
+  test("CHANGE COLUMN: allow change from char(x) to string type") {
+    withTable("t") {
+      sql("CREATE TABLE t(i VARCHAR(4)) USING delta")
+      sql("ALTER TABLE t CHANGE COLUMN i TYPE STRING")
+      val col = spark.table("t").schema.head
+      assert(col.dataType == StringType)
+      assert(CharVarcharUtils.getRawType(col.metadata).isEmpty)
+      sql("INSERT INTO t VALUES ('123456789')")
+    }
+  }
 }
 
 trait DeltaAlterTableByNameTests extends DeltaAlterTableTests {

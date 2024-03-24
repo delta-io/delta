@@ -28,16 +28,17 @@ import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterat
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 
 class DeltaTimeTravelSuite extends QueryTest
   with SharedSparkSession
-  with SQLTestUtils
+  with DeltaSQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._

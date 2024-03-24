@@ -532,10 +532,13 @@ class DeltaAnalysis(session: SparkSession)
           newTarget,
           merge.sourceTable,
           merge.mergeCondition,
-          matchedActions ++ notMatchedActions ++ notMatchedBySourceActions
+          matchedActions ++ notMatchedActions ++ notMatchedBySourceActions,
+          // TODO: We are waiting for Spark to support the SQL "WITH SCHEMA EVOLUTION" syntax.
+          // After that this argument will be `merge.withSchemaEvolution`.
+          withSchemaEvolution = false
         )
 
-        DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
+        ResolveDeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
           tryResolveReferencesForExpressions(session))
       } else {
         merge
@@ -577,7 +580,7 @@ class DeltaAnalysis(session: SparkSession)
 
     case deltaMerge: DeltaMergeInto =>
       val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
-        DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
+        ResolveDeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
           tryResolveReferencesForExpressions(session))
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))

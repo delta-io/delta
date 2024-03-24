@@ -17,12 +17,17 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.nio.file.FileAlreadyExistsException
+
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitResponse, CommitStore, CommitStoreBuilder, CommitStoreProvider, GetCommitsResponse, UpdatedActions}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.Row
@@ -288,9 +293,11 @@ class OptimisticTransactionSuite
   test("AddFile with different partition schema compared to metadata should fail") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
-      log.startTransaction().commit(Seq(Metadata(
+      val initTxn = log.startTransaction()
+      initTxn.updateMetadataForNewTable(Metadata(
         schemaString = StructType.fromDDL("col2 string, a int").json,
-        partitionColumns = Seq("col2"))), ManualUpdate)
+        partitionColumns = Seq("col2")))
+      initTxn.commit(Seq(), ManualUpdate)
       withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "true") {
         val e = intercept[IllegalStateException] {
           log.startTransaction().commit(Seq(AddFile(
@@ -425,7 +432,7 @@ class OptimisticTransactionSuite
 
       // preCommitLogSegment should not get updated until a commit is triggered
       assert(testTxn.preCommitLogSegment.version == 1)
-      assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnStartTs)
+      assert(testTxn.preCommitLogSegment.lastCommitFileModificationTimestamp < testTxnStartTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointProvider.isEmpty)
 
@@ -433,9 +440,109 @@ class OptimisticTransactionSuite
 
       // preCommitLogSegment should get updated to the version right before the txn commits
       assert(testTxn.preCommitLogSegment.version == 12)
-      assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnEndTs)
+      assert(testTxn.preCommitLogSegment.lastCommitFileModificationTimestamp < testTxnEndTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointProvider.version == 10)
+    }
+  }
+
+  test("Limited retries for non-conflict retryable CommitFailedExceptions") {
+    val commitStoreName = "retryable-non-conflict-commit-store"
+    var commitAttempts = 0
+    val numRetries = "100"
+    val numNonConflictRetries = "10"
+    val initialNonConflictErrors = 5
+    val initialConflictErrors = 5
+
+    object RetryableNonConflictCommitStoreBuilder extends CommitStoreBuilder {
+
+      override def name: String = commitStoreName
+
+      override def build(conf: Map[String, String]): CommitStore = {
+        new CommitStore {
+          override def commit(
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              tablePath: Path,
+              commitVersion: Long,
+              actions: Iterator[String],
+              updatedActions: UpdatedActions): CommitResponse = {
+            commitAttempts += 1
+            throw new CommitFailedException(
+              retryable = true,
+              conflict = commitAttempts > initialNonConflictErrors &&
+                commitAttempts <= (initialNonConflictErrors + initialConflictErrors),
+              message = "")
+          }
+          override def getCommits(
+              tablePath: Path,
+              startVersion: Long,
+              endVersion: Option[Long]): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
+        }
+      }
+    }
+
+    CommitStoreProvider.registerBuilder(RetryableNonConflictCommitStoreBuilder)
+
+    withSQLConf(
+        DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS.key -> numRetries,
+        DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS.key -> numNonConflictRetries) {
+      withTempDir { tempDir =>
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val conf = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> commitStoreName)
+        log.startTransaction().commit(Seq(Metadata(configuration = conf)), ManualUpdate)
+        val testTxn = log.startTransaction()
+        intercept[CommitFailedException] { testTxn.commit(Seq.empty, ManualUpdate) }
+        // num-attempts = 1 + num-retries
+        assert(commitAttempts ==
+          (initialNonConflictErrors + initialConflictErrors + numNonConflictRetries.toInt + 1))
+      }
+    }
+  }
+
+  test("No retries for FileAlreadyExistsException with Commit Store") {
+    val commitStoreName = "file-already-exists-commit-store"
+    var commitAttempts = 0
+
+    object FileAlreadyExistsCommitStoreBuilder extends CommitStoreBuilder {
+
+      override def name: String = commitStoreName
+
+      override def build(conf: Map[String, String]): CommitStore = {
+        new CommitStore {
+          override def commit(
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              tablePath: Path,
+              commitVersion: Long,
+              actions: Iterator[String],
+              updatedActions: UpdatedActions): CommitResponse = {
+            commitAttempts += 1
+            throw new FileAlreadyExistsException("Commit-File Already Exists")
+          }
+          override def getCommits(
+              tablePath: Path,
+              startVersion: Long,
+              endVersion: Option[Long]): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
+        }
+      }
+    }
+
+    CommitStoreProvider.registerBuilder(FileAlreadyExistsCommitStoreBuilder)
+
+    withSQLConf(
+        DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS.key -> "100",
+        DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS.key -> "10") {
+      withTempDir { tempDir =>
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val conf = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> commitStoreName)
+        log.startTransaction().commit(Seq(Metadata(configuration = conf)), ManualUpdate)
+        val testTxn = log.startTransaction()
+        intercept[FileAlreadyExistsException] { testTxn.commit(Seq.empty, ManualUpdate) }
+        // Test that there are no retries for the FileAlreadyExistsException in CommitStore.commit()
+        // num-attempts(1) = 1 + num-retries(0)
+        assert(commitAttempts == 1)
+      }
     }
   }
 

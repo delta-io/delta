@@ -21,14 +21,18 @@ import java.sql.Date
 
 import scala.collection.JavaConverters._
 
-import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.{Table, TableNotFoundException}
-import io.delta.kernel.defaults.internal.DefaultKernelUtils
-import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getTestResourceFilePath
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.scalatest.funsuite.AnyFunSuite
+import org.apache.spark.sql.functions.col
+import io.delta.golden.GoldenTableUtils.goldenTablePath
+
+import io.delta.kernel.{Table, TableNotFoundException}
+import io.delta.kernel.defaults.internal.DefaultKernelUtils
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
+import io.delta.kernel.types.{LongType, StructType}
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
@@ -422,7 +426,6 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     )
   }
 
-
   test("table primitives") {
     val expectedAnswer = (0 to 10).map {
       case 10 => TestRow(null, null, null, null, null, null, null, null, null, null)
@@ -623,6 +626,146 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         version = Some(11),
         expectedVersion = Some(11)
       )
+    }
+  }
+
+  test("time travel with schema change") {
+    withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.getCanonicalPath)
+      spark.range(10, 20).withColumn("part", col("id"))
+        .write.format("delta").mode("append").option("mergeSchema", true)
+        .save(tempDir.getCanonicalPath)
+      checkTable(
+        path = tempDir.getCanonicalPath,
+        expectedAnswer = (0L until 10L).map(TestRow(_)),
+        expectedSchema = new StructType().add("id", LongType.LONG),
+        version = Some(0),
+        expectedVersion = Some(0)
+      )
+    }
+  }
+
+  test("time travel with partition change") {
+    withTempDir { tempDir =>
+      spark.range(10).withColumn("part5", col("id") % 5)
+        .write.format("delta").partitionBy("part5").mode("append")
+        .save(tempDir.getCanonicalPath)
+      spark.range(10, 20).withColumn("part2", col("id") % 2)
+        .write
+        .format("delta")
+        .partitionBy("part2")
+        .mode("overwrite")
+        .option("overwriteSchema", true)
+        .save(tempDir.getCanonicalPath)
+      checkTable(
+        path = tempDir.getCanonicalPath,
+        expectedAnswer = (0L until 10L).map(v => TestRow(v, v % 5)),
+        expectedSchema = new StructType()
+          .add("id", LongType.LONG)
+          .add("part5", LongType.LONG),
+        version = Some(0),
+        expectedVersion = Some(0)
+      )
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////
+  // getSnapshotAtTimestamp end-to-end tests (more tests in DeltaHistoryManagerSuite)
+  //////////////////////////////////////////////////////////////////////////////////
+
+  private def generateCommits(path: String, commits: Long*): Unit = {
+    commits.zipWithIndex.foreach { case (ts, i) =>
+      spark.range(i*10, i*10 + 10).write.format("delta").mode("append").save(path)
+      val file = new File(FileNames.deltaFile(new Path(path, "_delta_log"), i))
+      file.setLastModified(ts)
+    }
+  }
+
+  test("getSnapshotAtTimestamp: basic end-to-end read") {
+    withTempDir { tempDir =>
+      val start = 1540415658000L
+      val minuteInMilliseconds = 60000L
+      generateCommits(tempDir.getCanonicalPath, start, start + 20 * minuteInMilliseconds,
+        start + 40 * minuteInMilliseconds)
+      // Exact timestamp for version 0
+      checkTable(
+        path = tempDir.getCanonicalPath,
+        expectedAnswer = (0L until 10L).map(TestRow(_)),
+        timestamp = Some(start),
+        expectedVersion = Some(0)
+      )
+      // Timestamp between version 0 and 1 should load version 0
+      checkTable(
+        path = tempDir.getCanonicalPath,
+        expectedAnswer = (0L until 10L).map(TestRow(_)),
+        timestamp = Some(start + 10 * minuteInMilliseconds),
+        expectedVersion = Some(0)
+      )
+      // Exact timestamp for version 1
+      checkTable(
+        path = tempDir.getCanonicalPath,
+        expectedAnswer = (0L until 20L).map(TestRow(_)),
+        timestamp = Some(start + 20 * minuteInMilliseconds),
+        expectedVersion = Some(1)
+      )
+      // Exact timestamp for the last version
+      checkTable(
+        path = tempDir.getCanonicalPath,
+        expectedAnswer = (0L until 30L).map(TestRow(_)),
+        timestamp = Some(start + 40 * minuteInMilliseconds),
+        expectedVersion = Some(2)
+      )
+      // Timestamp after last commit fails
+      val e1 = intercept[RuntimeException] {
+        checkTable(
+          path = tempDir.getCanonicalPath,
+          expectedAnswer = Seq(),
+          timestamp = Some(start + 50 * minuteInMilliseconds)
+        )
+      }
+      assert(e1.getMessage.contains(
+        s"The provided timestamp ${start + 50 * minuteInMilliseconds} ms " +
+          s"(2018-10-24T22:04:18Z) is after the latest commit"))
+      // Timestamp before the first commit fails
+      val e2 = intercept[RuntimeException] {
+        checkTable(
+          path = tempDir.getCanonicalPath,
+          expectedAnswer = Seq(),
+          timestamp = Some(start - 1L)
+        )
+      }
+      assert(e2.getMessage.contains(
+        s"The provided timestamp ${start - 1L} ms (2018-10-24T21:14:17.999Z) is before " +
+          s"the earliest version available."))
+    }
+  }
+
+  test("getSnapshotAtTimestamp: empty _delta_log folder") {
+    withTempDir { dir =>
+      new File(dir, "_delta_log").mkdirs()
+      intercept[TableNotFoundException] {
+        Table.forPath(defaultTableClient, dir.getCanonicalPath)
+          .getSnapshotAtTimestamp(defaultTableClient, 0L)
+      }
+    }
+  }
+
+  test("getSnapshotAtTimestamp: empty folder no _delta_log dir") {
+    withTempDir { dir =>
+      intercept[TableNotFoundException] {
+        Table.forPath(defaultTableClient, dir.getCanonicalPath)
+          .getSnapshotAtTimestamp(defaultTableClient, 0L)
+      }
+    }
+  }
+
+  test("getSnapshotAtTimestamp: non-empty folder not a delta table") {
+    withTempDir { dir =>
+      spark.range(20).write.format("parquet").mode("overwrite").save(dir.getCanonicalPath)
+      intercept[TableNotFoundException] {
+        Table.forPath(defaultTableClient, dir.getCanonicalPath)
+          .getSnapshotAtTimestamp(defaultTableClient, 0L)
+      }
     }
   }
 }

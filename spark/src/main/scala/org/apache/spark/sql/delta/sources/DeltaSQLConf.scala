@@ -375,6 +375,15 @@ trait DeltaSQLConfBase {
       .checkValue(_ >= 0, "maxCommitAttempts has to be positive")
       .createWithDefault(10000000)
 
+  val DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS =
+    buildConf("maxNonConflictCommitAttempts")
+      .internal()
+      .doc("The maximum number of non-conflict commit attempts we will try for a single commit " +
+        "before failing")
+      .intConf
+      .checkValue(_ >= 0, "maxNonConflictCommitAttempts has to be positive")
+      .createWithDefault(10)
+
   val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
     buildConf("properties.defaults.minWriterVersion")
       .doc("The default writer protocol version to create new tables with, unless a feature " +
@@ -1604,6 +1613,29 @@ trait DeltaSQLConfBase {
       .doc("Bin size for the adaptive shuffle in optimized writes in megabytes.")
       .bytesConf(ByteUnit.MiB)
       .createWithDefault(512)
+
+  val DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE =
+  buildConf("optimize.clustering.mergeStrategy.minCubeSize.threshold")
+    .internal()
+    .doc(
+      "Z-cube size at which new data will no longer be merged with it during incremental " +
+        "OPTIMIZE."
+    )
+    .longConf
+    .checkValue(_ >= 0, "the threshold must be >= 0")
+    .createWithDefault(100 * DELTA_OPTIMIZE_MAX_FILE_SIZE.defaultValue.get)
+
+  val DELTA_OPTIMIZE_CLUSTERING_TARGET_CUBE_SIZE =
+  buildConf("optimize.clustering.mergeStrategy.minCubeSize.targetCubeSize")
+    .internal()
+    .doc(
+      "Target size of the Z-cubes we will create. This is not a hard max; we will continue " +
+        "adding files to a Z-cube until their combined size exceeds this value. This value " +
+        s"must be greater than or equal to ${DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.key}. "
+    )
+    .longConf
+    .checkValue(_ >= 0, "the target must be >= 0")
+    .createWithDefault((DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.defaultValue.get * 1.5).toLong)
 
   //////////////////
   // Clustered Table

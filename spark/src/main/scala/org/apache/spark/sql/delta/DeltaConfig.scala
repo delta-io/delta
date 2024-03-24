@@ -725,6 +725,17 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a boolean."
   )
 
+  /**
+   * Whether widening the type of an existing column or field is allowed, either manually using
+   * ALTER TABLE CHANGE COLUMN or automatically if automatic schema evolution is enabled.
+   */
+  val ENABLE_TYPE_WIDENING = buildConfig[Boolean](
+    key = "enableTypeWidening",
+    defaultValue = false.toString,
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
   val MANAGED_COMMIT_OWNER_NAME = buildConfig[Option[String]](
     "managedCommits.commitOwner-dev",
     null,
@@ -743,6 +754,37 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "A string-to-string map of configuration properties for the managed commit owner.")
 
+  val IN_COMMIT_TIMESTAMPS_ENABLED = buildConfig[Boolean](
+    "enableInCommitTimestamps-dev",
+    false.toString,
+    _.toBoolean,
+    validationFunction = _ => true,
+    "needs to be a boolean."
+  )
+
+  /**
+   * This table property is used to track the version of the table at which
+   * inCommitTimestamps were enabled.
+   */
+  val IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION = buildConfig[Option[Long]](
+    "inCommitTimestampEnablementVersion-dev",
+    null,
+    v => Option(v).map(_.toLong),
+    validationFunction = _ => true,
+    "needs to be a long."
+  )
+
+  /**
+   * This table property is used to track the timestamp at which inCommitTimestamps
+   * were enabled. More specifically, it is the inCommitTimestamp of the commit with
+   * the version specified in [[IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION]].
+   */
+  val IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP = buildConfig[Option[Long]](
+    "inCommitTimestampEnablementTimestamp-dev",
+    null,
+    v => Option(v).map(_.toLong),
+    validationFunction = _ => true,
+    "needs to be a long.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase

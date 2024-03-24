@@ -367,9 +367,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       }
       assert(e.getMessage.contains(messageContains))
     }
-    // TODO support least-common-type resolution
-    checkUnsupportedTypes(LongType.LONG, IntegerType.INTEGER,
-      "Coalesce is only supported for arguments of the same type")
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
@@ -621,7 +618,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val ex = intercept[UnsupportedOperationException] {
       evaluator(inputSchema, elementAtExpr, StringType.STRING)
     }
-    assert(ex.getMessage.contains("ELEMENT_AT(column(`as_map`), 24): " +
+    assert(ex.getMessage.contains(
       "lookup key type (short) is different from the map key type (string)"))
   }
 

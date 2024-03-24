@@ -20,9 +20,7 @@ package org.apache.spark.sql.delta.commands
 import java.net.URI
 import java.util.Date
 import java.util.concurrent.TimeUnit
-
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -31,12 +29,13 @@ import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
-
 import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
+import org.apache.spark.paths.SparkPath
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.functions.{col, count, sum}
+import org.apache.spark.sql.functions.{col, count, lit, replace, startswith, substr, sum}
+import org.apache.spark.sql.types.{BooleanType, LongType, StringType, StructField, StructType}
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
 
 /**
@@ -51,6 +50,21 @@ import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
 object VacuumCommand extends VacuumCommandImpl with Serializable {
 
   case class FileNameAndSize(path: String, length: Long)
+
+  /**
+   * path : fully qualified uri
+   * length: size in bytes
+   * isDir: boolean indicating if it is a directory
+   * modificationTime: file update time in milliseconds
+   */
+  val INVENTORY_SCHEMA = StructType(
+    Seq(
+      StructField("path", StringType),
+      StructField("length", LongType),
+      StructField("isDir", BooleanType),
+      StructField("modificationTime", LongType)
+    ))
+
   /**
    * Additional check on retention duration to prevent people from shooting themselves in the foot.
    */
@@ -103,15 +117,17 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     val relativizeIgnoreError =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
 
+    val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
     snapshot.stateDS.mapPartitions { actions =>
       val reservoirBase = new Path(basePath)
       val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
       actions.flatMap {
         _.unwrap match {
-          case fa: FileAction if checkAbsolutePathOnly && !fa.path.contains(basePath) =>
-            Nil
-          case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp =>
-            Nil
+          // Existing tables may not store canonicalized paths, so we check both the canonicalized
+          // and non-canonicalized paths to ensure we don't accidentally delete wrong files.
+          case fa: FileAction if checkAbsolutePathOnly &&
+            !fa.path.contains(basePath) && !fa.path.contains(canonicalizedBasePath) => Nil
+          case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp => Nil
           case fa: FileAction =>
             getValidRelativePathsAndSubdirs(
               fa,
@@ -125,19 +141,55 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     }.toDF("path")
   }
 
+  def getFilesFromInventory(basePath: String,
+                            partitionColumns: Seq[String],
+                            inventory: DataFrame): Dataset[SerializableFileStatus] = {
+    implicit val fileNameAndSizeEncoder: Encoder[SerializableFileStatus] =
+      org.apache.spark.sql.Encoders.product[SerializableFileStatus]
+
+    // filter out required fields from provided inventory DF
+    val inventorySchema = StructType(
+        inventory.schema.fields.filter(f => INVENTORY_SCHEMA.fields.map(_.name).contains(f.name))
+      )
+    if (inventorySchema != INVENTORY_SCHEMA) {
+      throw DeltaErrors.invalidInventorySchema(INVENTORY_SCHEMA.treeString)
+    }
+
+    inventory
+      .filter(startswith(col("path"), lit(s"$basePath/")))
+      .select(
+        substr(col("path"), lit(basePath.length + 2)).as("path"),
+        col("length"), col("isDir"), col("modificationTime")
+      )
+      .flatMap {
+        row =>
+          val path = row.getString(0)
+          if(!DeltaTableUtils.isHiddenDirectory(partitionColumns, path)) {
+            Seq(SerializableFileStatus(path,
+              row.getLong(1), row.getBoolean(2), row.getLong(3)))
+          } else {
+            None
+          }
+      }
+  }
+
   /**
-   * Clears all untracked files and folders within this table. First lists all the files and
-   * directories in the table, and gets the relative paths with respect to the base of the
-   * table. Then it gets the list of all tracked files for this table, which may or may not
-   * be within the table base path, and gets the relative paths of all the tracked files with
-   * respect to the base of the table. Files outside of the table path will be ignored.
-   * Then we take a diff of the files and delete directories that were already empty, and all files
-   * that are within the table that are no longer tracked.
+   * Clears all untracked files and folders within this table. If the inventory is not provided
+   * then the command first lists all the files and directories in the table, if inventory is
+   * provided then it will be used for identifying files and directories within the table and
+   * gets the relative paths with respect to the base of the table. Then the command gets the
+   * list of all tracked files for this table, which may or may not be within the table base path,
+   * and gets the relative paths of all the tracked files with respect to the base of the table.
+   * Files outside of the table path will be ignored. Then we take a diff of the files and delete
+   * directories that were already empty, and all files that are within the table that are no longer
+   * tracked.
    *
    * @param dryRun If set to true, no files will be deleted. Instead, we will list all files and
    *               directories that will be cleared.
    * @param retentionHours An optional parameter to override the default Delta tombstone retention
    *                       period
+   * @param inventory An optional dataframe of files and directories within the table generated
+   *                  from sources like blob store inventory report
    * @return A Dataset containing the paths of the files/folders to delete in dryRun mode. Otherwise
    *         returns the base path of the table.
    */
@@ -146,6 +198,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       deltaLog: DeltaLog,
       dryRun: Boolean = true,
       retentionHours: Option[Double] = None,
+      inventory: Option[DataFrame] = None,
       clock: Clock = new SystemClock): DataFrame = {
     recordDeltaOperation(deltaLog, "delta.gc") {
 
@@ -189,8 +242,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
-
-      val allFilesAndDirs = DeltaFileOperations.recursiveListDirs(
+      val allFilesAndDirsWithDuplicates = inventory match {
+        case Some(inventoryDF) => getFilesFromInventory(basePath, partitionColumns, inventoryDF)
+        case None => DeltaFileOperations.recursiveListDirs(
           spark,
           Seq(basePath),
           hadoopConf,
@@ -198,7 +252,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
           fileListingParallelism = Option(parallelism)
         )
-        .groupByKey(_.path)
+      }
+      val allFilesAndDirs = allFilesAndDirsWithDuplicates.groupByKey(_.path)
         .mapGroups { (k, v) =>
           val duplicates = v.toSeq
           // of all the duplicates we can return the newest file.
