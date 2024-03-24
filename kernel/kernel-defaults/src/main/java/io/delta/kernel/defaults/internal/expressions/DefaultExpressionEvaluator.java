@@ -26,7 +26,6 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.internal.data.ColumnVectorConverter;
 import io.delta.kernel.expressions.*;
-import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.DeltaErrors;
 import static io.delta.kernel.internal.util.ExpressionUtils.getLeft;
@@ -41,7 +40,11 @@ import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUti
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.compare;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.evalNullability;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
-import io.delta.kernel.defaults.internal.types.LeastCommonTypeResolver;
+
+import static io.delta.kernel.defaults.internal.types.LeastCommonTypeResolver.isCompatible;
+import static io.delta.kernel.defaults.internal.types.LeastCommonTypeResolver.resolveLeastCommonType;
+
+import io.delta.kernel.types.*;
 
 /**
  * Implementation of {@link ExpressionEvaluator} for default {@link ExpressionHandler}.
@@ -66,9 +69,10 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ExpressionTransformResult transformResult =
             new ExpressionTransformer(inputSchema).visit(expression);
 
-        if (!LeastCommonTypeResolver.isCompatible(outputType, transformResult.outputType)) {
+        if (!isCompatible(outputType, transformResult.outputType)) {
             String reason = format("Can not create an expression handler " +
-                            "for expression `%s` returns result of type %s, type %s is not compatible with type %s",
+                            "for expression `%s` returns result of type %s, " +
+                            "type %s is not compatible with type %s",
                     expression, outputType, outputType, transformResult.outputType);
             throw DeltaErrors.unsupportedExpression(expression, Optional.of(reason));
         }
@@ -267,14 +271,15 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                     !(children.get(0).outputType instanceof DoubleType) &&
                     !(children.get(0).outputType instanceof StringType)) {
                 throw new UnsupportedOperationException(
-                        "Coalesce is only supported for boolean, string and number type expressions");
+                        "Coalesce is only supported for boolean, " +
+                                "string and number type expressions");
             }
 
             List<DataType> types = children
                     .stream()
                     .map(e -> e.outputType)
                     .collect(Collectors.toList());
-            DataType outputType = LeastCommonTypeResolver.resolveLeastCommonType(types);
+            DataType outputType = resolveLeastCommonType(types);
 
 
             return new ExpressionTransformResult(
