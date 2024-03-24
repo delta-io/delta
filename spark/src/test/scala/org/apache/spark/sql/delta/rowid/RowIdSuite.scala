@@ -16,10 +16,11 @@
 
 package org.apache.spark.sql.delta.rowid
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, RowId, Serializable, SnapshotIsolation, WriteSerializable}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, RowId, RowTrackingFeature, Serializable, SnapshotIsolation, WriteSerializable}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
-import org.apache.spark.sql.delta.actions.CommitInfo
+import org.apache.spark.sql.delta.actions.{CommitInfo, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -189,6 +190,33 @@ class RowIdSuite extends QueryTest
         assert(highWatermarkWithNewData == highWatermarkWithNewDataAfterRestore)
         assertRowIdsDoNotOverlap(log)
 
+      }
+    }
+  }
+
+  for (downgradeAllowed <- BOOLEAN_DOMAIN) {
+    test(s"RESTORE with potential row tracking downgrade, downgradeAllowed=$downgradeAllowed") {
+      withTempDir { dir =>
+        withRowTrackingEnabled(enabled = false) {
+          spark.range(5).write.format("delta").save(dir.toString)
+        }
+        val log = DeltaLog.forTable(spark, dir)
+        val oldProtocolVersion = log.update().protocol
+        assert(!oldProtocolVersion.isFeatureSupported(RowTrackingFeature))
+        val protocolWithRowTracking = Protocol(minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION)
+          .withFeature(RowTrackingFeature)
+        val newProtocolVersion = oldProtocolVersion.merge(protocolWithRowTracking)
+        log.upgradeProtocol(newProtocolVersion)
+        withSQLConf(
+          DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED.key -> downgradeAllowed.toString) {
+          sql(s"RESTORE TABLE delta.`$dir` VERSION AS OF 0")
+        }
+        val restoredProtocolVersion = log.update().protocol
+        if (downgradeAllowed) {
+          assert(restoredProtocolVersion === oldProtocolVersion)
+        } else {
+          assert(restoredProtocolVersion === newProtocolVersion)
+        }
       }
     }
   }

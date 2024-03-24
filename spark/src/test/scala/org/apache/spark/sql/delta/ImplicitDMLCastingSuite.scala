@@ -110,6 +110,11 @@ class ImplicitDMLCastingSuite extends QueryTest
       sourceTypeInErrorMessage = "MAP<STRING, BIGINT>", targetType = "MAP<STRING, INT>",
       targetTypeInErrorMessage = "MAP<STRING, INT>", validValue = "map('abc', 1)",
       overflowValue = s"map('abc', ${Long.MaxValue.toString})",
+      exceptionAnsiCast = "SparkArithmeticException"),
+    TestConfiguration(sourceType = "DECIMAL(3,1)",
+      sourceTypeInErrorMessage = "DECIMAL(3,1)", targetType = "DECIMAL(3,2)",
+      targetTypeInErrorMessage = "DECIMAL(3,2)", validValue = "CAST(1 AS DECIMAL(3,1))",
+      overflowValue = s"CAST(12.3 AS DECIMAL(3,1))",
       exceptionAnsiCast = "SparkArithmeticException")
   )
 

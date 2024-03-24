@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.io.IOException
 import java.lang.ref.WeakReference
 import java.net.URI
 import java.util.concurrent.TimeUnit
@@ -438,13 +439,18 @@ class DeltaLog private(
   def ensureLogDirectoryExist(): Unit = {
     val fs = logPath.getFileSystem(newDeltaHadoopConf())
     def createDirIfNotExists(path: Path): Unit = {
-      if (!fs.exists(path)) {
-        if (!fs.mkdirs(path)) {
-          throw DeltaErrors.cannotCreateLogPathException(logPath.toString)
-        }
+      var success = false
+      try {
+        success = fs.exists(path) || fs.mkdirs(path)
+      } catch {
+        case io: IOException =>
+          throw DeltaErrors.cannotCreateLogPathException(logPath.toString, io)
+      }
+      if (!success) {
+        throw DeltaErrors.cannotCreateLogPathException(logPath.toString)
       }
     }
-    createDirIfNotExists(logPath)
+    createDirIfNotExists(FileNames.commitDirPath(logPath))
   }
 
   /**

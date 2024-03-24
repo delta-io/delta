@@ -40,27 +40,30 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     // Setting `delegate` to `null` is fine. The following tests don't need to touch `delegate`.
     val parser = new DeltaSqlParser(null)
     assert(parser.parsePlan("vacuum 123_") ===
-      VacuumTableCommand(UnresolvedTable(Seq("123_"), "VACUUM", None), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("123_"), "VACUUM", None), None, None, None, false))
     assert(parser.parsePlan("vacuum 1a.123_") ===
-      VacuumTableCommand(UnresolvedTable(Seq("1a", "123_"), "VACUUM", None), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("1a", "123_"), "VACUUM", None),
+        None, None, None, false))
     assert(parser.parsePlan("vacuum a.123A") ===
-      VacuumTableCommand(UnresolvedTable(Seq("a", "123A"), "VACUUM", None), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("a", "123A"), "VACUUM", None),
+        None, None, None, false))
     assert(parser.parsePlan("vacuum a.123E3_column") ===
-      VacuumTableCommand(UnresolvedTable(Seq("a", "123E3_column"), "VACUUM", None), None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("a", "123E3_column"), "VACUUM", None),
+        None, None, None, false))
     assert(parser.parsePlan("vacuum a.123D_column") ===
       VacuumTableCommand(UnresolvedTable(Seq("a", "123D_column"), "VACUUM", None),
-        None, false))
+        None, None, None, false))
     assert(parser.parsePlan("vacuum a.123BD_column") ===
       VacuumTableCommand(UnresolvedTable(Seq("a", "123BD_column"), "VACUUM", None),
-        None, false))
+        None, None, None, false))
 
     assert(parser.parsePlan("vacuum delta.`/tmp/table`") ===
       VacuumTableCommand(UnresolvedTable(Seq("delta", "/tmp/table"), "VACUUM", None),
-        None, false))
+        None, None, None, false))
 
     assert(parser.parsePlan("vacuum \"/tmp/table\"") ===
       VacuumTableCommand(
-        UnresolvedPathBasedDeltaTable("/tmp/table", Map.empty, "VACUUM"), None, false))
+        UnresolvedPathBasedDeltaTable("/tmp/table", Map.empty, "VACUUM"), None, None, None, false))
   }
 
   test("Restore command is parsed as expected") {

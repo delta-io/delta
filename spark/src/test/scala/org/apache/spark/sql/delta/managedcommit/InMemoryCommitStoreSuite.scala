@@ -31,27 +31,6 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
-object InMemoryCommitStoreBuilder {
-  private val defaultBatchSize = 5L
-}
-
-/**
- * The InMemoryCommitStoreBuilder class is responsible for creating singleton instances of
- * InMemoryCommitStore with the specified batchSize.
- */
-case class InMemoryCommitStoreBuilder(
-    batchSize: Long = InMemoryCommitStoreBuilder.defaultBatchSize) extends CommitStoreBuilder {
-  private lazy val inMemoryStore = new InMemoryCommitStore(batchSize)
-
-  /** Name of the commit-store */
-  def name: String = "InMemoryCommitStore"
-
-  /** Returns a commit store based on the given conf */
-  def build(conf: Map[String, String]): CommitStore = {
-    inMemoryStore
-  }
-}
-
 class InMemoryCommitStoreSuite extends QueryTest
   with SharedSparkSession
   with LogStoreProvider {
@@ -78,12 +57,12 @@ class InMemoryCommitStoreSuite extends QueryTest
       version: Long,
       timestamp: Long,
       cs: CommitStore,
-      tablePath: Path): Commit = {
+      logPath: Path): Commit = {
     val commitInfo = CommitInfo.empty(version = Some(version)).withTimestamp(timestamp)
     cs.commit(
       store,
       sessionHadoopConf,
-      tablePath,
+      logPath,
       version,
       Iterator(s"$version", s"$timestamp"),
       UpdatedActions(commitInfo, None, None)).commit
@@ -91,9 +70,8 @@ class InMemoryCommitStoreSuite extends QueryTest
 
   private def assertBackfilled(
       version: Long,
-      tablePath: Path,
+      logPath: Path,
       timestampOpt: Option[Long] = None): Unit = {
-    val logPath = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
     val delta = FileNames.deltaFile(logPath, version)
     if (timestampOpt.isDefined) {
       assert(store.read(delta, sessionHadoopConf) == Seq(s"$version", s"${timestampOpt.get}"))
@@ -118,11 +96,11 @@ class InMemoryCommitStoreSuite extends QueryTest
   }
 
   private def assertInvariants(
-      tablePath: Path,
+      logPath: Path,
       cs: InMemoryCommitStore,
       commitTimestampsOpt: Option[Array[Long]] = None): Unit = {
-    val maxUntrackedVersion: Int = cs.withReadLock[Int](tablePath) {
-      val tableData = cs.perTableMap.get(tablePath)
+    val maxUntrackedVersion: Int = cs.withReadLock[Int](logPath) {
+      val tableData = cs.perTableMap.get(logPath)
       if (tableData.commitsMap.isEmpty) {
         tableData.maxCommitVersion.toInt
       } else {
@@ -138,7 +116,7 @@ class InMemoryCommitStoreSuite extends QueryTest
       }
     }
     (0 to maxUntrackedVersion).foreach { version =>
-      assertBackfilled(version, tablePath, commitTimestampsOpt.map(_(version)))}
+      assertBackfilled(version, logPath, commitTimestampsOpt.map(_(version)))}
   }
 
   test("in-memory-commit-store-builder works as expected") {
@@ -167,97 +145,103 @@ class InMemoryCommitStoreSuite extends QueryTest
   test("test basic commit and backfill functionality") {
     withTempTableDir { tempDir =>
       val tablePath = new Path(tempDir.getCanonicalPath)
+      val logPath = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
       val cs = InMemoryCommitStoreBuilder(batchSize = 3).build(Map.empty)
 
-      // Commit 0 is always immediately backfilled
-      val c0 = commit(0, 0, cs, tablePath)
-      assert(cs.getCommits(tablePath, 0) == Seq.empty)
-      assertBackfilled(0, tablePath, Some(0))
+      assert(cs.getCommits(logPath, 0) == GetCommitsResponse(Seq.empty, -1))
 
-      val c1 = commit(1, 1, cs, tablePath)
-      val c2 = commit(2, 2, cs, tablePath)
-      assert(cs.getCommits(tablePath, 0).takeRight(2) == Seq(c1, c2))
+      // Commit 0 is always immediately backfilled
+      val c0 = commit(0, 0, cs, logPath)
+      assert(cs.getCommits(logPath, 0) == GetCommitsResponse(Seq.empty, 0))
+      assertBackfilled(0, logPath, Some(0))
+
+      val c1 = commit(1, 1, cs, logPath)
+      val c2 = commit(2, 2, cs, logPath)
+      assert(cs.getCommits(logPath, 0).commits.takeRight(2) == Seq(c1, c2))
 
       // All 3 commits are backfilled since batchSize == 3
-      val c3 = commit(3, 3, cs, tablePath)
-      assert(cs.getCommits(tablePath, 0) == Seq.empty)
-      (1 to 3).foreach(i => assertBackfilled(i, tablePath, Some(i)))
+      val c3 = commit(3, 3, cs, logPath)
+      assert(cs.getCommits(logPath, 0) == GetCommitsResponse(Seq.empty, 3))
+      (1 to 3).foreach(i => assertBackfilled(i, logPath, Some(i)))
 
       // Test that startVersion and endVersion are respected in getCommits
-      val c4 = commit(4, 4, cs, tablePath)
-      val c5 = commit(5, 5, cs, tablePath)
-      assert(cs.getCommits(tablePath, 4) == Seq(c4, c5))
-      assert(cs.getCommits(tablePath, 4, Some(4)) == Seq(c4))
-      assert(cs.getCommits(tablePath, 5) == Seq(c5))
+      val c4 = commit(4, 4, cs, logPath)
+      val c5 = commit(5, 5, cs, logPath)
+      assert(cs.getCommits(logPath, 4) == GetCommitsResponse(Seq(c4, c5), 5))
+      assert(cs.getCommits(logPath, 4, Some(4)) == GetCommitsResponse(Seq(c4), 5))
+      assert(cs.getCommits(logPath, 5) == GetCommitsResponse(Seq(c5), 5))
 
       // Commit [4, 6] are backfilled since batchSize == 3
-      val c6 = commit(6, 6, cs, tablePath)
-      assert(cs.getCommits(tablePath, 0) == Seq.empty)
-      (4 to 6).foreach(i => assertBackfilled(i, tablePath, Some(i)))
-      assertInvariants(tablePath, cs.asInstanceOf[InMemoryCommitStore])
+      val c6 = commit(6, 6, cs, logPath)
+      assert(cs.getCommits(logPath, 0) == GetCommitsResponse(Seq.empty, 6))
+      (4 to 6).foreach(i => assertBackfilled(i, logPath, Some(i)))
+      assertInvariants(logPath, cs.asInstanceOf[InMemoryCommitStore])
     }
   }
 
   test("test basic commit and backfill functionality with 1 batch size") {
     withTempTableDir { tempDir =>
       val tablePath = new Path(tempDir.getCanonicalPath)
+      val logPath = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
       val cs = InMemoryCommitStoreBuilder(batchSize = 1).build(Map.empty)
 
       // Test that all commits are immediately backfilled
       (0 to 3).foreach { version =>
-        commit(version, version, cs, tablePath)
-        assert(cs.getCommits(tablePath, 0) == Seq.empty)
-        assertBackfilled(version, tablePath, Some(version))
+        commit(version, version, cs, logPath)
+        assert(cs.getCommits(logPath, 0) == GetCommitsResponse(Seq.empty, version))
+        assertBackfilled(version, logPath, Some(version))
       }
 
       // Test that out-of-order backfill is rejected
       intercept[IllegalArgumentException] {
         cs.asInstanceOf[InMemoryCommitStore]
-          .registerBackfill(tablePath, 5, new Path("delta5.json"))
+          .registerBackfill(logPath, 5)
       }
-      assertInvariants(tablePath, cs.asInstanceOf[InMemoryCommitStore])
+      assertInvariants(logPath, cs.asInstanceOf[InMemoryCommitStore])
     }
   }
 
   test("test out-of-order commits are rejected") {
     withTempTableDir { tempDir =>
       val tablePath = new Path(tempDir.getCanonicalPath)
+      val logPath = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
       val cs = InMemoryCommitStoreBuilder(batchSize = 5).build(Map.empty)
 
       // Anything other than version-0 should be rejected as the first commit
-      assertCommitFail(1, 0, retryable = false, commit(1, 0, cs, tablePath))
+      assertCommitFail(1, 0, retryable = false, commit(1, 0, cs, logPath))
 
       // Verify that conflict-checker rejects out-of-order commits.
-      (0 to 4).foreach(i => commit(i, i, cs, tablePath))
-      assertCommitFail(0, 5, retryable = true, commit(0, 5, cs, tablePath))
-      assertCommitFail(4, 5, retryable = true, commit(4, 6, cs, tablePath))
+      (0 to 4).foreach(i => commit(i, i, cs, logPath))
+      assertCommitFail(0, 5, retryable = true, commit(0, 5, cs, logPath))
+      assertCommitFail(4, 5, retryable = true, commit(4, 6, cs, logPath))
 
       // Verify that the conflict-checker still works even when everything has been backfilled
-      commit(5, 5, cs, tablePath)
-      assert(cs.getCommits(tablePath, 0) == Seq.empty)
-      assertCommitFail(5, 6, retryable = true, commit(5, 5, cs, tablePath))
-      assertCommitFail(7, 6, retryable = false, commit(7, 7, cs, tablePath))
+      commit(5, 5, cs, logPath)
+      assert(cs.getCommits(logPath, 0) == GetCommitsResponse(Seq.empty, 5))
+      assertCommitFail(5, 6, retryable = true, commit(5, 5, cs, logPath))
+      assertCommitFail(7, 6, retryable = false, commit(7, 7, cs, logPath))
 
-      assertInvariants(tablePath, cs.asInstanceOf[InMemoryCommitStore])
+      assertInvariants(logPath, cs.asInstanceOf[InMemoryCommitStore])
     }
   }
 
   test("test out-of-order backfills are rejected") {
     withTempTableDir { tempDir =>
       val tablePath = new Path(tempDir.getCanonicalPath)
+      val logPath = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
       val cs = InMemoryCommitStoreBuilder(batchSize = 5).build(Map.empty)
       intercept[IllegalArgumentException] {
-        cs.asInstanceOf[InMemoryCommitStore].registerBackfill(tablePath, 0, new Path("delta0.json"))
+        cs.asInstanceOf[InMemoryCommitStore].registerBackfill(logPath, 0)
       }
-      (0 to 3).foreach(i => commit(i, i, cs, tablePath))
+      (0 to 3).foreach(i => commit(i, i, cs, logPath))
 
       // Test that backfilling is idempotent for already-backfilled commits.
-      cs.asInstanceOf[InMemoryCommitStore].registerBackfill(tablePath, 2, new Path("delta2.json"))
-      cs.asInstanceOf[InMemoryCommitStore].registerBackfill(tablePath, 2, new Path("delta2.json"))
+      cs.asInstanceOf[InMemoryCommitStore].registerBackfill(logPath, 2)
+      cs.asInstanceOf[InMemoryCommitStore].registerBackfill(logPath, 2)
 
       // Test that backfilling uncommited commits fail.
       intercept[IllegalArgumentException] {
-        cs.asInstanceOf[InMemoryCommitStore].registerBackfill(tablePath, 4, new Path("delta4.json"))
+        cs.asInstanceOf[InMemoryCommitStore].registerBackfill(logPath, 4)
       }
     }
   }
@@ -265,6 +249,7 @@ class InMemoryCommitStoreSuite extends QueryTest
   test("should handle concurrent readers and writers") {
     withTempTableDir { tempDir =>
       val tablePath = new Path(tempDir.getCanonicalPath)
+      val logPath = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
       val batchSize = 6
       val cs = InMemoryCommitStoreBuilder(batchSize).build(Map.empty)
 
@@ -276,8 +261,6 @@ class InMemoryCommitStoreSuite extends QueryTest
       val runningTimestamp = new AtomicInteger(0)
       val commitFailedExceptions = new AtomicInteger(0)
       val totalCommits = numberOfWriters * numberOfCommitsPerWriter
-      // actualCommits is used to determine version of next commit when getCommits is empty.
-      val actualCommits = new AtomicInteger(0)
       val commitTimestamp: Array[Long] = new Array[Long](totalCommits)
 
       try {
@@ -286,16 +269,11 @@ class InMemoryCommitStoreSuite extends QueryTest
             override def run(): Unit = {
               var currentWriterCommits = 0
               while (currentWriterCommits < numberOfCommitsPerWriter) {
-                val nextVersion =
-                  cs
-                    .getCommits(tablePath, 0)
-                    .lastOption.map(_.version + 1)
-                    .getOrElse(actualCommits.get().toLong)
+                val nextVersion = cs.getCommits(logPath, 0).latestTableVersion + 1
                 try {
                   val currentTimestamp = runningTimestamp.getAndIncrement()
-                  val commitResponse = commit(nextVersion, currentTimestamp, cs, tablePath)
+                  val commitResponse = commit(nextVersion, currentTimestamp, cs, logPath)
                   currentWriterCommits += 1
-                  actualCommits.getAndIncrement()
                   assert(commitResponse.commitTimestamp == currentTimestamp)
                   assert(commitResponse.version == nextVersion)
                   commitTimestamp(commitResponse.version.toInt) = commitResponse.commitTimestamp
@@ -306,7 +284,7 @@ class InMemoryCommitStoreSuite extends QueryTest
                     commitFailedExceptions.getAndIncrement()
                 } finally {
                   assertInvariants(
-                    tablePath,
+                    logPath,
                     cs.asInstanceOf[InMemoryCommitStore],
                     Some(commitTimestamp))
                 }

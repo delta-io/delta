@@ -15,6 +15,11 @@
  */
 package io.delta.kernel.internal;
 
+import java.sql.Timestamp;
+import java.util.Optional;
+
+import io.delta.kernel.expressions.Expression;
+
 public final class DeltaErrors {
     private DeltaErrors() {}
 
@@ -41,5 +46,65 @@ public final class DeltaErrors {
             versionToLoad,
             latestVersion);
         return new RuntimeException(message);
+    }
+
+    // TODO update to be user-facing exception with future exception framework
+    //  (see delta-io/delta#2231) & document in method docs as needed
+    //  (Table::getSnapshotAtTimestamp)
+    public static RuntimeException timestampEarlierThanTableFirstCommitException(
+            String tablePath, long providedTimestamp, long commitTimestamp) {
+        String message = String.format(
+            "%s: The provided timestamp %s ms (%s) is before the earliest version available. " +
+                "Please use a timestamp greater than or equal to %s ms (%s)",
+            tablePath,
+            providedTimestamp,
+            formatTimestamp(providedTimestamp),
+            commitTimestamp,
+            formatTimestamp(commitTimestamp));
+        return new RuntimeException(message);
+    }
+
+    // TODO update to be user-facing exception with future exception framework
+    //  (see delta-io/delta#2231) & document in method docs as needed
+    //  (Table::getSnapshotAtTimestamp)
+    public static RuntimeException timestampLaterThanTableLastCommit(
+            String tablePath, long providedTimestamp, long commitTimestamp, long commitVersion) {
+        String commitTimestampStr = formatTimestamp(commitTimestamp);
+        String message = String.format(
+            "%s: The provided timestamp %s ms (%s) is after the latest commit with " +
+                "timestamp %s ms (%s). If you wish to query this version of the table please " +
+                "either provide the version %s or use the exact timestamp of the last " +
+                "commit %s ms (%s)",
+            tablePath,
+            providedTimestamp,
+            formatTimestamp(providedTimestamp),
+            commitTimestamp,
+            commitTimestampStr,
+            commitVersion,
+            commitTimestamp,
+            commitTimestampStr);
+        return new RuntimeException(message);
+    }
+
+    // TODO: Change the exception to proper type as part of the exception framework
+    // (see delta-io/delta#2231)
+    /**
+     * Exception thrown when the expression evaluator doesn't support the given expression.
+     * @param expression
+     * @param reason Optional additional reason for why the expression is not supported.
+     * @return
+     */
+    public static UnsupportedOperationException unsupportedExpression(
+            Expression expression,
+            Optional<String> reason) {
+        String message = String.format(
+            "Expression evaluator doesn't support the expression: %s.%s",
+                expression,
+                reason.map(r -> " Reason: " + r).orElse(""));
+        return new UnsupportedOperationException(message);
+    }
+
+    private static String formatTimestamp(long millisSinceEpochUTC) {
+        return new Timestamp(millisSinceEpochUTC).toInstant().toString();
     }
 }

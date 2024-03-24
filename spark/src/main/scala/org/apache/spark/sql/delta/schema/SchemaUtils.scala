@@ -21,7 +21,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -259,6 +259,9 @@ def normalizeColumnNamesInDataType(
       case (_: NullType, _) =>
         // When schema evolution adds a new column during MERGE, it can be represented with
         // a NullType in the schema of the data written by the MERGE.
+        sourceDataType
+      case (_: IntegralType, _: IntegralType) =>
+        // The integral types can be cast to each other later on.
         sourceDataType
       case _ =>
         if (Utils.isTesting) {
@@ -911,6 +914,8 @@ def normalizeColumnNamesInDataType(
    * @param failOnAmbiguousChanges Throw an error if a StructField both has columns dropped and new
    *                               columns added. These are ambiguous changes, because we don't
    *                               know if a column needs to be renamed, dropped, or added.
+   * @param allowTypeWidening      Whether widening type changes as defined in [[TypeWidening]]
+   *                               can be applied.
    * @return None if the data types can be changed, otherwise Some(err) containing the reason.
    */
   def canChangeDataType(
@@ -919,7 +924,8 @@ def normalizeColumnNamesInDataType(
       resolver: Resolver,
       columnMappingMode: DeltaColumnMappingMode,
       columnPath: Seq[String] = Nil,
-      failOnAmbiguousChanges: Boolean = false): Option[String] = {
+      failOnAmbiguousChanges: Boolean = false,
+      allowTypeWidening: Boolean = false): Option[String] = {
     def verify(cond: Boolean, err: => String): Unit = {
       if (!cond) {
         throw DeltaErrors.cannotChangeDataType(err)
@@ -969,6 +975,11 @@ def normalizeColumnNamesInDataType(
               s"dropping column(s) [${remainingFields.map(_.name).mkString(", ")}]" +
                 (if (columnPath.nonEmpty) s" from $columnName" else ""))
           }
+
+        case (fromDataType: AtomicType, toDataType: AtomicType) if allowTypeWidening =>
+          verify(TypeWidening.isTypeChangeSupported(fromDataType, toDataType),
+            s"changing data type of ${UnresolvedAttribute(columnPath).name} " +
+              s"from $fromDataType to $toDataType")
 
         case (fromDataType, toDataType) =>
           verify(fromDataType == toDataType,

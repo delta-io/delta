@@ -52,6 +52,12 @@ limitations under the License.-->
         </dependency>
 
         <dependency>
+            <groupId>io.delta</groupId>
+            <artifactId>delta-storage</artifactId>
+            <version>${delta-kernel.version}</version>
+        </dependency>
+
+        <dependency>
             <groupId>org.apache.hadoop</groupId>
             <artifactId>hadoop-client-runtime</artifactId>
             <version>${hadoop.version}</version>
