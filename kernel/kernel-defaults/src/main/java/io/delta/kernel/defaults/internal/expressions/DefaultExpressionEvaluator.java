@@ -21,11 +21,12 @@ import java.util.stream.Collectors;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.expressions.*;
+import io.delta.kernel.types.*;
 import io.delta.kernel.client.ExpressionHandler;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.internal.data.ColumnVectorConverter;
-import io.delta.kernel.expressions.*;
 
 import io.delta.kernel.internal.DeltaErrors;
 import static io.delta.kernel.internal.util.ExpressionUtils.getLeft;
@@ -40,11 +41,8 @@ import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUti
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.compare;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.evalNullability;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
-
 import static io.delta.kernel.defaults.internal.types.LeastCommonTypeResolver.isCompatible;
 import static io.delta.kernel.defaults.internal.types.LeastCommonTypeResolver.resolveLeastCommonType;
-
-import io.delta.kernel.types.*;
 
 /**
  * Implementation of {@link ExpressionEvaluator} for default {@link ExpressionHandler}.
