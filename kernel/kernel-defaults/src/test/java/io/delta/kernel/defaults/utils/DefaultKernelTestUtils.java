@@ -15,11 +15,11 @@
  */
 package io.delta.kernel.defaults.utils;
 
+import java.math.BigDecimal;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
-
-import java.math.BigDecimal;
 
 public class DefaultKernelTestUtils {
     private DefaultKernelTestUtils() {}
