@@ -43,8 +43,6 @@ object RowId {
       case d: DomainMetadata if d.domain == domainName => Some(fromJsonConfiguration(d))
       case _ => None
     }
-
-    def isRowTrackingDomain(d: DomainMetadata): Boolean = d.domain == domainName
   }
 
   val MISSING_HIGH_WATER_MARK: Long = -1L
@@ -92,7 +90,7 @@ object RowId {
           throw DeltaErrors.rowIdAssignmentWithoutStats
         }
         a.copy(baseRowId = Some(baseRowId))
-      case d: DomainMetadata if RowTrackingMetadataDomain.isRowTrackingDomain(d) =>
+      case d: DomainMetadata if RowTrackingMetadataDomain.isSameDomain(d) =>
         throw new IllegalStateException(
           "Manually setting the Row ID high water mark is not allowed")
       case other => other
