@@ -118,8 +118,9 @@ object OptimizeTableStrategy {
 
   private def getMode(snapshot: Snapshot, zOrderBy: Seq[String]): OptimizeTableMode.Value = {
     val isClusteredTable = ClusteredTableUtils.isSupported(snapshot.protocol)
+    val hasClusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshot).nonEmpty
     val isZOrderBy = zOrderBy.nonEmpty
-    if (isClusteredTable) {
+    if (isClusteredTable && hasClusteringColumns) {
       assert(!isZOrderBy)
       OptimizeTableMode.CLUSTERING
     } else if (isZOrderBy) {
