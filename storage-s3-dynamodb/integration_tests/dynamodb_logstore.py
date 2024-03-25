@@ -61,9 +61,9 @@ export DELTA_DYNAMO_TABLE_NAME=___
 
 ./run-integration-tests.py --use-local \
     --run-storage-s3-dynamodb-integration-tests \
-    --dbb-packages org.apache.hadoop:hadoop-aws:3.3.1 \
-    --dbb-conf io.delta.storage.credentials.provider=com.amazonaws.auth.profile.ProfileCredentialsProvider \
-               spark.hadoop.fs.s3a.aws.credentials.provider=com.amazonaws.auth.profile.ProfileCredentialsProvider
+    --dbb-packages org.apache.hadoop:hadoop-aws:3.4.0 \
+    --dbb-conf io.delta.storage.credentials.provider=software.amazon.awssdk.auth.credentials.ProfileCredentialsProvider \
+               spark.hadoop.fs.s3a.aws.credentials.provider=software.amazon.awssdk.auth.credentials.ProfileCredentialsProvider
 """
 
 # ===== Mandatory input from user =====

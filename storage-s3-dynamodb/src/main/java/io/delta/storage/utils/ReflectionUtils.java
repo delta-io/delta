@@ -16,9 +16,10 @@
 
 package io.delta.storage.utils;
 
-import com.amazonaws.auth.AWSCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import org.apache.hadoop.conf.Configuration;
 
+import java.lang.reflect.Method;
 import java.util.Arrays;
 
 public class ReflectionUtils {
@@ -39,21 +40,29 @@ public class ReflectionUtils {
      * @param credentialsProviderClassName Fully qualified name of the desired credentials provider class.
      * @param hadoopConf Hadoop configuration, used to create instance of AWS credentials
      *                                      provider, if supported.
-     * @return {@link AWSCredentialsProvider} object, instantiated from the class @see {credentialsProviderClassName}
+     * @return {@link AwsCredentialsProvider} object, instantiated from the class @see {credentialsProviderClassName}
      * @throws ReflectiveOperationException When AWS credentials provider constrictor do not matched.
      *                                      Means class has neither an constructor with no args as input
      *                                      nor constructor with only Hadoop configuration as argument.
      */
-    public static AWSCredentialsProvider createAwsCredentialsProvider(
+    public static AwsCredentialsProvider createAwsCredentialsProvider(
             String credentialsProviderClassName,
             Configuration hadoopConf) throws ReflectiveOperationException {
         Class<?> awsCredentialsProviderClass = Class.forName(credentialsProviderClassName);
-        if (readsCredsFromHadoopConf(awsCredentialsProviderClass))
-            return (AWSCredentialsProvider) awsCredentialsProviderClass
+        if (readsCredsFromHadoopConf(awsCredentialsProviderClass)) {
+            return (AwsCredentialsProvider) awsCredentialsProviderClass
                     .getConstructor(Configuration.class)
                     .newInstance(hadoopConf);
-        else
-            return (AWSCredentialsProvider) awsCredentialsProviderClass.getConstructor().newInstance();
+        } else {
+            try {
+                // Try to use the static create() method
+                Method createMethod = awsCredentialsProviderClass.getMethod("create");
+                return (AwsCredentialsProvider) createMethod.invoke(null);
+            } catch (NoSuchMethodException e) {
+                // Fall back to the empty constructor if create() method is not available
+                return (AwsCredentialsProvider) awsCredentialsProviderClass.getConstructor().newInstance();
+            }
+        }
     }
 
 }
