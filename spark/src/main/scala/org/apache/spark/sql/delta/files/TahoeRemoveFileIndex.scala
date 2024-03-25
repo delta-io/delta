@@ -73,7 +73,8 @@ class TahoeRemoveFileIndex(
             modificationTime = 0,
             dataChange = r.dataChange,
             tags = r.tags,
-            deletionVector = r.deletionVector
+            deletionVector = r.deletionVector,
+            baseRowId = r.baseRowId
           )
         }
     }
