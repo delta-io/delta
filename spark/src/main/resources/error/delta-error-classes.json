@@ -236,6 +236,12 @@
     ],
     "sqlState" : "22003"
   },
+  "DELTA_CANNOT_RESTORE_TIMESTAMP_EARLIER" : {
+    "message" : [
+      "Cannot restore table to timestamp (<requestedTimestamp>) as it is before the earliest version available. Please use a timestamp after (<earliestTimestamp>)."
+    ],
+    "sqlState" : "22003"
+  },
   "DELTA_CANNOT_RESTORE_TIMESTAMP_GREATER" : {
     "message" : [
       "Cannot restore table to timestamp (<requestedTimestamp>) as it is after the latest version available. Please use a timestamp before (<latestTimestamp>)"
@@ -1677,6 +1683,12 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_OPERATION_ON_VIEW_NOT_ALLOWED" : {
+    "message" : [
+      "Operation not allowed: <operation> cannot be performed on a view."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
     "message" : [
       "'overwriteSchema' cannot be used in dynamic partition overwrite mode."
@@ -2681,5 +2693,25 @@
       "TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')."
     ],
     "sqlState" : "0AKDE"
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0001" : {
+    "message" : [
+      "Cannot use '<name>' as the name of a CHECK constraint."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0002" : {
+    "message" : [
+      "Cannot create bloom filter index, invalid parameter value: '<message>'."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0003" : {
+    "message" : [
+      "You are trying to convert a table which already has a delta log where the table properties in the catalog don't match the configuration in the delta log.",
+      "Table properties in catalog:",
+      "<tableProperties>",
+      "Delta configuration:",
+      "<configuration>",
+      "If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `spark.databricks.delta.convert.metadataCheck.enabled` to false."
+    ]
   }
 }
