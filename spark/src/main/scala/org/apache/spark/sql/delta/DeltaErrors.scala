@@ -1228,7 +1228,10 @@ trait DeltaErrorsBase
     }
     new DeltaAnalysisException(
       errorClass = "_LEGACY_ERROR_TEMP_DELTA_0003",
-      messageParameters = Array(prettyMap(tableProperties), prettyMap(deltaConfiguration))
+      messageParameters = Array(
+        prettyMap(tableProperties),
+        prettyMap(deltaConfiguration),
+        DeltaSQLConf.DELTA_CONVERT_METADATA_CHECK_ENABLED.key)
     )
   }
 

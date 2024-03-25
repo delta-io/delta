@@ -2711,7 +2711,7 @@
       "<tableProperties>",
       "Delta configuration:",
       "<configuration>",
-      "If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `spark.databricks.delta.convert.metadataCheck.enabled` to false."
+      "If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `<metadataCheckSqlConf>` to false."
     ]
   }
 }
