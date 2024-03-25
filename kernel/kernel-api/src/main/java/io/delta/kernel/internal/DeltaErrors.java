@@ -16,6 +16,9 @@
 package io.delta.kernel.internal;
 
 import java.sql.Timestamp;
+import java.util.Optional;
+
+import io.delta.kernel.expressions.Expression;
 
 public final class DeltaErrors {
     private DeltaErrors() {}
@@ -81,6 +84,24 @@ public final class DeltaErrors {
             commitTimestamp,
             commitTimestampStr);
         return new RuntimeException(message);
+    }
+
+    // TODO: Change the exception to proper type as part of the exception framework
+    // (see delta-io/delta#2231)
+    /**
+     * Exception thrown when the expression evaluator doesn't support the given expression.
+     * @param expression
+     * @param reason Optional additional reason for why the expression is not supported.
+     * @return
+     */
+    public static UnsupportedOperationException unsupportedExpression(
+            Expression expression,
+            Optional<String> reason) {
+        String message = String.format(
+            "Expression evaluator doesn't support the expression: %s.%s",
+                expression,
+                reason.map(r -> " Reason: " + r).orElse(""));
+        return new UnsupportedOperationException(message);
     }
 
     private static String formatTimestamp(long millisSinceEpochUTC) {

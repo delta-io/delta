@@ -15,52 +15,51 @@
  */
 package io.delta.kernel.defaults.utils
 
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.expressions._
 
 /** Useful helper functions for creating expressions in tests */
 trait ExpressionTestUtils {
 
-  def equals(e1: Expression, e2: Expression): Predicate = {
-    new Predicate("=", e1, e2)
-  }
+  def eq(left: Expression, right: Expression): Predicate = predicate("=", left, right)
+  def equals(e1: Expression, e2: Expression): Predicate = eq(e1, e2)
 
-  def lessThan(e1: Expression, e2: Expression): Predicate = {
-    new Predicate("<", e1, e2)
-  }
+  def lt(e1: Expression, e2: Expression): Predicate = new Predicate("<", e1, e2)
+  def lessThan(e1: Expression, e2: Expression): Predicate = lt(e1, e2)
 
-  def greaterThan(e1: Expression, e2: Expression): Predicate = {
-    new Predicate(">", e1, e2)
-  }
+  def gt(e1: Expression, e2: Expression): Predicate = new Predicate(">", e1, e2)
+  def greaterThan(e1: Expression, e2: Expression): Predicate = gt(e1, e2)
 
-  def greaterThanOrEqual(e1: Expression, e2: Expression): Predicate = {
-    new Predicate(">=", e1, e2)
-  }
+  def gte(e1: Expression, e2: Expression): Predicate = predicate(">=", e1, e2)
+  def greaterThanOrEqual(e1: Expression, e2: Expression): Predicate = gte(e1, e2)
 
-  def lessThanOrEqual(e1: Expression, e2: Expression): Predicate = {
-    new Predicate("<=", e1, e2)
-  }
+  def lessThanOrEqual(e1: Expression, e2: Expression): Predicate = new Predicate("<=", e1, e2)
+  def lte(column: Column, literal: Literal): Predicate = predicate("<=", column, literal)
 
-  def not(pred: Predicate): Predicate = {
-    new Predicate("NOT", pred)
-  }
+  def not(pred: Predicate): Predicate = new Predicate("NOT", pred)
 
-  def isNotNull(e1: Expression): Predicate = {
-    new Predicate("IS_NOT_NULL", e1)
-  }
+  def isNotNull(e1: Expression): Predicate = new Predicate("IS_NOT_NULL", e1)
 
-  def col(name: String): Column = new Column(name)
+  def col(names: String*): Column = new Column(names.toArray)
 
   def nestedCol(name: String): Column = {
     new Column(name.split("\\."))
   }
 
-  protected def and(left: Predicate, right: Predicate): And = {
-    new And(left, right)
+  def predicate(name: String, children: Expression*): Predicate = {
+    new Predicate(name, children.asJava)
   }
 
-  protected def or(left: Predicate, right: Predicate): Or = {
-    new Or(left, right)
-  }
+  def and(left: Predicate, right: Predicate): Predicate = predicate("AND", left, right)
+
+  def or(left: Predicate, right: Predicate): Predicate = predicate("OR", left, right)
+
+  def int(value: Int): Literal = Literal.ofInt(value)
+
+  def str(value: String): Literal = Literal.ofString(value)
+
+  def unsupported(colName: String): Predicate = predicate("UNSUPPORTED", col(colName));
 
   /* ---------- NOT-YET SUPPORTED EXPRESSIONS ----------- */
 
@@ -71,19 +70,11 @@ trait ExpressionTestUtils {
   them to expect skipped files. If they are ever actually evaluated they will throw an exception.
    */
 
-  def nullSafeEquals(e1: Expression, e2: Expression): Predicate = {
-    new Predicate("<=>", e1, e2)
-  }
+  def nullSafeEquals(e1: Expression, e2: Expression): Predicate = new Predicate("<=>", e1, e2)
 
-  def notEquals(e1: Expression, e2: Expression): Predicate = {
-    new Predicate("<>", e1, e2)
-  }
+  def notEquals(e1: Expression, e2: Expression): Predicate = new Predicate("<>", e1, e2)
 
-  def startsWith(e1: Expression, e2: Expression): Predicate = {
-    new Predicate("STARTS_WITH", e1, e2)
-  }
+  def startsWith(e1: Expression, e2: Expression): Predicate = new Predicate("STARTS_WITH", e1, e2)
 
-  def isNull(e1: Expression): Predicate = {
-    new Predicate("IS_NULL", e1)
-  }
+  def isNull(e1: Expression): Predicate = new Predicate("IS_NULL", e1)
 }

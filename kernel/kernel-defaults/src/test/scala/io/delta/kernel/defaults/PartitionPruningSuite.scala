@@ -16,13 +16,14 @@
 package io.delta.kernel.defaults
 
 import java.math.{BigDecimal => BigDecimalJ}
+
 import scala.collection.JavaConverters._
+
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.expressions.{Column, Expression, Predicate}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.types._
-import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.funsuite.AnyFunSuite
 
 class PartitionPruningSuite extends AnyFunSuite with TestUtils {

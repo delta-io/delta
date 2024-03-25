@@ -1614,6 +1614,29 @@ trait DeltaSQLConfBase {
       .bytesConf(ByteUnit.MiB)
       .createWithDefault(512)
 
+  val DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE =
+  buildConf("optimize.clustering.mergeStrategy.minCubeSize.threshold")
+    .internal()
+    .doc(
+      "Z-cube size at which new data will no longer be merged with it during incremental " +
+        "OPTIMIZE."
+    )
+    .longConf
+    .checkValue(_ >= 0, "the threshold must be >= 0")
+    .createWithDefault(100 * DELTA_OPTIMIZE_MAX_FILE_SIZE.defaultValue.get)
+
+  val DELTA_OPTIMIZE_CLUSTERING_TARGET_CUBE_SIZE =
+  buildConf("optimize.clustering.mergeStrategy.minCubeSize.targetCubeSize")
+    .internal()
+    .doc(
+      "Target size of the Z-cubes we will create. This is not a hard max; we will continue " +
+        "adding files to a Z-cube until their combined size exceeds this value. This value " +
+        s"must be greater than or equal to ${DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.key}. "
+    )
+    .longConf
+    .checkValue(_ >= 0, "the target must be >= 0")
+    .createWithDefault((DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.defaultValue.get * 1.5).toLong)
+
   //////////////////
   // Clustered Table
   //////////////////

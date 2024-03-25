@@ -59,14 +59,14 @@ trait SnapshotManagement { self: DeltaLog =>
 
   @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
 
+  /** Use ReentrantLock to allow us to call `lockInterruptibly` */
+  protected val snapshotLock = new ReentrantLock()
+
   /**
    * Cached fileStatus for the latest CRC file seen in the deltaLog.
    */
   @volatile protected var lastSeenChecksumFileStatusOpt: Option[FileStatus] = None
   @volatile protected var currentSnapshot: CapturedSnapshot = getSnapshotAtInit
-
-  /** Use ReentrantLock to allow us to call `lockInterruptibly` */
-  protected val snapshotLock = new ReentrantLock()
 
   /**
    * Run `body` inside `snapshotLock` lock using `lockInterruptibly` so that the thread
@@ -79,20 +79,6 @@ trait SnapshotManagement { self: DeltaLog =>
     } finally {
       snapshotLock.unlock()
     }
-  }
-
-  /**
-   * Get the LogSegment that will help in computing the Snapshot of the table at DeltaLog
-   * initialization, or None if the directory was empty/missing.
-   *
-   * @param startingCheckpoint A checkpoint that we can start our listing from
-   */
-  protected def getLogSegmentFrom(
-      startingCheckpoint: Option[LastCheckpointInfo]): Option[LogSegment] = {
-    getLogSegmentForVersion(
-      versionToLoad = None,
-      lastCheckpointInfo = startingCheckpoint
-    )
   }
 
   /** Get an iterator of files in the _delta_log directory starting with the startVersion. */
@@ -231,11 +217,11 @@ trait SnapshotManagement { self: DeltaLog =>
    * @return Some LogSegment to build a Snapshot if files do exist after the given
    *         startCheckpoint. None, if the directory was missing or empty.
    */
-  protected def getLogSegmentForVersion(
+  protected def createLogSegment(
       versionToLoad: Option[Long] = None,
       oldCheckpointProviderOpt: Option[UninitializedCheckpointProvider] = None,
-      lastCheckpointInfo: Option[LastCheckpointInfo] = None,
-      commitStoreOpt: Option[CommitStore] = None): Option[LogSegment] = {
+      commitStoreOpt: Option[CommitStore] = None,
+      lastCheckpointInfo: Option[LastCheckpointInfo] = None): Option[LogSegment] = {
     // List based on the last known checkpoint version.
     // if that is -1, list from version 0L
     val lastCheckpointVersion = getCheckpointVersion(lastCheckpointInfo, oldCheckpointProviderOpt)
@@ -251,6 +237,12 @@ trait SnapshotManagement { self: DeltaLog =>
       oldCheckpointProviderOpt = oldCheckpointProviderOpt,
       lastCheckpointInfo = lastCheckpointInfo
     )
+  }
+
+  private def createLogSegment(previousSnapshot: Snapshot): Option[LogSegment] = {
+    createLogSegment(
+      oldCheckpointProviderOpt = Some(previousSnapshot.checkpointProvider),
+      commitStoreOpt = previousSnapshot.commitStoreOpt)
   }
 
   /**
@@ -324,7 +316,7 @@ trait SnapshotManagement { self: DeltaLog =>
           // deleting files. Either way, we can't safely continue.
           //
           // For now, we preserve existing behavior by returning Array.empty, which will trigger a
-          // recursive call to [[getLogSegmentForVersion]] below.
+          // recursive call to [[createLogSegment]] below.
           Array.empty[FileStatus]
         }
 
@@ -335,7 +327,7 @@ trait SnapshotManagement { self: DeltaLog =>
       } else if (newFiles.isEmpty) {
         // The directory may be deleted and recreated and we may have stale state in our DeltaLog
         // singleton, so try listing from the first version
-        return getLogSegmentForVersion(versionToLoad = versionToLoad)
+        return createLogSegment(versionToLoad = versionToLoad)
       }
       val (checkpoints, deltasAndCompactedDeltas) = newFiles.partition(isCheckpointFile)
       val (deltas, compactedDeltas) = deltasAndCompactedDeltas.partition(isDeltaFile)
@@ -498,30 +490,20 @@ trait SnapshotManagement { self: DeltaLog =>
    * file as a hint on where to start listing the transaction log directory. If the _delta_log
    * directory doesn't exist, this method will return an `InitialSnapshot`.
    */
-  protected def getSnapshotAtInit: CapturedSnapshot = {
+  protected def getSnapshotAtInit: CapturedSnapshot = withSnapshotLockInterruptibly {
     recordFrameProfile("Delta", "SnapshotManagement.getSnapshotAtInit") {
-      val currentTimestamp = clock.getTimeMillis()
+      val snapshotInitWallclockTime = clock.getTimeMillis()
       val lastCheckpointOpt = readLastCheckpointFile()
-      createSnapshotAtInitInternal(
-        initSegment = getLogSegmentFrom(lastCheckpointOpt),
-        timestamp = currentTimestamp
-      )
+      val initialSegmentForNewSnapshot = createLogSegment(
+        versionToLoad = None,
+        lastCheckpointInfo = lastCheckpointOpt)
+      val snapshot = getUpdatedSnapshot(
+        oldSnapshotOpt = None,
+        initialSegmentForNewSnapshot = initialSegmentForNewSnapshot,
+        initialCommitStore = None,
+        isAsync = false)
+      CapturedSnapshot(snapshot, snapshotInitWallclockTime)
     }
-  }
-
-  protected def createSnapshotAtInitInternal(
-      initSegment: Option[LogSegment],
-      timestamp: Long): CapturedSnapshot = {
-    val snapshot = initSegment.map { segment =>
-      val snapshot = createSnapshot(
-        initSegment = segment,
-        checksumOpt = None)
-      snapshot
-    }.getOrElse {
-      logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
-      new InitialSnapshot(logPath, this)
-    }
-    CapturedSnapshot(snapshot, timestamp)
   }
 
   /**
@@ -567,7 +549,6 @@ trait SnapshotManagement { self: DeltaLog =>
         version = segment.version,
         logSegment = segment,
         deltaLog = this,
-        inCommitTimestampOpt = None,
         checksumOpt = checksumOpt.orElse(
           readChecksum(segment.version, lastSeenChecksumFileStatusOpt))
       )
@@ -697,7 +678,7 @@ trait SnapshotManagement { self: DeltaLog =>
      * Instead, just do a general update to the latest available version. The racing commits
      * can then use the version check short-circuit to avoid constructing a new snapshot.
      */
-    getLogSegmentForVersion(
+    createLogSegment(
       oldCheckpointProviderOpt = Some(oldCheckpointProvider),
       commitStoreOpt = commitStoreOpt
     ).getOrElse {
@@ -908,48 +889,95 @@ trait SnapshotManagement { self: DeltaLog =>
    */
   protected def updateInternal(isAsync: Boolean): Snapshot =
     recordDeltaOperation(this, "delta.log.update", Map(TAG_ASYNC -> isAsync.toString)) {
-      val updateTimestamp = clock.getTimeMillis()
+      val updateStartTimeMs = clock.getTimeMillis()
       val previousSnapshot = currentSnapshot.snapshot
-      val segmentOpt = getLogSegmentForVersion(
-        oldCheckpointProviderOpt = Some(previousSnapshot.checkpointProvider),
-        commitStoreOpt = previousSnapshot.commitStoreOpt)
-      installLogSegmentInternal(previousSnapshot, segmentOpt, updateTimestamp, isAsync)
+      val segmentOpt = createLogSegment(previousSnapshot)
+      val newSnapshot = getUpdatedSnapshot(
+        oldSnapshotOpt = Some(previousSnapshot),
+        initialSegmentForNewSnapshot = segmentOpt,
+        initialCommitStore = previousSnapshot.commitStoreOpt,
+        isAsync = isAsync)
+      installSnapshot(newSnapshot, updateStartTimeMs)
     }
 
-  /** Install the provided segmentOpt as the currentSnapshot on the cluster */
-  protected def installLogSegmentInternal(
-      previousSnapshot: Snapshot,
+  /**
+   * Updates and installs a new snapshot in the `currentSnapshot`.
+   * This method takes care of recursively creating new snapshots if the commit store has changed.
+   * @param oldSnapshotOpt The previous snapshot, if any.
+   * @param initialSegmentForNewSnapshot the log segment constructed for the new snapshot
+   * @param initialCommitStore the Commit Store used for constructing the
+   *                           `initialSegmentForNewSnapshot`
+   * @param isAsync Whether the update is async.
+   * @return The new snapshot.
+   */
+  protected def getUpdatedSnapshot(
+      oldSnapshotOpt: Option[Snapshot],
+      initialSegmentForNewSnapshot: Option[LogSegment],
+      initialCommitStore: Option[CommitStore],
+      isAsync: Boolean): Snapshot = {
+    var commitStoreUsed = initialCommitStore
+    var newSnapshot = getSnapshotForLogSegmentInternal(
+      oldSnapshotOpt,
+      initialSegmentForNewSnapshot,
+      isAsync
+    )
+    // If the commit store has changed, we need to again invoke updateSnapshot so that we
+    // could get the latest commits from the new commit store. We need to do it only once as
+    // the delta spec mandates the commit which changes the commit owner to be backfilled.
+    if (newSnapshot.version >= 0 && newSnapshot.commitStoreOpt != commitStoreUsed) {
+      commitStoreUsed = newSnapshot.commitStoreOpt
+      val segmentOpt = createLogSegment(newSnapshot)
+      newSnapshot = getSnapshotForLogSegmentInternal(Some(newSnapshot), segmentOpt, isAsync)
+    }
+    newSnapshot
+  }
+
+  /** Creates a Snapshot for the given `segmentOpt` */
+  protected def getSnapshotForLogSegmentInternal(
+      previousSnapshotOpt: Option[Snapshot],
       segmentOpt: Option[LogSegment],
-      updateTimestamp: Long,
       isAsync: Boolean): Snapshot = {
     segmentOpt.map { segment =>
-      if (segment == previousSnapshot.logSegment) {
-        // If no changes were detected, just refresh the timestamp
-        val timestampToUse = math.max(updateTimestamp, currentSnapshot.updateTimestamp)
-        currentSnapshot = currentSnapshot.copy(updateTimestamp = timestampToUse)
+      if (previousSnapshotOpt.exists(_.logSegment == segment)) {
+        previousSnapshotOpt.get
       } else {
         val newSnapshot = createSnapshot(
           initSegment = segment,
           checksumOpt = None)
-        logMetadataTableIdChange(previousSnapshot, newSnapshot)
+        previousSnapshotOpt.foreach(logMetadataTableIdChange(_, newSnapshot))
         logInfo(s"Updated snapshot to $newSnapshot")
-        replaceSnapshot(newSnapshot, updateTimestamp)
+        newSnapshot
       }
     }.getOrElse {
-      logInfo(s"No delta log found for the Delta table at $logPath")
-      replaceSnapshot(new InitialSnapshot(logPath, this), updateTimestamp)
+      logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
+      new InitialSnapshot(logPath, this)
     }
-    currentSnapshot.snapshot
   }
 
-  /** Replace the given snapshot with the provided one. */
-  protected def replaceSnapshot(newSnapshot: Snapshot, updateTimestamp: Long): Unit = {
+  /** Installs the given `newSnapshot` as the `currentSnapshot` */
+  protected def installSnapshot(newSnapshot: Snapshot, updateTimestamp: Long): Snapshot = {
     if (!snapshotLock.isHeldByCurrentThread) {
+      if (Utils.isTesting) {
+        throw new RuntimeException("DeltaLog snapshot replaced without taking lock")
+      }
       recordDeltaEvent(this, "delta.update.unsafeReplace")
     }
-    val oldSnapshot = currentSnapshot.snapshot
-    currentSnapshot = CapturedSnapshot(newSnapshot, updateTimestamp)
-    oldSnapshot.uncache()
+    if (currentSnapshot == null) {
+      // cold snapshot initialization
+      currentSnapshot = CapturedSnapshot(newSnapshot, updateTimestamp)
+      return newSnapshot
+    }
+    val CapturedSnapshot(oldSnapshot, oldTimestamp) = currentSnapshot
+    if (oldSnapshot eq newSnapshot) {
+      // Same snapshot as before, so just refresh the timestamp
+      val timestampToUse = math.max(updateTimestamp, oldTimestamp)
+      currentSnapshot = CapturedSnapshot(newSnapshot, timestampToUse)
+    } else {
+      // Install the new snapshot and uncache the old one
+      currentSnapshot = CapturedSnapshot(newSnapshot, updateTimestamp)
+      oldSnapshot.uncache()
+    }
+    newSnapshot
   }
 
   /** Log a change in the metadata's table id whenever we install a newer version of a snapshot */
@@ -1023,8 +1051,7 @@ trait SnapshotManagement { self: DeltaLog =>
         committedVersion)
       logMetadataTableIdChange(previousSnapshot, newSnapshot)
       logInfo(s"Updated snapshot to $newSnapshot")
-      replaceSnapshot(newSnapshot, updateTimestamp)
-      currentSnapshot.snapshot
+      installSnapshot(newSnapshot, updateTimestamp)
     }
   }
 
@@ -1046,7 +1073,7 @@ trait SnapshotManagement { self: DeltaLog =>
       // fallback to the other overload.
       return getSnapshotAt(version)
     }
-    val segment = getLogSegmentForVersion(
+    val segment = createLogSegment(
       versionToLoad = Some(version),
       oldCheckpointProviderOpt = Some(lastCheckpointProvider)
     ).getOrElse {
@@ -1074,7 +1101,7 @@ trait SnapshotManagement { self: DeltaLog =>
         .collect { case ci if ci.version <= version => ci }
         .orElse(findLastCompleteCheckpointBefore(version))
         .map(manuallyLoadCheckpoint)
-    getLogSegmentForVersion(
+    createLogSegment(
       versionToLoad = Some(version),
       lastCheckpointInfo = lastCheckpointInfoHint
     ).map { segment =>
@@ -1086,6 +1113,9 @@ trait SnapshotManagement { self: DeltaLog =>
       throw DeltaErrors.emptyDirectoryException(logPath.toString)
     }
   }
+
+  // Visible for testing
+  private[delta] def getCapturedSnapshot(): CapturedSnapshot = currentSnapshot
 }
 
 object SnapshotManagement {
@@ -1137,7 +1167,7 @@ object SnapshotManagement {
     oldLogSegment.copy(
       version = committedVersion,
       deltas = oldLogSegment.deltas :+ commitFileStatus,
-      lastCommitTimestamp = commitFileStatus.getModificationTime)
+      lastCommitFileModificationTimestamp = commitFileStatus.getModificationTime)
   }
 }
 
@@ -1187,7 +1217,7 @@ object SerializableFileStatus {
  * @param version The Snapshot version to generate
  * @param deltas The delta commit files (.json) to read
  * @param checkpointProvider provider to give information about Checkpoint files.
- * @param lastCommitTimestamp The "unadjusted" file modification timestamp of the
+ * @param lastCommitFileModificationTimestamp The "unadjusted" file modification timestamp of the
  *          last commit within this segment. By unadjusted, we mean that the commit timestamps may
  *          not necessarily be monotonically increasing for the commits within this segment.
  */
@@ -1196,9 +1226,10 @@ case class LogSegment(
     version: Long,
     deltas: Seq[FileStatus],
     checkpointProvider: UninitializedCheckpointProvider,
-    lastCommitTimestamp: Long) {
+    lastCommitFileModificationTimestamp: Long) {
 
-  override def hashCode(): Int = logPath.hashCode() * 31 + (lastCommitTimestamp % 10000).toInt
+  override def hashCode(): Int =
+    logPath.hashCode() * 31 + (lastCommitFileModificationTimestamp % 10000).toInt
 
   /**
    * An efficient way to check if a cached Snapshot's contents actually correspond to a new
@@ -1207,7 +1238,8 @@ case class LogSegment(
   override def equals(obj: Any): Boolean = {
     obj match {
       case other: LogSegment =>
-        version == other.version && lastCommitTimestamp == other.lastCommitTimestamp &&
+        version == other.version &&
+          lastCommitFileModificationTimestamp == other.lastCommitFileModificationTimestamp &&
           logPath == other.logPath && checkpointProvider.version == other.checkpointProvider.version
       case _ => false
     }

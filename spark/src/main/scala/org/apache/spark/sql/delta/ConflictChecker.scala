@@ -560,7 +560,9 @@ private[delta] class ConflictChecker(
    *     to handle the row tracking feature being enabled by the winning transaction.
    */
   private def reassignRowCommitVersions(): Unit = {
-    if (!RowTracking.isSupported(currentTransactionInfo.protocol)) {
+    if (!RowTracking.isSupported(currentTransactionInfo.protocol) &&
+      // Type widening relies on default row commit versions to be set.
+      !TypeWidening.isSupported(currentTransactionInfo.protocol)) {
       return
     }
 

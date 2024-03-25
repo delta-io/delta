@@ -200,7 +200,8 @@ case class DeltaParquetFileFormat(
     // Parquet reader in Spark has a bug where a file containing 2b+ rows in a single rowgroup
     // causes it to run out of the `Integer` range (TODO: Create a SPARK issue)
     // For Delta Parquet readers don't expose the row_index field as a metadata field.
-    super.metadataSchemaFields.filter(field => field != ParquetFileFormat.ROW_INDEX_FIELD)
+    super.metadataSchemaFields.filter(field => field != ParquetFileFormat.ROW_INDEX_FIELD) ++
+      RowId.createBaseRowIdField(protocol, metadata)
   }
 
   override def prepareWrite(
@@ -222,6 +223,17 @@ case class DeltaParquetFileFormat(
       ParquetOutputFormat.setWriteSupportClass(job, classOf[DeltaParquetWriteSupport])
     }
     factory
+  }
+
+  override def fileConstantMetadataExtractors: Map[String, PartitionedFile => Any] = {
+    val extractBaseRowId: PartitionedFile => Any = { file =>
+      file.otherConstantMetadataColumnValues.getOrElse(RowId.BASE_ROW_ID, {
+        throw new IllegalStateException(
+          s"Missing ${RowId.BASE_ROW_ID} value for file '${file.filePath}'")
+      })
+    }
+    super.fileConstantMetadataExtractors
+      .updated(RowId.BASE_ROW_ID, extractBaseRowId)
   }
 
   def copyWithDVInfo(

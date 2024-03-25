@@ -23,19 +23,22 @@ import org.apache.spark.util.Utils
 
 trait DeltaSQLTestUtils extends SQLTestUtils {
   /**
-   * Creates a temporary directory, which is then passed to `f` and will be deleted after `f`
-   * returns.
+   * Generate a temporary directory path without creating the actual directory, which is then
+   * passed to `f` and will be deleted after `f` returns.
    *
    * This method is copied over from [[SQLTestUtils]] of Apache Spark.
    */
   def withTempDir(prefix: String)(f: File => Unit): Unit = {
     val path = Utils.createTempDir(namePrefix = prefix)
+    // delete the auto-created directory, otherwise some Delta tests will fail
+    // with PATH_ALREADY_EXISTS error.
+    path.delete()
     try f(path) finally Utils.deleteRecursively(path)
   }
 
   /**
-   * Creates a temporary directory, which is then passed to `f` and will be deleted after `f`
-   * returns.
+   * Generate a temporary directory path without creating the actual directory, which is then
+   * passed to `f` and will be deleted after `f` returns.
    *
    * This method is copied over from [[SQLTestUtils]] of Apache Spark.
    */

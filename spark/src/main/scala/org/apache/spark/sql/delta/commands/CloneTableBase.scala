@@ -191,40 +191,37 @@ abstract class CloneTableBase(
       destinationTable.createLogDirectory()
     }
 
+    val metadataToUpdate = determineTargetMetadata(txn.snapshot, deltaOperation.name)
+    // Don't merge in the default properties when cloning, or we'll end up with different sets of
+    // properties between source and target.
+    txn.updateMetadata(metadataToUpdate, ignoreDefaultProperties = true)
     val (
-      datasetOfNewFilesToAdd
+      addedFileList
       ) = {
       // Make sure target table is empty before running clone
       if (txn.snapshot.allFiles.count() > 0) {
         throw DeltaErrors.cloneReplaceNonEmptyTable
       }
-      sourceTable.allFiles
+      val toAdd = sourceTable.allFiles
+      // absolutize file paths
+      handleNewDataFiles(
+        deltaOperation.name,
+        toAdd,
+        qualifiedSource,
+        destinationTable).collectAsList()
     }
 
-    val metadataToUpdate = determineTargetMetadata(txn.snapshot, deltaOperation.name)
-    // Don't merge in the default properties when cloning, or we'll end up with different sets of
-    // properties between source and target.
-    txn.updateMetadata(metadataToUpdate, ignoreDefaultProperties = true)
-
-    val datasetOfAddedFileList = handleNewDataFiles(
-      deltaOperation.name,
-      datasetOfNewFilesToAdd,
-      qualifiedSource,
-      destinationTable)
-
-    val addedFileList = datasetOfAddedFileList.collectAsList()
-
     val (addedFileCount, addedFilesSize) =
-      (addedFileList.size.toLong, totalDataSize(addedFileList.iterator))
-
-    val operationTimestamp = sourceTable.clock.getTimeMillis()
+        (addedFileList.size.toLong, totalDataSize(addedFileList.iterator))
 
 
     val newProtocol = determineTargetProtocol(spark, txn, deltaOperation.name)
+    val addFileIter =
+        addedFileList.iterator.asScala
 
     try {
       var actions: Iterator[Action] =
-        addedFileList.iterator.asScala.map { fileToCopy =>
+        addFileIter.map { fileToCopy =>
           val copiedFile = fileToCopy.copy(dataChange = dataChangeInFileAction)
           // CLONE does not preserve Row IDs and Commit Versions
           copiedFile.copy(baseRowId = None, defaultRowCommitVersion = None)

@@ -66,7 +66,8 @@ case class MergeIntoCommand(
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
-    migratedSchema: Option[StructType])
+    migratedSchema: Option[StructType],
+    schemaEvolutionEnabled: Boolean = false)
   extends MergeIntoCommandBase
   with InsertOnlyMergeExecutor
   with ClassicMergeExecutor {
@@ -89,6 +90,15 @@ case class MergeIntoCommand(
           throw DeltaErrors.schemaChangedSinceAnalysis(
             atAnalysis = target.schema, latestSchema = deltaTxn.metadata.schema)
         }
+
+        // Check that type widening wasn't enabled/disabled between analysis and the start of the
+        // transaction.
+        TypeWidening.ensureFeatureConsistentlyEnabled(
+          protocol = targetFileIndex.protocol,
+          metadata = targetFileIndex.metadata,
+          otherProtocol = deltaTxn.protocol,
+          otherMetadata = deltaTxn.metadata
+        )
 
         if (canMergeSchema) {
           updateMetadata(

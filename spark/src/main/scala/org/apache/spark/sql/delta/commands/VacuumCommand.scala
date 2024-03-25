@@ -30,6 +30,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -116,15 +117,17 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     val relativizeIgnoreError =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
 
+    val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
     snapshot.stateDS.mapPartitions { actions =>
       val reservoirBase = new Path(basePath)
       val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
       actions.flatMap {
         _.unwrap match {
-          case fa: FileAction if checkAbsolutePathOnly && !fa.path.contains(basePath) =>
-            Nil
-          case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp =>
-            Nil
+          // Existing tables may not store canonicalized paths, so we check both the canonicalized
+          // and non-canonicalized paths to ensure we don't accidentally delete wrong files.
+          case fa: FileAction if checkAbsolutePathOnly &&
+            !fa.path.contains(basePath) && !fa.path.contains(canonicalizedBasePath) => Nil
+          case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp => Nil
           case fa: FileAction =>
             getValidRelativePathsAndSubdirs(
               fa,
