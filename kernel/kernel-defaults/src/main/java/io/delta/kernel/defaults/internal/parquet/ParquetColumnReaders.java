@@ -84,7 +84,7 @@ class ParquetColumnReaders {
             return createTimestampConverter(initialBatchSize, typeFromFile,
                     TimestampNTZType.TIMESTAMP_NTZ);
         } else if (typeFromClient instanceof VariantType) {
-            return new VariantConverter(initialBatchSize);
+            return new VariantColumnReader(initialBatchSize);
         }
 
         throw new UnsupportedOperationException(typeFromClient + " is not supported");

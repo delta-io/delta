@@ -41,10 +41,12 @@ public class DefaultVariantValue implements VariantValue {
         return metadata;
     }
 
-    public String debugString() {
+    @Override
+    public String toString() {
         return "VariantValue{value=" + Arrays.toString(value) +
             ", metadata=" + Arrays.toString(metadata) + '}';
     }
+
     /**
      * Compare two variants in bytes. The variant equality is more complex than it, and we haven't
      * supported it in the user surface yet. This method is only intended for tests.

@@ -26,13 +26,14 @@ import io.delta.kernel.types.VariantType;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultVariantVector;
-import io.delta.kernel.defaults.internal.parquet.ParquetConverters.BinaryColumnConverter;
+import io.delta.kernel.defaults.internal.parquet.ParquetColumnReaders.BaseColumnReader;
+import io.delta.kernel.defaults.internal.parquet.ParquetColumnReaders.BinaryColumnReader;
 
-class VariantConverter
+class VariantColumnReader
     extends GroupConverter
-    implements ParquetConverters.BaseConverter {
-    private final BinaryColumnConverter valueConverter;
-    private final BinaryColumnConverter metadataConverter;
+    implements BaseColumnReader {
+    private final BinaryColumnReader valueConverter;
+    private final BinaryColumnReader metadataConverter;
 
     // working state
     private int currentRowIndex;
@@ -46,12 +47,12 @@ class VariantConverter
      *
      * @param initialBatchSize Estimate of initial row batch size. Used in memory allocations.
      */
-    VariantConverter(int initialBatchSize) {
+    VariantColumnReader(int initialBatchSize) {
         checkArgument(initialBatchSize > 0, "invalid initialBatchSize: %s", initialBatchSize);
-        this.nullability = ParquetConverters.initNullabilityVector(initialBatchSize);
+        this.nullability = ParquetColumnReaders.initNullabilityVector(initialBatchSize);
 
-        this.valueConverter = new BinaryColumnConverter(BinaryType.BINARY, initialBatchSize);
-        this.metadataConverter = new BinaryColumnConverter(BinaryType.BINARY, initialBatchSize);
+        this.valueConverter = new BinaryColumnReader(BinaryType.BINARY, initialBatchSize);
+        this.metadataConverter = new BinaryColumnReader(BinaryType.BINARY, initialBatchSize);
     }
 
     @Override
@@ -102,7 +103,7 @@ class VariantConverter
         if (nullability.length == currentRowIndex) {
             int newSize = nullability.length * 2;
             this.nullability = Arrays.copyOf(this.nullability, newSize);
-            ParquetConverters.setNullabilityToTrue(this.nullability, newSize / 2, newSize);
+            ParquetColumnReaders.setNullabilityToTrue(this.nullability, newSize / 2, newSize);
         }
     }
 
@@ -110,7 +111,7 @@ class VariantConverter
     public void resetWorkingState() {
         this.currentRowIndex = 0;
         this.isCurrentValueNull = true;
-        this.nullability = ParquetConverters.initNullabilityVector(this.nullability.length);
+        this.nullability = ParquetColumnReaders.initNullabilityVector(this.nullability.length);
     }
 
     private void finalizeLastRowInConverters(long prevRowIndex) {

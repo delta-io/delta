@@ -69,20 +69,7 @@ public class DefaultVariantVector
         if (isNullAt(rowId)) {
             return null;
         }
-        // return new VariantValue() {
-        //     private final byte[] value = valueVector.getBinary(rowId);
-        //     private final byte[] metadata = metadataVector.getBinary(rowId);
 
-        //     @Override
-        //     public byte[] getValue() {
-        //         return value;
-        //     }
-
-        //     @Override
-        //     public byte[] getMetadata() {
-        //         return metadata;
-        //     }
-        // };
         return new DefaultVariantValue(
             valueVector.getBinary(rowId), metadataVector.getBinary(rowId));
     }
