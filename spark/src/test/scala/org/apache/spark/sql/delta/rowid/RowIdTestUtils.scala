@@ -21,7 +21,11 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
+import org.apache.spark.sql.execution.datasources.FileFormat
+
 trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
+  val QUALIFIED_BASE_ROW_ID_COLUMN_NAME = s"${FileFormat.METADATA_NAME}.${RowId.BASE_ROW_ID}"
+
   protected def getRowIdRangeInclusive(f: AddFile): (Long, Long) = {
     val min = f.baseRowId.get
     val max = min + f.numPhysicalRecords.get - 1L

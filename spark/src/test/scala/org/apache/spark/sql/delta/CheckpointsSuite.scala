@@ -936,13 +936,6 @@ class CheckpointsSuite
       assert(filterUsageRecords(usageRecords2, "delta.log.cleanup").size > 0)
     }
   }
-
-  protected def filterUsageRecords(
-      usageRecords: Seq[UsageRecord], opType: String): Seq[UsageRecord] = {
-    usageRecords.filter { r =>
-      r.tags.get("opType").contains(opType) || r.opType.map(_.typeName).contains(opType)
-    }
-  }
 }
 
 /**

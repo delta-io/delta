@@ -18,7 +18,6 @@ package io.delta.kernel.defaults
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getTestResourceFilePath
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 

@@ -58,7 +58,6 @@ import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
-import org.apache.spark.util.Utils.exceptionString
 
 trait DeltaErrorsSuiteBase
     extends QueryTest
@@ -979,13 +978,14 @@ trait DeltaErrorsSuiteBase
         val s2 = StructType(Seq(StructField("c0", StringType)))
         SchemaMergingUtils.mergeSchemas(s1, s2)
       }
-      assert(e.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
-      assert(
-          exceptionString(e)
-          .contains("Failed to merge incompatible data types IntegerType and StringType")
-        && exceptionString(e)
-          .contains("Failed to merge fields 'c0' and 'c0'")
-      )
+      checkError(
+        exception = e,
+        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+        parameters = Map("currentField" -> "c0", "updateField" -> "c0"))
+      checkError(
+        exception = e.getCause.asInstanceOf[DeltaAnalysisException],
+        errorClass = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        parameters = Map("currentDataType" -> "IntegerType", "updateDataType" -> "StringType"))
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -1432,7 +1432,12 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         val s1 = StructType(Seq(StructField("c0", IntegerType, true)))
         val s2 = StructType(Seq(StructField("c0", StringType, false)))
-        SchemaMergingUtils.mergeSchemas(s1, s2, false, false, Set("c0"))
+        SchemaMergingUtils.mergeSchemas(s1, s2,
+          allowImplicitConversions = false,
+          keepExistingType = false,
+          allowTypeWidening = false,
+          Set("c0")
+        )
       }
       checkErrorMessage(e, Some("DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH"), Some("42K09"),
         Some("Column c0 is a generated column or a column used by a generated " +

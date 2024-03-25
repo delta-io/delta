@@ -1305,8 +1305,10 @@ class DeltaSuite extends QueryTest
           .mode("append")
           .save(tempDir.toString)
       }
-      assert(e.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
-      assert(Utils.exceptionString(e).contains("incompatible"))
+      checkError(
+        exception = e,
+        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+        parameters = Map("currentField" -> "value", "updateField" -> "value"))
     }
   }
 

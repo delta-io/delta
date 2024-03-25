@@ -296,6 +296,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
 
 lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(kernelApi)
+  .dependsOn(storage)
   .dependsOn(spark % "test->test")
   .dependsOn(goldenTables % "test")
   .settings(
