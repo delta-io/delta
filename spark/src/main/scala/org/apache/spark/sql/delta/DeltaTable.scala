@@ -587,7 +587,7 @@ object UnresolvedDeltaPathOrIdentifier {
     (path, tableIdentifier) match {
       case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, Map.empty, cmd)
       case (None, Some(t)) =>
-        UnresolvedTable(t.nameParts, cmd, None)
+        UnresolvedTable(t.nameParts, cmd)
       case _ => throw new IllegalArgumentException(
         s"Exactly one of path or tableIdentifier must be provided to $cmd")
     }
@@ -609,7 +609,7 @@ object UnresolvedPathOrIdentifier {
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
       case (_, Some(t)) =>
-        UnresolvedTable(t.nameParts, cmd, None)
+        UnresolvedTable(t.nameParts, cmd)
       case (Some(p), None) => UnresolvedPathBasedTable(p, Map.empty, cmd)
       case _ => throw new IllegalArgumentException(
         s"At least one of path or tableIdentifier must be provided to $cmd")

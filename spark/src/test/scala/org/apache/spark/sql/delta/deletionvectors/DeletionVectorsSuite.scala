@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.{File, FileNotFoundException}
+import java.net.URISyntaxException
 
 import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, BOOLEAN_DOMAIN}
@@ -32,7 +33,7 @@ import io.delta.tables.DeltaTable
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkException
+import org.apache.spark.{SparkException, SparkFileNotFoundException}
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
 import org.apache.spark.sql.functions.col
@@ -675,11 +676,14 @@ class DeletionVectorsSuite extends QueryTest
       assert(filesWithDvs.size > 0)
       deleteDVFile(targetPath, filesWithDvs(0))
 
-      val se = intercept[SparkException] {
+      try {
         spark.sql(s"SELECT * FROM delta.`$targetPath`").collect()
+      } catch {
+        case _: SparkFileNotFoundException => // All good.
+        case se: SparkException =>
+          assert(findIfResponsible[FileNotFoundException](se).nonEmpty,
+            s"Expected a file not found exception as the cause, but got: [${se}]")
       }
-      assert(findIfResponsible[FileNotFoundException](se).nonEmpty,
-        s"Expected a file not found exception as the cause, but got: [${se}]")
     }
   }
 
@@ -702,7 +706,10 @@ class DeletionVectorsSuite extends QueryTest
       val e = intercept[SparkException] {
         spark.read.format("delta").load(dir.getCanonicalPath).collect()
       }
-      assert(e.getMessage.contains("URISyntaxException: Malformed escape pair"))
+      assert(e.getMessage.contains("URISyntaxException: Malformed escape pair") ||
+        (e.getCause.isInstanceOf[URISyntaxException] &&
+          e.getCause.getMessage.contains("Malformed escape pair"))
+      )
     }
   }
 

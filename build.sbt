@@ -32,12 +32,13 @@ val all_scala_versions = Seq(scala212, scala213)
 // sbt 'set default_scala_version := 2.13.8' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
-Global / default_scala_version := scala212
+Global / default_scala_version := scala213
+// TODO set scala only to 2.13 for spark but keep 2.12 for other projects?
 
 // Dependent library versions
-val sparkVersion = "3.5.0"
+val sparkVersion = "4.0.0-SNAPSHOT"
 val flinkVersion = "1.16.1"
-val hadoopVersion = "3.3.4"
+val hadoopVersion = "3.3.6"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -90,6 +91,20 @@ lazy val commonSettings = Seq(
   unidocSourceFilePatterns := Nil,
 )
 
+// Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
+val extraJavaTestArgs = Seq(
+  "--add-opens=java.base/java.lang=ALL-UNNAMED",
+  "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+  "--add-opens=java.base/java.io=ALL-UNNAMED",
+  "--add-opens=java.base/java.net=ALL-UNNAMED",
+  "--add-opens=java.base/java.nio=ALL-UNNAMED",
+  "--add-opens=java.base/java.util=ALL-UNNAMED",
+  "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+  "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+  "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+  "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+  "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED")
+
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
   .enablePlugins(Antlr4Plugin)
@@ -117,17 +132,18 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
     ),
     // For adding staged Spark RC versions, Ex:
-    // resolvers += "Apche Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
+    resolvers += "Spark master staging" at "https://repository.apache.org/content/groups/snapshots/",
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
-    Antlr4 / antlr4Version:= "4.9.3",
+    Antlr4 / antlr4Version:= "4.13.1",
     Antlr4 / antlr4PackageName := Some("io.delta.sql.parser"),
     Antlr4 / antlr4GenListener := true,
     Antlr4 / antlr4GenVisitor := true,
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+    Test / javaOptions ++= extraJavaTestArgs, // Required for UTs with Java 17
 
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,
@@ -238,7 +254,8 @@ lazy val sharing = (project in file("sharing"))
       "org.apache.spark" %% "spark-core" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion % "test" classifier "tests",
-    )
+    ),
+    Test / javaOptions ++= extraJavaTestArgs // Required for UTs with Java 17
   ).configureUnidoc()
 
 lazy val kernelApi = (project in file("kernel/kernel-api"))
@@ -350,6 +367,7 @@ val icebergSparkRuntimeArtifactName = {
  s"iceberg-spark-runtime-$expMaj.$expMin"
 }
 
+/*
 lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
   // delta-iceberg depends on delta-spark! So, we need to include it during our test.
   .dependsOn(spark % "test")
@@ -365,6 +383,7 @@ lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
       "org.apache.spark" %% "spark-core" % sparkVersion % "test"
     )
   )
+ */
 
 val deltaIcebergSparkIncludePrefixes = Seq(
   // We want everything from this package
@@ -377,6 +396,7 @@ val deltaIcebergSparkIncludePrefixes = Seq(
   "org/apache/spark/sql/delta/commands/convert/IcebergTable"
 )
 
+/*
 // Build using: build/sbt clean icebergShaded/compile iceberg/compile
 // It will fail the first time, just re-run it.
 // scalastyle:off println
@@ -451,6 +471,7 @@ lazy val iceberg = (project in file("iceberg"))
     assemblyPackageScala / assembleArtifact := false
   )
 // scalastyle:on println
+ */
 
 lazy val generateIcebergJarsTask = TaskKey[Unit]("generateIcebergJars", "Generate Iceberg JARs")
 
@@ -1120,7 +1141,8 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar, sharing)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, sharing)
+  // .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar, sharing)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

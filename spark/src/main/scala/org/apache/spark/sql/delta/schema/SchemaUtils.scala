@@ -733,7 +733,7 @@ def normalizeColumnNamesInDataType(
       findRecursively(column, schema)
     } catch {
       case e: AnalysisException =>
-        throw new AnalysisException(e.getMessage + s":\n${schema.treeString}")
+        throw new DeltaAnalysisException(e.getMessage + s":\n${schema.treeString}")
     }
   }
 
@@ -905,7 +905,7 @@ def normalizeColumnNamesInDataType(
       StructType(pre ++ Seq(mid) ++ post.tail) -> droppedColumn
     } else {
       if (length == 1) {
-        throw new AnalysisException(
+        throw new DeltaAnalysisException(
           "Cannot drop column from a struct type with a single field: " + schema)
       }
       StructType(pre ++ post.tail) -> field

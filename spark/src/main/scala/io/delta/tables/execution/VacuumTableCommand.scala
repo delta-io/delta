@@ -77,7 +77,7 @@ object VacuumTableCommand {
       dryRun: Boolean): VacuumTableCommand = {
     val child = UnresolvedDeltaPathOrIdentifier(path, table, "VACUUM")
     val unresolvedInventoryTable = inventoryTable.map(rt =>
-      UnresolvedTable(rt.nameParts, "VACUUM", relationTypeMismatchHint = None))
+      UnresolvedTable(rt.nameParts, "VACUUM"))
     VacuumTableCommand(child, horizonHours, unresolvedInventoryTable, inventoryQuery, dryRun)
   }
 }

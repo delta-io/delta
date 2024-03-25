@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.catalyst.plans.logical
 
-import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.delta.DeltaAnalysisException
+
 import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, Expression, ExtractValue, GetStructField}
 
 /**
@@ -66,7 +67,7 @@ object DeltaUpdateTable {
 
     def fail(extraMsg: String): Nothing = {
       val msg = Option(errMsg).map(_ + " - ").getOrElse("") + extraMsg
-      throw new AnalysisException(msg)
+      throw new DeltaAnalysisException(msg)
     }
 
     def extractRecursively(expr: Expression): Seq[String] = expr match {

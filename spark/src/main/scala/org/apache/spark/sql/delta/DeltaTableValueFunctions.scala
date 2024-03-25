@@ -25,11 +25,13 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaDataSource
+import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedLeafNode, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, StringLiteral}
+import org.apache.spark.sql.catalyst.optimizer.ComputeCurrentTime
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, UnaryNode}
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -115,7 +117,10 @@ trait CDCStatementBase extends DeltaTableValueFunction {
         case _: IntegerType | LongType => (keyPrefix + "Version") -> value.eval().toString
         case _: StringType => (keyPrefix + "Timestamp") -> value.eval().toString
         case _: TimestampType => (keyPrefix + "Timestamp") -> {
-          val time = value.eval().toString
+          // Resolve current time.
+          val fakePlan = AnalysisHelper.FakeLogicalPlan(Seq(value), Nil)
+          val timestampExpression = ComputeCurrentTime(fakePlan).expressions.head
+          val time = timestampExpression.eval().toString
           val fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
           // when evaluated the time is represented with microseconds, which needs to be trimmed.
           fmt.format(new Date(time.toLong / 1000))

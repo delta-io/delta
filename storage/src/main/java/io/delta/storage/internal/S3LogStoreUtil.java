@@ -94,7 +94,7 @@ public final class S3LogStoreUtil {
                     "The Hadoop file system used for the S3LogStore must be castable to " +
                             "org.apache.hadoop.fs.s3a.S3AFileSystem.", e);
         }
-        return iteratorToStatuses(S3LogStoreUtil.s3ListFrom(s3afs, resolvedPath, parentPath), new HashSet<>());
+        return iteratorToStatuses(S3LogStoreUtil.s3ListFrom(s3afs, resolvedPath, parentPath));
     }
 
     /**

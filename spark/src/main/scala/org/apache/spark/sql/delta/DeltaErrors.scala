@@ -257,7 +257,14 @@ trait DeltaErrorsBase
       startPosition: Option[Int] = None,
       plan: Option[LogicalPlan] = None,
       cause: Option[Throwable] = None): AnalysisException = {
-    new ExtendedAnalysisException(msg, line, startPosition, plan, cause)
+    if (plan.isEmpty) {
+      new DeltaAnalysisException(msg, line, startPosition, cause)
+    } else {
+      new ExtendedAnalysisException(
+        new DeltaAnalysisException(msg, line, startPosition, cause),
+        plan.get
+      )
+    }
   }
 
   def notNullColumnMissingException(constraint: Constraints.NotNull): Throwable = {
@@ -295,7 +302,7 @@ trait DeltaErrorsBase
   }
 
   def invalidConstraintName(name: String): AnalysisException = {
-    new AnalysisException(s"Cannot use '$name' as the name of a CHECK constraint.")
+    new DeltaAnalysisException(s"Cannot use '$name' as the name of a CHECK constraint.")
   }
 
   def nonexistentConstraint(constraintName: String, tableName: String): AnalysisException = {
@@ -1096,7 +1103,7 @@ trait DeltaErrorsBase
   }
 
   def bloomFilterInvalidParameterValueException(message: String): Throwable = {
-    new AnalysisException(
+    new DeltaAnalysisException(
       s"Cannot create bloom filter index, invalid parameter value: $message")
   }
 
@@ -1221,7 +1228,7 @@ trait DeltaErrorsBase
     def prettyMap(m: Map[String, String]): String = {
       m.map(e => s"${e._1}=${e._2}").mkString("[", ", ", "]")
     }
-    new AnalysisException(
+    new DeltaAnalysisException(
       s"""You are trying to convert a table which already has a delta log where the table
          |properties in the catalog don't match the configuration in the delta log.
          |Table properties in catalog: ${prettyMap(tableProperties)}
@@ -1399,7 +1406,7 @@ trait DeltaErrorsBase
   def restoreTimestampBeforeEarliestException(
       userTimestamp: String,
       earliestTimestamp: String): Throwable = {
-    new AnalysisException(
+    new DeltaAnalysisException(
       s"Cannot restore table to timestamp ($userTimestamp) as it is before the earliest version " +
         s"available. Please use a timestamp after ($earliestTimestamp)"
     )
@@ -1579,7 +1586,7 @@ trait DeltaErrorsBase
   }
 
   def viewNotSupported(operationName: String): Throwable = {
-    new AnalysisException(s"Operation $operationName can not be performed on a view")
+    new DeltaAnalysisException(s"Operation $operationName can not be performed on a view")
   }
 
   def postCommitHookFailedException(
@@ -1733,7 +1740,7 @@ trait DeltaErrorsBase
   }
 
   def generatedColumnsNonDeterministicExpression(expr: Expression): Throwable = {
-    new AnalysisException(
+    new DeltaAnalysisException(
       s"Found ${expr.sql}. A generated column cannot use a non deterministic expression")
   }
 
@@ -2069,7 +2076,7 @@ trait DeltaErrorsBase
       columnName: String,
       constraints: Map[String, String]): Throwable = {
     val plural = if (constraints.size > 1) "s" else ""
-    new AnalysisException(
+    new DeltaAnalysisException(
       s"""
         |Cannot $operation column $columnName because this column is referenced by the following
         | check constraint$plural:\n\t${constraints.mkString("\n\t")}
@@ -2081,7 +2088,7 @@ trait DeltaErrorsBase
       columnName: String,
       fields: Seq[StructField]): Throwable = {
     val plural = if (fields.size > 1) "s" else ""
-    new AnalysisException(
+    new DeltaAnalysisException(
       s"""
          |Cannot $operation column $columnName because this column is referenced by the following
          | generated column$plural:\n\t${fields.map(_.name).mkString("\n\t")}
@@ -2410,7 +2417,7 @@ trait DeltaErrorsBase
       hasStart: Boolean,
       hasStep: Boolean,
       hasInsert: Boolean): Throwable = {
-    new AnalysisException(s"Inconsistent IDENTITY metadata for column $colName " +
+    new DeltaAnalysisException(s"Inconsistent IDENTITY metadata for column $colName " +
       s"detected: $hasStart, $hasStep, $hasInsert")
   }
 
@@ -3430,7 +3437,7 @@ class MetadataMismatchErrorBuilder {
   }
 
   def finalizeAndThrow(conf: SQLConf): Unit = {
-    throw new AnalysisException(bits.mkString("\n"))
+    throw new DeltaAnalysisException(bits.mkString("\n"))
   }
 }
 
@@ -3481,7 +3488,7 @@ class DeltaIllegalStateException(
   override def getErrorClass: String = errorClass
 
   override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getParameterNames(errorClass, null)
+    DeltaThrowableHelper.getParameterNames(Option(errorClass), errorSubClass = None)
       .zip(messageParameters).toMap.asJava
   }
 }
@@ -3545,7 +3552,7 @@ class DeltaRuntimeException(
   override def getErrorClass: String = errorClass
 
   override def getMessageParameters: java.util.Map[String, String] =
-    DeltaThrowableHelper.getParameterNames(errorClass, null)
+    DeltaThrowableHelper.getParameterNames(Option(errorClass), errorSubClass = None)
       .zip(messageParameters).toMap.asJava
 }
 
@@ -3610,8 +3617,8 @@ class DeltaTablePropertyValidationFailedException(
 
   override def getMessageParameters: java.util.Map[String, String] = {
     DeltaThrowableHelper.getParameterNames(
-      "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED",
-      subClass.tag).zip(subClass.messageParameters(table)).toMap.asJava
+      Some("DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED"),
+      Some(subClass.tag)).zip(subClass.messageParameters(table)).toMap.asJava
   }
 
   override def getErrorClass: String =
