@@ -100,6 +100,13 @@ trait DocsPath {
     "createManagedTableWithoutSchemaException",
     "multipleSourceRowMatchingTargetRowInMergeException",
     "ignoreStreamingUpdatesAndDeletesWarning",
+    "concurrentAppendException",
+    "concurrentDeleteDeleteException",
+    "concurrentDeleteReadException",
+    "concurrentWriteException",
+    "concurrentTransactionException",
+    "metadataChangedException",
+    "protocolChangedException",
     "concurrentModificationExceptionMsg",
     "incorrectLogStoreImplementationException",
     "sourceNotDeterministicInMergeException",
@@ -2131,22 +2138,20 @@ trait DeltaErrorsBase
 
   def concurrentWriteException(
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ConcurrentWriteException = {
-    val message = DeltaErrors.concurrentModificationExceptionMsg(
-      SparkEnv.get.conf,
-      s"A concurrent transaction has written new data since the current transaction " +
-        s"read the table. Please try the operation again.",
-      conflictingCommit)
-    new io.delta.exceptions.ConcurrentWriteException(message)
+    new io.delta.exceptions.ConcurrentWriteException(
+      Array(
+        conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
+        DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html"))
+    )
   }
 
   def metadataChangedException(
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.MetadataChangedException = {
-    val message = DeltaErrors.concurrentModificationExceptionMsg(
-      SparkEnv.get.conf,
-      "The metadata of the Delta table has been changed by a concurrent update. " +
-        "Please try the operation again.",
-      conflictingCommit)
-    new io.delta.exceptions.MetadataChangedException(message)
+    new io.delta.exceptions.MetadataChangedException(
+      Array(
+        conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
+        DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html"))
+    )
   }
 
   def protocolPropNotIntException(key: String, value: String): Throwable = {
@@ -2165,12 +2170,13 @@ trait DeltaErrorsBase
         ""
       }
     }.getOrElse("")
-    val message = DeltaErrors.concurrentModificationExceptionMsg(
-      SparkEnv.get.conf,
-      "The protocol version of the Delta table has been changed by a concurrent update. " +
-        additionalInfo + "Please try the operation again.",
-      conflictingCommit)
-    new io.delta.exceptions.ProtocolChangedException(message)
+    new io.delta.exceptions.ProtocolChangedException(
+      Array(
+        additionalInfo,
+        conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
+        DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")
+      )
+    )
   }
 
   def unsupportedReaderTableFeaturesInTableException(
@@ -2334,46 +2340,41 @@ trait DeltaErrorsBase
       conflictingCommit: Option[CommitInfo],
       partition: String,
       customRetryMsg: Option[String] = None): io.delta.exceptions.ConcurrentAppendException = {
-    val message = DeltaErrors.concurrentModificationExceptionMsg(
-      SparkEnv.get.conf,
-      s"Files were added to $partition by a concurrent update. " +
-        customRetryMsg.getOrElse("Please try the operation again."),
-      conflictingCommit)
-    new io.delta.exceptions.ConcurrentAppendException(message)
+    new io.delta.exceptions.ConcurrentAppendException(
+      Array(partition, customRetryMsg.getOrElse("Please try the operation again."),
+        conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
+        DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html"))
+    )
   }
 
   def concurrentDeleteReadException(
       conflictingCommit: Option[CommitInfo],
       file: String): io.delta.exceptions.ConcurrentDeleteReadException = {
-    val message = DeltaErrors.concurrentModificationExceptionMsg(
-      SparkEnv.get.conf,
-      "This transaction attempted to read one or more files that were deleted" +
-        s" (for example $file) by a concurrent update. Please try the operation again.",
-      conflictingCommit)
-    new io.delta.exceptions.ConcurrentDeleteReadException(message)
+    new io.delta.exceptions.ConcurrentDeleteReadException(
+      Array(file,
+        conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
+        DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html"))
+    )
   }
 
   def concurrentDeleteDeleteException(
       conflictingCommit: Option[CommitInfo],
       file: String): io.delta.exceptions.ConcurrentDeleteDeleteException = {
-    val message = DeltaErrors.concurrentModificationExceptionMsg(
-      SparkEnv.get.conf,
-      "This transaction attempted to delete one or more files that were deleted " +
-        s"(for example $file) by a concurrent update. Please try the operation again.",
-      conflictingCommit)
-    new io.delta.exceptions.ConcurrentDeleteDeleteException(message)
+    new io.delta.exceptions.ConcurrentDeleteDeleteException(
+      Array(file,
+      conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
+      DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html"))
+    )
   }
 
 
   def concurrentTransactionException(
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ConcurrentTransactionException = {
-    val message = DeltaErrors.concurrentModificationExceptionMsg(
-        SparkEnv.get.conf,
-      s"This error occurs when multiple streaming queries are using the same checkpoint to write " +
-        "into this table. Did you run multiple instances of the same streaming query" +
-        " at the same time?",
-      conflictingCommit)
-    new io.delta.exceptions.ConcurrentTransactionException(message)
+    new io.delta.exceptions.ConcurrentTransactionException(
+      Array(
+        conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
+        DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html"))
+    )
   }
 
   def restoreMissedDataFilesError(missedFiles: Array[String], version: Long): Throwable =
@@ -3349,9 +3350,9 @@ class ProtocolChangedException(message: String)
 class ConcurrentAppendException(message: String)
   extends io.delta.exceptions.DeltaConcurrentModificationException(message) {
   def this(
-      conflictingCommit: Option[CommitInfo],
-      partition: String,
-      customRetryMsg: Option[String] = None) = this(
+    conflictingCommit: Option[CommitInfo],
+    partition: String,
+    customRetryMsg: Option[String] = None) = this(
     DeltaErrors.concurrentModificationExceptionMsg(
       SparkEnv.get.conf,
       s"Files were added to $partition by a concurrent update. " +
