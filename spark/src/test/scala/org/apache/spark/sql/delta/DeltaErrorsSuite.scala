@@ -2908,7 +2908,7 @@ trait DeltaErrorsSuiteBase
         Some("_LEGACY_ERROR_TEMP_DELTA_0004"),
         None,
         Some(
-          s"""Cannot UPDATE column `col1` because this column is referenced by the following
+          s"""Cannot UPDATE column col1 because this column is referenced by the following
              |check constraint(s):
              |foo -> bar""".stripMargin)
       )
@@ -2923,7 +2923,7 @@ trait DeltaErrorsSuiteBase
         Some("_LEGACY_ERROR_TEMP_DELTA_0005"),
         None,
         Some(
-          s"""Cannot UPDATE column `col1` because this column is referenced by the following
+          s"""Cannot UPDATE column col1 because this column is referenced by the following
              |generated column(s):
              |col2""".stripMargin)
       )
@@ -2936,7 +2936,7 @@ trait DeltaErrorsSuiteBase
         e,
         Some("_LEGACY_ERROR_TEMP_DELTA_0006"),
         None,
-        Some(s"Inconsistent IDENTITY metadata for column `col1` detected: true, true, true")
+        Some(s"Inconsistent IDENTITY metadata for column col1 detected: true, true, true")
       )
     }
     {
@@ -2957,7 +2957,7 @@ trait DeltaErrorsSuiteBase
         e,
         Some("DELTA_MERGE_ADD_VOID_COLUMN"),
         Some("42K09"),
-        Some(s"Cannot add column `fooCol` with type VOID. Please explicitly specify a non-void type.")
+        Some(s"Cannot add column fooCol with type VOID. Please explicitly specify a non-void type.")
       )
     }
   }

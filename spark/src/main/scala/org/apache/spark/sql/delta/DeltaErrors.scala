@@ -2077,7 +2077,7 @@ trait DeltaErrorsBase
       constraints: Map[String, String]): Throwable = {
     new DeltaAnalysisException(
       errorClass = "_LEGACY_ERROR_TEMP_DELTA_0004",
-      messageParameters = Array(operation, toSQLId(columnName), constraints.mkString("\n"))
+      messageParameters = Array(operation, columnName, constraints.mkString("\n"))
     )
   }
 
@@ -2087,7 +2087,7 @@ trait DeltaErrorsBase
       fields: Seq[StructField]): Throwable = {
     new DeltaAnalysisException(
       errorClass = "_LEGACY_ERROR_TEMP_DELTA_0005",
-      messageParameters = Array(operation, toSQLId(columnName), fields.map(_.name).mkString("\n"))
+      messageParameters = Array(operation, columnName, fields.map(_.name).mkString("\n"))
     )
   }
 
@@ -2415,7 +2415,7 @@ trait DeltaErrorsBase
       hasInsert: Boolean): Throwable = {
     new DeltaAnalysisException(
       errorClass = "_LEGACY_ERROR_TEMP_DELTA_0006",
-      messageParameters = Array(toSQLId(colName), s"$hasStart", s"$hasStep", s"$hasInsert")
+      messageParameters = Array(colName, s"$hasStart", s"$hasStep", s"$hasInsert")
     )
   }
 
@@ -3270,7 +3270,7 @@ trait DeltaErrorsBase
   def mergeAddVoidColumn(columnName: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_MERGE_ADD_VOID_COLUMN",
-      messageParameters = Array(toSQLId(columnName))
+      messageParameters = Array(columnName)
     )
   }
 }
