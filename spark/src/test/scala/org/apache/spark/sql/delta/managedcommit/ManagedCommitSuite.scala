@@ -75,7 +75,7 @@ class ManagedCommitSuite
               actions: Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
             val uuidFile =
-              FileNames.uuidDeltaFile(logPath, commitVersion)
+              FileNames.unbackfilledDeltaFile(logPath, commitVersion)
             logStore.write(uuidFile, actions, overwrite = false, hadoopConf)
             val uuidFileStatus = uuidFile.getFileSystem(hadoopConf).getFileStatus(uuidFile)
             val commitTime = uuidFileStatus.getModificationTime

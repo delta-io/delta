@@ -126,9 +126,7 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
     }
   }
 
-  def registerTable(
-      logPath: Path,
-      maxCommitVersion: Long): Unit = {
+  def registerTable(logPath: Path, maxCommitVersion: Long): Unit = {
     val newPerTableData = new PerTableData(maxCommitVersion)
     if (perTableMap.putIfAbsent(logPath, newPerTableData) != null) {
       throw new IllegalStateException(s"Table $logPath already exists in the commit store.")

@@ -100,7 +100,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
       commitVersion: Long,
       actions: Iterator[String]): FileStatus = {
     val uuidStr = generateUUID()
-    val commitPath = FileNames.uuidDeltaFile(logPath, commitVersion, Some(uuidStr))
+    val commitPath = FileNames.unbackfilledDeltaFile(logPath, commitVersion, Some(uuidStr))
     logStore.write(commitPath, actions, overwrite = false, hadoopConf)
     commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
   }
