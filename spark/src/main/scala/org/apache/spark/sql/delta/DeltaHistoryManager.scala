@@ -25,7 +25,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, CommitMarker, JobInfo, NotebookInfo}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
-import org.apache.spark.sql.delta.util.{DateTimeUtils, FileNames, TimestampFormatter}
+import org.apache.spark.sql.delta.util.{DateTimeUtils, DeltaCommitFileProvider, FileNames, TimestampFormatter}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -73,20 +73,23 @@ class DeltaHistoryManager(
    */
   def getHistory(
       start: Long,
-      end: Option[Long] = None): Seq[DeltaHistory] = {
+      endOpt: Option[Long] = None): Seq[DeltaHistory] = {
     import org.apache.spark.sql.delta.implicits._
     val conf = getSerializableHadoopConf
     val logPath = deltaLog.logPath.toString
+    val snapshot = endOpt.map(end => deltaLog.getSnapshotAt(end - 1)).getOrElse(deltaLog.update())
+    val commitFileProvider = DeltaCommitFileProvider(snapshot)
     // We assume that commits are contiguous, therefore we try to load all of them in order
-    val info = spark.range(start, end.getOrElse(deltaLog.update().version) + 1)
+    val info = spark.range(start, snapshot.version + 1)
       .mapPartitions { versions =>
         val logStore = LogStore(SparkEnv.get.conf, conf.value)
         val basePath = new Path(logPath)
         val fs = basePath.getFileSystem(conf.value)
         versions.flatMap { commit =>
           try {
-            val ci = DeltaHistoryManager.getCommitInfo(logStore, basePath, commit, conf.value)
-            val metadata = fs.getFileStatus(FileNames.deltaFile(basePath, commit))
+            val deltaFile = commitFileProvider.deltaFile(commit)
+            val ci = DeltaHistoryManager.getCommitInfo(logStore, deltaFile, conf.value)
+            val metadata = fs.getFileStatus(deltaFile)
             Some(ci.withTimestamp(metadata.getModificationTime))
           } catch {
             case _: FileNotFoundException =>
@@ -258,14 +261,13 @@ object DeltaHistoryManager extends DeltaLogging {
   /** Get the persisted commit info (if available) for the given delta file. */
   def getCommitInfoOpt(
       logStore: LogStore,
-      basePath: Path,
-      version: Long,
+      deltaFile: Path,
       hadoopConf: Configuration): Option[CommitInfo] = {
-    val logs = logStore.readAsIterator(FileNames.deltaFile(basePath, version), hadoopConf)
+    val logs = logStore.readAsIterator(deltaFile, hadoopConf)
     try {
       logs
         .map(Action.fromJson)
-        .collectFirst { case c: CommitInfo => c.copy(version = Some(version)) }
+        .collectFirst { case c: CommitInfo => c.copy(version = Some(deltaVersion(deltaFile))) }
     } finally {
       logs.close()
     }
@@ -278,11 +280,10 @@ object DeltaHistoryManager extends DeltaLogging {
    */
   private def getCommitInfo(
       logStore: LogStore,
-      basePath: Path,
-      version: Long,
+      deltaFile: Path,
       hadoopConf: Configuration): CommitInfo = {
-    getCommitInfoOpt(logStore, basePath, version, hadoopConf).getOrElse {
-      CommitInfo.empty(Some(version))
+    getCommitInfoOpt(logStore, deltaFile, hadoopConf).getOrElse {
+      CommitInfo.empty(Some(deltaVersion(deltaFile)))
     }
   }
 

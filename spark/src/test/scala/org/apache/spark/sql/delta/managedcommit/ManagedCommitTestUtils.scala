@@ -16,28 +16,41 @@
 
 package org.apache.spark.sql.delta.managedcommit
 
-import scala.collection.mutable
-
-import org.apache.spark.sql.delta.DeltaConfigs.MANAGED_COMMIT_OWNER_CONF
-import org.apache.spark.sql.delta.DeltaTestUtilsBase
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaTestUtilsBase}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkFunSuite
+import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.test.SharedSparkSession
 
 trait ManagedCommitTestUtils
   extends DeltaTestUtilsBase { self: SparkFunSuite with SharedSparkSession =>
 
   def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
-    Seq(0, 2, 10).foreach { backfillBatchSize =>
+    Seq(1, 2, 10).foreach { backfillBatchSize =>
       test(s"$testName [Backfill batch size: $backfillBatchSize]") {
         CommitStoreProvider.clearNonDefaultBuilders()
         CommitStoreProvider.registerBuilder(TrackingInMemoryCommitStoreBuilder(backfillBatchSize))
         CommitStoreProvider.registerBuilder(InMemoryCommitStoreBuilder(backfillBatchSize))
         f(backfillBatchSize)
+      }
+    }
+  }
+
+  def testWithDifferentBackfillIntervalOptional(
+      testName: String)(f: Option[Int] => Unit): Unit = {
+    test(s"$testName [Backfill batch size: None]") {
+      f(None)
+    }
+    val managedCommitOwnerConf = Map("randomConf" -> "randomConfValue")
+    val managedCommitOwnerJson = JsonUtils.toJson(managedCommitOwnerConf)
+    withSQLConf(
+        DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey -> "in-memory",
+        DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.defaultTablePropertyKey -> managedCommitOwnerJson) {
+      testWithDifferentBackfillInterval(testName) { backfillBatchSize =>
+        f(Some(backfillBatchSize))
       }
     }
   }
@@ -113,5 +126,31 @@ class TrackingCommitStore(delegatingCommitStore: InMemoryCommitStore) extends Co
   def reset(): Unit = {
     numCommitsCalled = 0
     numGetCommitsCalled = 0
+  }
+}
+
+trait ManagedCommitBaseSuite extends SparkFunSuite with SharedSparkSession {
+  val managedCommitBackfillBatchSize: Option[Int] = None
+
+  override protected def sparkConf: SparkConf = {
+    var sparkConf = super.sparkConf
+    if (managedCommitBackfillBatchSize.nonEmpty) {
+      val managedCommitOwnerConf = Map("randomConf" -> "randomConfValue")
+      val managedCommitOwnerJson = JsonUtils.toJson(managedCommitOwnerConf)
+      sparkConf = sparkConf
+        .set(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey, "in-memory")
+        .set(
+          DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.defaultTablePropertyKey,
+          managedCommitOwnerJson)
+    }
+    sparkConf
+  }
+
+  override def beforeEach(): Unit = {
+    super.beforeEach()
+    CommitStoreProvider.clearNonDefaultBuilders()
+    managedCommitBackfillBatchSize.foreach { batchSize =>
+      CommitStoreProvider.registerBuilder(InMemoryCommitStoreBuilder(batchSize))
+    }
   }
 }

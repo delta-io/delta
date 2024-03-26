@@ -41,6 +41,7 @@ import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats._
 import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -1368,9 +1369,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           deltaLog,
           "delta.commitLarge.failure",
           data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
-        // Actions of a commit which went in before ours
+        // Actions of a commit which went in before ours.
+        // Requires updating deltaLog to retrieve these actions, as another writer may have used
+        // CommitStore for writing.
         val logs = deltaLog.store.readAsIterator(
-          deltaFile(deltaLog.logPath, attemptVersion),
+          DeltaCommitFileProvider(deltaLog.update()).deltaFile(attemptVersion),
           deltaLog.newDeltaHadoopConf())
         try {
           val winningCommitActions = logs.map(Action.fromJson)

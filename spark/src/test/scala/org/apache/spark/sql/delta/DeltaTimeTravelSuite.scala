@@ -19,18 +19,18 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
-import java.util.{Calendar, Date, TimeZone}
+import java.util.Date
 
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
@@ -39,7 +39,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 class DeltaTimeTravelSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with ManagedCommitBaseSuite {
 
   import testImplicits._
 
@@ -52,7 +53,7 @@ class DeltaTimeTravelSuite extends QueryTest
   private implicit def longToTimestamp(ts: Long): Timestamp = new Timestamp(ts)
 
   private def modifyCommitTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
-    val file = new File(FileNames.deltaFile(deltaLog.logPath, version).toUri)
+    val file = new File(DeltaCommitFileProvider(deltaLog.update()).deltaFile(version).toUri)
     file.setLastModified(ts)
     val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
     if (crc.exists()) {
@@ -761,4 +762,8 @@ class DeltaTimeTravelSuite extends QueryTest
         Row(1) :: Row(1) :: Row(2) :: Nil)
     }
   }
+}
+
+class ManagedCommitFill1DeltaTimeTravelSuite extends DeltaTimeTravelSuite {
+  override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
 }
