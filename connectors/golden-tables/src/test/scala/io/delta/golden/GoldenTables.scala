@@ -1002,6 +1002,23 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
+  generateGoldenTable("dv-with-vacuum-protocol-check") { tablePath =>
+    withSQLConf(
+      ("spark.databricks.delta.properties.defaults.columnMapping.mode", "name"),
+      ("spark.databricks.delta.properties.defaults.enableDeletionVectors", "true")) {
+      val data = (0 until 50).map(x => (x % 10, x, s"foo${x % 5}"))
+      data
+        .toDF("part", "col1", "col2")
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .save(tablePath)
+      (0 until 15).foreach { n =>
+        spark.sql(s"DELETE FROM delta.`$tablePath` WHERE col1 = ${n * 2}")
+      }
+    }
+  }
+
   def writeBasicTimestampTable(path: String, timeZone: TimeZone): Unit = {
     TimeZone.setDefault(timeZone)
     // Create a partition value of both {year}-{month}-{day} {hour}:{minute}:{second} format and
