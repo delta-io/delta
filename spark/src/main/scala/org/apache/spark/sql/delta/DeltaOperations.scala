@@ -506,13 +506,11 @@ object DeltaOperations {
       clusterBy: Option[Seq[String]] = None
   ) extends OptimizeOrReorg(OPTIMIZE_OPERATION_NAME, predicate) {
     override val parameters: Map[String, Any] = super.parameters ++ Map(
-      ZORDER_PARAMETER_KEY -> JsonUtils.toJson(zOrderBy),
+      // When clustering columns are specified, set the zOrderBy key to empty.
+      ZORDER_PARAMETER_KEY -> JsonUtils.toJson(if (clusterBy.isEmpty) zOrderBy else Seq.empty),
       CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       AUTO_COMPACTION_PARAMETER_KEY -> auto
-    ) ++ (if (clusterBy.nonEmpty) {
-      // When clustering columns are specified, we will clear the zOrderBy key.
-      Map(ZORDER_PARAMETER_KEY -> JsonUtils.toJson(Seq.empty))
-    } else Map.empty)
+    )
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
   }
