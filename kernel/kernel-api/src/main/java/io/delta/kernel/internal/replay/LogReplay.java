@@ -29,7 +29,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
-import io.delta.kernel.internal.TableFeature;
+import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.LogSegment;
@@ -232,7 +232,7 @@ public class LogReplay {
 
                             if (protocol != null) {
                                 // Stop since we have found the latest Protocol and Metadata.
-                                TableFeature.validateSupportedTable(protocol, metadata);
+                                TableFeatures.validateReadSupportedTable(protocol, metadata);
                                 return new Tuple2<>(protocol, metadata);
                             }
 

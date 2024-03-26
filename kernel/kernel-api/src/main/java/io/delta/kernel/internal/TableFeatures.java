@@ -21,13 +21,16 @@ import java.util.List;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.util.ColumnMapping;
 
-public class TableFeature {
+/**
+ * Contains utility methods related to the Delta table feature support in protocol.
+ */
+public class TableFeatures {
 
     ////////////////////
     // Helper Methods //
     ////////////////////
 
-    public static void validateSupportedTable(Protocol protocol, Metadata metadata) {
+    public static void validateReadSupportedTable(Protocol protocol, Metadata metadata) {
         switch (protocol.getMinReaderVersion()) {
             case 1:
                 break;
