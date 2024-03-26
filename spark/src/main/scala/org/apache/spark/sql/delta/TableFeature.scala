@@ -335,6 +335,7 @@ object TableFeature {
       IcebergCompatV1TableFeature,
       IcebergCompatV2TableFeature,
       DeletionVectorsTableFeature,
+      VacuumProtocolCheckTableFeature,
       V2CheckpointTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
@@ -357,8 +358,7 @@ object TableFeature {
         // Row IDs are still under development and only available in testing.
         RowTrackingFeature,
         InCommitTimestampTableFeature,
-        TypeWideningTableFeature,
-        VacuumProtocolCheckTableFeature)
+        TypeWideningTableFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -682,7 +682,7 @@ object InCommitTimestampTableFeature
  * feature exists
  */
 object VacuumProtocolCheckTableFeature
-  extends ReaderWriterFeature(name = "vacuumProtocolCheck-dev")
+  extends ReaderWriterFeature(name = "vacuumProtocolCheck")
 
 /**
  * Features below are for testing only, and are being registered to the system only in the testing
