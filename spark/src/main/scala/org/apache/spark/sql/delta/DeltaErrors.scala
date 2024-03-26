@@ -295,7 +295,10 @@ trait DeltaErrorsBase
   }
 
   def invalidConstraintName(name: String): AnalysisException = {
-    new AnalysisException(s"Cannot use '$name' as the name of a CHECK constraint.")
+    new AnalysisException(
+      errorClass = "INTERNAL_ERROR",
+      messageParameters = Map("message" -> s"Cannot use '$name' as the name of a CHECK constraint.")
+    )
   }
 
   def nonexistentConstraint(constraintName: String, tableName: String): AnalysisException = {
