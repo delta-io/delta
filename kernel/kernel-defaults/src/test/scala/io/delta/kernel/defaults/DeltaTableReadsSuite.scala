@@ -499,6 +499,13 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     )
   }
 
+  test("simple end to end with vacuum protocol check feature") {
+    val expectedValues = (0 until 100).map(x => (x, s"val=$x"))
+    checkTable(
+      path = goldenTablePath("basic-with-vacuum-protocol-check-feature"),
+      expectedAnswer = expectedValues.map(TestRow.fromTuple))
+  }
+
   test("table with nested struct") {
     val expectedAnswer = (0 until 10).map { i =>
       TestRow(TestRow(i.toString, i.toString, TestRow(i, i.toLong)), i)

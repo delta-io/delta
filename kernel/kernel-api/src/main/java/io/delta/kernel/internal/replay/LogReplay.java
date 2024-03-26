@@ -29,11 +29,11 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
+import io.delta.kernel.internal.TableFeature;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
-import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 
 /**
@@ -232,7 +232,7 @@ public class LogReplay {
 
                             if (protocol != null) {
                                 // Stop since we have found the latest Protocol and Metadata.
-                                validateSupportedTable(protocol, metadata);
+                                TableFeature.validateSupportedTable(protocol, metadata);
                                 return new Tuple2<>(protocol, metadata);
                             }
 
@@ -295,34 +295,6 @@ public class LogReplay {
         }
 
         return Optional.empty();
-    }
-
-    private void validateSupportedTable(Protocol protocol, Metadata metadata) {
-        switch (protocol.getMinReaderVersion()) {
-            case 1:
-                break;
-            case 2:
-                ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
-                break;
-            case 3:
-                List<String> readerFeatures = protocol.getReaderFeatures();
-                for (String readerFeature : readerFeatures) {
-                    switch (readerFeature) {
-                        case "deletionVectors":
-                            break;
-                        case "columnMapping":
-                            ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
-                            break;
-                        default:
-                            throw new UnsupportedOperationException(
-                                "Unsupported table feature: " + readerFeature);
-                    }
-                }
-                break;
-            default:
-                throw new UnsupportedOperationException(
-                    "Unsupported reader protocol version: " + protocol.getMinReaderVersion());
-        }
     }
 
     /**
