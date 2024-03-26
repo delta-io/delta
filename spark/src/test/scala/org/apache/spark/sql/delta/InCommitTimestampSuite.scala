@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
@@ -42,8 +42,11 @@ class InCommitTimestampSuite
   }
 
   private def getInCommitTimestamp(deltaLog: DeltaLog, version: Long): Long = {
+    val deltaFile = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(version)
     val commitInfo = DeltaHistoryManager.getCommitInfoOpt(
-      deltaLog.store, deltaLog.logPath, version, deltaLog.newDeltaHadoopConf())
+      deltaLog.store,
+      deltaFile,
+      deltaLog.newDeltaHadoopConf())
     commitInfo.get.inCommitTimestamp.get
   }
 

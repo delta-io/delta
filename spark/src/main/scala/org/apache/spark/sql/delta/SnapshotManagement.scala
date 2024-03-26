@@ -191,7 +191,8 @@ trait SnapshotManagement { self: DeltaLog =>
       .toArray
     if (resultTuplesFromFsListingOpt.isEmpty && resultFromCommitStoreFiltered.nonEmpty) {
       throw new IllegalStateException("No files found from the file system listing, but " +
-        "files found from the commit store. This is unexpected.")
+        s"files found from the commit store. This is unexpected. Commit Files: " +
+        s"${resultFromCommitStoreFiltered.map(_.getPath).mkString("Array(", ", ", ")")}")
     }
     // If result from fs listing is None and result from commit-store is empty, return none.
     // This is used by caller to distinguish whether table doesn't exist.
