@@ -295,7 +295,7 @@ trait DeltaErrorsBase
   }
 
   def invalidConstraintName(name: String): AnalysisException = {
-    new AnalysisException(s"Cannot use '$name' as the name of a CHECK constraint.")
+    new DeltaAnalysisException(s"Cannot use '$name' as the name of a CHECK constraint.")
   }
 
   def nonexistentConstraint(constraintName: String, tableName: String): AnalysisException = {
@@ -3481,7 +3481,7 @@ class DeltaIllegalStateException(
   override def getErrorClass: String = errorClass
 
   override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getParameterNames(errorClass, null)
+    DeltaThrowableHelper.getParameterNames(Option(errorClass), errorSubClass = None)
       .zip(messageParameters).toMap.asJava
   }
 }
@@ -3545,7 +3545,7 @@ class DeltaRuntimeException(
   override def getErrorClass: String = errorClass
 
   override def getMessageParameters: java.util.Map[String, String] =
-    DeltaThrowableHelper.getParameterNames(errorClass, null)
+    DeltaThrowableHelper.getParameterNames(Option(errorClass), errorSubClass = None)
       .zip(messageParameters).toMap.asJava
 }
 
@@ -3610,8 +3610,8 @@ class DeltaTablePropertyValidationFailedException(
 
   override def getMessageParameters: java.util.Map[String, String] = {
     DeltaThrowableHelper.getParameterNames(
-      "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED",
-      subClass.tag).zip(subClass.messageParameters(table)).toMap.asJava
+      Some("DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED"),
+      Some(subClass.tag)).zip(subClass.messageParameters(table)).toMap.asJava
   }
 
   override def getErrorClass: String =
