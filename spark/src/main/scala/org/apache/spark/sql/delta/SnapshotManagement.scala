@@ -334,7 +334,8 @@ trait SnapshotManagement { self: DeltaLog =>
       val (deltas, compactedDeltas) = deltasAndCompactedDeltas.partition(isDeltaFile)
       // Find the latest checkpoint in the listing that is not older than the versionToLoad
       val checkpointFiles = checkpoints.map(f => CheckpointInstance(f.getPath))
-      val newCheckpoint = getLatestCompleteCheckpointFromList(checkpointFiles, versionToLoad)
+      val newCheckpoint = Checkpoints.getLatestCompleteCheckpointFromList(
+        checkpointFiles, versionToLoad)
       val newCheckpointVersion = newCheckpoint.map(_.version).getOrElse {
         // If we do not have any checkpoint, pass new checkpoint version as -1 so that first
         // delta version can be 0.

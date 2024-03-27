@@ -433,7 +433,7 @@ trait Checkpoints extends DeltaLogging {
           .takeWhile(tv => (cur == 0 || tv.version <= cur) && tv < upperBoundCv)
           .toArray
       val lastCheckpoint =
-        getLatestCompleteCheckpointFromList(checkpoints, Some(upperBoundCv.version))
+        Checkpoints.getLatestCompleteCheckpointFromList(checkpoints, Some(upperBoundCv.version))
       if (lastCheckpoint.isDefined) {
         logInfo(s"Delta checkpoint is found at version ${lastCheckpoint.get.version}")
         return lastCheckpoint
@@ -443,31 +443,6 @@ trait Checkpoints extends DeltaLogging {
     }
     logInfo(s"No checkpoint found for Delta table before version $startVersion")
     None
-  }
-
-  /**
-   * Given a list of checkpoint files, pick the latest complete checkpoint instance which is not
-   * later than `notLaterThan`.
-   */
-  protected[delta] def getLatestCompleteCheckpointFromList(
-      instances: Array[CheckpointInstance],
-      notLaterThanVersion: Option[Long] = None): Option[CheckpointInstance] = {
-    val sentinelCv = CheckpointInstance.sentinelValue(notLaterThanVersion)
-    val complete = instances.filter(_ <= sentinelCv).groupBy(identity).filter {
-      case (ci, matchingCheckpointInstances) =>
-       ci.format match {
-         case CheckpointInstance.Format.SINGLE =>
-           matchingCheckpointInstances.length == 1
-         case CheckpointInstance.Format.WITH_PARTS =>
-           assert(ci.numParts.nonEmpty, "Multi-Part Checkpoint must have non empty numParts")
-           matchingCheckpointInstances.length == ci.numParts.get
-         case CheckpointInstance.Format.V2 =>
-           matchingCheckpointInstances.length == 1
-         case CheckpointInstance.Format.SENTINEL =>
-           false
-       }
-    }
-    if (complete.isEmpty) None else Some(complete.keys.max)
   }
 }
 
@@ -1049,6 +1024,31 @@ object Checkpoints
     if (partitionValues.isEmpty) {
       None
     } else Some(struct(partitionValues: _*).as(STRUCT_PARTITIONS_COL_NAME))
+  }
+
+  /**
+   * Given a list of checkpoint files, pick the latest complete checkpoint instance which is not
+   * later than `notLaterThan`.
+   */
+  protected[delta] def getLatestCompleteCheckpointFromList(
+      instances: Array[CheckpointInstance],
+      notLaterThanVersion: Option[Long] = None): Option[CheckpointInstance] = {
+    val sentinelCv = CheckpointInstance.sentinelValue(notLaterThanVersion)
+    val complete = instances.filter(_ <= sentinelCv).groupBy(identity).filter {
+      case (ci, matchingCheckpointInstances) =>
+        ci.format match {
+          case CheckpointInstance.Format.SINGLE =>
+            matchingCheckpointInstances.length == 1
+          case CheckpointInstance.Format.WITH_PARTS =>
+            assert(ci.numParts.nonEmpty, "Multi-Part Checkpoint must have non empty numParts")
+            matchingCheckpointInstances.length == ci.numParts.get
+          case CheckpointInstance.Format.V2 =>
+            matchingCheckpointInstances.length == 1
+          case CheckpointInstance.Format.SENTINEL =>
+            false
+        }
+    }
+    if (complete.isEmpty) None else Some(complete.keys.max)
   }
 }
 

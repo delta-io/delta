@@ -27,9 +27,10 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.DeltaHistoryManager.DeltaLogGroupingIterator
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.SparkConf
+
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.util.ManualClock
 
@@ -269,11 +270,15 @@ class DeltaRetentionSuite extends QueryTest
       log.checkpoint()
 
       val initialFiles = getLogFiles(logPath)
+      // Create a new commit and checkpoint before hte retention window so that the previous one
+      // can be deleted
+      startTxnWithManualLogCleanup(log).commit(AddFile("1", Map.empty, 1, 1, true) :: Nil, testOp)
+      log.checkpoint()
+
       clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
         intervalStringToMillis("interval 1 day"))
 
-      // Create a new checkpoint so that the previous version can be deleted
-      log.startTransaction().commit(AddFile("1", Map.empty, 1, 1, true) :: Nil, testOp)
+      log.startTransaction().commit(AddFile("2", Map.empty, 1, 1, true) :: Nil, testOp)
       log.checkpoint()
 
       // despite our clock time being set in the future, this doesn't change the FileStatus
@@ -331,6 +336,94 @@ class DeltaRetentionSuite extends QueryTest
     }
   }
 
+  test("DeltaLogGroupingIterator") {
+    val paths = Seq(
+      // checkpoint, commit and crc file present for v1
+      "file://a/b/_delta_log/1.checkpoint.parquet",
+      "file://a/b/_delta_log/1.crc",
+      "file://a/b/_delta_log/1.json",
+
+      // only json file present for v2
+      "file://a/b/_delta_log/2.json",
+      // v3 missing
+
+      // multiple types of checkpoint, compacted-delta and crc present for v4
+      "file://a/b/_delta_log/4.6.compacted.json",
+      "file://a/b/_delta_log/4.checkpoint.parquet",
+      "file://a/b/_delta_log/4.checkpoint.uuid.parquet",
+      "file://a/b/_delta_log/4.checkpoint.json.parquet",
+      "file://a/b/_delta_log/4.checkpoint.0.1.parquet",
+      "file://a/b/_delta_log/4.checkpoint.1.1.parquet",
+      "file://a/b/_delta_log/4.crc",
+      "file://a/b/_delta_log/4.json",
+      // v5, v6 with single checkpoint file
+      "file://a/b/_delta_log/5.checkpoint.parquet",
+      "file://a/b/_delta_log/5.json",
+      "file://a/b/_delta_log/6.checkpoint.parquet",
+      "file://a/b/_delta_log/6.crc",
+      "file://a/b/_delta_log/6.json",
+      // no checkpoint files in the end
+      "file://a/b/_delta_log/7.json",
+      "file://a/b/_delta_log/8.9.compacted.json",
+      "file://a/b/_delta_log/8.json",
+      "file://a/b/_delta_log/9.crc",
+      "file://a/b/_delta_log/9.json",
+      "file://a/b/_delta_log/11.checkpoint.0.1.parquet",
+      "file://a/b/_delta_log/11.checkpoint.1.1.parquet",
+      "file://a/b/_delta_log/11.checkpoint.uuid.parquet",
+      "file://a/b/_delta_log/12.14.compacted.json",
+      "file://a/b/_delta_log/12.checkpoint.parquet",
+      "file://a/b/_delta_log/14.crc",
+      "file://a/b/_delta_log/14.json")
+    val fileStatuses = paths.map { path =>
+      SerializableFileStatus(path, length = 10, isDir = false, modificationTime = 1).toFileStatus
+    }.toIterator
+    val groupedFileStatuses = new DeltaLogGroupingIterator(fileStatuses)
+    val groupedPaths = groupedFileStatuses.toIndexedSeq.map { case (version, files) =>
+      (version, files.map(_.getPath.toString).toList)
+    }
+    assert(groupedPaths === Seq(
+      1 -> List(
+        "file://a/b/_delta_log/1.checkpoint.parquet",
+        "file://a/b/_delta_log/1.crc",
+        "file://a/b/_delta_log/1.json"),
+      2 -> List("file://a/b/_delta_log/2.json"),
+      4 -> List(
+        "file://a/b/_delta_log/4.6.compacted.json",
+        "file://a/b/_delta_log/4.checkpoint.parquet",
+        "file://a/b/_delta_log/4.checkpoint.uuid.parquet",
+        "file://a/b/_delta_log/4.checkpoint.json.parquet",
+        "file://a/b/_delta_log/4.checkpoint.0.1.parquet",
+        "file://a/b/_delta_log/4.checkpoint.1.1.parquet",
+        "file://a/b/_delta_log/4.crc",
+        "file://a/b/_delta_log/4.json"),
+      5 -> List(
+        "file://a/b/_delta_log/5.checkpoint.parquet",
+        "file://a/b/_delta_log/5.json"),
+      6 -> List(
+        "file://a/b/_delta_log/6.checkpoint.parquet",
+        "file://a/b/_delta_log/6.crc",
+        "file://a/b/_delta_log/6.json"),
+      7 -> List("file://a/b/_delta_log/7.json"),
+      8 -> List(
+        "file://a/b/_delta_log/8.9.compacted.json",
+        "file://a/b/_delta_log/8.json"),
+      9 -> List(
+        "file://a/b/_delta_log/9.crc",
+        "file://a/b/_delta_log/9.json"),
+      11 -> List(
+        "file://a/b/_delta_log/11.checkpoint.0.1.parquet",
+        "file://a/b/_delta_log/11.checkpoint.1.1.parquet",
+        "file://a/b/_delta_log/11.checkpoint.uuid.parquet"),
+      12 -> List(
+        "file://a/b/_delta_log/12.14.compacted.json",
+        "file://a/b/_delta_log/12.checkpoint.parquet"),
+      14 -> List(
+        "file://a/b/_delta_log/14.crc",
+        "file://a/b/_delta_log/14.json")
+    ))
+  }
+
   protected def cleanUpExpiredLogs(log: DeltaLog): Unit = {
     val snapshot = log.update()
 
@@ -379,7 +472,7 @@ class DeltaRetentionSuite extends QueryTest
           log.startTransaction().commit(Seq(log.unsafeVolatileSnapshot.metadata), testOp)
           setModificationTimeOfNewFiles(log, clock, visitedFiles)
 
-          // Write a new checkpoint on each day. Each checkpoint has 2 sodecars:
+          // Write a new checkpoint on each day. Each checkpoint has 2 sidecars:
           // 1. Common sidecar - one of oddCommitSidecarFile_1/evenCommitSidecarFile_1
           // 2. A new sidecar just created for this checkpoint.
           val sidecarFile1 =
@@ -407,43 +500,43 @@ class DeltaRetentionSuite extends QueryTest
               evenCommitSidecarFile_1,
               oddCommitSidecarFile_1) ++ sidecarFiles.values.toIndexedSeq)
 
-        // Trigger metadata cleanup and validate that only last 6 days of deltas and checkpoints
+        // Trigger metadata cleanup and validate that only last 6(+1) days of deltas and checkpoints
         // have been retained.
         cleanUpExpiredLogs(log)
-        compareVersions(getCheckpointVersions(logPath), "checkpoint", 4 to 9)
-        compareVersions(getDeltaVersions(logPath), "delta", 4 to 9)
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 3 to 9)
+        compareVersions(getDeltaVersions(logPath), "delta", 3 to 9)
         // Check that all active sidecars are retained and expired ones are deleted.
         assert(
           getSidecarFiles(log) ===
             Set(evenCommitSidecarFile_1, oddCommitSidecarFile_1) ++
-            (4 to 9).map(sidecarFiles(_)))
+            (3 to 9).map(sidecarFiles(_)))
 
         // Advance 1 day and again run metadata cleanup.
         clock.setTime(day(startTime, day = 11))
         cleanUpExpiredLogs(log)
         setModificationTimeOfNewFiles(log, clock, visitedFiles)
-        // Commit 4 and checkpoint 4 have expired and were deleted.
-        compareVersions(getCheckpointVersions(logPath), "checkpoint", 5 to 9)
-        compareVersions(getDeltaVersions(logPath), "delta", 5 to 9)
+        // Commit 3 and checkpoint 3 have expired and were deleted.
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 4 to 9)
+        compareVersions(getDeltaVersions(logPath), "delta", 4 to 9)
         assert(
           getSidecarFiles(log) ===
             Set(evenCommitSidecarFile_1, oddCommitSidecarFile_1) ++
-            (5 to 9).map(sidecarFiles(_)))
+            (4 to 9).map(sidecarFiles(_)))
 
         // do 1 more commit and checkpoint on day 13 and run metadata cleanup.
         commitAndCheckpoint(dayNumber = 13) // commit and checkpoint 10
-        compareVersions(getCheckpointVersions(logPath), "checkpoint", 5 to 10)
-        compareVersions(getDeltaVersions(logPath), "delta", 5 to 10)
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 4 to 10)
+        compareVersions(getDeltaVersions(logPath), "delta", 4 to 10)
         cleanUpExpiredLogs(log)
         setModificationTimeOfNewFiles(log, clock, visitedFiles)
-        // Version 5 and 6 checkpoints and deltas have expired and were deleted.
-        compareVersions(getCheckpointVersions(logPath), "checkpoint", 7 to 10)
-        compareVersions(getDeltaVersions(logPath), "delta", 7 to 10)
+        // Version 4 and 5 checkpoints and deltas have expired and were deleted.
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 6 to 10)
+        compareVersions(getDeltaVersions(logPath), "delta", 6 to 10)
 
         assert(
           getSidecarFiles(log) ===
             Set(evenCommitSidecarFile_1, oddCommitSidecarFile_1) ++
-            (7 to 10).map(sidecarFiles(_)))
+            (6 to 10).map(sidecarFiles(_)))
       }
     }
   }
@@ -488,8 +581,8 @@ class DeltaRetentionSuite extends QueryTest
         // 11th day Run metadata cleanup.
         clock.setTime(day(startTime, 11))
         cleanUpExpiredLogs(log)
-        compareVersions(getCheckpointVersions(logPath), "checkpoint", 5 to 10)
-        compareVersions(getDeltaVersions(logPath), "delta", 5 to 10)
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 4 to 10)
+        compareVersions(getDeltaVersions(logPath), "delta", 4 to 10)
         val checkpointInstancesForV10 =
           getCheckpointFiles(logPath)
             .filter(f => getFileVersions(Seq(f)).head == 10)
@@ -504,4 +597,99 @@ class DeltaRetentionSuite extends QueryTest
       }
     }
   }
+
+  test("cleanup does not delete the latest checkpoint before the cutoff") {
+    withTempDir { tempDir =>
+      val startTime = getStartTimeForRetentionTest
+      val clock = new ManualClock(startTime)
+      val actualTestStartTime = System.currentTimeMillis()
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val logPath = new File(log.logPath.toUri)
+
+      // enforce 10 day checkpoint interval -- commit 0
+      spark.sql(
+        s"""CREATE TABLE delta.`${tempDir.toString()}` (id Int) USING delta
+           | TBLPROPERTIES(
+           |-- Disable the async log cleanup as this test needs to manually trigger log
+           |-- clean up.
+           |'delta.enableExpiredLogCleanup' = 'false',
+           |'delta.checkpointInterval' = '10')
+        """.stripMargin)
+
+      // Day 0: Add commits 1 to 15 --> creates 1 checkpoint at Day 0 for version 10
+      (1 to 15).foreach { i =>
+        val txn = log.startTransaction()
+        val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        val delete: Seq[Action] = if (i > 1) {
+          val timestamp = startTime + (System.currentTimeMillis() - actualTestStartTime)
+          RemoveFile(i - 1 toString, Some(timestamp), true) :: Nil
+        } else {
+          Nil
+        }
+        val version = txn.commit(delete ++ file, testOp)
+        val deltaFile = new File(FileNames.deltaFile(log.logPath, version).toUri)
+        val time = clock.getTimeMillis() + i * 1000
+        deltaFile.setLastModified(time)
+        val crcFile = new File(FileNames.checksumFile(log.logPath, version).toUri)
+        crcFile.setLastModified(time)
+        val chk = new File(FileNames.checkpointFileSingular(log.logPath, version).toUri)
+        if (chk.exists()) {
+          chk.setLastModified(time)
+        }
+      }
+
+      // ensure that the checkpoint at version 10 exists
+      val checkpointFile = getCheckpointFiles(logPath)
+        .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == 10).head
+      assert(checkpointFile.exists())
+      val deltaFiles = (1 to 15).map { i =>
+        new File(FileNames.deltaFile(log.logPath, i).toUri)
+      }
+      deltaFiles.foreach { f =>
+        assert(f.exists())
+      }
+
+      // Day 35: Add commits 16 to 25 --> creates 1 checkpoint at Day 35 for version 20
+      clock.setTime(day(startTime, 35))
+      (16 to 25).foreach { i =>
+        val txn = if (i == 1) startTxnWithManualLogCleanup(log) else log.startTransaction()
+        val file = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        val delete: Seq[Action] = if (i > 1) {
+          val timestamp = startTime + (System.currentTimeMillis() - actualTestStartTime)
+          RemoveFile(i - 1 toString, Some(timestamp), true) :: Nil
+        } else {
+          Nil
+        }
+        val version = txn.commit(delete ++ file, testOp)
+        val deltaFile = new File(FileNames.deltaFile(log.logPath, version).toUri)
+        val time = clock.getTimeMillis() + i * 1000
+        deltaFile.setLastModified(time)
+        val crcFile = new File(FileNames.checksumFile(log.logPath, version).toUri)
+        crcFile.setLastModified(time)
+        val chk = new File(FileNames.checkpointFileSingular(log.logPath, version).toUri)
+        if (chk.exists()) {
+          chk.setLastModified(time)
+        }
+      }
+
+      assert(checkpointFile.exists())
+      deltaFiles.foreach { f =>
+        assert(f.exists())
+      }
+      cleanUpExpiredLogs(log)
+
+      // assert that the checkpoint from day 0 (at version 10) and all the commits after
+      // that are still there
+      assert(checkpointFile.exists())
+      deltaFiles.zipWithIndex.foreach { case (f, i) =>
+        val version = i + 1 // From 0-based indexing to 1-based versioning
+        if (version < 10) {
+          assert(!f.exists())
+        } else {
+          assert(f.exists())
+        }
+      }
+    }
+  }
 }
+
