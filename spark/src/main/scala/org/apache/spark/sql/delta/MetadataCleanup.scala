@@ -20,7 +20,9 @@ import java.util.{Calendar, TimeZone}
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
+import org.apache.spark.sql.delta.DeltaHistoryManager.DeltaLogGroupingIterator
+
+import org.apache.spark.sql.delta.DeltaHistoryManager.{LastCheckpointPreservingLogDeletionIterator, TimestampAdjustingLogDeletionIterator}
 import org.apache.spark.sql.delta.TruncationGranularity.{DAY, HOUR, MINUTE, TruncationGranularity}
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -110,7 +112,7 @@ trait MetadataCleanup extends DeltaLogging {
   /**
    * Returns an iterator of expired delta logs that can be cleaned up. For a delta log to be
    * considered as expired, it must:
-   *  - have a checkpoint file after it
+   *  - have a checkpoint file after that's before the `fileCutOffTime`
    *  - be older than `fileCutOffTime`
    */
   private def listExpiredDeltaLogs(fileCutOffTime: Long): Iterator[FileStatus] = {
@@ -118,18 +120,14 @@ trait MetadataCleanup extends DeltaLogging {
 
     val latestCheckpoint = readLastCheckpointFile()
     if (latestCheckpoint.isEmpty) return Iterator.empty
-    val threshold = latestCheckpoint.get.version - 1L
     val files = store.listFrom(listingPrefix(logPath, 0), newDeltaHadoopConf())
       .filter(f => isCheckpointFile(f) || isDeltaFile(f))
-    def getVersion(filePath: Path): Long = {
-      if (isCheckpointFile(filePath)) {
-        checkpointVersion(filePath)
-      } else {
-        deltaVersion(filePath)
-      }
-    }
 
-    new BufferingLogDeletionIterator(files, fileCutOffTime, threshold, getVersion)
+    new LastCheckpointPreservingLogDeletionIterator(
+      new TimestampAdjustingLogDeletionIterator(
+        underlying = new DeltaLogGroupingIterator(files).map(_._2),
+        maxTimestamp = fileCutOffTime
+      )).flatten.flatten.flatten
   }
 
   /**
@@ -187,7 +185,7 @@ trait MetadataCleanup extends DeltaLogging {
       .filter(_.format != CheckpointInstance.Format.V2)
       .toArray
     val availableNonV2Checkpoints =
-      getLatestCompleteCheckpointFromList(checkpoints, Some(checkpointVersion))
+      Checkpoints.getLatestCompleteCheckpointFromList(checkpoints, Some(checkpointVersion))
     if (availableNonV2Checkpoints.nonEmpty) {
       metrics.v2CheckpointCompatLogicTimeTakenMs = System.currentTimeMillis() - startTimeMs
       return
@@ -343,7 +341,7 @@ trait MetadataCleanup extends DeltaLogging {
 
     def isCurrentCheckpointComplete: Boolean = {
       val instances = currentCheckpointFiles.map(CheckpointInstance(_)).toArray
-      getLatestCompleteCheckpointFromList(instances).isDefined
+      Checkpoints.getLatestCompleteCheckpointFromList(instances).isDefined
     }
 
     store.listFrom(listingPrefix(logPath, 0L), hadoopConf)

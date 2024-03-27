@@ -21,6 +21,7 @@ import java.io.FileNotFoundException
 import java.sql.Timestamp
 
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, CommitMarker, JobInfo, NotebookInfo}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -432,12 +433,98 @@ object DeltaHistoryManager extends DeltaLogging {
   }
 
   /**
+   * Abstract iterator for breaking a sequence of items into groups based on custom logic. It wraps
+   * an underlying iterator, transforming and grouping its items according to specific rules defined
+   * in subclasses. This iterator excels in scenarios requiring the ordered processing of data
+   * streams, where specific items mark the beginning of new groups. It ensures items within a group
+   * are emitted together.
+   */
+  private abstract class GroupBreakingIterator[T](
+      underlying: Iterator[T]) extends Iterator[ArrayBuffer[T]] {
+    private var bufferedOutput: Option[mutable.ArrayBuffer[T]] = None
+    private val bufferedUnderlying = underlying.buffered
+
+    protected def isNewGroupStart(item: T): Boolean
+
+    protected def transformItem(item: T): T
+
+    private def queueItemsIfNeeded(): Unit = {
+      if (bufferedOutput.isEmpty && bufferedUnderlying.hasNext) {
+        val group = new mutable.ArrayBuffer[T]()
+        while (bufferedUnderlying.hasNext &&
+          (!isNewGroupStart(bufferedUnderlying.head) || group.isEmpty)) {
+          group += transformItem(bufferedUnderlying.next())
+        }
+        bufferedOutput = Some(group)
+      }
+    }
+
+    override def hasNext: Boolean = {
+      queueItemsIfNeeded()
+      bufferedOutput.nonEmpty
+    }
+
+    override def next(): ArrayBuffer[T] = {
+      if (!hasNext) throw new NoSuchElementException("No more items to return")
+      val output = bufferedOutput.get
+      bufferedOutput = None
+      output
+    }
+  }
+
+  /**
+   * An iterator that helps select old log files for deletion. It takes the input iterator of
+   * eligible log file groups to delete, grouped by version and timestamp-adjusting dependency, and
+   * returns all groups up to but not including the last group containing a checkpoint.
+   * This ensures time-travel can be supported anywhere within the retention window.
+   * Example Scenario:
+   * - 25 commits made.
+   * - Checkpoint files at the 10th and 20th commits.
+   * - Retention window starts from the 15th commit.
+   * We keep everything from the 10th commit checkpoint onwards.
+   * Note 1: 10th commit is retained in the above scenario to get a valid timestamp for version 10.
+   * Note 2: This code assumes that underlying iterator list groups in a sorted-by-version order.
+   */
+  class LastCheckpointPreservingLogDeletionIterator(
+      underlying: Iterator[ArrayBuffer[ArrayBuffer[FileStatus]]])
+    extends Iterator[ArrayBuffer[ArrayBuffer[ArrayBuffer[FileStatus]]]]{
+
+    private class CheckpointGroupingIterator(
+        underlying: Iterator[ArrayBuffer[ArrayBuffer[FileStatus]]])
+      extends GroupBreakingIterator[ArrayBuffer[ArrayBuffer[FileStatus]]](underlying) {
+
+      override protected def isNewGroupStart(
+          files: ArrayBuffer[ArrayBuffer[FileStatus]]): Boolean = {
+        val checkpointPaths = files.flatten.toArray.collect {
+          case f if isCheckpointFile(f) => CheckpointInstance(f.getPath)
+        }
+        Checkpoints.getLatestCompleteCheckpointFromList(checkpointPaths).isDefined
+      }
+
+      override protected def transformItem(
+          files: ArrayBuffer[ArrayBuffer[FileStatus]]): ArrayBuffer[ArrayBuffer[FileStatus]] = files
+    }
+
+    // 1. Group by checkpoints dependency.
+    // 2. Drop everything but the last checkpoint-dependency group.
+    // .sliding(2) can return a single entry if the underlying iterators' size is 1
+    // https://www.scala-lang.org/old/node/7939
+    private val lastCheckpointPreservingIterator:
+        Iterator[ArrayBuffer[ArrayBuffer[ArrayBuffer[FileStatus]]]] =
+      new CheckpointGroupingIterator(underlying).sliding(2).filter(_.length == 2).map(_.head)
+
+    override def hasNext: Boolean = lastCheckpointPreservingIterator.hasNext
+
+    override def next: ArrayBuffer[ArrayBuffer[ArrayBuffer[FileStatus]]] =
+      lastCheckpointPreservingIterator.next()
+  }
+
+  /**
    * An iterator that helps select old log files for deletion. It takes the input iterator of log
    * files from the earliest file, and returns should-be-deleted files until the given maxTimestamp
-   * or maxVersion to delete is reached. Note that this iterator may stop deleting files earlier
-   * than maxTimestamp or maxVersion if it finds that files that need to be preserved for adjusting
-   * the timestamps of subsequent files. Let's go through an example. Assume the following commit
-   * history:
+   * is reached. Note that this iterator may stop deleting files earlier than maxTimestamp if it
+   * finds that files that need to be preserved for adjusting the timestamps of subsequent files.
+   * Let's go through an example. Assume the following commit history:
    *
    * +---------+-----------+--------------------+
    * | Version | Timestamp | Adjusted Timestamp |
@@ -453,13 +540,14 @@ object DeltaHistoryManager extends DeltaLogging {
    * As you can see from the example, we require timestamps to be monotonically increasing with
    * respect to the version of the commit, and each commit to have a unique timestamp. If we have
    * a commit which doesn't obey one of these two requirements, we adjust the timestamp of that
-   * commit to be one millisecond greater than the previous commit.
+   * commit to be one millisecond greater than the previous commit. We don't adjust or look at
+   * timestamps of checkpoints since they could be far in the future.
    *
    * Given the above commit history, the behavior of this iterator will be as follows:
-   *  - For maxVersion = 1 and maxTimestamp = 9, we can delete versions 0 and 1
-   *  - Until we receive maxVersion >= 4 and maxTimestamp >= 12, we can't delete versions 2 and 3.
+   *  - For maxTimestamp = 9, we can delete versions 0 and 1
+   *  - Until we receive maxTimestamp >= 12, we can't delete versions 2 and 3.
    *    This is because version 2 is used to adjust the timestamps of commits up to version 4.
-   *  - For maxVersion >= 5 and maxTimestamp >= 14 we can delete everything
+   *  - For maxTimestamp >= 14 we can delete everything
    * The semantics of time travel guarantee that for a given timestamp, the user will ALWAYS get the
    * same version. Consider a user asks to get the version at timestamp 11. If all files are there,
    * we would return version 3 (timestamp 11) for this query. If we delete versions 0-2, the
@@ -476,104 +564,154 @@ object DeltaHistoryManager extends DeltaLogging {
    *
    * @param underlying The iterator which gives the list of files in ascending version order
    * @param maxTimestamp The timestamp until which we can delete (inclusive).
-   * @param maxVersion The version until which we can delete (inclusive).
-   * @param versionGetter A method to get the commit version from the file path.
    */
-  class BufferingLogDeletionIterator(
-      underlying: Iterator[FileStatus],
-      maxTimestamp: Long,
-      maxVersion: Long,
-      versionGetter: Path => Long) extends Iterator[FileStatus] {
-    /**
-     * Our output iterator
-     */
-    private val filesToDelete = new mutable.Queue[FileStatus]()
-    /**
-     * Our intermediate buffer which will buffer files as long as the last file requires a timestamp
-     * adjustment.
-     */
-    private val maybeDeleteFiles = new mutable.ArrayBuffer[FileStatus]()
-    private var lastFile: FileStatus = _
-    private var hasNextCalled: Boolean = false
+  class TimestampAdjustingLogDeletionIterator(
+      underlying: Iterator[ArrayBuffer[FileStatus]],
+      maxTimestamp: Long) extends Iterator[ArrayBuffer[ArrayBuffer[FileStatus]]] {
 
-    private def init(): Unit = {
-      if (underlying.hasNext) {
-        lastFile = underlying.next()
-        maybeDeleteFiles.append(lastFile)
+    private class TimestampAdjustingGroupedIterator(underlying: Iterator[ArrayBuffer[FileStatus]])
+      extends GroupBreakingIterator[ArrayBuffer[FileStatus]](underlying) {
+
+      private var lastCommitFileOpt: Option[FileStatus] = None
+
+      private def versionGetter(filePath: Path): Long = {
+        if (isCheckpointFile(filePath)) {
+          checkpointVersion(filePath)
+        } else {
+          deltaVersion(filePath)
+        }
+      }
+
+      /**
+       * Files need a time adjustment if their timestamp isn't later than the lastCommitFileOpt.
+       */
+      private def needsTimestampAdjustment(commitFile: FileStatus): Boolean = {
+        lastCommitFileOpt.exists { lastFile =>
+          versionGetter(lastFile.getPath) < versionGetter(commitFile.getPath) &&
+            lastFile.getModificationTime >= commitFile.getModificationTime
+        }
+      }
+
+      /**
+       * A new group can start if we have a delta file that doesn't need its timestamps changed.
+       * Non-delta files must continue to be in the same group because delta files coming later
+       * might need to adjust their timestamps based on the lastCommitFileInfoOpt.
+       */
+      override protected def isNewGroupStart(files: ArrayBuffer[FileStatus]): Boolean = {
+        files.find(isDeltaFile).exists(!needsTimestampAdjustment(_))
+      }
+
+      private def createAdjustedFileStatus(
+          commitFile: FileStatus,
+          adjustedModificationTime: Long): FileStatus = {
+        new FileStatus(
+          commitFile.getLen,
+          commitFile.isDirectory,
+          commitFile.getReplication,
+          commitFile.getBlockSize,
+          adjustedModificationTime,
+          commitFile.getPath)
+      }
+
+      override protected def transformItem(
+          files: ArrayBuffer[FileStatus]): ArrayBuffer[FileStatus] = {
+        val commitFileIndex = files.indexWhere(isDeltaFile)
+        if (commitFileIndex >= 0) {
+          val commitFile = files(commitFileIndex)
+          if (needsTimestampAdjustment(commitFile)) {
+            files(commitFileIndex) =
+              createAdjustedFileStatus(commitFile, lastCommitFileOpt.get.getModificationTime + 1)
+          }
+          lastCommitFileOpt = Some(files(commitFileIndex))
+        }
+        files
       }
     }
-
-    init()
 
     /** Whether the given file can be deleted based on the version and retention timestamp input. */
     private def shouldDeleteFile(file: FileStatus): Boolean = {
-      file.getModificationTime <= maxTimestamp && versionGetter(file.getPath) <= maxVersion
+      file.getModificationTime <= maxTimestamp
     }
 
     /**
-     * Files need a time adjustment if their timestamp isn't later than the lastFile.
+     * A timestamp-adjusting group can be deleted if the last delta file in it can be deleted.
      */
-    private def needsTimeAdjustment(file: FileStatus): Boolean = {
-      versionGetter(lastFile.getPath) < versionGetter(file.getPath) &&
-        lastFile.getModificationTime >= file.getModificationTime
+    private def shouldDeleteGroup(group: ArrayBuffer[ArrayBuffer[FileStatus]]): Boolean = {
+      group.flatten.reverse.find((file: FileStatus) => isDeltaFile(file))
+        .forall(file => shouldDeleteFile(file))
     }
 
-    /**
-     * Enqueue the files in the buffer if the last file is safe to delete. Clears the buffer.
-     */
-    private def flushBuffer(): Unit = {
-      if (maybeDeleteFiles.lastOption.exists(shouldDeleteFile)) {
-        filesToDelete ++= maybeDeleteFiles
-      }
-      maybeDeleteFiles.clear()
+    private def transformLastGroup(
+        group: ArrayBuffer[ArrayBuffer[FileStatus]]
+    ): ArrayBuffer[ArrayBuffer[FileStatus]] = {
+      val deltaFileIdx = group.lastIndexWhere { files =>
+        files.exists((file: FileStatus) => isDeltaFile(file)) }
+      group.take(deltaFileIdx + 1) ++
+        group.drop(deltaFileIdx + 1).takeWhile(_.forall(shouldDeleteFile))
     }
 
-    /**
-     * Peeks at the next file in the iterator. Based on the next file we can have three
-     * possible outcomes:
-     * - The underlying iterator returned a file, which doesn't require timestamp adjustment. If
-     *   the file in the buffer has expired, flush the buffer to our output queue.
-     * - The underlying iterator returned a file, which requires timestamp adjustment. In this case,
-     *   we add this file to the buffer and fetch the next file
-     * - The underlying iterator is empty. In this case, we check the last file in the buffer. If
-     *   it has expired, then flush the buffer to the output queue.
-     * Once this method returns, the buffer is expected to have 1 file (last file of the
-     * underlying iterator) unless the underlying iterator is fully consumed.
-     */
-    private def queueFilesInBuffer(): Unit = {
-      var continueBuffering = true
-      while (continueBuffering) {
-        if (!underlying.hasNext) {
-          flushBuffer()
-          return
-        }
+    val filteredIterator: Iterator[ArrayBuffer[ArrayBuffer[FileStatus]]] =
+      new TimestampAdjustingGroupedIterator(underlying).takeWhile(shouldDeleteGroup)
 
-        var currentFile = underlying.next()
-        require(currentFile != null, "FileStatus iterator returned null")
-        if (needsTimeAdjustment(currentFile)) {
-          currentFile = new FileStatus(
-            currentFile.getLen, currentFile.isDirectory, currentFile.getReplication,
-            currentFile.getBlockSize, lastFile.getModificationTime + 1, currentFile.getPath)
-          maybeDeleteFiles.append(currentFile)
-        } else {
-          flushBuffer()
-          maybeDeleteFiles.append(currentFile)
-          continueBuffering = false
-        }
-        lastFile = currentFile
+    override def hasNext: Boolean = filteredIterator.hasNext
+
+    /**
+     * We potentially drop trailing checkpoints from the last group by explicitly checking if they
+     * are within the retention window.
+     */
+    override def next(): ArrayBuffer[ArrayBuffer[FileStatus]] = {
+      val group = filteredIterator.next()
+      if (hasNext) {
+        group
+      } else {
+        transformLastGroup(group)
       }
     }
+  }
 
-    override def hasNext: Boolean = {
-      hasNextCalled = true
-      if (filesToDelete.isEmpty) queueFilesInBuffer()
-      filesToDelete.nonEmpty
+  /**
+   * An iterator that groups same types of files by version. For example for an input iterator:
+   *   - 11.checkpoint.0.1.parquet
+   *   - 11.checkpoint.1.1.parquet
+   *   - 11.json
+   *   - 12.checkpoint.parquet
+   *   - 12.json
+   *   - 13.json
+   *   - 14.json
+   *   - 15.checkpoint.0.1.parquet
+   *   - 15.checkpoint.1.1.parquet
+   *   - 15.checkpoint.<uuid>.parquet
+   *   - 15.json This will return:
+   *     - (11, Seq(11.checkpoint.0.1.parquet, 11.checkpoint.1.1.parquet, 11.json))
+   *     - (12, Seq(12.checkpoint.parquet, 12.json))
+   *     - (13, Seq(13.json))
+   *     - (14, Seq(14.json))
+   *     - (15, Seq(15.checkpoint.0.1.parquet, 15.checkpoint.1.1.parquet,
+   *       15.checkpoint.<uuid>.parquet, 15.json))
+   */
+  class DeltaLogGroupingIterator(checkpointAndDeltas: Iterator[FileStatus])
+    extends Iterator[(Long, ArrayBuffer[FileStatus])] {
+
+    private val bufferedIterator = checkpointAndDeltas.buffered
+
+    private def getFileVersion(file: FileStatus): Long = {
+      if (isCheckpointFile(file.getPath)) {
+        checkpointVersion(file.getPath)
+      } else {
+        deltaVersion(file.getPath)
+      }
     }
 
-    override def next(): FileStatus = {
-      if (!hasNextCalled) throw new NoSuchElementException()
-      hasNextCalled = false
-      filesToDelete.dequeue()
+    override def hasNext: Boolean = bufferedIterator.hasNext
+
+    override def next(): (Long, ArrayBuffer[FileStatus]) = {
+      val first = bufferedIterator.next()
+      val buffer = scala.collection.mutable.ArrayBuffer(first)
+      val firstFileVersion = getFileVersion(first)
+      while (bufferedIterator.headOption.exists(getFileVersion(_) == firstFileVersion)) {
+        buffer += bufferedIterator.next()
+      }
+      firstFileVersion -> buffer
     }
   }
 }
@@ -629,4 +767,3 @@ object DeltaHistory {
       engineInfo = ci.engineInfo)
   }
 }
-
