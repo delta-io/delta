@@ -1739,8 +1739,9 @@ trait DeltaErrorsBase
   }
 
   def generatedColumnsNonDeterministicExpression(expr: Expression): Throwable = {
-    new AnalysisException(
-      s"Found ${expr.sql}. A generated column cannot use a non deterministic expression")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NON_DETERMINISTIC_EXPRESSION_IN_GENERATED_COLUMN",
+      messageParameters = Array(s"${expr.sql}"))
   }
 
   def generatedColumnsAggregateExpression(expr: Expression): Throwable = {
@@ -2074,24 +2075,20 @@ trait DeltaErrorsBase
       operation: String,
       columnName: String,
       constraints: Map[String, String]): Throwable = {
-    val plural = if (constraints.size > 1) "s" else ""
-    new AnalysisException(
-      s"""
-        |Cannot $operation column $columnName because this column is referenced by the following
-        | check constraint$plural:\n\t${constraints.mkString("\n\t")}
-        |""".stripMargin)
+    new DeltaAnalysisException(
+      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0004",
+      messageParameters = Array(operation, columnName, constraints.mkString("\n"))
+    )
   }
 
   def foundViolatingGeneratedColumnsForColumnChange(
       operation: String,
       columnName: String,
       fields: Seq[StructField]): Throwable = {
-    val plural = if (fields.size > 1) "s" else ""
-    new AnalysisException(
-      s"""
-         |Cannot $operation column $columnName because this column is referenced by the following
-         | generated column$plural:\n\t${fields.map(_.name).mkString("\n\t")}
-         |""".stripMargin)
+    new DeltaAnalysisException(
+      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0005",
+      messageParameters = Array(operation, columnName, fields.map(_.name).mkString("\n"))
+    )
   }
 
   def missingColumnsInInsertInto(column: String): Throwable = {
@@ -2416,8 +2413,10 @@ trait DeltaErrorsBase
       hasStart: Boolean,
       hasStep: Boolean,
       hasInsert: Boolean): Throwable = {
-    new AnalysisException(s"Inconsistent IDENTITY metadata for column $colName " +
-      s"detected: $hasStart, $hasStep, $hasInsert")
+    new DeltaAnalysisException(
+      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0006",
+      messageParameters = Array(colName, s"$hasStart", s"$hasStep", s"$hasInsert")
+    )
   }
 
   def activeSparkSessionNotFound(): Throwable = {
@@ -3267,6 +3266,13 @@ trait DeltaErrorsBase
       errorClass = "DELTA_CREATE_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED",
       messageParameters = Array(tableFeature))
   }
+
+  def mergeAddVoidColumn(columnName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_MERGE_ADD_VOID_COLUMN",
+      messageParameters = Array(toSQLId(columnName))
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
@@ -3436,7 +3442,10 @@ class MetadataMismatchErrorBuilder {
   }
 
   def finalizeAndThrow(conf: SQLConf): Unit = {
-    throw new AnalysisException(bits.mkString("\n"))
+    throw new DeltaAnalysisException(
+      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0007",
+      messageParameters = Array(bits.mkString("\n"))
+    )
   }
 }
 

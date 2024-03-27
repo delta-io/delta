@@ -1329,6 +1329,12 @@
     ],
     "sqlState" : "40000"
   },
+  "DELTA_MERGE_ADD_VOID_COLUMN" : {
+    "message" : [
+      "Cannot add column <newColumn> with type VOID. Please explicitly specify a non-void type."
+    ],
+    "sqlState" : "42K09"
+  },
   "DELTA_MERGE_INCOMPATIBLE_DATATYPE" : {
     "message" : [
       "Failed to merge incompatible data types <currentDataType> and <updateDataType>"
@@ -1522,6 +1528,12 @@
   "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT" : {
     "message" : [
       "CHECK constraint '<name>' (<expr>) should be a boolean expression."
+    ],
+    "sqlState" : "42621"
+  },
+  "DELTA_NON_DETERMINISTIC_EXPRESSION_IN_GENERATED_COLUMN" : {
+    "message" : [
+      "Found <expr>. A generated column cannot use a non deterministic expression."
     ],
     "sqlState" : "42621"
   },
@@ -2712,6 +2724,30 @@
       "Delta configuration:",
       "<configuration>",
       "If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `<metadataCheckSqlConf>` to false."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0004" : {
+    "message" : [
+      "Cannot <operation> column <columnName> because this column is referenced by the following",
+      "check constraint(s):",
+      "<constraints>"
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0005" : {
+    "message" : [
+      "Cannot <operation> column <columnName> because this column is referenced by the following",
+      "generated column(s):",
+      "<generatedColumns>"
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0006" : {
+    "message" : [
+      "Inconsistent IDENTITY metadata for column <colName> detected: <hasStart>, <hasStep>, <hasInsert>"
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0007" : {
+    "message" : [
+      "<message>"
     ]
   }
 }
