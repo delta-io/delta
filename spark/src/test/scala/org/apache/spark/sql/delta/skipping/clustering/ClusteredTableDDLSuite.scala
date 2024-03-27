@@ -674,7 +674,7 @@ trait ClusteredTableDDLSuiteBase
     }
   }
 
-  testQuietly("validate CLONE on clustered table") {
+  test("validate CLONE on clustered table") {
     import testImplicits._
     val srcTable = "SrcTbl"
     val dstTable1 = "DestTbl1"
