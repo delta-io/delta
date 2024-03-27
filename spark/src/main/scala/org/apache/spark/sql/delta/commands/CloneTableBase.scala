@@ -228,7 +228,6 @@ abstract class CloneTableBase(
           copiedFile.copy(baseRowId = None, defaultRowCommitVersion = None)
         }
       sourceTable.snapshot.foreach { sourceSnapshot =>
-
         // Handle DomainMetadata for cloning a table.
         if (deltaOperation.name == DeltaOperations.OP_CLONE) {
           actions ++=
