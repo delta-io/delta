@@ -172,9 +172,9 @@ public class SnapshotManager {
      * Get an iterator of files in the _delta_log directory starting with the startVersion.
      */
     private CloseableIterator<FileStatus> listFrom(
-        TableClient tableClient,
-        long startVersion)
-        throws IOException {
+            TableClient tableClient,
+            long startVersion)
+            throws IOException {
         logger.debug("startVersion: {}", startVersion);
         return tableClient
             .getFileSystemClient()
