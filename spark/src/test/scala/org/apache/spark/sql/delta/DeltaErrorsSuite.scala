@@ -2957,7 +2957,7 @@ trait DeltaErrorsSuiteBase
         e,
         Some("DELTA_MERGE_ADD_VOID_COLUMN"),
         Some("42K09"),
-        Some(s"Cannot add column fooCol with type VOID. Please explicitly specify a non-void type.")
+        Some(s"Cannot add column `fooCol` with type VOID. Please explicitly specify a non-void type.")
       )
     }
   }

@@ -3270,7 +3270,7 @@ trait DeltaErrorsBase
   def mergeAddVoidColumn(columnName: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_MERGE_ADD_VOID_COLUMN",
-      messageParameters = Array(columnName)
+      messageParameters = Array(toSQLId(columnName))
     )
   }
 }
