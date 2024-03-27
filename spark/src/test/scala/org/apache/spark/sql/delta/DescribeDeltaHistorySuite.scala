@@ -260,11 +260,13 @@ trait DescribeDeltaHistorySuiteBase
           "CREATE TABLE",
           "true",
           """["b"]""",
+          """[]""",
           """{"delta.appendOnly":"true"}""",
           "this is my table"),
         Seq(
           $"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
-          $"operationParameters.properties", $"operationParameters.description"))
+          $"operationParameters.clusterBy", $"operationParameters.properties",
+          $"operationParameters.description"))
     }
   }
 
@@ -275,9 +277,10 @@ trait DescribeDeltaHistorySuiteBase
         .option("path", tempDir).saveAsTable("delta_test")
       checkLastOperation(
         tempDir,
-        Seq("CREATE TABLE AS SELECT", "false", """[]""", "{}", null),
+        Seq("CREATE TABLE AS SELECT", "false", """[]""", """[]""", "{}", null),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
-          $"operationParameters.properties", $"operationParameters.description"))
+          $"operationParameters.clusterBy", $"operationParameters.properties",
+          $"operationParameters.description"))
     }
   }
 
@@ -297,9 +300,11 @@ trait DescribeDeltaHistorySuiteBase
         Seq("CREATE TABLE AS SELECT",
           "false",
           """["b"]""",
+          """[]""",
           """{"delta.appendOnly":"true"}""", null),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
-          $"operationParameters.properties", $"operationParameters.description"))
+          $"operationParameters.clusterBy", $"operationParameters.properties",
+          $"operationParameters.description"))
     }
     val tempDir2 = Utils.createTempDir().toString
     withTable("delta_test") {
@@ -314,9 +319,10 @@ trait DescribeDeltaHistorySuiteBase
       checkLastOperation(
         tempDir2,
         Seq("CREATE TABLE AS SELECT",
-          "false", """[]""", """{}""", "this is my table"),
+          "false", """[]""", """[]""", """{}""", "this is my table"),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
-          $"operationParameters.properties", $"operationParameters.description"))
+          $"operationParameters.clusterBy", $"operationParameters.properties",
+          $"operationParameters.description"))
     }
   }
 
