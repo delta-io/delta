@@ -110,7 +110,21 @@ trait DeltaErrorsSuiteBase
         spark,
         StructType.fromDDL("id int"),
         StructType.fromDDL("id2 int"),
-        detectedDuringStreaming = true)
+        detectedDuringStreaming = true),
+    "concurrentAppendException" ->
+      DeltaErrors.concurrentAppendException(None, "p1"),
+    "concurrentDeleteDeleteException" ->
+      DeltaErrors.concurrentDeleteDeleteException(None, "p1"),
+    "concurrentDeleteReadException" ->
+      DeltaErrors.concurrentDeleteReadException(None, "p1"),
+    "concurrentWriteException" ->
+      DeltaErrors.concurrentWriteException(None),
+    "concurrentTransactionException" ->
+      DeltaErrors.concurrentTransactionException(None),
+    "metadataChangedException" ->
+      DeltaErrors.metadataChangedException(None),
+    "protocolChangedException" ->
+      DeltaErrors.protocolChangedException(None)
   )
 
   def otherMessagesToTest: Map[String, String] = Map(
@@ -2958,6 +2972,7 @@ trait DeltaErrorsSuiteBase
         Some("DELTA_MERGE_ADD_VOID_COLUMN"),
         Some("42K09"),
         Some(s"Cannot add column `fooCol` with type VOID. Please explicitly specify a non-void type.")
+      )
     }
     {
       val e = intercept[io.delta.exceptions.ConcurrentAppendException] {
