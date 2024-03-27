@@ -55,6 +55,9 @@
   - [Row Commit Versions](#row-commit-versions)
   - [Reader Requirements for Row Tracking](#reader-requirements-for-row-tracking)
   - [Writer Requirements for Row Tracking](#writer-requirements-for-row-tracking)
+- [VACUUM Protocol Check](#vacuum-protocol-check)
+  - [Writer Requirements for Vacuum Protocol Check](#writer-requirements-for-vacuum-protocol-check)
+  - [Recommendations for Readers of Tables with Vacuum Protocol Check feature](#recommendations-for-readers-of-tables-with-vacuum-protocol-check-feature)
 - [Clustered Table](#clustered-table)
   - [Writer Requirements for Clustered Table](#writer-requirements-for-clustered-table)
 - [Requirements for Writers](#requirements-for-writers)
@@ -1178,6 +1181,26 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
 - Writers should set `delta.rowTracking.preserved` in the `tags` of the `commitInfo` action to `true` whenever all the stable Row IDs of rows that are updated or copied and all the stable Row Commit Versions of rows that are copied were preserved.
   In particular, writers should set `delta.rowTracking.preserved` in the `tags` of the `commitInfo` action to `true` if no rows are updated or copied.
   Writers should set that flag to false otherwise.
+
+# VACUUM Protocol Check
+
+The `vacuumProtocolCheck` ReaderWriter feature ensures consistent application of reader and writer protocol checks during `VACUUM` operations, addressing potential protocol discrepancies and mitigating the risk of data corruption due to skipped writer checks.
+
+Enablement:
+- The table must be on Writer Version 7 and Reader Version 3.
+- The feature `vacuumProtocolCheck` must exist in the table `protocol`'s `writerFeatures` and `readerFeatures`.
+
+## Writer Requirements for Vacuum Protocol Check
+
+This feature affects only the VACUUM operations; standard commits remain unaffected.
+
+Before performing a VACUUM operation, writers must ensure that they check the table's write protocol. This is most easily implemented by adding an unconditional write protocol check for all tables, which removes the need to examine individual table properties.
+
+Writers that do not implement VACUUM do not need to change anything and can safely write to tables that enable the feature.
+
+## Recommendations for Readers of Tables with Vacuum Protocol Check feature
+
+For tables with Vacuum Protocol Check enabled, readers don’t need to understand or change anything new; they just need to acknowledge the feature exists.
 
 # Clustered Table
 
