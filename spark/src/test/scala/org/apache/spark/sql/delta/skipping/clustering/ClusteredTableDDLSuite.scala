@@ -677,54 +677,45 @@ trait ClusteredTableDDLSuiteBase
   testQuietly("validate CLONE on clustered table") {
     import testImplicits._
     val srcTable = "SrcTbl"
-    val dstTable = "DestTbl"
-    Seq(true, false).foreach { useSQL =>
-      withTable(srcTable, dstTable) {
-        // Create the source table.
-        sql(s"CREATE TABLE $srcTable (col1 INT, col2 INT, col3 INT) " +
-          s"USING delta CLUSTER BY (col1, col2)")
-        val tableIdent = new TableIdentifier(srcTable)
-        (1 to 100).map(i => (i, i + 1000, i + 100)).toDF("col1", "col2", "col3")
-          .repartitionByRange(100, col("col1"))
-          .write.format("delta").mode("append").saveAsTable(srcTable)
+    val dstTable1 = "DestTbl1"
+    val dstTable2 = "DestTbl2"
 
-        // Force clustering on the source table.
-        val (_, srcSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdent)
-        val ingestionSize = srcSnapshot.allFiles.collect().map(_.size).sum
-        withSQLConf(
-          DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> (ingestionSize / 4).toString) {
-          runOptimize(srcTable) { res =>
-            assert(res.numFilesAdded === 4)
-            assert(res.numFilesRemoved === 100)
-          }
+    withTable(srcTable, dstTable1) {
+      // Create the source table.
+      sql(s"CREATE TABLE $srcTable (col1 INT, col2 INT, col3 INT) " +
+        s"USING delta CLUSTER BY (col1, col2)")
+      val tableIdent = new TableIdentifier(srcTable)
+      (1 to 100).map(i => (i, i + 1000, i + 100)).toDF("col1", "col2", "col3")
+        .repartitionByRange(100, col("col1"))
+        .write.format("delta").mode("append").saveAsTable(srcTable)
+
+      // Force clustering on the source table.
+      val (_, srcSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdent)
+      val ingestionSize = srcSnapshot.allFiles.collect().map(_.size).sum
+      withSQLConf(
+        DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> (ingestionSize / 4).toString) {
+        runOptimize(srcTable) { res =>
+          assert(res.numFilesAdded === 4)
+          assert(res.numFilesRemoved === 100)
         }
-
-        // Create destination table as a clone of the source table.
-        if (useSQL) {
-          sql(s"CREATE TABLE $dstTable SHALLOW CLONE $srcTable")
-        } else {
-          val sourceIdentifier = Identifier.of(
-            TableIdentifier(srcTable).database.toArray, TableIdentifier(srcTable).table)
-          val sourceRelation = DataSourceV2Relation.create(
-            DeltaTableV2(spark, TableIdentifier(srcTable), ""), None, Some(sourceIdentifier))
-          val clone = CloneTableStatement(
-            sourceRelation,
-            UnresolvedRelation(TableIdentifier(dstTable)),
-            ifNotExists = false,
-            isReplaceCommand = false,
-            isCreateCommand = true,
-            tablePropertyOverrides = Map.empty[String, String],
-            targetLocation = None)
-
-          Dataset.ofRows(spark, clone).collect()
-          DeltaTable.forName(spark, dstTable)
-        }
-
-        // Validate clustering columns and that clustering columns in stats schema.
-        val (_, dstSnapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable))
-        verifyClusteringColumns(TableIdentifier(dstTable), "col1,col2")
-        ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot, Seq("col1", "col2"))
       }
+
+      // Create destination table as a clone of the source table.
+      sql(s"CREATE TABLE $dstTable1 SHALLOW CLONE $srcTable")
+
+      // Validate clustering columns and that clustering columns in stats schema.
+      val (_, dstSnapshot1) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable1))
+      verifyClusteringColumns(TableIdentifier(dstTable1), "col1,col2")
+      ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot1, Seq("col1", "col2"))
+
+      // Change to CLUSTER BY NONE, then CLONE from earlier version to validate that the
+      // clustering column information is maintainted.
+      sql(s"ALTER TABLE $srcTable CLUSTER BY NONE")
+      sql(s"CREATE TABLE $dstTable2 SHALLOW CLONE $srcTable VERSION AS OF 2")
+
+      val (_, dstSnapshot2) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable1))
+      verifyClusteringColumns(TableIdentifier(dstTable2), "col1,col2")
+      ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot2, Seq("col1", "col2"))
     }
   }
 }
