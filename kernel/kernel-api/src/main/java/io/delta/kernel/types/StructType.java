@@ -31,13 +31,18 @@ import io.delta.kernel.internal.util.Tuple2;
  */
 @Evolving
 public final class StructType extends DataType {
-
+    private static final byte typePromotionGroup = PromotionGroup.STRUCT_GROUP;
     private final Map<String, Tuple2<StructField, Integer>> nameToFieldAndOrdinal;
     private final List<StructField> fields;
     private final List<String> fieldNames;
 
     public StructType() {
         this(new ArrayList<>());
+    }
+
+    @Override
+    public byte getPromotionGroup(DataType dataType) {
+        return typePromotionGroup;
     }
 
     public StructType(List<StructField> fields) {

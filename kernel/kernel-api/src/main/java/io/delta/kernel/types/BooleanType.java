@@ -24,9 +24,15 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class BooleanType extends BasePrimitiveType {
+    private static final byte typePromotionGroup = PromotionGroup.BOOLEAN_GROUP;
     public static final BooleanType BOOLEAN = new BooleanType();
 
     private BooleanType() {
         super("boolean");
+    }
+
+    @Override
+    public byte getPromotionGroup(DataType dataType) {
+        return typePromotionGroup;
     }
 }

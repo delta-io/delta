@@ -24,9 +24,20 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class IntegerType extends BasePrimitiveType {
+    private static final byte typePromotionGroup = PromotionGroup.NUMBER_GROUP;
+    private static final byte typePromotionPrecedenceInGroup = PromotionGroup.NUMBER_PRECEDENCE_INT;
     public static final IntegerType INTEGER = new IntegerType();
 
     private IntegerType() {
         super("integer");
+    }
+
+    @Override
+    public byte getPromotionPrecedence(DataType dataType) {
+        return typePromotionPrecedenceInGroup;
+    }
+    @Override
+    public byte getPromotionGroup(DataType dataType) {
+        return typePromotionGroup;
     }
 }

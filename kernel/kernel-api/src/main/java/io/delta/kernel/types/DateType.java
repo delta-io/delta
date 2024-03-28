@@ -25,9 +25,21 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class DateType extends BasePrimitiveType {
+    private static final byte typePromotionGroup = PromotionGroup.TIME_GROUP;
+    private static final byte typePromotionPrecedenceInGroup = PromotionGroup.TIME_PRECEDENCE_DATE;
+
     public static final DateType DATE = new DateType();
 
     private DateType() {
         super("date");
+    }
+
+    @Override
+    public byte getPromotionPrecedence(DataType dataType) {
+        return typePromotionPrecedenceInGroup;
+    }
+    @Override
+    public byte getPromotionGroup(DataType dataType) {
+        return typePromotionGroup;
     }
 }
