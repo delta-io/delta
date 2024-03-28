@@ -254,6 +254,19 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 throw DeltaErrors.unsupportedExpression(
                     coalesce, Optional.of("Coalesce requires at least one expression"));
             }
+
+            if (!(children.get(0).outputType instanceof BooleanType) &&
+                    !(children.get(0).outputType instanceof ByteType) &&
+                    !(children.get(0).outputType instanceof ShortType) &&
+                    !(children.get(0).outputType instanceof IntegerType) &&
+                    !(children.get(0).outputType instanceof LongType) &&
+                    !(children.get(0).outputType instanceof FloatType) &&
+                    !(children.get(0).outputType instanceof DoubleType) &&
+                    !(children.get(0).outputType instanceof StringType)) {
+                throw new UnsupportedOperationException(
+                        "Coalesce is only supported for boolean and number type expressions");
+            }
+
             // TODO support least-common-type resolution
             long numDistinctTypes = children.stream().map(e -> e.outputType)
                 .distinct()
@@ -262,11 +275,6 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 throw DeltaErrors.unsupportedExpression(
                         coalesce,
                         Optional.of("Coalesce is only supported for arguments of the same type"));
-            }
-            // TODO support other data types besides boolean (just needs tests)
-            if (!(children.get(0).outputType instanceof BooleanType)) {
-                throw new UnsupportedOperationException(
-                    "Coalesce is only supported for boolean type expressions");
             }
             return new ExpressionTransformResult(
                 new ScalarExpression(
