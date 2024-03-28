@@ -1800,7 +1800,7 @@ trait DeltaErrorsSuiteBase
           |followed by the name of the column (only if that column is a struct type).
           |e.g. mymap.key.mykey
           |If the column is a basic type, mymap.key or mymap.value is sufficient.
-          |Schema:\n${schema.treeString}""".stripMargin))
+          |Schema:\n""".stripMargin + schema.treeString))
     }
     {
       val e = intercept[DeltaAnalysisException] {
