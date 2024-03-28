@@ -217,7 +217,8 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     verifyClusteringColumnsInternal(
       snapshot,
       tableIdentifier.table,
-      expectedLogicalClusteringColumns)
+      expectedLogicalClusteringColumns
+    )
   }
 
   def verifyClusteringColumns(
@@ -227,7 +228,8 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     verifyClusteringColumnsInternal(
       snapshot,
       s"delta.`$dataPath`",
-      expectedLogicalClusteringColumns)
+      expectedLogicalClusteringColumns
+    )
   }
 
   def verifyClusteringColumnsInternal(
