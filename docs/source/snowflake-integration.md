@@ -4,25 +4,27 @@ description: Learn how to set up an integration to enable you to read Delta tabl
 
 # <Delta> to <Snowflake> integration
 
-.. important::
+## <Snowflake> <Delta> connector
 
-  There is a preview available for an updated Delta to Snowflake integration which doesn't require using manifest files to query Delta Lake. Please visit [Snowflake documentation](https://docs.snowflake.com/en/user-guide/tables-external-intro.html#delta-lake-support) to use it.
+Visit the [Snowflake Delta Lake support](https://docs.snowflake.com/en/user-guide/tables-external-intro.html#delta-lake-support) documentation to use the connector.
 
-  You may still use the following instructions to query Delta Lake using manifest files.
+### What to do if Snowflake performance is slow when reading Delta tables?
 
-.. admonition::  Experimental
-    :class: preview
+Some users in the community have reported that <Snowflake>, unlike [Trino](https://trino.io/docs/current/connector/delta-lake.html) or [Spark](delta-batch.md), is not using [Delta statistics](optimizations-oss.md#data-skipping) to do data skipping when reading Delta tables. Due to this bug, <Snowflake> may read a lot of unnecessary parquet files resulting in poor query performance and increased API call requests from cloud providers.
 
-    This is an experimental integration. Use with caution.
+If you are a <Snowflake> customer and have subscribed to their enterprise support, please [open a support case](https://community.snowflake.com/s/article/How-To-Submit-a-Support-Case-in-Snowflake-Lodge).
 
+As a workaround, you can enable [Delta UniForm](delta-uniform.md) to generate Iceberg metadata and read these tables as Iceberg tables from <Snowflake>.
+
+## Integration using manifest files (obsolete)
 
 A Delta table can be read by <Snowflake> using a _manifest file_, which is a text file containing the list of data files to read for querying a Delta table. This article describes how to set up a <Delta> to <Snowflake> integration using manifest files and query Delta tables.
 
-## Set up a <Delta> to <Snowflake> integration and query Delta tables
+### Set up a <Delta> to <Snowflake> integration and query Delta tables
 
 You set up a <Delta> to <Snowflake> integration using the following steps.
 
-### Step 1: Generate manifests of a Delta table using <AS>
+#### Step 1: Generate manifests of a Delta table using <AS>
 
 Run the `generate` operation on a Delta table at location `<path-to-delta-table>`:
 
@@ -55,11 +57,11 @@ The `generate` operation generates manifest files at `<path-to-delta-table>/_sym
 .. note::
   We recommend that you define the Delta table in a location that <Snowflake> can read directly.
 
-### Step 2: Configure <Snowflake> to read the generated manifests
+#### Step 2: Configure <Snowflake> to read the generated manifests
 
 Run the following commands in your <Snowflake> environment.
 
-#### Define an external table on the manifest files
+##### Define an external table on the manifest files
 
 To define an external table in <Snowflake>, you must first [define a external stage](https://docs.snowflake.net/manuals/user-guide/data-load-s3-create-stage.html) `my_staged_table` that points to the Delta table. In <Snowflake>, run the following.
 
@@ -84,7 +86,7 @@ CREATE OR REPLACE EXTERNAL TABLE delta_manifest_table(
   - The location is the manifest subdirectory.
   - The `filename` column contains the name of the files (not the full path) defined in the manifest.
 
-#### Define an external table on Parquet files
+##### Define an external table on Parquet files
 
 You can define a table `my_parquet_data_table` that reads all the Parquet files in the Delta table.
 
@@ -130,7 +132,7 @@ The regular expression is used to extract the partition value for the column `pa
 
 Querying the Delta table as this Parquet table will produce incorrect results because this query will read all the Parquet files in this table rather than only those that define a consistent snapshot of the table. You can use the manifest table to get a consistent snapshot data.
 
-#### Define view to get correct contents of the Delta table using the manifest table
+##### Define view to get correct contents of the Delta table using the manifest table
 
 To read only the rows belonging to the consistent snapshot defined in the generated manifests, you can apply a filter to keep only the rows in the Parquet table that came from the files defined in the manifest table.
 
@@ -143,7 +145,7 @@ CREATE OR REPLACE VIEW my_delta_table AS
 
 Querying this view will provide you with a [consistent](#data-consistency) view of the Delta table.
 
-### Step 3: Update manifests
+#### Step 3: Update manifests
 
 When data in a Delta table is updated, you must regenerate the manifests using either of the following approaches:
 
@@ -154,11 +156,11 @@ When data in a Delta table is updated, you must regenerate the manifests using e
   ALTER TABLE delta.`<path-to-delta-table>` SET TBLPROPERTIES(delta.compatibility.symlinkFormatManifest.enabled=true)
   ```
 
-## Limitations
+### Limitations
 
 The <Snowflake> integration has known limitations in its behavior.
 
-### Data consistency
+#### Data consistency
 
 Whenever <Delta> generates updated manifests, it atomically overwrites existing manifest files. Therefore, <Snowflake> will always see a consistent view of the data files; it will see all of the old version files or all of the new version files. However, the granularity of the consistency guarantees depends on whether the table is partitioned or not.
 
@@ -168,11 +170,11 @@ Whenever <Delta> generates updated manifests, it atomically overwrites existing 
 
 Depending on what storage system you are using for Delta tables, it is possible to get incorrect results when <Snowflake> concurrently queries the manifest while the manifest files are being rewritten. In file system implementations that lack atomic file overwrites, a manifest file may be momentarily unavailable. Hence, use manifests with caution if their updates are likely to coincide with queries from <Snowflake>.
 
-### Performance
+#### Performance
 
 This is an experimental integration and its performance and scalability characteristics have not yet been tested.
 
-### Schema evolution
+#### Schema evolution
 
 <Delta> supports schema evolution and queries on a Delta table automatically use the latest schema regardless of the schema defined in the table in the Hive metastore. However, <Snowflake> uses the schema defined in its table definition, and will not query with the updated schema until the table definition is updated to the new schema.
 
