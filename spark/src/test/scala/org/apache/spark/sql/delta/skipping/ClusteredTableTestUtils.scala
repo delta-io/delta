@@ -141,6 +141,9 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
           doAssert(lastOperationParameters(CLUSTERING_PARAMETER_KEY) === "[]")
           doAssert(lastOperationParameters(ZORDER_PARAMETER_KEY) === "[]")
         }
+      case "CLONE" =>
+        // CLUSTER BY not in operation parameters for CLONE - similar to PARTITION BY.
+        doAssert(!lastOperationParameters.contains(CLUSTERING_PARAMETER_KEY))
       case o if clusterBySupportedOperations.contains(o) =>
         if (expectClustering) {
           assertClusterByExists()
@@ -214,8 +217,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     verifyClusteringColumnsInternal(
       snapshot,
       tableIdentifier.table,
-      expectedLogicalClusteringColumns
-    )
+      expectedLogicalClusteringColumns)
   }
 
   def verifyClusteringColumns(
@@ -225,8 +227,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     verifyClusteringColumnsInternal(
       snapshot,
       s"delta.`$dataPath`",
-      expectedLogicalClusteringColumns
-    )
+      expectedLogicalClusteringColumns)
   }
 
   def verifyClusteringColumnsInternal(

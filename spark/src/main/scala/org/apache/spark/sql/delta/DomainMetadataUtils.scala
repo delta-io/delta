@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, DomainMetadata, Protocol}
+import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 object DomainMetadataUtils extends DeltaLogging {
@@ -26,6 +27,10 @@ object DomainMetadataUtils extends DeltaLogging {
   // List of metadata domains that will be copied from the table we are restoring to.
   private val METADATA_DOMAIN_TO_COPY_FOR_RESTORE_TABLE =
     METADATA_DOMAINS_TO_REMOVE_FOR_REPLACE_TABLE
+
+  // List of metadata domains that will be copied from the table on a CLONE operation.
+  private val METADATA_DOMAIN_TO_COPY_FOR_CLONE_TABLE: Set[String] = Set(
+    ClusteringMetadataDomain.domainName)
 
   /**
    * Returns whether the protocol version supports the [[DomainMetadata]] action.
@@ -94,6 +99,16 @@ object DomainMetadataUtils extends DeltaLogging {
       sourceDomainMetadatas: Seq[DomainMetadata]): Seq[DomainMetadata] = {
     sourceDomainMetadatas.filter { m =>
       METADATA_DOMAIN_TO_COPY_FOR_RESTORE_TABLE.contains(m.domain)
+    }
+  }
+
+  /**
+   *  Generates sequence of DomainMetadata to commit for CLONE TABLE command.
+   */
+  def handleDomainMetadataForCloneTable(
+      sourceDomainMetadatas: Seq[DomainMetadata]): Seq[DomainMetadata] = {
+    sourceDomainMetadatas.filter { m =>
+      METADATA_DOMAIN_TO_COPY_FOR_CLONE_TABLE.contains(m.domain)
     }
   }
 }
