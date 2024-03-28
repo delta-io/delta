@@ -20,18 +20,12 @@ import java.io.File
 
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException}
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
-import io.delta.tables.DeltaTable
 
-import org.apache.spark.sql.{AnalysisException, Dataset, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
-import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
-import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, StructField, StructType}
@@ -679,8 +673,9 @@ trait ClusteredTableDDLSuiteBase
     val srcTable = "SrcTbl"
     val dstTable1 = "DestTbl1"
     val dstTable2 = "DestTbl2"
+    val dstTable3 = "DestTbl3"
 
-    withTable(srcTable, dstTable1) {
+    withTable(srcTable, dstTable1, dstTable2, dstTable3) {
       // Create the source table.
       sql(s"CREATE TABLE $srcTable (col1 INT, col2 INT, col3 INT) " +
         s"USING delta CLUSTER BY (col1, col2)")
@@ -705,17 +700,26 @@ trait ClusteredTableDDLSuiteBase
 
       // Validate clustering columns and that clustering columns in stats schema.
       val (_, dstSnapshot1) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable1))
-      verifyClusteringColumns(TableIdentifier(dstTable1), "col1,col2")
+      verifyClusteringColumnsWithoutHistory(
+        TableIdentifier(dstTable1), "col1,col2")
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot1, Seq("col1", "col2"))
 
       // Change to CLUSTER BY NONE, then CLONE from earlier version to validate that the
       // clustering column information is maintainted.
       sql(s"ALTER TABLE $srcTable CLUSTER BY NONE")
       sql(s"CREATE TABLE $dstTable2 SHALLOW CLONE $srcTable VERSION AS OF 2")
-
-      val (_, dstSnapshot2) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable1))
-      verifyClusteringColumns(TableIdentifier(dstTable2), "col1,col2")
+      val (_, dstSnapshot2) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable2))
+      verifyClusteringColumnsWithoutHistory(
+        TableIdentifier(dstTable2), "col1,col2")
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot2, Seq("col1", "col2"))
+
+      // Validate CLONE after CLUSTER BY NONE
+      sql(s"CREATE TABLE $dstTable3 SHALLOW CLONE $srcTable")
+      val (_, dstSnapshot3) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable3))
+      verifyClusteringColumnsWithoutHistory(
+        TableIdentifier(dstTable3), "")
+      ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot3, Seq.empty)
+
     }
   }
 }

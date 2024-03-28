@@ -207,6 +207,17 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
       s"$locationClause AS SELECT * FROM $srcTable")
   }
 
+  def verifyClusteringColumnsWithoutHistory(
+    tableIdentifier: TableIdentifier,
+    expectedLogicalClusteringColumns: String): Unit = {
+    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+    verifyClusteringColumnsInternal(
+      snapshot,
+      tableIdentifier.table,
+      expectedLogicalClusteringColumns,
+      validateHistory = false)
+  }
+
   def verifyClusteringColumns(
       tableIdentifier: TableIdentifier,
       expectedLogicalClusteringColumns: String): Unit = {
@@ -214,8 +225,8 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     verifyClusteringColumnsInternal(
       snapshot,
       tableIdentifier.table,
-      expectedLogicalClusteringColumns
-    )
+      expectedLogicalClusteringColumns,
+      validateHistory = true)
   }
 
   def verifyClusteringColumns(
@@ -225,19 +236,22 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     verifyClusteringColumnsInternal(
       snapshot,
       s"delta.`$dataPath`",
-      expectedLogicalClusteringColumns
-    )
+      expectedLogicalClusteringColumns,
+      validateHistory = true)
   }
 
   def verifyClusteringColumnsInternal(
       snapshot: Snapshot,
       tableNameOrPath: String,
-      expectedLogicalClusteringColumns: String): Unit = {
+      expectedLogicalClusteringColumns: String,
+      validateHistory: Boolean): Unit = {
     assert(ClusteredTableUtils.isSupported(snapshot.protocol) === true)
     verifyClusteringColumnsInDomainMetadata(snapshot, expectedLogicalClusteringColumns)
 
     // Verify Delta history operation parameters' clusterBy
-    verifyDescribeHistoryOperationParameters(tableNameOrPath)
+    if (validateHistory) {
+      verifyDescribeHistoryOperationParameters(tableNameOrPath)
+    }
   }
 }
 
