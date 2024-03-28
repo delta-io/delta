@@ -632,6 +632,17 @@ trait DeltaConfigsBase extends DeltaLogging {
     "",
     userConfigurable = false)
 
+  /**
+   * Tracks whether a column has been dropped or renamed. Internal property that cannot be set by
+   * users.
+   */
+  val COLUMN_MAPPING_HAS_DROPPED_OR_RENAMED: DeltaConfig[Boolean] = buildConfig[Boolean](
+    key = "columnMapping.hasDroppedOrRenamed",
+    defaultValue = "true",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "",
+    userConfigurable = false)
 
   /**
    * The shortest duration within which new [[Snapshot]]s will retain transaction identifiers (i.e.
