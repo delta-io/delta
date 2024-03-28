@@ -16,21 +16,19 @@
 
 package io.delta.standalone.internal
 
-import java.math.{BigDecimal => BigDecimalJ}
-import java.sql.{Date => DateJ, Timestamp => TimestampJ}
-import java.util.{Arrays => ArraysJ, Objects}
-
-import scala.collection.JavaConverters._
-
-import org.scalatest.FunSuite
-
 import io.delta.standalone.data.RowRecord
-import io.delta.standalone.expressions.{Column, _}
-import io.delta.standalone.types._
-
+import io.delta.standalone.expressions.Like.LikeType
+import io.delta.standalone.expressions._
 import io.delta.standalone.internal.actions.AddFile
 import io.delta.standalone.internal.data.PartitionRowRecord
 import io.delta.standalone.internal.util.PartitionUtils
+import io.delta.standalone.types._
+import org.scalatest.FunSuite
+
+import java.math.{BigDecimal => BigDecimalJ}
+import java.sql.{Date => DateJ, Timestamp => TimestampJ}
+import java.util.{Objects, Arrays => ArraysJ}
+import scala.collection.JavaConverters._
 
 class ExpressionSuite extends FunSuite {
 
@@ -44,15 +42,15 @@ class ExpressionSuite extends FunSuite {
     new StructField("col5", new IntegerType(), true)))
 
   private def testPredicate(
-      predicate: Expression,
-      expectedResult: Any,
-      record: RowRecord = null) = {
+                             predicate: Expression,
+                             expectedResult: Any,
+                             record: RowRecord = null) = {
     assert(predicate.eval(record) == expectedResult)
   }
 
   private def testException[T <: Throwable](f: => Any, messageContains: String)
-      (implicit manifest: Manifest[T]) = {
-    val e = intercept[T]{
+                                           (implicit manifest: Manifest[T]) = {
+    val e = intercept[T] {
       f;
     }.getMessage
     assert(e.contains(messageContains))
@@ -121,7 +119,7 @@ class ExpressionSuite extends FunSuite {
         Literal.ofNull(new ByteType())),
       (Literal.False, Literal.True, Literal.False, Literal.ofNull(new BooleanType())),
       (Literal.of(new TimestampJ(0)), Literal.of(new TimestampJ(1000000)),
-      Literal.of(new TimestampJ(0)), Literal.ofNull(new TimestampType())),
+        Literal.of(new TimestampJ(0)), Literal.ofNull(new TimestampType())),
       (Literal.of(new DateJ(0)), Literal.of(new DateJ(1000000)),
         Literal.of(new DateJ(0)), Literal.ofNull(new DateType())),
       (Literal.of("apples"), Literal.of("oranges"), Literal.of("apples"),
@@ -182,7 +180,7 @@ class ExpressionSuite extends FunSuite {
       (Array(0, 1), Array(0, 2), Array(0, 1)), // [0, 1] < [0, 2] or X'001' < X'002'
       // [0, 0, 2] < [0, 1, 0] or X'00002' < X'00100'
       (Array(0, 0, 2), Array(0, 1, 0), Array(0, 0, 2))
-    ).map{ case (small, big, small2) =>
+    ).map { case (small, big, small2) =>
       (small.map(_.toByte), big.map(_.toByte), small2.map(_.toByte))
     }
 
@@ -237,12 +235,18 @@ class ExpressionSuite extends FunSuite {
       Literal.ofNull(new BooleanType())).asJava), null)
 
     // non-null cases
-    testPredicate( new In(Literal.of(1),
-      (0 to 10).map{Literal.of}.asJava), true)
-    testPredicate( new In(Literal.of(100),
-      (0 to 10).map{Literal.of}.asJava), false)
-    testPredicate( new In(Literal.of(10),
-      (0 to 10).map{Literal.of}.asJava), true)
+    testPredicate(new In(Literal.of(1),
+      (0 to 10).map {
+        Literal.of
+      }.asJava), true)
+    testPredicate(new In(Literal.of(100),
+      (0 to 10).map {
+        Literal.of
+      }.asJava), false)
+    testPredicate(new In(Literal.of(10),
+      (0 to 10).map {
+        Literal.of
+      }.asJava), true)
 
     // Here we test In specifically with the BigDecimal data type to make sure we cover
     // the different cases with values and elements of varying precision and scales
@@ -323,10 +327,10 @@ class ExpressionSuite extends FunSuite {
 
   test("Column tests") {
     def testColumn(
-        fieldName: String,
-        dataType: DataType,
-        record: RowRecord,
-        expectedResult: Any): Unit = {
+                    fieldName: String,
+                    dataType: DataType,
+                    record: RowRecord,
+                    expectedResult: Any): Unit = {
       assert(Objects.equals(new Column(fieldName, dataType).eval(record), expectedResult))
     }
 
@@ -345,9 +349,9 @@ class ExpressionSuite extends FunSuite {
       new StructField("testDate", new DateType(), true)))
 
     val partRowRecord = new PartitionRowRecord(schema,
-      Map("testInt"->"1",
-        "testLong"->"10",
-        "testByte" ->"8",
+      Map("testInt" -> "1",
+        "testLong" -> "10",
+        "testByte" -> "8",
         "testShort" -> "100",
         "testBoolean" -> "true",
         "testFloat" -> "20.0",
@@ -385,10 +389,10 @@ class ExpressionSuite extends FunSuite {
 
   test("PartitionRowRecord tests") {
     def buildPartitionRowRecord(
-        dataType: DataType,
-        nullable: Boolean,
-        value: String,
-        name: String = "test"): PartitionRowRecord = {
+                                 dataType: DataType,
+                                 nullable: Boolean,
+                                 value: String,
+                                 name: String = "test"): PartitionRowRecord = {
       new PartitionRowRecord(
         new StructType(Array(new StructField(name, dataType, nullable))),
         Map(name -> value))
@@ -486,10 +490,10 @@ class ExpressionSuite extends FunSuite {
   // TODO: nested expression tree tests
 
   private def testPartitionFilter(
-      partitionSchema: StructType,
-      inputFiles: Seq[AddFile],
-      filter: Expression,
-      expectedMatchedFiles: Seq[AddFile]) = {
+                                   partitionSchema: StructType,
+                                   inputFiles: Seq[AddFile],
+                                   filter: Expression,
+                                   expectedMatchedFiles: Seq[AddFile]) = {
     val matchedFiles = PartitionUtils.filterFileList(partitionSchema, inputFiles, filter)
     assert(matchedFiles.length == expectedMatchedFiles.length)
     assert(matchedFiles.forall(expectedMatchedFiles.contains(_)))
@@ -594,4 +598,163 @@ class ExpressionSuite extends FunSuite {
     val lit52 = Literal.of(dec52)
     assert(lit52.dataType().equals(new DecimalType(5, 2)))
   }
+
+  test("standerd like pattern") {
+    // null/empty
+    testPredicate(new Like(Literal.ofNull(new StringType()), Literal.of("aa")), null)
+    testPredicate(new Like(Literal.of("aa"), Literal.ofNull(new StringType())), null)
+    testPredicate(new Like(Literal.ofNull(new StringType()), Literal.ofNull(new StringType())), null)
+    testPredicate(new Like(Literal.of(""), Literal.of("")), true)
+    testPredicate(new Like(Literal.of("a"), Literal.of("")), false)
+    testPredicate(new Like(Literal.of(""), Literal.of("a")), false)
+
+    //simple patterns
+    testPredicate(new Like(Literal.of("abc"), Literal.of("abc")), true)
+    testPredicate(new Like(Literal.of("a_%b"), Literal.of("a\\__b")), true)
+    testPredicate(new Like(Literal.of("abbc"), Literal.of("a_%c")), true)
+    testPredicate(new Like(Literal.of("abbc"), Literal.of("a\\__c")), false)
+    testPredicate(new Like(Literal.of("abbc"), Literal.of("a%\\%c")), false)
+    testPredicate(new Like(Literal.of("a_%b"), Literal.of("a%\\%b")), true)
+    testPredicate(new Like(Literal.of("abbc"), Literal.of("a%")), true)
+    testPredicate(new Like(Literal.of("abbc"), Literal.of("**")), false)
+    testPredicate(new Like(Literal.of("abc"), Literal.of("a%")), true)
+    testPredicate(new Like(Literal.of("abc"), Literal.of("b%")), false)
+    testPredicate(new Like(Literal.of("abc"), Literal.of("bc%")), false)
+    testPredicate(new Like(Literal.of("a\nb"), Literal.of("a_b")), true)
+    testPredicate(new Like(Literal.of("ab"), Literal.of("a%b")), true)
+    testPredicate(new Like(Literal.of("a\nb"), Literal.of("a%b")), true)
+
+    //case
+    testPredicate(new Like(Literal.of("A"), Literal.of("a%")), false)
+    testPredicate(new Like(Literal.of("a"), Literal.of("a%")), true)
+    testPredicate(new Like(Literal.of("a"), Literal.of("A%")), false)
+    testPredicate(new Like(Literal.of("aAa"), Literal.of("aA_")), true)
+
+    //regrex
+    testPredicate(new Like(Literal.of("a([a-b]{2,4})a"), Literal.of("_([a-b]{2,4})%")), true)
+    testPredicate(new Like(Literal.of("a([a-b]{2,4})a"), Literal.of("_([a-c]{2,6})_")), false)
+
+    // %/_
+    testPredicate(new Like(Literal.of("a%a"), Literal.of("%\\%%")), true)
+    testPredicate(new Like(Literal.of("a%"), Literal.of("%\\%%")), true)
+    testPredicate(new Like(Literal.of("a%a"), Literal.of("_\\%_")), true)
+    testPredicate(new Like(Literal.of("a_a"), Literal.of("%\\_%")), true)
+    testPredicate(new Like(Literal.of("a_"), Literal.of("%\\_%")), true)
+    testPredicate(new Like(Literal.of("a_a"), Literal.of("_\\__")), true)
+
+    //double-escaping
+    testPredicate(new Like(Literal.of("""\\\\"""), Literal.of("""%\\%""")), true)
+    testPredicate(new Like(Literal.of("""%%"""), Literal.of("""%%""")), true)
+    testPredicate(new Like(Literal.of("""\__"""), Literal.of("""\\\__""")), true)
+    testPredicate(new Like(Literal.of("""\\\__"""), Literal.of("""%\\%\%""")), false)
+    testPredicate(new Like(Literal.of("""_\\\%"""), Literal.of("""%\\""")), false)
+
+    //unicode
+    testPredicate(new Like(Literal.of("a¥a"), Literal.of("_\u00A5_")), true)
+    testPredicate(new Like(Literal.of("a\u00A5a"), Literal.of("_¥_")), true)
+
+  }
+
+  test("ilike pattern") {
+    testPredicate(new Like(Literal.of("A"), Literal.of("a%"), LikeType.ILIKE), true)
+    testPredicate(new Like(Literal.of("a"), Literal.of("a%"), LikeType.ILIKE), true)
+    testPredicate(new Like(Literal.of("a"), Literal.of("A%"), LikeType.ILIKE), true)
+    testPredicate(new Like(Literal.of("aAa"), Literal.of("_a_"), LikeType.ILIKE), true)
+  }
+
+  test("like pattern escape") {
+    Seq('!', '@', '#').foreach {
+      escape => {
+        // null/empty
+        testPredicate(new Like(Literal.ofNull(new StringType()), Literal.of("a"), escape), null)
+        testPredicate(new Like(Literal.of("a"), Literal.ofNull(new StringType()), escape), null)
+        testPredicate(new Like(Literal.ofNull(new StringType()), Literal.ofNull(new StringType()), escape), null)
+        testPredicate(new Like(Literal.of(""), Literal.of(""), escape), true)
+        testPredicate(new Like(Literal.of("a"), Literal.of(""), escape), false)
+        testPredicate(new Like(Literal.of(""), Literal.of("a"), escape), false)
+
+        //simple patterns
+        testPredicate(new Like(Literal.of("abc"), Literal.of("abc"), escape), true)
+        testPredicate(new Like(Literal.of("a_%b"), Literal.of(s"a${escape}__b"), escape), true)
+        testPredicate(new Like(Literal.of("abbc"), Literal.of("a_%c"), escape), true)
+        testPredicate(new Like(Literal.of("abbc"), Literal.of(s"a${escape}__c"), escape), false)
+        testPredicate(new Like(Literal.of("abbc"), Literal.of(s"a%${escape}%c"), escape), false)
+        testPredicate(new Like(Literal.of("a_%b"), Literal.of(s"a%${escape}%b"), escape), true)
+        testPredicate(new Like(Literal.of("abbc"), Literal.of("a%"), escape), true)
+        testPredicate(new Like(Literal.of("abbc"), Literal.of("**"), escape), false)
+        testPredicate(new Like(Literal.of("abc"), Literal.of("a%"), escape), true)
+        testPredicate(new Like(Literal.of("abc"), Literal.of("b%"), escape), false)
+        testPredicate(new Like(Literal.of("abc"), Literal.of("bc%"), escape), false)
+        testPredicate(new Like(Literal.of("a\nb"), Literal.of("a_b"), escape), true)
+        testPredicate(new Like(Literal.of("ab"), Literal.of("a%b"), escape), true)
+        testPredicate(new Like(Literal.of("a\nb"), Literal.of("a%b"), escape), true)
+
+        //case
+        testPredicate(new Like(Literal.of("A"), Literal.of("a%"), escape), false)
+        testPredicate(new Like(Literal.of("a"), Literal.of("a%"), escape), true)
+        testPredicate(new Like(Literal.of("a"), Literal.of("A%"), escape), false)
+        testPredicate(new Like(Literal.of(s"aAa"), Literal.of(s"aA_"), escape), true)
+
+        //regrex
+        testPredicate(new Like(Literal.of("a([a-b]{2,4})a"), Literal.of("_([a-b]{2,4})%"), escape), true)
+        testPredicate(new Like(Literal.of("a([a-b]{2,4})a"), Literal.of("_([a-c]{2,6})_"), escape), false)
+
+        // %/_
+        testPredicate(new Like(Literal.of("a%a"), Literal.of(s"%${escape}%%"), escape), true)
+        testPredicate(new Like(Literal.of("a%"), Literal.of(s"%${escape}%%"), escape), true)
+        testPredicate(new Like(Literal.of("a%a"), Literal.of(s"_${escape}%_"), escape), true)
+        testPredicate(new Like(Literal.of("a_a"), Literal.of(s"%${escape}_%"), escape), true)
+        testPredicate(new Like(Literal.of("a_"), Literal.of(s"%${escape}_%"), escape), true)
+        testPredicate(new Like(Literal.of("a_a"), Literal.of(s"_${escape}__"), escape), true)
+
+        //double-escaping
+        testPredicate(new Like(Literal.of(s"""$escape$escape$escape$escape"""),
+          Literal.of(s"""%${escape}${escape}%"""), escape), true)
+        testPredicate(new Like(Literal.of("""%%"""), Literal.of("""%%"""), escape), true)
+        testPredicate(new Like(Literal.of(s"""${escape}__"""), Literal.
+          of(s"""${escape}${escape}${escape}__"""), escape), true)
+        testPredicate(new Like(Literal.of(s"""${escape}__"""),
+          Literal.of(s"""%${escape}${escape}%${escape}%"""), escape), false)
+        testPredicate(new Like(Literal.of(s"""_${escape}${escape}${escape}%"""),
+          Literal.of(s"""%${escape}${escape}"""), escape), false)
+
+        testPredicate(new Like(Literal.of("a¥a"), Literal.of("_\u00A5_"), escape), true)
+        testPredicate(new Like(Literal.of("a\u00A5a"), Literal.of("_¥_"), escape), true)
+
+      }
+    }
+  }
+
+  test("regex pattern") {
+    //null
+    testPredicate(new Like(Literal.ofNull(new StringType()), Literal.of("abc"), LikeType.REGEX), null)
+    testPredicate(new Like(Literal.of("abc"), Literal.ofNull(new StringType()), LikeType.REGEX), null)
+    testPredicate(new Like(Literal.ofNull(new StringType()), Literal.ofNull(new StringType()), LikeType.REGEX), null)
+
+    //simple pattern
+    testPredicate(new Like(Literal.of("a"), Literal.of("A%"), LikeType.REGEX), false)
+    testPredicate(new Like(Literal.of("aAa"), Literal.of("_a_"), LikeType.REGEX), false)
+
+    //regex pattern
+    testPredicate(new Like(Literal.of("abc"), Literal.of("abc"), LikeType.REGEX), true)
+    testPredicate(new Like(Literal.of("abbc"), Literal.of("a.*c"), LikeType.REGEX), true)
+
+    testPredicate(new Like(Literal.of("abab"), Literal.of("^ab"), LikeType.REGEX), true)
+    testPredicate(new Like(Literal.of("ab\nb"), Literal.of("^ab\nb$"), LikeType.REGEX), true)
+    testPredicate(new Like(Literal.of("Bn"), Literal.of("^Ba*n"), LikeType.REGEX), true)
+    testPredicate(new Like(Literal.of("abcbc"), Literal.of("bc"), LikeType.REGEX), true)
+    testPredicate(new Like(Literal.of("abcbc"), Literal.of("^bc"), LikeType.REGEX), false)
+    testPredicate(new Like(Literal.of("Baab"), Literal.of("^Ba?b"), LikeType.REGEX), false)
+    testPredicate(new Like(Literal.of("abc"), Literal.of("cd|ac"), LikeType.REGEX), false)
+    testPredicate(new Like(Literal.of("abc"), Literal.of("^(ab)*$"), LikeType.REGEX), false)
+
+    testPredicate(new Like(Literal.of("abc"), Literal.of("^ab"), LikeType.REGEX), true)
+    testPredicate(new Like(Literal.of("abc"), Literal.of("^bc"), LikeType.REGEX), false)
+    testPredicate(new Like(Literal.of("abc"), Literal.of("^ab"), LikeType.REGEX), true)
+    testPredicate(new Like(Literal.of("abc"), Literal.of("^bc"), LikeType.REGEX), false)
+
+    testPredicate(new Like(Literal.of("a([a-b]{2-4})a"), Literal.of("a([a-b]{2,4})a"), LikeType.REGEX), false)
+    testPredicate(new Like(Literal.of("a([a-b]{2-4})a"), Literal.of("a([a-c]{2,6})a"), LikeType.REGEX), false)
+  }
+
 }
