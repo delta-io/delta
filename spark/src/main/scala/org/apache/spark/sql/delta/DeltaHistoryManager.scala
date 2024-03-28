@@ -68,7 +68,7 @@ class DeltaHistoryManager(
   }
 
   /**
-   * Get the commit information of the Delta table from commit `[start, end)`. If `end` is `None`,
+   * Get the commit information of the Delta table from commit `[start, end]`. If `end` is `None`,
    * we return all commits from start to now.
    */
   def getHistory(
@@ -77,7 +77,7 @@ class DeltaHistoryManager(
     import org.apache.spark.sql.delta.implicits._
     val conf = getSerializableHadoopConf
     val logPath = deltaLog.logPath.toString
-    val snapshot = endOpt.map(end => deltaLog.getSnapshotAt(end - 1)).getOrElse(deltaLog.update())
+    val snapshot = endOpt.map(end => deltaLog.getSnapshotAt(end)).getOrElse(deltaLog.update())
     val commitFileProvider = DeltaCommitFileProvider(snapshot)
     // We assume that commits are contiguous, therefore we try to load all of them in order
     val info = spark.range(start, snapshot.version + 1)
