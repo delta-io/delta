@@ -183,7 +183,7 @@ trait TestUtils extends Assertions with SQLHelper {
     val scan = scanBuilder.build()
 
     if (filter != null) {
-      val actRemainingPredicate = scan.getRemainingFilter()
+      val actRemainingPredicate = scan.getRemainingFilter(defaultTableClient)
       assert(
         actRemainingPredicate.toString === Optional.ofNullable(expectedRemainingFilter).toString)
     }

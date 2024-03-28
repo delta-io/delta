@@ -55,8 +55,21 @@ public class ScanImpl implements Scan {
     private final Metadata metadata;
     private final LogReplay logReplay;
     private final Path dataPath;
-    private final Optional<Tuple2<Predicate, Predicate>> partitionAndDataFilters;
+
+    private final Optional<Predicate> filter;
+
     private boolean accessedScanFiles;
+
+    private boolean areFiltersSplit;
+    // Subset of partition predicate the expression handler can support evaluating
+    private Optional<Predicate> metadataPredicate;
+    // Subset of the given query predicate the Kernel tries to use prune scan file list as best as
+    // it can, but can't guarantee that the all the scan files returned contains data on which this
+    // predicate evaluates to true. The connector needs to apply this filter on the data from the
+    // returned scan files to completely remove the data that doesn't satisfy given query predicate.
+    //
+    // The predicate could be on the data columns and/or unsupported predicate on partition columns
+    private Optional<Predicate> remainingPredicate;
 
     public ScanImpl(
             StructType snapshotSchema,
@@ -71,7 +84,7 @@ public class ScanImpl implements Scan {
         this.protocol = protocol;
         this.metadata = metadata;
         this.logReplay = logReplay;
-        this.partitionAndDataFilters = splitFilters(filter);
+        this.filter = filter;
         this.dataPath = dataPath;
     }
 
@@ -88,7 +101,7 @@ public class ScanImpl implements Scan {
         accessedScanFiles = true;
 
         // Generate data skipping filter and decide if we should read the stats column
-        Optional<DataSkippingPredicate> dataSkippingFilter = getDataSkippingFilter();
+        Optional<DataSkippingPredicate> dataSkippingFilter = getDataSkippingFilter(tableClient);
         boolean shouldReadStats = dataSkippingFilter.isPresent();
 
         // Get active AddFiles via log replay
@@ -142,22 +155,38 @@ public class ScanImpl implements Scan {
     }
 
     @Override
-    public Optional<Predicate> getRemainingFilter() {
-        return getDataFilters();
+    public Optional<Predicate> getRemainingFilter(TableClient tableClient) {
+        splitFilters(tableClient);
+        return remainingPredicate;
     }
 
-    private Optional<Tuple2<Predicate, Predicate>> splitFilters(Optional<Predicate> filter) {
-        return filter.map(predicate ->
-            PartitionUtils.splitMetadataAndDataPredicates(
-                predicate, metadata.getPartitionColNames()));
+    private void splitFilters(TableClient tableClient) {
+        if (areFiltersSplit) {
+            return;
+        }
+        filter.map(predicate -> {
+            Tuple2<Predicate, Predicate> metadataAndNonMetadataFilters =
+                PartitionUtils.splitPredicates(
+                    tableClient.getExpressionHandler(),
+                    metadata.getSchema(),
+                    predicate,
+                    metadata.getPartitionColNames());
+
+            metadataPredicate = removeAlwaysTrue(Optional.of(metadataAndNonMetadataFilters._1));
+            remainingPredicate = removeAlwaysTrue(Optional.of(metadataAndNonMetadataFilters._2));
+            return null;
+        });
+        areFiltersSplit = true;
     }
 
-    private Optional<Predicate> getDataFilters() {
-        return removeAlwaysTrue(partitionAndDataFilters.map(filters -> filters._2));
+    private Optional<Predicate> getDataFilters(TableClient tableClient) {
+        splitFilters(tableClient);
+        return remainingPredicate;
     }
 
-    private Optional<Predicate> getPartitionsFilters() {
-        return removeAlwaysTrue(partitionAndDataFilters.map(filters -> filters._1));
+    private Optional<Predicate> getPartitionsFilters(TableClient tableClient) {
+        splitFilters(tableClient);
+        return metadataPredicate;
     }
 
     /**
@@ -171,7 +200,7 @@ public class ScanImpl implements Scan {
     private CloseableIterator<FilteredColumnarBatch> applyPartitionPruning(
         TableClient tableClient,
         CloseableIterator<FilteredColumnarBatch> scanFileIter) {
-        Optional<Predicate> partitionPredicate = getPartitionsFilters();
+        Optional<Predicate> partitionPredicate = getPartitionsFilters(tableClient);
         if (!partitionPredicate.isPresent()) {
             // There is no partition filter, return the scan file iterator as is.
             return scanFileIter;
@@ -221,9 +250,9 @@ public class ScanImpl implements Scan {
         };
     }
 
-    private Optional<DataSkippingPredicate> getDataSkippingFilter() {
-        return getDataFilters().flatMap(dataFilters ->
-            DataSkippingUtils.constructDataSkippingFilter(dataFilters, metadata.getDataSchema())
+    private Optional<DataSkippingPredicate> getDataSkippingFilter(TableClient tableClient) {
+        return getDataFilters(tableClient).flatMap(dataFilters ->
+            DataSkippingUtils.constructDataSkippingFilter(dataFilters, metadata.getSchema())
         );
     }
 

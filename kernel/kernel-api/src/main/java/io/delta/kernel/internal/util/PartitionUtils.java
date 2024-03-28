@@ -29,10 +29,10 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
-import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
+import static io.delta.kernel.internal.util.ExpressionUtils.*;
 
 public class PartitionUtils {
     private PartitionUtils() {}
@@ -103,30 +103,37 @@ public class PartitionUtils {
     }
 
     /**
-     * Split the given predicate into predicate on partition columns and predicate on data columns.
+     * Split the given predicate into predicate that a part that can be guaranteed to be satisfied
+     * by kernel when returning the scan file and the best effort predicate that Kernel uses for
+     * skipping but doesn't guarantee the returned scan files has data that doesn't satisfy the
+     * predicate.
      *
+     * @param exprHandler
      * @param predicate
      * @param partitionColNames
-     * @return Tuple of partition column predicate and data column predicate.
+     * @return Tuple of guaranteed predicate and best effort predicate.
      */
-    public static Tuple2<Predicate, Predicate> splitMetadataAndDataPredicates(
-        Predicate predicate,
-        Set<String> partitionColNames) {
+    public static Tuple2<Predicate, Predicate> splitPredicates(
+            ExpressionHandler exprHandler,
+            StructType tableSchema,
+            Predicate predicate,
+            Set<String> partitionColNames) {
         String predicateName = predicate.getName();
         List<Expression> children = predicate.getChildren();
         if ("AND".equalsIgnoreCase(predicateName)) {
-            Predicate left = (Predicate) children.get(0);
-            Predicate right = (Predicate) children.get(1);
+            Predicate left = asPredicate(getLeft(predicate));
+            Predicate right = asPredicate(getRight(predicate));
             Tuple2<Predicate, Predicate> leftResult =
-                splitMetadataAndDataPredicates(left, partitionColNames);
+                splitPredicates(exprHandler, tableSchema, left, partitionColNames);
             Tuple2<Predicate, Predicate> rightResult =
-                splitMetadataAndDataPredicates(right, partitionColNames);
+                splitPredicates(exprHandler, tableSchema, right, partitionColNames);
 
             return new Tuple2<>(
                 combineWithAndOp(leftResult._1, rightResult._1),
                 combineWithAndOp(leftResult._2, rightResult._2));
         }
-        if (hasNonPartitionColumns(children, partitionColNames)) {
+        if (hasNonPartitionColumns(children, partitionColNames) ||
+                !exprHandler.isSupported(tableSchema, predicate, BooleanType.BOOLEAN)) {
             return new Tuple2(ALWAYS_TRUE, predicate);
         } else {
             return new Tuple2<>(predicate, ALWAYS_TRUE);
@@ -213,21 +220,6 @@ public class PartitionUtils {
             }
         }
         return false;
-    }
-
-    private static Predicate combineWithAndOp(Predicate left, Predicate right) {
-        String leftName = left.getName().toUpperCase();
-        String rightName = right.getName().toUpperCase();
-        if (leftName.equals("ALWAYS_FALSE") || rightName.equals("ALWAYS_FALSE")) {
-            return ALWAYS_FALSE;
-        }
-        if (leftName.equals("ALWAYS_TRUE")) {
-            return right;
-        }
-        if (rightName.equals("ALWAYS_TRUE")) {
-            return left;
-        }
-        return new And(left, right);
     }
 
     private static Literal literalForPartitionValue(DataType dataType, String partitionValue) {

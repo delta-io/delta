@@ -18,8 +18,9 @@ package io.delta.kernel.internal.util;
 import java.util.List;
 import static java.lang.String.format;
 
-import io.delta.kernel.expressions.Expression;
-import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.expressions.*;
+import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
+
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public class ExpressionUtils {
@@ -63,5 +64,23 @@ public class ExpressionUtils {
             children.size() == 1,
             format("%s: expected one inputs, but got %s", expression, children.size()));
         return children.get(0);
+    }
+
+    /*
+     * Utility method to combine the given predicates with AND
+     */
+    public static Predicate combineWithAndOp(Predicate left, Predicate right) {
+        String leftName = left.getName().toUpperCase();
+        String rightName = right.getName().toUpperCase();
+        if (leftName.equals("ALWAYS_FALSE") || rightName.equals("ALWAYS_FALSE")) {
+            return ALWAYS_FALSE;
+        }
+        if (leftName.equals("ALWAYS_TRUE")) {
+            return right;
+        }
+        if (rightName.equals("ALWAYS_TRUE")) {
+            return left;
+        }
+        return new And(left, right);
     }
 }
