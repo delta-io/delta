@@ -295,7 +295,10 @@ trait DeltaErrorsBase
   }
 
   def invalidConstraintName(name: String): AnalysisException = {
-    new AnalysisException(s"Cannot use '$name' as the name of a CHECK constraint.")
+    new DeltaAnalysisException(
+      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0001",
+      messageParameters = Array(name)
+    )
   }
 
   def nonexistentConstraint(constraintName: String, tableName: String): AnalysisException = {
@@ -1096,8 +1099,10 @@ trait DeltaErrorsBase
   }
 
   def bloomFilterInvalidParameterValueException(message: String): Throwable = {
-    new AnalysisException(
-      s"Cannot create bloom filter index, invalid parameter value: $message")
+    new DeltaAnalysisException(
+      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0002",
+      messageParameters = Array(message)
+    )
   }
 
   def bloomFilterDropOnNonIndexedColumnException(name: String): Throwable = {
@@ -1221,15 +1226,13 @@ trait DeltaErrorsBase
     def prettyMap(m: Map[String, String]): String = {
       m.map(e => s"${e._1}=${e._2}").mkString("[", ", ", "]")
     }
-    new AnalysisException(
-      s"""You are trying to convert a table which already has a delta log where the table
-         |properties in the catalog don't match the configuration in the delta log.
-         |Table properties in catalog: ${prettyMap(tableProperties)}
-         |Delta configuration: ${prettyMap{deltaConfiguration}}
-         |If you would like to merge the configurations (update existing fields and insert new
-         |ones), set the SQL configuration
-         |spark.databricks.delta.convert.metadataCheck.enabled to false.
-       """.stripMargin)
+    new DeltaAnalysisException(
+      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0003",
+      messageParameters = Array(
+        prettyMap(tableProperties),
+        prettyMap(deltaConfiguration),
+        DeltaSQLConf.DELTA_CONVERT_METADATA_CHECK_ENABLED.key)
+    )
   }
 
   def createExternalTableWithoutLogException(
@@ -1399,9 +1402,9 @@ trait DeltaErrorsBase
   def restoreTimestampBeforeEarliestException(
       userTimestamp: String,
       earliestTimestamp: String): Throwable = {
-    new AnalysisException(
-      s"Cannot restore table to timestamp ($userTimestamp) as it is before the earliest version " +
-        s"available. Please use a timestamp after ($earliestTimestamp)"
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_RESTORE_TIMESTAMP_EARLIER",
+      messageParameters = Array(userTimestamp, earliestTimestamp)
     )
   }
 
@@ -1579,7 +1582,10 @@ trait DeltaErrorsBase
   }
 
   def viewNotSupported(operationName: String): Throwable = {
-    new AnalysisException(s"Operation $operationName can not be performed on a view")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_OPERATION_ON_VIEW_NOT_ALLOWED",
+      messageParameters = Array(operationName)
+    )
   }
 
   def postCommitHookFailedException(
@@ -1733,8 +1739,9 @@ trait DeltaErrorsBase
   }
 
   def generatedColumnsNonDeterministicExpression(expr: Expression): Throwable = {
-    new AnalysisException(
-      s"Found ${expr.sql}. A generated column cannot use a non deterministic expression")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NON_DETERMINISTIC_EXPRESSION_IN_GENERATED_COLUMN",
+      messageParameters = Array(s"${expr.sql}"))
   }
 
   def generatedColumnsAggregateExpression(expr: Expression): Throwable = {
@@ -2068,24 +2075,20 @@ trait DeltaErrorsBase
       operation: String,
       columnName: String,
       constraints: Map[String, String]): Throwable = {
-    val plural = if (constraints.size > 1) "s" else ""
-    new AnalysisException(
-      s"""
-        |Cannot $operation column $columnName because this column is referenced by the following
-        | check constraint$plural:\n\t${constraints.mkString("\n\t")}
-        |""".stripMargin)
+    new DeltaAnalysisException(
+      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0004",
+      messageParameters = Array(operation, columnName, constraints.mkString("\n"))
+    )
   }
 
   def foundViolatingGeneratedColumnsForColumnChange(
       operation: String,
       columnName: String,
       fields: Seq[StructField]): Throwable = {
-    val plural = if (fields.size > 1) "s" else ""
-    new AnalysisException(
-      s"""
-         |Cannot $operation column $columnName because this column is referenced by the following
-         | generated column$plural:\n\t${fields.map(_.name).mkString("\n\t")}
-         |""".stripMargin)
+    new DeltaAnalysisException(
+      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0005",
+      messageParameters = Array(operation, columnName, fields.map(_.name).mkString("\n"))
+    )
   }
 
   def missingColumnsInInsertInto(column: String): Throwable = {
@@ -2410,8 +2413,10 @@ trait DeltaErrorsBase
       hasStart: Boolean,
       hasStep: Boolean,
       hasInsert: Boolean): Throwable = {
-    new AnalysisException(s"Inconsistent IDENTITY metadata for column $colName " +
-      s"detected: $hasStart, $hasStep, $hasInsert")
+    new DeltaAnalysisException(
+      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0006",
+      messageParameters = Array(colName, s"$hasStart", s"$hasStep", s"$hasInsert")
+    )
   }
 
   def activeSparkSessionNotFound(): Throwable = {
@@ -3261,6 +3266,13 @@ trait DeltaErrorsBase
       errorClass = "DELTA_CREATE_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED",
       messageParameters = Array(tableFeature))
   }
+
+  def mergeAddVoidColumn(columnName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_MERGE_ADD_VOID_COLUMN",
+      messageParameters = Array(toSQLId(columnName))
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
@@ -3430,7 +3442,10 @@ class MetadataMismatchErrorBuilder {
   }
 
   def finalizeAndThrow(conf: SQLConf): Unit = {
-    throw new AnalysisException(bits.mkString("\n"))
+    throw new DeltaAnalysisException(
+      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0007",
+      messageParameters = Array(bits.mkString("\n"))
+    )
   }
 }
 

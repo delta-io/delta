@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
+import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.spark.sql.util.ScalaExtensions._
@@ -122,8 +123,7 @@ class Snapshot(
           try {
             val commitInfoOpt = DeltaHistoryManager.getCommitInfoOpt(
               deltaLog.store,
-              deltaLog.logPath,
-              version,
+              DeltaCommitFileProvider(this).deltaFile(version),
               deltaLog.newDeltaHadoopConf())
             CommitInfo.getRequiredInCommitTimestamp(commitInfoOpt, version.toString)
           } catch {

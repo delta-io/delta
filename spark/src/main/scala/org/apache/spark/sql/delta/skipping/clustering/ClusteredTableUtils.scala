@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.skipping.clustering
 
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.{ClusteringTableFeature, DeltaColumnMappingMode, DeltaErrors, DeltaLog, OptimisticTransaction, Snapshot}
-import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{Action, DomainMetadata, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -217,6 +217,28 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
     val clusteringMetadataDomainOpt =
       Some(ClusteringMetadataDomain.fromClusteringColumns(newClusteringColumns).toDomainMetadata)
     clusteringMetadataDomainOpt.toSeq
+  }
+
+  /**
+   * Extract the logical clustering column names from the to-be committed domain metadata action.
+   *
+   * @param txn the transaction being used to commit the actions.
+   * @param actionsToCommit the actions to be committed.
+   * @return optional logical clustering column names.
+   */
+  def getLogicalClusteringColumnNames(
+      txn: OptimisticTransaction,
+      actionsToCommit: Seq[Action]): Option[Seq[String]] = {
+    def getLogicalColumnNames(clusteringColumns: Seq[ClusteringColumn]): Seq[String] = {
+      clusteringColumns.map(ClusteringColumnInfo(txn.metadata.schema, _).logicalName)
+    }
+
+    actionsToCommit.collectFirst {
+      // Only consider clustering domain metadata actions that are getting added
+      // (removed = false).
+      case ClusteringMetadataDomain(domain, removed) if !removed =>
+        getLogicalColumnNames(domain.clusteringColumns.map(ClusteringColumn.apply))
+    }
   }
 
   /**

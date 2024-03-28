@@ -1365,6 +1365,15 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
+  generateGoldenTable("basic-with-vacuum-protocol-check-feature") { tablePath =>
+    val data = (0 until 100).map(x => (x, s"val=$x"))
+    data.toDF("id", "str").write.format("delta").save(tablePath)
+    sql(s"""
+         |ALTER TABLE delta.`$tablePath`
+         |SET TBLPROPERTIES('delta.feature.vacuumProtocolCheck' = 'supported')
+         |""".stripMargin)
+  }
+
   generateGoldenTable("basic-with-inserts-updates") { tablePath =>
     val data = (0 until 100).map(x => (x, s"val=$x"))
     data.toDF("id", "str").write.format("delta").save(tablePath)

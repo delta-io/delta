@@ -23,6 +23,7 @@ import java.util.Objects
 import scala.collection.mutable
 import org.apache.spark.sql.delta.RowIndexFilterType
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.DefaultRowCommitVersion
 import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.implicits._
@@ -122,6 +123,8 @@ abstract class TahoeFileIndex(
       /* path */ absolutePath(addFile.path))
     val metadata = mutable.Map.empty[String, Any]
     addFile.baseRowId.foreach(baseRowId => metadata.put(RowId.BASE_ROW_ID, baseRowId))
+    addFile.defaultRowCommitVersion.foreach(defaultRowCommitVersion =>
+      metadata.put(DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME, defaultRowCommitVersion))
 
     FileStatusWithMetadata(fs, metadata.toMap)
   }
