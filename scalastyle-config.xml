@@ -168,6 +168,14 @@ This file is divided into 3 sections:
    </parameters>
   </check>
 
+  <check enabled="true" class="org.scalastyle.file.IndentationChecker" level="error">
+    <parameters>
+      <parameter name="tabSize"><![CDATA[2]]></parameter>
+      <parameter name="methodParamIndentSize"><![CDATA[4]]></parameter>
+      <parameter name="classParamIndentSize"><![CDATA[4]]></parameter>
+    </parameters>
+  </check>
+
   <check level="error" class="org.scalastyle.scalariform.EnsureSingleSpaceAfterTokenChecker" enabled="true">
     <parameters>
      <parameter name="tokens">ARROW, EQUALS, COMMA, COLON, IF, ELSE, DO, WHILE, FOR, MATCH, TRY, CATCH, FINALLY, LARROW, RARROW</parameter>
