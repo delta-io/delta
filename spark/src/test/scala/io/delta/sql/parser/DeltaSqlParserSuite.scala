@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, Describe
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedTableShim._
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
@@ -40,25 +41,26 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     // Setting `delegate` to `null` is fine. The following tests don't need to touch `delegate`.
     val parser = new DeltaSqlParser(null)
     assert(parser.parsePlan("vacuum 123_") ===
-      VacuumTableCommand(UnresolvedTable(Seq("123_"), "VACUUM", None), None, None, None, false))
+      VacuumTableCommand(
+        createUnresolvedTable(Seq("123_"), "VACUUM", None), None, None, None, false))
     assert(parser.parsePlan("vacuum 1a.123_") ===
-      VacuumTableCommand(UnresolvedTable(Seq("1a", "123_"), "VACUUM", None),
+      VacuumTableCommand(createUnresolvedTable(Seq("1a", "123_"), "VACUUM", None),
         None, None, None, false))
     assert(parser.parsePlan("vacuum a.123A") ===
-      VacuumTableCommand(UnresolvedTable(Seq("a", "123A"), "VACUUM", None),
+      VacuumTableCommand(createUnresolvedTable(Seq("a", "123A"), "VACUUM", None),
         None, None, None, false))
     assert(parser.parsePlan("vacuum a.123E3_column") ===
-      VacuumTableCommand(UnresolvedTable(Seq("a", "123E3_column"), "VACUUM", None),
+      VacuumTableCommand(createUnresolvedTable(Seq("a", "123E3_column"), "VACUUM", None),
         None, None, None, false))
     assert(parser.parsePlan("vacuum a.123D_column") ===
-      VacuumTableCommand(UnresolvedTable(Seq("a", "123D_column"), "VACUUM", None),
+      VacuumTableCommand(createUnresolvedTable(Seq("a", "123D_column"), "VACUUM", None),
         None, None, None, false))
     assert(parser.parsePlan("vacuum a.123BD_column") ===
-      VacuumTableCommand(UnresolvedTable(Seq("a", "123BD_column"), "VACUUM", None),
+      VacuumTableCommand(createUnresolvedTable(Seq("a", "123BD_column"), "VACUUM", None),
         None, None, None, false))
 
     assert(parser.parsePlan("vacuum delta.`/tmp/table`") ===
-      VacuumTableCommand(UnresolvedTable(Seq("delta", "/tmp/table"), "VACUUM", None),
+      VacuumTableCommand(createUnresolvedTable(Seq("delta", "/tmp/table"), "VACUUM", None),
         None, None, None, false))
 
     assert(parser.parsePlan("vacuum \"/tmp/table\"") ===
@@ -91,19 +93,19 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     assert(parsedCmd ===
       OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
-      UnresolvedTable(Seq("tbl"), "OPTIMIZE", None))
+      createUnresolvedTable(Seq("tbl"), "OPTIMIZE", None))
 
     parsedCmd = parser.parsePlan("OPTIMIZE db.tbl")
     assert(parsedCmd ===
       OptimizeTableCommand(None, Some(tblId("tbl", "db")), Nil)(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
-      UnresolvedTable(Seq("db", "tbl"), "OPTIMIZE", None))
+      createUnresolvedTable(Seq("db", "tbl"), "OPTIMIZE", None))
 
     parsedCmd = parser.parsePlan("OPTIMIZE catalog_foo.db.tbl")
     assert(parsedCmd ===
       OptimizeTableCommand(None, Some(tblId("tbl", "db", "catalog_foo")), Nil)(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
-      UnresolvedTable(Seq("catalog_foo", "db", "tbl"), "OPTIMIZE", None))
+      createUnresolvedTable(Seq("catalog_foo", "db", "tbl"), "OPTIMIZE", None))
 
     assert(parser.parsePlan("OPTIMIZE tbl_${system:spark.testing}") ===
       OptimizeTableCommand(None, Some(tblId("tbl_true")), Nil)(Nil))
@@ -135,7 +137,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     assert(parsedCmd ===
       OptimizeTableCommand(None, Some(tblId("/path/to/tbl", "delta")), Nil)(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
-      UnresolvedTable(Seq("delta", "/path/to/tbl"), "OPTIMIZE", None))
+      createUnresolvedTable(Seq("delta", "/path/to/tbl"), "OPTIMIZE", None))
 
     assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1") ===
       OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"))(Nil))
@@ -181,7 +183,8 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     // Desc detail on a table
     assert(parser.parsePlan("DESCRIBE DETAIL catalog_foo.db.tbl") ===
       DescribeDeltaDetailCommand(
-        UnresolvedTable(Seq("catalog_foo", "db", "tbl"), DescribeDeltaDetailCommand.CMD_NAME, None),
+        createUnresolvedTable(
+          Seq("catalog_foo", "db", "tbl"), DescribeDeltaDetailCommand.CMD_NAME, None),
         Map.empty))
 
     // Desc detail on a raw path
@@ -193,7 +196,8 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     // Desc detail on a delta raw path
     assert(parser.parsePlan("DESCRIBE DETAIL delta.`dummy_raw_path`") ===
       DescribeDeltaDetailCommand(
-        UnresolvedTable(Seq("delta", "dummy_raw_path"), DescribeDeltaDetailCommand.CMD_NAME, None),
+        createUnresolvedTable(
+          Seq("delta", "dummy_raw_path"), DescribeDeltaDetailCommand.CMD_NAME, None),
         Map.empty))
   }
 
@@ -201,17 +205,19 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     val parser = new DeltaSqlParser(null)
     var parsedCmd = parser.parsePlan("DESCRIBE HISTORY catalog_foo.db.tbl")
     assert(parsedCmd.asInstanceOf[DescribeDeltaHistory].child ===
-        UnresolvedTable(Seq("catalog_foo", "db", "tbl"), DescribeDeltaHistory.COMMAND_NAME, None))
+        createUnresolvedTable(
+          Seq("catalog_foo", "db", "tbl"), DescribeDeltaHistory.COMMAND_NAME, None))
     parsedCmd = parser.parsePlan("DESCRIBE HISTORY delta.`/path/to/tbl`")
     assert(parsedCmd.asInstanceOf[DescribeDeltaHistory].child ===
-      UnresolvedTable(Seq("delta", "/path/to/tbl"), DescribeDeltaHistory.COMMAND_NAME, None))
+      createUnresolvedTable(
+        Seq("delta", "/path/to/tbl"), DescribeDeltaHistory.COMMAND_NAME, None))
     parsedCmd = parser.parsePlan("DESCRIBE HISTORY '/path/to/tbl'")
     assert(parsedCmd.asInstanceOf[DescribeDeltaHistory].child ===
       UnresolvedPathBasedDeltaTable("/path/to/tbl", Map.empty, DescribeDeltaHistory.COMMAND_NAME))
   }
 
   private def targetPlanForTable(tableParts: String*): UnresolvedTable =
-    UnresolvedTable(tableParts.toSeq, "REORG", relationTypeMismatchHint = None)
+    createUnresolvedTable(tableParts.toSeq, "REORG", relationTypeMismatchHint = None)
 
   test("REORG command is parsed as expected") {
     val parser = new DeltaSqlParser(null)
@@ -362,7 +368,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     val parsedCmd = parser.parsePlan(sql)
     assert(parsedCmd ===
       AlterTableDropFeature(
-        UnresolvedTable(Seq(table), "ALTER TABLE ... DROP FEATURE", None),
+        createUnresolvedTable(Seq(table), "ALTER TABLE ... DROP FEATURE", None),
         featureName,
         truncateHistory))
   }

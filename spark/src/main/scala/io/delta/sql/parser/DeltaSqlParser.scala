@@ -522,7 +522,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   private def createUnresolvedTable(
       tableName: Seq[String],
       commandName: String): UnresolvedTable = {
-    UnresolvedTable(tableName, commandName, relationTypeMismatchHint = None)
+    UnresolvedTableShim.createUnresolvedTable(tableName, commandName, None)
   }
 
   // Build the text of the CHECK constraint expression. The user-specified whitespace is in the
