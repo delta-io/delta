@@ -41,7 +41,7 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, QualifiedColType}
-import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, SparkCharVarcharUtils}
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
 import org.apache.spark.sql.connector.expressions.FieldReference
@@ -112,13 +112,26 @@ case class AlterTableSetPropertiesDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
+
+    val rowTrackingPropertyKey = DeltaConfigs.ROW_TRACKING_ENABLED.key
+    val enableRowTracking = configuration.keySet.contains(rowTrackingPropertyKey) &&
+      configuration(rowTrackingPropertyKey).toBoolean
+
+    if (enableRowTracking) {
+      // TODO(longvu-db): This will be removed once we support backfill.
+      throw new UnsupportedOperationException("Cannot enable Row IDs on an existing table.")
+    }
     val columnMappingPropertyKey = DeltaConfigs.COLUMN_MAPPING_MODE.key
     val disableColumnMapping = configuration.get(columnMappingPropertyKey).contains("none")
     val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
       DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL)
     if (disableColumnMapping && columnMappingRemovalAllowed) {
-      new RemoveColumnMappingCommand(deltaLog, table.catalogTable)
+      RemoveColumnMappingCommand(deltaLog, table.catalogTable)
         .run(sparkSession, removeColumnMappingTableProperty = false)
+      // Not changing anything else, so we can return early.
+      if (configuration.size == 1) {
+        return Seq.empty[Row]
+      }
     }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.setProperties") {
       val txn = startTransaction()
@@ -176,8 +189,12 @@ case class AlterTableUnsetPropertiesDeltaCommand(
     val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
       DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL)
     if (disableColumnMapping && columnMappingRemovalAllowed) {
-      new RemoveColumnMappingCommand(deltaLog, table.catalogTable)
+      RemoveColumnMappingCommand(deltaLog, table.catalogTable)
         .run(sparkSession, removeColumnMappingTableProperty = true)
+      if (propKeys.size == 1) {
+        // Not unsetting anything else, so we can return early.
+        return Seq.empty[Row]
+      }
     }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.unsetProperties") {
       val txn = startTransaction()
@@ -562,12 +579,25 @@ case class AlterTableChangeColumnDeltaCommand(
                 case Some(newDefaultValue) => result.withCurrentDefaultValue(newDefaultValue)
                 case None => result.clearCurrentDefaultValue()
               }
+              val updatedColumnMetadata =
+                if (!SparkCharVarcharUtils.hasCharVarchar(newColumn.dataType)) {
+                  // Remove the char/varchar property from the metadata that
+                  // indicates that this column is a char/varchar column.
+                  // We construct this throwaway object because
+                  // CharVarcharUtils.cleanAttrMetadata takes an AttributeReference.
+                  val throwAwayAttrRef = AttributeReference(
+                      result.name, result.dataType, nullable = result.nullable, result.metadata)()
+                  CharVarcharUtils.cleanAttrMetadata(throwAwayAttrRef).metadata
+                } else {
+                  result.metadata
+                }
               result
                 .copy(
                   name = newColumn.name,
                   dataType =
                     SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
-                  nullable = newColumn.nullable)
+                  nullable = newColumn.nullable,
+                  metadata = updatedColumnMetadata)
           }
 
           // Replace existing field with new field
@@ -616,8 +646,11 @@ case class AlterTableChangeColumnDeltaCommand(
         StatisticsCollection.renameDeltaStatsColumn(metadata, oldColumnPath, newColumnPath) ++
         ColumnMappingUsageTracking.trackColumnDropOrRename(txn.protocol)
 
+      val newSchemaWithTypeWideningMetadata =
+        TypeWideningMetadata.addTypeWideningMetadata(txn, schema = newSchema, oldSchema = oldSchema)
+
       val newMetadata = metadata.copy(
-        schemaString = newSchema.json,
+        schemaString = newSchemaWithTypeWideningMetadata.json,
         partitionColumns = newPartitionColumns,
         configuration = newConfiguration
       )
@@ -818,7 +851,13 @@ case class AlterTableReplaceColumnsDeltaCommand(
       SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
       SchemaUtils.checkSchemaFieldNames(newSchema, metadata.columnMappingMode)
 
-      val newMetadata = metadata.copy(schemaString = newSchema.json)
+      val newSchemaWithTypeWideningMetadata = TypeWideningMetadata.addTypeWideningMetadata(
+        txn,
+        schema = newSchema,
+        oldSchema = existingSchema
+      )
+
+      val newMetadata = metadata.copy(schemaString = newSchemaWithTypeWideningMetadata.json)
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.ReplaceColumns(columns))
 

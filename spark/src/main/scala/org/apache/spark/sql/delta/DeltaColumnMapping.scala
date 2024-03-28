@@ -96,7 +96,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     // No change.
     (oldMode == newMode) ||
       // Downgrade allowed with a flag.
-      (removalAllowed && (oldMode == NameMapping && newMode == NoMapping)) ||
+      (removalAllowed && (oldMode != NoMapping && newMode == NoMapping)) ||
       // Upgrade always allowed.
       (oldMode == NoMapping && newMode == NameMapping)
   }

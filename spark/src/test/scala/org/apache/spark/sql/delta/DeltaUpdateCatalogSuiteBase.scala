@@ -23,6 +23,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.scalatest.time.SpanSugar
 
@@ -30,13 +31,12 @@ import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{lit, struct}
-import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.sql.types.{BooleanType, DoubleType, IntegerType, LongType, StringType, StructField, StructType}
 import org.apache.spark.util.{ThreadUtils, Utils}
 
 abstract class DeltaUpdateCatalogSuiteBase
   extends QueryTest
-    with SQLTestUtils
+    with DeltaSQLTestUtils
     with SpanSugar {
 
   protected val tbl = "delta_table"

@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.delta.util.FileNames.deltaFile
@@ -43,14 +44,14 @@ import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
   with SharedSparkSession
   with DeltaColumnMappingTestUtils
-  with SQLTestUtils
+  with DeltaSQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._
@@ -1302,7 +1303,10 @@ class DeltaSuite extends QueryTest
           .mode("append")
           .save(tempDir.toString)
       }
-      assert(e.getMessage.contains("incompatible"))
+      checkError(
+        exception = e,
+        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+        parameters = Map("currentField" -> "value", "updateField" -> "value"))
     }
   }
 
@@ -1605,6 +1609,37 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("support Java8 API for DATE type") {
+    withSQLConf(SQLConf.DATETIME_JAVA8API_ENABLED.key -> "true") {
+      val tableName = "my_table"
+      withTable(tableName) {
+        spark.sql(s"CREATE TABLE $tableName (id STRING, date DATE) USING DELTA;")
+        spark.sql(
+          s"""
+             |INSERT INTO $tableName REPLACE
+             |where (DATE IN (DATE('2024-03-11'), DATE('2024-03-13')))
+             |VALUES ('2', DATE('2024-03-13')), ('3', DATE('2024-03-11'))
+             |""".stripMargin)
+      }
+    }
+  }
+
+  test("support Java8 API for TIMESTAMP type") {
+    withSQLConf(SQLConf.DATETIME_JAVA8API_ENABLED.key -> "true") {
+      val tableName = "my_table"
+      withTable(tableName) {
+        spark.sql(s"CREATE TABLE $tableName (id STRING, timestamp TIMESTAMP) USING DELTA;")
+        spark.sql(
+          s"""
+             |INSERT INTO $tableName REPLACE
+             |where
+             | (timestamp IN (TIMESTAMP('2022-12-22 15:50:00'), TIMESTAMP('2022-12-23 15:50:00')))
+             | VALUES
+             | ('2', TIMESTAMP('2022-12-22 15:50:00')), ('3', TIMESTAMP('2022-12-23 15:50:00'))
+             |""".stripMargin)
+      }
+    }
+  }
 
   test("all operations with special characters in path") {
     withTempDir { dir =>

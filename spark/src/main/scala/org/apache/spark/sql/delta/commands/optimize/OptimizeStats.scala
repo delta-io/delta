@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.commands.optimize
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteringStats
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -28,6 +29,7 @@ case class OptimizeStats(
     var removedFilesSizeStats: FileSizeStats = FileSizeStats(),
     var numPartitionsOptimized: Long = 0,
     var zOrderStats: Option[ZOrderStats] = None,
+    var clusteringStats: Option[ClusteringStats] = None,
     var numBatches: Long = 0,
     var totalConsideredFiles: Long = 0,
     var totalFilesSkipped: Long = 0,
@@ -51,6 +53,7 @@ case class OptimizeStats(
       filesRemoved = removedFilesSizeStats.toFileSizeMetrics,
       partitionsOptimized = numPartitionsOptimized,
       zOrderStats = zOrderStats,
+      clusteringStats = clusteringStats,
       numBatches = numBatches,
       totalConsideredFiles = totalConsideredFiles,
       totalFilesSkipped = totalFilesSkipped,
@@ -196,6 +199,7 @@ object FileSizeStatsWithHistogram {
  * @param filesRemoved Stats for the files removed
  * @param partitionsOptimized Number of partitions optimized
  * @param zOrderStats Z-Order stats
+ * @param clusteringStats Clustering stats
  * @param numBatches Number of batches
  * @param totalConsideredFiles Number of files considered for the Optimize operation.
  * @param totalFilesSkipped Number of files that are skipped from being Optimized.
@@ -222,6 +226,7 @@ case class OptimizeMetrics(
       FileSizeMetrics(min = None, max = None, avg = 0, totalFiles = 0, totalSize = 0),
     partitionsOptimized: Long = 0,
     zOrderStats: Option[ZOrderStats] = None,
+    clusteringStats: Option[ClusteringStats] = None,
     numBatches: Long,
     totalConsideredFiles: Long,
     totalFilesSkipped: Long = 0,

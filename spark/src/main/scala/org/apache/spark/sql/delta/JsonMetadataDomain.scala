@@ -49,5 +49,7 @@ abstract class JsonMetadataDomainUtils[T: Manifest] {
 
   protected def fromJsonConfiguration(domain: DomainMetadata): T =
     JsonUtils.fromJson[T](domain.configuration)
+
+  def isSameDomain(d: DomainMetadata): Boolean = d.domain == domainName
 }
 

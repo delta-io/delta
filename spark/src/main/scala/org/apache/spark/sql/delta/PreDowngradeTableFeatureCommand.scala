@@ -18,9 +18,11 @@ package org.apache.spark.sql.delta
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand}
+import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaReorgTableCommand, DeltaReorgTableMode, DeltaReorgTableSpec}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+
+import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 
 /**
  * A base class for implementing a preparation command for removing table features.
@@ -123,6 +125,91 @@ case class V2CheckpointPreDowngradeCommand(table: DeltaTableV2)
         Map(("downgradeTimeMs", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)))
     )
 
+    true
+  }
+}
+
+case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+  with DeltaLogging {
+
+  /**
+   * Unset the type widening table property to prevent new type changes to be applied to the table,
+   * then removes traces of the feature:
+   * - Rewrite files that have columns or fields with a different type than in the current table
+   *   schema. These are all files not added or modified after the last type change.
+   * - Remove the type widening metadata attached to fields in the current table schema.
+   *
+   * @return Return true if files were rewritten or metadata was removed. False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    if (TypeWideningTableFeature.validateRemoval(table.initialSnapshot)) return false
+
+    val startTimeNs = System.nanoTime()
+    val properties = Seq(DeltaConfigs.ENABLE_TYPE_WIDENING.key)
+    AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    val numFilesRewritten = rewriteFilesIfNeeded()
+    val metadataRemoved = removeMetadataIfNeeded()
+
+    recordDeltaEvent(
+      table.deltaLog,
+      opType = "delta.typeWideningFeatureRemovalMetrics",
+      data = Map(
+        "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
+        "numFilesRewritten" -> numFilesRewritten,
+        "metadataRemoved" -> metadataRemoved
+        )
+    )
+    numFilesRewritten > 0 || metadataRemoved
+  }
+
+  /**
+   * Rewrite files that have columns or fields with a different type than in the current table
+   * schema. These are all files not added or modified after the last type change.
+   * @return Return the number of files rewritten.
+   */
+  private def rewriteFilesIfNeeded(): Long = {
+    val numFilesToRewrite = TypeWidening.numFilesRequiringRewrite(table.initialSnapshot)
+    if (numFilesToRewrite == 0L) return 0L
+
+    // Get the table Id and catalog from the delta table to build a ResolvedTable plan for the reorg
+    // command.
+    import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
+    val tableId = table.spark
+      .sessionState
+      .sqlParser
+      .parseTableIdentifier(table.name).nameParts.asIdentifier
+    val catalog = table.spark.sessionState.catalogManager.currentCatalog.asTableCatalog
+
+    val reorg = DeltaReorgTableCommand(
+      ResolvedTable.create(
+        catalog,
+        tableId,
+        table
+      ),
+      DeltaReorgTableSpec(DeltaReorgTableMode.REWRITE_TYPE_WIDENING, None)
+    )(Nil)
+
+    reorg.run(table.spark)
+    numFilesToRewrite
+  }
+
+  /**
+   * Remove the type widening metadata attached to fields in the current table schema.
+   * @return Return true if any metadata was removed. False otherwise.
+   */
+  private def removeMetadataIfNeeded(): Boolean = {
+    if (!TypeWideningMetadata.containsTypeWideningMetadata(table.initialSnapshot.schema)) {
+      return false
+    }
+
+    val txn = table.startTransaction()
+    val metadata = txn.metadata
+    val (cleanedSchema, changes) =
+      TypeWideningMetadata.removeTypeWideningMetadata(metadata.schema)
+    txn.commit(
+      metadata.copy(schemaString = cleanedSchema.json) :: Nil,
+      DeltaOperations.UpdateColumnMetadata("DROP FEATURE", changes))
     true
   }
 }

@@ -16,9 +16,10 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
 
 import org.apache.spark.sql.catalyst.expressions.Cast
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types._
 
 object TypeWidening {
@@ -47,6 +48,20 @@ object TypeWidening {
   }
 
   /**
+   * Checks that the type widening table property wasn't disabled or enabled between the two given
+   * states, throws an errors if it was.
+   */
+  def ensureFeatureConsistentlyEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      otherProtocol: Protocol,
+      otherMetadata: Metadata): Unit = {
+    if (isEnabled(protocol, metadata) != isEnabled(otherProtocol, otherMetadata)) {
+      throw DeltaErrors.metadataChangedException(None)
+    }
+  }
+
+  /**
    * Returns whether the given type change is eligible for widening. This only checks atomic types.
    * It is the responsibility of the caller to recurse into structs, maps and arrays.
    */
@@ -60,4 +75,46 @@ object TypeWidening {
       case (ByteType | ShortType, IntegerType) => true
       case _ => false
     }
+
+  /**
+   * Returns whether the given type change can be applied during schema evolution. Only a
+   * subset of supported type changes are considered for schema evolution.
+   */
+  def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
+    (fromType, toType) match {
+      case (from, to) if from == to => true
+      case (from, to) if !isTypeChangeSupported(from, to) => false
+      case (ByteType, ShortType) => true
+      case (ByteType | ShortType, IntegerType) => true
+      case _ => false
+    }
+
+  /**
+   * Filter the given list of files to only keep files that were written before the latest type
+   * change, if any. These older files contain a column or field with a type that is different than
+   * in the current table schema and must be rewritten when dropping the type widening table feature
+   * to make the table readable by readers that don't support the feature.
+   */
+  def filterFilesRequiringRewrite(snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile] =
+     TypeWideningMetadata.getLatestTypeChangeVersion(snapshot.metadata.schema) match {
+      case Some(latestVersion) =>
+        files.filter(_.defaultRowCommitVersion match {
+            case Some(version) => version < latestVersion
+            // Files written before the type widening table feature was added to the table don't
+            // have a defaultRowCommitVersion. That does mean they were written before the latest
+            // type change.
+            case None => true
+        })
+      case None =>
+        Seq.empty
+    }
+
+
+  /**
+   * Return the number of files that were written before the latest type change and that then
+   * contain a column or field with a type that is different from the current able schema.
+   */
+  def numFilesRequiringRewrite(snapshot: Snapshot): Long = {
+    filterFilesRequiringRewrite(snapshot, snapshot.allFiles.collect()).size
+  }
 }

@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaOperationMetrics.MetricsTransformer
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 
@@ -135,6 +134,14 @@ object DeltaOperations {
     }
     override def changesData: Boolean = true
   }
+
+  case class RemoveColumnMapping(
+      override val userMetadata: Option[String] = None) extends Operation("REMOVE COLUMN MAPPING") {
+    override def parameters: Map[String, Any] = Map()
+
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.REMOVE_COLUMN_MAPPING
+  }
+
   /** Recorded during streaming inserts. */
   case class StreamingUpdate(
       outputMode: OutputMode,
@@ -294,12 +301,14 @@ object DeltaOperations {
   case class CreateTable(
       metadata: Metadata,
       isManaged: Boolean,
-      asSelect: Boolean = false
+      asSelect: Boolean = false,
+      clusterBy: Option[Seq[String]] = None
   ) extends Operation("CREATE TABLE" + s"${if (asSelect) " AS SELECT" else ""}") {
     override val parameters: Map[String, Any] = Map(
       "isManaged" -> isManaged.toString,
       "description" -> Option(metadata.description),
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
+      CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       "properties" -> JsonUtils.toJson(metadata.configuration)
     )
     override val operationMetrics: Set[String] = if (!asSelect) {
@@ -315,13 +324,15 @@ object DeltaOperations {
       isManaged: Boolean,
       orCreate: Boolean,
       asSelect: Boolean = false,
-      override val userMetadata: Option[String] = None
+      override val userMetadata: Option[String] = None,
+      clusterBy: Option[Seq[String]] = None
   ) extends Operation(s"${if (orCreate) "CREATE OR " else ""}REPLACE TABLE" +
       s"${if (asSelect) " AS SELECT" else ""}") {
     override val parameters: Map[String, Any] = Map(
       "isManaged" -> isManaged.toString,
       "description" -> Option(metadata.description),
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
+      CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       "properties" -> JsonUtils.toJson(metadata.configuration)
   )
     override val operationMetrics: Set[String] = if (!asSelect) {
@@ -484,15 +495,20 @@ object DeltaOperations {
   val OPTIMIZE_OPERATION_NAME = "OPTIMIZE"
   /** parameter key to indicate which columns to z-order by */
   val ZORDER_PARAMETER_KEY = "zOrderBy"
+  /** parameter key to indicate clustering columns */
+  val CLUSTERING_PARAMETER_KEY = "clusterBy"
 
   /** Recorded when optimizing the table. */
   case class Optimize(
       predicate: Seq[Expression],
       zOrderBy: Seq[String] = Seq.empty,
-      auto: Boolean = false
+      auto: Boolean = false,
+      clusterBy: Option[Seq[String]] = None
   ) extends OptimizeOrReorg(OPTIMIZE_OPERATION_NAME, predicate) {
     override val parameters: Map[String, Any] = super.parameters ++ Map(
-      ZORDER_PARAMETER_KEY -> JsonUtils.toJson(zOrderBy),
+      // When clustering columns are specified, set the zOrderBy key to empty.
+      ZORDER_PARAMETER_KEY -> JsonUtils.toJson(if (clusterBy.isEmpty) zOrderBy else Seq.empty),
+      CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       AUTO_COMPACTION_PARAMETER_KEY -> auto
     )
 
@@ -610,6 +626,14 @@ private[delta] object DeltaOperationMetrics {
     "numFiles", // number of files written
     "numOutputBytes", // size in bytes of the written contents
     "numOutputRows" // number of rows written
+  )
+
+  val REMOVE_COLUMN_MAPPING: Set[String] = Set(
+    "numRewrittenFiles",
+    "numOutputBytes",
+    "numRemovedBytes",
+    "numCopiedRows",
+    "numDeletionVectorsRemoved"
   )
 
   val STREAMING_UPDATE = Set(

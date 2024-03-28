@@ -20,12 +20,14 @@ import java.io.File
 
 import org.apache.spark.sql.delta.actions.Format
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.StructType
 
-trait DeltaSourceSuiteBase extends StreamTest {
+trait DeltaSourceSuiteBase extends StreamTest
+  with DeltaSQLTestUtils {
 
   /**
    * Creates 3 temporary directories for use within a function.
@@ -35,6 +37,20 @@ trait DeltaSourceSuiteBase extends StreamTest {
     withTempDir { file1 =>
       withTempDir { file2 =>
         withTempDir { file3 =>
+          f(file1, file2, file3)
+        }
+      }
+    }
+  }
+
+  /**
+   * Creates 3 temporary directories for use within a function using a given prefix.
+   * @param f function to be run with created temp directories
+   */
+  protected def withTempDirs(prefix: String)(f: (File, File, File) => Unit): Unit = {
+    withTempDir(prefix) { file1 =>
+      withTempDir(prefix) { file2 =>
+        withTempDir(prefix) { file3 =>
           f(file1, file2, file3)
         }
       }

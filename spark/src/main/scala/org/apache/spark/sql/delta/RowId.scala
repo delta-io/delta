@@ -18,6 +18,11 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.propertyKey
+import org.apache.spark.sql.util.ScalaExtensions._
+
+import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField
+import org.apache.spark.sql.types
+import org.apache.spark.sql.types.{DataType, LongType, MetadataBuilder, StructField}
 
 /**
  * Collection of helpers to handle Row IDs.
@@ -38,8 +43,6 @@ object RowId {
       case d: DomainMetadata if d.domain == domainName => Some(fromJsonConfiguration(d))
       case _ => None
     }
-
-    def isRowTrackingDomain(d: DomainMetadata): Boolean = d.domain == domainName
   }
 
   val MISSING_HIGH_WATER_MARK: Long = -1L
@@ -67,25 +70,6 @@ object RowId {
   }
 
   /**
-   * Verifies that row IDs are only set as readable when a new table is created.
-   */
-  private[delta] def verifyMetadata(
-      oldProtocol: Protocol,
-      newProtocol: Protocol,
-      oldMetadata: Metadata,
-      newMetadata: Metadata,
-      isCreatingNewTable: Boolean): Unit = {
-
-    val rowIdsEnabledBefore = isEnabled(oldProtocol, oldMetadata)
-    val rowIdsEnabledAfter = isEnabled(newProtocol, newMetadata)
-
-    if (rowIdsEnabledAfter && !rowIdsEnabledBefore && !isCreatingNewTable) {
-      throw new UnsupportedOperationException(
-        "Cannot enable Row IDs on an existing table.")
-    }
-  }
-
-  /**
    * Assigns fresh row IDs to all AddFiles inside `actions` that do not have row IDs yet and emits
    * a [[RowIdHighWaterMark]] action with the new high-water mark.
    */
@@ -106,7 +90,7 @@ object RowId {
           throw DeltaErrors.rowIdAssignmentWithoutStats
         }
         a.copy(baseRowId = Some(baseRowId))
-      case d: DomainMetadata if RowTrackingMetadataDomain.isRowTrackingDomain(d) =>
+      case d: DomainMetadata if RowTrackingMetadataDomain.isSameDomain(d) =>
         throw new IllegalStateException(
           "Manually setting the Row ID high water mark is not allowed")
       case other => other
@@ -127,4 +111,48 @@ object RowId {
    */
   private[delta] def extractHighWatermark(snapshot: Snapshot): Option[Long] =
     RowTrackingMetadataDomain.fromSnapshot(snapshot).map(_.rowIdHighWaterMark)
+
+  /** Base Row ID column name */
+  val BASE_ROW_ID = "base_row_id"
+
+  /*
+   * A specialization of [[FileSourceConstantMetadataStructField]] used to represent base RowId
+   * columns.
+   */
+  object BaseRowIdMetadataStructField {
+    private val BASE_ROW_ID_METADATA_COL_ATTR_KEY = s"__base_row_id_metadata_col"
+
+    def metadata: types.Metadata = new MetadataBuilder()
+      .withMetadata(FileSourceConstantMetadataStructField.metadata(BASE_ROW_ID))
+      .putBoolean(BASE_ROW_ID_METADATA_COL_ATTR_KEY, value = true)
+      .build()
+
+    def apply(): StructField =
+      StructField(
+        BASE_ROW_ID,
+        LongType,
+        nullable = false,
+        metadata = metadata)
+
+    def unapply(field: StructField): Option[StructField] =
+      Some(field).filter(isBaseRowIdColumn)
+
+    /** Return true if the column is a base Row ID column. */
+    def isBaseRowIdColumn(structField: StructField): Boolean =
+      isValid(structField.dataType, structField.metadata)
+
+    def isValid(dataType: DataType, metadata: types.Metadata): Boolean = {
+      FileSourceConstantMetadataStructField.isValid(dataType, metadata) &&
+        metadata.contains(BASE_ROW_ID_METADATA_COL_ATTR_KEY) &&
+        metadata.getBoolean(BASE_ROW_ID_METADATA_COL_ATTR_KEY)
+    }
+  }
+
+  /**
+   * The field readers can use to access the base row id column.
+   */
+  def createBaseRowIdField(protocol: Protocol, metadata: Metadata): Option[StructField] =
+    Option.when(RowId.isEnabled(protocol, metadata)) {
+      BaseRowIdMetadataStructField()
+    }
 }

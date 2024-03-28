@@ -765,6 +765,37 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "A string-to-string map of configuration properties for the managed commit owner.")
 
+  val IN_COMMIT_TIMESTAMPS_ENABLED = buildConfig[Boolean](
+    "enableInCommitTimestamps-dev",
+    false.toString,
+    _.toBoolean,
+    validationFunction = _ => true,
+    "needs to be a boolean."
+  )
+
+  /**
+   * This table property is used to track the version of the table at which
+   * inCommitTimestamps were enabled.
+   */
+  val IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION = buildConfig[Option[Long]](
+    "inCommitTimestampEnablementVersion-dev",
+    null,
+    v => Option(v).map(_.toLong),
+    validationFunction = _ => true,
+    "needs to be a long."
+  )
+
+  /**
+   * This table property is used to track the timestamp at which inCommitTimestamps
+   * were enabled. More specifically, it is the inCommitTimestamp of the commit with
+   * the version specified in [[IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION]].
+   */
+  val IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP = buildConfig[Option[Long]](
+    "inCommitTimestampEnablementTimestamp-dev",
+    null,
+    v => Option(v).map(_.toLong),
+    validationFunction = _ => true,
+    "needs to be a long.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase

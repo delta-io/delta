@@ -16,24 +16,25 @@
 
 package org.apache.spark.sql.delta.managedcommit
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, ManagedCommitTableFeature, SerializableFileStatus}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, ManagedCommitTableFeature}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 
-class CommitStoreSuite extends QueryTest with SQLTestUtils with SharedSparkSession
+class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
   with DeltaSQLCommandTest {
 
   trait TestCommitStoreBase extends CommitStore {
     override def commit(
         logStore: LogStore,
         hadoopConf: Configuration,
-        tablePath: Path,
+        logPath: Path,
         commitVersion: Long,
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
@@ -41,9 +42,9 @@ class CommitStoreSuite extends QueryTest with SQLTestUtils with SharedSparkSessi
     }
 
     override def getCommits(
-      tablePath: Path,
+      logPath: Path,
       startVersion: Long,
-      endVersion: Option[Long] = None): Seq[Commit] = Seq.empty
+      endVersion: Option[Long] = None): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
   }
 
   class TestCommitStore1 extends TestCommitStoreBase

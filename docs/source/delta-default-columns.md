@@ -12,7 +12,7 @@ This information is stored in the [StructField](https://github.com/delta-io/delt
 
 ## How to enable <Delta> default column values
 
-.. important:: Enabling default column values for a table upgrades the Delta [table version](versioning.md) as a byproduct of enabling [table features](#versioning). This protocol upgrade is irreversible. Tables with default column values enabled can only be read in <Delta> 3.1 and above.
+.. important:: Enabling default column values for a table upgrades the Delta [table version](versioning.md) as a byproduct of enabling [table features](#versioning). This protocol upgrade is irreversible. Tables with default column values enabled can only be written to in <Delta> 3.1 and above.
 
 You can enable default column values for a table by setting `delta.feature.allowColumnDefaults` to `enabled`:
 
