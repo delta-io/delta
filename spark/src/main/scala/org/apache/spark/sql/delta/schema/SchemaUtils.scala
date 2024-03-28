@@ -711,7 +711,8 @@ def normalizeColumnNamesInDataType(
         case (_: MapType, _) =>
           throw DeltaErrors.foundMapTypeColumnException(
             prettyFieldName(currentPath :+ "key"),
-            prettyFieldName(currentPath :+ "value"))
+            prettyFieldName(currentPath :+ "value"),
+            schema)
 
         case (array: ArrayType, "element") =>
           val childPosition = findRecursively(
@@ -723,17 +724,19 @@ def normalizeColumnNamesInDataType(
         case (_: ArrayType, _) =>
           throw DeltaErrors.incorrectArrayAccessByName(
             prettyFieldName(currentPath :+ "element"),
-            prettyFieldName(currentPath))
+            prettyFieldName(currentPath),
+            schema)
         case _ =>
-          throw DeltaErrors.columnPathNotNested(currentFieldName, currentType, currentPath)
+          throw DeltaErrors.columnPathNotNested(currentFieldName, currentType, currentPath, schema)
       }
     }
 
     try {
       findRecursively(column, schema)
     } catch {
+      case e: DeltaAnalysisException => throw e
       case e: AnalysisException =>
-        throw new AnalysisException(e.getMessage + s":\n${schema.treeString}")
+        throw DeltaErrors.errorFindingColumnPosition(column, schema, e.getMessage)
     }
   }
 
@@ -905,8 +908,7 @@ def normalizeColumnNamesInDataType(
       StructType(pre ++ Seq(mid) ++ post.tail) -> droppedColumn
     } else {
       if (length == 1) {
-        throw new AnalysisException(
-          "Cannot drop column from a struct type with a single field: " + schema)
+        throw DeltaErrors.dropColumnOnSingleFieldSchema(schema)
       }
       StructType(pre ++ post.tail) -> field
     }
