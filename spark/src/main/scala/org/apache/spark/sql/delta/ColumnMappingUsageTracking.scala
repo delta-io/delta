@@ -39,8 +39,8 @@ object ColumnMappingUsageTracking {
     // enabled after the table is created. Therefore, we have to assume that a column was already
     // dropped or renamed.
     metadata.copy(
-      configuration = metadata.configuration ++ Map(
-        DeltaConfigs.COLUMN_MAPPING_HAS_DROPPED_OR_RENAMED.key -> (!isCreatingNewTable).toString)
+      configuration = metadata.configuration +
+        (DeltaConfigs.COLUMN_MAPPING_HAS_DROPPED_OR_RENAMED.key -> (!isCreatingNewTable).toString)
     )
   }
 
