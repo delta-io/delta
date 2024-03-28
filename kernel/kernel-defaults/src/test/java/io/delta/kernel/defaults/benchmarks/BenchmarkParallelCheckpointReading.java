@@ -235,7 +235,8 @@ public class BenchmarkParallelCheckpointReading {
 
         List<ColumnarBatch> parquetFileReader(String filePath, StructType readSchema) {
             ParquetFileReader reader = new ParquetFileReader(hadoopConf);
-            try (CloseableIterator<ColumnarBatch> batchIter = reader.read(filePath, readSchema)) {
+            try (CloseableIterator<ColumnarBatch> batchIter =
+                         reader.read(filePath, readSchema, Optional.empty())) {
                 List<ColumnarBatch> batches = new ArrayList<>();
                 while (batchIter.hasNext()) {
                     batches.add(batchIter.next());

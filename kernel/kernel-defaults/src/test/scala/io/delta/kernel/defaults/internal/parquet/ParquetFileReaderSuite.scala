@@ -16,11 +16,13 @@
 package io.delta.kernel.defaults.internal.parquet
 
 import java.math.BigDecimal
-
-import io.delta.golden.GoldenTableUtils.goldenTableFile
+import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, VectorTestUtils}
+import io.delta.kernel.expressions.Literal
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
+
+import java.util.Optional
 
 class ParquetFileReaderSuite extends AnyFunSuite
   with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils {
@@ -140,5 +142,36 @@ class ParquetFileReaderSuite extends AnyFunSuite
     val expResult2 = (0L until 20000L).map(i => TestRow(i, i))
 
     checkAnswer(actResult2, expResult2)
+  }
+
+  test("parquet filter pushdown - byte type") {
+    val parquetFiles = goldenTablePath("parquet-all-types")
+    val schema = tableSchema(parquetFiles)
+    val readSchema = schema
+
+    val predicate = or(
+      isNull(col("NonExistentType")),
+      equals(col("NonExistentType"), Literal.ofByte(2.toByte)))
+
+    val batches = readParquetUsingKernelAsColumnarBatches(
+      parquetFiles, readSchema, Optional.of(predicate))
+
+    val rowsFromSpark = readParquetFilesUsingSpark(parquetFiles, readSchema)
+    val expRows = rowsFromSpark
+      .filter(row => row.get(0).asInstanceOf[Byte] == 2.toByte)
+
+    checkAnswer(batches.flatMap(_.getRows.toSeq), expRows)
+  }
+
+  test("parquet filter pushdown - non-existent column") {
+    val parquetFiles = goldenTablePath("parquet-all-types")
+    val readSchema = tableSchema(parquetFiles)
+
+    val predicate = equals(col("ByteNonExistent"), Literal.ofByte(2.toByte))
+
+    val batches = readParquetUsingKernelAsColumnarBatches(
+      parquetFiles, readSchema, Optional.of(predicate))
+
+    verifyContentUsingSparkReader(parquetFiles, batches.map(_.toFiltered))
   }
 }

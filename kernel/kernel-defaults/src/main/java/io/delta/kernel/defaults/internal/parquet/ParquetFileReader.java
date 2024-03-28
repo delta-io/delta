@@ -16,29 +16,36 @@
 package io.delta.kernel.defaults.internal.parquet;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
-import java.util.Map;
-import java.util.NoSuchElementException;
+import java.util.*;
 import static java.util.Objects.requireNonNull;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.mapred.FileSplit;
-import org.apache.hadoop.mapred.Reporter;
-import org.apache.parquet.hadoop.ParquetRecordReader;
+import org.apache.parquet.ParquetReadOptions;
+import org.apache.parquet.filter2.compat.FilterCompat;
+import org.apache.parquet.filter2.compat.FilterCompat.Filter;
+import org.apache.parquet.hadoop.KernelParquetRecordReader;
 import org.apache.parquet.hadoop.api.InitContext;
 import org.apache.parquet.hadoop.api.ReadSupport;
+import org.apache.parquet.hadoop.metadata.ParquetMetadata;
+import org.apache.parquet.hadoop.util.HadoopInputFile;
+import org.apache.parquet.io.InputFile;
 import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.io.api.RecordMaterializer;
 import org.apache.parquet.schema.MessageType;
 
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+
+import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
+import static io.delta.kernel.defaults.internal.parquet.ParquetFilterUtils.toParquetFilter;
 
 public class ParquetFileReader {
     private final Configuration configuration;
@@ -47,46 +54,39 @@ public class ParquetFileReader {
     public ParquetFileReader(Configuration configuration) {
         this.configuration = requireNonNull(configuration, "configuration is null");
         this.maxBatchSize =
-            configuration.getInt("delta.kernel.default.parquet.reader.batch-size", 1024);
+                configuration.getInt("delta.kernel.default.parquet.reader.batch-size", 1024);
         checkArgument(maxBatchSize > 0, "invalid Parquet reader batch size: " + maxBatchSize);
     }
 
-    public CloseableIterator<ColumnarBatch> read(String path, StructType schema) {
-        BatchReadSupport batchReadSupport = new BatchReadSupport(maxBatchSize, schema);
-        ParquetRecordReader<Object> reader = new ParquetRecordReader<>(batchReadSupport);
-        final boolean hasRowIndexCol =
-            schema.indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME) >= 0 &&
-            schema.get(StructField.METADATA_ROW_INDEX_COLUMN_NAME).isMetadataColumn();
+    public CloseableIterator<ColumnarBatch> read(
+            String path,
+            StructType schema,
+            Optional<Predicate> predicate) {
 
-        Path filePath = new Path(URI.create(path));
-        try {
-            FileSystem fs = filePath.getFileSystem(configuration);
-            FileStatus fileStatus = fs.getFileStatus(filePath);
-            FileSplit fileSplit = new FileSplit(filePath, 0, fileStatus.getLen(), new String[0]);
-            reader.initialize(fileSplit, configuration, Reporter.NULL);
-        } catch (IOException | InterruptedException e) {
-            throw new RuntimeException(e);
-        }
+        final boolean hasRowIndexCol =
+                schema.indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME) >= 0 &&
+                        schema.get(StructField.METADATA_ROW_INDEX_COLUMN_NAME).isMetadataColumn();
 
         return new CloseableIterator<ColumnarBatch>() {
+            private final BatchReadSupport readSupport = new BatchReadSupport(maxBatchSize, schema);
+            private KernelParquetRecordReader<Object> reader;
             private boolean hasNotConsumedNextElement;
 
             @Override
-            public void close()
-                throws IOException {
-                reader.close();
+            public void close() throws IOException {
+                Utils.closeCloseables(reader);
             }
 
             @Override
             public boolean hasNext() {
+                initParquetReaderIfRequired();
                 try {
                     if (hasNotConsumedNextElement) {
                         return true;
                     }
-                    hasNotConsumedNextElement = reader.nextKeyValue();
-                    return hasNotConsumedNextElement;
-                } catch (IOException | InterruptedException e) {
-                    throw new RuntimeException(e);
+                    return (hasNotConsumedNextElement = reader.getCurrentValue() != null);
+                } catch (IOException | InterruptedException ie) {
+                    throw new RuntimeException(ie);
                 }
             }
 
@@ -99,31 +99,59 @@ public class ParquetFileReader {
                 do {
                     hasNotConsumedNextElement = false;
                     // hasNext reads to row to confirm there is a next element.
-                    try {
-                        long rowIndex = 0;
-                        if (hasRowIndexCol) {
-                            // get the row index only if required by the read schema
-                            rowIndex = reader.getCurrentRowIndex();
-                        }
-                        batchReadSupport.finalizeCurrentRow(rowIndex);
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
+                    // get the row index only if required by the read schema
+                    long rowIndex = hasRowIndexCol ? reader.getCurrentRowIndex() : -1;
+                    readSupport.finalizeCurrentRow(rowIndex);
                     batchSize++;
                 }
                 while (batchSize < maxBatchSize && hasNext());
 
-                return batchReadSupport.getDataAsColumnarBatch(batchSize);
+                return readSupport.getDataAsColumnarBatch(batchSize);
+            }
+
+            void initParquetReaderIfRequired() {
+                if (reader != null) {
+                    return;
+                }
+
+                org.apache.parquet.hadoop.ParquetFileReader fileReader = null;
+                try {
+                    Path filePath = new Path(URI.create(path));
+                    HadoopInputFile file = HadoopInputFile.fromPath(filePath, configuration);
+
+                    ParquetMetadata footer =
+                            org.apache.parquet.hadoop.ParquetFileReader.readFooter(configuration,
+                                    filePath);
+
+                    Filter parquetPredicate = predicate
+                            .map(predicate -> toParquetFilter(footer, predicate))
+                            .orElse(FilterCompat.NOOP);
+
+                    ParquetReadOptions options = ParquetReadOptions.builder()
+                            .withRecordFilter(parquetPredicate)
+                            // disable record filtering, currently we just use the predicate to
+                            // prune row groups.
+                            .useRecordFilter(false)
+                            .build();
+
+                    // Pass the already read footer to the reader to avoid reading it again.
+                    fileReader = new ParquetFileReaderWithFooter(file, options, footer);
+                    reader = new KernelParquetRecordReader<>(readSupport, parquetPredicate);
+                    reader.initialize(fileReader, configuration);
+                } catch (IOException e) {
+                    Utils.closeCloseablesSilently(fileReader, reader);
+                    throw new UncheckedIOException(e);
+                }
             }
         };
     }
 
     /**
-     * Implement a {@link ReadSupport} that will collect the data for each row and return
-     * as a {@link ColumnarBatch}.
+     * Implement a {@link ReadSupport} that will collect the data for each row and return as a
+     * {@link ColumnarBatch}.
      */
     public static class BatchReadSupport
-        extends ReadSupport<Object> {
+            extends ReadSupport<Object> {
         private final int maxBatchSize;
         private final StructType readSchema;
         private RowRecordCollector rowRecordCollector;
@@ -136,15 +164,15 @@ public class ParquetFileReader {
         @Override
         public ReadContext init(InitContext context) {
             return new ReadContext(
-                ParquetSchemaUtils.pruneSchema(context.getFileSchema(), readSchema));
+                    ParquetSchemaUtils.pruneSchema(context.getFileSchema(), readSchema));
         }
 
         @Override
         public RecordMaterializer<Object> prepareForRead(
-            Configuration configuration,
-            Map<String, String> keyValueMetaData,
-            MessageType fileSchema,
-            ReadContext readContext) {
+                Configuration configuration,
+                Map<String, String> keyValueMetaData,
+                MessageType fileSchema,
+                ReadContext readContext) {
             rowRecordCollector = new RowRecordCollector(maxBatchSize, readSchema, fileSchema);
             return rowRecordCollector;
         }
@@ -163,14 +191,13 @@ public class ParquetFileReader {
 
     /**
      * Collects the records given by the Parquet reader as columnar data. Parquet reader allows
-     * reading data row by row, but {@link ParquetFileReader} wants to expose the data as a
-     * columnar batch. Parquet reader takes an implementation of {@link RecordMaterializer}
-     * to which it gives data for each column one row a time. This {@link RecordMaterializer}
-     * implementation collects the column values for multiple rows and returns a
-     * {@link ColumnarBatch} at the end.
+     * reading data row by row, but {@link ParquetFileReader} wants to expose the data as a columnar
+     * batch. Parquet reader takes an implementation of {@link RecordMaterializer} to which it gives
+     * data for each column one row a time. This {@link RecordMaterializer} implementation collects
+     * the column values for multiple rows and returns a {@link ColumnarBatch} at the end.
      */
     public static class RowRecordCollector
-        extends RecordMaterializer<Object> {
+            extends RecordMaterializer<Object> {
         private static final Object FAKE_ROW_RECORD = new Object();
         private final RowColumnReader rowRecordGroupConverter;
 
@@ -207,10 +234,34 @@ public class ParquetFileReader {
 
         /**
          * Finalize the current row.
+         *
          * @param fileRowIndex the file row index of the row just processed
          */
         public void finalizeCurrentRow(long fileRowIndex) {
             rowRecordGroupConverter.finalizeCurrentRow(fileRowIndex);
+        }
+    }
+
+    /**
+     * Wrapper around {@link org.apache.parquet.hadoop.ParquetFileReader} to allow using the
+     * provided footer instead of reading it again. We read the footer in advance to construct a
+     * predicate for filtering rows.
+     */
+    private static class ParquetFileReaderWithFooter
+            extends org.apache.parquet.hadoop.ParquetFileReader {
+        private final ParquetMetadata footer;
+
+        ParquetFileReaderWithFooter(
+                InputFile inputFile,
+                ParquetReadOptions options,
+                ParquetMetadata footer) throws IOException {
+            super(inputFile, options);
+            this.footer = requireNonNull(footer, "footer is null");
+        }
+
+        @Override
+        public ParquetMetadata getFooter() {
+            return footer;  // return the footer passed in the constructor
         }
     }
 }
