@@ -42,27 +42,22 @@ import org.apache.spark.sql.types.StructType
  * @since 0.3.0
  */
 class DeltaTable private[tables](
-    @transient private val _df: Dataset[Row],
-    @transient private val table: DeltaTableV2)
+    @transient private val _table: DeltaTableV2,
+    private val alias: Option[String] = None)
   extends DeltaTableOperations with Serializable {
 
-  protected def deltaLog: DeltaLog = {
-    /** Assert the codes run in the driver. */
-    if (table == null) {
-      throw DeltaErrors.deltaTableFoundInExecutor()
-    }
+  // Ensure table's initial snapshot has been captured, for consistent behavior.
+  _table.initialSnapshot
 
-    table.deltaLog
+  /** Assert the codes run in the driver. */
+  private def table: DeltaTableV2 = Option(_table).getOrElse {
+    throw DeltaErrors.deltaTableFoundInExecutor()
   }
 
-  protected def df: Dataset[Row] = {
-    /** Assert the codes run in the driver. */
-    if (_df == null) {
-      throw DeltaErrors.deltaTableFoundInExecutor()
-    }
+  protected def deltaLog: DeltaLog = table.deltaLog
 
-    _df
-  }
+  @transient
+  protected lazy val df: Dataset[Row] = alias.foldLeft(table.toDf)(_ as _)
 
   /**
    * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or
@@ -70,7 +65,7 @@ class DeltaTable private[tables](
    *
    * @since 0.3.0
    */
-  def as(alias: String): DeltaTable = new DeltaTable(df.as(alias), table)
+  def as(alias: String): DeltaTable = new DeltaTable(table, Some(alias))
 
   /**
    * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or
@@ -85,7 +80,9 @@ class DeltaTable private[tables](
    *
    * @since 0.3.0
    */
-  def toDF: Dataset[Row] = df
+  def toDF: Dataset[Row] = Option(df).getOrElse {
+    throw DeltaErrors.deltaTableFoundInExecutor()
+  }
 
   /**
    * Recursively delete files and directories in the table that are not needed by the table for
@@ -714,11 +711,7 @@ object DeltaTable {
     val fileSystemOptions: Map[String, String] = hadoopConf.toMap
     val hdpPath = new Path(path)
     if (DeltaTableUtils.isDeltaTable(sparkSession, hdpPath, fileSystemOptions)) {
-      new DeltaTable(sparkSession.read.format("delta").options(fileSystemOptions).load(path),
-        DeltaTableV2(
-          spark = sparkSession,
-          path = hdpPath,
-          options = fileSystemOptions))
+      new DeltaTable(DeltaTableV2(sparkSession, hdpPath, options = fileSystemOptions))
     } else {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(path)))
     }
@@ -785,9 +778,8 @@ object DeltaTable {
     val tableId = sparkSession.sessionState.sqlParser.parseTableIdentifier(tableName)
     if (DeltaTableUtils.isDeltaTable(sparkSession, tableId)) {
       val tbl = sparkSession.sessionState.catalog.getTableMetadata(tableId)
-      new DeltaTable(
-        sparkSession.table(tableName),
-        DeltaTableV2(sparkSession, new Path(tbl.location), Some(tbl), Some(tableName)))
+      val newTable = DeltaTableV2(sparkSession, new Path(tbl.location), Some(tbl), Some(tableName))
+      new DeltaTable(newTable)
     } else if (DeltaTableUtils.isValidPath(tableId)) {
       forPath(sparkSession, tableId.table)
     } else {
