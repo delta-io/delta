@@ -23,6 +23,12 @@ from multiprocessing.pool import ThreadPool
 import time
 
 """
+Create required s3 bucket with:
+
+$ aws s3api create-bucket --region <region> \
+    --bucket <name> \
+    --create-bucket-configuration LocationConstraint=<region>
+
 Create required dynamodb table with:
 
 $ aws dynamodb create-table \
@@ -33,13 +39,15 @@ $ aws dynamodb create-table \
     --key-schema AttributeName=tablePath,KeyType=HASH \
                 AttributeName=fileName,KeyType=RANGE \
     --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
-    
+
 Enable TTL with:
 
 $ aws dynamodb update-time-to-live \
   --region <region> \
   --table-name <table_name> \
   --time-to-live-specification "Enabled=true, AttributeName=expireTime"
+
+The S3 bucket and dynamodb table are created once and will be used for multiple runs.
 
 Run this script in root dir of repository:
 
@@ -81,7 +89,7 @@ dynamo_region = os.environ.get("DELTA_DYNAMO_REGION", "us-west-2")
 dynamo_error_rates = os.environ.get("DELTA_DYNAMO_ERROR_RATES", "")
 
 # ===== Optional input from user (we calculate defaults using RUN_ID) =====
-relative_delta_table_path = os.environ.get("RELATIVE_DELTA_TABLE_PATH", "tables/table_" + run_id)\
+relative_delta_table_path = os.environ.get("RELATIVE_DELTA_TABLE_PATH", "tables/table_" + run_id) \
     .rstrip("/")
 dynamo_table_name = os.environ.get("DELTA_DYNAMO_TABLE_NAME", "ddb_table_" + run_id)
 
@@ -179,10 +187,11 @@ print(f"{num_rows / t:.02f} tx / sec")
 print("===================== Evaluating DDB writes =====================")
 import boto3
 from botocore.config import Config
+
 my_config = Config(
     region_name=dynamo_region,
 )
-dynamodb = boto3.resource('dynamodb',  config=my_config)
+dynamodb = boto3.resource('dynamodb', config=my_config)
 table = dynamodb.Table(dynamo_table_name)  # this ensures we actually used/created the input table
 response = table.scan()
 items = response['Items']
@@ -215,4 +224,4 @@ for commit in delta_log_commits_sorted_timestamp:
     print(commit)
 
 print("========== ASSERT that these orders (version vs timestamp) are the same ==========")
-assert(delta_log_commits == delta_log_commits_sorted_timestamp)
+assert delta_log_commits == delta_log_commits_sorted_timestamp
