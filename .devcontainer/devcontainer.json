@@ -1,0 +1,11 @@
+{
+  "name": "spark-delta",
+  "build": {
+    "dockerfile": "../Dockerfile"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["scala-lang.scala", "scalameta.metals", "ms-python.python", "mhutchie.git-graph"]
+    }
+  }
+}
