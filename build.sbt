@@ -484,6 +484,57 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
   )
 
+lazy val hudi = (project in file("hudi"))
+  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .settings (
+    name := "delta-hudi",
+    commonSettings,
+    scalaStyleSettings,
+    releaseSettings,
+    libraryDependencies ++= Seq(
+      "org.apache.hudi" % "hudi-java-client" % "0.14.0" % "compile" excludeAll(
+        ExclusionRule(organization = "org.apache.hadoop"),
+        ExclusionRule(organization = "org.apache.zookeeper"),
+      ),
+      "org.apache.spark" %% "spark-avro" % sparkVersion % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
+      "org.apache.parquet" % "parquet-avro" % "1.12.3" % "compile"
+    ),
+    assembly / assemblyJarName := s"${name.value}-assembly_${scalaBinaryVersion.value}-${version.value}.jar",
+    assembly / logLevel := Level.Info,
+    assembly / test := {},
+    assembly / assemblyMergeStrategy := {
+      // Project hudi `dependsOn` spark and accidentally brings in it, along with its
+      // compile-time dependencies (like delta-storage). We want these excluded from the
+      // delta-hudi jar.
+      case PathList("io", "delta", xs @ _*) =>
+        // - delta-storage will bring in classes: io/delta/storage
+        // - delta-spark will bring in classes: io/delta/exceptions/, io/delta/implicits,
+        //   io/delta/package, io/delta/sql, io/delta/tables,
+        MergeStrategy.discard
+      case PathList("com", "databricks", xs @ _*) =>
+        // delta-spark will bring in com/databricks/spark/util
+        MergeStrategy.discard
+      case PathList("org", "apache", "spark", "sql", "delta", "hudi", xs @ _*) =>
+        MergeStrategy.first
+      case PathList("org", "apache", "spark", xs @ _*) =>
+        MergeStrategy.discard
+      // Discard `module-info.class` to fix the `different file contents found` error.
+      // TODO Upgrade SBT to 1.5 which will do this automatically
+      case "module-info.class" => MergeStrategy.discard
+      // Discard unused `parquet.thrift` so that we don't conflict the file used by the user
+      case "parquet.thrift" => MergeStrategy.discard
+      // Hudi metadata writer requires this service file to be present on the classpath
+      case "META-INF/services/org.apache.hadoop.hbase.regionserver.MetricsRegionServerSourceFactory" => MergeStrategy.first
+      // Discard the jackson service configs that we don't need. These files are not shaded so
+      // adding them may conflict with other jackson version used by the user.
+      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
+      case x =>
+        MergeStrategy.first
+    },
+    // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
+    Compile / packageBin := assembly.value
+  )
+
 lazy val hive = (project in file("connectors/hive"))
   .dependsOn(standaloneCosmetic)
   .settings (
@@ -1120,7 +1171,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar, sharing)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

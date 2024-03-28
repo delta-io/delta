@@ -33,7 +33,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
+import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitResponse, CommitStore, GetCommitsResponse, UpdatedActions}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -332,6 +332,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   // The CheckpointHook will only checkpoint if necessary, so always register it to run.
   registerPostCommitHook(CheckpointHook)
   registerPostCommitHook(IcebergConverterHook)
+  registerPostCommitHook(HudiConverterHook)
 
   /** The protocol of the snapshot that this transaction is reading at. */
   def protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
