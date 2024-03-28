@@ -70,6 +70,13 @@ public class CheckpointInstance
         return version <= other.version;
     }
 
+    boolean isEarlierThan(CheckpointInstance other) {
+        if (other == CheckpointInstance.MAX_VALUE) {
+            return true;
+        }
+        return version < other.version;
+    }
+
     public List<Path> getCorrespondingFiles(Path path) {
         if (this == CheckpointInstance.MAX_VALUE) {
             throw new IllegalStateException("Can't get files for CheckpointVersion.MaxValue.");

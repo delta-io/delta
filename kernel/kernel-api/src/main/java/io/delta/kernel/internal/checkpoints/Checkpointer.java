@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.checkpoints;
 
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -29,6 +30,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.InternalUtils;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
@@ -74,6 +76,59 @@ public class Checkpointer {
         } else {
             return Optional.of(Collections.max(completeCheckpoints));
         }
+    }
+
+    /**
+     * Utility method to find the last complete checkpoint before a given version.
+     * @return
+     */
+    public Optional<CheckpointInstance> findLastCompleteCheckpointBefore(
+            TableClient tableClient,
+            Path tableLogPath,
+            long version) {
+        long upperBound = version;
+        CheckpointInstance upperBoundCheckpoint = new CheckpointInstance(upperBound);
+        logger.info("Try to find the last complete checkpoint before version {}", version);
+
+        long currentVersion = version;
+        while (currentVersion >= 0) {
+            try {
+                long searchUpperBound = currentVersion;
+                long searchLowerBound = Math.min(0, currentVersion - 1000);
+                logger.debug("Searching for last checkpoint in range [{}, {}]",
+                        searchLowerBound, searchUpperBound);
+
+                List<CheckpointInstance> checkpoints = tableClient.getFileSystemClient()
+                        .listFrom(FileNames.listingPrefix(tableLogPath, searchLowerBound))
+                        .filter(Checkpointer::validCheckpointFile)
+                        .map(f -> new CheckpointInstance(f.getPath()))
+                        .filter(c ->
+                                (searchUpperBound == 0 || c.version <= searchUpperBound) &&
+                                        c.isEarlierThan(upperBoundCheckpoint))
+                        .toList();
+
+                Optional<CheckpointInstance> latestCheckpoint =
+                        getLatestCompleteCheckpointFromList(checkpoints, upperBoundCheckpoint);
+
+                if (latestCheckpoint.isPresent()) {
+                    logger.info("Found the last complete checkpoint before version {} at {}",
+                            version, latestCheckpoint.get());
+                    return latestCheckpoint;
+                } else {
+                    currentVersion -= 1000;
+                }
+            } catch (IOException e) {
+                logger.warn("Failed to list checkpoint files for version {}. ", currentVersion, e);
+                return Optional.empty();
+            }
+        }
+        logger.info("No complete checkpoint found before version {}", version);
+        return Optional.empty();
+    }
+
+    private static boolean validCheckpointFile(FileStatus fileStatus) {
+        return FileNames.isCheckpointFile(new Path(fileStatus.getPath()).getName()) &&
+                fileStatus.getSize() > 0;
     }
 
     /**

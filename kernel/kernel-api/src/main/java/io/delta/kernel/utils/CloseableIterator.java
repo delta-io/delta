@@ -18,8 +18,7 @@ package io.delta.kernel.utils;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.Iterator;
-import java.util.NoSuchElementException;
+import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -101,5 +100,13 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
                 delegate.close();
             }
         };
+    }
+
+    default List<T> toList() {
+        List<T> list = new ArrayList<>();
+        while (hasNext()) {
+            list.add(next());
+        }
+        return list;
     }
 }
