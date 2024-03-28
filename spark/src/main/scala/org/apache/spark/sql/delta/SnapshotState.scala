@@ -114,6 +114,17 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
           throw DeltaErrors.actionNotFoundException("metadata", version)
         }
 
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.snapshot.stats",
+          data = Map(
+            "sizeInBytes" -> _computedState.sizeInBytes,
+            "numSetTransactions" -> _computedState.numOfSetTransactions,
+            "numFiles" -> _computedState.numOfFiles,
+            "numRemoves" -> _computedState.numOfRemoves,
+            "numPartitionColumns" -> _computedState.metadata.partitionColumns.size
+          ))
+
         _computedState
       }
     }

@@ -806,4 +806,30 @@ class OptimisticTransactionSuite
       }
     }
   }
+
+  test("Skip computing state of post-commit snapshot") {
+    withTempDir { tableDir =>
+      val df = Seq((1, 0), (2, 1)).toDF("key", "value")
+      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+      val snapshot = deltaLog.update()
+
+      assert(!snapshot.stateReconstructionTriggered)
+    }
+  }
+
+  test("Skip computing state of pre-commit snapshot") {
+    withTempDir { tableDir =>
+      val df = Seq((1, 0), (2, 1)).toDF("key", "value")
+      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+      val preCommitSnapshot = deltaLog.update()
+
+      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+      assert(!preCommitSnapshot.stateReconstructionTriggered)
+    }
+  }
 }
