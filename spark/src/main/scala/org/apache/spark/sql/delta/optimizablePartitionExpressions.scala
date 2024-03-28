@@ -20,9 +20,9 @@ import org.apache.spark.sql.delta.OptimizablePartitionExpression._
 
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.dsl.expressions._
-import org.apache.spark.sql.catalyst.expressions.{Cast, DateFormatClass, DayOfMonth, Expression, Hour, IsNull, Literal, Month, Or, Substring, TruncDate, TruncTimestamp, UnixTimestamp, Year}
+import org.apache.spark.sql.catalyst.expressions.{Cast, Ceil, DateFormatClass, DayOfMonth, Expression, Hour, IsNull, Literal, Month, Or, Substring, TruncDate, TruncTimestamp, UnixTimestamp, Year}
 import org.apache.spark.sql.catalyst.util.quoteIfNeeded
-import org.apache.spark.sql.types.{DateType, StringType, TimestampType}
+import org.apache.spark.sql.types.{DateType, DoubleType, StringType, TimestampType, LongType, DecimalType}
 
 /**
  * Defines rules to convert a data filter to a partition filter for a special generation expression
@@ -173,6 +173,57 @@ case class YearPartitionExpr(yearPart: String) extends OptimizablePartitionExpre
 
   override def isNull(): Option[Expression] = Some(yearPart.toPartCol.isNull)
 }
+
+/**
+ * The rules for the generation expression `CEIL(col)`.
+ *
+ * @param partitionColumn the partition column name using CEIL in its generation expression.
+ */
+case class CeilPartitionExpr(partitionColumn: String) extends OptimizablePartitionExpression{
+
+  override def lessThan(lit: Literal): Option[Expression] = {
+    // As the partition column has truncated information, we need to turn "<" to "<=".
+    lessThanOrEqual(lit)
+  }
+
+  override def lessThanOrEqual(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case DoubleType | LongType | DecimalType.Fixed(_, _) =>
+        Some(partitionColumn.toPartCol <= Ceil(lit))
+      case _ => None
+    }
+    // to avoid any expression which yields null
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def equalTo(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case DoubleType | LongType | DecimalType.Fixed(_, _) =>
+        Some(partitionColumn.toPartCol.expr === Ceil(lit))
+      case _ => None
+    }
+    // to avoid any expression which yields null
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def greaterThan(lit: Literal): Option[Expression] = {
+    // As the partition column has truncated information, we need to turn ">" to ">=".
+    greaterThanOrEqual(lit)
+  }
+
+  override def greaterThanOrEqual(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case DoubleType | LongType | DecimalType.Fixed(_, _) =>
+        Some(partitionColumn.toPartCol >= Ceil(lit))
+      case _ => None
+    }
+    // to avoid any expression which yields null
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def isNull(): Option[Expression] = Some(partitionColumn.toPartCol.isNull)
+}
+
 
 /**
  * This is a placeholder to catch `month(col)` so that we can merge [[YearPartitionExpr]] and
