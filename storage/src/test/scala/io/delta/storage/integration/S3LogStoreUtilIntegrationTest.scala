@@ -89,6 +89,21 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
     })
   }
 
+  def testNonRecursive(table: String): Unit = integrationTest(table) {
+    // Setup delta log
+    touch(s"$testRunUID/$table/_delta_log/%020d.json".format(1))
+    // Setup data file
+    touch(s"$testRunUID/$table/1.snappy.parquet")
+    val resolvedPath = new Path(s"s3a://$bucket/$testRunUID/$table", "\u0000")
+    val ListByStartAfter =
+      S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, resolvedPath.getParent)
+    val list = fs.listStatus(resolvedPath.getParent)
+    // Ensure that the output of S3LogStoreUtil.s3ListFromArray() does not contain log files,
+    // which is the same as fs.listStatus().
+    assert(ListByStartAfter.size == list.size)
+    ListByStartAfter.foreach(f => assert(list.contains(f)))
+  }
+
   integrationTest("setup empty delta log") {
     touch(s"$testRunUID/empty/some.json")
   }
@@ -101,4 +116,5 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
 
   testCase("large", 10 * maxKeys)
 
+  testNonRecursive("non-recursive")
 }
