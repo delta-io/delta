@@ -15,11 +15,12 @@
  */
 package io.delta.kernel.internal.checkpoints;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.io.FileNotFoundException;
+import java.util.*;
 import java.util.stream.Collectors;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
@@ -35,6 +36,8 @@ import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
  * Class to load the {@link CheckpointMetaData} from `_last_checkpoint` file.
  */
 public class Checkpointer {
+    private static final Logger logger = LoggerFactory.getLogger(Checkpointer.class);
+
     /**
      * The name of the last checkpoint file
      */
@@ -86,28 +89,63 @@ public class Checkpointer {
      * Returns information about the most recent checkpoint.
      */
     public Optional<CheckpointMetaData> readLastCheckpointFile(TableClient tableClient) {
-        return loadMetadataFromFile(tableClient);
+        return loadMetadataFromFile(tableClient, 0 /* tries */);
     }
 
     /**
      * Loads the checkpoint metadata from the _last_checkpoint file.
+     * <p>
+     * @param tableClient {@link TableClient instance to use}
+     * @param tries Number of times already tried to load the metadata before this call.
      */
-    private Optional<CheckpointMetaData> loadMetadataFromFile(TableClient tableClient) {
-        try {
-            // For now we use file size = 0 and modification time = 0, in the future we should use
-            // listFrom to retrieve the real values see delta-io/delta#2140
-            FileStatus lastCheckpointFile = FileStatus.of(lastCheckpointFilePath.toString(), 0, 0);
-
-            try(CloseableIterator<ColumnarBatch> jsonIter =
-                tableClient.getJsonHandler().readJsonFiles(
-                    singletonCloseableIterator(lastCheckpointFile),
-                    CheckpointMetaData.READ_SCHEMA,
-                    Optional.empty())) {
-                Optional<Row> checkpointRow = InternalUtils.getSingularRow(jsonIter);
-                return checkpointRow.map(CheckpointMetaData::fromRow);
-            }
-        } catch (Exception ex) {
+    private Optional<CheckpointMetaData> loadMetadataFromFile(TableClient tableClient, int tries) {
+        if (tries >= 3) {
+            // We have tried 3 times and failed. Assume the checkpoint metadata file is corrupt.
+            logger.warn(
+                    "Failed to load checkpoint metadata from file {} after 3 attempts.",
+                    lastCheckpointFilePath);
             return Optional.empty();
+        }
+        try {
+            // Use arbitrary values for size and mod time as they are not available.
+            // We could list and find the values, but it is an unnecessary FS call.
+            FileStatus lastCheckpointFile = FileStatus.of(
+                    lastCheckpointFilePath.toString(), 0 /* size */, 0 /* modTime */);
+
+            try (CloseableIterator<ColumnarBatch> jsonIter =
+                         tableClient.getJsonHandler().readJsonFiles(
+                                 singletonCloseableIterator(lastCheckpointFile),
+                                 CheckpointMetaData.READ_SCHEMA,
+                                 Optional.empty())) {
+                Optional<Row> checkpointRow = InternalUtils.getSingularRow(jsonIter);
+                if (checkpointRow.isPresent()) {
+                    return Optional.of(CheckpointMetaData.fromRow(checkpointRow.get()));
+                }
+
+                // Checkpoint has no data. This is a valid case on some file systems where the
+                // contents are not visible until the file stream is closed.
+                // Sleep for one second and retry.
+                logger.warn(
+                        "Last checkpoint file {} has no data. " +
+                                "Retrying after 1sec. (current attempt = {})",
+                        lastCheckpointFilePath,
+                        tries);
+                Thread.sleep(1000);
+                return loadMetadataFromFile(tableClient, tries + 1);
+            }
+        } catch (FileNotFoundException ex) {
+            return Optional.empty(); // there is no point retrying
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
+        } catch (Exception ex) {
+            String msg = String.format(
+                    "Failed to load checkpoint metadata from file %s. " +
+                            "Retrying after 1sec. (current attempt = %s)",
+                    lastCheckpointFilePath, tries);
+            logger.warn(msg, ex);
+            // we can retry until max tries are exhausted
+            return loadMetadataFromFile(tableClient, tries + 1);
         }
     }
 }
