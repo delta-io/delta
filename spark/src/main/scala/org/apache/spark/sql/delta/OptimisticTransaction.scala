@@ -1586,7 +1586,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val isolationLevelToUse = if (canDowngradeToSnapshotIsolation(preparedActions, op)) {
       SnapshotIsolation
     } else {
-      getDefaultIsolationLevel()
+      defaultIsolationLevel()
     }
     isolationLevelToUse
   }
@@ -1615,7 +1615,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       return false
     }
 
-    val defaultIsolationLevel = getDefaultIsolationLevel()
     // Note-1: For no-data-change transactions such as OPTIMIZE/Auto Compaction/ZorderBY, we can
     // change the isolation level to SnapshotIsolation. SnapshotIsolation allows reduced conflict
     // detection by skipping the
@@ -1635,7 +1634,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // be moved above Q1 in the final SERIALIZABLE order. This is because if Q2 is moved above Q1,
     // then Q1 should see the updates from Q2 - which actually didn't happen.
 
-    val allowFallbackToSnapshotIsolation = defaultIsolationLevel match {
+    val allowFallbackToSnapshotIsolation = defaultIsolationLevel() match {
       case Serializable => noDataChanged
       case WriteSerializable => noDataChanged && !op.changesData
       case _ => false // This case should never happen
@@ -1665,9 +1664,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
-  * Default [[IsolationLevel]] as set in table metadata.
-  */
-  private[delta] def getDefaultIsolationLevel(): IsolationLevel = {
+   * Default [[IsolationLevel]] from the table metadata.
+   */
+  private[delta] def defaultIsolationLevel(): IsolationLevel = {
     DeltaConfigs.ISOLATION_LEVEL.fromMetaData(metadata)
   }
 
