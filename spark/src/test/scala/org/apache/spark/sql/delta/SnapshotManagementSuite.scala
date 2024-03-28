@@ -16,17 +16,28 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.{File, FileNotFoundException, RandomAccessFile}
-import java.util.concurrent.ExecutionException
+import java.io.{File, RandomAccessFile}
+import java.util.concurrent.CountDownLatch
 
-import org.apache.spark.sql.delta.managedcommit.Commit
+import scala.collection.mutable
+
+import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
+import org.apache.spark.sql.delta.DeltaConfigs.MANAGED_COMMIT_OWNER_NAME
+import org.apache.spark.sql.delta.DeltaTestUtils.{verifyBackfilled, verifyUnbackfilled, BOOLEAN_DOMAIN}
+import org.apache.spark.sql.delta.managedcommit.{Commit, CommitStore, CommitStoreBuilder, CommitStoreProvider, GetCommitsResponse, InMemoryCommitStore}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.storage.LocalLogStore
+import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.spark.sql.delta.storage.LogStore.logStoreClassConfKey
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkConf
 import org.apache.spark.SparkException
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
@@ -471,6 +482,166 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       deltaLog.snapshot.uncache()
 
       spark.read.format("delta").load(path).collect()
+    }
+  }
+}
+
+class CountDownLatchLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
+    extends LocalLogStore(sparkConf, hadoopConf) {
+  override def listFrom(path: Path, hadoopConf: Configuration): Iterator[FileStatus] = {
+    val files = super.listFrom(path, hadoopConf).toSeq
+    if (ConcurrentBackfillCommitStore.beginConcurrentBackfills) {
+      CountDownLatchLogStore.listFromCalled.countDown()
+    }
+    files.iterator
+  }
+}
+object CountDownLatchLogStore {
+  val listFromCalled = new CountDownLatch(1)
+}
+
+case class ConcurrentBackfillCommitStore(
+    synchronousBackfillThreshold: Long,
+    override val batchSize: Long
+) extends InMemoryCommitStore(batchSize) {
+  private val deferredBackfills: mutable.Map[Long, () => Unit] = mutable.Map.empty
+  override def getCommits(
+      logPath: Path,
+      startVersion: Long,
+      endVersion: Option[Long]): GetCommitsResponse = {
+    if (ConcurrentBackfillCommitStore.beginConcurrentBackfills) {
+      CountDownLatchLogStore.listFromCalled.await()
+      logInfo(s"Finishing pending backfills concurrently: ${deferredBackfills.keySet}")
+      deferredBackfills.keys.toSeq.sorted.foreach((version: Long) => deferredBackfills(version)())
+      deferredBackfills.clear()
+    }
+    super.getCommits(logPath, startVersion, endVersion)
+  }
+  override def backfill(
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      logPath: Path,
+      version: Long,
+      fileStatus: FileStatus): Unit = {
+    if (version > synchronousBackfillThreshold && ConcurrentBackfillCommitStore.deferBackfills) {
+      deferredBackfills(version) = () =>
+        super.backfill(logStore, hadoopConf, logPath, version, fileStatus)
+    } else {
+      super.backfill(logStore, hadoopConf, logPath, version, fileStatus)
+    }
+  }
+}
+object ConcurrentBackfillCommitStore {
+  var deferBackfills = false
+  var beginConcurrentBackfills = false
+}
+
+object ConcurrentBackfillCommitStoreBuilder extends CommitStoreBuilder {
+  val batchSize = 5
+  private lazy val concurrentBackfillCommitStore =
+    ConcurrentBackfillCommitStore(synchronousBackfillThreshold = 2, batchSize)
+  override def name: String = "awaiting-commit-store"
+  override def build(conf: Map[String, String]): CommitStore = concurrentBackfillCommitStore
+}
+
+/**
+ * Setup (Assuming batch size = 5 & synchronousBackfillThreshold = 2):
+ * - LogStore contains backfilled commits [0, 2]
+ * - CommitStore contains unbackfilled commits [3, ...]
+ * - Backfills are pending for versions [3, 5]
+ *
+ * Goal: Create a gap for versions [3, 5] in the LogStore and CommitStore listings.
+ *
+ * Step 1: LogStore retrieves delta files for versions [0, 2] from the file system.
+ * Step 2: Wait on the latch to ensure step (1) is completed before step (3) begins.
+ * Step 3: Backfill commits [3, 5] from CommitStore to LogStore using deferredBackfills map.
+ * Step 4: CommitStore returns commits [6, ...] (if valid).
+ *
+ * Test that the code correctly handles the gap in the LogStore and CommitStore listings by
+ * making an additional call to LogStore to fetch versions [3, 5].
+ */
+class SnapshotManagementParallelListingSuite extends QueryTest
+    with SharedSparkSession
+    with DeltaSQLCommandTest {
+
+  override protected def sparkConf: SparkConf =
+    super.sparkConf.set(logStoreClassConfKey, classOf[CountDownLatchLogStore].getName)
+
+  override protected def beforeEach(): Unit = {
+    super.beforeEach()
+    CommitStoreProvider.clearNonDefaultBuilders()
+    CommitStoreProvider.registerBuilder(ConcurrentBackfillCommitStoreBuilder)
+    ConcurrentBackfillCommitStore.beginConcurrentBackfills = false
+    ConcurrentBackfillCommitStore.deferBackfills = false
+  }
+
+  private def writeDeltaData(path: String, endVersion: Long): Unit = {
+    spark.range(10).write.format("delta").save(path)
+    (1L to endVersion).foreach(
+      _ => spark.range(10).write.format("delta").mode("append").save(path))
+  }
+
+  private def captureUsageRecordsAndGetSnapshot(dataPath: Path): (Snapshot, Seq[UsageRecord]) = {
+    var snapshot: Snapshot = null
+    val records = Log4jUsageLogger.track {
+      snapshot = DeltaLog.forTable(spark, dataPath).update()
+    }
+    (snapshot, records)
+  }
+
+  private def verifyUsageRecords(
+      records: Seq[UsageRecord],
+      expectedNeedAdditionalFsListingCount: Int): Unit = {
+    val opType = "delta.listDeltaAndCheckpointFiles.requiresAdditionalFsListing"
+    assert(DeltaTestUtils.filterUsageRecords(records, opType).size ===
+      expectedNeedAdditionalFsListingCount)
+  }
+
+  private def verifySnapshotBackfills(snapshot: Snapshot, backfillUntilInclusive: Long): Unit = {
+    snapshot.logSegment.deltas.zipWithIndex.foreach { case (delta, index) =>
+      if (index <= backfillUntilInclusive) {
+        verifyBackfilled(delta)
+      } else {
+        verifyUnbackfilled(delta)
+      }
+    }
+  }
+
+  /**
+   * concurrentBackfills: Whether to defer backfills for versions > synchronousBackfillThreshold to
+   *                      simulate concurrent backfills to test addition file-system listing.
+   * tryIncludeGapAtTheEnd: Whether to include a gap in listing at end of the version range or
+   *                        somewhere in the middle.
+   */
+  BOOLEAN_DOMAIN.foreach { concurrentBackfills =>
+    BOOLEAN_DOMAIN.foreach { tryIncludeGapAtTheEnd =>
+      test(
+        s"Backfills are properly reconciled with concurrentBackfills: $concurrentBackfills, " +
+          s"tryIncludeGapAtTheEnd: $tryIncludeGapAtTheEnd") {
+        ConcurrentBackfillCommitStore.deferBackfills = concurrentBackfills
+        val batchSize = ConcurrentBackfillCommitStoreBuilder.batchSize
+        val endVersion = if (tryIncludeGapAtTheEnd) { batchSize } else { batchSize + 3 }
+        withSQLConf(
+            MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey ->
+              ConcurrentBackfillCommitStoreBuilder.name,
+            DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "false") {
+          withTempDir { tempDir =>
+            val path = tempDir.getCanonicalPath
+            val dataPath = new Path(path)
+
+            writeDeltaData(path, endVersion)
+
+            // Invalidate cache to ensure re-listing.
+            DeltaLog.invalidateCache(spark, dataPath)
+            ConcurrentBackfillCommitStore.beginConcurrentBackfills = true
+
+            val (snapshot, records) = captureUsageRecordsAndGetSnapshot(dataPath)
+            val expectedNeedAdditionalFsListingCount = if (concurrentBackfills) { 1 } else { 0 }
+            verifyUsageRecords(records, expectedNeedAdditionalFsListingCount)
+            verifySnapshotBackfills(snapshot, backfillUntilInclusive = batchSize)
+          }
+        }
+      }
     }
   }
 }
