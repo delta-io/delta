@@ -57,7 +57,7 @@
   - [Writer Requirements for Row Tracking](#writer-requirements-for-row-tracking)
 - [VACUUM Protocol Check](#vacuum-protocol-check)
   - [Writer Requirements for Vacuum Protocol Check](#writer-requirements-for-vacuum-protocol-check)
-  - [Recommendations for Readers of Tables with Vacuum Protocol Check feature](#recommendations-for-readers-of-tables-with-vacuum-protocol-check-feature)
+  - [Reader Requirements for Vacuum Protocol Check](#reader-requirements-for-vacuum-protocol-check)
 - [Clustered Table](#clustered-table)
   - [Writer Requirements for Clustered Table](#writer-requirements-for-clustered-table)
 - [Requirements for Writers](#requirements-for-writers)
@@ -1198,7 +1198,7 @@ Before performing a VACUUM operation, writers must ensure that they check the ta
 
 Writers that do not implement VACUUM do not need to change anything and can safely write to tables that enable the feature.
 
-## Recommendations for Readers of Tables with Vacuum Protocol Check feature
+## Reader Requirements for Vacuum Protocol Check
 
 For tables with Vacuum Protocol Check enabled, readers don’t need to understand or change anything new; they just need to acknowledge the feature exists.
 
