@@ -460,6 +460,36 @@
     ],
     "sqlState" : "22005"
   },
+  "DELTA_CONCURRENT_APPEND" : {
+    "message" : [
+      "ConcurrentAppendException: Files were added to <partition> by a concurrent update. <retryMsg><conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
+  "DELTA_CONCURRENT_DELETE_DELETE" : {
+    "message" : [
+      "ConcurrentDeleteDeleteException: This transaction attempted to delete one or more files that were deleted (for example <file>) by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
+  "DELTA_CONCURRENT_DELETE_READ" : {
+    "message" : [
+      "ConcurrentDeleteReadException: This transaction attempted to read one or more files that were deleted (for example <file>) by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
+  "DELTA_CONCURRENT_TRANSACTION" : {
+    "message" : [
+      "ConcurrentTransactionException: This error occurs when multiple streaming queries are using the same checkpoint to write into this table. Did you run multiple instances of the same streaming query at the same time?<conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
+  "DELTA_CONCURRENT_WRITE" : {
+    "message" : [
+      "ConcurrentWriteException: A concurrent transaction has written new data since the current transaction read the table. Please try the operation again.\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
   "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG" : {
     "message" : [
       "This Delta operation requires the SparkSession to be configured with the",
@@ -1390,6 +1420,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_METADATA_CHANGED" : {
+    "message" : [
+      "MetadataChangedException: The metadata of the Delta table has been changed by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
   "DELTA_MISSING_CHANGE_DATA" : {
     "message" : [
       "Error getting change data for range [<startVersion> , <endVersion>] as change data was not",
@@ -1778,6 +1814,12 @@
       "Committing to the Delta table version <version> succeeded but error while executing post-commit hook <name><message>"
     ],
     "sqlState" : "2DKD0"
+  },
+  "DELTA_PROTOCOL_CHANGED" : {
+    "message" : [
+      "ProtocolChangedException: The protocol version of the Delta table has been changed by a concurrent update. <additionalInfo><conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
   },
   "DELTA_PROTOCOL_PROPERTY_NOT_INT" : {
     "message" : [

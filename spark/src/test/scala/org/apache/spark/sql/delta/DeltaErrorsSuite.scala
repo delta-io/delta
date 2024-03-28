@@ -110,7 +110,21 @@ trait DeltaErrorsSuiteBase
         spark,
         StructType.fromDDL("id int"),
         StructType.fromDDL("id2 int"),
-        detectedDuringStreaming = true)
+        detectedDuringStreaming = true),
+    "concurrentAppendException" ->
+      DeltaErrors.concurrentAppendException(None, "p1"),
+    "concurrentDeleteDeleteException" ->
+      DeltaErrors.concurrentDeleteDeleteException(None, "p1"),
+    "concurrentDeleteReadException" ->
+      DeltaErrors.concurrentDeleteReadException(None, "p1"),
+    "concurrentWriteException" ->
+      DeltaErrors.concurrentWriteException(None),
+    "concurrentTransactionException" ->
+      DeltaErrors.concurrentTransactionException(None),
+    "metadataChangedException" ->
+      DeltaErrors.metadataChangedException(None),
+    "protocolChangedException" ->
+      DeltaErrors.protocolChangedException(None)
   )
 
   def otherMessagesToTest: Map[String, String] = Map(
@@ -2958,6 +2972,90 @@ trait DeltaErrorsSuiteBase
         Some("DELTA_MERGE_ADD_VOID_COLUMN"),
         Some("42K09"),
         Some(s"Cannot add column `fooCol` with type VOID. Please explicitly specify a non-void type.")
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.ConcurrentAppendException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.concurrentAppendException(None, "p1")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_CONCURRENT_APPEND"),
+        Some("2D521"),
+        Some("ConcurrentAppendException: Files were added to p1 by a concurrent update. Please try the operation again."),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.ConcurrentDeleteReadException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.concurrentDeleteReadException(None, "p1")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_CONCURRENT_DELETE_READ"),
+        Some("2D521"),
+        Some("ConcurrentDeleteReadException: This transaction attempted to read one or more files that were deleted (for example p1) by a concurrent update. "),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.ConcurrentDeleteDeleteException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.concurrentDeleteDeleteException(None, "p1")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_CONCURRENT_DELETE_DELETE"),
+        Some("2D521"),
+        Some("ConcurrentDeleteDeleteException: This transaction attempted to delete one or more files that were deleted (for example p1) by a concurrent update. "),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.ConcurrentTransactionException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.concurrentTransactionException(None)
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_CONCURRENT_TRANSACTION"),
+        Some("2D521"),
+        Some("ConcurrentTransactionException: This error occurs when multiple streaming queries are using the same checkpoint to write into this table. Did you run multiple instances of the same streaming query at the same time?"),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.ConcurrentWriteException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.concurrentWriteException(None)
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_CONCURRENT_WRITE"),
+        Some("2D521"),
+        Some("ConcurrentWriteException: A concurrent transaction has written new data since the current transaction read the table."),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.ProtocolChangedException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.protocolChangedException(None)
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_PROTOCOL_CHANGED"),
+        Some("2D521"),
+        Some("ProtocolChangedException: The protocol version of the Delta table has been changed by a concurrent update."),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.MetadataChangedException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.metadataChangedException(None)
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_METADATA_CHANGED"),
+        Some("2D521"),
+        Some("MetadataChangedException: The metadata of the Delta table has been changed by a concurrent update."),
+        startWith = true
       )
     }
   }
