@@ -447,7 +447,9 @@ class DeltaLog private(
         // we will verify below because we're paranoid about buggy FileSystem implementations.
         (fs.mkdirs(path), None)
       } catch {
-        // Only needed because buggy Hadoop FileSystem.mkdir wrongly throws on existing dir.
+        // A FileAlreadyExistsException is expected if a non-directory object exists but an explicit
+        // check is needed because buggy Hadoop FileSystem.mkdir wrongly throws the exception even
+        // on existing directories.
         case io: IOException =>
           val dirExists =
             try {
