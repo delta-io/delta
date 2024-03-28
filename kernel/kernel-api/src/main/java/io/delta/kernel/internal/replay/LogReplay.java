@@ -101,22 +101,20 @@ public class LogReplay {
 
     private final Path dataPath;
     private final LogSegment logSegment;
-    private final TableClient tableClient;
     private final Tuple2<Protocol, Metadata> protocolAndMetadata;
 
     public LogReplay(
+            TableClient tableClient,
             Path logPath,
             Path dataPath,
             long snapshotVersion,
-            TableClient tableClient,
             LogSegment logSegment,
             Optional<SnapshotHint> snapshotHint) {
         assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
         this.dataPath = dataPath;
         this.logSegment = logSegment;
-        this.tableClient = tableClient;
-        this.protocolAndMetadata = loadTableProtocolAndMetadata(snapshotHint, snapshotVersion);
+        this.protocolAndMetadata = loadTableProtocolAndMetadata(tableClient, snapshotHint, snapshotVersion);
     }
 
     /////////////////
@@ -131,8 +129,8 @@ public class LogReplay {
         return this.protocolAndMetadata._2;
     }
 
-    public Optional<Long> getLatestTransactionIdentifier(String applicationId) {
-        return loadLatestTransactionVersion(applicationId);
+    public Optional<Long> getLatestTransactionIdentifier(TableClient tableClient, String applicationId ) {
+        return loadLatestTransactionVersion(tableClient, applicationId);
     }
 
     /**
@@ -151,7 +149,9 @@ public class LogReplay {
      * </ol>
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
-            boolean shouldReadStats) {
+            TableClient tableClient,
+            boolean shouldReadStats,   
+            ) {
         final CloseableIterator<ActionWrapper> addRemoveIter =
             new ActionsIterator(
                 tableClient,
@@ -173,8 +173,10 @@ public class LogReplay {
      * just use the P and/or M from the hint.
      */
     private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
+            TableClient tableClient,
             Optional<SnapshotHint> snapshotHint,
-            long snapshotVersion) {
+            long snapshotVersion,  
+            ) {
 
         // Exit early if the hint already has the info we need
         if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
@@ -269,7 +271,7 @@ public class LogReplay {
         );
     }
 
-    private Optional<Long> loadLatestTransactionVersion(String applicationId) {
+    private Optional<Long> loadLatestTransactionVersion(TableClient tableClient, String applicationId) {
         try (CloseableIterator<ActionWrapper> reverseIter =
                  new ActionsIterator(
                      tableClient,
