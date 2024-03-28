@@ -459,6 +459,33 @@ class DeltaTableFeatureSuite
     }
   }
 
+  for(commandName <- Seq("ALTER", "CLONE", "REPLACE", "CREATE OR REPLACE")) {
+    test(s"Vacuum Protocol Check is disabled by default but can be enabled during $commandName") {
+      val table = "tbl"
+      withTable(table) {
+        spark.range(0).write.format("delta").saveAsTable(table)
+        val log = DeltaLog.forTable(spark, TableIdentifier(table))
+        val protocol = log.update().protocol
+        assert(!protocol.readerAndWriterFeatureNames.contains(VacuumProtocolCheckTableFeature.name))
+
+        val tblProperties1 = Seq(s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION")
+        sql(buildTablePropertyModifyingCommand(
+          commandName, targetTableName = table, sourceTableName = table, tblProperties1))
+        val newProtocol1 = log.update().protocol
+        assert(!newProtocol1.readerAndWriterFeatureNames.contains(
+          VacuumProtocolCheckTableFeature.name))
+
+        val tblProperties2 = Seq(s"'$FEATURE_PROP_PREFIX${VacuumProtocolCheckTableFeature.name}' " +
+          s"= 'supported', 'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION")
+        sql(buildTablePropertyModifyingCommand(
+          commandName, targetTableName = table, sourceTableName = table, tblProperties2))
+        val newProtocol2 = log.update().protocol
+        assert(newProtocol2.readerAndWriterFeatureNames.contains(
+          VacuumProtocolCheckTableFeature.name))
+      }
+    }
+  }
+
   private def buildTablePropertyModifyingCommand(
       commandName: String,
       targetTableName: String,

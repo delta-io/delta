@@ -225,12 +225,23 @@ class OptimizeExecutor(
     optimizeContext: DeltaOptimizeContext)
   extends DeltaCommand with SQLMetricsReporting with Serializable {
 
+  /**
+   * In which mode the Optimize command is running. There are three valid modes:
+   * 1. Compaction
+   * 2. ZOrder
+   * 3. Clustering
+   */
+  private val optimizeStrategy =
+    OptimizeTableStrategy(sparkSession, txn.snapshot, optimizeContext, zOrderByColumns)
+
   /** Timestamp to use in [[FileAction]] */
   private val operationTimestamp = new SystemClock().getTimeMillis()
 
   private val isClusteredTable = ClusteredTableUtils.isSupported(txn.snapshot.protocol)
 
-  private val isMultiDimClustering = isClusteredTable || zOrderByColumns.nonEmpty
+  private val isMultiDimClustering =
+    optimizeStrategy.isInstanceOf[ClusteringStrategy] ||
+    optimizeStrategy.isInstanceOf[ZOrderStrategy]
 
   private val clusteringColumns: Seq[String] = {
     if (zOrderByColumns.nonEmpty) {
@@ -239,15 +250,6 @@ class OptimizeExecutor(
       ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
     } else {
       Nil
-    }
-  }
-
-  private lazy val curve: String = {
-    if (zOrderByColumns.nonEmpty) {
-      "zorder"
-    } else {
-      assert(isClusteredTable)
-      "hilbert"
     }
   }
 
@@ -264,12 +266,12 @@ class OptimizeExecutor(
       val partitionSchema = txn.metadata.partitionSchema
 
       val filesToProcess = optimizeContext.reorg match {
-        case Some(reorgOperation) => reorgOperation.filterFilesToReorg(candidateFiles)
+        case Some(reorgOperation) => reorgOperation.filterFilesToReorg(txn.snapshot, candidateFiles)
         case None => filterCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
       }
       val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
 
-      val jobs = groupFilesIntoBins(partitionsToCompact, maxFileSize)
+      val jobs = groupFilesIntoBins(partitionsToCompact)
 
       val maxThreads =
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_THREADS)
@@ -320,18 +322,7 @@ class OptimizeExecutor(
           numDeletionVectorRowsRemoved = removedDVs.map(_.cardinality).sum))
       }
 
-      if (isMultiDimClustering) {
-        val inputFileStats =
-          ZOrderFileStats(removedFiles.size, removedFiles.map(_.size.getOrElse(0L)).sum)
-        optimizeStats.zOrderStats = Some(ZOrderStats(
-          strategyName = "all", // means process all files in a partition
-          inputCubeFiles = ZOrderFileStats(0, 0),
-          inputOtherFiles = inputFileStats,
-          inputNumCubes = 0,
-          mergedFiles = inputFileStats,
-          // There will one z-cube for each partition
-          numOutputCubes = optimizeStats.numPartitionsOptimized))
-      }
+      optimizeStrategy.updateOptimizeStats(optimizeStats, removedFiles, jobs)
 
       return Seq(Row(txn.deltaLog.dataPath.toString, optimizeStats.toOptimizeMetrics))
     }
@@ -365,13 +356,13 @@ class OptimizeExecutor(
    *
    * @param partitionsToCompact List of files to compact group by partition.
    *                            Partition is defined by the partition values (partCol -> partValue)
-   * @param maxTargetFileSize Max size (in bytes) of the compaction output file.
    * @return Sequence of bins. Each bin contains one or more files from the same
    *         partition and targeted for one output file.
    */
   private def groupFilesIntoBins(
-      partitionsToCompact: Seq[(Map[String, String], Seq[AddFile])],
-      maxTargetFileSize: Long): Seq[(Map[String, String], Seq[AddFile])] = {
+      partitionsToCompact: Seq[(Map[String, String], Seq[AddFile])])
+  : Seq[(Map[String, String], Seq[AddFile])] = {
+    val maxBinSize = optimizeStrategy.maxBinSize
     partitionsToCompact.flatMap {
       case (partition, files) =>
         val bins = new ArrayBuffer[Seq[AddFile]]()
@@ -379,13 +370,17 @@ class OptimizeExecutor(
         val currentBin = new ArrayBuffer[AddFile]()
         var currentBinSize = 0L
 
-        files.sortBy(_.size).foreach { file =>
+        val preparedFiles = optimizeStrategy.prepareFilesPerPartition(files)
+        preparedFiles.foreach { file =>
           // Generally, a bin is a group of existing files, whose total size does not exceed the
-          // desired maxFileSize. They will be coalesced into a single output file.
-          // However, if isMultiDimClustering = true, all files in a partition will be read by the
-          // same job, the data will be range-partitioned and numFiles = totalFileSize / maxFileSize
-          // will be produced. See below.
-          if (file.size + currentBinSize > maxTargetFileSize && !isMultiDimClustering) {
+          // desired maxBinSize. The output file size depends on the mode:
+          // 1. Compaction: Files in a bin will be coalesced into a single output file.
+          // 2. ZOrder:  all files in a partition will be read by the
+          //    same job, the data will be range-partitioned and
+          //    numFiles = totalFileSize / maxFileSize will be produced.
+          // 3. Clustering: Files in a bin belongs to one ZCUBE, the data will be
+          //    range-partitioned and numFiles = totalFileSize / maxFileSize.
+          if (file.size + currentBinSize > maxBinSize) {
             bins += currentBin.toVector
             currentBin.clear()
             currentBin += file
@@ -431,7 +426,7 @@ class OptimizeExecutor(
         input,
         approxNumFiles,
         clusteringColumns,
-        curve)
+        optimizeStrategy.curve)
     } else {
       val useRepartition = sparkSession.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_OPTIMIZE_REPARTITION_ENABLED)
@@ -450,13 +445,9 @@ class OptimizeExecutor(
       sparkSession.sparkContext.getLocalProperty(SPARK_JOB_GROUP_ID),
       description)
 
+    val binInfo = optimizeStrategy.initNewBin
     val addFiles = txn.writeFiles(repartitionDF, None, isOptimize = true, Nil).collect {
-      case a: AddFile =>
-        (if (isClusteredTable) {
-          a.copy(clusteringProvider = Some(ClusteredTableUtils.clusteringProvider))
-        } else {
-          a
-        }).copy(dataChange = false)
+      case a: AddFile => optimizeStrategy.tagAddFile(a, binInfo)
       case other =>
         throw new IllegalStateException(
           s"Unexpected action $other with type ${other.getClass}. File compaction job output" +
@@ -501,7 +492,11 @@ class OptimizeExecutor(
     if (optimizeContext.reorg.nonEmpty) {
       DeltaOperations.Reorg(partitionPredicate)
     } else {
-      DeltaOperations.Optimize(partitionPredicate, clusteringColumns, auto = isAutoCompact)
+      DeltaOperations.Optimize(
+        predicate = partitionPredicate,
+        zOrderBy = zOrderByColumns,
+        auto = isAutoCompact,
+        clusterBy = if (isClusteredTable) Option(clusteringColumns).filter(_.nonEmpty) else None)
     }
   }
 

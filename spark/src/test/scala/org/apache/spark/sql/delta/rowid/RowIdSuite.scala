@@ -16,10 +16,11 @@
 
 package org.apache.spark.sql.delta.rowid
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, RowId, Serializable, SnapshotIsolation, WriteSerializable}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, RowId, RowTrackingFeature, Serializable, SnapshotIsolation, WriteSerializable}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
-import org.apache.spark.sql.delta.actions.CommitInfo
+import org.apache.spark.sql.delta.actions.{CommitInfo, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -29,6 +30,7 @@ import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{LongType, MetadataBuilder, StructField, StructType}
 
 class RowIdSuite extends QueryTest
     with SharedSparkSession
@@ -193,6 +195,33 @@ class RowIdSuite extends QueryTest
     }
   }
 
+  for (downgradeAllowed <- BOOLEAN_DOMAIN) {
+    test(s"RESTORE with potential row tracking downgrade, downgradeAllowed=$downgradeAllowed") {
+      withTempDir { dir =>
+        withRowTrackingEnabled(enabled = false) {
+          spark.range(5).write.format("delta").save(dir.toString)
+        }
+        val log = DeltaLog.forTable(spark, dir)
+        val oldProtocolVersion = log.update().protocol
+        assert(!oldProtocolVersion.isFeatureSupported(RowTrackingFeature))
+        val protocolWithRowTracking = Protocol(minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION)
+          .withFeature(RowTrackingFeature)
+        val newProtocolVersion = oldProtocolVersion.merge(protocolWithRowTracking)
+        log.upgradeProtocol(newProtocolVersion)
+        withSQLConf(
+          DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED.key -> downgradeAllowed.toString) {
+          sql(s"RESTORE TABLE delta.`$dir` VERSION AS OF 0")
+        }
+        val restoredProtocolVersion = log.update().protocol
+        if (downgradeAllowed) {
+          assert(restoredProtocolVersion === oldProtocolVersion)
+        } else {
+          assert(restoredProtocolVersion === newProtocolVersion)
+        }
+      }
+    }
+  }
+
   test("Check missing High Watermark for newly created empty table") {
     withRowTrackingEnabled(enabled = true) {
       withTempDir { dir =>
@@ -349,6 +378,164 @@ class RowIdSuite extends QueryTest
               "rowTrackingDefaultPropertyKey" ->
                 DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey))
         }
+      }
+    }
+  }
+
+  test("Base Row ID metadata field has the expected type") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { tempDir =>
+        spark.range(start = 0, end = 20).toDF("id")
+          .write.format("delta").save(tempDir.getAbsolutePath)
+
+        val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
+          .select(QUALIFIED_BASE_ROW_ID_COLUMN_NAME)
+
+        val expectedBaseRowIdMetadata = new MetadataBuilder()
+          .putBoolean("__base_row_id_metadata_col", value = true)
+          .build()
+
+        val expectedBaseRowIdField = StructField(
+          RowId.BASE_ROW_ID,
+          LongType,
+          nullable = false,
+          metadata = expectedBaseRowIdMetadata)
+
+        Seq(df.schema, df.queryExecution.analyzed.schema, df.queryExecution.optimizedPlan.schema)
+          .foreach { schema =>
+            assert(schema === new StructType().add(expectedBaseRowIdField))
+          }
+      }
+    }
+  }
+
+  test("Base Row IDs can be read with conflicting metadata column name") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { tempDir =>
+        // Generate 2 files with base Row ID 0 and 20 resp.
+        spark.range(start = 0, end = 20).toDF("_metadata").repartition(1)
+          .write.format("delta").save(tempDir.getAbsolutePath)
+        spark.range(start = 20, end = 30).toDF("_metadata").repartition(1)
+          .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+
+        val df = spark.read.format("delta").load(tempDir.getAbsolutePath).select("_metadata")
+
+        val dfWithConflict = df
+          .select(
+            col("_metadata"),
+            df.metadataColumn("_metadata")
+              .getField({RowId.BASE_ROW_ID})
+              .as("real_base_row_id"))
+          .where("real_base_row_id % 5 = 0")
+
+        checkAnswer(dfWithConflict,
+          (0 until 20).map(Row(_, 0)) ++
+            (20 until 30).map(Row(_, 20)))
+      }
+    }
+  }
+
+  test("Base Row IDs can be read through the Scala syntax") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { tempDir =>
+        // Generate 2 files with base Row ID 0 and 20 resp.
+        spark.range(start = 0, end = 20).toDF("id").repartition(1)
+          .write.format("delta").save(tempDir.getAbsolutePath)
+        spark.range(start = 20, end = 30).toDF("id").repartition(1)
+          .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+
+        val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
+          .select("id", QUALIFIED_BASE_ROW_ID_COLUMN_NAME)
+
+        checkAnswer(df,
+          (0 until 20).map(Row(_, 0)) ++
+            (20 until 30).map(Row(_, 20)))
+      }
+    }
+  }
+
+  test("Base Row IDs can be read through the SQL syntax") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { tempDir =>
+        // Generate 2 files with base Row ID 0 and 20 resp.
+        spark.range(start = 0, end = 20).toDF("id").repartition(1)
+          .write.format("delta").save(tempDir.getAbsolutePath)
+        spark.range(start = 20, end = 30).toDF("id").repartition(1)
+          .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+
+        val rows = sql(
+          s"""
+             |SELECT id, $QUALIFIED_BASE_ROW_ID_COLUMN_NAME FROM delta.`${tempDir.getAbsolutePath}`
+          """.stripMargin
+        )
+
+        checkAnswer(rows,
+          (0 until 20).map(Row(_, 0)) ++
+            (20 until 30).map(Row(_, 20)))
+      }
+    }
+  }
+
+  test("Filter by base Row IDs") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { tempDir =>
+        // Generate 3 files with base Row ID 0, 10 and 20 resp.
+        spark.range(start = 0, end = 10).toDF("id").repartition(1)
+          .write.format("delta").save(tempDir.getAbsolutePath)
+        spark.range(start = 10, end = 20).toDF("id").repartition(1)
+          .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+        spark.range(start = 20, end = 30).toDF("id").repartition(1)
+          .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+
+        val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
+          .where(col(QUALIFIED_BASE_ROW_ID_COLUMN_NAME) === 10)
+
+        checkAnswer(df, (10 until 20).map(Row(_)))
+      }
+    }
+  }
+
+  test("Base Row IDs can be read in subquery") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { tempDir =>
+        // Generate 2 files with base Row ID 0 and 20 resp.
+        spark.range(start = 0, end = 20).toDF("id").repartition(1)
+          .write.format("delta").save(tempDir.getAbsolutePath)
+        spark.range(start = 20, end = 30).toDF("id").repartition(1)
+          .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+
+        val rows = sql(
+          s"""
+             |SELECT * FROM delta.`${tempDir.getAbsolutePath}`
+             |WHERE id IN (
+             |  SELECT $QUALIFIED_BASE_ROW_ID_COLUMN_NAME
+             |  FROM delta.`${tempDir.getAbsolutePath}`)
+          """.stripMargin)
+
+        checkAnswer(rows, Seq(Row(0), Row(20)))
+      }
+    }
+  }
+
+  test("Filter by base Row IDs in subquery") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { tempDir =>
+        // Generate 2 files with base Row ID 0 and 20 resp.
+        spark.range(start = 0, end = 20).toDF("id").repartition(1)
+          .write.format("delta").save(tempDir.getAbsolutePath)
+        spark.range(start = 20, end = 30).toDF("id").repartition(1)
+          .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+
+        val rows = sql(
+          s"""
+             |SELECT * FROM delta.`${tempDir.getAbsolutePath}`
+             |WHERE id IN (
+             |  SELECT id
+             |  FROM delta.`${tempDir.getAbsolutePath}`
+             |  WHERE $QUALIFIED_BASE_ROW_ID_COLUMN_NAME = 20)
+          """.stripMargin)
+
+        checkAnswer(rows, (20 until 30).map(Row(_)))
       }
     }
   }

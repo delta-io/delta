@@ -35,7 +35,7 @@ import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
-import io.delta.kernel.utils.{CloseableIterator, DataFileStatus}
+import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.SparkSession
@@ -296,14 +296,21 @@ trait TestUtils extends Assertions with SQLHelper {
     expectedSchema: StructType = null,
     filter: Predicate = null,
     version: Option[Long] = None,
+    timestamp: Option[Long] = None,
     expectedRemainingFilter: Predicate = null,
     expectedVersion: Option[Long] = None
   ): Unit = {
+    assert(version.isEmpty || timestamp.isEmpty, "Cannot provide both a version and timestamp")
 
-    val snapshot = version.map { v =>
+    val snapshot = if (version.isDefined) {
       Table.forPath(tableClient, path)
-        .getSnapshotAtVersion(tableClient, v)
-    }.getOrElse(latestSnapshot(path, tableClient))
+        .getSnapshotAtVersion(tableClient, version.get)
+    } else if (timestamp.isDefined) {
+      Table.forPath(tableClient, path)
+        .getSnapshotAtTimestamp(tableClient, timestamp.get)
+    } else {
+      latestSnapshot(path, tableClient)
+    }
 
     val readSchema = if (readCols == null) {
       null

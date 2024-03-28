@@ -26,11 +26,12 @@ import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 import org.apache.spark.sql.delta.util.FileNames
 import org.scalatest.GivenWhenThen
 
@@ -49,7 +50,8 @@ trait DeltaTimeTravelTests extends QueryTest
     with SharedSparkSession
     with GivenWhenThen
     with DeltaSQLCommandTest
-    with StatsUtils {
+    with StatsUtils
+    with ManagedCommitBaseSuite {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
   }
@@ -131,7 +133,8 @@ trait DeltaTimeTravelTests extends QueryTest
         val rangeStart = startVersion * 10
         val rangeEnd = rangeStart + 10
         spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").saveAsTable(table)
-        val file = new File(FileNames.deltaFile(deltaLog.logPath, startVersion).toUri)
+        val file = new File(DeltaCommitFileProvider(
+          deltaLog.update()).deltaFile(startVersion).toUri)
         file.setLastModified(ts)
         startVersion += 1
       }
@@ -611,4 +614,8 @@ class DeltaHistoryManagerSuite extends DeltaHistoryManagerBase {
   override protected def sparkConf: SparkConf = {
     super.sparkConf.set(SQLConf.USE_V1_SOURCE_LIST.key, "parquet,json")
   }
+}
+
+class ManagedCommitFill1DeltaHistoryManagerSuite extends DeltaHistoryManagerSuite {
+  override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
 }

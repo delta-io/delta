@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.managedcommit
 import java.nio.file.FileAlreadyExistsException
 import java.util.UUID
 
-import org.apache.spark.sql.delta.{DeltaLog, SerializableFileStatus}
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
@@ -40,13 +40,13 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
   val batchSize: Long
 
   /**
-   * Commit a given `commitFile` to the table represented by given `tablePath` at the
+   * Commit a given `commitFile` to the table represented by given `logPath` at the
    * given `commitVersion`
    */
-  protected def commitImpl(
+  private[delta] def commitImpl(
       logStore: LogStore,
       hadoopConf: Configuration,
-      tablePath: Path,
+      logPath: Path,
       commitVersion: Long,
       commitFile: FileStatus,
       commitTimestamp: Long): CommitResponse
@@ -54,40 +54,40 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
   override def commit(
       logStore: LogStore,
       hadoopConf: Configuration,
-      tablePath: Path,
+      logPath: Path,
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = {
-
+    val tablePath = getTablePath(logPath)
     logInfo(s"Attempting to commit version $commitVersion on table $tablePath")
-    val fs = tablePath.getFileSystem(hadoopConf)
+    val fs = logPath.getFileSystem(hadoopConf)
     if (batchSize <= 1) {
       // Backfill until `commitVersion - 1`
       logInfo(s"Making sure commits are backfilled until $commitVersion version for" +
         s" table ${tablePath.toString}")
-      backfillToVersion(logStore, hadoopConf, tablePath)
+      backfillToVersion(logStore, hadoopConf, logPath)
     }
 
     // Write new commit file in _commits directory
-    val fileStatus = writeCommitFile(logStore, hadoopConf, tablePath, commitVersion, actions)
+    val fileStatus = writeCommitFile(logStore, hadoopConf, logPath, commitVersion, actions)
 
     // Do the actual commit
     val commitTimestamp = updatedActions.commitInfo.getTimestamp
     var commitResponse =
-      commitImpl(logStore, hadoopConf, tablePath, commitVersion, fileStatus, commitTimestamp)
+      commitImpl(logStore, hadoopConf, logPath, commitVersion, fileStatus, commitTimestamp)
 
     // Backfill if needed
     if (commitVersion == 0 || batchSize <= 1) {
       // Always backfill zeroth commit or when batch size is configured as 1
-      backfill(logStore, hadoopConf, tablePath, commitVersion, fileStatus)
-      val targetFile = FileNames.deltaFile(logPath(tablePath), commitVersion)
-      val targetFileStatus = SerializableFileStatus.fromStatus(fs.getFileStatus(targetFile))
-      val newCommit = commitResponse.commit.copy(serializableFileStatus = targetFileStatus)
+      backfill(logStore, hadoopConf, logPath, commitVersion, fileStatus)
+      val targetFile = FileNames.deltaFile(logPath, commitVersion)
+      val targetFileStatus = fs.getFileStatus(targetFile)
+      val newCommit = commitResponse.commit.copy(fileStatus = targetFileStatus)
       commitResponse = commitResponse.copy(commit = newCommit)
     } else if (commitVersion % batchSize == 0) {
       logInfo(s"Making sure commits are backfilled till $commitVersion version for" +
         s"table ${tablePath.toString}")
-      backfillToVersion(logStore, hadoopConf, tablePath)
+      backfillToVersion(logStore, hadoopConf, logPath)
     }
     logInfo(s"Commit $commitVersion done successfully on table $tablePath")
     commitResponse
@@ -96,11 +96,11 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
   protected def writeCommitFile(
       logStore: LogStore,
       hadoopConf: Configuration,
-      tablePath: Path,
+      logPath: Path,
       commitVersion: Long,
       actions: Iterator[String]): FileStatus = {
     val uuidStr = generateUUID()
-    val commitPath = FileNames.uuidDeltaFile(logPath(tablePath), commitVersion, Some(uuidStr))
+    val commitPath = FileNames.unbackfilledDeltaFile(logPath, commitVersion, Some(uuidStr))
     logStore.write(commitPath, actions, overwrite = false, hadoopConf)
     commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
   }
@@ -111,10 +111,9 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
   protected def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
-      tablePath: Path): Unit = {
-    getCommits(tablePath, startVersion = 0).foreach { case commit =>
-      val fileStatus = commit.serializableFileStatus.toFileStatus
-      backfill(logStore, hadoopConf, tablePath, commit.version, fileStatus)
+      logPath: Path): Unit = {
+    getCommits(logPath, startVersion = 0).commits.foreach { commit =>
+      backfill(logStore, hadoopConf, logPath, commit.version, commit.fileStatus)
     }
   }
 
@@ -122,10 +121,10 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
   protected def backfill(
       logStore: LogStore,
       hadoopConf: Configuration,
-      tablePath: Path,
+      logPath: Path,
       version: Long,
       fileStatus: FileStatus): Unit = {
-    val targetFile = FileNames.deltaFile(logPath(tablePath), version)
+    val targetFile = FileNames.deltaFile(logPath, version)
     logInfo(s"Backfilling commit ${fileStatus.getPath} to ${targetFile.toString}")
     val commitContentIterator = logStore.readAsIterator(fileStatus, hadoopConf)
     try {
@@ -134,7 +133,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
         commitContentIterator,
         overwrite = false,
         hadoopConf)
-      registerBackfill(tablePath, version)
+      registerBackfill(logPath, version)
     } catch {
       case _: FileAlreadyExistsException =>
         logInfo(s"The backfilled file $targetFile already exists.")
@@ -145,8 +144,8 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
 
   /** Callback to tell the CommitStore that all commits <= `backfilledVersion` are backfilled. */
   protected[delta] def registerBackfill(
-      tablePath: Path,
+      logPath: Path,
       backfilledVersion: Long): Unit
 
-  protected def logPath(tablePath: Path): Path = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
+  protected def getTablePath(logPath: Path): Path = logPath.getParent
 }

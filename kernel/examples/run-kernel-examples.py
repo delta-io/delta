@@ -71,7 +71,9 @@ def clear_artifact_cache():
     print("Clearing Delta Kernel artifacts from ivy2 and mvn cache")
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta.kernel"))
     delete_if_exists(os.path.expanduser("~/.ivy2/local/io.delta.kernel"))
-    delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/kernel/"))
+    delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
+    delete_if_exists(os.path.expanduser("~/.ivy2/local/io.delta"))
+    delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
 
 
 def delete_if_exists(path):
@@ -163,7 +165,7 @@ if __name__ == "__main__":
 
     if args.use_local:
         with WorkingDirectory(project_root_dir):
-            run_cmd(["build/sbt", "kernelGroup/publishM2"], stream_output=True)
+            run_cmd(["build/sbt", "kernelGroup/publishM2", "storage/publishM2"], stream_output=True)
 
     golden_file_dir = path.join(
         examples_root_dir,

@@ -378,6 +378,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
     val commitInfoFile = CommitInfo(
       version = Some(0L),
+      inCommitTimestamp = None,
       timestamp = new Timestamp(1540415658000L),
       userId = Some("user_0"),
       userName = Some("username_0"),
@@ -1362,6 +1363,15 @@ class GoldenTables extends QueryTest with SharedSparkSession {
         spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id = ${n*7}")
       }
     }
+  }
+
+  generateGoldenTable("basic-with-vacuum-protocol-check-feature") { tablePath =>
+    val data = (0 until 100).map(x => (x, s"val=$x"))
+    data.toDF("id", "str").write.format("delta").save(tablePath)
+    sql(s"""
+         |ALTER TABLE delta.`$tablePath`
+         |SET TBLPROPERTIES('delta.feature.vacuumProtocolCheck' = 'supported')
+         |""".stripMargin)
   }
 
   generateGoldenTable("basic-with-inserts-updates") { tablePath =>

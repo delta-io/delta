@@ -22,18 +22,19 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 import org.apache.spark.TaskFailedReason
 import org.apache.spark.scheduler.{SparkListener, SparkListenerTaskEnd}
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.parser.ParseException
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructField, StructType}
 
 class CheckConstraintsSuite extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with SQLTestUtils {
+    with DeltaSQLTestUtils {
 
 
   import testImplicits._
@@ -276,18 +277,20 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
-  testQuietly("constraint with analyzer-evaluated expressions") {
+  for (expression <- Seq("year(current_date())", "unix_timestamp()"))
+  testQuietly(s"constraint with analyzer-evaluated expressions. Expression: $expression") {
     withTestTable { table =>
-      // We use current_timestamp() as the most convenient analyzer-evaluated expression - of course
-      // in a realistic use case it'd probably not be right to add a constraint on a
+      // We use current_timestamp()/current_date() as the most convenient
+      // analyzer-evaluated expressions - of course in a realistic use case
+      // it'd probably not be right to add a constraint on a
       // nondeterministic expression.
       sql(s"ALTER TABLE $table ADD CONSTRAINT maxWithAnalyzerEval " +
-        s"CHECK (num < unix_timestamp())")
+        s"CHECK (num < $expression)")
       val e = intercept[InvariantViolationException] {
         sql(s"INSERT INTO $table VALUES (${Int.MaxValue}, 'data')")
       }
       errorContains(e.getMessage,
-        "maxwithanalyzereval (num < unix_timestamp()) violated by row")
+        s"maxwithanalyzereval (num < $expression) violated by row")
     }
   }
 

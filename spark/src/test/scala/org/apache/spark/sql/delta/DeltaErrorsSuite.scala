@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 import org.json4s.JString
@@ -55,7 +56,7 @@ import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 trait DeltaErrorsSuiteBase
@@ -63,7 +64,7 @@ trait DeltaErrorsSuiteBase
     with SharedSparkSession
     with GivenWhenThen
     with DeltaSQLCommandTest
-    with SQLTestUtils
+    with DeltaSQLTestUtils
     with QueryErrorsBase {
 
   val MAX_URL_ACCESS_RETRIES = 3
@@ -972,13 +973,19 @@ trait DeltaErrorsSuiteBase
         "expression for each column"))
     }
     {
-      val e = intercept[AnalysisException] {
+      val e = intercept[DeltaAnalysisException] {
         val s1 = StructType(Seq(StructField("c0", IntegerType)))
         val s2 = StructType(Seq(StructField("c0", StringType)))
         SchemaMergingUtils.mergeSchemas(s1, s2)
       }
-      assert(e.getMessage == "Failed to merge fields 'c0' and 'c0'. Failed to merge " +
-        "incompatible data types IntegerType and StringType")
+      checkError(
+        exception = e,
+        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+        parameters = Map("currentField" -> "c0", "updateField" -> "c0"))
+      checkError(
+        exception = e.getCause.asInstanceOf[DeltaAnalysisException],
+        errorClass = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        parameters = Map("currentDataType" -> "IntegerType", "updateDataType" -> "StringType"))
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -1415,11 +1422,9 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalStateException] {
-        throw DeltaErrors.nonGeneratedColumnMissingUpdateExpression(
-          AttributeReference("attr1", IntegerType)(ExprId(1234567L)))
+        throw DeltaErrors.nonGeneratedColumnMissingUpdateExpression("attr1")
       }
-      val msg = "attr1#1234567 is not a generated column but is missing " +
-            "its update expression"
+      val msg = "attr1 is not a generated column but is missing its update expression"
       checkErrorMessage(e, Some("DELTA_NON_GENERATED_COLUMN_MISSING_UPDATE_EXPR"), Some("XXKDS"),
         Some(msg))
     }
@@ -1427,7 +1432,12 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         val s1 = StructType(Seq(StructField("c0", IntegerType, true)))
         val s2 = StructType(Seq(StructField("c0", StringType, false)))
-        SchemaMergingUtils.mergeSchemas(s1, s2, false, false, Set("c0"))
+        SchemaMergingUtils.mergeSchemas(s1, s2,
+          allowImplicitConversions = false,
+          keepExistingType = false,
+          allowTypeWidening = false,
+          Set("c0")
+        )
       }
       checkErrorMessage(e, Some("DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH"), Some("42K09"),
         Some("Column c0 is a generated column or a column used by a generated " +
@@ -2787,6 +2797,168 @@ trait DeltaErrorsSuiteBase
              |columns to previously existing Delta tables; please add the column without a default
              |value first, then run a second ALTER TABLE ALTER COLUMN SET DEFAULT command to apply
              |for future inserted rows instead.""".stripMargin))
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.missingCommitInfo("featureName", "1225")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_MISSING_COMMIT_INFO"),
+        Some("KD004"),
+        Some(
+          "This table has the feature featureName enabled which requires the presence of the " +
+           "CommitInfo action in every commit. However, the CommitInfo action is missing from commit " +
+           "version 1225.")
+      )
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.missingCommitTimestamp("1225")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_MISSING_COMMIT_TIMESTAMP"),
+        Some("KD004"),
+        Some(
+          s"This table has the feature ${InCommitTimestampTableFeature.name} enabled which requires " +
+            "the presence of commitTimestamp in the CommitInfo action. However, this field has not " +
+            "been set in commit version 1225.")
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.invalidConstraintName("foo")
+      }
+      checkErrorMessage(
+        e,
+        Some("_LEGACY_ERROR_TEMP_DELTA_0001"),
+        None,
+        Some("Cannot use 'foo' as the name of a CHECK constraint."))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.bloomFilterInvalidParameterValueException("foo")
+      }
+      checkErrorMessage(
+        e,
+        Some("_LEGACY_ERROR_TEMP_DELTA_0002"),
+        None,
+        Some("Cannot create bloom filter index, invalid parameter value: 'foo'."))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.convertMetastoreMetadataMismatchException(
+          tableProperties = Map("delta.prop1" -> "foo"),
+          deltaConfiguration = Map("delta.config1" -> "bar"))
+      }
+      checkErrorMessage(
+        e,
+        Some("_LEGACY_ERROR_TEMP_DELTA_0003"),
+        None,
+        Some(
+          s"""You are trying to convert a table which already has a delta log where the table properties in the catalog don't match the configuration in the delta log.
+             |Table properties in catalog:
+             |[delta.prop1=foo]
+             |Delta configuration:
+             |[delta.config1=bar]
+             |If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `spark.databricks.delta.convert.metadataCheck.enabled` to false.""".stripMargin))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.restoreTimestampBeforeEarliestException("2022-02-02 12:12:12",
+          "2022-02-02 12:12:14")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_CANNOT_RESTORE_TIMESTAMP_EARLIER"),
+        Some("22003"),
+        Some("Cannot restore table to timestamp (2022-02-02 12:12:12) as it is before the " +
+            "earliest version available. Please use a timestamp after (2022-02-02 12:12:14)."))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.viewNotSupported("FOO_OP")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_OPERATION_ON_VIEW_NOT_ALLOWED"),
+        Some("0AKDC"),
+        Some("Operation not allowed: FOO_OP cannot be performed on a view."))
+    }
+    {
+      val expr = "1".expr
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.generatedColumnsNonDeterministicExpression(expr)
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_NON_DETERMINISTIC_EXPRESSION_IN_GENERATED_COLUMN"),
+        Some("42621"),
+        Some(s"Found ${expr.sql}. A generated column cannot use a non deterministic expression.")
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.foundViolatingConstraintsForColumnChange(
+          "UPDATE", "col1", Map("foo" -> "bar"))
+      }
+      checkErrorMessage(
+        e,
+        Some("_LEGACY_ERROR_TEMP_DELTA_0004"),
+        None,
+        Some(
+          s"""Cannot UPDATE column col1 because this column is referenced by the following
+             |check constraint(s):
+             |foo -> bar""".stripMargin)
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
+          "UPDATE", "col1", Seq(StructField("col2", IntegerType)))
+      }
+      checkErrorMessage(
+        e,
+        Some("_LEGACY_ERROR_TEMP_DELTA_0005"),
+        None,
+        Some(
+          s"""Cannot UPDATE column col1 because this column is referenced by the following
+             |generated column(s):
+             |col2""".stripMargin)
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.identityColumnInconsistentMetadata("col1", true, true, true)
+      }
+      checkErrorMessage(
+        e,
+        Some("_LEGACY_ERROR_TEMP_DELTA_0006"),
+        None,
+        Some(s"Inconsistent IDENTITY metadata for column col1 detected: true, true, true")
+      )
+    }
+    {
+      val errorBuilder = new MetadataMismatchErrorBuilder()
+      val schema1 = StructType(Seq(StructField("c0", IntegerType)))
+      val schema2 = StructType(Seq(StructField("c0", StringType)))
+      errorBuilder.addSchemaMismatch(schema1, schema2, "id")
+      val e = intercept[DeltaAnalysisException] {
+        errorBuilder.finalizeAndThrow(spark.sessionState.conf)
+      }
+      assert(e.getErrorClass == "_LEGACY_ERROR_TEMP_DELTA_0007")
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.mergeAddVoidColumn("fooCol")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_MERGE_ADD_VOID_COLUMN"),
+        Some("42K09"),
+        Some(s"Cannot add column `fooCol` with type VOID. Please explicitly specify a non-void type.")
+      )
     }
   }
 }

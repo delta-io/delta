@@ -259,7 +259,9 @@ case class CreateDeltaTableCommand(
             txn.snapshot.domainMetadata, newDomainMetadata)
         taggedCommitData = taggedCommitData.copy(actions = newActions)
       }
-      val op = getOperation(txn.metadata, isManagedTable, Some(options)
+      val op = getOperation(txn.metadata, isManagedTable, Some(options),
+        clusterBy = ClusteredTableUtils.getLogicalClusteringColumnNames(
+          txn, taggedCommitData.actions)
       )
       (taggedCommitData, op)
     }
@@ -383,7 +385,9 @@ case class CreateDeltaTableCommand(
     val changedMetadata = txn.metadata != txn.snapshot.metadata
     val changedProtocol = txn.protocol != txn.snapshot.protocol
     if (actionsToCommit.nonEmpty || changedMetadata || changedProtocol) {
-      val op = getOperation(txn.metadata, isManagedTable, None
+      val op = getOperation(txn.metadata, isManagedTable, None,
+        clusterBy = ClusteredTableUtils.getLogicalClusteringColumnNames(
+          txn, actionsToCommit)
       )
       txn.commit(actionsToCommit, op)
     }
@@ -506,7 +510,8 @@ case class CreateDeltaTableCommand(
   private def getOperation(
       metadata: Metadata,
       isManagedTable: Boolean,
-      options: Option[DeltaOptions]
+      options: Option[DeltaOptions],
+      clusterBy: Option[Seq[String]]
   ): DeltaOperations.Operation = operation match {
     // This is legacy saveAsTable behavior in Databricks Runtime
     case TableCreationModes.Create if existingTableOpt.isDefined && query.isDefined =>
@@ -519,7 +524,7 @@ case class CreateDeltaTableCommand(
     // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Create =>
       DeltaOperations.CreateTable(
-        metadata, isManagedTable, query.isDefined
+        metadata, isManagedTable, query.isDefined, clusterBy = clusterBy
       )
 
     // DataSourceV2 table replace
@@ -527,7 +532,7 @@ case class CreateDeltaTableCommand(
     // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Replace =>
       DeltaOperations.ReplaceTable(
-        metadata, isManagedTable, orCreate = false, query.isDefined
+        metadata, isManagedTable, orCreate = false, query.isDefined, clusterBy = clusterBy
       )
 
     // Legacy saveAsTable with Overwrite mode
@@ -539,7 +544,7 @@ case class CreateDeltaTableCommand(
     // New DataSourceV2 saveAsTable with overwrite mode behavior
     case TableCreationModes.CreateOrReplace =>
       DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = true, query.isDefined,
-        options.flatMap(_.userMetadata)
+        options.flatMap(_.userMetadata), clusterBy = clusterBy
       )
   }
 
