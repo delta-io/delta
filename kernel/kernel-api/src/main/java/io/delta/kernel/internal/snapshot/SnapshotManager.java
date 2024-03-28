@@ -172,9 +172,9 @@ public class SnapshotManager {
      * Get an iterator of files in the _delta_log directory starting with the startVersion.
      */
     private CloseableIterator<FileStatus> listFrom(
-        TableClient tableClient,
-        long startVersion)
-        throws IOException {
+            TableClient tableClient,
+            long startVersion)
+            throws IOException {
         logger.debug("startVersion: {}", startVersion);
         return tableClient
             .getFileSystemClient()
@@ -373,7 +373,18 @@ public class SnapshotManager {
         Optional<Long> versionToLoad) {
         // Only use startCheckpoint if it is <= versionToLoad
         Optional<Long> startCheckpointToUse = startCheckpoint
-            .filter(v -> !versionToLoad.isPresent() || v <= versionToLoad.get());
+                .filter(v -> !versionToLoad.isPresent() || v <= versionToLoad.get());
+
+        // if we are loading a specific version and there is no usable starting checkpoint
+        // try to load a checkpoint that is <= version to load
+        if (!startCheckpointToUse.isPresent() && versionToLoad.isPresent()) {
+            Checkpointer checkpointer = new Checkpointer(logPath);
+            startCheckpointToUse = checkpointer.findLastCompleteCheckpointBefore(
+                    tableClient,
+                    logPath,
+                    versionToLoad.get()).map(x -> x.version);
+        }
+
         final Optional<List<FileStatus>> newFiles =
             listDeltaAndCheckpointFiles(
                 tableClient,
