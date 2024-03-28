@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.FileNotFoundException
 import java.sql.Timestamp
+import java.util.concurrent.CompletableFuture
 
 import scala.collection.mutable
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutorService, Future}
@@ -175,11 +176,10 @@ class DeltaHistoryManager(
         Some(Commit(snapshot.version, snapshot.timestamp))
       } else {
         // start ICT search over [earliest available ICT version, latestVersion)
-        val searchWindowLowerBoundCommit = if (earliestVersion <= ictEnablementCommit.version) {
-          ictEnablementCommit
-        } else {
-          placeholderEarliestCommit
-        }
+        val ictEnabledForEntireWindow = (ictEnablementCommit.version <= earliestVersion)
+        val searchWindowLowerBoundCommit =
+          if (ictEnabledForEntireWindow) placeholderEarliestCommit else ictEnablementCommit
+
         // Note that this search can return `placeholderEarliestCommit`.
         // The real timestamp of the earliest commit will be fetched later.
         getActiveCommitAtTimeFromICTRange(
@@ -488,28 +488,29 @@ object DeltaHistoryManager extends DeltaLogging {
 
       val chunkStartICTFutures =
         (curStartCommit.version until curEnd by chunkSize).map { chunkStart =>
-          threadPool.submit(spark) {
-            Option.when(chunkStart == curStartCommit.version)(curStartCommit)
-              .orElse {
-                getFirstCommitAndICTAfter(
-                  chunkStart,
-                  upperBoundExclusive = getChunkEnd(chunkStart),
-                  basePath,
-                  logStore,
-                  conf,
-                  commitFileProvider
-                )
-              }
+          if (chunkStart == curStartCommit.version) {
+            CompletableFuture.completedFuture(Option(curStartCommit))
+          } else {
+            threadPool.submit(spark) {
+              getFirstCommitAndICTAfter(
+                chunkStart,
+                upperBoundExclusive = getChunkEnd(chunkStart),
+                basePath,
+                logStore,
+                conf,
+                commitFileProvider
+              )
+            }
           }
         }
-      val knownTightestLowerBoundCommit =
-        chunkStartICTFutures.map(ThreadUtils.awaitResult(_, Duration.Inf))
-          .takeWhile(_.forall(_.timestamp <= searchTimestamp))
-          .flatten
-          .lastOption
-          .getOrElse {
-            return None
-          }
+      val knownTightestLowerBoundCommit = chunkStartICTFutures
+        .map(ThreadUtils.awaitResult(_, Duration.Inf))
+        .takeWhile(_.forall(_.timestamp <= searchTimestamp))
+        .flatten
+        .lastOption
+        .getOrElse {
+          return None
+        }
       val nextStartCommit = knownTightestLowerBoundCommit
       val nextEnd = getChunkEnd(nextStartCommit.version)
       if (nextStartCommit.version + 2 > nextEnd ||

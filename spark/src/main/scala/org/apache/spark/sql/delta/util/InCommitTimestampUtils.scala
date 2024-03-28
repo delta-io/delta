@@ -75,7 +75,6 @@ object InCommitTimestampUtils {
       case (None, None) =>
         None
       case _ =>
-        // TODO: create a proper DeltaError message.
         throw new IllegalStateException(
           "Both enablement version and timestamp should be present or absent together.")
     }

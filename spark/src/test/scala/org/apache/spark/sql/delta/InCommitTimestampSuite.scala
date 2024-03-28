@@ -83,7 +83,7 @@ class InCommitTimestampSuite
         assert(
           ver1Snapshot.logSegment.lastCommitFileModificationTimestamp == ver1Snapshot.timestamp)
 
-        spark.sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}`" +
+        spark.sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
           s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
         val ver2Snapshot = DeltaLog.forTable(spark, tempDir.getAbsolutePath).snapshot
@@ -228,7 +228,7 @@ class InCommitTimestampSuite
       withTempDir { tempDir =>
         spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
         spark.sql(
-          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}`" +
+          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
             s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
         spark.sql(
@@ -269,7 +269,7 @@ class InCommitTimestampSuite
         spark.sql(s"INSERT INTO delta.`$tempDir` VALUES 10")
 
         spark.sql(
-          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}`" +
+          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
             s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
         val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
@@ -329,7 +329,7 @@ class InCommitTimestampSuite
       assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(ver0Snapshot.metadata))
       // Disable ICT in version 1.
       spark.sql(
-        s"ALTER TABLE delta.`${tempDir.getAbsolutePath}`" +
+        s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
           s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false')")
       assert(!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(deltaLog.update().metadata))
 
@@ -457,7 +457,7 @@ class InCommitTimestampSuite
         DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       val commitTimeDelta = 10
       val numberAdditionalCommits = 25
-      assert(clock.getTimeMillis() == deltaLog.clock.getTimeMillis())
+      assert(clock eq deltaLog.clock)
       for (i <- 1 to numberAdditionalCommits) {
         clock.setTime(startTime + i*commitTimeDelta)
         deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
@@ -530,7 +530,7 @@ class InCommitTimestampSuite
         DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
       val commitTimeDelta = 10
       val numberAdditionalCommits = 2
-      assert(clock.getTimeMillis() == deltaLog.clock.getTimeMillis())
+      assert(clock eq deltaLog.clock)
       for (i <- 1 to numberAdditionalCommits) {
         clock.setTime(startTime + i * commitTimeDelta)
         deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
@@ -567,7 +567,7 @@ class InCommitTimestampSuite
 
         // Enable ICT.
         spark.sql(
-          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}`" +
+          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
             s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
         for (i <- 1 to (numICTCommits-1)) {
@@ -647,7 +647,7 @@ class InCommitTimestampSuite
       val commit0 = DeltaHistoryManager.Commit(0, deltaLog.snapshot.timestamp)
       val commitTimeDelta = 10
       val numberAdditionalCommits = 10
-      assert(clock.getTimeMillis() == deltaLog.clock.getTimeMillis())
+      assert(clock eq deltaLog.clock)
       for (i <- 1 to numberAdditionalCommits) {
         clock.setTime(startTime + i * commitTimeDelta)
         deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
