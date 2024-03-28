@@ -478,17 +478,6 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
   )
 
-val deltaHudiSparkIncludePrefixes = Seq(
-  // We want everything from this package
-  "org/apache/spark/sql/delta/hudi",
-
-  // We only want the files in this project from this package. e.g. we want to exclude
-  // org/apache/spark/sql/delta/commands/convert/ConvertTargetFile.class (from delta-spark project).
-  "org/apache/spark/sql/delta/commands/convert/IcebergFileManifest",
-  "org/apache/spark/sql/delta/commands/convert/IcebergSchemaUtils",
-  "org/apache/spark/sql/delta/commands/convert/IcebergTable"
-)
-
 lazy val hudi = (project in file("hudi"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .settings (
