@@ -399,7 +399,7 @@ libraryDependencies ++= Seq(
 
 ### 2. Mock situation
 
-We have a Delta table `Sales` storing sales data, but have realized all the data written on November 2021 for customer `XYZ` had incorrect `total_cost` values. Thus, we need to update all those records with the correct values. We will use a fictious distributed engine `Zappy` and Delta Standalone to update our Delta table.
+We have a Delta table `Sales` storing sales data, but have realized all the data written on November 2021 for customer `XYZ` had incorrect `total_cost` values. Thus, we need to update all those records with the correct values. We will use a fictitious distributed engine `Zappy` and Delta Standalone to update our Delta table.
 
 The sales table schema is given below.
 

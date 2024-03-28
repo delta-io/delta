@@ -1206,7 +1206,7 @@ When the Clustered Table is supported (when the `writerFeatures` field of a tabl
   - A clustering implementation is free to add additional information such as adding a new user-controlled metadata domain to keep track of its metadata.
 - Writers must not define clustered and partitioned table at the same time.
 
-The following is an example for the `domainMetadata` action defintion of a table that leverages column mapping.
+The following is an example for the `domainMetadata` action definition of a table that leverages column mapping.
 ```json
 {
   "domainMetadata": {
@@ -1623,16 +1623,16 @@ Deletion Vectors are basically sets of row indexes, that is 64-bit integers that
 
 The serialization format is [standardized](https://github.com/RoaringBitmap/RoaringFormatSpec), and both [Java](https://github.com/lemire/RoaringBitmap/) and [C/C++](https://github.com/RoaringBitmap/CRoaring) implementations are available (among others).
 
-The above description only applies to 32-bit bitmaps, but Deletion Vectors use 64-bit integers. In order to extend coverage from 32 to 64 bits, RoaringBitmaps defines a "portable" serialization format in the [RoaringBitmaps Specification](https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations). This format essentially splits the space into an outer part with the most significant 32-bit "keys" indexing the least significant 32-bit RoaringBitmaps in ascending sequence. The spec calls these least signficant 32-bit RoaringBitmaps "buckets".
+The above description only applies to 32-bit bitmaps, but Deletion Vectors use 64-bit integers. In order to extend coverage from 32 to 64 bits, RoaringBitmaps defines a "portable" serialization format in the [RoaringBitmaps Specification](https://github.com/RoaringBitmap/RoaringFormatSpec#extention-for-64-bit-implementations). This format essentially splits the space into an outer part with the most significant 32-bit "keys" indexing the least significant 32-bit RoaringBitmaps in ascending sequence. The spec calls these least significant 32-bit RoaringBitmaps "buckets".
 
 Bytes | Name | Description
 -|-|-
 0 – 7 | numBuckets | The number of distinct 32-bit buckets in this bitmap.
 `repeat for each bucket b` | | For each bucket in ascending order of keys.
 `<start of b>` – `<start of b> + 3` | key | The most significant 32-bit of all the values in this bucket.
-`<start of b> + 4` – `<end of b>` | bucketData | A serialized 32-bit RoaringBitmap with all the least signficant 32-bit entries in this bucket.
+`<start of b> + 4` – `<end of b>` | bucketData | A serialized 32-bit RoaringBitmap with all the least significant 32-bit entries in this bucket.
 
-The 32-bit serialization format then consists of a header that describes all the (least signficant) 16-bit containers, their types (s. above), and their their key (most significant 16-bits).
+The 32-bit serialization format then consists of a header that describes all the (least significant) 16-bit containers, their types (s. above), and their their key (most significant 16-bits).
 This is followed by the data for each individual container in a container-specific format.
 
 Reference Implementations of the Roaring format:

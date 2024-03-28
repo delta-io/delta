@@ -596,7 +596,7 @@ Each time a checkpoint is written, Delta automatically cleans up log entries old
     To access 30 days of historical data even if you run `VACUUM` on the Delta table, set `delta.deletedFileRetentionDuration = "interval 30 days"`. This setting may cause your storage costs to go up.
 
 .. note::
-    Due to log entry cleanup, instances can arise where you cannot time travel to a version that is less than the retention interval. <Delta> requires all consecutive log entries since the previous checkpoint to time travel to a particular version. For example, with a table initially consisting of log entries for versions [0, 19] and a checkpoint at verison 10, if the log entry for version 0 is cleaned up, then you cannot time travel to versions [1, 9]. Increasing the table property `delta.logRetentionDuration` can help avoid these situations.
+    Due to log entry cleanup, instances can arise where you cannot time travel to a version that is less than the retention interval. <Delta> requires all consecutive log entries since the previous checkpoint to time travel to a particular version. For example, with a table initially consisting of log entries for versions [0, 19] and a checkpoint at version 10, if the log entry for version 0 is cleaned up, then you cannot time travel to versions [1, 9]. Increasing the table property `delta.logRetentionDuration` can help avoid these situations.
 
 <a id="deltadataframewrites"></a>
 
@@ -1307,7 +1307,7 @@ pyspark --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" --
 
 ## Configure storage credentials
 
-<Delta> uses Hadoop FileSystem APIs to access the storage systems. The credentails for storage systems usually can be set through Hadoop configurations. <Delta> provides multiple ways to set Hadoop configurations similar to <AS>.
+<Delta> uses Hadoop FileSystem APIs to access the storage systems. The credentials for storage systems usually can be set through Hadoop configurations. <Delta> provides multiple ways to set Hadoop configurations similar to <AS>.
 
 ### Spark configurations
 
@@ -1325,7 +1325,7 @@ Spark SQL will pass all of the current [SQL session configurations](http://spark
 
 Besides setting Hadoop file system configurations through the Spark (cluster) configurations or SQL session configurations, Delta supports reading Hadoop file system configurations from `DataFrameReader` and `DataFrameWriter` options (that is, option keys that start with the `fs.` prefix) when the table is read or written, by using `DataFrameReader.load(path)` or `DataFrameWriter.save(path)`.
 
-For example, you can pass your storage credentails through DataFrame options:
+For example, you can pass your storage credentials through DataFrame options:
 
 
 .. code-language-tabs::
