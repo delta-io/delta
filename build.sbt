@@ -489,7 +489,6 @@ val deltaHudiSparkIncludePrefixes = Seq(
   "org/apache/spark/sql/delta/commands/convert/IcebergTable"
 )
 
-// scalastyle:off println
 lazy val hudi = (project in file("hudi"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .settings (
@@ -516,35 +515,30 @@ lazy val hudi = (project in file("hudi"))
         // - delta-storage will bring in classes: io/delta/storage
         // - delta-spark will bring in classes: io/delta/exceptions/, io/delta/implicits,
         //   io/delta/package, io/delta/sql, io/delta/tables,
-        println(s"Discarding class: io/delta/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("com", "databricks", xs @ _*) =>
         // delta-spark will bring in com/databricks/spark/util
-        println(s"Discarding class: com/databricks/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("org", "apache", "spark", "sql", "delta", "hudi", xs @ _*) =>
-        println(s"Including class: org/apache/spark/sql/delta/hudi/${xs.mkString("/")}")
         MergeStrategy.first
       case PathList("org", "apache", "spark", xs @ _*) =>
-      println(s"Discarding class: org/apache/spark/${xs.mkString("/")}")
-      MergeStrategy.discard
+        MergeStrategy.discard
       // Discard `module-info.class` to fix the `different file contents found` error.
       // TODO Upgrade SBT to 1.5 which will do this automatically
       case "module-info.class" => MergeStrategy.discard
       // Discard unused `parquet.thrift` so that we don't conflict the file used by the user
       case "parquet.thrift" => MergeStrategy.discard
+      // Hudi metadata writer requires this service file to be present on the classpath
       case "META-INF/services/org.apache.hadoop.hbase.regionserver.MetricsRegionServerSourceFactory" => MergeStrategy.first
       // Discard the jackson service configs that we don't need. These files are not shaded so
       // adding them may conflict with other jackson version used by the user.
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
       case x =>
-        println(s"Including class: $x")
         MergeStrategy.first
     },
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
     Compile / packageBin := assembly.value
   )
-// scalastyle:on println
 
 lazy val hive = (project in file("connectors/hive"))
   .dependsOn(standaloneCosmetic)
