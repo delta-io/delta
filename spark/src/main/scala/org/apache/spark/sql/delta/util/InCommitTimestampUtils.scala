@@ -63,4 +63,20 @@ object InCommitTimestampUtils {
       metadata.copy(configuration = metadata.configuration ++ enablementTrackingProperties)
     }
   }
+
+  def getValidatedICTEnablementInfo(metadata: Metadata): Option[DeltaHistoryManager.Commit] = {
+    val enablementTimestampOpt =
+      DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetaData(metadata)
+    val enablementVersionOpt =
+      DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetaData(metadata)
+    (enablementTimestampOpt, enablementVersionOpt) match {
+      case (Some(enablementTimestamp), Some(enablementVersion)) =>
+        Some(DeltaHistoryManager.Commit(enablementVersion, enablementTimestamp))
+      case (None, None) =>
+        None
+      case _ =>
+        throw new IllegalStateException(
+          "Both enablement version and timestamp should be present or absent together.")
+    }
+  }
 }

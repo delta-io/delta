@@ -433,6 +433,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_HISTORY_MANAGER_THREAD_POOL_SIZE =
+    buildConf("history.threadPoolSize")
+      .internal()
+      .doc("The size of the thread pool used for search during DeltaHistory operations. " +
+        "This configuration is only used when the feature inCommitTimestamps is enabled.")
+      .intConf
+      .checkValue(_ > 0, "history.threadPoolSize must be positive")
+      .createWithDefault(10)
+
   val DELTA_VACUUM_LOGGING_ENABLED =
     buildConf("vacuum.logging.enabled")
       .doc("Whether to log vacuum information into the Delta transaction log." +
