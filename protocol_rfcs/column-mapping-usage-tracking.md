@@ -38,6 +38,6 @@ The writer table feature `columnMappingUsageTracking` is added to the `writerFea
 In order to support column mapping usage tracking, writers must:
 - Write `protocol` and `metaData` actions when Column Mapping Usage Tracking is turned on for the first time:
     - Write a `protocol` action with writer version 7 and the feature `columnMappingUsageTracking` in the `writerFeatures`.
-    - Write a `metaData` action with the table property `delta.columnMapping.hasDroppedOrRenamed` set to `false` when creating a new table, or set to `true` when enabling usage tracking on an existing table.
+    - Write a `metaData` action with the table property `delta.columnMapping.hasDroppedOrRenamed` set to `false` when creating a new table or enabling the feature on an existing table without column mapping enabled, and set to `true` when enabling usage tracking on an existing table with column mapping enabled.
 - When dropping or renaming a column `delta.columnMapping.hasDroppedOrRenamed` must be set to `true`.
 - After `delta.columnMapping.hasDroppedOrRenamed` is set to `true` it must never be set back to `false` again.
