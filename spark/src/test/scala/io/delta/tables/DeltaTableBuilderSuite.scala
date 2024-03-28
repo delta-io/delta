@@ -242,7 +242,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
         .nullable(true)
         .build()
     }
-    assert(e.getMessage == "The data type of the column value is not provided")
+    assert(e.getMessage.contains("The data type of the column `value` was not provided"))
   }
 
   testCreateTable("create_table") { table =>
@@ -323,7 +323,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
     val e = intercept[AnalysisException] {
       io.delta.tables.DeltaTable.create().addColumn("c1", "int").execute()
     }
-    assert(e.getMessage.equals("Table name or location has to be specified"))
+    assert(e.getMessage.contains("Table name or location has to be specified"))
   }
 
   test("partitionedBy only should contain columns in the schema") {
@@ -345,7 +345,7 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
           .location("src/test/resources/delta/dbr_8_0_non_generated_columns")
           .execute()
       }
-      assert(e.getMessage.startsWith(
+      assert(e.getMessage.contains(
         "Creating path-based Delta table with a different location isn't supported."))
     }
   }
