@@ -141,6 +141,9 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
           doAssert(lastOperationParameters(CLUSTERING_PARAMETER_KEY) === "[]")
           doAssert(lastOperationParameters(ZORDER_PARAMETER_KEY) === "[]")
         }
+      case "CLONE" =>
+        // CLUSTER BY not in operation parameters for CLONE - similar to PARTITION BY.
+        doAssert(!lastOperationParameters.contains(CLUSTERING_PARAMETER_KEY))
       case o if clusterBySupportedOperations.contains(o) =>
         if (expectClustering) {
           assertClusterByExists()
@@ -207,17 +210,6 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
       s"$locationClause AS SELECT * FROM $srcTable")
   }
 
-  def verifyClusteringColumnsWithoutHistory(
-    tableIdentifier: TableIdentifier,
-    expectedLogicalClusteringColumns: String): Unit = {
-    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
-    verifyClusteringColumnsInternal(
-      snapshot,
-      tableIdentifier.table,
-      expectedLogicalClusteringColumns,
-      validateHistory = false)
-  }
-
   def verifyClusteringColumns(
       tableIdentifier: TableIdentifier,
       expectedLogicalClusteringColumns: String): Unit = {
@@ -225,8 +217,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     verifyClusteringColumnsInternal(
       snapshot,
       tableIdentifier.table,
-      expectedLogicalClusteringColumns,
-      validateHistory = true)
+      expectedLogicalClusteringColumns)
   }
 
   def verifyClusteringColumns(
@@ -236,22 +227,18 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     verifyClusteringColumnsInternal(
       snapshot,
       s"delta.`$dataPath`",
-      expectedLogicalClusteringColumns,
-      validateHistory = true)
+      expectedLogicalClusteringColumns)
   }
 
   def verifyClusteringColumnsInternal(
       snapshot: Snapshot,
       tableNameOrPath: String,
-      expectedLogicalClusteringColumns: String,
-      validateHistory: Boolean): Unit = {
+      expectedLogicalClusteringColumns: String): Unit = {
     assert(ClusteredTableUtils.isSupported(snapshot.protocol) === true)
     verifyClusteringColumnsInDomainMetadata(snapshot, expectedLogicalClusteringColumns)
 
     // Verify Delta history operation parameters' clusterBy
-    if (validateHistory) {
-      verifyDescribeHistoryOperationParameters(tableNameOrPath)
-    }
+    verifyDescribeHistoryOperationParameters(tableNameOrPath)
   }
 }
 

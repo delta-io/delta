@@ -700,8 +700,7 @@ trait ClusteredTableDDLSuiteBase
 
       // Validate clustering columns and that clustering columns in stats schema.
       val (_, dstSnapshot1) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable1))
-      verifyClusteringColumnsWithoutHistory(
-        TableIdentifier(dstTable1), "col1,col2")
+      verifyClusteringColumns(TableIdentifier(dstTable1), "col1,col2")
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot1, Seq("col1", "col2"))
 
       // Change to CLUSTER BY NONE, then CLONE from earlier version to validate that the
@@ -709,15 +708,13 @@ trait ClusteredTableDDLSuiteBase
       sql(s"ALTER TABLE $srcTable CLUSTER BY NONE")
       sql(s"CREATE TABLE $dstTable2 SHALLOW CLONE $srcTable VERSION AS OF 2")
       val (_, dstSnapshot2) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable2))
-      verifyClusteringColumnsWithoutHistory(
-        TableIdentifier(dstTable2), "col1,col2")
+      verifyClusteringColumns(TableIdentifier(dstTable2), "col1,col2")
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot2, Seq("col1", "col2"))
 
       // Validate CLONE after CLUSTER BY NONE
       sql(s"CREATE TABLE $dstTable3 SHALLOW CLONE $srcTable")
       val (_, dstSnapshot3) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable3))
-      verifyClusteringColumnsWithoutHistory(
-        TableIdentifier(dstTable3), "")
+      verifyClusteringColumns(TableIdentifier(dstTable3), "")
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot3, Seq.empty)
 
     }
