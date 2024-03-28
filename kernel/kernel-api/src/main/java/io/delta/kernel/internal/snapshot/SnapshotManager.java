@@ -373,7 +373,19 @@ public class SnapshotManager {
         Optional<Long> versionToLoad) {
         // Only use startCheckpoint if it is <= versionToLoad
         Optional<Long> startCheckpointToUse = startCheckpoint
-            .filter(v -> !versionToLoad.isPresent() || v <= versionToLoad.get());
+                .filter(v -> !versionToLoad.isPresent() || v <= versionToLoad.get());
+
+        // if we are loading a specific version and there is no usable starting checkpoint
+        // try to load a checkpoint that is <= version to load
+        if (!startCheckpointToUse.isPresent() && versionToLoad.isPresent()) {
+            startCheckpointToUse =
+                    Checkpointer.findLastCompleteCheckpointBefore(
+                            tableClient,
+                            logPath,
+                            versionToLoad.get() + 1)
+                    .map(x -> x.version);
+        }
+
         final Optional<List<FileStatus>> newFiles =
             listDeltaAndCheckpointFiles(
                 tableClient,
