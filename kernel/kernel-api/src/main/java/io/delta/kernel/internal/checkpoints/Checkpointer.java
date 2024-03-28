@@ -125,7 +125,8 @@ public class Checkpointer {
                 // Checkpoint has no data. This is a valid case on some file systems where the
                 // contents are not visible until the file stream is closed.
                 // Sleep for one second and retry.
-                logger.warn("Last checkpoint file {} has no data. " +
+                logger.warn(
+                        "Last checkpoint file {} has no data. " +
                                 "Retrying after 1sec. (current attempt = {})",
                         lastCheckpointFilePath,
                         tries);
@@ -138,7 +139,8 @@ public class Checkpointer {
             Thread.currentThread().interrupt();
             return Optional.empty();
         } catch (Exception ex) {
-            String msg = String.format("Failed to load checkpoint metadata from file %s. " +
+            String msg = String.format(
+                    "Failed to load checkpoint metadata from file %s. " +
                             "Retrying after 1sec. (current attempt = %s)",
                     lastCheckpointFilePath, tries);
             logger.warn(msg, ex);

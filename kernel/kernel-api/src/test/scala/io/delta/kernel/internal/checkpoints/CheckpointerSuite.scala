@@ -30,6 +30,9 @@ import java.util.Optional
 class CheckpointerSuite extends AnyFunSuite {
   import CheckpointerSuite._
 
+  //////////////////////////////////////////////////////////////////////////////////
+  // readLastCheckpointFile tests
+  //////////////////////////////////////////////////////////////////////////////////
   test("load a valid last checkpoint metadata file") {
     val jsonHandler = new TestJsonHandler(maxFailures = 0)
     val lastCheckpoint = new Checkpointer(VALID_LAST_CHECKPOINT_FILE_TABLE)
@@ -54,7 +57,7 @@ class CheckpointerSuite extends AnyFunSuite {
     assert(jsonHandler.currentFailCount == 0)
   }
 
-  test("retry metadata loading - succeeds at third attempt") {
+  test("retry last checkpoint metadata loading - succeeds at third attempt") {
     val jsonHandler = new TestJsonHandler(maxFailures = 2)
     val lastCheckpoint = new Checkpointer(VALID_LAST_CHECKPOINT_FILE_TABLE)
       .readLastCheckpointFile(mockTableClient(jsonHandler))
@@ -62,7 +65,7 @@ class CheckpointerSuite extends AnyFunSuite {
     assert(jsonHandler.currentFailCount == 2)
   }
 
-  test("retry metadata loading - exceeds max failures") {
+  test("retry last checkpoint metadata loading - exceeds max failures") {
     val jsonHandler = new TestJsonHandler(maxFailures = 4)
     val lastCheckpoint = new Checkpointer(VALID_LAST_CHECKPOINT_FILE_TABLE)
       .readLastCheckpointFile(mockTableClient(jsonHandler))
