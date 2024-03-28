@@ -13,19 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel
+package io.delta.kernel.test
 
-import java.io.ByteArrayInputStream
+import io.delta.kernel.client._
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.client.{ExpressionHandler, FileReadRequest, FileSystemClient, JsonHandler, ParquetHandler, TableClient}
-import io.delta.kernel.internal.util.Utils.toCloseableIterator
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.FileNames
-import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-
-trait MockFileSystemClientUtils {
+/**
+ * This is an extension to [[BaseMockFileSystemClient]] containing specific mock implementations
+ * [[FileSystemClient]] which are shared across multiple test suite.
+ * 
+ * [[MockListFromFileSystemClient]] - mocks the `listFrom` API within [[FileSystemClient]].
+ */
+trait MockFileSystemClientUtils extends MockTableClientUtils {
 
   val dataPath = new Path("/fake/path/to/table/")
   val logPath = new Path(dataPath, "_delta_log")
@@ -54,54 +58,44 @@ trait MockFileSystemClientUtils {
     )
   }
 
-  /**
-   * Create input function for createMockTableClient to implement listFrom from a list of
+  /* Create input function for createMockTableClient to implement listFrom from a list of
    * file statuses.
-   * */
-  def listFromFileList(files: Seq[FileStatus])(filePath: String): Seq[FileStatus] = {
+   */
+  def listFromProvider(files: Seq[FileStatus])(filePath: String): Seq[FileStatus] = {
     files.filter(_.getPath.compareTo(filePath) >= 0).sortBy(_.getPath)
   }
 
   /**
-   * Create a mock {@link TableClient} to test log segment generation.
+   * Create a mock [[TableClient]] to mock the [[FileSystemClient.listFrom]] calls using
+   * the given contents. The contents are filtered depending upon the list from path prefix.
    */
-  def createMockTableClient(listFromPath: String => Seq[FileStatus]): TableClient = {
-    new TableClient {
-      override def getExpressionHandler: ExpressionHandler = {
-        throw new UnsupportedOperationException("not supported for SnapshotManagerSuite tests")
-      }
-
-      override def getJsonHandler: JsonHandler = {
-        throw new UnsupportedOperationException("not supported for SnapshotManagerSuite tests")
-      }
-
-      override def getFileSystemClient: FileSystemClient =
-        createMockFileSystemClient(listFromPath)
-
-      override def getParquetHandler: ParquetHandler = {
-        throw new UnsupportedOperationException("not supported for SnapshotManagerSuite tests")
-      }
-    }
+  def createMockFSListFromTableClient(contents: Seq[FileStatus]): TableClient = {
+    mockTableClient(fileSystemClient =
+      new MockListFromFileSystemClient(listFromProvider(contents)))
   }
 
-  private def createMockFileSystemClient(
-    listFromPath: String => Seq[FileStatus]): FileSystemClient = {
-
-    new FileSystemClient {
-
-      override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
-        toCloseableIterator(listFromPath(filePath).iterator.asJava)
-      }
-
-      override def resolvePath(path: String): String = {
-        throw new UnsupportedOperationException("not supported for SnapshotManagerSuite tests")
-      }
-
-      override def readFiles(
-        readRequests: CloseableIterator[FileReadRequest]
-      ): CloseableIterator[ByteArrayInputStream] = {
-        throw new UnsupportedOperationException("not supported for SnapshotManagerSuite tests")
-      }
-    }
+  /**
+   * Create a mock [[TableClient]] to mock the [[FileSystemClient.listFrom]] calls using
+   * [[MockListFromFileSystemClient]].
+   */
+  def createMockFSListFromTableClient(listFromProvider: String => Seq[FileStatus]): TableClient = {
+    mockTableClient(fileSystemClient = new MockListFromFileSystemClient(listFromProvider))
   }
+}
+
+/**
+ * A mock [[FileSystemClient]] that answers `listFrom` calls from a given content provider.
+ *
+ * It also maintains metrics on number of times `listFrom` is called and arguments for each call.
+ */
+class MockListFromFileSystemClient(listFromProvider: String => Seq[FileStatus])
+    extends BaseMockFileSystemClient {
+  private var listFromCalls: Seq[String] = Seq.empty
+
+  override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
+    listFromCalls = listFromCalls :+ filePath
+    toCloseableIterator(listFromProvider(filePath).iterator.asJava)
+  }
+
+  def getListFromCalls: Seq[String] = listFromCalls
 }
