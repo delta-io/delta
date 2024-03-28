@@ -352,8 +352,8 @@ case class PreparedDeltaFileIndex(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[AddFile] = {
     val currentFilters = ExpressionSet(partitionFilters ++ dataFilters)
-    val (addFiles, eventData) = if (currentFilters == preparedScan.allFilters ||
-        currentFilters == preparedScan.filtersUsedForSkipping) {
+    val resolver = spark.sessionState.conf.resolver
+    val (addFiles, eventData) = if (preparedScan.filtersMatch(currentFilters, resolver)) {
       // [[DeltaScan]] was created using `allFilters` out of which only `filtersUsedForSkipping`
       // filters were used for skipping while creating the DeltaScan.
       // If currentFilters is same as allFilters, then no need to recalculate files and we can use

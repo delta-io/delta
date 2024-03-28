@@ -33,14 +33,44 @@ import org.scalatest.GivenWhenThen
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.SparkConf
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.QueryPlanningTracker
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, PredicateHelper}
-import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.execution.LogicalRDD
+import org.apache.spark.sql.functions.{col, lit, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
+
+
+class DeltaScanSuite extends QueryTest
+    with SharedSparkSession
+    with PredicateHelper {
+
+  test("Comparing filters should ignore nested schema differences") {
+    // Simulate outer.inner.b = "abc" filter
+    val schema = StructType.fromDDL("inner STRUCT<a: STRING, b: STRING>, c LONG")
+    val prunedSchema = StructType.fromDDL("inner STRUCT<b: STRING>")
+
+    val originalAttr = AttributeReference("outer", schema, true)(ExprId(1))
+    val prunedAttr = AttributeReference("outer", prunedSchema, true)(ExprId(1))
+
+    val originalExprs = Seq(
+      GetStructField(GetStructField(originalAttr, 0), 1),
+      IsNotNull(originalAttr),
+      IsNotNull(GetStructField(originalAttr, 0))
+    )
+    val prunedExprs = Seq(
+      GetStructField(GetStructField(prunedAttr, 0), 0),
+      IsNotNull(prunedAttr),
+      IsNotNull(GetStructField(prunedAttr, 0))
+    )
+
+    val resolver = org.apache.spark.sql.catalyst.analysis.caseSensitiveResolution
+    assert(DeltaScan.filtersMatch(ExpressionSet(originalExprs), ExpressionSet(prunedExprs),
+      resolver))
+  }
+}
 
 trait DataSkippingDeltaTestsBase extends QueryTest
     with SharedSparkSession
@@ -1797,6 +1827,23 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       )
       val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
       checkSkipping(r, hits, misses, dataSeq.toString(), false)
+    }
+  }
+
+  test("Ensure that we do reuse a scan with nested column pruning") {
+    withTempDir { dir =>
+      Seq(("a", 1), ("b", 2), ("c", 3)).toDF("a", "b").select(struct('a, 'b).alias("nested"))
+        .write.format("delta").save(dir.getCanonicalPath)
+
+      val plans = DeltaTestUtils.withLogicalPlansCaptured(spark, optimizedPlan = true) {
+        sql(s"SELECT nested.b FROM delta.`$dir` WHERE nested.b < 2").collect()
+      }
+      val rddScans = plans.flatMap(_.collect {
+        // Only look for the RDD containg the path, ignore the initial cached RDD for all AddFile's
+        case l: LogicalRDD if l.output.exists(_.name == "path") => l
+      })
+      // We should only scan the log once
+      assert(rddScans.length == 1)
     }
   }
 
