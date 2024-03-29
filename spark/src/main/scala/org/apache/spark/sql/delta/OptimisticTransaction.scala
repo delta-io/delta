@@ -249,6 +249,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /** Tracks if this transaction has already committed. */
   protected var committed = false
 
+  /** Contains the execution instrumentation set via thread-local. No-op by default. */
+  protected[delta] var executionObserver: TransactionExecutionObserver =
+    TransactionExecutionObserver.threadObserver.get()
+
   /**
    * Stores the updated metadata (if any) that will result from this txn.
    *
@@ -1079,7 +1083,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val finalActions = checkForSetTransactionConflictAndDedup(actions ++ this.actions.toSeq)
 
       // Try to commit at the next version.
-      val preparedActions = prepareCommit(finalActions, op)
+      val preparedActions =
+        executionObserver.preparingCommit {
+          prepareCommit(finalActions, op)
+        }
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -1162,6 +1169,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         return None
       }
 
+      // Try to commit at the next version.
+      executionObserver.beginDoCommit()
+
       val (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo) =
         doCommitRetryIteratively(
           firstAttemptVersion, currentTransactionInfo, isolationLevelToUse)
@@ -1170,15 +1180,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     } catch {
       case e: DeltaConcurrentModificationException =>
         recordDeltaEvent(deltaLog, "delta.commit.conflict." + e.conflictType)
+        executionObserver.transactionAborted()
         throw e
       case NonFatal(e) =>
         recordDeltaEvent(
           deltaLog, "delta.commit.failure", data = Map("exception" -> Utils.exceptionString(e)))
+        executionObserver.transactionAborted()
         throw e
     }
 
     runPostCommitHooks(version, postCommitSnapshot, actualCommittedActions)
 
+    executionObserver.transactionCommitted()
     Some(version)
   }
 

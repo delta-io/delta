@@ -193,7 +193,9 @@ class DeltaLog private(
   def startTransaction(
       catalogTableOpt: Option[CatalogTable],
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    new OptimisticTransaction(this, catalogTableOpt, snapshotOpt)
+    TransactionExecutionObserver.threadObserver.get().startingTransaction {
+      new OptimisticTransaction(this, catalogTableOpt, snapshotOpt)
+    }
   }
 
   /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
