@@ -78,7 +78,7 @@ public class Checkpointer {
     }
 
     /**
-     * Utility method to find the last complete checkpoint before a given version.
+     * Find the last complete checkpoint before (strictly less than) a given version.
      */
     public static Optional<CheckpointInstance> findLastCompleteCheckpointBefore(
             TableClient tableClient,
@@ -87,6 +87,10 @@ public class Checkpointer {
         return findLastCompleteCheckpointBeforeHelper(tableClient, tableLogPath, version)._1;
     }
 
+    /**
+     * Helper method for `findLastCompleteCheckpointBefore` which also return the number
+     * of files searched. This helps in testing
+     */
     protected static Tuple2<Optional<CheckpointInstance>, Long>
             findLastCompleteCheckpointBeforeHelper(
                     TableClient tableClient,
@@ -122,7 +126,7 @@ public class Checkpointer {
                         currentFileVersion = FileNames.checkpointVersion(fileName);
                     } else {
                         // allow all other types of files.
-                        currentFileVersion = Math.min(currentVersion, version);
+                        currentFileVersion = currentVersion;
                     }
 
                     boolean shouldContinue =
@@ -134,7 +138,7 @@ public class Checkpointer {
                     if (!shouldContinue) {
                         break;
                     }
-                    if (FileNames.isCheckpointFile(fileName)) {
+                    if (validCheckpointFile(fileStatus)) {
                         checkpoints.add(new CheckpointInstance(fileStatus.getPath()));
                     }
                     numberOfFilesSearched++;

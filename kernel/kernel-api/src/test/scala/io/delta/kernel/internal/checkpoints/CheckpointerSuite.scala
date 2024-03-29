@@ -19,7 +19,8 @@ import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.Utils
+import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
+import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, MockTableClientUtils}
 import io.delta.kernel.types.{DataType, LongType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
@@ -168,6 +169,24 @@ class CheckpointerSuite extends AnyFunSuite
           versionsListed /* delta files */ +
            50 /* one multi-part checkpoint */
       assertLastCheckpoint(files, beforeVersion, expCheckpointVersion, expNumFilesListed)
+    }
+  }
+
+  test("findLastCompleteCheckpointBefore - two checkpoints (one is zero-sized - not valid)") {
+    // 25 delta files and 2 checkpoint file = total 27 files.
+    val files = deltaFileStatuses(Seq.range(0, 25)) ++
+      singularCheckpointFileStatuses(Seq(10)) ++
+      Seq(FileStatus.of(
+        checkpointFileSingular(logPath, 20).toString, 0, 0)) // zero-sized CP
+
+    Seq((0, 0), (4, 4), (9, 9), (10, 10)).foreach {
+      case (beforeVersion, expNumFilesListed) =>
+        assertNoLastCheckpoint(files, beforeVersion, expNumFilesListed)
+    }
+
+    Seq((14, 10, 15), (25, 10, 27), (27, 10, 27)).foreach {
+      case (beforeVersion, expCheckpointVersion, expNumFilesListed) =>
+        assertLastCheckpoint(files, beforeVersion, expCheckpointVersion, expNumFilesListed)
     }
   }
 
