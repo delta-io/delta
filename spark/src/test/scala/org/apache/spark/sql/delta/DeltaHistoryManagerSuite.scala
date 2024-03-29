@@ -617,5 +617,5 @@ class DeltaHistoryManagerSuite extends DeltaHistoryManagerBase {
 }
 
 class ManagedCommitFill1DeltaHistoryManagerSuite extends DeltaHistoryManagerSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
 }
