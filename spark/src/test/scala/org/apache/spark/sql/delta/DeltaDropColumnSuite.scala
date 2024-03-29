@@ -148,7 +148,7 @@ class DeltaDropColumnSuite extends QueryTest
       val e = intercept[AnalysisException] {
         drop("t1", "b.d" :: Nil)
       }
-      assert(e.getMessage.contains("Cannot drop column from a struct type with a single field"))
+      assert(e.getMessage.contains("Cannot drop column from a schema with a single column"))
 
       // can drop the parent column
       drop("t1", "b" :: Nil)
@@ -157,7 +157,7 @@ class DeltaDropColumnSuite extends QueryTest
       val e2 = intercept[AnalysisException] {
         drop("t1", "map" :: Nil)
       }
-      assert(e2.getMessage.contains("Cannot drop column from a struct type with a single field"))
+      assert(e2.getMessage.contains("Cannot drop column from a schema with a single column"))
 
       spark.sql("alter table t1 add column (e struct<e1 string, e2 string>)")
 

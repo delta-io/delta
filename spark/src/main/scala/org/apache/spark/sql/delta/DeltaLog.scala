@@ -439,15 +439,30 @@ class DeltaLog private(
   def ensureLogDirectoryExist(): Unit = {
     val fs = logPath.getFileSystem(newDeltaHadoopConf())
     def createDirIfNotExists(path: Path): Unit = {
-      var success = false
-      try {
-        success = fs.exists(path) || fs.mkdirs(path)
+      // Optimistically attempt to create the directory first without checking its existence.
+      // This is efficient because we're assuming it's more likely that the directory doesn't
+      // exist and it saves an filesystem existence check in that case.
+      val (success, mkdirsIOExceptionOpt) = try {
+        // Return value of false should mean the directory already existed (not an error) but
+        // we will verify below because we're paranoid about buggy FileSystem implementations.
+        (fs.mkdirs(path), None)
       } catch {
+        // A FileAlreadyExistsException is expected if a non-directory object exists but an explicit
+        // check is needed because buggy Hadoop FileSystem.mkdir wrongly throws the exception even
+        // on existing directories.
         case io: IOException =>
-          throw DeltaErrors.cannotCreateLogPathException(logPath.toString, io)
+          val dirExists =
+            try {
+              fs.getFileStatus(path).isDirectory
+            } catch {
+              case NonFatal(_) => false
+            }
+          (dirExists, Some(io))
       }
       if (!success) {
-        throw DeltaErrors.cannotCreateLogPathException(logPath.toString)
+        throw DeltaErrors.cannotCreateLogPathException(
+          logPath = logPath.toString,
+          cause = mkdirsIOExceptionOpt.orNull)
       }
     }
     createDirIfNotExists(FileNames.commitDirPath(logPath))

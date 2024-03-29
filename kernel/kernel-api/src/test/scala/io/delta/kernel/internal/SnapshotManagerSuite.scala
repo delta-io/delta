@@ -15,17 +15,22 @@
  */
 package io.delta.kernel.internal
 
+import java.io.IOException
 import java.util.{Arrays, Collections, Optional}
 
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
+import io.delta.kernel.expressions.Predicate
+import io.delta.kernel.internal.checkpoints.SidecarFile
+import io.delta.kernel.internal.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
-
 import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
-import io.delta.kernel.internal.util.FileNames
-import io.delta.kernel.utils.FileStatus
-import io.delta.kernel.MockFileSystemClientUtils
+import io.delta.kernel.internal.util.{FileNames, Utils}
+import io.delta.kernel.test.{BaseMockParquetHandler, MockFileSystemClientUtils}
+import io.delta.kernel.types.StructType
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
@@ -163,7 +168,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val multiCheckpoints = multiCheckpointFileStatuses(multiCheckpointVersions, numParts)
 
     val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-      createMockTableClient(listFromFileList(deltas ++ checkpoints ++ multiCheckpoints)),
+      createMockFSListFromTableClient(deltas ++ checkpoints ++ multiCheckpoints),
       startCheckpoint,
       versionToLoad
     )
@@ -260,7 +265,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       expectedErrorMessageContains: String = "")(implicit classTag: ClassTag[T]): Unit = {
     val e = intercept[T] {
       snapshotManager.getLogSegmentForVersion(
-        createMockTableClient(listFromFileList(files)),
+        createMockFSListFromTableClient(files),
         startCheckpoint,
         versionToLoad
       )
@@ -278,8 +283,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       case (checkpointManifest, sidecars) => Seq(checkpointManifest) ++ sidecars
     }
     val logSegment = snapshotManager.getLogSegmentForVersion(
-      createMockTableClient(listFromFileList(deltas ++ checkpointFiles),
-        new TestSidecarParquetHandler(checkpoints(1)._2)),
+      createMockFSListFromTableClient(listFromProvider(deltas ++ checkpointFiles)("/"),
+        new MockSidecarParquetHandler(checkpoints(1)._2)),
       Optional.empty(),
       Optional.of(6)
     ).get()
@@ -415,7 +420,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   test("getLogSegmentForVersion: empty delta log") {
     // listDeltaAndCheckpointFiles = Optional.empty()
     val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-      createMockTableClient(listFromFileList(Seq.empty)),
+      createMockFSListFromTableClient(Seq.empty),
       Optional.empty(),
       Optional.empty()
     )
@@ -462,11 +467,11 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       if (filePath < FileNames.listingPrefix(logPath, minVersion)) {
         throw new RuntimeException("Listing from before provided _last_checkpoint")
       }
-      listFromFileList(files)(filePath)
+      listFromProvider(files)(filePath)
     }
     for (checkpointV <- Seq(10, 20)) {
       val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-        createMockTableClient(listFrom(checkpointV)),
+        createMockFSListFromTableClient(listFrom(checkpointV)(_)),
         Optional.of(checkpointV),
         Optional.empty()
       )
@@ -577,7 +582,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       expectedErrorMessageContains = "Could not find any delta files for version 10"
     )
     val logSegment = snapshotManager.getLogSegmentForVersion(
-      createMockTableClient(listFromFileList(fileList)),
+      createMockFSListFromTableClient(fileList),
       Optional.empty(),
       Optional.empty()
     )
@@ -723,7 +728,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       val checkpoints = singularCheckpointFileStatuses(validVersions)
       val deltas = deltaFileStatuses(deltaVersions)
       val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-        createMockTableClient(listFromFileList(deltas ++ corruptedCheckpoint ++ checkpoints)),
+        createMockFSListFromTableClient(deltas ++ corruptedCheckpoint ++ checkpoints),
         Optional.empty(),
         Optional.empty()
       )
@@ -744,10 +749,42 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   test("getLogSegmentForVersion: corrupt _last_checkpoint with empty delta log") {
     // listDeltaAndCheckpointFiles = Optional.empty()
     val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-      createMockTableClient(listFromFileList(Seq.empty)),
+      createMockFSListFromTableClient(Seq.empty),
       Optional.of(1),
       Optional.empty()
     )
     assert(!logSegmentOpt.isPresent())
+  }
+}
+
+class MockSidecarParquetHandler(sidecars: Seq[FileStatus]) extends BaseMockParquetHandler {
+
+  import io.delta.kernel.internal.checkpoints.CheckpointerSuite._
+
+  override def readParquetFiles(
+    fileIter: CloseableIterator[FileStatus],
+    physicalSchema: StructType,
+    predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+    val file = fileIter.next()
+    val path = new Path(file.getPath)
+
+    Utils.singletonCloseableIterator(
+      path.getParent match {
+        case logPath => new ColumnarBatch {
+          override def getSchema: StructType = SidecarFile.READ_SCHEMA
+
+          override def getColumnVector(ordinal: Int): ColumnVector = {
+            ordinal match {
+              case 0 => stringVector(sidecars.map(_.getPath): _*) // path
+              case 1 => longVector(sidecars.map(_.getSize): _*) // size
+              case 2 =>
+                longVector(sidecars.map(_.getModificationTime): _*); // modification time
+            }
+          }
+
+          override def getSize: Int = 2
+        }
+        case _ => throw new IOException("Unknown table")
+      })
   }
 }

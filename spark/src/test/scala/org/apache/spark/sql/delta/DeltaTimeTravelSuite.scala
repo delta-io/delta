@@ -765,5 +765,5 @@ class DeltaTimeTravelSuite extends QueryTest
 }
 
 class ManagedCommitFill1DeltaTimeTravelSuite extends DeltaTimeTravelSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
 }

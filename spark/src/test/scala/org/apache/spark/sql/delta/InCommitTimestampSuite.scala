@@ -17,6 +17,9 @@
 package org.apache.spark.sql.delta
 
 import java.nio.charset.StandardCharsets.UTF_8
+import java.sql.Timestamp
+
+import scala.concurrent.duration.Duration
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
@@ -29,7 +32,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.util.ManualClock
+import org.apache.spark.util.{ManualClock, SerializableConfiguration, ThreadUtils}
 
 class InCommitTimestampSuite
   extends QueryTest
@@ -80,7 +83,7 @@ class InCommitTimestampSuite
         assert(
           ver1Snapshot.logSegment.lastCommitFileModificationTimestamp == ver1Snapshot.timestamp)
 
-        spark.sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}`" +
+        spark.sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
           s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
         val ver2Snapshot = DeltaLog.forTable(spark, tempDir.getAbsolutePath).snapshot
@@ -225,7 +228,7 @@ class InCommitTimestampSuite
       withTempDir { tempDir =>
         spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
         spark.sql(
-          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}`" +
+          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
             s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
         spark.sql(
@@ -266,7 +269,7 @@ class InCommitTimestampSuite
         spark.sql(s"INSERT INTO delta.`$tempDir` VALUES 10")
 
         spark.sql(
-          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}`" +
+          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
             s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
         val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
@@ -325,7 +328,8 @@ class InCommitTimestampSuite
       val ver0Snapshot = deltaLog.snapshot
       assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(ver0Snapshot.metadata))
       // Disable ICT in version 1.
-      spark.sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}`" +
+      spark.sql(
+        s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
           s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false')")
       assert(!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(deltaLog.update().metadata))
 
@@ -439,6 +443,402 @@ class InCommitTimestampSuite
       assert(blob("checkpointVersion") == "-1")
       assert(blob("exceptionMessage").startsWith("[DELTA_MISSING_COMMIT_INFO]"))
       assert(blob("exceptionStackTrace").contains(Snapshot.getClass.getName.stripSuffix("$")))
+    }
+  }
+
+  test("DeltaHistoryManager.getActiveCommitAtTimeFromICTRange") {
+    withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+      val startTime = System.currentTimeMillis()
+      val clock = new ManualClock(startTime)
+      // Ensure that a cached version of deltaLog without the ManualClock is not used.
+      DeltaLog.clearCache()
+      val deltaLog =
+        DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val commitTimeDelta = 10
+      val numberAdditionalCommits = 25
+      assert(clock eq deltaLog.clock)
+      for (i <- 1 to numberAdditionalCommits) {
+        clock.setTime(startTime + i*commitTimeDelta)
+        deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
+      }
+      val deltaCommitFileProvider = DeltaCommitFileProvider(deltaLog.update())
+      val commit0 = DeltaHistoryManager.Commit(0, getInCommitTimestamp(deltaLog, 0))
+      var commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          startTime + commitTimeDelta*11,
+          startCommit = commit0,
+          numberAdditionalCommits + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 3,
+          spark,
+          deltaCommitFileProvider).get
+      assert(commit.version == 11)
+      assert(commit.version == deltaLog.history.getActiveCommitAtTime(
+        new Timestamp(startTime + commitTimeDelta*11), true).version)
+
+      // Search for commit 11 when the timestamp is not an exact match.
+      commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          startTime + commitTimeDelta * 11 + 5,
+          startCommit = commit0,
+          numberAdditionalCommits + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 3,
+          spark,
+          deltaCommitFileProvider).get
+      assert(commit.version == 11)
+
+      // Search for the last commit.
+      commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          startTime + commitTimeDelta*25,
+          startCommit = commit0,
+          numberAdditionalCommits + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 3,
+          spark,
+          deltaCommitFileProvider).get
+      assert(commit.version == 25)
+      // Search for the first commit.
+      commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          commit0.timestamp,
+          startCommit = commit0,
+          numberAdditionalCommits + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 3,
+          spark,
+          deltaCommitFileProvider).get
+      assert(commit.version == 0)
+    }
+  }
+
+  test("DeltaHistoryManager.getActiveCommitAtTimeFromICTRange --- " +
+    "search for a timestamp after the last commit") {
+    withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+      val startTime = System.currentTimeMillis()
+      val clock = new ManualClock(startTime)
+      // Ensure that a cached version of deltaLog without the ManualClock is not used.
+      DeltaLog.clearCache()
+      val deltaLog =
+        DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val commitTimeDelta = 10
+      val numberAdditionalCommits = 2
+      assert(clock eq deltaLog.clock)
+      for (i <- 1 to numberAdditionalCommits) {
+        clock.setTime(startTime + i * commitTimeDelta)
+        deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
+      }
+      val commit = deltaLog.history.getActiveCommitAtTime(
+        new Timestamp(startTime + commitTimeDelta * (numberAdditionalCommits + 1)),
+        canReturnLastCommit = true)
+      assert(commit.version == numberAdditionalCommits)
+
+      // Searching beyond the last commit should throw an error
+      // when canReturnLastCommit is false.
+      val e = intercept[DeltaErrors.TemporallyUnstableInputException] {
+        deltaLog.history.getActiveCommitAtTime(
+          new Timestamp(startTime + commitTimeDelta * (numberAdditionalCommits + 1)),
+          canReturnLastCommit = false)
+      }
+      assert(e.getMessage.contains("The provided timestamp:") && e.getMessage.contains("is after"))
+    }
+  }
+
+  test("DeltaHistoryManager.getActiveCommitAtTime: " +
+    "works correctly when the history has both ICT and non-ICT commits") {
+    withSQLConf(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
+      withTempDir { tempDir =>
+        spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+        val numNonICTCommits = 6
+        val numICTCommits = 5
+        val deltaLog =
+          DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        for (i <- 1 to (numNonICTCommits-1)) {
+          deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
+        }
+
+        // Enable ICT.
+        spark.sql(
+          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
+            s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+
+        for (i <- 1 to (numICTCommits-1)) {
+          deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
+        }
+        val currentVersion = deltaLog.update().version
+        for (version <- 0L to currentVersion) {
+          val ts = deltaLog.getSnapshotAt(version).timestamp
+          // Search for the exact timestamp.
+          var commit = deltaLog.history.getActiveCommitAtTime(new Timestamp(ts), true)
+          assert(commit.version == version)
+
+          // Search using a timestamp just before the current timestamp.
+          commit = deltaLog.history.getActiveCommitAtTime(
+            new Timestamp(ts-1), true, canReturnEarliestCommit = true)
+          val expectedVersion = if (version == 0) 0 else version - 1
+          assert(commit.version == expectedVersion)
+
+          // Search using a timestamp just after the current timestamp.
+          commit = deltaLog.history.getActiveCommitAtTime(new Timestamp(ts + 1), true)
+          assert(commit.version == version)
+        }
+
+        val enablementCommit =
+          InCommitTimestampUtils.getValidatedICTEnablementInfo(deltaLog.snapshot.metadata).get
+        // Create a checkpoint before deleting commits.
+        deltaLog.createCheckpointAtVersion(enablementCommit.version + 2)
+
+        // Search for an ICT commit when all the ICT commits leading up to and including it are
+        // absent.
+        val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+        // Search for the commit immediately after the enablement commit.
+        val searchTimestamp = getInCommitTimestamp(deltaLog, enablementCommit.version + 1)
+        // Delete the first two ICT commits before performing the search.
+        (enablementCommit.version to enablementCommit.version + 1).foreach { version =>
+          fs.delete(FileNames.deltaFile(deltaLog.logPath, version), false)
+        }
+        val e = intercept[DeltaErrors.TimestampEarlierThanCommitRetentionException] {
+          deltaLog.history.getActiveCommitAtTime(
+            new Timestamp(searchTimestamp), false)
+        }
+        assert(
+          e.getMessage.contains("The provided timestamp") && e.getMessage.contains("is before"))
+
+        // Search for a non-ICT commit when all the non-ICT commits are missing.
+        // Delete all the non-ICT commits.
+        (0L until numNonICTCommits).foreach { version =>
+          fs.delete(FileNames.deltaFile(deltaLog.logPath, version), false)
+        }
+        intercept[DeltaErrors.TimestampEarlierThanCommitRetentionException] {
+          deltaLog.history.getActiveCommitAtTime(
+            new Timestamp(enablementCommit.timestamp-1), false)
+        }
+        // The same query should work when the earliest commit is allowed to be returned.
+        // The returned commit will be the earliest available ICT commit.
+        val commit = deltaLog.history.getActiveCommitAtTime(
+          new Timestamp(enablementCommit.timestamp-1), false, canReturnEarliestCommit = true)
+        // Note that we have already deleted the first two ICT commits.
+        assert(commit.version == enablementCommit.version + 2)
+        val earliestAvailableICTCommitTs = getInCommitTimestamp(
+          deltaLog,
+          enablementCommit.version + 2)
+        assert(commit.timestamp == earliestAvailableICTCommitTs)
+      }
+    }
+  }
+
+  test("DeltaHistoryManager.getActiveCommitAtTimeFromICTRange -- boundary cases" ) {
+    withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+      val startTime = System.currentTimeMillis()
+      val clock = new ManualClock(startTime)
+      // Ensure that a cached version of deltaLog without the ManualClock is not used.
+      DeltaLog.clearCache()
+      val deltaLog =
+        DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val commit0 = DeltaHistoryManager.Commit(0, deltaLog.snapshot.timestamp)
+      val commitTimeDelta = 10
+      val numberAdditionalCommits = 10
+      assert(clock eq deltaLog.clock)
+      for (i <- 1 to numberAdditionalCommits) {
+        clock.setTime(startTime + i * commitTimeDelta)
+        deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
+      }
+      def getICTCommit(version: Long): DeltaHistoryManager.Commit =
+        DeltaHistoryManager.Commit(version, startTime + commitTimeDelta * version)
+
+      val deltaCommitFileProvider = DeltaCommitFileProvider(deltaLog.update())
+
+      // Degenerate case: start + 1 == end.
+      var commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          getICTCommit(2).timestamp,
+          getICTCommit(2),
+          end = 2 + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 3,
+          spark,
+          deltaCommitFileProvider).get
+      assert(commit == getICTCommit(2))
+
+      // start + 1 == end, search for a timestamp that is after the window.
+      commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+        getICTCommit(5).timestamp,
+        getICTCommit(2),
+          end = 2 + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 3,
+          spark,
+          deltaCommitFileProvider).get
+      assert(commit == getICTCommit(2))
+
+      // start + 1 == end, search for a timestamp that is before the window.
+      val commitOpt = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          getICTCommit(1).timestamp,
+          getICTCommit(2),
+          end = 2 + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 3,
+          spark,
+          deltaCommitFileProvider)
+      assert(commitOpt.isEmpty)
+
+      // window size is exactly equal to `numChunks`.
+      // Search for an intermediate commit.
+      commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          getICTCommit(7).timestamp,
+          getICTCommit(5),
+          end = 9 + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 5,
+          spark,
+          deltaCommitFileProvider).get
+      assert(commit == getICTCommit(7))
+      // Search for the last commit.
+      commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          getICTCommit(9).timestamp,
+          getICTCommit(5),
+          end = 9 + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 5,
+          spark,
+          deltaCommitFileProvider).get
+      assert(commit == getICTCommit(9))
+
+      // Delete the last few commits in the window.
+      val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+      fs.delete(FileNames.deltaFile(deltaLog.logPath, 5), false)
+      fs.delete(FileNames.deltaFile(deltaLog.logPath, 6), false)
+      // Search for the commit just before the deleted commits.
+      commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          getICTCommit(4).timestamp,
+          getICTCommit(2),
+          end = 6 + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 3,
+          spark,
+          deltaCommitFileProvider).get
+      assert(commit == getICTCommit(4))
+
+      // Search with the first couple of commits in the window deleted.
+      commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          getICTCommit(8).timestamp,
+          // Commits 5 and 6 have been deleted. We start from commit 5,
+          // which does not exist anymore.
+          getICTCommit(5),
+          end = 10 + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 3,
+          spark,
+          deltaCommitFileProvider).get
+      assert(commit == getICTCommit(8))
+
+      // Make one chunk in the first iteration completely empty.
+      // Window -> [0, 11)
+      // numChunks = 5, chunkSize = (11-0)/5 = 2
+      // chunks -> [0, 2), [2, 4), [4, 6), [6, 8), [8, 10), [10, 11)
+      fs.delete(FileNames.deltaFile(deltaLog.logPath, 4), false)
+      // 4, 5, 6 have been deleted, so window [4, 6) is completely empty.
+
+      // Search for the commit 6.
+      commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          getICTCommit(6).timestamp,
+          commit0,
+          end = 11,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 5,
+          spark,
+          deltaCommitFileProvider).get
+      // [4,6] have been deleted, so we should get the commit at version 3.
+      assert(commit == getICTCommit(3))
+
+      // Search for a commit just after the deleted chunk (7).
+      commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          getICTCommit(7).timestamp,
+          commit0,
+          end = 11,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 5,
+          spark,
+          deltaCommitFileProvider).get
+      assert(commit == getICTCommit(7))
+
+      // Scenario with many empty chunks.
+      fs.delete(FileNames.deltaFile(deltaLog.logPath, 8), false)
+      fs.delete(FileNames.deltaFile(deltaLog.logPath, 9), false)
+
+      // Window -> [0, 11)
+      // numChunks = 11, chunkSize = (11-0)/11 = 1
+      // chunks -> [0, 1), [1, 2), [2, 3), ... [9, 10), [10, 11)
+      // 4, 5, 6, 8, 9 have been deleted.
+      // [4, 6), [5, 6) and [8, 9) are completely empty.
+
+      // Search for a commit in between empty chunks (7).
+      commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          getICTCommit(7).timestamp,
+          commit0,
+          end = 11,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 11,
+          spark,
+          deltaCommitFileProvider).get
+      assert(commit == getICTCommit(7))
+
+      // Search for a commit just after the last deleted chunk (10).
+      commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          getICTCommit(10).timestamp,
+          commit0,
+          end = 11,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 11,
+          spark,
+          deltaCommitFileProvider).get
+      assert(commit == getICTCommit(10))
+
+      fs.delete(FileNames.deltaFile(deltaLog.logPath, 10), false)
+      // Everything after and including `end` does not exist.
+      commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+        getICTCommit(7).timestamp,
+        commit0,
+        // The last commit in the table is at version 9. But our
+        // search window here is [7, 11).
+        end = 11,
+        deltaLog.newDeltaHadoopConf(),
+        deltaLog.logPath,
+        deltaLog.store,
+        numChunks = 3,
+        spark,
+        deltaCommitFileProvider).get
+      assert(commit == getICTCommit(7))
     }
   }
 }

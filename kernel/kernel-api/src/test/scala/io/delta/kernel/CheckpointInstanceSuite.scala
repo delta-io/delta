@@ -20,8 +20,9 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.client.TableClient
-import io.delta.kernel.internal.checkpoints.{CheckpointInstance, TestJsonHandler}
+import io.delta.kernel.internal.checkpoints.{CheckpointInstance, MockSidecarJsonHandler}
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.test.MockFileSystemClientUtils
 import org.scalatest.funsuite.AnyFunSuite
 
 class CheckpointInstanceSuite extends AnyFunSuite with MockFileSystemClientUtils {
@@ -96,7 +97,6 @@ class CheckpointInstanceSuite extends AnyFunSuite with MockFileSystemClientUtils
   test("checkpoint instance getCorrespondingFiles") {
     // classic checkpoint
     val classicCheckpoint0 = new CheckpointInstance(0)
-    val testTableClient = mockTableClient(new TestJsonHandler(0))
     assert(classicCheckpoint0.getCorrespondingFiles(FAKE_DELTA_LOG_PATH).equals(
       Seq(new Path(FAKE_DELTA_LOG_PATH, "00000000000000000000.checkpoint.parquet")).asJava
     ))

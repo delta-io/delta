@@ -433,6 +433,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_HISTORY_MANAGER_THREAD_POOL_SIZE =
+    buildConf("history.threadPoolSize")
+      .internal()
+      .doc("The size of the thread pool used for search during DeltaHistory operations. " +
+        "This configuration is only used when the feature inCommitTimestamps is enabled.")
+      .intConf
+      .checkValue(_ > 0, "history.threadPoolSize must be positive")
+      .createWithDefault(10)
+
   val DELTA_VACUUM_LOGGING_ENABLED =
     buildConf("vacuum.logging.enabled")
       .doc("Whether to log vacuum information into the Delta transaction log." +
@@ -505,6 +514,14 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(20)
+
+  val DELTA_LIST_FROM_COMMIT_STORE_THREAD_POOL_SIZE =
+    buildStaticConf("commitStore.getCommits.threadPoolSize")
+      .internal()
+      .doc("The size of the thread pool for listing files from the CommitStore.")
+      .intConf
+      .checkValue(_ > 0, "threadPoolSize must be positive")
+      .createWithDefault(5)
 
   val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
     buildConf("constraints.assumesDropIfExists.enabled")
@@ -1539,6 +1556,15 @@ trait DeltaSQLConfBase {
         |If the table hasn't been converted to Iceberg in longer than this number of commits,
         |we start from scratch, replacing the previously converted Iceberg table contents.
         |""".stripMargin)
+    .intConf
+    .createWithDefault(100)
+
+  val HUDI_MAX_COMMITS_TO_CONVERT = buildConf("hudi.maxPendingCommits")
+    .doc("""
+           |The maximum number of pending Delta commits to convert to Hudi incrementally.
+           |If the table hasn't been converted to Iceberg in longer than this number of commits,
+           |we start from scratch, replacing the previously converted Iceberg table contents.
+           |""".stripMargin)
     .intConf
     .createWithDefault(100)
 

@@ -35,11 +35,9 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.{ChecksumException, Path}
-import org.json4s.JValue
 
 import org.apache.spark.{SparkConf, SparkEnv, SparkException}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
-import org.apache.spark.sql.catalyst.ExtendedAnalysisException
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
@@ -257,15 +255,6 @@ trait DeltaErrorsBase
     colNames.map(formatColumn).mkString("[", ", ", "]")
 
   def formatSchema(schema: StructType): String = schema.treeString
-
-  def analysisException(
-      msg: String,
-      line: Option[Int] = None,
-      startPosition: Option[Int] = None,
-      plan: Option[LogicalPlan] = None,
-      cause: Option[Throwable] = None): AnalysisException = {
-    new ExtendedAnalysisException(msg, line, startPosition, plan, cause)
-  }
 
   def notNullColumnMissingException(constraint: Constraints.NotNull): Throwable = {
     new DeltaInvariantViolationException(
@@ -1626,10 +1615,10 @@ trait DeltaErrorsBase
       messageParameters = Array(option, operation))
   }
 
-  def foundMapTypeColumnException(key: String, value: String): Throwable = {
+  def foundMapTypeColumnException(key: String, value: String, schema: StructType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_FOUND_MAP_TYPE_COLUMN",
-      messageParameters = Array(key, value)
+      messageParameters = Array(key, value, schema.treeString)
     )
   }
   def columnNotInSchemaException(column: String, schema: StructType): Throwable = {
@@ -2601,20 +2590,28 @@ trait DeltaErrorsBase
     )
   }
 
-  def incorrectArrayAccessByName(rightName: String, wrongName: String): Throwable = {
+  def incorrectArrayAccessByName(
+      rightName: String,
+      wrongName: String,
+      schema: StructType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME",
-      messageParameters = Array(rightName, wrongName)
+      messageParameters = Array(rightName, wrongName, schema.treeString)
     )
   }
 
-  def columnPathNotNested(columnPath: String, other: DataType, column: Seq[String]): Throwable = {
+  def columnPathNotNested(
+      columnPath: String,
+      other: DataType,
+      column: Seq[String],
+      schema: StructType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_COLUMN_PATH_NOT_NESTED",
       messageParameters = Array(
         s"$columnPath",
         s"$other",
-        s"${SchemaUtils.prettyFieldName(column)}"
+        s"${SchemaUtils.prettyFieldName(column)}",
+        schema.treeString
       )
     )
   }
@@ -2823,6 +2820,15 @@ trait DeltaErrorsBase
   def icebergClassMissing(sparkConf: SparkConf, cause: Throwable): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_MISSING_ICEBERG_CLASS",
+      messageParameters = Array(
+        generateDocsLink(
+          sparkConf, "/delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
+      cause = cause)
+  }
+
+  def hudiClassMissing(sparkConf: SparkConf, cause: Throwable): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_HUDI_CLASS",
       messageParameters = Array(
         generateDocsLink(
           sparkConf, "/delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
@@ -3039,6 +3045,26 @@ trait DeltaErrorsBase
         "Requires IcebergCompat to be explicitly enabled in order for Universal Format (Iceberg) " +
         "to be enabled on an existing table. To enable IcebergCompatV2, set the table property " +
         "'delta.enableIcebergCompatV2' = 'true'."
+      )
+    )
+  }
+
+  def uniFormHudiDeleteVectorCompat(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+      messageParameters = Array(
+        UniversalFormat.HUDI_FORMAT,
+        "Requires delete vectors to be disabled."
+      )
+    )
+  }
+
+  def uniFormHudiSchemaCompat(unsupportedType: DataType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+      messageParameters = Array(
+        UniversalFormat.HUDI_FORMAT,
+        s"DataType: $unsupportedType is not currently supported."
       )
     )
   }
@@ -3273,6 +3299,38 @@ trait DeltaErrorsBase
       errorClass = "DELTA_MERGE_ADD_VOID_COLUMN",
       messageParameters = Array(toSQLId(columnName))
     )
+  }
+
+  def columnBuilderMissingDataType(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_COLUMN_MISSING_DATA_TYPE",
+      messageParameters = Array(toSQLId(colName)))
+  }
+
+  def createTableMissingTableNameOrLocation(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CREATE_TABLE_MISSING_TABLE_NAME_OR_LOCATION",
+      messageParameters = Array.empty)
+  }
+
+  def createTableIdentifierLocationMismatch(identifier: String, location: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CREATE_TABLE_IDENTIFIER_LOCATION_MISMATCH",
+      messageParameters = Array(identifier, location))
+  }
+
+  def dropColumnOnSingleFieldSchema(schema: StructType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_DROP_COLUMN_ON_SINGLE_FIELD_SCHEMA",
+      messageParameters = Array(schema.treeString))
+  }
+
+  def errorFindingColumnPosition(
+      columnPath: Seq[String], schema: StructType, extraErrMsg: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0008",
+      messageParameters = Array(
+        UnresolvedAttribute(columnPath).name, schema.treeString, extraErrMsg))
   }
 }
 
