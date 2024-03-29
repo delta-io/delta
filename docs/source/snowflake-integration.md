@@ -8,13 +8,15 @@ description: Learn how to set up an integration to enable you to read Delta tabl
 
 Visit the [Snowflake Delta Lake support](https://docs.snowflake.com/en/user-guide/tables-external-intro.html#delta-lake-support) documentation to use the connector.
 
-### What to do if Snowflake performance is slow when reading Delta tables?
+.. important::
 
-Some users in the community have reported that <Snowflake>, unlike [Trino](https://trino.io/docs/current/connector/delta-lake.html) or [Spark](delta-batch.md), is not using [Delta statistics](optimizations-oss.md#data-skipping) to do data skipping when reading Delta tables. Due to this bug, <Snowflake> may read a lot of unnecessary parquet files resulting in poor query performance and increased API call requests from cloud providers.
+  ### What to do if Snowflake performance is slow when reading Delta tables?
 
-If you are a <Snowflake> customer and have subscribed to their enterprise support, please [open a support case](https://community.snowflake.com/s/article/How-To-Submit-a-Support-Case-in-Snowflake-Lodge).
+  Some users in the community have reported that <Snowflake>, unlike [Trino](https://trino.io/docs/current/connector/delta-lake.html) or [Spark](delta-batch.md), is not using [Delta statistics](optimizations-oss.md#data-skipping) to do data skipping when reading Delta tables. Due to this bug, <Snowflake> may read a lot of unnecessary parquet files resulting in poor query performance and increased API call requests from cloud providers.
 
-As a workaround, you can enable [Delta UniForm](delta-uniform.md) to generate Iceberg metadata and read these tables as Iceberg tables from <Snowflake>.
+  If you are a <Snowflake> customer and have subscribed to their enterprise support, please [open a support case](https://community.snowflake.com/s/article/How-To-Submit-a-Support-Case-in-Snowflake-Lodge).
+
+  As a workaround, you can enable [Delta UniForm](delta-uniform.md) to generate Iceberg metadata and read these tables as Iceberg tables from <Snowflake>.
 
 ## Integration using manifest files (obsolete)
 
