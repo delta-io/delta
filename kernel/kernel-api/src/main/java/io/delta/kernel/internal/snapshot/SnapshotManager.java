@@ -181,6 +181,13 @@ public class SnapshotManager {
             .listFrom(FileNames.listingPrefix(logPath, startVersion));
     }
 
+    private CloseableIterator<FileStatus> listFromSidecarDirectory(
+            TableClient tableClient) throws IOException {
+        return tableClient
+            .getFileSystemClient()
+            .listFrom(FileNames.sidecarPrefix(logPath));
+    }
+
     /**
      * Returns true if the given file name is delta log files. Delta log files can be delta commit
      * file (e.g., 000000000.json), or checkpoint file.
@@ -215,6 +222,23 @@ public class SnapshotManager {
             return Optional.empty();
         } catch (IOException io) {
             throw new RuntimeException("Failed to list the files in delta log", io);
+        }
+    }
+
+    private List<FileStatus> listSidecars(TableClient tableClient) {
+        try {
+            CloseableIterator<FileStatus> results = listFromSidecarDirectory(tableClient);
+            if (results.hasNext()) {
+                List<FileStatus> output = new ArrayList<>();
+                results.forEachRemaining(output::add);
+                return output;
+            } else {
+                return Collections.emptyList();
+            }
+        } catch (FileNotFoundException e) {
+            return Collections.emptyList();
+        } catch (IOException io) {
+            throw new RuntimeException("Failed to list files in sidecar directory", io);
         }
     }
 
@@ -567,7 +591,7 @@ public class SnapshotManager {
 
         final List<FileStatus> newCheckpointFiles = newCheckpointOpt.map(newCheckpoint -> {
             final Set<Path> newCheckpointPaths =
-                new HashSet<>(newCheckpoint.getCorrespondingFiles(tableClient, logPath));
+                new HashSet<>(newCheckpoint.getCorrespondingFiles(logPath));
             final List<FileStatus> newCheckpointFileList = checkpoints
                 .stream()
                 .filter(f -> newCheckpointPaths.contains(new Path(f.getPath())))
@@ -586,6 +610,19 @@ public class SnapshotManager {
                 );
                 throw new IllegalStateException(msg);
             }
+
+            // This only applies for single-part (v1 or v2) checkpoints, so we only have to pass the
+            // top-level checkpoint instance path.
+            if (newCheckpoint.format.usesSidecars()) {
+                final Set<Path> referencedSidecars = new HashSet<>(
+                        newCheckpoint.getReferencedSidecars(tableClient, logPath));
+                final List<FileStatus> sidecarFiles = listSidecars(tableClient)
+                        .stream()
+                        .filter(f -> referencedSidecars.contains(new Path(f.getPath())))
+                        .collect(Collectors.toList());
+                newCheckpointFileList.addAll(sidecarFiles);
+            }
+
             return newCheckpointFileList;
         }).orElse(Collections.emptyList());
 

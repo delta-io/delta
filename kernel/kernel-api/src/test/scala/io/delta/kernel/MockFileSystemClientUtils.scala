@@ -15,16 +15,20 @@
  */
 package io.delta.kernel
 
-import java.io.ByteArrayInputStream
-import java.util.UUID
+import java.io.{ByteArrayInputStream, IOException}
+import java.util.{Optional, UUID}
 
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.client.{ExpressionHandler, FileReadRequest, FileSystemClient, JsonHandler, ParquetHandler, TableClient}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch}
+import io.delta.kernel.expressions.{Column, Predicate}
+import io.delta.kernel.internal.checkpoints.SidecarFile
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.FileNames
-import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+import io.delta.kernel.internal.util.{FileNames, Utils}
+import io.delta.kernel.types.StructType
+import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 
 trait MockFileSystemClientUtils {
 
@@ -133,6 +137,25 @@ trait MockFileSystemClientUtils {
     }
   }
 
+  def createMockTableClient(
+      listFromPath: String => Seq[FileStatus],
+      parquetHandler: ParquetHandler): TableClient = {
+    new TableClient {
+      override def getExpressionHandler: ExpressionHandler = {
+        throw new UnsupportedOperationException("not supported for SnapshotManagerSuite tests")
+      }
+
+      override def getJsonHandler: JsonHandler = {
+        throw new UnsupportedOperationException("not supported for SnapshotManagerSuite tests")
+      }
+
+      override def getFileSystemClient: FileSystemClient =
+        createMockFileSystemClient(listFromPath)
+
+      override def getParquetHandler: ParquetHandler = parquetHandler
+    }
+  }
+
   private def createMockFileSystemClient(
     listFromPath: String => Seq[FileStatus]): FileSystemClient = {
 
@@ -151,6 +174,44 @@ trait MockFileSystemClientUtils {
       ): CloseableIterator[ByteArrayInputStream] = {
         throw new UnsupportedOperationException("not supported for SnapshotManagerSuite tests")
       }
+    }
+  }
+
+  class TestSidecarParquetHandler(sidecars: Seq[FileStatus]) extends ParquetHandler {
+    import io.delta.kernel.internal.checkpoints.CheckpointerSuite._
+
+    override def writeParquetFiles(
+      directoryPath: String,
+      dataIter: CloseableIterator[FilteredColumnarBatch],
+      maxFileSize: Long,
+      statsColumns: java.util.List[Column]): CloseableIterator[DataFileStatus] = {
+      throw new UnsupportedOperationException("not supported for in this test suite")
+    }
+
+    override def readParquetFiles(
+      fileIter: CloseableIterator[FileStatus],
+      physicalSchema: StructType,
+      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+      val file = fileIter.next()
+      val path = new Path(file.getPath)
+
+      Utils.singletonCloseableIterator(
+        path.getParent match {
+          case logPath => new ColumnarBatch {
+            override def getSchema: StructType = SidecarFile.READ_SCHEMA
+
+            override def getColumnVector(ordinal: Int): ColumnVector = {
+              ordinal match {
+                case 0 => stringVector(sidecars.map(_.getPath): _*) // path
+                case 1 => longVector(sidecars.map(_.getSize): _*) // size
+                case 2 => longVector(sidecars.map(_.getModificationTime): _*); // modification time
+              }
+            }
+
+            override def getSize: Int = 2
+          }
+          case _ => throw new IOException("Unknown table")
+        })
     }
   }
 }

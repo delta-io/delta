@@ -76,6 +76,10 @@ public final class FileNames {
         return String.format("%s/%020d.", path, version);
     }
 
+    public static String sidecarPrefix(Path path) {
+        return String.format("%s/_sidecars/", path);
+    }
+
     /**
      * Returns the path for a singular checkpoint up to the given version.
      * <p>
@@ -102,7 +106,7 @@ public final class FileNames {
      * Returns the path for a V2 sidecar file with a given UUID.
      */
     public static Path v2CheckpointSidecarFile(Path path, String uuid) {
-        return new Path(path, String.format("/_sidecars/%s.parquet", uuid));
+        return new Path(String.format("%s/_sidecars/%s.parquet", path.toString(), uuid));
     }
 
     /**

@@ -123,9 +123,9 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       logSegment.deltas.asScala.map(f => (f.getPath, f.getSize, f.getModificationTime)))
 
     val expectedCheckpointStatuses = expectedCheckpoints
-      .map(f => (f.getPath, f.getSize, f.getModificationTime))
+      .map(f => (f.getPath, f.getSize, f.getModificationTime)).sortBy(_._1)
     val actualCheckpointStatuses = logSegment.checkpoints.asScala
-      .map(f => (f.getPath, f.getSize, f.getModificationTime))
+      .map(f => (f.getPath, f.getSize, f.getModificationTime)).sortBy(_._1)
     assert(expectedCheckpointStatuses sameElements actualCheckpointStatuses,
       s"expected:\n$expectedCheckpointStatuses\nactual:\n$actualCheckpointStatuses")
 
@@ -277,11 +277,19 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val checkpointFiles = checkpoints.flatMap {
       case (checkpointManifest, sidecars) => Seq(checkpointManifest) ++ sidecars
     }
-    snapshotManager.getLogSegmentForVersion(
-      createMockTableClient(listFromFileList(deltas ++ checkpointFiles)),
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      createMockTableClient(listFromFileList(deltas ++ checkpointFiles),
+        new TestSidecarParquetHandler(checkpoints(1)._2)),
       Optional.empty(),
       Optional.of(6)
-    )
+    ).get()
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 6,
+      expectedDeltas = deltaFileStatuses(Seq(6L)),
+      expectedCheckpoints = checkpoints(1)._2 :+ checkpoints(1)._1,
+      expectedCheckpointVersion = Some(5),
+      expectedLastCommitTimestamp = 60)
   }
 
   test("chirag") {

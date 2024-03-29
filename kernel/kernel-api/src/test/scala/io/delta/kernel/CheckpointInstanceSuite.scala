@@ -97,11 +97,11 @@ class CheckpointInstanceSuite extends AnyFunSuite with MockFileSystemClientUtils
     // classic checkpoint
     val classicCheckpoint0 = new CheckpointInstance(0)
     val testTableClient = mockTableClient(new TestJsonHandler(0))
-    assert(classicCheckpoint0.getCorrespondingFiles(testTableClient, FAKE_DELTA_LOG_PATH).equals(
+    assert(classicCheckpoint0.getCorrespondingFiles(FAKE_DELTA_LOG_PATH).equals(
       Seq(new Path(FAKE_DELTA_LOG_PATH, "00000000000000000000.checkpoint.parquet")).asJava
     ))
     val classicCheckpoint10 = new CheckpointInstance(10)
-    assert(classicCheckpoint10.getCorrespondingFiles(testTableClient, FAKE_DELTA_LOG_PATH).equals(
+    assert(classicCheckpoint10.getCorrespondingFiles(FAKE_DELTA_LOG_PATH).equals(
       Seq(new Path(FAKE_DELTA_LOG_PATH, "00000000000000000010.checkpoint.parquet")).asJava
     ))
 
@@ -112,7 +112,7 @@ class CheckpointInstanceSuite extends AnyFunSuite with MockFileSystemClientUtils
       "00000000000000000010.checkpoint.0000000002.0000000003.parquet",
       "00000000000000000010.checkpoint.0000000003.0000000003.parquet"
     ).map(new Path(FAKE_DELTA_LOG_PATH, _))
-    assert(multipartCheckpoint.getCorrespondingFiles(testTableClient, FAKE_DELTA_LOG_PATH).equals(
+    assert(multipartCheckpoint.getCorrespondingFiles(FAKE_DELTA_LOG_PATH).equals(
       expectedResult.asJava))
   }
 }

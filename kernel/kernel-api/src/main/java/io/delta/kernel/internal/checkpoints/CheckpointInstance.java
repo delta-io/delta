@@ -19,6 +19,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.internal.fs.Path;
@@ -90,24 +91,28 @@ public class CheckpointInstance
         return version <= other.version;
     }
 
-    public List<Path> getCorrespondingFiles(TableClient tableClient, Path logPath) {
+    public List<Path> getReferencedSidecars(TableClient tableClient, Path logPath) {
+        return new Checkpointer(logPath).loadSidecarFiles(tableClient, filePath.get())
+                .orElse(Collections.emptyList())
+                .stream()
+                .map(sidecar -> new Path(sidecar.path))
+                .collect(Collectors.toList());
+    }
+
+    public List<Path> getCorrespondingFiles(Path logPath) {
         if (this == CheckpointInstance.MAX_VALUE) {
             throw new IllegalStateException("Can't get files for CheckpointVersion.MaxValue.");
         }
 
-        // Single or V2 checkpoint (not multi-part).
-        if (format.usesSidecars()) {
-            new Checkpointer(logPath).loadSidecarFiles(tableClient, filePath.get());
-
-            return Collections.singletonList(
-                    FileNames.checkpointFileSingular(logPath, version));
-        } else {
-            return numParts
-                    .map(parts -> FileNames.checkpointFileWithParts(logPath, version, parts))
-                    .orElseGet(() ->
-                            Collections.singletonList(
-                                    FileNames.checkpointFileSingular(logPath, version)));
+        if (format instanceof V2Format) {
+            return Collections.singletonList(filePath.get());
         }
+
+        return numParts
+                .map(parts -> FileNames.checkpointFileWithParts(logPath, version, parts))
+                .orElseGet(() ->
+                        Collections.singletonList(
+                                FileNames.checkpointFileSingular(logPath, version)));
     }
 
     /**
