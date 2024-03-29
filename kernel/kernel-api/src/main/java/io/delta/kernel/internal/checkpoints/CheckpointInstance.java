@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+import io.delta.kernel.client.TableClient;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 
@@ -36,19 +37,32 @@ public class CheckpointInstance
     public final long version;
     public final Optional<Integer> numParts;
 
+    public final CheckpointFormat format;
+
+    public final Optional<Path> filePath;
+
     public CheckpointInstance(String path) {
         String[] pathParts = getPathName(path).split("\\.");
+        this.filePath = Optional.of(new Path(path));
 
         if (pathParts.length == 3 && pathParts[1].equals("checkpoint") &&
                 pathParts[2].equals("parquet")) {
             // Classic checkpoint 00000000000000000010.checkpoint.parquet
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.empty();
+            this.format = new SingleFormat();
         } else if (pathParts.length == 5 && pathParts[1].equals("checkpoint")
                 && pathParts[4].equals("parquet")) {
             // Multi-part checkpoint 00000000000000000010.checkpoint.0000000001.0000000003.parquet
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.of(Integer.parseInt(pathParts[3]));
+            this.format = new MultipartFormat();
+        } else if (pathParts.length == 4 && pathParts[1].equals("checkpoint")
+                && (pathParts[3].equals("parquet") || pathParts[3].equals("json"))) {
+            // V2 checkpoint 00000000000000000010.checkpoint.UUID.(parquet|json)
+            this.version = Long.parseLong(pathParts[0]);
+            this.numParts = Optional.empty();
+            this.format = new V2Format();
         } else {
             throw new RuntimeException("Unrecognized checkpoint path format: " + getPathName(path));
         }
@@ -61,6 +75,12 @@ public class CheckpointInstance
     public CheckpointInstance(long version, Optional<Integer> numParts) {
         this.version = version;
         this.numParts = numParts;
+        this.filePath = Optional.empty();
+        if (numParts.orElse(0) == 0) {
+            this.format = new SingleFormat();
+        } else {
+            this.format = new MultipartFormat();
+        }
     }
 
     boolean isNotLaterThan(CheckpointInstance other) {
@@ -70,14 +90,24 @@ public class CheckpointInstance
         return version <= other.version;
     }
 
-    public List<Path> getCorrespondingFiles(Path path) {
+    public List<Path> getCorrespondingFiles(TableClient tableClient, Path logPath) {
         if (this == CheckpointInstance.MAX_VALUE) {
             throw new IllegalStateException("Can't get files for CheckpointVersion.MaxValue.");
         }
-        return numParts
-            .map(parts -> FileNames.checkpointFileWithParts(path, version, parts))
-            .orElseGet(() ->
-                Collections.singletonList(FileNames.checkpointFileSingular(path, version)));
+
+        // Single or V2 checkpoint (not multi-part).
+        if (format.usesSidecars()) {
+            new Checkpointer(logPath).loadSidecarFiles(tableClient, filePath.get());
+
+            return Collections.singletonList(
+                    FileNames.checkpointFileSingular(logPath, version));
+        } else {
+            return numParts
+                    .map(parts -> FileNames.checkpointFileWithParts(logPath, version, parts))
+                    .orElseGet(() ->
+                            Collections.singletonList(
+                                    FileNames.checkpointFileSingular(logPath, version)));
+        }
     }
 
     /**
@@ -99,7 +129,8 @@ public class CheckpointInstance
 
     @Override
     public String toString() {
-        return "CheckpointInstance{version=" + version + ", numParts=" + numParts + "}";
+        return "CheckpointInstance{version=" + version + ", numParts=" + numParts + ", format" +
+                format.name + "}";
     }
 
     @Override
@@ -112,12 +143,13 @@ public class CheckpointInstance
         }
         CheckpointInstance checkpointInstance = (CheckpointInstance) o;
         return version == checkpointInstance.version &&
-                Objects.equals(numParts, checkpointInstance.numParts);
+                Objects.equals(numParts, checkpointInstance.numParts) &&
+                format.name.equals(checkpointInstance.format.name);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(version, numParts);
+        return Objects.hash(version, numParts, format.name);
     }
 
     private String getPathName(String path) {

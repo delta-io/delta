@@ -16,18 +16,19 @@
 package io.delta.kernel.internal.checkpoints
 
 import io.delta.kernel.client._
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
-import io.delta.kernel.expressions.Predicate
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch}
+import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.types.{DataType, LongType, StructType}
-import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+import io.delta.kernel.types.{DataType, LongType, StringType, StructType}
+import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 import org.scalatest.funsuite.AnyFunSuite
-
 import java.io.{FileNotFoundException, IOException}
 import java.util.Optional
 
-class CheckpointerSuite extends AnyFunSuite {
+import io.delta.kernel.MockFileSystemClientUtils
+
+class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   import CheckpointerSuite._
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -81,6 +82,19 @@ class CheckpointerSuite extends AnyFunSuite {
     assert(jsonHandler.currentFailCount == 0)
   }
 
+  test("test loading sidecar files from checkpoint manifest") {
+    val jsonHandler = new TestJsonHandler(maxFailures = 0)
+    val parquetHandler = new TestParquetHandler()
+    Seq("json", "parquet").foreach { format =>
+      val sidecars = new Checkpointer(CHECKPOINT_MANIFEST_FILE_TABLE)
+        .loadSidecarFiles(mockTableClient(jsonHandler, parquetHandler),
+          new Path(CHECKPOINT_MANIFEST_FILE_TABLE, s"001.checkpoint.abc-def.$format"))
+      assert(sidecars.isPresent && sidecars.get().size() == 2)
+      assert(sidecars.get().get(0).equals(new SidecarFile("abc", 44L, 20L)))
+      assert(sidecars.get().get(1).equals(new SidecarFile("def", 45L, 30L)))
+    }
+  }
+
   /** Assert that the checkpoint metadata is same as [[SAMPLE_LAST_CHECKPOINT_FILE_CONTENT]] */
   def assertValidCheckpointMetadata(actual: Optional[CheckpointMetaData]): Unit = {
     assert(actual.isPresent)
@@ -106,6 +120,20 @@ object CheckpointerSuite {
     override def getSize: Int = 1
   }
 
+  val SAMPLE_SIDECAR_FILE_CONTENT: ColumnarBatch = new ColumnarBatch {
+    override def getSchema: StructType = SidecarFile.READ_SCHEMA
+
+    override def getColumnVector(ordinal: Int): ColumnVector = {
+      ordinal match {
+        case 0 => stringVector("abc", "def") // path
+        case 1 => longVector(44, 45) // size
+        case 2 => longVector(20, 30); // modification time
+      }
+    }
+
+    override def getSize: Int = 2
+  }
+
   val ZERO_ENTRIES_COLUMNAR_BATCH: ColumnarBatch = new ColumnarBatch {
     override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
 
@@ -115,6 +143,7 @@ object CheckpointerSuite {
     override def getSize: Int = 0
   }
 
+  val CHECKPOINT_MANIFEST_FILE_TABLE = new Path("/ckpt-manifest-test")
   val VALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/valid")
   val ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE = new Path("/zero_sized")
   val INVALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/invalid")
@@ -123,7 +152,7 @@ object CheckpointerSuite {
   def longVector(values: Long*): ColumnVector = new ColumnVector {
     override def getDataType: DataType = LongType.LONG
 
-    override def getSize: Int = 1
+    override def getSize: Int = values.size
 
     override def close(): Unit = {}
 
@@ -132,19 +161,16 @@ object CheckpointerSuite {
     override def getLong(rowId: Int): Long = values(rowId)
   }
 
-  def mockTableClient(jsonHandler: JsonHandler): TableClient = {
-    new TableClient() {
-      override def getExpressionHandler: ExpressionHandler =
-        throw new UnsupportedOperationException("not supported for in this test suite")
+  def stringVector(values: String*): ColumnVector = new ColumnVector {
+    override def getDataType: DataType = StringType.STRING
 
-      override def getJsonHandler: JsonHandler = jsonHandler
+    override def getSize: Int = values.size
 
-      override def getFileSystemClient: FileSystemClient =
-        throw new UnsupportedOperationException("not supported for in this test suite")
+    override def close(): Unit = {}
 
-      override def getParquetHandler: ParquetHandler =
-        throw new UnsupportedOperationException("not supported for in this test suite")
-    }
+    override def isNullAt(rowId: Int): Boolean = false
+
+    override def getString(rowId: Int): String = values(rowId)
   }
 }
 
@@ -176,6 +202,39 @@ class TestJsonHandler(maxFailures: Int) extends JsonHandler {
 
     Utils.singletonCloseableIterator(
       path.getParent match {
+        case CHECKPOINT_MANIFEST_FILE_TABLE => SAMPLE_SIDECAR_FILE_CONTENT
+        case VALID_LAST_CHECKPOINT_FILE_TABLE => SAMPLE_LAST_CHECKPOINT_FILE_CONTENT
+        case ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE => ZERO_ENTRIES_COLUMNAR_BATCH
+        case INVALID_LAST_CHECKPOINT_FILE_TABLE =>
+          throw new IOException("Invalid last checkpoint file")
+        case LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE =>
+          throw new FileNotFoundException("File not found")
+        case _ => throw new IOException("Unknown table")
+      })
+  }
+}
+
+class TestParquetHandler extends ParquetHandler {
+  import CheckpointerSuite._
+
+  override def writeParquetFiles(
+      directoryPath: String,
+      dataIter: CloseableIterator[FilteredColumnarBatch],
+      maxFileSize: Long,
+      statsColumns: java.util.List[Column]): CloseableIterator[DataFileStatus] = {
+    throw new UnsupportedOperationException("not supported for in this test suite")
+  }
+
+  override def readParquetFiles(
+    fileIter: CloseableIterator[FileStatus],
+    physicalSchema: StructType,
+    predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+    val file = fileIter.next()
+    val path = new Path(file.getPath)
+
+    Utils.singletonCloseableIterator(
+      path.getParent match {
+        case CHECKPOINT_MANIFEST_FILE_TABLE => SAMPLE_SIDECAR_FILE_CONTENT
         case VALID_LAST_CHECKPOINT_FILE_TABLE => SAMPLE_LAST_CHECKPOINT_FILE_CONTENT
         case ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE => ZERO_ENTRIES_COLUMNAR_BATCH
         case INVALID_LAST_CHECKPOINT_FILE_TABLE =>

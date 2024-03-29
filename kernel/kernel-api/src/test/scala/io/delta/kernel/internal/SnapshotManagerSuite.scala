@@ -268,6 +268,29 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     assert(e.getMessage.contains(expectedErrorMessageContains))
   }
 
+  def testWithV2Checkpoint(
+      deltaVersions: Seq[Long],
+      checkpointVersionsAndNumSidecars: Seq[(Long, Int)],
+      manifestFileFormat: String): Unit = {
+    val deltas = deltaFileStatuses(deltaVersions)
+    val checkpoints = v2CheckpointFileStatuses(checkpointVersionsAndNumSidecars, manifestFileFormat)
+    val checkpointFiles = checkpoints.flatMap {
+      case (checkpointManifest, sidecars) => Seq(checkpointManifest) ++ sidecars
+    }
+    snapshotManager.getLogSegmentForVersion(
+      createMockTableClient(listFromFileList(deltas ++ checkpointFiles)),
+      Optional.empty(),
+      Optional.of(6)
+    )
+  }
+
+  test("chirag") {
+    testWithV2Checkpoint(
+      (0L until 10L),
+      Seq((0L, 1), (5L, 2)),
+      manifestFileFormat = "parquet")
+  }
+
   /* ------------------- VALID DELTA LOG FILE LISTINGS ----------------------- */
 
   test("getLogSegmentForVersion: 000.json only") {
@@ -393,7 +416,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("getLogSegmentForVersion: no delta files in the delta log") {
     // listDeltaAndCheckpointFiles = Optional.of(EmptyList)
-    val files = Seq("foo", "notdelta.parquet", "foo.json", "001.checkpoint.00foo0.parquet")
+    val files = Seq("foo", "notdelta.parquet", "foo.json", "001.checkpoint.00f.oo0.parquet")
       .map(FileStatus.of(_, 10, 10))
     testExpectedError[RuntimeException](
       files,

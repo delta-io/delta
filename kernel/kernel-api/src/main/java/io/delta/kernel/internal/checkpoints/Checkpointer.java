@@ -92,6 +92,55 @@ public class Checkpointer {
         return loadMetadataFromFile(tableClient, 0 /* tries */);
     }
 
+    public Optional<List<SidecarFile>> loadSidecarFiles(TableClient tableClient, Path checkpointPath) {
+        FileStatus checkpointFile = FileStatus.of(
+                checkpointPath.toString(), 0 /* size */, 0 /* modTime */);
+
+        // V2 JSON checkpoint.
+        if (checkpointPath.toString().endsWith(".json")) {
+            try {
+                CloseableIterator<ColumnarBatch> jsonIter =
+                        tableClient.getJsonHandler().readJsonFiles(
+                                singletonCloseableIterator(checkpointFile),
+                                SidecarFile.READ_SCHEMA,
+                                Optional.empty());
+                List<SidecarFile> files = new ArrayList<SidecarFile>();
+                while (jsonIter.hasNext()) {
+                    CloseableIterator<SidecarFile> sidecars =
+                            jsonIter.next().getRows().map(SidecarFile::fromRow);
+                    while (sidecars.hasNext()) {
+                        files.add(sidecars.next());
+                    }
+                }
+                return Optional.of(files);
+            } catch (Exception e) {
+                logger.warn("Failed to load checkpoint metadata from file {}", checkpointPath, e);
+                return Optional.empty();
+            }
+        } else if (checkpointPath.toString().endsWith(".parquet")) {
+            try {
+                CloseableIterator<ColumnarBatch> jsonIter =
+                        tableClient.getParquetHandler().readParquetFiles(
+                                singletonCloseableIterator(checkpointFile),
+                                SidecarFile.READ_SCHEMA,
+                                Optional.empty());
+                List<SidecarFile> files = new ArrayList<SidecarFile>();
+                while (jsonIter.hasNext()) {
+                    CloseableIterator<SidecarFile> sidecars =
+                            jsonIter.next().getRows().map(SidecarFile::fromRow);
+                    while (sidecars.hasNext()) {
+                        files.add(sidecars.next());
+                    }
+                }
+                return Optional.of(files);
+            } catch (Exception e) {
+                logger.warn("Failed to load checkpoint metadata from file {}", checkpointPath, e);
+                return Optional.empty();
+            }
+        }
+        return Optional.empty();
+    }
+
     /**
      * Loads the checkpoint metadata from the _last_checkpoint file.
      * <p>

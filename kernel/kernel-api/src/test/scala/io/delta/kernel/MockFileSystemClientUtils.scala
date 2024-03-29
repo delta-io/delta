@@ -16,6 +16,7 @@
 package io.delta.kernel
 
 import java.io.ByteArrayInputStream
+import java.util.UUID
 
 import scala.collection.JavaConverters._
 
@@ -29,6 +30,35 @@ trait MockFileSystemClientUtils {
 
   val dataPath = new Path("/fake/path/to/table/")
   val logPath = new Path(dataPath, "_delta_log")
+
+  def mockTableClient(jsonHandler: JsonHandler): TableClient = {
+    new TableClient() {
+      override def getExpressionHandler: ExpressionHandler =
+        throw new UnsupportedOperationException("not supported for in this test suite")
+
+      override def getJsonHandler: JsonHandler = jsonHandler
+
+      override def getFileSystemClient: FileSystemClient =
+        throw new UnsupportedOperationException("not supported for in this test suite")
+
+      override def getParquetHandler: ParquetHandler =
+        throw new UnsupportedOperationException("not supported for in this test suite")
+    }
+  }
+
+  def mockTableClient(jsonHandler: JsonHandler, parquetHandler: ParquetHandler): TableClient = {
+    new TableClient() {
+      override def getExpressionHandler: ExpressionHandler =
+        throw new UnsupportedOperationException("not supported for in this test suite")
+
+      override def getJsonHandler: JsonHandler = jsonHandler
+
+      override def getFileSystemClient: FileSystemClient =
+        throw new UnsupportedOperationException("not supported for in this test suite")
+
+      override def getParquetHandler: ParquetHandler = parquetHandler
+    }
+  }
 
   /** Delta file statuses where the timestamp = 10*version */
   def deltaFileStatuses(deltaVersions: Seq[Long]): Seq[FileStatus] = {
@@ -52,6 +82,25 @@ trait MockFileSystemClientUtils {
       FileNames.checkpointFileWithParts(logPath, v, numParts).asScala
         .map(p => FileStatus.of(p.toString, v, v*10))
     )
+  }
+
+  /** Checkpoint file status for V2 checkpoint manifest */
+  def v2CheckpointFileStatuses(
+      checkpointVersions: Seq[(Long, Int)],
+      fileType: String): Seq[(FileStatus, Seq[FileStatus])] = {
+    assert(checkpointVersions.size == checkpointVersions.toSet.size)
+    checkpointVersions.map { case(v, numSidecars) =>
+      val checkpointManifest = FileStatus.of(
+        FileNames.v2CheckpointManifestFile(
+          logPath, v, UUID.randomUUID().toString, fileType).toString,
+        v, v * 10)
+      val sidecars = (0 until numSidecars).map { _ =>
+        FileStatus.of(
+          FileNames.v2CheckpointSidecarFile(logPath, UUID.randomUUID().toString).toString,
+          v, v * 10)
+      }
+      (checkpointManifest, sidecars)
+    }
   }
 
   /**

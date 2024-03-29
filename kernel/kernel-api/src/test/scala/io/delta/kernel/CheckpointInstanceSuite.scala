@@ -19,11 +19,12 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.internal.checkpoints.CheckpointInstance
+import io.delta.kernel.client.TableClient
+import io.delta.kernel.internal.checkpoints.{CheckpointInstance, TestJsonHandler}
 import io.delta.kernel.internal.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
 
-class CheckpointInstanceSuite extends AnyFunSuite {
+class CheckpointInstanceSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   private val FAKE_DELTA_LOG_PATH = new Path("/path/to/delta/log")
 
@@ -58,6 +59,8 @@ class CheckpointInstanceSuite extends AnyFunSuite {
       new Path(FAKE_DELTA_LOG_PATH, "00000000000000000010.checkpoint.parquet").toString)
     assert(classicCheckpoint.version == 10)
     assert(!classicCheckpoint.numParts.isPresent())
+    assert(classicCheckpoint.format.name.equals("Single"))
+    assert(classicCheckpoint.format.usesSidecars())
 
     // multi-part checkpoint
     val multipartCheckpoint = new CheckpointInstance(
@@ -65,12 +68,23 @@ class CheckpointInstanceSuite extends AnyFunSuite {
         "00000000000000000010.checkpoint.0000000002.0000000003.parquet").toString)
     assert(multipartCheckpoint.version == 10)
     assert(multipartCheckpoint.numParts.isPresent() && multipartCheckpoint.numParts.get() == 3)
+    assert(multipartCheckpoint.format.name.equals("Multipart"))
+    assert(!multipartCheckpoint.format.usesSidecars())
+
+    // V2 checkpoint
+    val v2Checkpoint = new CheckpointInstance(
+      new Path(FAKE_DELTA_LOG_PATH,
+        "00000000000000000010.checkpoint.abcda-bacbac.parquet").toString)
+    assert(v2Checkpoint.version == 10)
+    assert(!v2Checkpoint.numParts.isPresent())
+    assert(v2Checkpoint.format.name.equals("V2"))
+    assert(v2Checkpoint.format.usesSidecars())
 
     // invalid checkpoints
     intercept[RuntimeException] {
       new CheckpointInstance(
         new Path(FAKE_DELTA_LOG_PATH,
-          "00000000000000000010.checkpoint.0000000002.parquet").toString)
+          "00000000000000000010.checkpoint.000000.a.parquet").toString)
     }
     intercept[RuntimeException] {
       new CheckpointInstance(
@@ -82,11 +96,12 @@ class CheckpointInstanceSuite extends AnyFunSuite {
   test("checkpoint instance getCorrespondingFiles") {
     // classic checkpoint
     val classicCheckpoint0 = new CheckpointInstance(0)
-    assert(classicCheckpoint0.getCorrespondingFiles(FAKE_DELTA_LOG_PATH).equals(
+    val testTableClient = mockTableClient(new TestJsonHandler(0))
+    assert(classicCheckpoint0.getCorrespondingFiles(testTableClient, FAKE_DELTA_LOG_PATH).equals(
       Seq(new Path(FAKE_DELTA_LOG_PATH, "00000000000000000000.checkpoint.parquet")).asJava
     ))
     val classicCheckpoint10 = new CheckpointInstance(10)
-    assert(classicCheckpoint10.getCorrespondingFiles(FAKE_DELTA_LOG_PATH).equals(
+    assert(classicCheckpoint10.getCorrespondingFiles(testTableClient, FAKE_DELTA_LOG_PATH).equals(
       Seq(new Path(FAKE_DELTA_LOG_PATH, "00000000000000000010.checkpoint.parquet")).asJava
     ))
 
@@ -97,7 +112,7 @@ class CheckpointInstanceSuite extends AnyFunSuite {
       "00000000000000000010.checkpoint.0000000002.0000000003.parquet",
       "00000000000000000010.checkpoint.0000000003.0000000003.parquet"
     ).map(new Path(FAKE_DELTA_LOG_PATH, _))
-    assert(multipartCheckpoint.getCorrespondingFiles(FAKE_DELTA_LOG_PATH).equals(
+    assert(multipartCheckpoint.getCorrespondingFiles(testTableClient, FAKE_DELTA_LOG_PATH).equals(
       expectedResult.asJava))
   }
 }

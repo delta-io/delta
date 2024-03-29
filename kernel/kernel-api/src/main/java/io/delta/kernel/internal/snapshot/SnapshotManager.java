@@ -567,7 +567,7 @@ public class SnapshotManager {
 
         final List<FileStatus> newCheckpointFiles = newCheckpointOpt.map(newCheckpoint -> {
             final Set<Path> newCheckpointPaths =
-                new HashSet<>(newCheckpoint.getCorrespondingFiles(logPath));
+                new HashSet<>(newCheckpoint.getCorrespondingFiles(tableClient, logPath));
             final List<FileStatus> newCheckpointFileList = checkpoints
                 .stream()
                 .filter(f -> newCheckpointPaths.contains(new Path(f.getPath())))

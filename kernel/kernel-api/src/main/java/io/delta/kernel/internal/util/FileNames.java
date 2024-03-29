@@ -30,7 +30,8 @@ public final class FileNames {
         Pattern.compile("\\d+\\.json");
 
     private static final Pattern CHECKPOINT_FILE_PATTERN =
-        Pattern.compile("\\d+\\.checkpoint(\\.\\d+\\.\\d+)?\\.parquet");
+        Pattern.compile(
+            "(\\d+)\\.checkpoint((\\.\\d+\\.\\d+)?\\.parquet|\\.[^.]+\\.(json|parquet))");
 
     /**
      * Returns the delta (json format) path for a given delta file.
@@ -82,6 +83,26 @@ public final class FileNames {
      */
     public static Path checkpointFileSingular(Path path, long version) {
         return new Path(path, String.format("%020d.checkpoint.parquet", version));
+    }
+
+    /**
+     * Returns the path for a V2 checkpoint manifest up to the given version with a given UUID and
+     * filetype (JSON or Parquet).
+     */
+    public static Path v2CheckpointManifestFile(
+            Path path,
+            long version,
+            String uuid,
+            String fileType) {
+        assert(fileType.equals("json") || fileType.equals("parquet"));
+        return new Path(path, String.format("%020d.checkpoint.%s.%s", version, uuid, fileType));
+    }
+
+    /**
+     * Returns the path for a V2 sidecar file with a given UUID.
+     */
+    public static Path v2CheckpointSidecarFile(Path path, String uuid) {
+        return new Path(path, String.format("/_sidecars/%s.parquet", uuid));
     }
 
     /**
