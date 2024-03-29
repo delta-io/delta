@@ -459,9 +459,9 @@ object StatisticsCollection extends DeltaCommand {
       dataType: DataType,
       columnPaths: ArrayBuffer[String]): Unit = dataType match {
     case s: StructType =>
-      s.foreach { field =>
-        validateDataSkippingType(name + "." + field.name, field.dataType, columnPaths)
-      }
+      // s.foreach { field =>
+      //   validateDataSkippingType(name + "." + field.name, field.dataType, columnPaths)
+      // }
     case SkippingEligibleDataType(_) => columnPaths.append(name)
     case _ =>
       throw new DeltaIllegalArgumentException(
@@ -482,6 +482,8 @@ object StatisticsCollection extends DeltaCommand {
     val visitedColumns = ArrayBuffer.empty[String]
     parseDeltaStatsColumnNames(deltaStatsColumnsConfigs).foreach { columns =>
       columns.foreach { columnAttribute =>
+        // // scalastyle:off println
+        // println(s"Looking for $columnAttribute")
         val columnFullPath = columnAttribute.nameParts
         // Delta statistics columns must not be partitioned column.
         if (partitionColumnSet.contains(columnAttribute.name.toLowerCase(Locale.ROOT))) {
@@ -495,6 +497,8 @@ object StatisticsCollection extends DeltaCommand {
         val (prefixPath, columnName) = columnFullPath.splitAt(columnFullPath.size - 1)
         transformSchema(schema, Some(columnName.head)) {
           case (`prefixPath`, struct @ StructType(_), _) =>
+            // println(prefixPath)
+            // println(struct)
             val columnField = struct(columnName.head)
             validateDataSkippingType(columnAttribute.name, columnField.dataType, visitedColumns)
             struct
