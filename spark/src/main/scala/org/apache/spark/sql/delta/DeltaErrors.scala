@@ -2826,6 +2826,15 @@ trait DeltaErrorsBase
       cause = cause)
   }
 
+  def hudiClassMissing(sparkConf: SparkConf, cause: Throwable): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_MISSING_HUDI_CLASS",
+      messageParameters = Array(
+        generateDocsLink(
+          sparkConf, "/delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
+      cause = cause)
+  }
+
   def streamingMetadataEvolutionException(
       newSchema: StructType,
       newConfigs: Map[String, String],
@@ -3036,6 +3045,26 @@ trait DeltaErrorsBase
         "Requires IcebergCompat to be explicitly enabled in order for Universal Format (Iceberg) " +
         "to be enabled on an existing table. To enable IcebergCompatV2, set the table property " +
         "'delta.enableIcebergCompatV2' = 'true'."
+      )
+    )
+  }
+
+  def uniFormHudiDeleteVectorCompat(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+      messageParameters = Array(
+        UniversalFormat.HUDI_FORMAT,
+        "Requires delete vectors to be disabled."
+      )
+    )
+  }
+
+  def uniFormHudiSchemaCompat(unsupportedType: DataType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+      messageParameters = Array(
+        UniversalFormat.HUDI_FORMAT,
+        s"DataType: $unsupportedType is not currently supported."
       )
     )
   }
