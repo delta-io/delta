@@ -31,6 +31,9 @@ import org.apache.spark.util.ThreadUtils.namedThreadFactory
 
 /** A wrapper for [[ThreadPoolExecutor]] whose tasks run with the caller's [[SparkSession]]. */
 private[delta] class DeltaThreadPool(tpe: ThreadPoolExecutor) {
+  def getActiveCount: Int = tpe.getActiveCount
+  def getMaximumPoolSize: Int = tpe.getMaximumPoolSize
+
   /** Submits a task for execution and returns a [[Future]] representing that task. */
   def submit[T](spark: SparkSession)(body: => T): Future[T] = {
     tpe.submit { () => spark.withActive(body) }

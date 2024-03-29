@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.tables.{DeltaTable => IODeltaTable}
+import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
@@ -247,6 +248,16 @@ trait DeltaTestUtilsBase {
       children
         .map(findIfResponsible[E](_))
         .collectFirst { case Some(culprit) => culprit }
+  }
+
+  def verifyBackfilled(file: FileStatus): Unit = {
+    val unbackfilled = file.getPath.getName.matches(FileNames.uuidDeltaFileRegex.toString)
+    assert(!unbackfilled, s"File $file was not backfilled")
+  }
+
+  def verifyUnbackfilled(file: FileStatus): Unit = {
+    val unbackfilled = file.getPath.getName.matches(FileNames.uuidDeltaFileRegex.toString)
+    assert(unbackfilled, s"File $file was backfilled")
   }
 }
 

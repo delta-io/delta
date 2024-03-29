@@ -506,6 +506,14 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(20)
 
+  val DELTA_LIST_FROM_COMMIT_STORE_THREAD_POOL_SIZE =
+    buildStaticConf("commitStore.getCommits.threadPoolSize")
+      .internal()
+      .doc("The size of the thread pool for listing files from the CommitStore.")
+      .intConf
+      .checkValue(_ > 0, "threadPoolSize must be positive")
+      .createWithDefault(5)
+
   val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
     buildConf("constraints.assumesDropIfExists.enabled")
       .doc("""If true, DROP CONSTRAINT quietly drops nonexistent constraints even without
