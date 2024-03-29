@@ -183,7 +183,9 @@ public class Checkpointer {
         return loadMetadataFromFile(tableClient, 0 /* tries */);
     }
 
-    public Optional<List<SidecarFile>> loadSidecarFiles(TableClient tableClient, Path checkpointPath) {
+    public Optional<List<SidecarFile>> loadSidecarFiles(
+            TableClient tableClient,
+            Path checkpointPath) {
         FileStatus checkpointFile = FileStatus.of(
                 checkpointPath.toString(), 0 /* size */, 0 /* modTime */);
 

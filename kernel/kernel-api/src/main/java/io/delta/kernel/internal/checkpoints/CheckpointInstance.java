@@ -116,10 +116,10 @@ public class CheckpointInstance
         }
 
         return numParts
-                .map(parts -> FileNames.checkpointFileWithParts(logPath, version, parts))
+                .map(parts -> FileNames.checkpointFileWithParts(path, version, parts))
                 .orElseGet(() ->
                         Collections.singletonList(
-                                FileNames.checkpointFileSingular(logPath, version)));
+                                FileNames.checkpointFileSingular(path, version)));
     }
 
     /**

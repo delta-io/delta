@@ -20,11 +20,11 @@ import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
-import io.delta.kernel.internal.util.{FileNames, Utils}
+import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, MockTableClientUtils}
-import io.delta.kernel.types.{DataType, LongType, StructType}
+import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-import io.delta.kernel.test.{BaseMockJsonHandler, BaseMockParquetHandler, MockFileSystemClientUtils, MockTableClientUtils}
+import io.delta.kernel.test.BaseMockParquetHandler
 import org.scalatest.funsuite.AnyFunSuite
 import java.io.{FileNotFoundException, IOException}
 import java.util.Optional

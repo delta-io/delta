@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal
 
-import java.io.IOException
 import java.util.{Arrays, Collections, Optional}
 
 import scala.collection.JavaConverters._
@@ -24,7 +23,6 @@ import scala.reflect.ClassTag
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.SidecarFile
-import io.delta.kernel.internal.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
 import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
 import io.delta.kernel.internal.util.{FileNames, Utils}
