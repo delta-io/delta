@@ -22,6 +22,7 @@ import java.util.UUID
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -226,6 +227,13 @@ abstract class CloneTableBase(
           // CLONE does not preserve Row IDs and Commit Versions
           copiedFile.copy(baseRowId = None, defaultRowCommitVersion = None)
         }
+      sourceTable.snapshot.foreach { sourceSnapshot =>
+        // Handle DomainMetadata for cloning a table.
+        if (deltaOperation.name == DeltaOperations.OP_CLONE) {
+          actions ++=
+            DomainMetadataUtils.handleDomainMetadataForCloneTable(sourceSnapshot.domainMetadata)
+        }
+      }
       val sourceName = sourceTable.name
       // Override source table metadata with user-defined table properties
       val context = Map[String, String]()
