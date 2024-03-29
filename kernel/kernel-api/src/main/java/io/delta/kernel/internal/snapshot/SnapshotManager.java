@@ -181,6 +181,9 @@ public class SnapshotManager {
             .listFrom(FileNames.listingPrefix(logPath, startVersion));
     }
 
+    /**
+     * Get an iterator of files in the _delta_log/_sidecars directory.
+     */
     private CloseableIterator<FileStatus> listFromSidecarDirectory(
             TableClient tableClient) throws IOException {
         return tableClient
@@ -225,6 +228,10 @@ public class SnapshotManager {
         }
     }
 
+    /**
+     * Returns an iterator of sidecar files found in the _delta_log/_sidecars directory. Returns
+     * None if the directory is missing (for example, for a v1 checkpoint).
+     */
     private List<FileStatus> listSidecars(TableClient tableClient) {
         try {
             CloseableIterator<FileStatus> results = listFromSidecarDirectory(tableClient);
@@ -623,11 +630,12 @@ public class SnapshotManager {
                 throw new IllegalStateException(msg);
             }
 
-            // This only applies for single-part (v1 or v2) checkpoints, so we only have to pass the
-            // top-level checkpoint instance path.
+            // Reading sidecars only applies for single-part (v1 or v2) checkpoints.
             if (newCheckpoint.format.usesSidecars()) {
+                // Safe to call .get() here, as we know the CheckpointInstance was initialized with
+                // a valid filepath.
                 final Set<Path> referencedSidecars = new HashSet<>(
-                        newCheckpoint.getReferencedSidecars(tableClient, logPath));
+                        newCheckpoint.getReferencedSidecars(tableClient, logPath).get());
                 final List<FileStatus> sidecarFiles = listSidecars(tableClient)
                         .stream()
                         .filter(f -> referencedSidecars.contains(new Path(f.getPath())))

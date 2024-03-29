@@ -91,19 +91,26 @@ public class CheckpointInstance
         return version <= other.version;
     }
 
-    public List<Path> getReferencedSidecars(TableClient tableClient, Path logPath) {
-        return new Checkpointer(logPath).loadSidecarFiles(tableClient, filePath.get())
-                .orElse(Collections.emptyList())
-                .stream()
-                .map(sidecar -> new Path(sidecar.path))
-                .collect(Collectors.toList());
-    }
-
     boolean isEarlierThan(CheckpointInstance other) {
         if (other == CheckpointInstance.MAX_VALUE) {
             return true;
         }
         return version < other.version;
+    }
+
+    /**
+     * Returns a list of sidecar files referenced by this checkpoint by reading the checkpoint file
+     * and extracting the SidecarFile actions if the filepath is defined in the current
+     * CheckpointInstance.
+     * This method is only valid for single-part or V2 checkpoints.
+     */
+    public Optional<List<Path>> getReferencedSidecars(TableClient tableClient, Path logPath) {
+        return filePath.map(path ->
+                new Checkpointer(logPath).loadSidecarFiles(tableClient, path)
+                .orElse(Collections.emptyList())
+                .stream()
+                .map(sidecar -> new Path(sidecar.path))
+                .collect(Collectors.toList()));
     }
 
     public List<Path> getCorrespondingFiles(Path path) {

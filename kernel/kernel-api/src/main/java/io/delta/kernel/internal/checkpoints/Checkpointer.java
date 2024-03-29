@@ -183,55 +183,47 @@ public class Checkpointer {
         return loadMetadataFromFile(tableClient, 0 /* tries */);
     }
 
+    /**
+     * Reads sidecar files from a checkpoint manifest at checkpointPath.
+     */
     public Optional<List<SidecarFile>> loadSidecarFiles(
             TableClient tableClient,
             Path checkpointPath) {
         FileStatus checkpointFile = FileStatus.of(
                 checkpointPath.toString(), 0 /* size */, 0 /* modTime */);
+        try {
+            CloseableIterator<ColumnarBatch> actionItr;
+            if (checkpointPath.toString().endsWith(".json")) {
+                // V2 JSON manifest.
+                actionItr = tableClient.getJsonHandler().readJsonFiles(
+                        singletonCloseableIterator(checkpointFile),
+                        SidecarFile.READ_SCHEMA,
+                        Optional.empty());
+            } else if (checkpointPath.toString().endsWith(".parquet")) {
+                // Either V2 Parquet manifest or V1 Parquet single checkpoint.
+                actionItr = tableClient.getParquetHandler().readParquetFiles(
+                        singletonCloseableIterator(checkpointFile),
+                        SidecarFile.READ_SCHEMA,
+                        Optional.empty());
+            } else {
+                // Unrecognized file format.
+                return Optional.empty();
+            }
 
-        // V2 JSON checkpoint.
-        if (checkpointPath.toString().endsWith(".json")) {
-            try {
-                CloseableIterator<ColumnarBatch> jsonIter =
-                        tableClient.getJsonHandler().readJsonFiles(
-                                singletonCloseableIterator(checkpointFile),
-                                SidecarFile.READ_SCHEMA,
-                                Optional.empty());
-                List<SidecarFile> files = new ArrayList<SidecarFile>();
-                while (jsonIter.hasNext()) {
-                    CloseableIterator<SidecarFile> sidecars =
-                            jsonIter.next().getRows().map(SidecarFile::fromRow);
-                    while (sidecars.hasNext()) {
-                        files.add(sidecars.next());
-                    }
+            // Read sidecar actions from file.
+            List<SidecarFile> files = new ArrayList<>();
+            while (actionItr.hasNext()) {
+                CloseableIterator<SidecarFile> sidecars =
+                        actionItr.next().getRows().map(SidecarFile::fromRow);
+                while (sidecars.hasNext()) {
+                    files.add(sidecars.next());
                 }
-                return Optional.of(files);
-            } catch (Exception e) {
-                logger.warn("Failed to load checkpoint metadata from file {}", checkpointPath, e);
-                return Optional.empty();
             }
-        } else if (checkpointPath.toString().endsWith(".parquet")) {
-            try {
-                CloseableIterator<ColumnarBatch> jsonIter =
-                        tableClient.getParquetHandler().readParquetFiles(
-                                singletonCloseableIterator(checkpointFile),
-                                SidecarFile.READ_SCHEMA,
-                                Optional.empty());
-                List<SidecarFile> files = new ArrayList<SidecarFile>();
-                while (jsonIter.hasNext()) {
-                    CloseableIterator<SidecarFile> sidecars =
-                            jsonIter.next().getRows().map(SidecarFile::fromRow);
-                    while (sidecars.hasNext()) {
-                        files.add(sidecars.next());
-                    }
-                }
-                return Optional.of(files);
-            } catch (Exception e) {
-                logger.warn("Failed to load checkpoint metadata from file {}", checkpointPath, e);
-                return Optional.empty();
-            }
+            return Optional.of(files);
+        } catch (Exception e) {
+            logger.warn("Failed to load checkpoint metadata from file {}", checkpointPath, e);
+            return Optional.empty();
         }
-        return Optional.empty();
     }
 
     /**
