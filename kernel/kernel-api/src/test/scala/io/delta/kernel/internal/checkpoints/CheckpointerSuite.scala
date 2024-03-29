@@ -17,8 +17,10 @@ package io.delta.kernel.internal.checkpoints
 
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.expressions.Predicate
+import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.Utils
+import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
+import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, MockTableClientUtils}
 import io.delta.kernel.types.{DataType, LongType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
@@ -83,6 +85,111 @@ class CheckpointerSuite extends AnyFunSuite
     assert(jsonHandler.currentFailCount == 0)
   }
 
+  //////////////////////////////////////////////////////////////////////////////////
+  // findLastCompleteCheckpointBefore tests
+  //////////////////////////////////////////////////////////////////////////////////
+  test("findLastCompleteCheckpointBefore - no checkpoints") {
+    val files = deltaFileStatuses(Seq.range(0, 25))
+
+    Seq((0, 0), (10, 10), (20, 20), (27, 25 /* no delta log files after version 24 */)).foreach {
+      case (beforeVersion, expNumFilesListed) =>
+        assertNoLastCheckpoint(files, beforeVersion, expNumFilesListed)
+    }
+  }
+
+  test("findLastCompleteCheckpointBefore - single checkpoint") {
+    // 25 delta files and 1 checkpoint file = total 26 files.
+    val files = deltaFileStatuses(Seq.range(0, 25)) ++ singularCheckpointFileStatuses(Seq(10))
+
+    Seq((0, 0), (4, 4), (9, 9), (10, 10)).foreach {
+      case (beforeVersion, expNumFilesListed) =>
+        assertNoLastCheckpoint(files, beforeVersion, expNumFilesListed)
+    }
+
+    Seq((14, 10, 15), (25, 10, 26), (27, 10, 26)).foreach {
+      case (beforeVersion, expCheckpointVersion, expNumFilesListed) =>
+        assertLastCheckpoint(files, beforeVersion, expCheckpointVersion, expNumFilesListed)
+    }
+  }
+
+  test("findLastCompleteCheckpointBefore - multi-part checkpoint") {
+    // 25 delta files and 20 checkpoint files = total 45 files.
+    val files = deltaFileStatuses(Seq.range(0, 25)) ++ multiCheckpointFileStatuses(Seq(10), 20)
+
+    Seq((0, 0), (4, 4), (9, 9), (10, 10)).foreach {
+      case (beforeVersion, expNumFilesListed) =>
+        assertNoLastCheckpoint(files, beforeVersion, expNumFilesListed)
+    }
+
+    Seq((14, 10, 14 + 20), (25, 10, 25 + 20), (27, 10, 25 + 20)).foreach {
+      case (beforeVersion, expCheckpointVersion, expNumFilesListed) =>
+        assertLastCheckpoint(files, beforeVersion, expCheckpointVersion, expNumFilesListed)
+    }
+  }
+
+  test("findLastCompleteCheckpointBefore - multi-part checkpoint per 10commits - 10K commits") {
+    // 10K delta files and 1K checkpoints * 20 files for each checkpoint = total 30K files.
+    val files = deltaFileStatuses(Seq.range(0, 10000)) ++
+      multiCheckpointFileStatuses(Seq.range(10, 10000, 10), 20)
+
+    Seq(0, 4, 9, 10).foreach { beforeVersion =>
+      val expNumFilesListed = beforeVersion
+      assertNoLastCheckpoint(files, beforeVersion, expNumFilesListed)
+    }
+
+    Seq(789, 1005, 5787, 9999).foreach { beforeVersion =>
+      val expCheckpointVersion = (beforeVersion / 10) * 10
+      // Listing size is 1000 delta versions (i.e list _delta_log/0001000* to _delta_log/0001999*)
+      val versionsListed = Math.min(beforeVersion, 1000)
+      val expNumFilesListed =
+          versionsListed /* delta files */ +
+          (versionsListed / 10) * 20 /* checkpoints */
+      assertLastCheckpoint(files, beforeVersion, expCheckpointVersion, expNumFilesListed)
+    }
+  }
+
+  test("findLastCompleteCheckpointBefore - multi-part checkpoint per 2.5K commits - 10K commits") {
+    // 10K delta files and 4 checkpoints * 50 files for each checkpoint = total 10,080 files.
+    val files = deltaFileStatuses(Seq.range(0, 10000)) ++
+      multiCheckpointFileStatuses(Seq.range(2500, 10000, 2500), 50)
+
+    Seq((0, 0), (889, 889), (1001, 1002), (2400, 2402)).foreach {
+      case (beforeVersion, expNumFilesListed) =>
+        assertNoLastCheckpoint(files, beforeVersion, expNumFilesListed)
+    }
+
+    Seq(2600, 5002, 7980, 9999).foreach { beforeVersion =>
+      val expCheckpointVersion = (beforeVersion / 2500) * 2500
+      // Listing size is 1000 delta versions (i.e list _delta_log/0001000* to _delta_log/0001999*)
+      // We list until the checkpoint is encounters in increments of 1000 versions at a time
+      val numListCalls = ((beforeVersion - expCheckpointVersion) / 1000) + 1
+      val versionsListed = 1000 * numListCalls
+      val expNumFilesListed =
+        numListCalls - 1 /* last file scanned that fails the search and stops */ +
+          versionsListed /* delta files */ +
+           50 /* one multi-part checkpoint */
+      assertLastCheckpoint(files, beforeVersion, expCheckpointVersion, expNumFilesListed)
+    }
+  }
+
+  test("findLastCompleteCheckpointBefore - two checkpoints (one is zero-sized - not valid)") {
+    // 25 delta files and 2 checkpoint file = total 27 files.
+    val files = deltaFileStatuses(Seq.range(0, 25)) ++
+      singularCheckpointFileStatuses(Seq(10)) ++
+      Seq(FileStatus.of(
+        checkpointFileSingular(logPath, 20).toString, 0, 0)) // zero-sized CP
+
+    Seq((0, 0), (4, 4), (9, 9), (10, 10)).foreach {
+      case (beforeVersion, expNumFilesListed) =>
+        assertNoLastCheckpoint(files, beforeVersion, expNumFilesListed)
+    }
+
+    Seq((14, 10, 15), (25, 10, 27), (27, 10, 27)).foreach {
+      case (beforeVersion, expCheckpointVersion, expNumFilesListed) =>
+        assertLastCheckpoint(files, beforeVersion, expCheckpointVersion, expNumFilesListed)
+    }
+  }
+
   /** Assert that the checkpoint metadata is same as [[SAMPLE_LAST_CHECKPOINT_FILE_CONTENT]] */
   def assertValidCheckpointMetadata(actual: Optional[CheckpointMetaData]): Unit = {
     assert(actual.isPresent)
@@ -90,6 +197,30 @@ class CheckpointerSuite extends AnyFunSuite
     assert(metadata.version == 40L)
     assert(metadata.size == 44L)
     assert(metadata.parts == Optional.of(20L))
+  }
+
+  def assertLastCheckpoint(
+      deltaLogFiles: Seq[FileStatus],
+      beforeVersion: Long,
+      expCheckpointVersion: Long,
+      expNumFilesListed: Long): Unit = {
+    val tableClient = createMockFSListFromTableClient(deltaLogFiles)
+    val result = findLastCompleteCheckpointBeforeHelper(tableClient, logPath, beforeVersion)
+    assert(result._1.isPresent, s"Checkpoint should be found for version=$beforeVersion")
+    assert(
+      result._1.get().version === expCheckpointVersion,
+      s"Incorrect checkpoint version before version=$beforeVersion")
+    assert(result._2 === expNumFilesListed, s"Invalid number of files listed: $beforeVersion")
+  }
+
+  def assertNoLastCheckpoint(
+      deltaLogFiles: Seq[FileStatus],
+      beforeVersion: Long,
+      expNumFilesListed: Long): Unit = {
+    val tableClient = createMockFSListFromTableClient(deltaLogFiles)
+    val result = findLastCompleteCheckpointBeforeHelper(tableClient, logPath, beforeVersion)
+    assert(!result._1.isPresent, s"No checkpoint should be found for version=$beforeVersion")
+    assert(result._2 == expNumFilesListed, s"Invalid number of files listed: $beforeVersion")
   }
 }
 

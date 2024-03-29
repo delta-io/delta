@@ -525,11 +525,10 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val fileList = deltaFileStatuses((0L until 10L)) ++ singularCheckpointFileStatuses(Seq(10L))
 
     /* ----------  version to load is 15 (greater than latest checkpoint/delta file) ---------- */
-    // (?) different error messages
     testExpectedError[RuntimeException](
       fileList,
       versionToLoad = Optional.of(15),
-      expectedErrorMessageContains = "Trying to load a non-existent version 15"
+      expectedErrorMessageContains = "Could not find any delta files for version 10"
     )
     testExpectedError[IllegalStateException](
       fileList,

@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.checkpoints;
 
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -29,7 +30,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.*;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 /**
@@ -74,6 +75,96 @@ public class Checkpointer {
         } else {
             return Optional.of(Collections.max(completeCheckpoints));
         }
+    }
+
+    /**
+     * Find the last complete checkpoint before (strictly less than) a given version.
+     */
+    public static Optional<CheckpointInstance> findLastCompleteCheckpointBefore(
+            TableClient tableClient,
+            Path tableLogPath,
+            long version) {
+        return findLastCompleteCheckpointBeforeHelper(tableClient, tableLogPath, version)._1;
+    }
+
+    /**
+     * Helper method for `findLastCompleteCheckpointBefore` which also return the number
+     * of files searched. This helps in testing
+     */
+    protected static Tuple2<Optional<CheckpointInstance>, Long>
+            findLastCompleteCheckpointBeforeHelper(
+                    TableClient tableClient,
+                    Path tableLogPath,
+                    long version) {
+        CheckpointInstance upperBoundCheckpoint = new CheckpointInstance(version);
+        logger.info("Try to find the last complete checkpoint before version {}", version);
+
+        // This is a just a tracker for testing purposes
+        long numberOfFilesSearched = 0;
+        long currentVersion = version;
+
+        // Some cloud storage APIs make a calls to fetch 1000 at a time.
+        // To make use of that observation and to avoid making more listing calls than
+        // necessary, list 1000 at a time (backwards from the given version). Search
+        // within that list if a checkpoint is found. If found stop, otherwise list the previous
+        // 1000 entries. Repeat until a checkpoint is found or there are no more delta commits.
+        while (currentVersion >= 0) {
+            try {
+                long searchLowerBound = Math.max(0, currentVersion - 1000);
+                CloseableIterator<FileStatus> deltaLogFileIter = tableClient.getFileSystemClient()
+                        .listFrom(FileNames.listingPrefix(tableLogPath, searchLowerBound));
+
+                List<CheckpointInstance> checkpoints = new ArrayList<>();
+                while (deltaLogFileIter.hasNext()) {
+                    FileStatus fileStatus = deltaLogFileIter.next();
+                    String fileName = new Path(fileStatus.getPath()).getName();
+
+                    long currentFileVersion;
+                    if (FileNames.isCommitFile(fileName)) {
+                        currentFileVersion = FileNames.deltaVersion(fileName);
+                    } else if (FileNames.isCheckpointFile(fileName)) {
+                        currentFileVersion = FileNames.checkpointVersion(fileName);
+                    } else {
+                        // allow all other types of files.
+                        currentFileVersion = currentVersion;
+                    }
+
+                    boolean shouldContinue =
+                            // only consider files with version in the range and
+                            // before the target version
+                            (currentVersion == 0 || currentFileVersion <= currentVersion) &&
+                            currentFileVersion < version;
+
+                    if (!shouldContinue) {
+                        break;
+                    }
+                    if (validCheckpointFile(fileStatus)) {
+                        checkpoints.add(new CheckpointInstance(fileStatus.getPath()));
+                    }
+                    numberOfFilesSearched++;
+                }
+
+                Optional<CheckpointInstance> latestCheckpoint =
+                        getLatestCompleteCheckpointFromList(checkpoints, upperBoundCheckpoint);
+
+                if (latestCheckpoint.isPresent()) {
+                    logger.info("Found the last complete checkpoint before version {} at {}",
+                            version, latestCheckpoint.get());
+                    return new Tuple2<>(latestCheckpoint, numberOfFilesSearched);
+                }
+                currentVersion -= 1000; // search for checkpoint in previous 1000 entries
+            } catch (IOException e) {
+                logger.warn("Failed to list checkpoint files for version {}. ", currentVersion, e);
+                return new Tuple2<>(Optional.empty(), numberOfFilesSearched);
+            }
+        }
+        logger.info("No complete checkpoint found before version {}", version);
+        return new Tuple2<>(Optional.empty(), numberOfFilesSearched);
+    }
+
+    private static boolean validCheckpointFile(FileStatus fileStatus) {
+        return FileNames.isCheckpointFile(new Path(fileStatus.getPath()).getName()) &&
+                fileStatus.getSize() > 0;
     }
 
     /**
