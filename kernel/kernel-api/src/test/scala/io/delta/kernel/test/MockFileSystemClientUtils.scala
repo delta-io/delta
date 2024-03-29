@@ -26,7 +26,7 @@ import scala.collection.JavaConverters._
 /**
  * This is an extension to [[BaseMockFileSystemClient]] containing specific mock implementations
  * [[FileSystemClient]] which are shared across multiple test suite.
- * 
+ *
  * [[MockListFromFileSystemClient]] - mocks the `listFrom` API within [[FileSystemClient]].
  */
 trait MockFileSystemClientUtils extends MockTableClientUtils {
