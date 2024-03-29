@@ -305,7 +305,7 @@ class DeltaTableBuilder private[tables](
   @Evolving
   def execute(): DeltaTable = withActiveSession(spark) {
     if (identifier == null && location.isEmpty) {
-      throw DeltaErrors.analysisException("Table name or location has to be specified")
+      throw DeltaErrors.createTableMissingTableNameOrLocation()
     }
 
     if (this.identifier == null) {
@@ -317,9 +317,7 @@ class DeltaTableBuilder private[tables](
 
     if (DeltaTableUtils.isValidPath(tableId) && location.nonEmpty
         && tableId.table != location.get) {
-      throw DeltaErrors.analysisException(
-        s"Creating path-based Delta table with a different location isn't supported. "
-          + s"Identifier: $identifier, Location: ${location.get}")
+      throw DeltaErrors.createTableIdentifierLocationMismatch(identifier, location.get)
     }
 
     val table = spark.sessionState.sqlParser.parseMultipartIdentifier(identifier)
