@@ -632,15 +632,17 @@ public class SnapshotManager {
 
             // Reading sidecars only applies for single-part (v1 or v2) checkpoints.
             if (newCheckpoint.format.usesSidecars()) {
-                // Safe to call .get() here, as we know the CheckpointInstance was initialized with
-                // a valid filepath.
-                final Set<Path> referencedSidecars = new HashSet<>(
-                        newCheckpoint.getReferencedSidecars(tableClient, logPath).get());
-                final List<FileStatus> sidecarFiles = listSidecars(tableClient)
-                        .stream()
-                        .filter(f -> referencedSidecars.contains(new Path(f.getPath())))
-                        .collect(Collectors.toList());
-                newCheckpointFileList.addAll(sidecarFiles);
+                final List<FileStatus> sidecarFiles = listSidecars(tableClient);
+                // Only read the checkpoint for sidecars if any sidecars exist in the table.
+                if (!sidecarFiles.isEmpty()) {
+                    // Safe to call .get() here, as we know the CheckpointInstance was initialized
+                    // with a valid filepath.
+                    final Set<Path> referencedSidecars = new HashSet<>(
+                            newCheckpoint.getReferencedSidecars(tableClient, logPath).get());
+                    newCheckpointFileList.addAll(sidecarFiles.stream()
+                            .filter(f -> referencedSidecars.contains(new Path(f.getPath())))
+                            .collect(Collectors.toList()));
+                }
             }
 
             return newCheckpointFileList;
