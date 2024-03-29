@@ -21,16 +21,18 @@ import java.sql.Timestamp
 import java.text.SimpleDateFormat
 import java.util.Date
 
+import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
-import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
+import org.apache.spark.sql.delta.DeltaHistoryManager.{DeltaLogGroupingIterator, LastCheckpointPreservingLogDeletionIterator, TimestampAdjustingLogDeletionIterator}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
+import org.apache.spark.sql.delta.util.FileNames.isCheckpointFile
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
@@ -203,20 +205,49 @@ class DeltaTimeTravelSuite extends QueryTest
    */
   private def createFileStatuses(modTimes: Long*): Iterator[FileStatus] = {
     modTimes.zipWithIndex.map { case (time, version) =>
-      new FileStatus(10L, false, 1, 10L, time, new Path(version.toString))
+      new FileStatus(10L, false, 1, 10L, time, new Path(s"file://a/b/_delta_log/$version.json"))
+    }.iterator
+  }
+
+  private sealed trait TestAction
+  private case class Delta(time: Long) extends TestAction
+  private case class Checkpoint(time: Long) extends TestAction
+  private case class IncompleteCheckpoint(time: Long) extends TestAction
+  private case class CheckpointAndDelta(time: Long) extends TestAction
+  private case class IncompleteCheckpointAndDelta(time: Long) extends TestAction
+  private case class ExceptionThrowingFile(time: Long) extends TestAction
+
+  private def createFileStatusesWithCheckpoints(inputData: TestAction*): Iterator[FileStatus] = {
+    def createFileStatus(time: Long, version: Int, suffix: String): FileStatus =
+      new FileStatus(10L, false, 1, 10L, time, new Path(s"file://a/b/_delta_log/$version$suffix"))
+    inputData.zipWithIndex.flatMap { case (action, version) =>
+      action match {
+        case Delta(time) => Seq(createFileStatus(time, version, ".json"))
+        case Checkpoint(time) => Seq(createFileStatus(time, version, ".checkpoint.parquet"))
+        case IncompleteCheckpoint(time) =>
+          Seq(createFileStatus(time, version, ".checkpoint.0.2.parquet"))
+        case CheckpointAndDelta(time) =>
+          Seq(createFileStatus(time, version, ".checkpoint.parquet"),
+            createFileStatus(time, version, ".json"))
+        case IncompleteCheckpointAndDelta(time) =>
+          Seq(createFileStatus(time, version, ".checkpoint.0.2.parquet"),
+            createFileStatus(time, version, ".json"))
+        case ExceptionThrowingFile(time) =>
+          Seq(new FileStatus(10L, false, 1, 10L, time, new Path(s"gibberish.gibberish")))
+      }
     }.iterator
   }
 
   /**
-   * Creates a log deletion iterator with a retention `maxTimestamp` and `maxVersion` (both
-   * inclusive). The input iterator takes the original file timestamps, and the deleted output will
-   * return the adjusted timestamps of files that would actually be consumed by the iterator.
+   * Creates a log deletion iterator with a retention `maxTimestamp` (inclusive). The input
+   * iterator takes the original file timestamps, and the deleted output will return the adjusted
+   * timestamps of files that would actually be consumed by the iterator.
    */
-  private def testBufferingLogDeletionIterator(
-      maxTimestamp: Long,
-      maxVersion: Long)(inputTimestamps: Seq[Long], deleted: Seq[Long]): Unit = {
-    val i = new BufferingLogDeletionIterator(
-      createFileStatuses(inputTimestamps: _*), maxTimestamp, maxVersion, _.getName.toLong)
+  private def testTimestampAdjustingLogDeletionIterator(
+      maxTimestamp: Long)(inputTimestamps: Seq[Long], deleted: Seq[Long]): Unit = {
+    val i = new TimestampAdjustingLogDeletionIterator(
+      new DeltaLogGroupingIterator(createFileStatuses(inputTimestamps: _*)).map(_._2),
+      maxTimestamp).flatten.flatten
     deleted.foreach { ts =>
       assert(i.hasNext, s"Was supposed to delete $ts, but iterator returned hasNext: false")
       assert(i.next().getModificationTime === ts, "Returned files out of order!")
@@ -224,193 +255,278 @@ class DeltaTimeTravelSuite extends QueryTest
     assert(!i.hasNext, "Iterator should be consumed")
   }
 
-  test("BufferingLogDeletionIterator: iterator behavior") {
-    val i1 = new BufferingLogDeletionIterator(Iterator.empty, 100, 100, _ => 1)
+  private def testIteratorReturnsExpected(
+      i: Iterator[FileStatus], outputData: Seq[TestAction]): Unit = {
+    outputData.foreach { action =>
+      val deltaTsOpt = action match {
+        case Delta(ts) => Some(ts)
+        case CheckpointAndDelta(ts) => Some(ts)
+        case IncompleteCheckpointAndDelta(ts) => Some(ts)
+        case _ => None
+      }
+      val checkpointTsOpt = action match {
+        case Checkpoint(ts) => Some(ts)
+        case IncompleteCheckpoint(ts) => Some(ts)
+        case CheckpointAndDelta(ts) => Some(ts)
+        case IncompleteCheckpointAndDelta(ts) => Some(ts)
+        case _ => None
+      }
+      checkpointTsOpt.foreach { ts =>
+        assert(i.hasNext, s"Was supposed to delete $ts, but iterator returned hasNext: false")
+        val deletedFile = i.next()
+        assert(isCheckpointFile(deletedFile), "Returned file is different than expected")
+      }
+      deltaTsOpt.foreach { ts =>
+        assert(i.hasNext, s"Was supposed to delete $ts, but iterator returned hasNext: false")
+        val deletedFile = i.next()
+        assert(!isCheckpointFile(deletedFile), "Returned file is different than expected")
+      }
+    }
+    assert(!i.hasNext, s"Iterator should be consumed")
+  }
+
+  private def testTimestampAdjustingLogDeletionIteratorWithCheckpoints(maxTimestamp: Long)(
+      inputData: Seq[TestAction], deletedGroupCount: Int): Unit = {
+    val i = new TimestampAdjustingLogDeletionIterator(
+      new DeltaLogGroupingIterator(createFileStatusesWithCheckpoints(inputData: _*)).map(_._2),
+      maxTimestamp).flatten.flatten
+    testIteratorReturnsExpected(i, inputData.take(deletedGroupCount))
+  }
+
+  private def testLastCheckpointPreservingLogDeletionIterator(
+      maxTimestamp: Long)(inputData: Seq[TestAction], deletedGroupCount: Int): Unit = {
+    val i = new LastCheckpointPreservingLogDeletionIterator(
+      new TimestampAdjustingLogDeletionIterator(
+        new DeltaLogGroupingIterator(createFileStatusesWithCheckpoints(inputData: _*)).map(_._2),
+        maxTimestamp)).flatten.flatten.flatten
+    testIteratorReturnsExpected(i, inputData.take(deletedGroupCount))
+  }
+
+  test("TimestampAdjustingLogDeletionIterator: iterator behavior") {
+    val i1 = new TimestampAdjustingLogDeletionIterator(Iterator.empty, 100)
     intercept[NoSuchElementException](i1.next())
     assert(!i1.hasNext)
 
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 100)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 100)(
       inputTimestamps = Seq(10),
       deleted = Seq(10)
     )
 
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 100)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 100)(
       inputTimestamps = Seq(10, 15, 25),
       deleted = Seq(10, 15, 25)
     )
   }
 
-  test("BufferingLogDeletionIterator: " +
+  test("TimestampAdjustingLogDeletionIterator: " +
     "early exit while handling adjusted timestamps due to timestamp") {
     // only should return 5 because 5 < 7
-    testBufferingLogDeletionIterator(maxTimestamp = 7, maxVersion = 100)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 7)(
       inputTimestamps = Seq(5, 10, 8, 12),
       deleted = Seq(5)
     )
 
     // Should only return 5, because 10 is used to adjust the following 8 to 11
-    testBufferingLogDeletionIterator(maxTimestamp = 10, maxVersion = 100)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 10)(
       inputTimestamps = Seq(5, 10, 8, 12),
       deleted = Seq(5)
     )
 
     // When it is 11, we can delete both 10 and 8
-    testBufferingLogDeletionIterator(maxTimestamp = 11, maxVersion = 100)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 11)(
       inputTimestamps = Seq(5, 10, 8, 12),
       deleted = Seq(5, 10, 11)
     )
 
     // When it is 12, we can return all
-    testBufferingLogDeletionIterator(maxTimestamp = 12, maxVersion = 100)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 12)(
       inputTimestamps = Seq(5, 10, 8, 12),
       deleted = Seq(5, 10, 11, 12)
     )
 
     // Should only return 5, because 10 is used to adjust the following 8 to 11
-    testBufferingLogDeletionIterator(maxTimestamp = 10, maxVersion = 100)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 10)(
       inputTimestamps = Seq(5, 10, 8),
       deleted = Seq(5)
     )
 
     // When it is 11, we can delete both 10 and 8
-    testBufferingLogDeletionIterator(maxTimestamp = 11, maxVersion = 100)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 11)(
       inputTimestamps = Seq(5, 10, 8),
       deleted = Seq(5, 10, 11)
     )
   }
 
-  test("BufferingLogDeletionIterator: " +
-    "early exit while handling adjusted timestamps due to version") {
-    // only should return 5 because we can delete only up to version 0
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 0)(
-      inputTimestamps = Seq(5, 10, 8, 12),
-      deleted = Seq(5)
-    )
-
-    // Should only return 5, because 10 is used to adjust the following 8 to 11
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 1)(
-      inputTimestamps = Seq(5, 10, 8, 12),
-      deleted = Seq(5)
-    )
-
-    // When we can delete up to version 2, we can return up to version 2
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 2)(
-      inputTimestamps = Seq(5, 10, 8, 12),
-      deleted = Seq(5, 10, 11)
-    )
-
-    // When it is version 3, we can return all
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 3)(
-      inputTimestamps = Seq(5, 10, 8, 12),
-      deleted = Seq(5, 10, 11, 12)
-    )
-
-    // Should only return 5, because 10 is used to adjust the following 8 to 11
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 1)(
-      inputTimestamps = Seq(5, 10, 8),
-      deleted = Seq(5)
-    )
-
-    // When we can delete up to version 2, we can return up to version 2
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 2)(
-      inputTimestamps = Seq(5, 10, 8),
-      deleted = Seq(5, 10, 11)
-    )
-  }
-
-  test("BufferingLogDeletionIterator: multiple adjusted timestamps") {
+  test("TimestampAdjustingLogDeletionIterator: multiple adjusted timestamps") {
     Seq(9, 10, 11).foreach { retentionTimestamp =>
       // Files should be buffered but not deleted, because of the file 11, which has adjusted ts 12
-      testBufferingLogDeletionIterator(maxTimestamp = retentionTimestamp, maxVersion = 100)(
+      testTimestampAdjustingLogDeletionIterator(maxTimestamp = retentionTimestamp)(
         inputTimestamps = Seq(5, 10, 8, 11, 14),
         deleted = Seq(5)
       )
     }
 
     // Safe to delete everything before (including) file: 11 which has adjusted timestamp 12
-    testBufferingLogDeletionIterator(maxTimestamp = 12, maxVersion = 100)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 12)(
       inputTimestamps = Seq(5, 10, 8, 11, 14),
       deleted = Seq(5, 10, 11, 12)
     )
 
-    Seq(0, 1, 2).foreach { retentionVersion =>
-      testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = retentionVersion)(
-        inputTimestamps = Seq(5, 10, 8, 11, 14),
-        deleted = Seq(5)
-      )
-    }
-
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 3)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 100)(
       inputTimestamps = Seq(5, 10, 8, 11, 14),
-      deleted = Seq(5, 10, 11, 12)
+      deleted = Seq(5, 10, 11, 12, 14)
     )
 
     // Test when the last element is adjusted with both timestamp and version
     Seq(9, 10, 11).foreach { retentionTimestamp =>
-      testBufferingLogDeletionIterator(maxTimestamp = retentionTimestamp, maxVersion = 100)(
+      testTimestampAdjustingLogDeletionIterator(maxTimestamp = retentionTimestamp)(
         inputTimestamps = Seq(5, 10, 8, 9),
         deleted = Seq(5)
       )
     }
 
-    testBufferingLogDeletionIterator(maxTimestamp = 12, maxVersion = 100)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 12)(
       inputTimestamps = Seq(5, 10, 8, 9),
       deleted = Seq(5, 10, 11, 12)
     )
 
-    Seq(0, 1, 2).foreach { retentionVersion =>
-      testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = retentionVersion)(
-        inputTimestamps = Seq(5, 10, 8, 9),
-        deleted = Seq(5)
-      )
-    }
-
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 3)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 100)(
       inputTimestamps = Seq(5, 10, 8, 9),
       deleted = Seq(5, 10, 11, 12)
     )
 
     Seq(9, 10, 11).foreach { retentionTimestamp =>
-      testBufferingLogDeletionIterator(maxTimestamp = retentionTimestamp, maxVersion = 100)(
+      testTimestampAdjustingLogDeletionIterator(maxTimestamp = retentionTimestamp)(
         inputTimestamps = Seq(10, 8, 9),
         deleted = Nil
       )
     }
 
     // Test the first element causing cascading adjustments
-    testBufferingLogDeletionIterator(maxTimestamp = 12, maxVersion = 100)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 12)(
       inputTimestamps = Seq(10, 8, 9),
       deleted = Seq(10, 11, 12)
     )
 
-    Seq(0, 1).foreach { retentionVersion =>
-      testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = retentionVersion)(
-        inputTimestamps = Seq(10, 8, 9),
-        deleted = Nil
-      )
-    }
-
-    testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 2)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 100)(
       inputTimestamps = Seq(10, 8, 9),
       deleted = Seq(10, 11, 12)
     )
 
     // Test multiple batches of time adjustments
-    testBufferingLogDeletionIterator(maxTimestamp = 12, maxVersion = 100)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 12)(
       inputTimestamps = Seq(5, 10, 8, 9, 12, 15, 14, 14), // 5, 10, 11, 12, 13, 15, 16, 17
       deleted = Seq(5)
     )
 
     Seq(13, 14, 15, 16).foreach { retentionTimestamp =>
-      testBufferingLogDeletionIterator(maxTimestamp = retentionTimestamp, maxVersion = 100)(
+      testTimestampAdjustingLogDeletionIterator(maxTimestamp = retentionTimestamp)(
         inputTimestamps = Seq(5, 10, 8, 9, 12, 15, 14, 14), // 5, 10, 11, 12, 13, 15, 16, 17
         deleted = Seq(5, 10, 11, 12, 13)
       )
     }
 
-    testBufferingLogDeletionIterator(maxTimestamp = 17, maxVersion = 100)(
+    testTimestampAdjustingLogDeletionIterator(maxTimestamp = 17)(
       inputTimestamps = Seq(5, 10, 8, 9, 12, 15, 14, 14), // 5, 10, 11, 12, 13, 15, 16, 17
       deleted = Seq(5, 10, 11, 12, 13, 15, 16, 17)
+    )
+  }
+
+  test("TimestampAdjustingLogDeletionIterator: multiple adjusted timestamps with checkpoints") {
+    Seq(9, 10, 11).foreach { retentionTimestamp =>
+      // Files should be buffered but not deleted, because of the file 11, which has adjusted ts 12
+      testTimestampAdjustingLogDeletionIteratorWithCheckpoints(maxTimestamp = retentionTimestamp)(
+        inputData =
+          Seq(CheckpointAndDelta(5), Delta(10), Delta(8), CheckpointAndDelta(11), Delta(14)),
+        deletedGroupCount = 1)
+    }
+
+    // Test that all checkpoints until the first checkpoint that needs to be retained are deleted.
+    Seq(9, 10, 11).foreach { retentionTimestamp =>
+      testTimestampAdjustingLogDeletionIteratorWithCheckpoints(maxTimestamp = retentionTimestamp)(
+        inputData = Seq(Checkpoint(1), Checkpoint(3), IncompleteCheckpoint(5), Checkpoint(7),
+          Checkpoint(12), Checkpoint(9)),
+        deletedGroupCount = 4)
+    }
+
+    Seq(7, 8, 9).foreach { retentionTimestamp =>
+      testTimestampAdjustingLogDeletionIteratorWithCheckpoints(maxTimestamp = retentionTimestamp)(
+        inputData = Seq(CheckpointAndDelta(1), CheckpointAndDelta(3),
+          IncompleteCheckpointAndDelta(5), CheckpointAndDelta(7), CheckpointAndDelta(12),
+          CheckpointAndDelta(9)),
+        deletedGroupCount = 4)
+    }
+
+    // Test that checkpoints are not retained for timestamp adjustments.
+    Seq(7, 8, 9).foreach { retentionTimestamp =>
+      testTimestampAdjustingLogDeletionIteratorWithCheckpoints(retentionTimestamp)(
+        inputData = Seq(Checkpoint(1), Checkpoint(3), Checkpoint(5), Checkpoint(7), Checkpoint(6),
+          Checkpoint(7), Checkpoint(10)),
+        deletedGroupCount = 6)
+    }
+
+    // Test that checkpoints are retained for commit-files time-adjustments.
+    Seq(7, 8).foreach { retentionTimestamp =>
+      testTimestampAdjustingLogDeletionIteratorWithCheckpoints(retentionTimestamp)(
+        inputData = Seq(CheckpointAndDelta(1), Delta(3), Delta(5), CheckpointAndDelta(7),
+          Checkpoint(6), CheckpointAndDelta(6), Delta(7), CheckpointAndDelta(10)),
+        deletedGroupCount = 3)
+    }
+
+    testTimestampAdjustingLogDeletionIteratorWithCheckpoints(maxTimestamp = 9)(
+      inputData = Seq(CheckpointAndDelta(1), Delta(3), Delta(5), CheckpointAndDelta(7),
+        Checkpoint(6), CheckpointAndDelta(6), Delta(7), CheckpointAndDelta(10)),
+      deletedGroupCount = 7)
+
+    // Since 5.json(@timestamp-9) can be deleted, we will delete everything until that point even
+    // though some of the intermediate checkpoints are within the retention window.
+    testTimestampAdjustingLogDeletionIteratorWithCheckpoints(maxTimestamp = 10)(
+      inputData = Seq(Delta(1), Delta(6), Checkpoint(11), IncompleteCheckpoint(12),
+        CheckpointAndDelta(8), Delta(9), CheckpointAndDelta(11)),
+      deletedGroupCount = 6
+    )
+  }
+
+  test("TimestampAdjustingLogDeletionIterator: " +
+    "skips consuming the iterator after entering retention window") {
+    // Since 1.json(@timestamp-12) can't be deleted
+    // - don't delete anything after that.
+    // - don't even consume more files after that to enable early-exit.
+    //   (A couple of extra files is okay).
+    val inputData = Seq(Delta(8), Delta(12), Delta(15), ExceptionThrowingFile(18))
+    val groups = createFileStatusesWithCheckpoints(inputData: _*).map(file => ArrayBuffer(file))
+    val i = new TimestampAdjustingLogDeletionIterator(groups, 100)
+    while (i.hasNext) i.next()
+  }
+
+  test("LastCheckpointPreservingLogDeletionIterator: don't rely on incomplete checkpoints") {
+    testLastCheckpointPreservingLogDeletionIterator(maxTimestamp = 100000)(
+      inputData = Seq(Delta(1), CheckpointAndDelta(2), Delta(3), Delta(4), CheckpointAndDelta(5),
+        Delta(6), Delta(7)),
+      deletedGroupCount = 4
+    )
+
+    // Filter the last 2 checkpoints because of maxTimestamp and then delete everything until the
+    // last complete checkpoint (exclusive).
+    testLastCheckpointPreservingLogDeletionIterator(maxTimestamp = 5)(
+      inputData = Seq(CheckpointAndDelta(1), CheckpointAndDelta(2), CheckpointAndDelta(3),
+        IncompleteCheckpointAndDelta(4), CheckpointAndDelta(6), CheckpointAndDelta(7)),
+      deletedGroupCount = 2
+    )
+
+    // Delete nothing when you don't find a complete checkpoint
+    testLastCheckpointPreservingLogDeletionIterator(maxTimestamp = 100000)(
+      inputData = Seq(IncompleteCheckpointAndDelta(1), IncompleteCheckpoint(2),
+        IncompleteCheckpointAndDelta(3)),
+      deletedGroupCount = 0
+    )
+
+    // Delete everything until the last complete checkpoint
+    testLastCheckpointPreservingLogDeletionIterator(maxTimestamp = 100000)(
+      inputData = Seq(IncompleteCheckpointAndDelta(1), CheckpointAndDelta(2),
+        IncompleteCheckpoint(3), IncompleteCheckpointAndDelta(4), CheckpointAndDelta(5),
+        CheckpointAndDelta(6), IncompleteCheckpointAndDelta(7), IncompleteCheckpoint(8)),
+      deletedGroupCount = 5
     )
   }
 
