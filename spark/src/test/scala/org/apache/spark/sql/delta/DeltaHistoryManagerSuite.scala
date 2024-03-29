@@ -607,6 +607,25 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
     }
   }
 
+  test("getHistory returns the correct set of commits") {
+    val tblName = "delta_table"
+    withTable(tblName) {
+      val start = 1540415658000L
+      generateCommits(tblName, start, start + 20.minutes, start + 40.minutes, start + 60.minutes)
+      val deltaLog = DeltaLog.forTable(spark, getTableLocation(tblName))
+      val history_02 = deltaLog.history.getHistory(start = 0, endOpt = Some(2))
+      assert(history_02.size == 3)
+      assert(history_02.map(_.getVersion) == Seq(2, 1, 0))
+
+      val history_13 = deltaLog.history.getHistory(start = 1, endOpt = Some(1))
+      assert(history_13.size == 1)
+      assert(history_13.map(_.getVersion) == Seq(1))
+
+      val history_2 = deltaLog.history.getHistory(start = 2, endOpt = None)
+      assert(history_2.size == 2)
+      assert(history_2.map(_.getVersion) == Seq(3, 2))
+    }
+  }
 }
 
 /** Uses V2 resolution code paths */
