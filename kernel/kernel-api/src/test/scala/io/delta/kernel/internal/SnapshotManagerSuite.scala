@@ -28,7 +28,7 @@ import io.delta.kernel.internal.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
 import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
 import io.delta.kernel.internal.util.{FileNames, Utils}
-import io.delta.kernel.test.{BaseMockParquetHandler, MockFileSystemClientUtils}
+import io.delta.kernel.test.{BaseMockJsonHandler, BaseMockParquetHandler, MockFileSystemClientUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
@@ -162,44 +162,78 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       multiCheckpointVersions: Seq[Long],
       numParts: Int = -1,
       startCheckpoint: Optional[java.lang.Long] = Optional.empty(),
-      versionToLoad: Optional[java.lang.Long] = Optional.empty()): Unit = {
+      versionToLoad: Optional[java.lang.Long] = Optional.empty(),
+      v2CheckpointVersionsAndNumSidecars: Seq[(Long, Int)] = Seq.empty): Unit = {
     val deltas = deltaFileStatuses(deltaVersions)
-    val checkpoints = singularCheckpointFileStatuses(checkpointVersions)
+    val singularCheckpoints = singularCheckpointFileStatuses(checkpointVersions)
     val multiCheckpoints = multiCheckpointFileStatuses(multiCheckpointVersions, numParts)
 
-    val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-      createMockFSListFromTableClient(deltas ++ checkpoints ++ multiCheckpoints),
-      startCheckpoint,
-      versionToLoad
-    )
-    assert(logSegmentOpt.isPresent())
+    // Only test both filetypes if we have to read the checkpoint manifest.
+    val manifestFileTypes = if (v2CheckpointVersionsAndNumSidecars.nonEmpty) {
+      Seq("parquet", "json")
+    } else {
+      Seq("parquet")
+    }
+    manifestFileTypes.foreach { manifestFileType =>
+      val v2Checkpoints =
+        v2CheckpointFileStatuses(v2CheckpointVersionsAndNumSidecars, manifestFileType)
+      val checkpointFiles = v2Checkpoints.flatMap {
+        case (checkpointManifest, sidecars) => Seq(checkpointManifest) ++ sidecars
+      } ++ singularCheckpoints ++ multiCheckpoints
 
-    val expectedCheckpointVersion = (checkpointVersions ++ multiCheckpointVersions)
-      .filter(_ <= versionToLoad.orElse(Long.MaxValue))
-      .sorted
-      .lastOption
+      val expectedCheckpointVersion = (checkpointVersions ++ multiCheckpointVersions ++
+        v2CheckpointVersionsAndNumSidecars.map(_._1))
+        .filter(_ <= versionToLoad.orElse(Long.MaxValue))
+        .sorted
+        .lastOption
 
-    val expectedDeltas = deltaFileStatuses(
-      deltaVersions.filter { v =>
-        v > expectedCheckpointVersion.getOrElse(-1L) && v <= versionToLoad.orElse(Long.MaxValue)
-      }
-    )
-    val expectedCheckpoints = expectedCheckpointVersion.map { v =>
-      if (checkpointVersions.toSet.contains(v)) {
-        singularCheckpointFileStatuses(Seq(v))
-      } else {
-        multiCheckpointFileStatuses(Seq(v), numParts)
-      }
-    }.getOrElse(Seq.empty)
+      val (expectedV2Checkpoint, expectedSidecars) = expectedCheckpointVersion.map { v =>
+        val matchingCheckpoints = v2Checkpoints.filter { case (manifest, _) =>
+          FileNames.checkpointVersion(manifest.getPath) == v
+        }
+        if (matchingCheckpoints.nonEmpty) {
+          matchingCheckpoints.head match {
+            case (c, sidecars) => (Seq(c), sidecars)
+          }
+        } else {
+          (Seq.empty, Seq.empty)
+        }
+      }.getOrElse((Seq.empty, Seq.empty))
 
-    checkLogSegment(
-      logSegmentOpt.get(),
-      expectedVersion = versionToLoad.orElse(deltaVersions.max),
-      expectedDeltas = expectedDeltas,
-      expectedCheckpoints = expectedCheckpoints,
-      expectedCheckpointVersion = expectedCheckpointVersion,
-      expectedLastCommitTimestamp = versionToLoad.orElse(deltaVersions.max)*10
-    )
+      val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
+        createMockFSListFromTableClient(listFromProvider(deltas ++ checkpointFiles)("/"),
+          new MockSidecarParquetHandler(expectedSidecars),
+          new MockSidecarJsonHandler(expectedSidecars)),
+        Optional.empty(),
+        versionToLoad
+      )
+      assert(logSegmentOpt.isPresent())
+
+      val expectedDeltas = deltaFileStatuses(
+        deltaVersions.filter { v =>
+          v > expectedCheckpointVersion.getOrElse(-1L) && v <= versionToLoad.orElse(Long.MaxValue)
+        }
+      )
+      val expectedCheckpoints = expectedCheckpointVersion.map { v =>
+        if (expectedV2Checkpoint.nonEmpty) {
+          expectedV2Checkpoint ++ expectedSidecars
+        }
+        else if (checkpointVersions.toSet.contains(v)) {
+          singularCheckpointFileStatuses(Seq(v))
+        } else {
+          multiCheckpointFileStatuses(Seq(v), numParts)
+        }
+      }.getOrElse(Seq.empty)
+
+      checkLogSegment(
+        logSegmentOpt.get(),
+        expectedVersion = versionToLoad.orElse(deltaVersions.max),
+        expectedDeltas = expectedDeltas,
+        expectedCheckpoints = expectedCheckpoints,
+        expectedCheckpointVersion = expectedCheckpointVersion,
+        expectedLastCommitTimestamp = versionToLoad.orElse(deltaVersions.max) * 10
+      )
+    }
   }
 
   /** Simple test for a log with only JSON files and no checkpoints */
@@ -271,37 +305,6 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       )
     }
     assert(e.getMessage.contains(expectedErrorMessageContains))
-  }
-
-  def testWithV2Checkpoint(
-      deltaVersions: Seq[Long],
-      checkpointVersionsAndNumSidecars: Seq[(Long, Int)],
-      manifestFileFormat: String): Unit = {
-    val deltas = deltaFileStatuses(deltaVersions)
-    val checkpoints = v2CheckpointFileStatuses(checkpointVersionsAndNumSidecars, manifestFileFormat)
-    val checkpointFiles = checkpoints.flatMap {
-      case (checkpointManifest, sidecars) => Seq(checkpointManifest) ++ sidecars
-    }
-    val logSegment = snapshotManager.getLogSegmentForVersion(
-      createMockFSListFromTableClient(listFromProvider(deltas ++ checkpointFiles)("/"),
-        new MockSidecarParquetHandler(checkpoints(1)._2)),
-      Optional.empty(),
-      Optional.of(6)
-    ).get()
-    checkLogSegment(
-      logSegment,
-      expectedVersion = 6,
-      expectedDeltas = deltaFileStatuses(Seq(6L)),
-      expectedCheckpoints = checkpoints(1)._2 :+ checkpoints(1)._1,
-      expectedCheckpointVersion = Some(5),
-      expectedLastCommitTimestamp = 60)
-  }
-
-  test("chirag") {
-    testWithV2Checkpoint(
-      (0L until 10L),
-      Seq((0L, 1), (5L, 2)),
-      manifestFileFormat = "parquet")
   }
 
   /* ------------------- VALID DELTA LOG FILE LISTINGS ----------------------- */
@@ -516,6 +519,65 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains = "Unable to reconstruct state at version 15"
     )
+  }
+
+  test("v2 checkpoint exists at version") {
+    testWithCheckpoints(
+      (0L to 5L),
+      Seq.empty,
+      Seq.empty,
+      versionToLoad = Optional.of(5L),
+      v2CheckpointVersionsAndNumSidecars = Seq((0L, 2), (5L, 2)))
+  }
+
+  test("v2 checkpoint exists before version") {
+    testWithCheckpoints(
+      (0L to 7L),
+      Seq.empty,
+      Seq.empty,
+      versionToLoad = Optional.of(6L),
+      v2CheckpointVersionsAndNumSidecars = Seq((0L, 2), (5L, 2)))
+  }
+
+  test("v1 and v2 checkpoints in table") {
+    testWithCheckpoints(
+      (0L to 12L),
+      Seq(0L, 10L),
+      Seq.empty,
+      versionToLoad = Optional.of(8L),
+      v2CheckpointVersionsAndNumSidecars = Seq((5L, 2)))
+    testWithCheckpoints(
+      (0L to 12L),
+      Seq(0L, 10L),
+      Seq.empty,
+      versionToLoad = Optional.of(12L),
+      v2CheckpointVersionsAndNumSidecars = Seq((5L, 2)))
+  }
+
+  test("multipart and v2 checkpoints in table") {
+    testWithCheckpoints(
+      (0L to 12L),
+      Seq.empty,
+      Seq(0L, 10L),
+      numParts = 5,
+      versionToLoad = Optional.of(8L),
+      v2CheckpointVersionsAndNumSidecars = Seq((5L, 2)))
+    testWithCheckpoints(
+      (0L to 12L),
+      Seq.empty,
+      Seq(0L, 10L),
+      numParts = 5,
+      versionToLoad = Optional.of(12L),
+      v2CheckpointVersionsAndNumSidecars = Seq((5L, 2)))
+  }
+
+  test("no checkpoint prior to version") {
+    testWithCheckpoints(
+      (0L to 5L),
+      Seq.empty,
+      Seq.empty,
+      versionToLoad = Optional.of(3L),
+      v2CheckpointVersionsAndNumSidecars = Seq((5L, 2)))
   }
 
   /* ------------------- CORRUPT DELTA LOG FILE LISTINGS ------------------ */
@@ -758,33 +820,49 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 }
 
 class MockSidecarParquetHandler(sidecars: Seq[FileStatus]) extends BaseMockParquetHandler {
-
-  import io.delta.kernel.internal.checkpoints.CheckpointerSuite._
-
   override def readParquetFiles(
     fileIter: CloseableIterator[FileStatus],
     physicalSchema: StructType,
     predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
-    val file = fileIter.next()
-    val path = new Path(file.getPath)
 
     Utils.singletonCloseableIterator(
-      path.getParent match {
-        case logPath => new ColumnarBatch {
-          override def getSchema: StructType = SidecarFile.READ_SCHEMA
+      new ColumnarBatch {
+        override def getSchema: StructType = SidecarFile.READ_SCHEMA
 
-          override def getColumnVector(ordinal: Int): ColumnVector = {
-            ordinal match {
-              case 0 => stringVector(sidecars.map(_.getPath): _*) // path
-              case 1 => longVector(sidecars.map(_.getSize): _*) // size
-              case 2 =>
-                longVector(sidecars.map(_.getModificationTime): _*); // modification time
-            }
+        override def getColumnVector(ordinal: Int): ColumnVector = {
+          ordinal match {
+            case 0 => stringVector(sidecars.map(_.getPath): _*) // path
+            case 1 => longVector(sidecars.map(_.getSize): _*) // size
+            case 2 =>
+              longVector(sidecars.map(_.getModificationTime): _*); // modification time
           }
-
-          override def getSize: Int = 2
         }
-        case _ => throw new IOException("Unknown table")
+
+        override def getSize: Int = 2
+      })
+  }
+}
+
+class MockSidecarJsonHandler(sidecars: Seq[FileStatus]) extends BaseMockJsonHandler {
+  override def readJsonFiles(
+    fileIter: CloseableIterator[FileStatus],
+    physicalSchema: StructType,
+    predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+
+    Utils.singletonCloseableIterator(
+      new ColumnarBatch {
+        override def getSchema: StructType = SidecarFile.READ_SCHEMA
+
+        override def getColumnVector(ordinal: Int): ColumnVector = {
+          ordinal match {
+            case 0 => stringVector(sidecars.map(_.getPath): _*) // path
+            case 1 => longVector(sidecars.map(_.getSize): _*) // size
+            case 2 =>
+              longVector(sidecars.map(_.getModificationTime): _*); // modification time
+          }
+        }
+
+        override def getSize: Int = 2
       })
   }
 }

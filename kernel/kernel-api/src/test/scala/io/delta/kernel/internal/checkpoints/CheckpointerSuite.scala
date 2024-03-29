@@ -15,13 +15,12 @@
  */
 package io.delta.kernel.internal.checkpoints
 
-import io.delta.kernel.client._
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch}
-import io.delta.kernel.expressions.{Column, Predicate}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
+import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.types.{DataType, LongType, StringType, StructType}
-import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
+import io.delta.kernel.types.StructType
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.test.{BaseMockJsonHandler, BaseMockParquetHandler, MockFileSystemClientUtils, MockTableClientUtils}
 import org.scalatest.funsuite.AnyFunSuite
 import java.io.{FileNotFoundException, IOException}
@@ -107,7 +106,7 @@ class CheckpointerSuite extends AnyFunSuite
   }
 }
 
-object CheckpointerSuite {
+object CheckpointerSuite extends MockTableClientUtils {
   val SAMPLE_LAST_CHECKPOINT_FILE_CONTENT: ColumnarBatch = new ColumnarBatch {
     override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
 
@@ -150,30 +149,6 @@ object CheckpointerSuite {
   val ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE = new Path("/zero_sized")
   val INVALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/invalid")
   val LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE = new Path("/filenotfoundtable")
-
-  def longVector(values: Long*): ColumnVector = new ColumnVector {
-    override def getDataType: DataType = LongType.LONG
-
-    override def getSize: Int = values.size
-
-    override def close(): Unit = {}
-
-    override def isNullAt(rowId: Int): Boolean = false
-
-    override def getLong(rowId: Int): Long = values(rowId)
-  }
-
-  def stringVector(values: String*): ColumnVector = new ColumnVector {
-    override def getDataType: DataType = StringType.STRING
-
-    override def getSize: Int = values.size
-
-    override def close(): Unit = {}
-
-    override def isNullAt(rowId: Int): Boolean = false
-
-    override def getString(rowId: Int): String = values(rowId)
-  }
 }
 
 /** `maxFailures` allows how many times to fail before returning the valid data */

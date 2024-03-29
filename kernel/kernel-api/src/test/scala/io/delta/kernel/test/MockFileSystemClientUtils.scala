@@ -91,10 +91,12 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
    */
   def createMockFSListFromTableClient(
       contents: Seq[FileStatus],
-      parquetHandler: ParquetHandler): TableClient = {
+      parquetHandler: ParquetHandler,
+      jsonHandler: JsonHandler): TableClient = {
     mockTableClient(fileSystemClient =
       new MockListFromFileSystemClient(listFromProvider(contents)),
-      parquetHandler = parquetHandler)
+      parquetHandler = parquetHandler,
+      jsonHandler = jsonHandler)
   }
 
   /**
