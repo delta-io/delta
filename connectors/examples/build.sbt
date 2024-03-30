@@ -18,11 +18,11 @@ name := "examples"
 organization := "com.examples"
 organizationName := "examples"
 
-scalaVersion := "2.12.17"
+scalaVersion := "2.12.18"
 version := "0.1.0"
 
 lazy val commonSettings = Seq(
-  crossScalaVersions := Seq("2.13.13", "2.12.17", "2.11.12"),
+  crossScalaVersions := Seq("2.13.13", "2.12.18", "2.11.12"),
   resolvers += Resolver.mavenLocal,
   libraryDependencies ++= Seq(
     "io.delta" %% "delta-standalone" % getStandaloneVersion(),
@@ -47,14 +47,14 @@ lazy val extraMavenRepo = sys.env.get("EXTRA_MAVEN_REPO").toSeq.map { repo =>
 
 lazy val convertToDelta = (project in file("convert-to-delta")) settings (
   name := "convert",
-  scalaVersion := "2.12.17",
+  scalaVersion := "2.12.18",
   commonSettings,
   extraMavenRepo
 )
 
 lazy val helloWorld = (project in file("hello-world")) settings (
   name := "hello",
-  scalaVersion := "2.12.17",
+  scalaVersion := "2.12.18",
   commonSettings,
   extraMavenRepo
 )
@@ -63,7 +63,7 @@ val flinkVersion = "1.16.1"
 val flinkHadoopVersion = "3.1.0"
 lazy val flinkExample = (project in file("flink-example")) settings (
   name := "flink",
-  scalaVersion := "2.12.17",
+  scalaVersion := "2.12.18",
   commonSettings,
   extraMavenRepo,
   resolvers += Resolver.mavenLocal,
