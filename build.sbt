@@ -200,7 +200,7 @@ lazy val spark = (project in file("spark"))
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
-      "junit" % "junit" % "4.12" % "test",
+      "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
@@ -315,7 +315,7 @@ lazy val sharing = (project in file("sharing"))
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
-      "junit" % "junit" % "4.12" % "test",
+      "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
@@ -337,7 +337,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
 
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.13" % "test",
+      "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test"
     ),
@@ -364,7 +364,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.13" % "test",
+      "junit" % "junit" % "4.13.2" % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
