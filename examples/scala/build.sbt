@@ -19,7 +19,7 @@ organization := "com.example"
 organizationName := "example"
 
 val scala212 = "2.12.17"
-val scala213 = "2.13.8"
+val scala213 = "2.13.13"
 val deltaVersion = "3.0.0"
 val icebergVersion = "1.4.1"
 
