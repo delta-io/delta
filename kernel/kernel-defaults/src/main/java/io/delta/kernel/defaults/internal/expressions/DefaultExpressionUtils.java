@@ -155,7 +155,8 @@ class DefaultExpressionUtils {
                 result[rowId] = 1;
             } else {
                 if (dataType instanceof BooleanType) {
-                    result[rowId] = Boolean.compare(left.getBoolean(rowId), right.getBoolean(rowId));
+                    result[rowId] =
+                            Boolean.compare(left.getBoolean(rowId), right.getBoolean(rowId));
                 } else if (dataType instanceof ByteType) {
                     result[rowId] = Byte.compare(left.getByte(rowId), right.getByte(rowId));
                 } else if (dataType instanceof ShortType) {
@@ -169,11 +170,14 @@ class DefaultExpressionUtils {
                 } else if (dataType instanceof DoubleType) {
                     result[rowId] = Double.compare(left.getDouble(rowId), right.getDouble(rowId));
                 } else if (dataType instanceof DecimalType) {
-                    result[rowId] = bigDecimalComparator.compare(left.getDecimal(rowId), right.getDecimal(rowId));
+                    result[rowId] = bigDecimalComparator.compare(
+                            left.getDecimal(rowId), right.getDecimal(rowId));
                 } else if (dataType instanceof StringType) {
-                    result[rowId] = stringComparator.compare(left.getString(rowId), right.getString(rowId));
+                    result[rowId] = stringComparator.compare(
+                            left.getString(rowId), right.getString(rowId));
                 } else if (dataType instanceof BinaryType) {
-                    result[rowId] = binaryComparator.compare(left.getBinary(rowId), right.getBinary(rowId));
+                    result[rowId] = binaryComparator.compare(
+                            left.getBinary(rowId), right.getBinary(rowId));
                 } else {
                     throw new UnsupportedOperationException(dataType + " can not be compared.");
                 }
