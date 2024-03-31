@@ -41,6 +41,8 @@ abstract class ExpressionVisitor<R> {
 
     abstract R visitComparator(Predicate predicate);
 
+    abstract R visitNullSafeComparator(Predicate predicate);
+
     abstract R visitLiteral(Literal literal);
 
     abstract R visitColumn(Column column);
@@ -95,6 +97,8 @@ abstract class ExpressionVisitor<R> {
             case ">":
             case ">=":
                 return visitComparator(new Predicate(name, children));
+            case "<=>":
+                return visitNullSafeComparator(new Predicate(name, children));
             case "ELEMENT_AT":
                 return visitElementAt(expression);
             case "NOT":

@@ -33,6 +33,20 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
  * Utility methods used by the default expression evaluator.
  */
 class DefaultExpressionUtils {
+
+    static final Comparator<byte[]> binaryComparator = (leftOp, rightOp) -> {
+        int i = 0;
+        while (i < leftOp.length && i < rightOp.length) {
+            if (leftOp[i] != rightOp[i]) {
+                return Byte.compare(leftOp[i], rightOp[i]);
+            }
+            i++;
+        }
+        return Integer.compare(leftOp.length, rightOp.length);
+    };
+
+    static final Comparator<BigDecimal> bigDecimalComparator = Comparator.naturalOrder();
+    static final Comparator<String> stringComparator = Comparator.naturalOrder();
     private DefaultExpressionUtils() {}
 
     /**
@@ -127,6 +141,48 @@ class DefaultExpressionUtils {
         return result;
     }
 
+    static int[] compareNullSafe(ColumnVector left, ColumnVector right) {
+        checkArgument(
+                left.getSize() == right.getSize(),
+                "Left and right operand have different vector sizes.");
+        DataType dataType = left.getDataType();
+        int numRows = left.getSize();
+        int[] result = new int[numRows];
+        for (int rowId = 0; rowId < left.getSize(); rowId++) {
+            if (left.isNullAt(rowId) && right.isNullAt(rowId)) {
+                result[rowId] = 0;
+            } else if (left.isNullAt(rowId) || right.isNullAt(rowId)) {
+                result[rowId] = 1;
+            } else {
+                if (dataType instanceof BooleanType) {
+                    result[rowId] = Boolean.compare(left.getBoolean(rowId), right.getBoolean(rowId));
+                } else if (dataType instanceof ByteType) {
+                    result[rowId] = Byte.compare(left.getByte(rowId), right.getByte(rowId));
+                } else if (dataType instanceof ShortType) {
+                    result[rowId] = Short.compare(left.getShort(rowId), right.getShort(rowId));
+                } else if (dataType instanceof IntegerType || dataType instanceof DateType) {
+                    result[rowId] = Integer.compare(left.getInt(rowId), right.getInt(rowId));
+                } else if (dataType instanceof LongType || dataType instanceof TimestampType) {
+                    result[rowId] = Long.compare(left.getLong(rowId), right.getLong(rowId));
+                } else if (dataType instanceof FloatType) {
+                    result[rowId] = Float.compare(left.getFloat(rowId), right.getFloat(rowId));
+                } else if (dataType instanceof DoubleType) {
+                    result[rowId] = Double.compare(left.getDouble(rowId), right.getDouble(rowId));
+                } else if (dataType instanceof DecimalType) {
+                    result[rowId] = bigDecimalComparator.compare(left.getDecimal(rowId), right.getDecimal(rowId));
+                } else if (dataType instanceof StringType) {
+                    result[rowId] = stringComparator.compare(left.getString(rowId), right.getString(rowId));
+                } else if (dataType instanceof BinaryType) {
+                    result[rowId] = binaryComparator.compare(left.getBinary(rowId), right.getBinary(rowId));
+                } else {
+                    throw new UnsupportedOperationException(dataType + " can not be compared.");
+                }
+            }
+        }
+        return result;
+    }
+
+
     static void compareBoolean(ColumnVector left, ColumnVector right, int[] result) {
         for (int rowId = 0; rowId < left.getSize(); rowId++) {
             if (!left.isNullAt(rowId) && !right.isNullAt(rowId)) {
@@ -202,19 +258,9 @@ class DefaultExpressionUtils {
     }
 
     static void compareBinary(ColumnVector left, ColumnVector right, int[] result) {
-        Comparator<byte[]> comparator = (leftOp, rightOp) -> {
-            int i = 0;
-            while (i < leftOp.length && i < rightOp.length) {
-                if (leftOp[i] != rightOp[i]) {
-                    return Byte.compare(leftOp[i], rightOp[i]);
-                }
-                i++;
-            }
-            return Integer.compare(leftOp.length, rightOp.length);
-        };
         for (int rowId = 0; rowId < left.getSize(); rowId++) {
             if (!left.isNullAt(rowId) && !right.isNullAt(rowId)) {
-                result[rowId] = comparator.compare(left.getBinary(rowId), right.getBinary(rowId));
+                result[rowId] = binaryComparator.compare(left.getBinary(rowId), right.getBinary(rowId));
             }
         }
     }

@@ -38,6 +38,7 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.booleanWrapperVector;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.childAt;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.compare;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.compareNullSafe;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.evalNullability;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
@@ -150,6 +151,19 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                     return new ExpressionTransformResult(
                         transformBinaryComparator(predicate),
                         BooleanType.BOOLEAN);
+                default:
+                    throw DeltaErrors.unsupportedExpression(
+                            predicate, Optional.of("unsupported expression encountered"));
+            }
+        }
+
+        @Override
+        ExpressionTransformResult visitNullSafeComparator(Predicate predicate) {
+            switch (predicate.getName()) {
+                case "<=>":
+                    return new ExpressionTransformResult(
+                            transformBinaryComparator(predicate),
+                            BooleanType.BOOLEAN);
                 default:
                     throw DeltaErrors.unsupportedExpression(
                             predicate, Optional.of("unsupported expression encountered"));
@@ -443,6 +457,27 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             }
 
             return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
+        }
+
+        @Override
+        ColumnVector visitNullSafeComparator(Predicate predicate) {
+            PredicateChildrenEvalResult argResults = evalBinaryExpressionChildren(predicate);
+            int numRows = argResults.rowCount;
+            boolean[] result = new boolean[numRows];
+            int[] compareResult = compareNullSafe(argResults.leftResult, argResults.rightResult);
+            switch (predicate.getName()) {
+                case "<=>":
+                    for (int rowId = 0; rowId < numRows; rowId++) {
+                        result[rowId] = compareResult[rowId] == 0;
+                    }
+                    break;
+                default:
+                    throw DeltaErrors.unsupportedExpression(
+                            predicate,
+                            Optional.of("unsupported expression encountered"));
+            }
+
+            return new DefaultBooleanVector(numRows, Optional.empty(), result);
         }
 
         @Override

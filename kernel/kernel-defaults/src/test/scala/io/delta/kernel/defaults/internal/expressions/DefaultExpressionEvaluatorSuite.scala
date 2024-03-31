@@ -305,7 +305,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "Coalesce is only supported for boolean type expressions")
   }
 
-  test("evaluate expression: comparators (=, <, <=, >, >=)") {
+  test("evaluate expression: comparators (=, <, <=, >, >=, <=>)") {
     // Literals for each data type from the data type value range, used as inputs to comparator
     // (small, big, small, null)
     val literals = Seq(
@@ -350,7 +350,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "<=" -> Seq(true, false, true, null, null, null),
       ">" -> Seq(false, true, false, null, null, null),
       ">=" -> Seq(false, true, true, null, null, null),
-      "=" -> Seq(false, false, true, null, null, null)
+      "=" -> Seq(false, false, true, null, null, null),
+      "<=>" -> Seq(false, false, true, false, false, true)
     )
 
     literals.foreach {
