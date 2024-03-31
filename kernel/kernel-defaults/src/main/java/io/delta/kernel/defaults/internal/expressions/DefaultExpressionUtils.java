@@ -168,7 +168,8 @@ class DefaultExpressionUtils {
                 } else if (dataType instanceof FloatType) {
                     result[rowId] = Float.compare(left.getFloat(rowId), right.getFloat(rowId));
                 } else if (dataType instanceof DoubleType) {
-                    result[rowId] = Double.compare(left.getDouble(rowId), right.getDouble(rowId));
+                    result[rowId] = Double.compare(
+                            left.getDouble(rowId), right.getDouble(rowId));
                 } else if (dataType instanceof DecimalType) {
                     result[rowId] = bigDecimalComparator.compare(
                             left.getDecimal(rowId), right.getDecimal(rowId));
