@@ -33,6 +33,16 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
  * Utility methods used by the default expression evaluator.
  */
 class DefaultExpressionUtils {
+    static final Comparator<byte[]> binaryComparator = (leftOp, rightOp) -> {
+        int i = 0;
+        while (i < leftOp.length && i < rightOp.length) {
+            if (leftOp[i] != rightOp[i]) {
+                return Byte.compare(leftOp[i], rightOp[i]);
+            }
+            i++;
+        }
+        return Integer.compare(leftOp.length, rightOp.length);
+    };
     private DefaultExpressionUtils() {}
 
     /**
@@ -202,19 +212,9 @@ class DefaultExpressionUtils {
     }
 
     static void compareBinary(ColumnVector left, ColumnVector right, int[] result) {
-        Comparator<byte[]> comparator = (leftOp, rightOp) -> {
-            int i = 0;
-            while (i < leftOp.length && i < rightOp.length) {
-                if (leftOp[i] != rightOp[i]) {
-                    return Byte.compare(leftOp[i], rightOp[i]);
-                }
-                i++;
-            }
-            return Integer.compare(leftOp.length, rightOp.length);
-        };
         for (int rowId = 0; rowId < left.getSize(); rowId++) {
             if (!left.isNullAt(rowId) && !right.isNullAt(rowId)) {
-                result[rowId] = comparator.compare(left.getBinary(rowId), right.getBinary(rowId));
+                result[rowId] = binaryComparator.compare(left.getBinary(rowId), right.getBinary(rowId));
             }
         }
     }
