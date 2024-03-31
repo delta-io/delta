@@ -214,7 +214,8 @@ class DefaultExpressionUtils {
     static void compareBinary(ColumnVector left, ColumnVector right, int[] result) {
         for (int rowId = 0; rowId < left.getSize(); rowId++) {
             if (!left.isNullAt(rowId) && !right.isNullAt(rowId)) {
-                result[rowId] = binaryComparator.compare(left.getBinary(rowId), right.getBinary(rowId));
+                result[rowId] = binaryComparator.compare(
+                        left.getBinary(rowId), right.getBinary(rowId));
             }
         }
     }
