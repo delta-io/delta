@@ -23,12 +23,12 @@ import scala.reflect.ClassTag
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.SidecarFile
-import org.scalatest.funsuite.AnyFunSuite
 import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
 import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.test.{BaseMockJsonHandler, BaseMockParquetHandler, MockFileSystemClientUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+import org.scalatest.funsuite.AnyFunSuite
 
 class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 

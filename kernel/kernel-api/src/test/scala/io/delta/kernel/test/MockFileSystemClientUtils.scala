@@ -60,7 +60,9 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
   }
 
   /**
-   * Checkpoint file status for V2 checkpoint manifest
+   * Checkpoint file status for V2 checkpoint manifest.
+   * Note that although only one compatibility checkpoint file is required, we return one for each
+   * checkpoint to verify that the compatibility checkpoint can never be read over a V2 checkpoint.
    * Returns manifest, compatibility checkpoint, and sidecar files.
    */
   def v2CheckpointFileStatuses(
