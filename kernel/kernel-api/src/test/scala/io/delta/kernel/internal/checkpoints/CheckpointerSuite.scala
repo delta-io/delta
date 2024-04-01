@@ -18,8 +18,6 @@ package io.delta.kernel.internal.checkpoints
 import java.io.{FileNotFoundException, IOException}
 import java.util.Optional
 
-import org.scalatest.funsuite.AnyFunSuite
-
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
@@ -30,6 +28,7 @@ import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, Moc
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.test.BaseMockParquetHandler
+import org.scalatest.funsuite.AnyFunSuite
 
 class CheckpointerSuite extends AnyFunSuite
     with MockFileSystemClientUtils
