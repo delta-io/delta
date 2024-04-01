@@ -26,6 +26,8 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
+import io.delta.kernel.internal.checkpoints.CheckpointInstance;
+import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Utils;
@@ -179,17 +181,50 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
                 return combine(dataIter, false /* isFromCheckpoint */, fileVersion);
             } else if (isCheckpointFile(nextFilePath.getName())) {
-                final long fileVersion = checkpointVersion(nextFilePath);
+                CheckpointInstance checkpointInstance =
+                        new CheckpointInstance(nextFilePath.getName());
+                final long fileVersion = checkpointInstance.version;
 
                 // Try to retrieve the remaining checkpoint files (if there are any) and issue
                 // read request for all in one go, so that the {@link ParquetHandler} can do
                 // optimizations like reading multiple files in parallel.
-                CloseableIterator<FileStatus> checkpointFilesIter =
+                List<FileStatus> checkpointFiles =
                         retrieveRemainingCheckpointFiles(nextFile, fileVersion);
+
+                if (false && checkpointInstance.format.usesSidecars()) {
+                    // If the checkpoint format may contain sidecars, read the sidecar actions from
+                    // the checkpoint.
+                    final CloseableIterator<ColumnarBatch> manifestIter;
+                    if (nextFilePath.getName().endsWith(".parquet")) {
+                        manifestIter = tableClient.getParquetHandler().readParquetFiles(
+                                toCloseableIterator(
+                                        Collections.singletonList(nextFile).iterator()),
+                                LogReplay.getSidecarFileSchema(),
+                                Optional.empty());
+                    } else if (nextFilePath.getName().endsWith(".json")) {
+                        manifestIter = tableClient.getJsonHandler().readJsonFiles(
+                                toCloseableIterator(
+                                        Collections.singletonList(nextFile).iterator()),
+                                LogReplay.getSidecarFileSchema(),
+                                Optional.empty());
+                    } else {
+                        throw new IOException("Unrecognized file format");
+                    }
+
+                    while (manifestIter.hasNext()) {
+                        CloseableIterator<SidecarFile> sidecars =
+                                manifestIter.next().getRows().map(SidecarFile::fromRow);
+                        while (sidecars.hasNext()) {
+                            SidecarFile f = sidecars.next();
+                            checkpointFiles.add(
+                                    FileStatus.of(f.path, f.sizeInBytes, f.modificationTime));
+                        }
+                    }
+                }
 
                 final CloseableIterator<ColumnarBatch> dataIter =
                     tableClient.getParquetHandler().readParquetFiles(
-                        checkpointFilesIter,
+                        toCloseableIterator(checkpointFiles.iterator()),
                         readSchema,
                         Optional.empty());
 
@@ -235,7 +270,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
      * This is done by looking at the file name and finding all the files that have the same
      * version number.
      */
-    private CloseableIterator<FileStatus> retrieveRemainingCheckpointFiles(
+    private List<FileStatus> retrieveRemainingCheckpointFiles(
             FileStatus checkpointFile,
             long version) {
 
@@ -253,6 +288,6 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
             peek = filesList.peek();
         }
 
-        return toCloseableIterator(checkpointFiles.iterator());
+        return checkpointFiles;
     }
 }

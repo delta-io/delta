@@ -19,12 +19,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
-import io.delta.kernel.client.TableClient;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.utils.FileStatus;
 
 /**
  * Metadata about Delta checkpoint.
@@ -45,6 +42,9 @@ public class CheckpointInstance
             return ordinal;
         }
 
+        // Indicates that the checkpoint (may) contain SidecarFile actions. For compatibility,
+        // V2 checkpoints can be named with classic-style names, so any checkpoint other than a
+        // multipart checkpoint may contain SidecarFile actions.s
         public boolean usesSidecars() {
             return ordinal != 1;
         }
@@ -118,22 +118,6 @@ public class CheckpointInstance
         return version < other.version;
     }
 
-    /**
-     * Returns a list of sidecar files referenced by this checkpoint by reading the checkpoint file
-     * and extracting the SidecarFile actions if the filepath is defined in the current
-     * CheckpointInstance.
-     * This method is only valid for single-part or V2 checkpoints.
-     */
-    public List<FileStatus> getReferencedSidecars(TableClient tableClient, Path logPath) {
-        return filePath.map(path ->
-                new Checkpointer(logPath).loadSidecarFiles(tableClient, path)
-                .orElse(Collections.emptyList())
-                .stream()
-                .map(s -> FileStatus.of(s.path, s.sizeInBytes, s.modificationTime))
-                .collect(Collectors.toList()))
-                .orElse(Collections.emptyList());
-    }
-
     public List<Path> getCorrespondingFiles(Path path) {
         if (this == CheckpointInstance.MAX_VALUE) {
             throw new IllegalStateException("Can't get files for CheckpointVersion.MaxValue.");
@@ -156,9 +140,9 @@ public class CheckpointInstance
      * 1. A CheckpointInstance with higher version is greater than the one with lower version.
      * 2. A CheckpointInstance for a V2 checkpoint is greater than a classic checkpoint (to filter
      *    avoid selecting the compatibility file).
-     * 2. For CheckpointInstances with same version, a Multi-part checkpoint is greater than a
+     * 3. For CheckpointInstances with same version, a Multi-part checkpoint is greater than a
      *    Single part checkpoint.
-     * 3. For Multi-part CheckpointInstance corresponding to same version, the one with more
+     * 4. For Multi-part CheckpointInstance corresponding to same version, the one with more
      *    parts is greater than the one with less parts.
      */
     @Override

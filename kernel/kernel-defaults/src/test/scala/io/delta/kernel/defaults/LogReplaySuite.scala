@@ -298,4 +298,10 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     assert(snapshotImpl.getLatestTransactionVersion("fakeAppId") === Optional.of(3L))
     assert(snapshotImpl.getLatestTransactionVersion("nonExistentAppId") === Optional.empty())
   }
+
+  test("read sidecars from file") {
+    val path = goldenTablePath("read-sidecars-from-file")
+    val snapshot = latestSnapshot(path)
+
+  }
 }

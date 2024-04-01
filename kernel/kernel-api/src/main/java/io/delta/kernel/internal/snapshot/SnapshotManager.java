@@ -599,13 +599,6 @@ public class SnapshotManager {
                 throw new IllegalStateException(msg);
             }
 
-            // Reading sidecars only applies for V2 checkpoints (whether with a classic or UUID
-            // naming scheme).
-            if (newCheckpoint.format.usesSidecars()) {
-                newCheckpointFileList.addAll(
-                        newCheckpoint.getReferencedSidecars(tableClient, logPath));
-            }
-
             return newCheckpointFileList;
         }).orElse(Collections.emptyList());
 

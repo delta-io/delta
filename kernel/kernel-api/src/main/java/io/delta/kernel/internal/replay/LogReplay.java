@@ -31,6 +31,7 @@ import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
@@ -76,6 +77,11 @@ public class LogReplay {
     private static StructType getAddSchema(boolean shouldReadStats) {
         return shouldReadStats ? AddFile.SCHEMA_WITH_STATS :
             AddFile.SCHEMA_WITHOUT_STATS;
+    }
+
+    public static StructType getSidecarFileSchema() {
+        return new StructType()
+                .add("sidecar", SidecarFile.READ_SCHEMA);
     }
 
     /**

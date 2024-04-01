@@ -86,20 +86,6 @@ class CheckpointerSuite extends AnyFunSuite
     assert(jsonHandler.currentFailCount == 0)
   }
 
-  test("test loading sidecar files from checkpoint manifest") {
-    val jsonHandler = new MockSidecarJsonHandler()
-    val parquetHandler = new MockSidecarParquetHandler()
-    Seq("json", "parquet").foreach { format =>
-      val sidecars = new Checkpointer(CHECKPOINT_MANIFEST_FILE_TABLE)
-        .loadSidecarFiles(
-          mockTableClient(jsonHandler = jsonHandler, parquetHandler = parquetHandler),
-          new Path(CHECKPOINT_MANIFEST_FILE_TABLE, s"001.checkpoint.abc-def.$format"))
-      assert(sidecars.isPresent && sidecars.get().size() == 2)
-      assert(sidecars.get().get(0).equals(new SidecarFile("abc", 44L, 20L)))
-      assert(sidecars.get().get(1).equals(new SidecarFile("def", 45L, 30L)))
-    }
-  }
-
   //////////////////////////////////////////////////////////////////////////////////
   // findLastCompleteCheckpointBefore tests
   //////////////////////////////////////////////////////////////////////////////////

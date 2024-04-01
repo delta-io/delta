@@ -184,49 +184,6 @@ public class Checkpointer {
     }
 
     /**
-     * Reads sidecar files from a checkpoint manifest at checkpointPath.
-     */
-    public Optional<List<SidecarFile>> loadSidecarFiles(
-            TableClient tableClient,
-            Path checkpointPath) {
-        FileStatus checkpointFile = FileStatus.of(
-                checkpointPath.toString(), 0 /* size */, 0 /* modTime */);
-        try {
-            CloseableIterator<ColumnarBatch> actionItr;
-            if (checkpointPath.toString().endsWith(".json")) {
-                // V2 JSON manifest.
-                actionItr = tableClient.getJsonHandler().readJsonFiles(
-                        singletonCloseableIterator(checkpointFile),
-                        SidecarFile.READ_SCHEMA,
-                        Optional.empty());
-            } else if (checkpointPath.toString().endsWith(".parquet")) {
-                // Either V2 Parquet manifest or V1 Parquet single checkpoint.
-                actionItr = tableClient.getParquetHandler().readParquetFiles(
-                        singletonCloseableIterator(checkpointFile),
-                        SidecarFile.READ_SCHEMA,
-                        Optional.empty());
-            } else {
-                // Unrecognized file format.
-                return Optional.empty();
-            }
-
-            // Read sidecar actions from file.
-            List<SidecarFile> files = new ArrayList<>();
-            while (actionItr.hasNext()) {
-                CloseableIterator<SidecarFile> sidecars =
-                        actionItr.next().getRows().map(SidecarFile::fromRow);
-                while (sidecars.hasNext()) {
-                    files.add(sidecars.next());
-                }
-            }
-            return Optional.of(files);
-        } catch (Exception e) {
-            logger.warn("Failed to load sidecars from file {}", checkpointPath, e);
-            return Optional.empty();
-        }
-    }
-
-    /**
      * Loads the checkpoint metadata from the _last_checkpoint file.
      * <p>
      * @param tableClient {@link TableClient instance to use}
