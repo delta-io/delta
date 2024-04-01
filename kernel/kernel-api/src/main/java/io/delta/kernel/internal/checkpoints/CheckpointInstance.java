@@ -30,6 +30,11 @@ import io.delta.kernel.internal.util.FileNames;
  */
 public class CheckpointInstance
     implements Comparable<CheckpointInstance> {
+
+    public enum CheckpointFormat {
+        SINGLE_PART, MULTI_PART, V2
+    }
+
     /**
      * Placeholder to identify the version that is always the latest on timeline
      */
@@ -51,19 +56,19 @@ public class CheckpointInstance
             // Classic checkpoint 00000000000000000010.checkpoint.parquet
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.empty();
-            this.format = new SingleFormat();
+            this.format = CheckpointFormat.SINGLE_PART;
         } else if (pathParts.length == 5 && pathParts[1].equals("checkpoint")
                 && pathParts[4].equals("parquet")) {
             // Multi-part checkpoint 00000000000000000010.checkpoint.0000000001.0000000003.parquet
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.of(Integer.parseInt(pathParts[3]));
-            this.format = new MultipartFormat();
+            this.format = CheckpointFormat.MULTI_PART;
         } else if (pathParts.length == 4 && pathParts[1].equals("checkpoint")
                 && (pathParts[3].equals("parquet") || pathParts[3].equals("json"))) {
             // V2 checkpoint 00000000000000000010.checkpoint.UUID.(parquet|json)
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.empty();
-            this.format = new V2Format();
+            this.format = CheckpointFormat.V2;
         } else {
             throw new RuntimeException("Unrecognized checkpoint path format: " + getPathName(path));
         }
@@ -78,9 +83,9 @@ public class CheckpointInstance
         this.numParts = numParts;
         this.filePath = Optional.empty();
         if (numParts.orElse(0) == 0) {
-            this.format = new SingleFormat();
+            this.format = CheckpointFormat.SINGLE_PART;
         } else {
-            this.format = new MultipartFormat();
+            this.format = CheckpointFormat.MULTI_PART;
         }
     }
 
@@ -118,7 +123,7 @@ public class CheckpointInstance
             throw new IllegalStateException("Can't get files for CheckpointVersion.MaxValue.");
         }
 
-        if (format instanceof V2Format) {
+        if (format == CheckpointFormat.V2) {
             return Collections.singletonList(filePath.get());
         }
 
@@ -149,7 +154,7 @@ public class CheckpointInstance
     @Override
     public String toString() {
         return "CheckpointInstance{version=" + version + ", numParts=" + numParts + ", format" +
-                format.name + "}";
+                format + "}";
     }
 
     @Override
@@ -163,12 +168,12 @@ public class CheckpointInstance
         CheckpointInstance checkpointInstance = (CheckpointInstance) o;
         return version == checkpointInstance.version &&
                 Objects.equals(numParts, checkpointInstance.numParts) &&
-                format.name.equals(checkpointInstance.format.name);
+                format == checkpointInstance.format;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(version, numParts, format.name);
+        return Objects.hash(version, numParts, format);
     }
 
     private String getPathName(String path) {
