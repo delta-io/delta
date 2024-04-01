@@ -67,36 +67,32 @@ class DeltaHistoryManager(
    * chronological order.
    */
   def getHistory(limitOpt: Option[Int]): Seq[DeltaHistory] = {
+    val snapshot = deltaLog.update()
     val listStart = limitOpt.map { limit =>
-      math.max(deltaLog.update().version - limit + 1, 0)
+      math.max(snapshot.version - limit + 1, 0)
     }.getOrElse(getEarliestDeltaFile(deltaLog))
-    getHistory(listStart)
+    getHistory(listStart, snapshotOpt = Some(snapshot))
   }
 
   /**
-   * Get the commit information of the Delta table from commit `[start, end]`. If `end` is `None`,
-   * we return all commits from start to now.
+   * Get the commit information of the Delta table from commit `[start, end)`.
+   *
+   * @param isRangeICT Whether the commit range is ICT-enabled.
+   *                   If `true`, all commits in the range must have ICTs and
+   *                   the timestamp returned for each commit will be the ICT.
+   *                   If `false`, the file modification time will be used as the timestamp.
    */
-  def getHistory(
+  private[delta] def getHistoryImpl(
       start: Long,
-      endOpt: Option[Long] = None): Seq[DeltaHistory] = {
+      end: Long,
+      isRangeICT: Boolean,
+      snapshot: Snapshot): Seq[DeltaHistory] = {
     import org.apache.spark.sql.delta.implicits._
     val conf = getSerializableHadoopConf
     val logPath = deltaLog.logPath.toString
-    val currentSnapshot = deltaLog.unsafeVolatileSnapshot
-    val (snapshotForCommitFileProvider, end) = endOpt match {
-      case Some(end) if currentSnapshot.version >= end =>
-        // Use the cache snapshot if it's fresh enough for the [start, end] query.
-        (currentSnapshot, end)
-      case _ =>
-        // Either end doesn't exist or the currently cached snapshot isn't new enough to satisfy it.
-        val newSnapshot = deltaLog.update()
-        val endVersion = endOpt.getOrElse(newSnapshot.version).min(newSnapshot.version)
-        (newSnapshot, endVersion)
-    }
-    val commitFileProvider = DeltaCommitFileProvider(snapshotForCommitFileProvider)
+    val commitFileProvider = DeltaCommitFileProvider(snapshot)
     // We assume that commits are contiguous, therefore we try to load all of them in order
-    val info = spark.range(start, end + 1)
+    val info = spark.range(start, end)
       .mapPartitions { versions =>
         val logStore = LogStore(SparkEnv.get.conf, conf.value)
         val basePath = new Path(logPath)
@@ -104,9 +100,15 @@ class DeltaHistoryManager(
         versions.flatMap { commit =>
           try {
             val deltaFile = commitFileProvider.deltaFile(commit)
-            val ci = DeltaHistoryManager.getCommitInfo(logStore, deltaFile, conf.value)
-            val metadata = fs.getFileStatus(deltaFile)
-            Some(ci.withTimestamp(metadata.getModificationTime))
+            val ci = DeltaHistoryManager
+              .getCommitInfoOpt(logStore, deltaFile, conf.value)
+              .getOrElse(CommitInfo.empty(Some(commit)))
+            val timestamp = if (isRangeICT) {
+              CommitInfo.getRequiredInCommitTimestamp(Some(ci), commit.toString)
+            } else {
+              fs.getFileStatus(deltaFile).getModificationTime
+            }
+            Some(ci.withTimestamp(timestamp))
           } catch {
             case _: FileNotFoundException =>
               // We have a race-condition where files can be deleted while reading. It's fine to
@@ -115,8 +117,48 @@ class DeltaHistoryManager(
           }
         }.map(DeltaHistory.fromCommitInfo)
       }
-    // Spark should return the commits in increasing order as well
-    monotonizeCommitTimestamps(info.collect()).reverse
+    val monotonizedCommits = if (isRangeICT) {
+      info.collect()
+    } else {
+      monotonizeCommitTimestamps(info.collect())
+    }
+    monotonizedCommits.reverse
+  }
+
+  /**
+   * Get the commit information of the Delta table from commit `[start, end)`. If `end` is `None`,
+   * we return all commits from start to now.
+   * @param start The start of the commit range, inclusive.
+   * @param end The end of the commit range, exclusive.
+   */
+  def getHistory(
+      start: Long,
+      end: Option[Long] = None,
+      snapshotOpt: Option[Snapshot] = None): Seq[DeltaHistory] = {
+    val snapshot = snapshotOpt.getOrElse(deltaLog.update())
+    val upperBoundExclusive = end.getOrElse(snapshot.version + 1)
+    if (!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata)) {
+      getHistoryImpl(start, upperBoundExclusive, isRangeICT = false, snapshot)
+    } else {
+      InCommitTimestampUtils.getValidatedICTEnablementInfo(snapshot.metadata) match {
+        case Some(Commit(ictEarliest, _)) =>
+          val nonICTCommits = if (ictEarliest > start) {
+            getHistoryImpl(
+              start, math.min(upperBoundExclusive, ictEarliest), isRangeICT = false, snapshot)
+          } else {
+            Seq.empty
+          }
+          val ictCommits = if (upperBoundExclusive > ictEarliest) {
+            getHistoryImpl(
+              math.max(ictEarliest, start), upperBoundExclusive, isRangeICT = true, snapshot)
+          } else {
+            Seq.empty
+          }
+          ictCommits ++ nonICTCommits
+        case _ => // Enablement info not found, ICT is enabled for all available commits.
+          getHistoryImpl(start, upperBoundExclusive, isRangeICT = true, snapshot)
+      }
+    }
   }
 
   /**
@@ -378,20 +420,6 @@ object DeltaHistoryManager extends DeltaLogging {
         .collectFirst { case c: CommitInfo => c.copy(version = Some(deltaVersion(deltaFile))) }
     } finally {
       logs.close()
-    }
-  }
-
-  /**
-   * Get the persisted commit info for the given delta file. If commit info
-   * is not found in the commit, a mostly empty [[CommitInfo]] object with only
-   * the version populated will be returned.
-   */
-  private def getCommitInfo(
-      logStore: LogStore,
-      deltaFile: Path,
-      hadoopConf: Configuration): CommitInfo = {
-    getCommitInfoOpt(logStore, deltaFile, hadoopConf).getOrElse {
-      CommitInfo.empty(Some(deltaVersion(deltaFile)))
     }
   }
 

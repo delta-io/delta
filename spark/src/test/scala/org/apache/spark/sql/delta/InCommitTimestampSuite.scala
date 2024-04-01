@@ -635,6 +635,83 @@ class InCommitTimestampSuite
     }
   }
 
+  test("DeltaHistoryManager.getHistory --- " +
+      "works correctly when the history has both ICT and non-ICT commits") {
+    withSQLConf(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
+      withTempDir { tempDir =>
+        spark.range(1).write.format("delta").save(tempDir.getAbsolutePath)
+        val numNonICTCommits = 6
+        val numICTCommits = 5
+        val deltaLog =
+          DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        for (i <- 1 to (numNonICTCommits - 1)) {
+          deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
+        }
+
+        // Enable ICT.
+        spark.sql(
+          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}`" +
+            s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+
+        for (i <- 1 to (numICTCommits - 1)) {
+          deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
+        }
+        val currentVersion = deltaLog.update().version
+        val ictEnablementVersion = numNonICTCommits
+
+        // Fetch the entire history.
+        val history = deltaLog.history.getHistory(None)
+        assert(history.length == currentVersion + 1)
+        val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+        history.reverse.zipWithIndex.foreach { case (hist, version) =>
+          assert(hist.getVersion == version)
+          val expectedTimestamp = if (version < ictEnablementVersion) {
+            fs.getFileStatus(FileNames.deltaFile(deltaLog.logPath, version))
+              .getModificationTime
+          } else {
+            getInCommitTimestamp(deltaLog, version)
+          }
+          assert(hist.timestamp.getTime == expectedTimestamp)
+        }
+        // Try fetching only the non-ICT commits.
+        val nonICTHistory = deltaLog.history.getHistory(start = 0, end = Some(ictEnablementVersion))
+        assert(nonICTHistory.length == ictEnablementVersion)
+        nonICTHistory.reverse.zipWithIndex.foreach { case (hist, version) =>
+          assert(hist.getVersion == version)
+          val expectedTimestamp = fs.getFileStatus(FileNames.deltaFile(deltaLog.logPath, version))
+            .getModificationTime
+          assert(hist.timestamp.getTime == expectedTimestamp)
+        }
+        // Try fetching only the ICT commits.
+        val ictHistory = deltaLog.history.getHistory(start = ictEnablementVersion, end = None)
+        assert(ictHistory.length == currentVersion - ictEnablementVersion + 1)
+        ictHistory
+          .reverse
+          .zip(ictEnablementVersion to currentVersion.toInt)
+          .foreach { case (hist, version) =>
+            assert(hist.getVersion == version)
+            assert(hist.timestamp.getTime == getInCommitTimestamp(deltaLog, version))
+          }
+        // Try fetching some non-ICT + some ICT commits.
+        val mixedHistory = deltaLog.history.getHistory(start = 2, end = Some(7))
+        assert(mixedHistory.length == 5)
+        mixedHistory
+          .reverse
+          .zip(2 to 6)
+          .foreach { case (hist, version) =>
+            assert(hist.getVersion == version)
+            val expectedTimestamp = if (version < ictEnablementVersion) {
+                fs.getFileStatus(FileNames.deltaFile(deltaLog.logPath, version)).getModificationTime
+              } else {
+                getInCommitTimestamp(deltaLog, version)
+              }
+            assert(hist.timestamp.getTime == expectedTimestamp)
+        }
+      }
+    }
+  }
+
   test("DeltaHistoryManager.getActiveCommitAtTimeFromICTRange -- boundary cases" ) {
     withTempDir { tempDir =>
       spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
@@ -839,6 +916,26 @@ class InCommitTimestampSuite
         spark,
         deltaCommitFileProvider).get
       assert(commit == getICTCommit(7))
+    }
+  }
+
+  test("DeltaHistoryManager.getHistory --- all ICT commits") {
+    withTempDir { tempDir =>
+      spark.range(1).write.format("delta").save(tempDir.getAbsolutePath)
+      val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val numberAdditionalCommits = 4
+      for (i <- 1 to numberAdditionalCommits) {
+        deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
+      }
+      val history = deltaLog.history.getHistory(None)
+      assert(history.length == numberAdditionalCommits + 1)
+      history.reverse.zipWithIndex.foreach { case (hist, version) =>
+        assert(hist.timestamp.getTime == getInCommitTimestamp(deltaLog, version))
+      }
+      // Try fetching a limited subset of the history.
+      val historySubset = deltaLog.history.getHistory(start = 2, end = Some(3))
+      assert(historySubset.length == 1)
+      assert(historySubset.head.timestamp.getTime == getInCommitTimestamp(deltaLog, 2))
     }
   }
 }
