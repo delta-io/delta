@@ -22,6 +22,7 @@ import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+
 import scala.collection.JavaConverters._
 
 /**
