@@ -630,8 +630,9 @@ public class SnapshotManager {
                 throw new IllegalStateException(msg);
             }
 
-            // Reading sidecars only applies for v2 checkpoints.
-            if (newCheckpoint.format == CheckpointInstance.CheckpointFormat.V2) {
+            // Reading sidecars only applies for V2 checkpoints (whether with a classic or UUID
+            // naming scheme).
+            if (newCheckpoint.format.usesSidecars()) {
                 final List<FileStatus> sidecarFiles = listSidecars(tableClient);
                 // Only read the checkpoint for sidecars if any sidecars exist in the table.
                 if (!sidecarFiles.isEmpty()) {

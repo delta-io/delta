@@ -62,27 +62,28 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
 
   /**
    * Checkpoint file status for V2 checkpoint manifest.
-   * Note that although only one compatibility checkpoint file is required, we return one for each
-   * checkpoint to verify that the compatibility checkpoint can never be read over a V2 checkpoint.
-   * Returns manifest, compatibility checkpoint, and sidecar files.
+   *
+   * @param checkpointVersions List of checkpoint versions, given as Seq(version, whether to use
+   *                           UUID naming scheme, number of sidecars).
+   * Returns manifest and sidecar files for each checkpoint version.
    */
   def v2CheckpointFileStatuses(
-      checkpointVersions: Seq[(Long, Int)],
-      fileType: String): Seq[(FileStatus, FileStatus, Seq[FileStatus])] = {
+      checkpointVersions: Seq[(Long, Boolean, Int)],
+      fileType: String): Seq[(FileStatus, Seq[FileStatus])] = {
     assert(checkpointVersions.size == checkpointVersions.toSet.size)
-    checkpointVersions.map { case (v, numSidecars) =>
-      val checkpointManifest = FileStatus.of(
-        FileNames.v2CheckpointManifestFile(
-          logPath, v, UUID.randomUUID().toString, fileType).toString,
-        v, v * 10)
-      val compatibilityCheckpoint = FileStatus.of(
-        FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10)
+    checkpointVersions.map { case (v, useUUID, numSidecars) =>
+      val checkpointManifest = if (useUUID) {
+        FileStatus.of(FileNames.v2CheckpointManifestFile(
+          logPath, v, UUID.randomUUID().toString, fileType).toString, v, v * 10)
+      } else {
+        FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10)
+      }
       val sidecars = (0 until numSidecars).map { _ =>
         FileStatus.of(
           FileNames.v2CheckpointSidecarFile(logPath, UUID.randomUUID().toString).toString,
           v, v * 10)
       }
-      (checkpointManifest, compatibilityCheckpoint, sidecars)
+      (checkpointManifest, sidecars)
     }
   }
 

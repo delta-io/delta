@@ -153,6 +153,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
    * @param startCheckpoint starting checkpoint to list from, in practice provided by the
    *                        _last_checkpoint file; if not provided list from 0
    * @param versionToLoad specific version to load; if not provided load the latest
+   * @param v2CheckpointSpec Versions of V2 checkpoints to be included along with the number of
+   *                         sidecars in each checkpoint and the naming scheme for each checkpoint.
    */
   def testWithCheckpoints(
       deltaVersions: Seq[Long],
@@ -161,38 +163,38 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       numParts: Int = -1,
       startCheckpoint: Optional[java.lang.Long] = Optional.empty(),
       versionToLoad: Optional[java.lang.Long] = Optional.empty(),
-      v2CheckpointVersionsAndNumSidecars: Seq[(Long, Int)] = Seq.empty): Unit = {
+      v2CheckpointSpec: Seq[(Long, Boolean, Int)] = Seq.empty): Unit = {
     val deltas = deltaFileStatuses(deltaVersions)
     val singularCheckpoints = singularCheckpointFileStatuses(checkpointVersions)
     val multiCheckpoints = multiCheckpointFileStatuses(multiCheckpointVersions, numParts)
 
     // Only test both filetypes if we have to read the checkpoint manifest.
-    val manifestFileTypes = if (v2CheckpointVersionsAndNumSidecars.nonEmpty) {
+    val manifestFileTypes = if (v2CheckpointSpec.nonEmpty) {
       Seq("parquet", "json")
     } else {
       Seq("parquet")
     }
     manifestFileTypes.foreach { manifestFileType =>
       val v2Checkpoints =
-        v2CheckpointFileStatuses(v2CheckpointVersionsAndNumSidecars, manifestFileType)
+        v2CheckpointFileStatuses(v2CheckpointSpec, manifestFileType)
       val checkpointFiles = v2Checkpoints.flatMap {
-        case (checkpointManifest, compatibilityFile, sidecars) =>
-          Seq(checkpointManifest) ++ Seq(compatibilityFile) ++ sidecars
+        case (checkpointManifest, sidecars) =>
+          Seq(checkpointManifest) ++ sidecars
       } ++ singularCheckpoints ++ multiCheckpoints
 
       val expectedCheckpointVersion = (checkpointVersions ++ multiCheckpointVersions ++
-        v2CheckpointVersionsAndNumSidecars.map(_._1))
+        v2CheckpointSpec.map(_._1))
         .filter(_ <= versionToLoad.orElse(Long.MaxValue))
         .sorted
         .lastOption
 
       val (expectedV2Checkpoint, expectedSidecars) = expectedCheckpointVersion.map { v =>
-        val matchingCheckpoints = v2Checkpoints.filter { case (manifest, _, _) =>
+        val matchingCheckpoints = v2Checkpoints.filter { case (manifest, _) =>
           FileNames.checkpointVersion(manifest.getPath) == v
         }
         if (matchingCheckpoints.nonEmpty) {
           matchingCheckpoints.head match {
-            case (c, _, sidecars) => (Seq(c), sidecars)
+            case (c, sidecars) => (Seq(c), sidecars)
           }
         } else {
           (Seq.empty, Seq.empty)
@@ -527,7 +529,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       Seq.empty,
       Seq.empty,
       versionToLoad = Optional.of(5L),
-      v2CheckpointVersionsAndNumSidecars = Seq((0L, 2), (5L, 2)))
+      v2CheckpointSpec = Seq((0L, true, 2), (5L, true, 2)))
   }
 
   test("v2 checkpoint exists before version") {
@@ -536,7 +538,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       Seq.empty,
       Seq.empty,
       versionToLoad = Optional.of(6L),
-      v2CheckpointVersionsAndNumSidecars = Seq((0L, 2), (5L, 2)))
+      v2CheckpointSpec = Seq((0L, true, 2), (5L, true, 2)))
   }
 
   test("v1 and v2 checkpoints in table") {
@@ -545,13 +547,13 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       Seq(0L, 10L),
       Seq.empty,
       versionToLoad = Optional.of(8L),
-      v2CheckpointVersionsAndNumSidecars = Seq((5L, 2)))
+      v2CheckpointSpec = Seq((5L, true, 2)))
     testWithCheckpoints(
       (0L to 12L),
       Seq(0L, 10L),
       Seq.empty,
       versionToLoad = Optional.of(12L),
-      v2CheckpointVersionsAndNumSidecars = Seq((5L, 2)))
+      v2CheckpointSpec = Seq((5L, true, 2)))
   }
 
   test("multipart and v2 checkpoints in table") {
@@ -561,14 +563,14 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       Seq(0L, 10L),
       numParts = 5,
       versionToLoad = Optional.of(8L),
-      v2CheckpointVersionsAndNumSidecars = Seq((5L, 2)))
+      v2CheckpointSpec = Seq((5L, true, 2)))
     testWithCheckpoints(
       (0L to 12L),
       Seq.empty,
       Seq(0L, 10L),
       numParts = 5,
       versionToLoad = Optional.of(12L),
-      v2CheckpointVersionsAndNumSidecars = Seq((5L, 2)))
+      v2CheckpointSpec = Seq((5L, true, 2)))
   }
 
   test("no checkpoint prior to version") {
@@ -577,7 +579,40 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       Seq.empty,
       Seq.empty,
       versionToLoad = Optional.of(3L),
-      v2CheckpointVersionsAndNumSidecars = Seq((5L, 2)))
+      v2CheckpointSpec = Seq((5L, true, 2)))
+  }
+
+  test("read from compatibility checkpoint") {
+    testWithCheckpoints(
+      (0L to 5L),
+      Seq.empty,
+      Seq.empty,
+      versionToLoad = Optional.of(5L),
+      v2CheckpointSpec = Seq((5L, false, 5)))
+    testWithCheckpoints(
+      (0L to 5L),
+      Seq.empty,
+      Seq.empty,
+      versionToLoad = Optional.of(5L),
+      v2CheckpointSpec = Seq((0L, true, 5), (5L, false, 5)))
+  }
+
+  test("read from V2 checkpoint with compatibility checkpoint at same version") {
+    testWithCheckpoints(
+      (0L to 5L),
+      Seq.empty,
+      Seq.empty,
+      versionToLoad = Optional.of(5L),
+      v2CheckpointSpec = Seq((5L, true, 5), (5L, false, 5)))
+  }
+
+  test("read from V2 checkpoint with compatibility checkpoint at previous version") {
+    testWithCheckpoints(
+      (0L to 5L),
+      Seq.empty,
+      Seq.empty,
+      versionToLoad = Optional.of(5L),
+      v2CheckpointSpec = Seq((3L, false, 5), (5L, true, 5)))
   }
 
   /* ------------------- CORRUPT DELTA LOG FILE LISTINGS ------------------ */
@@ -837,7 +872,7 @@ class MockSidecarParquetHandler(sidecars: Seq[FileStatus]) extends BaseMockParqu
           }
         }
 
-        override def getSize: Int = 2
+        override def getSize: Int = sidecars.length
       })
   }
 }
@@ -861,7 +896,7 @@ class MockSidecarJsonHandler(sidecars: Seq[FileStatus]) extends BaseMockJsonHand
           }
         }
 
-        override def getSize: Int = 2
+        override def getSize: Int = sidecars.length
       })
   }
 }

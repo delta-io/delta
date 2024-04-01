@@ -59,7 +59,8 @@ class CheckpointInstanceSuite extends AnyFunSuite with MockFileSystemClientUtils
       new Path(FAKE_DELTA_LOG_PATH, "00000000000000000010.checkpoint.parquet").toString)
     assert(classicCheckpoint.version == 10)
     assert(!classicCheckpoint.numParts.isPresent())
-    assert(classicCheckpoint.format == CheckpointInstance.CheckpointFormat.SINGLE_PART)
+    assert(classicCheckpoint.format == CheckpointInstance.CheckpointFormat.CLASSIC)
+    assert(classicCheckpoint.format.usesSidecars())
 
     // multi-part checkpoint
     val multipartCheckpoint = new CheckpointInstance(
@@ -68,6 +69,7 @@ class CheckpointInstanceSuite extends AnyFunSuite with MockFileSystemClientUtils
     assert(multipartCheckpoint.version == 10)
     assert(multipartCheckpoint.numParts.isPresent() && multipartCheckpoint.numParts.get() == 3)
     assert(multipartCheckpoint.format == CheckpointInstance.CheckpointFormat.MULTI_PART)
+    assert(!multipartCheckpoint.format.usesSidecars())
 
     // V2 checkpoint
     val v2Checkpoint = new CheckpointInstance(
@@ -76,6 +78,7 @@ class CheckpointInstanceSuite extends AnyFunSuite with MockFileSystemClientUtils
     assert(v2Checkpoint.version == 10)
     assert(!v2Checkpoint.numParts.isPresent())
     assert(v2Checkpoint.format == CheckpointInstance.CheckpointFormat.V2)
+    assert(v2Checkpoint.format.usesSidecars())
 
     // invalid checkpoints
     intercept[RuntimeException] {

@@ -32,7 +32,7 @@ public class CheckpointInstance
     implements Comparable<CheckpointInstance> {
 
     public enum CheckpointFormat {
-        SINGLE_PART(0), MULTI_PART(1), V2(2);
+        CLASSIC(0), MULTI_PART(1), V2(2);
 
         private int ordinal;
 
@@ -43,6 +43,8 @@ public class CheckpointInstance
         public int getOrdinal() {
             return ordinal;
         }
+
+        public boolean usesSidecars() { return ordinal != 1; }
     }
 
     /**
@@ -66,7 +68,7 @@ public class CheckpointInstance
             // Classic checkpoint 00000000000000000010.checkpoint.parquet
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.empty();
-            this.format = CheckpointFormat.SINGLE_PART;
+            this.format = CheckpointFormat.CLASSIC;
         } else if (pathParts.length == 5 && pathParts[1].equals("checkpoint")
                 && pathParts[4].equals("parquet")) {
             // Multi-part checkpoint 00000000000000000010.checkpoint.0000000001.0000000003.parquet
@@ -93,7 +95,7 @@ public class CheckpointInstance
         this.numParts = numParts;
         this.filePath = Optional.empty();
         if (numParts.orElse(0) == 0) {
-            this.format = CheckpointFormat.SINGLE_PART;
+            this.format = CheckpointFormat.CLASSIC;
         } else {
             this.format = CheckpointFormat.MULTI_PART;
         }
