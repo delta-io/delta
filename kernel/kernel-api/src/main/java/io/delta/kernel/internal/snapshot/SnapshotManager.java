@@ -182,16 +182,6 @@ public class SnapshotManager {
     }
 
     /**
-     * Get an iterator of files in the _delta_log/_sidecars directory.
-     */
-    private CloseableIterator<FileStatus> listFromSidecarDirectory(
-            TableClient tableClient) throws IOException {
-        return tableClient
-            .getFileSystemClient()
-            .listFrom(FileNames.sidecarPrefix(logPath));
-    }
-
-    /**
      * Returns true if the given file name is delta log files. Delta log files can be delta commit
      * file (e.g., 000000000.json), or checkpoint file.
      * (e.g., 000000001.checkpoint.00001.00003.parquet)
@@ -225,27 +215,6 @@ public class SnapshotManager {
             return Optional.empty();
         } catch (IOException io) {
             throw new RuntimeException("Failed to list the files in delta log", io);
-        }
-    }
-
-    /**
-     * Returns an iterator of sidecar files found in the _delta_log/_sidecars directory. Returns
-     * None if the directory is missing (for example, for a v1 checkpoint).
-     */
-    private List<FileStatus> listSidecars(TableClient tableClient) {
-        try {
-            CloseableIterator<FileStatus> results = listFromSidecarDirectory(tableClient);
-            if (results.hasNext()) {
-                List<FileStatus> output = new ArrayList<>();
-                results.forEachRemaining(output::add);
-                return output;
-            } else {
-                return Collections.emptyList();
-            }
-        } catch (FileNotFoundException e) {
-            return Collections.emptyList();
-        } catch (IOException io) {
-            throw new RuntimeException("Failed to list files in sidecar directory", io);
         }
     }
 
@@ -633,17 +602,8 @@ public class SnapshotManager {
             // Reading sidecars only applies for V2 checkpoints (whether with a classic or UUID
             // naming scheme).
             if (newCheckpoint.format.usesSidecars()) {
-                final List<FileStatus> sidecarFiles = listSidecars(tableClient);
-                // Only read the checkpoint for sidecars if any sidecars exist in the table.
-                if (!sidecarFiles.isEmpty()) {
-                    // Safe to call .get() here, as we know the CheckpointInstance was initialized
-                    // with a valid filepath.
-                    final Set<Path> referencedSidecars = new HashSet<>(
-                            newCheckpoint.getReferencedSidecars(tableClient, logPath).get());
-                    newCheckpointFileList.addAll(sidecarFiles.stream()
-                            .filter(f -> referencedSidecars.contains(new Path(f.getPath())))
-                            .collect(Collectors.toList()));
-                }
+                newCheckpointFileList.addAll(
+                        newCheckpoint.getReferencedSidecars(tableClient, logPath));
             }
 
             return newCheckpointFileList;

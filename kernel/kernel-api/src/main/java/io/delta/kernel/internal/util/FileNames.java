@@ -76,10 +76,6 @@ public final class FileNames {
         return String.format("%s/%020d.", path, version);
     }
 
-    public static String sidecarPrefix(Path path) {
-        return String.format("%s/_sidecars/", path);
-    }
-
     /**
      * Returns the path for a singular checkpoint up to the given version.
      * <p>

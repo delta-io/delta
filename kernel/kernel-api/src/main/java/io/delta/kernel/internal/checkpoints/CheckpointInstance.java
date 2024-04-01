@@ -24,6 +24,7 @@ import java.util.stream.Collectors;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.utils.FileStatus;
 
 /**
  * Metadata about Delta checkpoint.
@@ -123,13 +124,14 @@ public class CheckpointInstance
      * CheckpointInstance.
      * This method is only valid for single-part or V2 checkpoints.
      */
-    public Optional<List<Path>> getReferencedSidecars(TableClient tableClient, Path logPath) {
+    public List<FileStatus> getReferencedSidecars(TableClient tableClient, Path logPath) {
         return filePath.map(path ->
                 new Checkpointer(logPath).loadSidecarFiles(tableClient, path)
                 .orElse(Collections.emptyList())
                 .stream()
-                .map(sidecar -> new Path(sidecar.path))
-                .collect(Collectors.toList()));
+                .map(s -> FileStatus.of(s.path, s.sizeInBytes, s.modificationTime))
+                .collect(Collectors.toList()))
+                .orElse(Collections.emptyList());
     }
 
     public List<Path> getCorrespondingFiles(Path path) {
