@@ -427,7 +427,7 @@ class StatsCollectionSuite
     ("BINARY", "BinaryType"),
     ("BOOLEAN", "BooleanType"),
     ("ARRAY<TINYINT>", "ArrayType(ByteType,true)"),
-    ("MAP<DATE, INT>", "MapType(DateType,IntegerType,true)"),
+    ("MAP<DATE, INT>", "MapType(DateType,IntegerType,true)")
     // ("STRUCT<c60:INT, c61:ARRAY<INT>>", "ArrayType(IntegerType,true)")
   ).foreach { case (invalidType, typename) =>
     val tableName1 = "delta_table_1"
