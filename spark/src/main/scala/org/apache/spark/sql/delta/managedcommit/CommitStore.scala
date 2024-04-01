@@ -40,8 +40,8 @@ case class Commit(
  *  |   yes     |   no      | transient error (e.g. network hiccup)                           |
  *  |   yes     |   yes     | physical conflict (allowed to rebase and retry)                 |
  */
-class CommitFailedException(
-    val retryable: Boolean, val conflict: Boolean, message: String) extends Exception(message)
+case class CommitFailedException(
+    retryable: Boolean, conflict: Boolean, message: String) extends Exception(message)
 
 /** Response container for [[CommitStore.commit]] API */
 case class CommitResponse(commit: Commit)
