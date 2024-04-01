@@ -32,7 +32,17 @@ public class CheckpointInstance
     implements Comparable<CheckpointInstance> {
 
     public enum CheckpointFormat {
-        SINGLE_PART, MULTI_PART, V2
+        SINGLE_PART(0), MULTI_PART(1), V2(2);
+
+        private int ordinal;
+
+        CheckpointFormat(int ordinal) {
+            this.ordinal = ordinal;
+        }
+
+        public int getOrdinal() {
+            return ordinal;
+        }
     }
 
     /**
@@ -137,6 +147,8 @@ public class CheckpointInstance
     /**
      * Comparison rules:
      * 1. A CheckpointInstance with higher version is greater than the one with lower version.
+     * 2. A CheckpointInstance for a V2 checkpoint is greater than a classic checkpoint (to filter
+     *    avoid selecting the compatibility file).
      * 2. For CheckpointInstances with same version, a Multi-part checkpoint is greater than a
      *    Single part checkpoint.
      * 3. For Multi-part CheckpointInstance corresponding to same version, the one with more
@@ -145,7 +157,10 @@ public class CheckpointInstance
     @Override
     public int compareTo(CheckpointInstance that) {
         if (version == that.version) {
-            return Long.compare(numParts.orElse(1), that.numParts.orElse(1));
+            if (format == that.format) {
+                return Long.compare(numParts.orElse(1), that.numParts.orElse(1));
+            }
+            return Integer.compare(format.ordinal(), that.format.ordinal());
         } else {
             return Long.compare(version, that.version);
         }

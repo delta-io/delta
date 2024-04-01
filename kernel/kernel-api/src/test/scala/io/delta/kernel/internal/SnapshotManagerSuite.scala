@@ -176,7 +176,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       val v2Checkpoints =
         v2CheckpointFileStatuses(v2CheckpointVersionsAndNumSidecars, manifestFileType)
       val checkpointFiles = v2Checkpoints.flatMap {
-        case (checkpointManifest, sidecars) => Seq(checkpointManifest) ++ sidecars
+        case (checkpointManifest, compatibilityFile, sidecars) =>
+          Seq(checkpointManifest) ++ Seq(compatibilityFile) ++ sidecars
       } ++ singularCheckpoints ++ multiCheckpoints
 
       val expectedCheckpointVersion = (checkpointVersions ++ multiCheckpointVersions ++
@@ -186,12 +187,12 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         .lastOption
 
       val (expectedV2Checkpoint, expectedSidecars) = expectedCheckpointVersion.map { v =>
-        val matchingCheckpoints = v2Checkpoints.filter { case (manifest, _) =>
+        val matchingCheckpoints = v2Checkpoints.filter { case (manifest, _, _) =>
           FileNames.checkpointVersion(manifest.getPath) == v
         }
         if (matchingCheckpoints.nonEmpty) {
           matchingCheckpoints.head match {
-            case (c, sidecars) => (Seq(c), sidecars)
+            case (c, _, sidecars) => (Seq(c), sidecars)
           }
         } else {
           (Seq.empty, Seq.empty)
@@ -519,6 +520,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     )
   }
 
+  /* ------------------- V2 CHECKPOINT TESTS ------------------ */
   test("v2 checkpoint exists at version") {
     testWithCheckpoints(
       (0L to 5L),

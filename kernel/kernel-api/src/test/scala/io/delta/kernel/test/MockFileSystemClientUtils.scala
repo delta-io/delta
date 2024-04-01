@@ -59,22 +59,27 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
     )
   }
 
-  /** Checkpoint file status for V2 checkpoint manifest */
+  /**
+   * Checkpoint file status for V2 checkpoint manifest
+   * Returns manifest, compatibility checkpoint, and sidecar files.
+   */
   def v2CheckpointFileStatuses(
       checkpointVersions: Seq[(Long, Int)],
-      fileType: String): Seq[(FileStatus, Seq[FileStatus])] = {
+      fileType: String): Seq[(FileStatus, FileStatus, Seq[FileStatus])] = {
     assert(checkpointVersions.size == checkpointVersions.toSet.size)
     checkpointVersions.map { case (v, numSidecars) =>
       val checkpointManifest = FileStatus.of(
         FileNames.v2CheckpointManifestFile(
           logPath, v, UUID.randomUUID().toString, fileType).toString,
         v, v * 10)
+      val compatibilityCheckpoint = FileStatus.of(
+        FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10)
       val sidecars = (0 until numSidecars).map { _ =>
         FileStatus.of(
           FileNames.v2CheckpointSidecarFile(logPath, UUID.randomUUID().toString).toString,
           v, v * 10)
       }
-      (checkpointManifest, sidecars)
+      (checkpointManifest, compatibilityCheckpoint, sidecars)
     }
   }
 
