@@ -83,10 +83,20 @@ class DeltaHistoryManager(
     import org.apache.spark.sql.delta.implicits._
     val conf = getSerializableHadoopConf
     val logPath = deltaLog.logPath.toString
-    val snapshot = endOpt.map(end => deltaLog.getSnapshotAt(end)).getOrElse(deltaLog.update())
-    val commitFileProvider = DeltaCommitFileProvider(snapshot)
+    val currentSnapshot = deltaLog.unsafeVolatileSnapshot
+    val (snapshotForCommitFileProvider, end) = endOpt match {
+      case Some(end) if currentSnapshot.version >= end =>
+        // Use the cache snapshot if it's fresh enough for the [start, end] query.
+        (currentSnapshot, end)
+      case _ =>
+        // Either end doesn't exist or the currently cached snapshot isn't new enough to satisfy it.
+        val newSnapshot = deltaLog.update()
+        val endVersion = endOpt.getOrElse(newSnapshot.version).min(newSnapshot.version)
+        (newSnapshot, endVersion)
+    }
+    val commitFileProvider = DeltaCommitFileProvider(snapshotForCommitFileProvider)
     // We assume that commits are contiguous, therefore we try to load all of them in order
-    val info = spark.range(start, snapshot.version + 1)
+    val info = spark.range(start, end + 1)
       .mapPartitions { versions =>
         val logStore = LogStore(SparkEnv.get.conf, conf.value)
         val basePath = new Path(logPath)
