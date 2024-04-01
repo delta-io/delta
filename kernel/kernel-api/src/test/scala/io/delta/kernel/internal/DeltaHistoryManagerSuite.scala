@@ -194,7 +194,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     )
     // No delta files
     checkGetActiveCommitAtTimestampError[RuntimeException](
-      Seq("foo", "notdelta.parquet", "foo.json", "001.checkpoint.00foo0.parquet")
+      Seq("foo", "notdelta.parquet", "foo.json", "001.checkpoint.00f.oo0.parquet")
         .map(FileStatus.of(_, 10, 10)),
       25,
       "No delta files found in the directory"
