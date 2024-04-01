@@ -221,7 +221,7 @@ public class Checkpointer {
             }
             return Optional.of(files);
         } catch (Exception e) {
-            logger.warn("Failed to load checkpoint metadata from file {}", checkpointPath, e);
+            logger.warn("Failed to load sidecars from file {}", checkpointPath, e);
             return Optional.empty();
         }
     }
