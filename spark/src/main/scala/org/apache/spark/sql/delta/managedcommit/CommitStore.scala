@@ -18,13 +18,11 @@ package org.apache.spark.sql.delta.managedcommit
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaConfigs, InitialSnapshot, ManagedCommitTableFeature, SerializableFileStatus, SnapshotDescriptor}
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.{DeltaConfigs, ManagedCommitTableFeature, SnapshotDescriptor}
+import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
-
-import org.apache.spark.internal.Logging
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 /** Representation of a commit file */
 case class Commit(
@@ -92,9 +90,22 @@ trait CommitStore {
    *         tracked by [[CommitStore]].
    */
   def getCommits(
-    logPath: Path,
-    startVersion: Long,
-    endVersion: Option[Long] = None): GetCommitsResponse
+      logPath: Path,
+      startVersion: Long,
+      endVersion: Option[Long] = None): GetCommitsResponse
+
+  /**
+   * API to ask the Commit-Owner to backfill all commits >= 'startVersion' and <= `endVersion`.
+   *
+   * If this API returns successfully, that means the backfill must have been completed, although
+   * the Commit-Owner may not be aware of it yet.
+   */
+  def backfillToVersion(
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      logPath: Path,
+      startVersion: Long,
+      endVersion: Option[Long]): Unit
 }
 
 /** A builder interface for CommitStore */
@@ -146,7 +157,7 @@ object CommitStoreProvider {
     nameToBuilderMapping.retain((k, _) => initialCommitStoreBuilderNames.contains(k))
   }
 
-  val initialCommitStoreBuilders = Seq[CommitStoreBuilder](
+  private val initialCommitStoreBuilders = Seq[CommitStoreBuilder](
     // Any new commit-store builder will be registered here.
   )
   initialCommitStoreBuilders.foreach(registerBuilder)

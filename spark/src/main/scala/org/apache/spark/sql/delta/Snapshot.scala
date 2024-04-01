@@ -467,6 +467,38 @@ class Snapshot(
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
+  /**
+   * Ensures that commit files are backfilled up to the current version in the snapshot.
+   *
+   * This method checks if there are any un-backfilled versions up to the current version and
+   * triggers the backfilling process using the commit store. It verifies that the delta file for
+   * the current version exists after the backfilling process.
+   *
+   * @throws IllegalStateException
+   *   if the delta file for the current version is not found after backfilling.
+   */
+  def ensureCommitFilesBackfilled(): Unit = {
+    val commitStore = commitStoreOpt.getOrElse {
+      return
+    }
+    val minUnbackfilledVersion = DeltaCommitFileProvider(this).minUnbackfilledVersion
+    if (minUnbackfilledVersion <= version) {
+      val hadoopConf = deltaLog.newDeltaHadoopConf()
+      commitStore.backfillToVersion(
+        deltaLog.store,
+        hadoopConf,
+        deltaLog.logPath,
+        startVersion = minUnbackfilledVersion,
+        endVersion = Some(version))
+      val fs = deltaLog.logPath.getFileSystem(hadoopConf)
+      val expectedBackfilledDeltaFile = FileNames.deltaFile(deltaLog.logPath, version)
+      if (!fs.exists(expectedBackfilledDeltaFile)) {
+        throw new IllegalStateException("Backfilling of commit files failed. " +
+          s"Expected delta file $expectedBackfilledDeltaFile not found.")
+      }
+    }
+  }
+
 
   protected def emptyDF: DataFrame =
     spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema)
