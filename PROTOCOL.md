@@ -1202,6 +1202,9 @@ Writers that do not implement VACUUM do not need to change anything and can safe
 
 For tables with Vacuum Protocol Check enabled, readers don’t need to understand or change anything new; they just need to acknowledge the feature exists.
 
+Making this feature a ReaderWriter feature (rather than solely a Writer feature) ensures that:
+- Older vacuum implementations, which only performed the Reader protocol check and lacked the Writer protocol check, will begin to fail if the table has `vacuumProtocolCheck` enabled.This change allows future writer features to have greater flexibility and safety in managing files within the table directory, eliminating the risk of older Vacuum implementations (that lack the Writer protocol check) accidentally deleting relevant files.
+
 # Clustered Table
 
 The Clustered Table feature facilitates the physical clustering of rows that share similar values on a predefined set of clustering columns.
