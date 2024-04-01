@@ -45,6 +45,7 @@ public class CheckpointInstance
         }
 
         public boolean usesSidecars() { return ordinal != 1; }
+
     }
 
     /**
