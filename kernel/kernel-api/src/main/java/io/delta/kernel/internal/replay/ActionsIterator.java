@@ -191,8 +191,27 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                 List<FileStatus> checkpointFiles =
                         retrieveRemainingCheckpointFiles(fileVersion);
 
-                CloseableIterator<ColumnarBatch> manifestIterCopy;
-                if (checkpointInstance.format.usesSidecars()) {
+                // If the checkpoint file is a UUID-named checkpoint, we may need to read the JSON
+                // actions separately. Otherwise, we can add the checkpoint manifest to the list of
+                // checkpoint files to be read in parallel.
+                CloseableIterator<ColumnarBatch> checkpointJsonActions;
+                if (checkpointInstance.format.equals(CheckpointInstance.CheckpointFormat.V2) &&
+                    nextFilePath.getName().endsWith(".json")) {
+                    checkpointJsonActions = tableClient.getJsonHandler().readJsonFiles(
+                            toCloseableIterator(
+                                    Collections.singletonList(nextFile).iterator()),
+                            readSchema,
+                            Optional.empty());
+                } else {
+                    checkpointFiles.add(nextFile);
+                    checkpointJsonActions = toCloseableIterator(
+                            new ArrayList<ColumnarBatch>().iterator());
+                }
+
+                // Read any potential sidecars for a checkpoint format supporting sidecars and if
+                // the current read is for Add/Remove Files (otherwise, no reason to read sidecars).
+                if (checkpointInstance.format.usesSidecars() &&
+                        LogReplay.isAddRemoveReadSchema(readSchema)) {
                     // If the checkpoint format may contain sidecars, read the sidecar actions from
                     // the checkpoint.
                     final CloseableIterator<ColumnarBatch> manifestIter;
@@ -202,21 +221,11 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                                         Collections.singletonList(nextFile).iterator()),
                                 LogReplay.getSidecarFileSchema(),
                                 Optional.empty());
-                        manifestIterCopy = tableClient.getParquetHandler().readParquetFiles(
-                                toCloseableIterator(
-                                        Collections.singletonList(nextFile).iterator()),
-                                readSchema,
-                                Optional.empty());
                     } else if (nextFilePath.getName().endsWith(".json")) {
                         manifestIter = tableClient.getJsonHandler().readJsonFiles(
                                 toCloseableIterator(
                                         Collections.singletonList(nextFile).iterator()),
                                 LogReplay.getSidecarFileSchema(),
-                                Optional.empty());
-                        manifestIterCopy = tableClient.getJsonHandler().readJsonFiles(
-                                toCloseableIterator(
-                                        Collections.singletonList(nextFile).iterator()),
-                                readSchema,
                                 Optional.empty());
                     } else {
                         throw new IOException("Unrecognized file format");
@@ -228,10 +237,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                                 currentBatch.getRows().map(SidecarFile::fromRow);
                         while (sidecars.hasNext()) {
                             SidecarFile f = sidecars.next();
-                            if (f != null && (readSchema.equals(
-                                    LogReplay.getAddRemoveReadSchema(true)) ||
-                                            readSchema.equals(LogReplay.getAddRemoveReadSchema(
-                                                    false)))) {
+                            if (f != null) {
                                 checkpointFiles.add(
                                         FileStatus.of(
                                                 FileNames.sidecarFile(nextFilePath.getParent(),
@@ -240,16 +246,17 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                             }
                         }
                     }
-                } else {
-                    checkpointFiles.add(nextFile);
-                    manifestIterCopy = toCloseableIterator(new ArrayList<ColumnarBatch>().iterator());
                 }
 
+                // For a classic checkpoint, this will read all files (single part or multipart).
+                // For a V2 checkpoint, this will read the manifest file (if Parquet), and all
+                // sidecar files. If the manifest is a JSON file, append the manifest's batches
+                // to the result of this read.
                 final CloseableIterator<ColumnarBatch> dataIter =
                     tableClient.getParquetHandler().readParquetFiles(
                         toCloseableIterator(checkpointFiles.iterator()),
                         readSchema,
-                        Optional.empty()).append(manifestIterCopy);
+                        Optional.empty()).append(checkpointJsonActions);
 
                 return combine(dataIter, true /* isFromCheckpoint */, fileVersion);
             } else {

@@ -598,7 +598,6 @@ public class SnapshotManager {
                 );
                 throw new IllegalStateException(msg);
             }
-
             return newCheckpointFileList;
         }).orElse(Collections.emptyList());
 

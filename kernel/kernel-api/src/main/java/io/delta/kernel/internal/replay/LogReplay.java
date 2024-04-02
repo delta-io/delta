@@ -84,6 +84,11 @@ public class LogReplay {
                 .add("sidecar", SidecarFile.READ_SCHEMA);
     }
 
+    public static boolean isAddRemoveReadSchema(StructType schema) {
+        return schema.equals(getAddRemoveReadSchema(true)) ||
+                schema.equals(getAddRemoveReadSchema(false));
+    }
+
     /**
      * Read schema when searching for all the active AddFiles
      */
