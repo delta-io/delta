@@ -675,7 +675,7 @@ class InCommitTimestampSuite
           assert(hist.timestamp.getTime == expectedTimestamp)
         }
         // Try fetching only the non-ICT commits.
-        val nonICTHistory = deltaLog.history.getHistory(start = 0, end = Some(ictEnablementVersion))
+        val nonICTHistory = deltaLog.history.getHistory(start = 0, end = Some(ictEnablementVersion - 1))
         assert(nonICTHistory.length == ictEnablementVersion)
         nonICTHistory.reverse.zipWithIndex.foreach { case (hist, version) =>
           assert(hist.getVersion == version)
@@ -694,7 +694,7 @@ class InCommitTimestampSuite
             assert(hist.timestamp.getTime == getInCommitTimestamp(deltaLog, version))
           }
         // Try fetching some non-ICT + some ICT commits.
-        val mixedHistory = deltaLog.history.getHistory(start = 2, end = Some(7))
+        val mixedHistory = deltaLog.history.getHistory(start = 2, end = Some(6))
         assert(mixedHistory.length == 5)
         mixedHistory
           .reverse
@@ -933,7 +933,7 @@ class InCommitTimestampSuite
         assert(hist.timestamp.getTime == getInCommitTimestamp(deltaLog, version))
       }
       // Try fetching a limited subset of the history.
-      val historySubset = deltaLog.history.getHistory(start = 2, end = Some(3))
+      val historySubset = deltaLog.history.getHistory(start = 2, end = Some(2))
       assert(historySubset.length == 1)
       assert(historySubset.head.timestamp.getTime == getInCommitTimestamp(deltaLog, 2))
     }

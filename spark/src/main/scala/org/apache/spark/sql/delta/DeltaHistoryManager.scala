@@ -71,7 +71,7 @@ class DeltaHistoryManager(
     val listStart = limitOpt.map { limit =>
       math.max(snapshot.version - limit + 1, 0)
     }.getOrElse(getEarliestDeltaFile(deltaLog))
-    getHistory(listStart, snapshotOpt = Some(snapshot))
+    getHistory(listStart, end = Some(snapshot.version))
   }
 
   /**
@@ -126,28 +126,25 @@ class DeltaHistoryManager(
   }
 
   /**
-   * Get the commit information of the Delta table from commit `[start, end)`. If `end` is `None`,
+   * Get the commit information of the Delta table from commit `[start, end]`. If `end` is `None`,
    * we return all commits from start to now.
    * @param start The start of the commit range, inclusive.
-   * @param end The end of the commit range, exclusive.
+   * @param end The end of the commit range, inclusive.
    */
   def getHistory(
       start: Long,
-      end: Option[Long] = None,
-      snapshotOpt: Option[Snapshot] = None): Seq[DeltaHistory] = {
+      end: Option[Long] = None): Seq[DeltaHistory] = {
     val currentSnapshot = deltaLog.unsafeVolatileSnapshot
     val (snapshot, upperBoundExclusive) = end match {
-        case Some(endExclusive) if currentSnapshot.version + 1 >= endExclusive =>
-          // Use the cache snapshot if it's fresh enough for the [start, endExclusive) query.
-          (currentSnapshot, math.min(currentSnapshot.version + 1, endExclusive))
+        case Some(endInclusive) if currentSnapshot.version >= endInclusive =>
+          // Use the cache snapshot if it's fresh enough for the [start, endInclusive] query.
+          (currentSnapshot, math.min(currentSnapshot.version, endInclusive) + 1)
         case _ =>
           // Either end doesn't exist or the currently cached snapshot isn't new enough to
           // satisfy it.
-          val snapshot = snapshotOpt.getOrElse(deltaLog.update())
-          val endExclusive = end
-            .filter(_ <= snapshot.version + 1)
-            .getOrElse(snapshot.version + 1)
-          (snapshot, endExclusive)
+          val snapshot = deltaLog.update()
+          val endInclusive = end.getOrElse(snapshot.version).min(snapshot.version)
+          (snapshot, endInclusive + 1)
       }
     if (!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata)) {
       getHistoryImpl(start, upperBoundExclusive, isRangeICT = false, snapshot)
