@@ -217,7 +217,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       )
       val expectedCheckpoints = expectedCheckpointVersion.map { v =>
         if (expectedV2Checkpoint.nonEmpty) {
-          expectedV2Checkpoint ++ expectedSidecars
+          expectedV2Checkpoint
         }
         else if (checkpointVersions.toSet.contains(v)) {
           singularCheckpointFileStatuses(Seq(v))

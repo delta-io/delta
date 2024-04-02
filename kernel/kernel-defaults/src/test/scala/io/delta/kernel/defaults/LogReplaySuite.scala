@@ -16,9 +16,7 @@
 package io.delta.kernel.defaults
 
 import java.io.File
-
 import scala.collection.JavaConverters._
-
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.scalatest.funsuite.AnyFunSuite
 import org.apache.hadoop.conf.Configuration
@@ -27,11 +25,10 @@ import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.Table
-import java.util.Optional
 
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.snapshot.SnapshotManager
+import io.delta.kernel.Table
+
+import java.util.Optional
 
 class LogReplaySuite extends AnyFunSuite with TestUtils {
 
@@ -302,7 +299,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     assert(snapshotImpl.getLatestTransactionVersion("nonExistentAppId") === Optional.empty())
   }
 
-  test("read sidecars from file") {
+  test("v2 checkpoint support") {
     Seq("parquet", "json").foreach { format =>
       // Get table path and create snapshot.
       val path = goldenTablePath(s"checkpoint-with-sidecars-$format")

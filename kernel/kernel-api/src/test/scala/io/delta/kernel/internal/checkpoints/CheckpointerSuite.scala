@@ -15,9 +15,6 @@
  */
 package io.delta.kernel.internal.checkpoints
 
-import java.io.{FileNotFoundException, IOException}
-import java.util.Optional
-
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
@@ -27,12 +24,12 @@ import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, MockTableClientUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-import io.delta.kernel.test.BaseMockParquetHandler
 import org.scalatest.funsuite.AnyFunSuite
 
-class CheckpointerSuite extends AnyFunSuite
-    with MockFileSystemClientUtils
-    with MockTableClientUtils {
+import java.io.{FileNotFoundException, IOException}
+import java.util.Optional
+
+class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   import CheckpointerSuite._
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -296,42 +293,6 @@ class MockLastCheckpointMetadataFileReader(maxFailures: Int) extends BaseMockJso
           throw new IOException("Invalid last checkpoint file")
         case LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE =>
           throw new FileNotFoundException("File not found")
-        case _ => throw new IOException("Unknown table")
-      })
-  }
-}
-
-class MockSidecarJsonHandler extends BaseMockJsonHandler {
-  import CheckpointerSuite._
-
-  override def readJsonFiles(
-    fileIter: CloseableIterator[FileStatus],
-    physicalSchema: StructType,
-    predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
-    val file = fileIter.next()
-    val path = new Path(file.getPath)
-
-    Utils.singletonCloseableIterator(
-      path.getParent match {
-        case CHECKPOINT_MANIFEST_FILE_TABLE => SAMPLE_SIDECAR_FILE_CONTENT
-        case _ => throw new IOException("Unknown table")
-      })
-  }
-}
-
-class MockSidecarParquetHandler extends BaseMockParquetHandler {
-  import CheckpointerSuite._
-
-  override def readParquetFiles(
-    fileIter: CloseableIterator[FileStatus],
-    physicalSchema: StructType,
-    predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
-    val file = fileIter.next()
-    val path = new Path(file.getPath)
-
-    Utils.singletonCloseableIterator(
-      path.getParent match {
-        case CHECKPOINT_MANIFEST_FILE_TABLE => SAMPLE_SIDECAR_FILE_CONTENT
         case _ => throw new IOException("Unknown table")
       })
   }
