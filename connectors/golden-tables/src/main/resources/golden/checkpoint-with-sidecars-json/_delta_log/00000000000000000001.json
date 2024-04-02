@@ -1,0 +1,2 @@
+{"commitInfo":{"timestamp":2,"operation":"Manual Update","operationParameters":{},"isBlindAppend":true}}
+{"remove":{"path":"/path/to/addfile-2.parquet","deletionTimestamp":2,"dataChange":true}}

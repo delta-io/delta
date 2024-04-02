@@ -48,6 +48,8 @@ public class TableFeatures {
                             break;
                         case "vacuumProtocolCheck":
                             break;
+                        case "v2Checkpoint":
+                            break;
                         default:
                             throw new UnsupportedOperationException(
                                     "Unsupported table feature: " + readerFeature);

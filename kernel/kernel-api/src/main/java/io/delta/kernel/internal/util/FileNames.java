@@ -33,6 +33,8 @@ public final class FileNames {
         Pattern.compile(
             "(\\d+)\\.checkpoint((\\.\\d+\\.\\d+)?\\.parquet|\\.[^.]+\\.(json|parquet))");
 
+    public static final String SIDECAR_DIRECTORY = "_sidecars";
+
     /**
      * Returns the delta (json format) path for a given delta file.
      */
@@ -64,6 +66,10 @@ public final class FileNames {
         final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
         final String name = path.substring(slashIdx + 1);
         return Long.parseLong(name.split("\\.")[0]);
+    }
+
+    public static String sidecarFile(Path path, String sidecar) {
+        return String.format("%s/%s/%s", path.toString(), SIDECAR_DIRECTORY, sidecar);
     }
 
     /**

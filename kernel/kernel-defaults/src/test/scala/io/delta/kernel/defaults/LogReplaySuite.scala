@@ -16,7 +16,9 @@
 package io.delta.kernel.defaults
 
 import java.io.File
+
 import scala.collection.JavaConverters._
+
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.scalatest.funsuite.AnyFunSuite
 import org.apache.hadoop.conf.Configuration
@@ -25,10 +27,11 @@ import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-
 import io.delta.kernel.Table
-
 import java.util.Optional
+
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.snapshot.SnapshotManager
 
 class LogReplaySuite extends AnyFunSuite with TestUtils {
 
@@ -300,8 +303,25 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   }
 
   test("read sidecars from file") {
-    val path = goldenTablePath("read-sidecars-from-file")
-    val snapshot = latestSnapshot(path)
+    Seq("parquet", "json").foreach { format =>
+      // Get table path and create snapshot.
+      val path = goldenTablePath(s"checkpoint-with-sidecars-$format")
+      val snapshot = latestSnapshot(path)
+      val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
 
+      // Validate metadata/protocol loaded correctly from checkpoint manifest.
+      assert(snapshotImpl.getMetadata.getId == "testId")
+      assert(snapshotImpl.getProtocol.getMinReaderVersion == 3)
+      assert(snapshotImpl.getProtocol.getMinWriterVersion == 7)
+      assert(snapshotImpl.getProtocol.getReaderFeatures.asScala.toList == List("v2Checkpoint"))
+      assert(snapshotImpl.getProtocol.getWriterFeatures.asScala.toList == List("v2Checkpoint"))
+      assert(snapshot.getVersion(defaultTableClient) == 1)
+
+      // Validate AddFiles from sidecars found.
+      val scan = snapshot.getScanBuilder(defaultTableClient).build()
+      val foundFiles = collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus)
+      assert(foundFiles.map(_.getPath).toSet == (1 to 4)
+        .map(v => s"file:/path/to/addfile-$v.parquet").toSet)
+    }
   }
 }

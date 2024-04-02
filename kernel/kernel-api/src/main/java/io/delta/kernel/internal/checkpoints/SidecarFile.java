@@ -28,10 +28,14 @@ public class SidecarFile {
     public long modificationTime;
 
     public static SidecarFile fromRow(Row row) {
+        Row sidecar = row.getStruct(0);
+        if (sidecar == null) {
+            return null;
+        }
         return new SidecarFile(
-                row.getString(0),
-                row.getLong(1),
-                row.getLong(2)
+                sidecar.getString(0),
+                sidecar.getLong(1),
+                sidecar.getLong(2)
         );
     }
 
