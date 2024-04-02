@@ -1219,6 +1219,21 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     assert(!committed, "Transaction already committed.")
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
+
+    def recordCommitLargeFailure(ex: Throwable, op: DeltaOperations.Operation): Unit = {
+      val managedCommitExceptionOpt = ex match {
+        case e: CommitFailedException => Some(e)
+        case _ => None
+      }
+      val data = Map(
+        "exception" -> Utils.exceptionString(ex),
+        "operation" -> op.name,
+        "fromManagedCommit" -> managedCommitExceptionOpt.isDefined,
+        "fromManagedCommitConflict" -> managedCommitExceptionOpt.map(_.conflict).getOrElse(""),
+        "fromManagedCommitRetryable" -> managedCommitExceptionOpt.map(_.retryable).getOrElse(""))
+      recordDeltaEvent(deltaLog, "delta.commitLarge.failure", data = data)
+    }
+
     try {
       val tags = Map.empty[String, String]
       val commitInfo = CommitInfo(
@@ -1365,32 +1380,28 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
       (attemptVersion, postCommitSnapshot)
     } catch {
-      case e: java.nio.file.FileAlreadyExistsException =>
-        recordDeltaEvent(
-          deltaLog,
-          "delta.commitLarge.failure",
-          data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
-        // Actions of a commit which went in before ours.
-        // Requires updating deltaLog to retrieve these actions, as another writer may have used
-        // CommitStore for writing.
-        val logs = deltaLog.store.readAsIterator(
-          DeltaCommitFileProvider(deltaLog.update()).deltaFile(attemptVersion),
-          deltaLog.newDeltaHadoopConf())
-        try {
-          val winningCommitActions = logs.map(Action.fromJson)
-          val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
-            .map(ci => ci.copy(version = Some(attemptVersion)))
-          throw DeltaErrors.concurrentWriteException(commitInfo)
-        } finally {
-          logs.close()
+      case e: Throwable =>
+        e match {
+          case _: FileAlreadyExistsException | CommitFailedException(_, true, _) =>
+            recordCommitLargeFailure(e, op)
+            // Actions of a commit which went in before ours.
+            // Requires updating deltaLog to retrieve these actions, as another writer may have used
+            // CommitStore for writing.
+            val logs = deltaLog.store.readAsIterator(
+              DeltaCommitFileProvider(deltaLog.update()).deltaFile(attemptVersion),
+              deltaLog.newDeltaHadoopConf())
+            try {
+              val winningCommitActions = logs.map(Action.fromJson)
+              val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
+                .map(ci => ci.copy(version = Some(attemptVersion)))
+              throw DeltaErrors.concurrentWriteException(commitInfo)
+            } finally {
+              logs.close()
+            }
+          case NonFatal(_) =>
+            recordCommitLargeFailure(e, op)
+            throw e
         }
-
-      case NonFatal(e) =>
-        recordDeltaEvent(
-          deltaLog,
-          "delta.commitLarge.failure",
-          data = Map("exception" -> Utils.exceptionString(e), "operation" -> op.name))
-        throw e
     }
   }
 
