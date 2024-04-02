@@ -828,6 +828,7 @@ object DeletionVectorsSuite {
     val logJsonContent = FileUtils.readFileToString(logJson, "UTF-8")
     val newLogJsonContent = logJsonContent.replace(
       "{{FOLDER_WITH_SPECIAL_CHAR}}", fullPath)
+    FileUtils.delete(logJson)
     FileUtils.write(logJson, newLogJsonContent, "UTF-8")
   }
 }
