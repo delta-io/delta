@@ -675,7 +675,8 @@ class InCommitTimestampSuite
           assert(hist.timestamp.getTime == expectedTimestamp)
         }
         // Try fetching only the non-ICT commits.
-        val nonICTHistory = deltaLog.history.getHistory(start = 0, end = Some(ictEnablementVersion - 1))
+        val nonICTHistory =
+          deltaLog.history.getHistory(start = 0, end = Some(ictEnablementVersion - 1))
         assert(nonICTHistory.length == ictEnablementVersion)
         nonICTHistory.reverse.zipWithIndex.foreach { case (hist, version) =>
           assert(hist.getVersion == version)
