@@ -1621,23 +1621,24 @@ Reader Version 3 | Respect [Table Features](#table-features) for readers<br> - W
 
 ## Valid Feature Names in Table Features
 
-Feature | Name | Readers or Writers?
--|-|-
-[Append-only Tables](#append-only-tables) | `appendOnly` | Writers only
-[Column Invariants](#column-invariants) | `invariants` | Writers only
-[`CHECK` constraints](#check-constraints) | `checkConstraints` | Writers only
-[Generated Columns](#generated-columns) | `generatedColumns` | Writers only
+Feature | Name                  | Readers or Writers?
+-|-----------------------|-
+[Append-only Tables](#append-only-tables) | `appendOnly`          | Writers only
+[Column Invariants](#column-invariants) | `invariants`          | Writers only
+[`CHECK` constraints](#check-constraints) | `checkConstraints`    | Writers only
+[Generated Columns](#generated-columns) | `generatedColumns`    | Writers only
 [Default Columns](#default-columns) | `allowColumnDefaults` | Writers only
-[Change Data Feed](#add-cdc-file) | `changeDataFeed` | Writers only
-[Column Mapping](#column-mapping) | `columnMapping` | Readers and writers
-[Identity Columns](#identity-columns) | `identityColumns` | Writers only
-[Deletion Vectors](#deletion-vectors) | `deletionVectors` | Readers and writers
-[Row Tracking](#row-tracking) | `rowTracking` | Writers only
-[Timestamp without Timezone](#timestamp-without-timezone-timestampNtz) | `timestampNtz` | Readers and writers
-[Domain Metadata](#domain-metadata) | `domainMetadata` | Writers only
-[V2 Checkpoint](#v2-checkpoint-table-feature) | `v2Checkpoint` | Readers and writers
-[Iceberg Compatibility V1](#iceberg-compatibility-v1) | `icebergCompatV1` | Writers only
-[Clustered Table](#clustered-table) | `clustering` | Writers only
+[Change Data Feed](#add-cdc-file) | `changeDataFeed`      | Writers only
+[Column Mapping](#column-mapping) | `columnMapping`       | Readers and writers
+[Identity Columns](#identity-columns) | `identityColumns`     | Writers only
+[Deletion Vectors](#deletion-vectors) | `deletionVectors`     | Readers and writers
+[Row Tracking](#row-tracking) | `rowTracking`         | Writers only
+[Timestamp without Timezone](#timestamp-without-timezone-timestampNtz) | `timestampNtz`        | Readers and writers
+[Domain Metadata](#domain-metadata) | `domainMetadata`      | Writers only
+[V2 Checkpoint](#v2-checkpoint-table-feature) | `v2Checkpoint`        | Readers and writers
+[Iceberg Compatibility V1](#iceberg-compatibility-v1) | `icebergCompatV1`     | Writers only
+[Clustered Table](#clustered-table) | `clustering`          | Writers only
+[VACUUM Protocol Check](#vacuum-protocol-check) | `vacuumProtocolCheck` | Readers and Writers
 
 ## Deletion Vector Format
 
