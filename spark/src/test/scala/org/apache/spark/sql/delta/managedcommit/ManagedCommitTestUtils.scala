@@ -121,6 +121,15 @@ class TrackingCommitStore(delegatingCommitStore: InMemoryCommitStore) extends Co
     delegatingCommitStore.getCommits(logPath, startVersion, endVersion)
   }
 
+  override def backfillToVersion(
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      logPath: Path,
+      startVersion: Long,
+      endVersion: Option[Long]): Unit = {
+    delegatingCommitStore.backfillToVersion(logStore, hadoopConf, logPath, startVersion, endVersion)
+  }
+
   def registerTable(
       logPath: Path,
       maxCommitVersion: Long): Unit = {

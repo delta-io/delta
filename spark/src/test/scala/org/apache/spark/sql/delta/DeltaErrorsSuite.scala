@@ -527,9 +527,15 @@ trait DeltaErrorsSuiteBase
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.generatedColumnsReferToWrongColumns(
-          new AnalysisException("analysis exception"))
+          new AnalysisException(
+            errorClass = "INTERNAL_ERROR",
+            messageParameters = Map("message" -> "internal test error msg"))
+        )
       }
-      checkErrorMessage(e, None, None,
+      checkErrorMessage(
+        e,
+        Some("DELTA_INVALID_GENERATED_COLUMN_REFERENCES"),
+        Some("42621"),
         Some("A generated column cannot use a non-existent column or " +
         "another generated column"))
     }

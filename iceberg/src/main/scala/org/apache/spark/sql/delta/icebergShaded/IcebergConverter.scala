@@ -320,6 +320,11 @@ class IcebergConverter(spark: SparkSession)
           .foreach { actions =>
             runIcebergConversionForActions(icebergTxn, actions, log.dataPath, None)
           }
+
+        // Always attempt to update table metadata (schema/properties) for REPLACE_TABLE
+        if (tableOp == REPLACE_TABLE) {
+          icebergTxn.updateTableMetadata(snapshotToConvert.metadata, snapshotToConvert.metadata)
+        }
     }
     icebergTxn.commit()
     Some(snapshotToConvert.version, snapshotToConvert.timestamp)
