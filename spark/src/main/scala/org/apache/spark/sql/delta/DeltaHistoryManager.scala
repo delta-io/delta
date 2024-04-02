@@ -135,8 +135,20 @@ class DeltaHistoryManager(
       start: Long,
       end: Option[Long] = None,
       snapshotOpt: Option[Snapshot] = None): Seq[DeltaHistory] = {
-    val snapshot = snapshotOpt.getOrElse(deltaLog.update())
-    val upperBoundExclusive = end.getOrElse(snapshot.version + 1)
+    val currentSnapshot = deltaLog.unsafeVolatileSnapshot
+    val (snapshot, upperBoundExclusive) = end match {
+        case Some(endExclusive) if currentSnapshot.version + 1 >= endExclusive =>
+          // Use the cache snapshot if it's fresh enough for the [start, endExclusive) query.
+          (currentSnapshot, math.min(currentSnapshot.version + 1, endExclusive))
+        case _ =>
+          // Either end doesn't exist or the currently cached snapshot isn't new enough to
+          // satisfy it.
+          val snapshot = snapshotOpt.getOrElse(deltaLog.update())
+          val endExclusive = end
+            .filter(_ <= snapshot.version + 1)
+            .getOrElse(snapshot.version + 1)
+          (snapshot, endExclusive)
+      }
     if (!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata)) {
       getHistoryImpl(start, upperBoundExclusive, isRangeICT = false, snapshot)
     } else {

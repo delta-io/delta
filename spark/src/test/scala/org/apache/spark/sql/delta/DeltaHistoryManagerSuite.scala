@@ -628,12 +628,12 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
         assert(filterUsageRecords(usageRecords, "deltaLog.update").size === expectedLogUpdates)
       }
 
-      testGetHistory(start = 0, endOpt = Some(2), versions = Seq(2, 1, 0), expectedLogUpdates = 0)
-      testGetHistory(start = 1, endOpt = Some(1), versions = Seq(1), expectedLogUpdates = 0)
+      testGetHistory(start = 0, endOpt = Some(3), versions = Seq(2, 1, 0), expectedLogUpdates = 0)
+      testGetHistory(start = 1, endOpt = Some(2), versions = Seq(1), expectedLogUpdates = 0)
       testGetHistory(start = 2, endOpt = None, versions = Seq(3, 2), expectedLogUpdates = 1)
-      testGetHistory(start = 1, endOpt = Some(5), versions = Seq(3, 2, 1), expectedLogUpdates = 1)
+      testGetHistory(start = 1, endOpt = Some(6), versions = Seq(3, 2, 1), expectedLogUpdates = 1)
       testGetHistory(start = 4, endOpt = None, versions = Seq.empty, expectedLogUpdates = 1)
-      testGetHistory(start = 2, endOpt = Some(1), versions = Seq.empty, expectedLogUpdates = 0)
+      testGetHistory(start = 2, endOpt = Some(2), versions = Seq.empty, expectedLogUpdates = 0)
     }
   }
 }
