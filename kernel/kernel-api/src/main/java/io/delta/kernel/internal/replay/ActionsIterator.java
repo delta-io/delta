@@ -228,7 +228,8 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                                 LogReplay.getSidecarFileSchema(),
                                 Optional.empty());
                     } else {
-                        throw new IOException("Unrecognized file format");
+                        throw new IOException(String.format("Unrecognized file format for file: %s",
+                                nextFilePath.getName()));
                     }
 
                     // Read SidecarFile actions and add the corresponding files to the list of
