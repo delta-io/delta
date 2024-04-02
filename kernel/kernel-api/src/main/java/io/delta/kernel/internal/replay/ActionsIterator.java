@@ -231,6 +231,8 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                         throw new IOException("Unrecognized file format");
                     }
 
+                    // Read SidecarFile actions and add the corresponding files to the list of
+                    // checkpoint files to be read.
                     while (manifestIter.hasNext()) {
                         ColumnarBatch currentBatch = manifestIter.next();
                         CloseableIterator<SidecarFile> sidecars =
