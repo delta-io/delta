@@ -485,6 +485,12 @@ class OptimisticTransactionSuite
               tablePath: Path,
               startVersion: Long,
               endVersion: Option[Long]): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
+          override def backfillToVersion(
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              logPath: Path,
+              startVersion: Long,
+              endVersion: Option[Long]): Unit = {}
         }
       }
     }
@@ -531,6 +537,12 @@ class OptimisticTransactionSuite
               tablePath: Path,
               startVersion: Long,
               endVersion: Option[Long]): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
+          override def backfillToVersion(
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              logPath: Path,
+              startVersion: Long,
+              endVersion: Option[Long]): Unit = {}
         }
       }
     }

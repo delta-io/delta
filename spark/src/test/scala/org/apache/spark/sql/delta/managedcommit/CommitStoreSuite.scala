@@ -45,6 +45,13 @@ class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSpark
       logPath: Path,
       startVersion: Long,
       endVersion: Option[Long] = None): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
+
+    override def backfillToVersion(
+        logStore: LogStore,
+        hadoopConf: Configuration,
+        logPath: Path,
+        startVersion: Long,
+        endVersion: Option[Long]): Unit = {}
   }
 
   class TestCommitStore1 extends TestCommitStoreBase

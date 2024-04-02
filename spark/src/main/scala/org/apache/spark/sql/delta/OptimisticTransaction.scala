@@ -1929,6 +1929,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     override def getCommits(
         logPath: Path, startVersion: Long, endVersion: Option[Long]): GetCommitsResponse =
       GetCommitsResponse(Seq.empty, -1)
+
+    override def backfillToVersion(
+        logStore: LogStore,
+        hadoopConf: Configuration,
+        logPath: Path,
+        startVersion: Long,
+        endVersion: Option[Long]): Unit = {}
   }
 
   /**
