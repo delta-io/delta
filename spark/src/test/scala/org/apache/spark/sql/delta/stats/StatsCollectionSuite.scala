@@ -761,9 +761,9 @@ class StatsCollectionSuite
   test("Duplicated delta statistic columns: create") {
     Seq(
       ("'c0,c0'", "c0"),
-      // ("'c1,c1.c11'", "c1.c11"),
+      ("'c1,c1.c11'", "c1.c11"),
       ("'c1.c11,c1.c11'", "c1.c11"),
-      // ("'c1,c1'", "c1.c11,c1.c12")
+      ("'c1,c1'", "c1.c11,c1.c12")
     ).foreach { case (statsColumns, duplicatedColumns) =>
       val exception = intercept[DeltaIllegalArgumentException] {
         sql(
@@ -786,9 +786,9 @@ class StatsCollectionSuite
     )
     Seq(
       ("'c0,c0'", "c0"),
-      // ("'c1,c1.c11'", "c1.c11"),
+      ("'c1,c1.c11'", "c1.c11"),
       ("'c1.c11,c1.c11'", "c1.c11"),
-      // ("'c1,c1'", "c1.c11,c1.c12")
+      ("'c1,c1'", "c1.c11,c1.c12")
     ).foreach { case (statsColumns, duplicatedColumns) =>
       val exception = intercept[SparkException] {
         sql(
