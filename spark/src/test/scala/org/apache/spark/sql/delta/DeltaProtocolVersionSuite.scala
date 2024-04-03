@@ -3397,21 +3397,21 @@ q
   }
 
   for (truncateHistory <- BOOLEAN_DOMAIN)
-  test(s"Protocol version downgrade with Table Features - Basic test" +
+  test(s"Protocol version downgrade with Table Features - Basic test " +
       s"truncateHistory: ${truncateHistory}") {
     val expectedFeatures = Seq(RowTrackingFeature, DomainMetadataTableFeature)
 
     testProtocolVersionDowngrade(
       initialMinReaderVersion = 3,
       initialMinWriterVersion = 7,
-      featuresToAdd = expectedFeatures :+ DeletionVectorsTableFeature,
-      featuresToRemove = Seq(DeletionVectorsTableFeature),
+      featuresToAdd = expectedFeatures :+ TestRemovableReaderWriterFeature,
+      featuresToRemove = Seq(TestRemovableReaderWriterFeature),
       expectedDowngradedProtocol = Protocol(1, 7).withFeatures(expectedFeatures),
       truncateHistory = truncateHistory)
   }
 
   for (truncateHistory <- BOOLEAN_DOMAIN)
-  test(s"Protocol version downgrade with Table Features - include legacy features:" +
+  test(s"Protocol version downgrade with Table Features - include legacy features: " +
       s"truncateHistory: ${truncateHistory}") {
     val expectedFeatures =
       Seq(DomainMetadataTableFeature, ChangeDataFeedTableFeature, AppendOnlyTableFeature)
@@ -3421,8 +3421,8 @@ q
     testProtocolVersionDowngrade(
       initialMinReaderVersion = 3,
       initialMinWriterVersion = 7,
-      featuresToAdd = expectedFeatures :+ DeletionVectorsTableFeature,
-      featuresToRemove = Seq(DeletionVectorsTableFeature),
+      featuresToAdd = expectedFeatures :+ TestRemovableReaderWriterFeature,
+      featuresToRemove = Seq(TestRemovableReaderWriterFeature),
       expectedDowngradedProtocol = Protocol(1, 7).withFeatures(expectedFeatures),
       truncateHistory = truncateHistory)
   }
