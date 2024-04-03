@@ -106,27 +106,6 @@ trait SnapshotManagement { self: DeltaLog =>
     }
   }
 
-  /**
-   * Returns the delta files and checkpoint files starting from the given `startVersion`.
-   * `versionToLoad` is an optional parameter to set the max bound. It's usually used to load a
-   * table snapshot for a specific version.
-   *
-   * @param startVersion the version to start. Inclusive.
-   * @param versionToLoad the optional parameter to set the max version we should return. Inclusive.
-   * @param includeMinorCompactions Whether to include minor compaction files in the result
-   * @return Some array of files found (possibly empty, if no usable commit files are present), or
-   *         None if the listing returned no files at all.
-   */
-  protected final def listDeltaCompactedDeltaAndCheckpointFiles(
-      startVersion: Long,
-      versionToLoad: Option[Long],
-      includeMinorCompactions: Boolean): Option[Array[FileStatus]] = {
-    recordDeltaOperation(self, "delta.deltaLog.listDeltaAndCheckpointFiles") {
-      listFromFileSystemInternal(startVersion, versionToLoad, includeMinorCompactions)
-        .map(_.map(_._1))
-    }
-  }
-
   private def listFromFileSystemInternal(
       startVersion: Long,
       versionToLoad: Option[Long],
@@ -158,6 +137,8 @@ trait SnapshotManagement { self: DeltaLog =>
    * file-system and a commit-store (if available), reconciles the results to account for
    * asynchronous backfill operations, and ensures a comprehensive list of file statuses without
    * missing any concurrently backfilled files.
+   * *Note*: If table is a managed-commit table, the commit store MUST be passed to correctly list
+   * the commits.
    *
    * @param startVersion the version to start. Inclusive.
    * @param commitStoreOpt the optional commit store to use for fetching un-backfilled commits.
@@ -166,14 +147,12 @@ trait SnapshotManagement { self: DeltaLog =>
    * @return Some array of files found (possibly empty, if no usable commit files are present), or
    *         None if the listing returned no files at all.
    */
-  protected final def listDeltaCompactedDeltaAndCheckpointFilesWithCommitStore(
+  protected final def listDeltaCompactedDeltaAndCheckpointFiles(
       startVersion: Long,
       commitStoreOpt: Option[CommitStore],
       versionToLoad: Option[Long],
       includeMinorCompactions: Boolean): Option[Array[FileStatus]] = {
     recordDeltaOperation(self, "delta.deltaLog.listDeltaAndCheckpointFiles") {
-      // TODO(managed-commits): Make sure all usage of `listDeltaCompactedDeltaAndCheckpointFiles`
-      //   are replaced with this method.
       val commitStore = commitStoreOpt.getOrElse {
         return listFromFileSystemInternal(startVersion, versionToLoad, includeMinorCompactions)
           .map(_.map(_._1))
@@ -317,13 +296,14 @@ trait SnapshotManagement { self: DeltaLog =>
     val listingStartVersion = Math.max(0L, lastCheckpointVersion)
     val includeMinorCompactions =
       spark.conf.get(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS)
-    val newFiles = listDeltaCompactedDeltaAndCheckpointFilesWithCommitStore(
+    val newFiles = listDeltaCompactedDeltaAndCheckpointFiles(
       listingStartVersion, commitStoreOpt, versionToLoad, includeMinorCompactions)
     getLogSegmentForVersion(
       versionToLoad,
       newFiles,
       validateLogSegmentWithoutCompactedDeltas = true,
       oldCheckpointProviderOpt = oldCheckpointProviderOpt,
+      commitStoreOpt = commitStoreOpt,
       lastCheckpointInfo = lastCheckpointInfo
     )
   }
@@ -386,11 +366,14 @@ trait SnapshotManagement { self: DeltaLog =>
   /**
    * Helper function for the getLogSegmentForVersion above. Called with a provided files list,
    * and will then try to construct a new LogSegment using that.
+   * *Note*: If table is a managed-commit table, the commit store MUST be passed to correctly list
+   * the commits.
    */
   protected def getLogSegmentForVersion(
       versionToLoad: Option[Long],
       files: Option[Array[FileStatus]],
       validateLogSegmentWithoutCompactedDeltas: Boolean,
+      commitStoreOpt: Option[CommitStore],
       oldCheckpointProviderOpt: Option[UninitializedCheckpointProvider],
       lastCheckpointInfo: Option[LastCheckpointInfo]): Option[LogSegment] = {
     recordFrameProfile("Delta", "SnapshotManagement.getLogSegmentForVersion") {
@@ -434,7 +417,8 @@ trait SnapshotManagement { self: DeltaLog =>
           // left the _last_checkpoint intact.
           recordDeltaEvent(this, "delta.checkpoint.error.partial")
           val snapshotVersion = versionToLoad.getOrElse(deltaVersion(deltas.last))
-          getLogSegmentWithMaxExclusiveCheckpointVersion(snapshotVersion, lastCheckpointVersion)
+          getLogSegmentWithMaxExclusiveCheckpointVersion(
+              snapshotVersion, lastCheckpointVersion, commitStoreOpt)
             .foreach { alternativeLogSegment => return Some(alternativeLogSegment) }
 
           // No alternative found, but the directory contains files so we cannot return None.
@@ -627,12 +611,13 @@ trait SnapshotManagement { self: DeltaLog =>
 
   protected def createSnapshot(
       initSegment: LogSegment,
+      commitStoreOpt: Option[CommitStore],
       checksumOpt: Option[VersionChecksum]): Snapshot = {
     val startingFrom = if (!initSegment.checkpointProvider.isEmpty) {
       s" starting from checkpoint version ${initSegment.checkpointProvider.version}."
     } else "."
     logInfo(s"Loading version ${initSegment.version}$startingFrom")
-    createSnapshotFromGivenOrEquivalentLogSegment(initSegment) { segment =>
+    createSnapshotFromGivenOrEquivalentLogSegment(initSegment, commitStoreOpt) { segment =>
       new Snapshot(
         path = logPath,
         version = segment.version,
@@ -650,10 +635,13 @@ trait SnapshotManagement { self: DeltaLog =>
    * This is useful when trying to skip a bad checkpoint. Returns `None` when we are not able to
    * construct such [[LogSegment]], for example, no checkpoint can be used but we don't have the
    * entire history from version 0 to version `snapshotVersion`.
+   * *Note*: If table is a managed-commit table, the commit store MUST be passed to correctly list
+   * the commits.
    */
   private def getLogSegmentWithMaxExclusiveCheckpointVersion(
       snapshotVersion: Long,
-      maxExclusiveCheckpointVersion: Long): Option[LogSegment] = {
+      maxExclusiveCheckpointVersion: Long,
+      commitStoreOpt: Option[CommitStore]): Option[LogSegment] = {
     assert(
       snapshotVersion >= maxExclusiveCheckpointVersion,
       s"snapshotVersion($snapshotVersion) is less than " +
@@ -665,6 +653,7 @@ trait SnapshotManagement { self: DeltaLog =>
       case Some(cp) =>
         val filesSinceCheckpointVersion = listDeltaCompactedDeltaAndCheckpointFiles(
           startVersion = cp.version,
+          commitStoreOpt = commitStoreOpt,
           versionToLoad = Some(snapshotVersion),
           includeMinorCompactions = false
         ).getOrElse(Array.empty)
@@ -705,6 +694,7 @@ trait SnapshotManagement { self: DeltaLog =>
         val listFromResult =
           listDeltaCompactedDeltaAndCheckpointFiles(
             startVersion = 0,
+            commitStoreOpt = commitStoreOpt,
             versionToLoad = Some(snapshotVersion),
             includeMinorCompactions = false)
         val (deltas, deltaVersions) =
@@ -783,7 +773,8 @@ trait SnapshotManagement { self: DeltaLog =>
    * [[DeltaSQLConf.DELTA_SNAPSHOT_LOADING_MAX_RETRIES]] times.
    */
   protected def createSnapshotFromGivenOrEquivalentLogSegment(
-      initSegment: LogSegment)(snapshotCreator: LogSegment => Snapshot): Snapshot = {
+      initSegment: LogSegment,
+      commitStoreOpt: Option[CommitStore])(snapshotCreator: LogSegment => Snapshot): Snapshot = {
     val numRetries =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_LOADING_MAX_RETRIES)
     var attempt = 0
@@ -804,7 +795,8 @@ trait SnapshotManagement { self: DeltaLog =>
             s"Trying a different checkpoint.", e)
           segment = getLogSegmentWithMaxExclusiveCheckpointVersion(
             segment.version,
-            segment.checkpointProvider.version).getOrElse {
+            segment.checkpointProvider.version,
+            commitStoreOpt).getOrElse {
               // Throw the first error if we cannot find an equivalent `LogSegment`.
               throw firstError
             }
@@ -833,7 +825,7 @@ trait SnapshotManagement { self: DeltaLog =>
       oldLogSegment: LogSegment,
       commitStoreOpt: Option[CommitStore]): (LogSegment, Seq[FileStatus]) = {
     val includeCompactions = spark.conf.get(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS)
-    val newFilesOpt = listDeltaCompactedDeltaAndCheckpointFilesWithCommitStore(
+    val newFilesOpt = listDeltaCompactedDeltaAndCheckpointFiles(
         startVersion = oldLogSegment.version + 1,
         commitStoreOpt = commitStoreOpt,
         versionToLoad = None,
@@ -853,6 +845,7 @@ trait SnapshotManagement { self: DeltaLog =>
       versionToLoad = None,
       files = Some(allFiles),
       validateLogSegmentWithoutCompactedDeltas = false,
+      commitStoreOpt = commitStoreOpt,
       lastCheckpointInfo = lastCheckpointInfo,
       oldCheckpointProviderOpt = Some(oldLogSegment.checkpointProvider)
     ).getOrElse(oldLogSegment)
@@ -1004,19 +997,20 @@ trait SnapshotManagement { self: DeltaLog =>
       initialSegmentForNewSnapshot: Option[LogSegment],
       initialCommitStore: Option[CommitStore],
       isAsync: Boolean): Snapshot = {
-    var commitStoreUsed = initialCommitStore
     var newSnapshot = getSnapshotForLogSegmentInternal(
       oldSnapshotOpt,
       initialSegmentForNewSnapshot,
+      initialCommitStore,
       isAsync
     )
     // If the commit store has changed, we need to again invoke updateSnapshot so that we
     // could get the latest commits from the new commit store. We need to do it only once as
     // the delta spec mandates the commit which changes the commit owner to be backfilled.
-    if (newSnapshot.version >= 0 && newSnapshot.commitStoreOpt != commitStoreUsed) {
-      commitStoreUsed = newSnapshot.commitStoreOpt
+    if (newSnapshot.version >= 0 && newSnapshot.commitStoreOpt != initialCommitStore) {
       val segmentOpt = createLogSegment(newSnapshot)
-      newSnapshot = getSnapshotForLogSegmentInternal(Some(newSnapshot), segmentOpt, isAsync)
+      newSnapshot =
+        getSnapshotForLogSegmentInternal(
+          Some(newSnapshot), segmentOpt, newSnapshot.commitStoreOpt, isAsync)
     }
     newSnapshot
   }
@@ -1025,6 +1019,7 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def getSnapshotForLogSegmentInternal(
       previousSnapshotOpt: Option[Snapshot],
       segmentOpt: Option[LogSegment],
+      commitStoreOpt: Option[CommitStore],
       isAsync: Boolean): Snapshot = {
     segmentOpt.map { segment =>
       if (previousSnapshotOpt.exists(_.logSegment == segment)) {
@@ -1032,6 +1027,7 @@ trait SnapshotManagement { self: DeltaLog =>
       } else {
         val newSnapshot = createSnapshot(
           initSegment = segment,
+          commitStoreOpt = commitStoreOpt,
           checksumOpt = None)
         previousSnapshotOpt.foreach(logMetadataTableIdChange(_, newSnapshot))
         logInfo(s"Updated snapshot to $newSnapshot")
@@ -1090,10 +1086,12 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def createSnapshotAfterCommit(
       initSegment: LogSegment,
       newChecksumOpt: Option[VersionChecksum],
+      commitStoreOpt: Option[CommitStore],
       committedVersion: Long): Snapshot = {
     logInfo(s"Creating a new snapshot v${initSegment.version} for commit version $committedVersion")
     createSnapshot(
       initSegment,
+      commitStoreOpt = commitStoreOpt,
       checksumOpt = newChecksumOpt
     )
   }
@@ -1137,6 +1135,7 @@ trait SnapshotManagement { self: DeltaLog =>
       val newSnapshot = createSnapshotAfterCommit(
         segment,
         newChecksumOpt,
+        previousSnapshot.commitStoreOpt,
         committedVersion)
       logMetadataTableIdChange(previousSnapshot, newSnapshot)
       logInfo(s"Updated snapshot to $newSnapshot")
@@ -1171,6 +1170,7 @@ trait SnapshotManagement { self: DeltaLog =>
     }
     createSnapshot(
       initSegment = segment,
+      commitStoreOpt = None,
       checksumOpt = None)
   }
 
@@ -1197,6 +1197,7 @@ trait SnapshotManagement { self: DeltaLog =>
     ).map { segment =>
       createSnapshot(
         initSegment = segment,
+        commitStoreOpt = None,
         checksumOpt = None)
     }.getOrElse {
       // We can't return InitialSnapshot because our caller asked for a specific snapshot version.
