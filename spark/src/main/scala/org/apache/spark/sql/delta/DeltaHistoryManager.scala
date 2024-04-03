@@ -125,6 +125,7 @@ class DeltaHistoryManager(
     } else {
       monotonizeCommitTimestamps(info.collect())
     }
+    // Spark should return the commits in increasing order as well
     monotonizedCommits.reverse
   }
 
@@ -138,7 +139,7 @@ class DeltaHistoryManager(
       start: Long,
       end: Option[Long] = None): Seq[DeltaHistory] = {
     val currentSnapshot = deltaLog.unsafeVolatileSnapshot
-    val (snapshot, resolvedEnd) = end match {
+    val (snapshotNewerThanResolvedEnd, resolvedEnd) = end match {
         case Some(endInclusive) if currentSnapshot.version >= endInclusive =>
           // Use the cache snapshot if it's fresh enough for the [start, endInclusive] query.
           (currentSnapshot, math.min(currentSnapshot.version, endInclusive))
@@ -150,11 +151,14 @@ class DeltaHistoryManager(
           (snapshot, endInclusive)
       }
 
-    val commitFileProvider = DeltaCommitFileProvider(snapshot)
-    if (!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata)) {
+    val commitFileProvider = DeltaCommitFileProvider(snapshotNewerThanResolvedEnd)
+    if (!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(
+        snapshotNewerThanResolvedEnd.metadata)) {
       getHistoryImpl(start, resolvedEnd, useInCommitTimestamps = false, commitFileProvider)
     } else {
-      InCommitTimestampUtils.getValidatedICTEnablementInfo(snapshot.metadata) match {
+      val ictEnablementCommit =
+        InCommitTimestampUtils.getValidatedICTEnablementInfo(snapshotNewerThanResolvedEnd.metadata)
+      ictEnablementCommit match {
         case Some(Commit(ictEarliest, _)) =>
           // getHistoryImpl will return an empty Seq if start > end.
           val nonICTCommits = getHistoryImpl(
