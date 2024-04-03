@@ -206,7 +206,7 @@ The checkpoint file name is based on the version of the table that the checkpoin
 Delta supports three kinds of checkpoints:
 
 1. UUID-named Checkpoints: These follow [V2 spec](#v2-spec) which uses the following file name: `n.checkpoint.u.{json/parquet}`, where `u` is a UUID and `n` is the
-snapshot version that this checkpoint represents. The UUID-named V2 Checkpoint may be in json or parquet format, and references zero or more checkpoint sidecars
+snapshot version that this checkpoint represents. Here `n` must be zero padded to have length 20. The UUID-named V2 Checkpoint may be in json or parquet format, and references zero or more checkpoint sidecars
 in the `_delta_log/_sidecars` directory. A checkpoint sidecar is a uniquely-named parquet file: `{unique}.parquet` where `unique` is some unique
 string such as a UUID.
 
@@ -219,7 +219,7 @@ _sidecars/016ae953-37a9-438e-8683-9a9a4a79a395.parquet
 _sidecars/7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.parquet
 ```
 
-2. A [classic checkpoint](#classic-checkpoint) for version `n` of the table consists of a file named `n.checkpoint.parquet`.
+2. A [classic checkpoint](#classic-checkpoint) for version `n` of the table consists of a file named `n.checkpoint.parquet`. Here `n` must be zero padded to have length 20.
 These could follow either [V1 spec](#v1-spec) or [V2 spec](#v2-spec).
 For example:
 
@@ -229,7 +229,7 @@ For example:
 
 
 3. A [multi-part checkpoint](#multi-part-checkpoint) for version `n` consists of `p` "part" files (`p > 1`), where
-part `o` of `p` is named `n.checkpoint.o.p.parquet`. These are always [V1 checkpoints](#v1-spec).
+part `o` of `p` is named `n.checkpoint.o.p.parquet`. Here `n` must be zero padded to have length 20, while `o` and `p` must be zero padded to have length 10. These are always [V1 checkpoints](#v1-spec).
 For example:
 
 ```
