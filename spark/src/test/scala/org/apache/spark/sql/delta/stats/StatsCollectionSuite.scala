@@ -428,7 +428,6 @@ class StatsCollectionSuite
     ("BOOLEAN", "BooleanType"),
     ("ARRAY<TINYINT>", "ArrayType(ByteType,true)"),
     ("MAP<DATE, INT>", "MapType(DateType,IntegerType,true)")
-    // ("STRUCT<c60:INT, c61:ARRAY<INT>>", "ArrayType(IntegerType,true)")
   ).foreach { case (invalidType, typename) =>
     val tableName1 = "delta_table_1"
     val tableName2 = "delta_table_2"
