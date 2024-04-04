@@ -17,12 +17,11 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
-
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-class ColumnMappingUsageTrackingSuite extends QueryTest with SharedSparkSession {
+class ColumnMappingUsageTrackingSuite extends QueryTest with DeltaSQLCommandTest {
   import testImplicits._
 
   private val COLUMN_MAPPING_USAGE_TRACKING_FEATURE_KEY =
