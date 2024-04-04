@@ -893,7 +893,9 @@ case class DeltaSource(
    * This should only be called by the engine. Call `latestOffsetInternal` instead if you need to
    * get the latest offset.
    */
-  override def latestOffset(startOffset: streaming.Offset, limit: ReadLimit): streaming.Offset = {
+  override def latestOffset(startOffset: streaming.Offset, limit: ReadLimit): streaming.Offset =
+    recordDeltaOperation(
+      snapshotAtSourceInit.deltaLog, opType = "delta.streaming.source.latestOffset") {
     val deltaStartOffset = Option(startOffset).map(toDeltaSourceOffset)
     initForTriggerAvailableNowIfNeeded(deltaStartOffset)
     latestOffsetInternal(deltaStartOffset, limit).orNull
@@ -1037,7 +1039,9 @@ case class DeltaSource(
     (skippedCommit, metadataAction, protocolAction)
   }
 
-  override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame = {
+  override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame =
+    recordDeltaOperation(
+      snapshotAtSourceInit.deltaLog, opType = "delta.streaming.source.getBatch") {
     val endOffset = toDeltaSourceOffset(end)
     val startDeltaOffsetOption = startOffsetOption.map(toDeltaSourceOffset)
 
@@ -1180,7 +1184,8 @@ case class DeltaSource(
   // Marks that the `end` offset is done and we can safely run any actions in response to that.
   // This happens AFTER `end` offset is committed by the streaming engine so we can safely fail this
   // if needed, e.g. for failing the stream to conduct schema evolution.
-  override def commit(end: Offset): Unit = {
+  override def commit(end: Offset): Unit =
+    recordDeltaOperation(snapshotAtSourceInit.deltaLog, opType = "delta.streaming.source.commit") {
     super.commit(end)
     // IMPORTANT: for future developers, please place any work you would like to do in commit()
     // before `updateSchemaTrackingLogAndFailTheStreamIfNeeded(end)` as it may throw an exception.
