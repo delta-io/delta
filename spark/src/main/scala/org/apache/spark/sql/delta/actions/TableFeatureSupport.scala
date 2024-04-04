@@ -189,10 +189,11 @@ trait TableFeatureSupport { this: Protocol =>
     readerAndWriterFeatureNames.toSeq.flatMap(TableFeature.featureNameToFeature)
 
   /**
-   * A sequence of non-legacy [[TableFeature]]s.
+   * A sequence of native [[TableFeature]]s. This is derived by filtering out all explicitly
+   * supported legacy features.
    */
   @JsonIgnore
-  lazy val nonLegacyReaderAndWriterFeatures: Seq[TableFeature] =
+  lazy val nativeReaderAndWriterFeatures: Seq[TableFeature] =
     readerAndWriterFeatures.filterNot(_.isLegacyFeature)
 
   /**
@@ -256,7 +257,7 @@ trait TableFeatureSupport { this: Protocol =>
    *    downgrade is only supported with table features.
    *  - We can only remove one feature at a time.
    *  - The protocol versions may be downgraded when dropping a table feature.
-   *    There are main two cases:
+   *    There are two cases:
    *    a) If `to` protocol contains table features, the resulting versions should be the
    *       minimum required versions to support all table features.
    *    b) If `to` protocol only contains legacy features, the resulting versions
@@ -292,7 +293,7 @@ trait TableFeatureSupport { this: Protocol =>
     // Note, we check the minimum required versions only when table features exist in the protocol.
     // This because we do not always downgrade the versions of protocols with no table features.
     if (!to.supportsWriterFeatures ||
-      to.nonLegacyReaderAndWriterFeatures.nonEmpty && !toSupportsRequiredMinVersions) {
+      to.nativeReaderAndWriterFeatures.nonEmpty && !toSupportsRequiredMinVersions) {
       return false
     }
 
@@ -387,9 +388,9 @@ trait TableFeatureSupport { this: Protocol =>
    * features. After we remove the last native feature we downgrade the protocol to (1, 1).
    */
   def downgradeProtocolVersionsIfNeeded: Protocol = {
-    if (nonLegacyReaderAndWriterFeatures.nonEmpty) {
+    if (nativeReaderAndWriterFeatures.nonEmpty) {
       val (minReaderVersion, minWriterVersion) =
-        TableFeatureProtocolUtils.minimumRequiredVersions(nonLegacyReaderAndWriterFeatures)
+        TableFeatureProtocolUtils.minimumRequiredVersions(nativeReaderAndWriterFeatures)
       // It is guaranteed by the definitions of WriterFeature and ReaderFeature, that we cannot
       // end up with invalid protocol versions such as (3, 3). Nevertheless,
       // we double check it here.
