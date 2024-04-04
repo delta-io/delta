@@ -101,7 +101,7 @@
   - [Last Checkpoint File Schema](#last-checkpoint-file-schema)
     - [JSON checksum](#json-checksum)
       - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
-  - [Delta Data Type to Parquet Type Mappings](#delta-data-types-to-parquet-type-mappings)
+  - [Delta Data Type to Parquet Type Mappings](#delta-data-type-to-parquet-type-mappings)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -1786,7 +1786,7 @@ An array stores a variable length collection of items of some type.
 Field Name | Description
 -|-
 type| Always the string "array"
-elementType| The type of element stored in this array is represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
+elementType| The type of element stored in this array, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 containsNull| Boolean denoting whether this array can contain one or more null values
 
 ### Map Type
