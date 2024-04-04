@@ -22,6 +22,7 @@ import java.util.Optional;
 
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.Preconditions;
 
 /**
  * Metadata about Delta checkpoint.
@@ -30,23 +31,13 @@ public class CheckpointInstance
     implements Comparable<CheckpointInstance> {
 
     public enum CheckpointFormat {
-        CLASSIC(0), MULTI_PART(1), V2(2);
-
-        private int ordinal;
-
-        CheckpointFormat(int ordinal) {
-            this.ordinal = ordinal;
-        }
-
-        public int getOrdinal() {
-            return ordinal;
-        }
+        CLASSIC, MULTI_PART, V2;
 
         // Indicates that the checkpoint (may) contain SidecarFile actions. For compatibility,
         // V2 checkpoints can be named with classic-style names, so any checkpoint other than a
         // multipart checkpoint may contain SidecarFile actions.s
         public boolean usesSidecars() {
-            return ordinal != 1;
+            return this == CLASSIC || this == V2;
         }
     }
 
@@ -63,23 +54,24 @@ public class CheckpointInstance
     public final Optional<Path> filePath;
 
     public CheckpointInstance(String path) {
+        Preconditions.checkArgument(FileNames.isCheckpointFile(path),
+                "not a valid checkpoint file name");
+
         String[] pathParts = getPathName(path).split("\\.");
         this.filePath = Optional.of(new Path(path));
 
-        if (pathParts.length == 3 && pathParts[1].equals("checkpoint") &&
-                pathParts[2].equals("parquet")) {
+        if (pathParts.length == 3 && pathParts[2].equals("parquet")) {
             // Classic checkpoint 00000000000000000010.checkpoint.parquet
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.empty();
             this.format = CheckpointFormat.CLASSIC;
-        } else if (pathParts.length == 5 && pathParts[1].equals("checkpoint")
-                && pathParts[4].equals("parquet")) {
+        } else if (pathParts.length == 5 && pathParts[4].equals("parquet")) {
             // Multi-part checkpoint 00000000000000000010.checkpoint.0000000001.0000000003.parquet
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.of(Integer.parseInt(pathParts[3]));
             this.format = CheckpointFormat.MULTI_PART;
-        } else if (pathParts.length == 4 && pathParts[1].equals("checkpoint")
-                && (pathParts[3].equals("parquet") || pathParts[3].equals("json"))) {
+        } else if (pathParts.length == 4 && (pathParts[3].equals("parquet") ||
+                pathParts[3].equals("json"))) {
             // V2 checkpoint 00000000000000000010.checkpoint.UUID.(parquet|json)
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.empty();

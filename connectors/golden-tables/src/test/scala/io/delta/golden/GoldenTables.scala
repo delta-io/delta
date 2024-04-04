@@ -1334,6 +1334,19 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
+  Seq("json", "parquet").foreach { fileFormat =>
+    generateGoldenTable(s"clustered-checkpoint-v2-$fileFormat") { tablePath =>
+      withSQLConf("spark.databricks.delta.checkpointV2.topLevelFileFormat" -> fileFormat,
+        "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
+        sql(s"CREATE TABLE tbl (a INT, b STRING) USING delta CLUSTER BY (a) LOCATION '$tablePath'" +
+          " TBLPROPERTIES ('delta.checkpointInterval' = '2', 'delta.checkpointPolicy'='v2')")
+        //sql("INSERT INTO tbl VALUES (1, 'a'), (2, 'b')")
+        //sql("INSERT INTO tbl VALUES (3, 'c'), (4, 'd')")
+        //sql("INSERT INTO tbl VALUES (5, 'e'), (6, 'f')")
+      }
+    }
+  }
+
   generateGoldenTable("log-replay-special-characters-a") { tablePath =>
     val log = DeltaLog.forTable(spark, new Path(tablePath))
     new File(log.logPath.toUri).mkdirs()

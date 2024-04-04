@@ -29,6 +29,7 @@ class FileNamesSuite extends AnyFunSuite {
     assert(FileNames.isCheckpointFile("/a/000000010.checkpoint.80a083e8-7026.json"))
     assert(FileNames.isCheckpointFile("/a/000000010.checkpoint.80a083e8-7026.parquet"))
     assert(!FileNames.isCheckpointFile("/a/123.json"))
+    assert(!FileNames.isCommitFile("/a/123.checkpoint.3.json"))
   }
 
   test("checkpointVersion") {
@@ -57,5 +58,7 @@ class FileNamesSuite extends AnyFunSuite {
       new Path("/a/00000000000000000001.checkpoint.0000000003.0000000005.parquet"),
       new Path("/a/00000000000000000001.checkpoint.0000000004.0000000005.parquet"),
       new Path("/a/00000000000000000001.checkpoint.0000000005.0000000005.parquet")))
+
+    Seq("a").iterator.duplicate
   }
 }

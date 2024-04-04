@@ -79,9 +79,10 @@ public class LogReplay {
             AddFile.SCHEMA_WITHOUT_STATS;
     }
 
-    public static StructType getSidecarFileSchema() {
-        return new StructType()
-                .add("sidecar", SidecarFile.READ_SCHEMA);
+    public static String SIDECAR_FIELD_NAME = "sidecar";
+
+    public static StructType withSidecarFileSchema(StructType schema) {
+        return schema.add(SIDECAR_FIELD_NAME, SidecarFile.READ_SCHEMA);
     }
 
     public static boolean isAddRemoveReadSchema(StructType schema) {

@@ -15,34 +15,28 @@
  */
 package io.delta.kernel.internal.replay;
 
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.utils.FileStatus;
+import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 
 /** Internal wrapper class holding information needed to perform log replay. */
-class ActionWrapper {
-    private final ColumnarBatch columnarBatch;
-    private final Path checkpointPath;
-    private final long version;
+public class FileWrapper {
+    private final FileStatus file;
+    private final CheckpointInstance sidecarManifest;
 
-    ActionWrapper(ColumnarBatch data, Path checkpointPath, long version) {
-        this.columnarBatch = data;
-        this.checkpointPath = checkpointPath;
-        this.version = version;
+    FileWrapper(FileStatus file, CheckpointInstance sidecarManifest) {
+        this.file = file;
+        this.sidecarManifest = sidecarManifest;
     }
 
-    public ColumnarBatch getColumnarBatch() {
-        return columnarBatch;
+    public FileStatus getFile() {
+        return file;
     }
 
-    public boolean isFromCheckpoint() {
-        return checkpointPath != null;
+    public boolean isSidecar() {
+        return sidecarManifest != null;
     }
 
-    public long getVersion() {
-        return version;
-    }
-
-    public Path getCheckpointPath() {
-        return checkpointPath;
+    public CheckpointInstance getSidecarManifest() {
+        return sidecarManifest;
     }
 }

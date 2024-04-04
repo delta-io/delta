@@ -27,8 +27,8 @@ public class SidecarFile {
     public long sizeInBytes;
     public long modificationTime;
 
-    public static SidecarFile fromRow(Row row) {
-        Row sidecar = row.getStruct(0);
+    public static SidecarFile fromRow(Row row, int index) {
+        Row sidecar = row.getStruct(index);
         if (sidecar == null) {
             return null;
         }

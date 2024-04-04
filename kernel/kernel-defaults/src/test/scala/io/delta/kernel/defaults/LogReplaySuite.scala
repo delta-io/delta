@@ -16,7 +16,9 @@
 package io.delta.kernel.defaults
 
 import java.io.File
+
 import scala.collection.JavaConverters._
+
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.scalatest.funsuite.AnyFunSuite
 import org.apache.hadoop.conf.Configuration
@@ -25,10 +27,10 @@ import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-
 import io.delta.kernel.Table
-
 import java.util.Optional
+
+import org.apache.spark.sql.delta.DeltaLog
 
 class LogReplaySuite extends AnyFunSuite with TestUtils {
 
@@ -302,7 +304,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   test("v2 checkpoint support") {
     Seq("parquet", "json").foreach { format =>
       // Get table path and create snapshot.
-      val path = goldenTablePath(s"checkpoint-with-sidecars-$format")
+      val path = goldenTablePath(s"clustered-checkpoint-v2-$format")
       val snapshot = latestSnapshot(path)
       val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
 
@@ -311,14 +313,18 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       assert(snapshotImpl.getProtocol.getMinReaderVersion == 3)
       assert(snapshotImpl.getProtocol.getMinWriterVersion == 7)
       assert(snapshotImpl.getProtocol.getReaderFeatures.asScala.toList == List("v2Checkpoint"))
-      assert(snapshotImpl.getProtocol.getWriterFeatures.asScala.toList == List("v2Checkpoint"))
-      assert(snapshot.getVersion(defaultTableClient) == 1)
+      assert(snapshotImpl.getProtocol.getWriterFeatures.asScala.toList == List("domainMetadata",
+        "clustering", "v2Checkpoint"))
+      assert(snapshot.getVersion(defaultTableClient) == 3)
 
-      // Validate AddFiles from sidecars found.
+      // Validate AddFiles from sidecars found against Spark connector.
       val scan = snapshot.getScanBuilder(defaultTableClient).build()
-      val foundFiles = collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus)
-      assert(foundFiles.map(_.getPath).toSet == (1 to 4)
-        .map(v => s"file:/path/to/addfile-$v.parquet").toSet)
+      val foundFiles =
+        collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus).map(
+          _.getPath.split('/').last).toSet
+       val expectedFiles = DeltaLog.forTable(
+        spark, path).update().allFiles.collect().map(_.path).toSet
+      assert(foundFiles == expectedFiles)
     }
   }
 }

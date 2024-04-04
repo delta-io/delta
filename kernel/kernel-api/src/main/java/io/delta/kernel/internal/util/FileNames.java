@@ -135,11 +135,11 @@ public final class FileNames {
     }
 
     public static boolean isCheckpointFile(String fileName) {
-        return CHECKPOINT_FILE_PATTERN.matcher(fileName).find();
+        return CHECKPOINT_FILE_PATTERN.matcher(new Path(fileName).getName()).matches();
     }
 
     public static boolean isCommitFile(String fileName) {
-        return DELTA_FILE_PATTERN.matcher(fileName).find();
+        return DELTA_FILE_PATTERN.matcher(new Path(fileName).getName()).matches();
     }
 
     /**

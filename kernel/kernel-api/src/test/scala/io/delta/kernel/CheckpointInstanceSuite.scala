@@ -31,25 +31,33 @@ class CheckpointInstanceSuite extends AnyFunSuite with MockFileSystemClientUtils
   test("checkpoint instance comparisons") {
     val ci1_single_1 = new CheckpointInstance(1, Optional.empty())
     val ci1_withparts_2 = new CheckpointInstance(1, Optional.of(2))
+    val ci1_v2_1 = new CheckpointInstance("01.checkpoint.abc.parquet" )
 
     val ci2_single_1 = new CheckpointInstance(2, Optional.empty())
     val ci2_withparts_4 = new CheckpointInstance(2, Optional.of(4))
+    val ci2_v2_1 = new CheckpointInstance("02.checkpoint.abc.parquet" )
 
     val ci3_single_1 = new CheckpointInstance(3, Optional.empty())
     val ci3_withparts_2 = new CheckpointInstance(3, Optional.of(2))
 
     // version takes priority
     assert(ci1_single_1.compareTo(ci2_single_1) < 0)
+    assert(ci1_v2_1.compareTo(ci2_single_1) < 0)
+    // v2 takes priority over v1 and multipart
+    assert(ci2_single_1.compareTo(ci2_v2_1) < 0)
+    assert(ci2_withparts_4.compareTo(ci2_v2_1) < 0)
     // parts takes priority when versions are same
     assert(ci1_single_1.compareTo(ci1_withparts_2) < 0)
-    // version takes priority over parts
+    // version takes priority over parts or v2
     assert(ci2_withparts_4.compareTo(ci3_withparts_2) < 0)
+    assert(ci2_single_1.compareTo(ci3_withparts_2) < 0)
 
     // Everything is less than CheckpointInstance.MAX_VALUE
     Seq(
       ci1_single_1, ci1_withparts_2,
       ci2_single_1, ci2_withparts_4,
-      ci3_single_1, ci3_withparts_2
+      ci3_single_1, ci3_withparts_2,
+      ci1_v2_1, ci2_v2_1
     ).foreach(ci => assert(ci.compareTo(CheckpointInstance.MAX_VALUE) < 0))
   }
 
