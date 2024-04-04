@@ -277,7 +277,7 @@ class LogReplayMetricsSuite extends QueryTest
         expParquetVersionsRead = Seq(10),
         // we read the checkpoint three times: once for the P & M, once for sidecar files,
         // and once for the scan files
-        expParquetReadSetSizes = Seq(1, 1, 1))
+        expParquetReadSetSizes = Seq(1, 1))
 
       // create a multi-part checkpoint
       checkpoint(path, actionsPerFile = 2)

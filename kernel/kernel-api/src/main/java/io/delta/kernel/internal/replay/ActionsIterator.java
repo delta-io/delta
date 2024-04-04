@@ -352,12 +352,12 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
         // Add the already retrieved checkpoint file to the list.
         checkpointFiles.add(checkpointFile);
 
-        FileStatus peek = filesList.peek().getFile();
+        FileWrapper peek = filesList.peek();
         while (peek != null &&
-                isCheckpointFile(getName(peek.getPath())) &&
-                checkpointVersion(peek.getPath()) == version) {
+                isCheckpointFile(getName(peek.getFile().getPath())) &&
+                checkpointVersion(peek.getFile().getPath()) == version) {
             checkpointFiles.add(filesList.pop().getFile());
-            peek = filesList.peek().getFile();
+            peek = filesList.peek();
         }
 
         return checkpointFiles;
