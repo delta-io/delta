@@ -47,8 +47,8 @@ class OptimisticTransactionSuite
   import testImplicits._
 
   // scalastyle:off: removeFile
-  private val addA = createTestAddFile(path = "a")
-  private val addB = createTestAddFile(path = "b")
+  private val addA = createTestAddFile(encodedPath = "a")
+  private val addB = createTestAddFile(encodedPath = "b")
 
   /* ************************** *
    * Allowed concurrent actions *

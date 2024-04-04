@@ -70,7 +70,8 @@ class DeltaTimeTravelSuite extends QueryTest
   private def generateCommitsCheap(deltaLog: DeltaLog, commits: Long*): Unit = {
     var startVersion = deltaLog.snapshot.version + 1
     commits.foreach { ts =>
-      val action = createTestAddFile(path = startVersion.toString, modificationTime = startVersion)
+      val action =
+        createTestAddFile(encodedPath = startVersion.toString, modificationTime = startVersion)
       deltaLog.startTransaction().commitManually(action)
       modifyCommitTimestamp(deltaLog, startVersion, ts)
       startVersion += 1
