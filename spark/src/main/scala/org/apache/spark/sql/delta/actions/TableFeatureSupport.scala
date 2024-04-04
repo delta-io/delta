@@ -289,7 +289,7 @@ trait TableFeatureSupport { this: Protocol =>
     }
 
     // When `to` protocol contains table features, protocol versions may still
-    // get downgraded. However, the resulting protocol need to support at least writer features.
+    // get downgraded. However, the resulting protocol needs to support at least writer features.
     // Note, we check the minimum required versions only when table features exist in the protocol.
     // This because we do not always downgrade the versions of protocols with no table features.
     if (!to.supportsWriterFeatures ||
@@ -395,8 +395,8 @@ trait TableFeatureSupport { this: Protocol =>
       // end up with invalid protocol versions such as (3, 3). Nevertheless,
       // we double check it here.
       val newProtocol =
-      Protocol(minReaderVersion, minWriterVersion).withFeatures(readerAndWriterFeatures)
-      require(
+        Protocol(minReaderVersion, minWriterVersion).withFeatures(readerAndWriterFeatures)
+      assert(
         newProtocol.supportsWriterFeatures,
         s"Downgraded protocol should at least support writer features, but got $newProtocol.")
       return newProtocol
@@ -406,7 +406,7 @@ trait TableFeatureSupport { this: Protocol =>
       TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
     val newProtocol = Protocol(minReaderVersion, minWriterVersion)
 
-    require(
+    assert(
       !newProtocol.supportsReaderFeatures && !newProtocol.supportsWriterFeatures,
       s"Downgraded protocol should not support table features, but got $newProtocol.")
 
