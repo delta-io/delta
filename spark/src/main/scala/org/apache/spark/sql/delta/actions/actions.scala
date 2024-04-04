@@ -864,6 +864,8 @@ object AddFile {
  *
  * Since old tables would not have `extendedFileMetadata` and `size` field, we should make them
  * nullable by setting their type Option.
+ *
+ * [[path]] is URL-encoded.
  */
 // scalastyle:off
 case class RemoveFile(
@@ -919,6 +921,8 @@ case class RemoveFile(
  * A change file containing CDC data for the Delta version it's within. Non-CDC readers should
  * ignore this, CDC readers should scan all ChangeFiles in a version rather than computing
  * changes from AddFile and RemoveFile actions.
+ *
+ * [[path]] is URL-encoded.
  */
 case class AddCDCFile(
     override val path: String,

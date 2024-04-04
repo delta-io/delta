@@ -60,7 +60,7 @@ class DeltaLogSuite extends QueryTest
 
     (1 to 15).foreach { i =>
       val txn = log1.startTransaction()
-      val file = createTestAddFile(path = i.toString) :: Nil
+      val file = createTestAddFile(encodedPath = i.toString) :: Nil
       val delete: Seq[Action] = if (i > 1) {
         RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
       } else {
@@ -82,7 +82,7 @@ class DeltaLogSuite extends QueryTest
 
       // Commit data so the in-memory state isn't consistent with an empty log.
       val txn = log.startTransaction()
-      val files = (1 to 10).map(f => createTestAddFile(path = f.toString))
+      val files = (1 to 10).map(f => createTestAddFile(encodedPath = f.toString))
       txn.commitManually(files: _*)
       log.checkpoint()
 
@@ -116,7 +116,7 @@ class DeltaLogSuite extends QueryTest
       val checkpointInterval = log.checkpointInterval()
       for (f <- 0 until (checkpointInterval * 2)) {
         val txn = log.startTransaction()
-        txn.commitManually(createTestAddFile(path = f.toString))
+        txn.commitManually(createTestAddFile(encodedPath = f.toString))
       }
 
       def collectReservoirStateRDD(rdd: RDD[_]): Seq[RDD[_]] = {
@@ -141,7 +141,7 @@ class DeltaLogSuite extends QueryTest
     (1 to 5).foreach { i =>
       val txn = log1.startTransaction()
       val file = if (i > 1) {
-        createTestAddFile(path = i.toString) :: Nil
+        createTestAddFile(encodedPath = i.toString) :: Nil
       } else {
         Metadata(configuration = Map(DeltaConfigs.CHECKPOINT_INTERVAL.key -> "10")) :: Nil
       }
@@ -158,7 +158,7 @@ class DeltaLogSuite extends QueryTest
 
     (6 to 15).foreach { i =>
       val txn = log1.startTransaction()
-      val file = createTestAddFile(path = i.toString) :: Nil
+      val file = createTestAddFile(encodedPath = i.toString) :: Nil
       val delete: Seq[Action] = if (i > 1) {
         RemoveFile(i - 1 toString, Some(System.currentTimeMillis()), true) :: Nil
       } else {
@@ -206,7 +206,7 @@ class DeltaLogSuite extends QueryTest
       val checkpointInterval = log.checkpointInterval()
       for (f <- 0 to checkpointInterval) {
         val txn = log.startTransaction()
-        txn.commitManually(createTestAddFile(path = f.toString))
+        txn.commitManually(createTestAddFile(encodedPath = f.toString))
       }
       val lastCheckpointOpt = log.readLastCheckpointFile()
       assert(lastCheckpointOpt.isDefined)
@@ -323,7 +323,8 @@ class DeltaLogSuite extends QueryTest
 
       // Add a new transaction to replay logs using the previous snapshot. If it contained
       // AddFile("foo") and RemoveFile("foo"), "foo" would get removed and fail this test.
-      val otherAdd = createTestAddFile(path = "bar", modificationTime = System.currentTimeMillis())
+      val otherAdd =
+        createTestAddFile(encodedPath = "bar", modificationTime = System.currentTimeMillis())
       log.startTransaction().commit(otherAdd :: Nil, DeltaOperations.ManualUpdate)
 
       assert(log.update().allFiles.collect().find(_.path == "foo")
@@ -398,7 +399,7 @@ class DeltaLogSuite extends QueryTest
         // Create a checkpoint regularly
         for (f <- 0 to checkpointInterval) {
           val txn = log.startTransaction()
-          val addFile = createTestAddFile(path = f.toString)
+          val addFile = createTestAddFile(encodedPath = f.toString)
           if (f == 0) {
             txn.commitManually(addFile)
           } else {

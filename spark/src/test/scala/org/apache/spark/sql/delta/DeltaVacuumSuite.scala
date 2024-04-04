@@ -169,7 +169,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
     FileUtils.write(file, "gibberish")
     file.setLastModified(clock.getTimeMillis())
     createTestAddFile(
-      path = filePath,
+      encodedPath = filePath,
       partitionValues = partitionValues,
       modificationTime = clock.getTimeMillis())
   }
@@ -211,7 +211,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
           "numCopiedRows" -> createMetric(sparkContext, "total number of rows.")
         )
         txn.registerSQLMetrics(spark, metrics)
-        txn.commit(Seq(RemoveFile(path, Option(clock.getTimeMillis()))),
+        val encodedPath = new Path(path).toUri.toString
+        txn.commit(Seq(RemoveFile(encodedPath, Option(clock.getTimeMillis()))),
           Delete(Seq(Literal.TrueLiteral)))
       // scalastyle:on
       case e: ExecuteVacuumInSQL =>
@@ -802,10 +803,8 @@ class DeltaVacuumSuite
     }
   }
 
-  // TODO: There is somewhere in the code calling CanonicalPathFunction with an unescaped path
-  //  string, which needs investigation. Do not test special characters until that is fixed.
   testQuietly("correctness test") {
-    withEnvironment(prefix = "spark") { (tempDir, clock) =>
+    withEnvironment { (tempDir, clock) =>
 
       val reservoirDir = new File(tempDir.getAbsolutePath, "reservoir")
       assert(reservoirDir.mkdirs())
