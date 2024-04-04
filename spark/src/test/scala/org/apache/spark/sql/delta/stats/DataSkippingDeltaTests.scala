@@ -600,6 +600,27 @@ trait DataSkippingDeltaTestsBase extends QueryTest
   )
 
   testSkipping(
+    "indexed column names - naming a nested column allows nested complex types",
+    """{
+      "a": {
+        "b": [1, 2, 3],
+        "c": [4, 5, 6],
+        "d": 7,
+        "e": 8
+      },
+      "f": 9
+    }""".replace("\n", ""),
+    hits = Seq(
+      "f < 0"
+    ),
+    misses = Seq(
+      "a.d < 0",
+      "a.e < 0"
+    ),
+    deltaStatsColNamesOpt = Some("a")
+  )
+
+  testSkipping(
     "indexed column names - index only a subset of leaf columns",
     """{
       "a": 1,
