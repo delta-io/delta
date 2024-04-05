@@ -18,12 +18,15 @@ package io.delta.kernel.defaults.internal.expressions;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
+
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.client.ExpressionHandler;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.VectorComparator;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 
@@ -35,10 +38,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.booleanWrapperVector;
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.childAt;
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.compare;
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.evalNullability;
+
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**
@@ -405,44 +405,53 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         @Override
         ColumnVector visitComparator(Predicate predicate) {
             PredicateChildrenEvalResult argResults = evalBinaryExpressionChildren(predicate);
-
-            int numRows = argResults.rowCount;
-            boolean[] result = new boolean[numRows];
-            boolean[] nullability = evalNullability(argResults.leftResult, argResults.rightResult);
-            int[] compareResult = compare(argResults.leftResult, argResults.rightResult);
+            VectorComparator v;
             switch (predicate.getName()) {
                 case "=":
-                    for (int rowId = 0; rowId < numRows; rowId++) {
-                        result[rowId] = compareResult[rowId] == 0;
-                    }
-                    break;
+                     v = new VectorComparator() {
+                        @Override
+                        public boolean compare(int compareResult) {
+                            return compareResult == 0;
+                        }
+                    };
+                    return comparatorVector(argResults.leftResult, argResults.rightResult, v);
                 case ">":
-                    for (int rowId = 0; rowId < numRows; rowId++) {
-                        result[rowId] = compareResult[rowId] > 0;
-                    }
-                    break;
+                    v = new VectorComparator() {
+                        @Override
+                        public boolean compare(int compareResult) {
+                            return compareResult > 0;
+                        }
+                    };
+                    return comparatorVector(argResults.leftResult, argResults.rightResult, v);
                 case ">=":
-                    for (int rowId = 0; rowId < numRows; rowId++) {
-                        result[rowId] = compareResult[rowId] >= 0;
-                    }
-                    break;
+                    v = new VectorComparator() {
+                        @Override
+                        public boolean compare(int compareResult) {
+                            return compareResult >= 0;
+                        }
+                    };
+                    return comparatorVector(argResults.leftResult, argResults.rightResult, v);
                 case "<":
-                    for (int rowId = 0; rowId < numRows; rowId++) {
-                        result[rowId] = compareResult[rowId] < 0;
-                    }
-                    break;
+                    v = new VectorComparator() {
+                        @Override
+                        public boolean compare(int compareResult) {
+                            return compareResult < 0;
+                        }
+                    };
+                    return comparatorVector(argResults.leftResult, argResults.rightResult, v);
                 case "<=":
-                    for (int rowId = 0; rowId < numRows; rowId++) {
-                        result[rowId] = compareResult[rowId] <= 0;
-                    }
-                    break;
+                    v = new VectorComparator() {
+                        @Override
+                        public boolean compare(int compareResult) {
+                            return compareResult <= 0;
+                        }
+                    };
+                    return comparatorVector(argResults.leftResult, argResults.rightResult, v);
                 default:
                     throw DeltaErrors.unsupportedExpression(
                             predicate,
                             Optional.of("unsupported expression encountered"));
             }
-
-            return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
         }
 
         @Override
