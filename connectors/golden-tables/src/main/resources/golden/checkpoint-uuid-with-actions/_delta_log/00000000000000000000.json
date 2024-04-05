@@ -1,0 +1,4 @@
+{"commitInfo":{"timestamp":1712337273551,"operation":"Manual Update","operationParameters":{},"isolationLevel":"Serializable","isBlindAppend":true,"operationMetrics":{},"engineInfo":"Apache-Spark/3.5.0 Delta-Lake/3.2.0-SNAPSHOT","txnId":"2e54d578-38fb-49b3-b5e6-53525ff35fe1"}}
+{"metaData":{"id":"testId","format":{"provider":"parquet","options":{}},"schemaString":"{\"type\":\"struct\",\"fields\":[{\"name\":\"intCol\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}}]}","partitionColumns":[],"configuration":{}}}
+{"protocol":{"minReaderVersion":3,"minWriterVersion":7,"readerFeatures":["v2Checkpoint"],"writerFeatures":["v2Checkpoint"]}}
+{"add":{"path":"addfile","partitionValues":{},"size":100,"modificationTime":10,"dataChange":true}}
