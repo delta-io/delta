@@ -145,7 +145,7 @@ class ColumnMappingUsageTrackingSuite extends QueryTest with DeltaSQLCommandTest
         sql("ALTER TABLE s RENAME COLUMN name TO first_name")
         sql("ALTER TABLE s ADD COLUMN last_name STRING")
 
-        sql(s"CREATE TABLE $TABLE_NAME CLONE s")
+        sql(s"CREATE TABLE $TABLE_NAME SHALLOW CLONE s")
         sql(s"ALTER TABLE $TABLE_NAME ADD COLUMN age INT")
         assert(hasDroppedOrRenamedColumn())
         assert(getPhysicalColumnName("id") === "id")
@@ -164,7 +164,7 @@ class ColumnMappingUsageTrackingSuite extends QueryTest with DeltaSQLCommandTest
         sql("CREATE TABLE s (id INT, name STRING) USING delta")
         sql("ALTER TABLE s ADD COLUMN last_name STRING")
 
-        sql(s"CREATE TABLE $TABLE_NAME CLONE s")
+        sql(s"CREATE TABLE $TABLE_NAME SHALLOW CLONE s")
         sql(s"ALTER TABLE $TABLE_NAME ADD COLUMN age INT")
         assert(!hasDroppedOrRenamedColumn())
         assert(getPhysicalColumnName("id") === "id")
@@ -183,7 +183,7 @@ class ColumnMappingUsageTrackingSuite extends QueryTest with DeltaSQLCommandTest
         sql("ALTER TABLE s ADD COLUMN last_name STRING")
 
         withSQLConf(COLUMN_MAPPING_USAGE_TRACKING_FEATURE_DEFAULT_KEY -> "supported") {
-          sql(s"CREATE TABLE $TABLE_NAME CLONE s")
+          sql(s"CREATE TABLE $TABLE_NAME SHALLOW CLONE s")
           sql(s"ALTER TABLE $TABLE_NAME ADD COLUMN age INT")
           assert(!hasDroppedOrRenamedColumn())
           // The schema was copied including the physical column names.
