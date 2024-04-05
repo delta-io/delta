@@ -153,6 +153,16 @@ public final class Literal implements Expression {
     }
 
     /**
+     * Create a {@code timestamp_ntz} type literal expression.
+     *
+     * @param microSecondsEpoch Microseconds since epoch with no timezone.
+     * @return a {@link Literal} with data type {@link TimestampNTZType}
+     */
+    public static Literal ofTimestampNtz(long microSecondsEpoch) {
+        return new Literal(microSecondsEpoch, TimestampNTZType.TIMESTAMP_NTZ);
+    }
+
+    /**
      * Create a {@code decimal} type literal expression.
      *
      * @param value     decimal literal value
@@ -207,6 +217,7 @@ public final class Literal implements Expression {
      * <li>DOUBLE: {@link Double}</li>
      * <li>DATE: {@link Integer} represents the number of days since epoch in UTC</li>
      * <li>TIMESTAMP: {@link Long} represents the microseconds since epoch in UTC</li>
+     * <li>TIMESTAMP_NTZ: {@link Long} represents the microseconds since epoch with no timezone</li>
      * <li>DECIMAL: {@link BigDecimal}.Use {@link #getDataType()} to find the precision and
      * scale</li>
      * </ul>

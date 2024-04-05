@@ -86,6 +86,9 @@ class PartitionValueEvaluator {
                 } else if (partitionType.equivalent(TimestampType.TIMESTAMP)) {
                     return InternalUtils.microsSinceEpoch(
                         Timestamp.valueOf(input.getString(rowId)));
+                } else if (partitionType.equivalent(TimestampNTZType.TIMESTAMP_NTZ)) {
+                    return InternalUtils.microsSinceEpoch(
+                            Timestamp.valueOf(input.getString(rowId)));
                 }
                 throw new UnsupportedOperationException("Invalid value request for data type");
             }
