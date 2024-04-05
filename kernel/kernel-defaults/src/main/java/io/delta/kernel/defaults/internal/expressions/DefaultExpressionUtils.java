@@ -108,6 +108,7 @@ class DefaultExpressionUtils {
                 left.getSize() == right.getSize(),
                 "Left and right operand have different vector sizes.");
         return new ColumnVector() {
+
             @Override
             public DataType getDataType() { return BooleanType.BOOLEAN;}
 
@@ -118,6 +119,7 @@ class DefaultExpressionUtils {
 
             @Override
             public int getSize() { return left.getSize(); }
+
             @Override
             public boolean isNullAt(int rowId) {
                 return left.isNullAt(rowId) || right.isNullAt(rowId);
