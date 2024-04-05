@@ -16,9 +16,7 @@
 package io.delta.kernel.defaults
 
 import java.io.File
-
 import scala.collection.JavaConverters._
-
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.scalatest.funsuite.AnyFunSuite
 import org.apache.hadoop.conf.Configuration
@@ -27,7 +25,9 @@ import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+
 import io.delta.kernel.Table
+
 import java.util.Optional
 
 import org.apache.spark.sql.delta.DeltaLog

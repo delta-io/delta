@@ -275,8 +275,7 @@ class LogReplayMetricsSuite extends QueryTest
         Table.forPath(tc, path),
         expJsonVersionsRead = 14L to 11L by -1L,
         expParquetVersionsRead = Seq(10),
-        // we read the checkpoint three times: once for the P & M, once for sidecar files,
-        // and once for the scan files
+        // we read the checkpoint twice: once for the P &M and once for the scan files
         expParquetReadSetSizes = Seq(1, 1))
 
       // create a multi-part checkpoint
