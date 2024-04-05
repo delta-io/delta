@@ -110,7 +110,9 @@ class DefaultExpressionUtils {
         return new ColumnVector() {
 
             @Override
-            public DataType getDataType() { return BooleanType.BOOLEAN;}
+            public DataType getDataType() {
+                return BooleanType.BOOLEAN;
+            }
 
             @Override
             public void close() {
@@ -118,7 +120,9 @@ class DefaultExpressionUtils {
             }
 
             @Override
-            public int getSize() { return left.getSize(); }
+            public int getSize() {
+                return left.getSize();
+            }
 
             @Override
             public boolean isNullAt(int rowId) {

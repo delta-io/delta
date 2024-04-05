@@ -18,7 +18,6 @@ package io.delta.kernel.defaults.internal.expressions;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
-
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
@@ -30,7 +29,6 @@ import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.DeltaErrors;
-
 import static io.delta.kernel.internal.util.ExpressionUtils.getLeft;
 import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
 import static io.delta.kernel.internal.util.ExpressionUtils.getUnaryChild;
@@ -38,8 +36,8 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
-import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
+import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**
  * Implementation of {@link ExpressionEvaluator} for default {@link ExpressionHandler}.
@@ -408,7 +406,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             VectorComparator v;
             switch (predicate.getName()) {
                 case "=":
-                     v = new VectorComparator() {
+                    v = new VectorComparator() {
                         @Override
                         public boolean compare(int compareResult) {
                             return compareResult == 0;
