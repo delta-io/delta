@@ -23,5 +23,5 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public interface VectorComparator {
-   boolean compare(int compareResult);
+    boolean compare(int compareResult);
 }
