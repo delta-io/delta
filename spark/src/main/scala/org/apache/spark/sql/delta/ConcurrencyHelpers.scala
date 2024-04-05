@@ -43,4 +43,15 @@ object ConcurrencyHelpers {
     } while (deadline.hasTimeLeft())
     false
   }
+
+  def withOptimisticTransaction[T](
+    activeTransaction: Option[OptimisticTransaction])(block: => T): T = {
+    if (activeTransaction.isDefined) {
+      OptimisticTransaction.withActive(activeTransaction.get) {
+        block
+      }
+    } else {
+      block
+    }
+  }
 }
