@@ -34,9 +34,9 @@
   - [Supported Features](#supported-features)
   - [Active Features](#active-features)
 - [Column Mapping](#column-mapping)
-  - [Usage Tracking](#usage-tracking)
+  - [Column Mapping Usage Tracking](#column-mapping-usage-tracking)
   - [Writer Requirements for Column Mapping](#writer-requirements-for-column-mapping)
-    - [Writer Requirements for Usage Tracking](#writer-requirements-for-usage-tracking)
+    - [Writer Requirements for Column Mapping Usage Tracking](#writer-requirements-for-column-mapping-usage-tracking)
   - [Reader Requirements for Column Mapping](#reader-requirements-for-column-mapping)
 - [Deletion Vectors](#deletion-vectors)
   - [Deletion Vector Descriptor Schema](#deletion-vector-descriptor-schema)
@@ -804,7 +804,7 @@ The following is an example for the column definition of a table that leverages 
   }
 ```
 
-## Usage Tracking
+## Column Mapping Usage Tracking
 
 Column Mapping Usage Tracking is an extension of the column mapping feature that allows Delta to track whether a column has been dropped or renamed.
 This is tracked by the table property `delta.columnMapping.hasDroppedOrRenamed`. This table property is set to `false` when the table is created, and flipped to `true` when the first column is either dropped or renamed.
@@ -826,7 +826,7 @@ In order to support column mapping, writers must:
    - Otherwise the physical column name must contain a universally unique identifier (UUID) to guarantee uniqueness.
  - Assign a column id to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
 
-### Writer Requirements for Usage Tracking
+### Writer Requirements for Column Mapping Usage Tracking
 
 In order to support column mapping usage tracking, writers must:
  - Write `protocol` and `metaData` actions when Column Mapping Usage Tracking is turned on for the first time:
