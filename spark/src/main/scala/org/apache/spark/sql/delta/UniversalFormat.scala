@@ -172,7 +172,7 @@ object UniversalFormat extends DeltaLogging {
   def enforceDependenciesInConfiguration(
       configuration: Map[String, String],
       snapshot: Snapshot): Map[String, String] = {
-    var metadata = Metadata(configuration = configuration)
+    var metadata = snapshot.metadata.copy(configuration = configuration)
 
     // Check UniversalFormat related property dependencies
     val (_, universalMetadata) = UniversalFormat.enforceInvariantsAndDependencies(
