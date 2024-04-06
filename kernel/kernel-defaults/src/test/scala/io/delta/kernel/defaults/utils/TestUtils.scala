@@ -261,6 +261,7 @@ trait TestUtils extends Assertions with SQLHelper {
     DoubleType.DOUBLE,
     DateType.DATE,
     TimestampType.TIMESTAMP,
+    TimestampNTZType.TIMESTAMP_NTZ,
     StringType.STRING,
     BinaryType.BINARY,
     new DecimalType(10, 5)
@@ -519,6 +520,7 @@ trait TestUtils extends Assertions with SQLHelper {
       case BinaryType.BINARY => rowId % 3 == 0
       case DateType.DATE => rowId % 5 == 0
       case TimestampType.TIMESTAMP => rowId % 3 == 0
+      case TimestampNTZType.TIMESTAMP_NTZ => rowId % 2 == 0
       case _ =>
         if (dataType.isInstanceOf[DecimalType]) rowId % 6 == 0
         else throw new UnsupportedOperationException(s"$dataType is not supported")
@@ -539,6 +541,7 @@ trait TestUtils extends Assertions with SQLHelper {
       case BinaryType.BINARY => Array[Byte]((rowId % 21).toByte, (rowId % 7 - 1).toByte)
       case DateType.DATE => (rowId * 28234) % 2876
       case TimestampType.TIMESTAMP => (rowId * 2342342L) % 23
+      case TimestampNTZType.TIMESTAMP_NTZ => (rowId * 523423L) % 29
       case _ =>
         if (dataType.isInstanceOf[DecimalType]) new BigDecimalJ(rowId * 22342.23)
         else throw new UnsupportedOperationException(s"$dataType is not supported")

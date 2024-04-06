@@ -180,9 +180,10 @@ public class ScanImpl implements Scan {
         Set<String> partitionColNames = metadata.getPartitionColNames();
         Map<String, StructField> partitionColNameToStructFieldMap =
             metadata.getSchema().fields().stream()
-                .filter(field -> partitionColNames.contains(field.getName()))
+                .filter(field ->
+                        partitionColNames.contains(field.getName().toLowerCase(Locale.ROOT)))
                 .collect(toMap(
-                    field -> field.getName().toLowerCase(Locale.ENGLISH),
+                    field -> field.getName().toLowerCase(Locale.ROOT),
                     identity()));
 
         Predicate predicateOnScanFileBatch = rewritePartitionPredicateOnScanFileSchema(

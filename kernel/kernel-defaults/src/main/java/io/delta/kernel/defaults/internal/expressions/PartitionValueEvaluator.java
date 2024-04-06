@@ -83,7 +83,10 @@ class PartitionValueEvaluator {
             public long getLong(int rowId) {
                 if (partitionType.equivalent(LongType.LONG)) {
                     return Long.parseLong(input.getString(rowId));
-                } else if (partitionType.equivalent(TimestampType.TIMESTAMP)) {
+                } else if (partitionType.equivalent(TimestampType.TIMESTAMP) ||
+                        partitionType.equivalent(TimestampNTZType.TIMESTAMP_NTZ)) {
+                    // Both the timestamp and timestamp_ntz have no timezone info,
+                    // so they are interpreted in local time zone.
                     return InternalUtils.microsSinceEpoch(
                         Timestamp.valueOf(input.getString(rowId)));
                 }

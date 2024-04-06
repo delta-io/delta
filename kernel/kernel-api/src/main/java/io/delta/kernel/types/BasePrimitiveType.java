@@ -61,6 +61,7 @@ public abstract class BasePrimitiveType extends DataType {
                 put("double", DoubleType.DOUBLE);
                 put("date", DateType.DATE);
                 put("timestamp", TimestampType.TIMESTAMP);
+                put("timestamp_ntz", TimestampNTZType.TIMESTAMP_NTZ);
                 put("binary", BinaryType.BINARY);
                 put("string", StringType.STRING);
             }
