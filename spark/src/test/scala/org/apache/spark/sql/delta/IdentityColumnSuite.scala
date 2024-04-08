@@ -36,10 +36,6 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
 
   import testImplicits._
   protected val tblName = "identity_test"
-  protected override def sparkConf: SparkConf = {
-    super.sparkConf
-      .set(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED.key, "true")
-  }
 
   test("Don't allow IDENTITY column in the schema if the feature is disabled") {
     withSQLConf(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED.key -> "false") {

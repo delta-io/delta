@@ -17,14 +17,19 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.GeneratedAsIdentityType.{GeneratedAlways, GeneratedAsIdentityType}
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 
-import org.apache.spark.sql.{QueryTest, Row}
-import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.SparkConf
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.types._
 
 trait IdentityColumnTestUtils
   extends DDLTestUtils {
+
+  protected override def sparkConf: SparkConf = {
+    super.sparkConf
+      .set(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED.key, "true")
+  }
 
   protected val unsupportedDataTypes: Seq[DataType] = Seq(
     BooleanType,
