@@ -76,7 +76,7 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
 
     colFields += StructField("value", IntegerType)
 
-    StructType(colFields)
+    StructType(colFields.toSeq)
   }
 
   test("various configuration") {
