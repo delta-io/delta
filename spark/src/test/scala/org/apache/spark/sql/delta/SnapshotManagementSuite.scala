@@ -78,7 +78,8 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
   }
 
   private def deleteLogVersion(path: String, version: Long): Unit = {
-    val deltaFile = new File(FileNames.deltaFile(new Path(path, "_delta_log"), version).toString)
+    val deltaFile = new File(
+      FileNames.unsafeDeltaFile(new Path(path, "_delta_log"), version).toString)
     assert(deltaFile.exists(), s"Could not find $deltaFile")
     assert(deltaFile.delete(), s"Failed to delete $deltaFile")
   }

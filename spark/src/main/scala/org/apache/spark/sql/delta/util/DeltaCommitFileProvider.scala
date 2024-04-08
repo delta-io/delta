@@ -56,7 +56,7 @@ case class DeltaCommitFileProvider(
     }
     uuids.get(version) match {
       case Some(uuid) => FileNames.unbackfilledDeltaFile(resolvedPath, version, Some(uuid))
-      case _ => FileNames.deltaFile(resolvedPath, version)
+      case _ => FileNames.unsafeDeltaFile(resolvedPath, version)
     }
   }
 }

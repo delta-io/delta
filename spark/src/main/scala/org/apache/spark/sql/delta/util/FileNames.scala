@@ -34,8 +34,26 @@ object FileNames {
   private val checksumFilePattern = checksumFileRegex.pattern
   private val checkpointFilePattern = checkpointFileRegex.pattern
 
-  /** Returns the delta (json format) path for a given delta file. */
-  def deltaFile(path: Path, version: Long): Path = new Path(path, f"$version%020d.json")
+  /**
+   * Returns the delta (json format) path for a given delta file.
+   * WARNING: This API is unsafe and can resolve to incorrect paths if the table has
+   * Managed Commits.
+   * Use DeltaCommitFileProvider(snapshot).deltaFile instead to guarantee accurate paths.
+   */
+  def unsafeDeltaFile(path: Path, version: Long): Path = new Path(path, f"$version%020d.json")
+
+  /**
+   * Returns the delta (json format) path for a given delta file.
+   * WARNING: This API is unsafe and deprecated. It can resolve to incorrect paths if the table has
+   * Managed Commits. It will be removed in future versions.
+   * Use DeltaCommitFileProvider(snapshot).deltaFile instead to guarantee accurate paths or
+   * unsafeDeltaFile for potentially incorrect file name resolution.
+   */
+  @deprecated(
+    "This method is deprecated and will be removed in future versions. " +
+      "Use DeltaCommitFileProvider(snapshot).deltaFile or unsafeDeltaFile instead",
+    "15.1")
+  def deltaFile(path: Path, version: Long): Path = unsafeDeltaFile(path, version)
 
   /**
    * Returns the un-backfilled uuid formatted delta (json format) path for a given version.

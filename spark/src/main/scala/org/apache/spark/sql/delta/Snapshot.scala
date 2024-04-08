@@ -491,7 +491,7 @@ class Snapshot(
         startVersion = minUnbackfilledVersion,
         endVersion = Some(version))
       val fs = deltaLog.logPath.getFileSystem(hadoopConf)
-      val expectedBackfilledDeltaFile = FileNames.deltaFile(deltaLog.logPath, version)
+      val expectedBackfilledDeltaFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
       if (!fs.exists(expectedBackfilledDeltaFile)) {
         throw new IllegalStateException("Backfilling of commit files failed. " +
           s"Expected delta file $expectedBackfilledDeltaFile not found.")

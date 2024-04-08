@@ -409,7 +409,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       val version = deltaTable.startTransactionWithInitialSnapshot()
         .commit(domainMetadatas, ManualUpdate)
       val committedActions = deltaLog.store.read(
-        FileNames.deltaFile(deltaLog.logPath, version),
+        FileNames.unsafeDeltaFile(deltaLog.logPath, version),
         deltaLog.newDeltaHadoopConf())
       assert(committedActions.size == 2)
       val serializedJson = committedActions.last
@@ -635,7 +635,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
           val version = deltaLog.startTransaction().commit(Seq(action), ManualUpdate)
           // Read the commit file and get the serialized committed actions
           val committedActions = deltaLog.store.read(
-            FileNames.deltaFile(deltaLog.logPath, version),
+            FileNames.unsafeDeltaFile(deltaLog.logPath, version),
             deltaLog.newDeltaHadoopConf())
 
           assert(committedActions.size == 2)

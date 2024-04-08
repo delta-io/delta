@@ -204,7 +204,7 @@ object EvolvabilitySuiteBase {
 
     val deltaLog = DeltaLog.forTable(spark, new Path(path))
     val deltas = 0L to deltaLog.snapshot.version
-    val deltaFiles = deltas.map(deltaFile(deltaLog.logPath, _)).map(_.toString)
+    val deltaFiles = deltas.map(unsafeDeltaFile(deltaLog.logPath, _)).map(_.toString)
     val actionsTypesInLog =
       spark.read.schema(Action.logSchema).json(deltaFiles: _*)
         .as[SingleAction]
@@ -293,14 +293,14 @@ object EvolvabilitySuiteBase {
 
     // manually remove AddFile in the previous commit and append a new column.
     val records = deltaLog.store.read(
-      FileNames.deltaFile(deltaLog.logPath, version),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, version),
       deltaLog.newDeltaHadoopConf())
     val actions = records.map(Action.fromJson).filter(action => action.isInstanceOf[AddFile])
       .map { action => action.asInstanceOf[AddFile].remove}
       .toIterator
     val recordsWithNewAction = actions.map(_.json) ++ Iterator("""{"some_new_action":{"a":1}}""")
     deltaLog.store.write(
-      FileNames.deltaFile(deltaLog.logPath, version + 1),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, version + 1),
       recordsWithNewAction,
       overwrite = false,
       deltaLog.newDeltaHadoopConf())
@@ -318,7 +318,7 @@ object EvolvabilitySuiteBase {
       JsonUtils.toJson(newRecordMap + ("some_new_action_alongside_add_action" -> ("a" -> "1")))
     }.toIterator
     deltaLog.store.write(
-      FileNames.deltaFile(deltaLog.logPath, version + 2),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, version + 2),
       newRecords,
       overwrite = false,
       deltaLog.newDeltaHadoopConf())
