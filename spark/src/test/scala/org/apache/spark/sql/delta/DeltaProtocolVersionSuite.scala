@@ -3451,7 +3451,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       sql(
         s"""ALTER TABLE delta.`${dir.getPath}` SET TBLPROPERTIES (
            |'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}'='false'
-           |)""")
+           |)""".stripMargin)
 
       // Pretend retention period has passed.
       val clockAdvanceMillis = DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention)
@@ -3463,7 +3463,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         TestRemovableReaderWriterFeature.name,
         truncateHistory = true).run(spark)
 
-      assert(targetLog.update().protocol == Protocol(3, 7))
+      assert(targetLog.update().protocol == Protocol(1, 1))
     }
   }
 
