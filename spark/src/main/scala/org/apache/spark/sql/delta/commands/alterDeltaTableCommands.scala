@@ -324,6 +324,7 @@ case class AlterTableDropFeatureDeltaCommand(
         // the feature. This intends to help slow-moving tables to qualify for history truncation
         // asap. The checkpoint is based on a new commit to avoid creating a checkpoint
         // on a commit that still contains traces of the removed feature.
+        // Note, the checkpoint is created in both executions of DROP FEATURE command.
         createEmptyCommitAndCheckpoint(startTimeNs)
 
         // If the pre-downgrade command made changes, then the table's historical versions

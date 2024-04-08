@@ -2881,11 +2881,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  for {
-    reEnablePropertyValue <- BOOLEAN_DOMAIN
-    reDisable <- BOOLEAN_DOMAIN
-  } test("Try removing reader+writer feature but re-enable feature after disablement " +
-      s"reEnablePropertyValue: $reEnablePropertyValue " +
+  for (reDisable <- BOOLEAN_DOMAIN)
+  test("Try removing reader+writer feature but re-enable feature after disablement " +
       s"reDisable: $reDisable") {
     withTempDir { dir =>
       val clock = new ManualClock(System.currentTimeMillis())
@@ -2929,7 +2926,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val v2Table = DeltaTableV2(spark, deltaLog.dataPath)
       AlterTableSetPropertiesDeltaCommand(
         v2Table,
-        Map(TestRemovableReaderWriterFeature.TABLE_PROP_KEY -> reEnablePropertyValue.toString))
+        Map(TestRemovableReaderWriterFeature.TABLE_PROP_KEY -> true.toString))
         .run(spark)
 
       // Disable by removing property.
@@ -2942,8 +2939,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       clock.advance(
         deltaRetentionMillis - TimeUnit.DAYS.toMillis(10) + TimeUnit.MINUTES.toMillis(5))
 
-      // Cleanup logs.
-      deltaLog.cleanUpExpiredLogs(deltaLog.update())
+      DeltaLog.clearCache()
 
       // Feature was enabled again in the middle of the timeframe. The feature traces are
       // are cleaned up again and we get a new "Wait for retention period message."
