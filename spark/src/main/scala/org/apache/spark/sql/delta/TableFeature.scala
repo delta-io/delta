@@ -353,7 +353,7 @@ object TableFeature {
         TestFeatureWithDependency,
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency,
-        // identity columns are under development and only available in testing.
+        // Identity columns are under development and only available in testing.
         IdentityColumnsTableFeature,
         // managed-commits are under development and only available in testing.
         ManagedCommitTableFeature,
