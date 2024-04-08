@@ -336,7 +336,8 @@ object TableFeature {
       IcebergCompatV2TableFeature,
       DeletionVectorsTableFeature,
       VacuumProtocolCheckTableFeature,
-      V2CheckpointTableFeature)
+      V2CheckpointTableFeature,
+      RowTrackingFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
@@ -355,8 +356,6 @@ object TableFeature {
         TestWriterFeatureWithTransitiveDependency,
         // managed-commits are under development and only available in testing.
         ManagedCommitTableFeature,
-        // Row IDs are still under development and only available in testing.
-        RowTrackingFeature,
         InCommitTimestampTableFeature,
         TypeWideningTableFeature)
     }
