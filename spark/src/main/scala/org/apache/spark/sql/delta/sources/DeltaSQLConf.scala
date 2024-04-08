@@ -1667,13 +1667,6 @@ trait DeltaSQLConfBase {
   // Clustered Table
   //////////////////
 
-  val DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED =
-    buildConf("clusteredTable.enableClusteringTablePreview")
-      .internal()
-      .doc("Whether to enable the clustering table preview.")
-      .booleanConf
-      .createWithDefault(false)
-
   val DELTA_NUM_CLUSTERING_COLUMNS_LIMIT =
     buildStaticConf("clusteredTable.numClusteringColumnsLimit")
       .internal()
