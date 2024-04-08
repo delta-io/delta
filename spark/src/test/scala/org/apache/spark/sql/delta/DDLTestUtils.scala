@@ -89,18 +89,8 @@ case class IdentityColumnSpec(
   extends ColumnSpec {
 
   override def ddl: String = {
-    val generatedStr = generatedAsIdentityType match {
-      case GeneratedAsIdentityType.GeneratedAlways => "ALWAYS"
-      case GeneratedAsIdentityType.GeneratedByDefault => "BY DEFAULT"
-    }
-
-    val startsWithStr = startsWith.map(step => s"START WITH $step").getOrElse("")
-    val incrementByStr = incrementBy.map(step => s"INCREMENT BY $step").getOrElse("")
-    val identitySpec = s"($startsWithStr $incrementByStr)"
-
-    val commentStr = comment.map(c => s""" COMMENT "$c"""").getOrElse("")
-
-    s"$colName ${dataType.sql} GENERATED $generatedStr AS IDENTITY $identitySpec$commentStr"
+    throw new UnsupportedOperationException(
+      "DDL generation is not supported for identity columns yet")
   }
 
   override def structField(spark: SparkSession): StructField = {
