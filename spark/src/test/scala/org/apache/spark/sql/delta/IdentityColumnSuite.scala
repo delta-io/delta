@@ -29,7 +29,6 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
-
 /**
  * General test suite for identity columns.
  */
@@ -37,6 +36,10 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
 
   import testImplicits._
   protected val tblName = "identity_test"
+  protected override def sparkConf: SparkConf = {
+    super.sparkConf
+      .set(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED.key, "true")
+  }
 
   test("Don't allow IDENTITY column in the schema if the feature is disabled") {
     withSQLConf(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED.key -> "false") {
@@ -94,39 +97,35 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
       Integer.MAX_VALUE.toLong,
       Long.MaxValue
     )
-    withSQLConf(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED.key -> "true") {
-      for {
-        generatedAsIdentityType <- GeneratedAsIdentityType.values
-        startsWith <- starts
-        incrementBy <- steps
-      } {
-        withTable(tblName) {
-          createTableWithIdColAndIntValueCol(
-            tblName, generatedAsIdentityType, Some(startsWith), Some(incrementBy))
-          val table = DeltaLog.forTable(spark, TableIdentifier(tblName))
-          val actualSchema =
-            DeltaColumnMapping.dropColumnMappingMetadata(table.snapshot.metadata.schema)
-          assert(actualSchema === expectedSchema(generatedAsIdentityType, startsWith, incrementBy))
-        }
+    for {
+      generatedAsIdentityType <- GeneratedAsIdentityType.values
+      startsWith <- starts
+      incrementBy <- steps
+    } {
+      withTable(tblName) {
+        createTableWithIdColAndIntValueCol(
+          tblName, generatedAsIdentityType, Some(startsWith), Some(incrementBy))
+        val table = DeltaLog.forTable(spark, TableIdentifier(tblName))
+        val actualSchema =
+          DeltaColumnMapping.dropColumnMappingMetadata(table.snapshot.metadata.schema)
+        assert(actualSchema === expectedSchema(generatedAsIdentityType, startsWith, incrementBy))
       }
     }
   }
 
   test("default configuration") {
-    withSQLConf(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED.key -> "true") {
-      for {
-        generatedAsIdentityType <- GeneratedAsIdentityType.values
-        startsWith <- Seq(Some(1L), None)
-        incrementBy <- Seq(Some(1L), None)
-      } {
-        withTable(tblName) {
-          createTableWithIdColAndIntValueCol(
-            tblName, generatedAsIdentityType, startsWith, incrementBy)
-          val table = DeltaLog.forTable(spark, TableIdentifier(tblName))
-          val actualSchema =
-            DeltaColumnMapping.dropColumnMappingMetadata(table.snapshot.metadata.schema)
-          assert(actualSchema === expectedSchema(generatedAsIdentityType))
-        }
+    for {
+      generatedAsIdentityType <- GeneratedAsIdentityType.values
+      startsWith <- Seq(Some(1L), None)
+      incrementBy <- Seq(Some(1L), None)
+    } {
+      withTable(tblName) {
+        createTableWithIdColAndIntValueCol(
+          tblName, generatedAsIdentityType, startsWith, incrementBy)
+        val table = DeltaLog.forTable(spark, TableIdentifier(tblName))
+        val actualSchema =
+          DeltaColumnMapping.dropColumnMappingMetadata(table.snapshot.metadata.schema)
+        assert(actualSchema === expectedSchema(generatedAsIdentityType))
       }
     }
   }
@@ -135,7 +134,64 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
 
 class IdentityColumnScalaSuite
   extends IdentityColumnSuiteBase
-  with ScalaDDLTestUtils
+  with ScalaDDLTestUtils {
+
+  test("unsupported column type") {
+    val tblName = "identity_test"
+    for (unsupportedType <- unsupportedDataTypes) {
+      withTable(tblName) {
+        val ex = intercept[AnalysisException] {
+          createTable(
+            tblName,
+            Seq(
+              IdentityColumnSpec(GeneratedAlways, dataType = unsupportedType),
+              TestColumnSpec(colName = "value", dataType = StringType)
+            )
+          )
+        }
+        assert(ex.getMessage.contains("Identity column does not support this data type."))
+      }
+    }
+  }
+
+  test("unsupported step") {
+    val tblName = "identity_test"
+    for {
+      generatedAsIdentityType <- GeneratedAsIdentityType.values
+      startsWith <- Seq(Some(1L), None)
+    } {
+      withTable(tblName) {
+        val ex = intercept[AnalysisException] {
+          createTableWithIdColAndIntValueCol(
+            tblName, generatedAsIdentityType, startsWith, incrementBy = Some(0))
+        }
+        assert(ex.getMessage.contains("step cannot be 0."))
+      }
+    }
+  }
+
+  test("cannot specify generatedAlwaysAs with identity columns") {
+    def expectColumnBuilderError(f: => StructField): Unit = {
+      val ex1 = intercept[AnalysisException] {
+        f
+      }
+      ex1.getMessage.contains(
+        "Identity column cannot be specified with a generated column expression.")
+    }
+    val generatedColumn = io.delta.tables.DeltaTable.columnBuilder(spark, "id")
+      .dataType(LongType)
+      .generatedAlwaysAs("id + 1")
+
+    expectColumnBuilderError {
+      generatedColumn.generatedAlwaysAsIdentity().build()
+    }
+
+    expectColumnBuilderError {
+      generatedColumn.generatedByDefaultAsIdentity().build()
+    }
+  }
+}
+
 
 class IdentityColumnScalaIdColumnMappingSuite
   extends IdentityColumnSuiteBase

@@ -21,10 +21,24 @@ import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{DataType, IntegerType, LongType, StringType}
+import org.apache.spark.sql.types._
 
 trait IdentityColumnTestUtils
   extends DDLTestUtils {
+
+  protected val unsupportedDataTypes: Seq[DataType] = Seq(
+    BooleanType,
+    ByteType,
+    ShortType,
+    IntegerType,
+    DoubleType,
+    DateType,
+    TimestampType,
+    StringType,
+    BinaryType,
+    DecimalType(precision = 5, scale = 2),
+    YearMonthIntervalType(startField = 0, endField = 0) // Interval Year
+  )
 
   def createTableWithIdColAndIntValueCol(
       tableName: String,

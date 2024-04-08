@@ -2409,8 +2409,12 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(errorClass = "DELTA_UNSET_NON_EXISTENT_PROPERTY", Array(key, table))
   }
 
+  def identityColumnWithGenerationExpression(): Throwable = {
+    new AnalysisException("Identity column cannot be specified with a generated column expression.")
+  }
+
   def identityColumnIllegalStep(): Throwable = {
-    new AnalysisException("IDENTITY column step cannot be 0.")
+    new AnalysisException("Identity column step cannot be 0.")
   }
 
   def identityColumnDataTypeNotSupported(): Throwable = {

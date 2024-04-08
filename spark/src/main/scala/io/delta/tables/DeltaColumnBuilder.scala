@@ -191,6 +191,10 @@ class DeltaColumnBuilder private[tables](
     }
 
     if (identityAllowExplicitInsert.isDefined) {
+      if (generationExpr.nonEmpty) {
+        throw DeltaErrors.identityColumnWithGenerationExpression()
+      }
+
       if (dataType != null && dataType != LongType) {
         throw DeltaErrors.identityColumnDataTypeNotSupported()
       }
