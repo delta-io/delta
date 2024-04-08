@@ -1725,6 +1725,20 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  ///////////////////
+  // IDENTITY COLUMN
+  ///////////////////
+
+  val DELTA_IDENTITY_COLUMN_ENABLED =
+    buildConf("identityColumn.enabled")
+      .internal()
+      .doc(
+        """
+          | The umbrella config to turn on/off the IDENTITY column support.
+          | If true, enable Delta IDENTITY column support.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 
   ///////////
   // TESTING
