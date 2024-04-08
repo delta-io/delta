@@ -42,7 +42,6 @@ To support this feature:
 }
 ```
 
-
 ## Variant data in Parquet
 
 The Variant data type is represented as 2 binary encoded values, according to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md).
@@ -60,19 +59,31 @@ Supported writers must write the 2 binary fields, and supported readers must rea
 Struct fields which start with `_` (underscore) can be safely ignored.
 The only non-ignorable fields must be `value` and `metadata`.
 
+## Writer Requirements for Variant Data Type
+
+When Variant type is supported (`writerFeatures` field of a table's `protocol` action contains `variantType`), writers:
+- must write the 2 parquet struct fields, `value` and `metadata`, according to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md)
+- must not write additional parquet struct fields
+
+## Reader Requirements for Variant Data Type
+
+When Variant type is supported (`readerFeatures` field of a table's `protocol` action contains `variantType`), readers:
+- must be able to read the 2 parquet struct fields, `value` and `metadata`
+- can ignore any parquet struct field names starting with `_` (underscore)
+
 ## Compatibility with other Delta Features
 
 Feature | Support for Variant Data Type
 -|-
-Partition Columns | &#x2705; A Variant column is allowed to be a non-partitioned column of a partitioned table. <br/> &#x274C; Variant is not a comparable data type, so it cannot be included in a partition column.
-Clustered Tables | &#x2705; A Variant column is allowed to be a non-clustering column of a clustered table. <br/> &#x274C; Variant is not a comparable data type, so it cannot be included in a clustering column.
-Delta Column Statistics | &#x2705; A Variant column supports the `nullCount` statistic. <br/> &#x274C; Variant is not a comparable data type, so a Variant column does not support the `minValues` and `maxValues` statistics.
-Generated Columns | &#x2705; A Variant column is allowed to be used as a source in a generated column expression, as long as the Variant type is not the result type of the generated column expression. <br/> &#x274C; The Variant data type is not allowed to be the result type of a generated column expression.
-Delta CHECK Constraints | &#x2705; A Variant column is allowed to be used for a CHECK constraint expression.
-Default Column Values | &#x2705; A Variant column is allowed to have a default column value.
-Change Data Feed | &#x2705; A table using the Variant data type is allowed to enable the Delta Change Data Feed.
-Convert-to-Delta Command | &#x2705; A Variant Parquet table following the Spark Variant specification, can be converted to Delta with the CONVERT TO DELTA command.
-Create Table Clone Command | &#x2705; A Variant table following the Spark Variant specification, can be deep or shallow cloned.
+Partition Columns | **Supported:** A Variant column is allowed to be a non-partitioned column of a partitioned table. <br/> **Unsupported:** Variant is not a comparable data type, so it cannot be included in a partition column.
+Clustered Tables | **Supported:** A Variant column is allowed to be a non-clustering column of a clustered table. <br/> **Unsupported:** Variant is not a comparable data type, so it cannot be included in a clustering column.
+Delta Column Statistics | **Supported:** A Variant column supports the `nullCount` statistic. <br/> **Unsupported:** Variant is not a comparable data type, so a Variant column does not support the `minValues` and `maxValues` statistics.
+Generated Columns | **Supported:** A Variant column is allowed to be used as a source in a generated column expression, as long as the Variant type is not the result type of the generated column expression. <br/> **Unsupported:** The Variant data type is not allowed to be the result type of a generated column expression.
+Delta CHECK Constraints | **Supported:** A Variant column is allowed to be used for a CHECK constraint expression.
+Default Column Values | **Supported:** A Variant column is allowed to have a default column value.
+Change Data Feed | **Supported:** A table using the Variant data type is allowed to enable the Delta Change Data Feed.
+Convert-to-Delta Command | **Supported:** A Variant Parquet table following the Spark Variant specification, can be converted to Delta with the CONVERT TO DELTA command.
+Create Table Clone Command | **Supported:** A Variant table following the Spark Variant specification, can be deep or shallow cloned.
 
 --------
 
