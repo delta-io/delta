@@ -336,7 +336,8 @@ object TableFeature {
       IcebergCompatV2TableFeature,
       DeletionVectorsTableFeature,
       VacuumProtocolCheckTableFeature,
-      V2CheckpointTableFeature)
+      V2CheckpointTableFeature,
+      RowTrackingFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
