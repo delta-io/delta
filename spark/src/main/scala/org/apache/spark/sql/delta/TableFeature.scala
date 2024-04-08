@@ -751,7 +751,7 @@ private[sql] object TestRemovableWriterFeature
   }
 
   override def validateRemoval(snapshot: Snapshot): Boolean =
-    !snapshot.metadata.configuration.contains(TABLE_PROP_KEY)
+    !snapshot.metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     TestWriterFeaturePreDowngradeCommand(table)
@@ -772,10 +772,10 @@ private[sql] object TestRemovableReaderWriterFeature
   }
 
   override def validateRemoval(snapshot: Snapshot): Boolean =
-    !snapshot.metadata.configuration.contains(TABLE_PROP_KEY)
+    !snapshot.metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
 
   override def actionUsesFeature(action: Action): Boolean = action match {
-    case m: Metadata => m.configuration.contains(TABLE_PROP_KEY)
+    case m: Metadata => m.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
     case _ => false
   }
 

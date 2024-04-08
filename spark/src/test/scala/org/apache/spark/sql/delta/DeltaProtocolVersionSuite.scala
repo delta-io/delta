@@ -3438,6 +3438,35 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       expectedDowngradedProtocol = protocolWithReaderFeature(TestRemovableReaderWriterFeature))
   }
 
+  test(s"Can drop reader+writer feature when there is nothing to clean") {
+    withTempPath { dir =>
+      val clock = new ManualClock(System.currentTimeMillis())
+      val targetLog = DeltaLog.forTable(spark, dir, clock)
+
+      createTableWithFeature(
+        targetLog,
+        TestRemovableReaderWriterFeature,
+        TestRemovableReaderWriterFeature.TABLE_PROP_KEY)
+
+      sql(
+        s"""ALTER TABLE delta.`${dir.getPath}` SET TBLPROPERTIES (
+           |'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}'='false'
+           |)""")
+
+      // Pretend retention period has passed.
+      val clockAdvanceMillis = DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention)
+      clock.advance(clockAdvanceMillis + TimeUnit.MINUTES.toMillis(5))
+
+      // History is now clean. We should be able to remove the feature.
+      AlterTableDropFeatureDeltaCommand(
+        DeltaTableV2(spark, targetLog.dataPath),
+        TestRemovableReaderWriterFeature.name,
+        truncateHistory = true).run(spark)
+
+      assert(targetLog.update().protocol == Protocol(3, 7))
+    }
+  }
+
   private def dropV2CheckpointsTableFeature(spark: SparkSession, log: DeltaLog): Unit = {
     spark.sql(s"ALTER TABLE delta.`${log.dataPath}` DROP FEATURE " +
       s"`${V2CheckpointTableFeature.name}`")
