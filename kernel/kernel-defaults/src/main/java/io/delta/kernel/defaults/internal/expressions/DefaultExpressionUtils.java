@@ -184,49 +184,6 @@ class DefaultExpressionUtils {
         };
     }
 
-    /**
-     * Utility method to compare the left and right according to the natural ordering
-     * and return an integer array where each row contains the comparison result (-1, 0, 1) for
-     * corresponding rows in the input vectors compared.
-     * <p>
-     * Only primitive data types are supported.
-     */
-    static int[] compare(ColumnVector left, ColumnVector right) {
-        checkArgument(
-            left.getSize() == right.getSize(),
-            "Left and right operand have different vector sizes.");
-        DataType dataType = left.getDataType();
-
-        int numRows = left.getSize();
-        int[] result = new int[numRows];
-        if (dataType instanceof BooleanType) {
-            compareBoolean(left, right, result);
-        } else if (dataType instanceof ByteType) {
-            compareByte(left, right, result);
-        } else if (dataType instanceof ShortType) {
-            compareShort(left, right, result);
-        } else if (dataType instanceof IntegerType || dataType instanceof DateType) {
-            compareInt(left, right, result);
-        } else if (dataType instanceof LongType ||
-                dataType instanceof TimestampType ||
-                dataType instanceof TimestampNTZType) {
-            compareLong(left, right, result);
-        } else if (dataType instanceof FloatType) {
-            compareFloat(left, right, result);
-        } else if (dataType instanceof DoubleType) {
-            compareDouble(left, right, result);
-        } else if (dataType instanceof DecimalType) {
-            compareDecimal(left, right, result);
-        } else if (dataType instanceof StringType) {
-            compareString(left, right, result);
-        } else if (dataType instanceof BinaryType) {
-            compareBinary(left, right, result);
-        } else {
-            throw new UnsupportedOperationException(dataType + " can not be compared.");
-        }
-        return result;
-    }
-
     static void compareBoolean(ColumnVector left, ColumnVector right, int[] result) {
         for (int rowId = 0; rowId < left.getSize(); rowId++) {
             if (!left.isNullAt(rowId) && !right.isNullAt(rowId)) {
