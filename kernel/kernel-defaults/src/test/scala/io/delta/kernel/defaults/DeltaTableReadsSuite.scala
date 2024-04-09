@@ -456,6 +456,15 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     )
   }
 
+  test("table with v2 checkpoint") {
+    Seq("json", "parquet").foreach { fileFormat =>
+      checkTable(
+        path = goldenTablePath(s"clustered-checkpoint-v2-$fileFormat"),
+        expectedAnswer = (1 to 6).map(i => TestRow(i, (i - 1 + 'a').toChar.toString))
+      )
+    }
+  }
+
   test("table with name column mapping mode") {
     val expectedAnswer = (0 to 10).map {
       case 10 => TestRow(null, null, null, null, null, null, null, null, null, null)

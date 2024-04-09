@@ -28,7 +28,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
-import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Utils;
@@ -114,10 +113,9 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
         // If the ActionWrapper schema does not match the read schema, then we have injected sidecar
         // files into the schema. Append any sidecar files found to the end of the file list and
-        // remove the sidecars from the schema.
-        ColumnarBatch nextBatch = next.getColumnarBatch();
+        // return a new ActionWrapper with the sidecar files removed from the read schema.
         if (!next.getColumnarBatch().getSchema().equals(readSchema) && next.isFromCheckpoint()) {
-            return appendSidecarsFromCurrentBatch(next, nextBatch);
+            return next.appendSidecarsFromBatch(filesList);
         }
 
         return next;
@@ -168,38 +166,6 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
     }
 
     /**
-     * Reads SidecarFile actions from ColumnarBatch, appending the SidecarFile actions to the end
-     * of the file list and removing sidecar actions from the ColumnarBatch.
-     */
-    private ActionWrapper appendSidecarsFromCurrentBatch(
-            ActionWrapper action,
-            ColumnarBatch batch) {
-        // If the source checkpoint for this action does not use sidecars, sidecars will not exist
-        // in schema.
-        CheckpointInstance sourceCheckpoint =
-                new CheckpointInstance(action.getCheckpointPath().toString());
-        if (!sourceCheckpoint.format.usesSidecars()) {
-            return action;
-        }
-
-        // Sidecars will exist in schema. Extract sidecar files, then remove sidecar files from
-        // batch output.
-        int sidecarIndex = batch.getSchema().fieldNames().indexOf(LogReplay.SIDECAR_FIELD_NAME);
-        CloseableIterator<SidecarFile> sidecars =
-                batch.getRows().map(r -> SidecarFile.fromRow(r, sidecarIndex));
-        while (sidecars.hasNext()) {
-            SidecarFile f = sidecars.next();
-            if (f != null) {
-                filesList.add(new FileWrapper(FileStatus.of(
-                        FileNames.sidecarFile(action.getCheckpointPath().getParent(),
-                                f.path), f.sizeInBytes, f.modificationTime), sourceCheckpoint));
-            }
-        }
-        return new ActionWrapper(batch.withDeletedColumnAt(sidecarIndex),
-                action.getCheckpointPath(), action.getVersion());
-    }
-
-    /**
      * Get an iterator of actions from a checkpoint manifest that may contain sidecar files. If the
      * current read schema includes Add/Remove files, then inject the sidecar column into this
      * schema to read the sidecar files from the checkpoint manifest. When the returned
@@ -207,7 +173,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
      * and read as part of a subsequent batch (avoiding reading the checkpoint manifest more than
      * once).
      */
-    private CloseableIterator<ColumnarBatch> getActionsIterFromSidecarCheckpoint(
+    private CloseableIterator<ColumnarBatch> getActionsIterFromSinglePartOrV2Checkpoint(
             FileStatus file,
             String fileName) throws IOException {
         // If the sidecars may contain the current action, read sidecars from the checkpoint
@@ -247,7 +213,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
         final Path nextFilePath = new Path(nextFile.getPath());
         final String fileName = nextFilePath.getName();
         try {
-            if (isCommitFile(fileName)) {
+            if (nextFileWrapper.isCommit()) {
                 final long fileVersion = FileNames.deltaVersion(nextFilePath);
                 // We can not read multiple JSON files in parallel (like the checkpoint files),
                 // because each one has a different version, and we need to associate the version
@@ -266,9 +232,9 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                 // The current file is a sidecar file. Because all sidecar files are appended at the
                 // end of the file list, read all sidecar files together here.
                 List<FileStatus> sidecars = Collections.singletonList(nextFile);
-                final long fileVersion = nextFileWrapper.getSidecarManifest().version;
+                final long fileVersion = nextFileWrapper.getVersion();
                 while(!filesList.isEmpty() && filesList.peek().isSidecar() &&
-                        filesList.peek().getSidecarManifest().version == fileVersion) {
+                        filesList.peek().getVersion() == fileVersion) {
                     sidecars.add(filesList.pop().getFile());
                 }
                 CloseableIterator<ColumnarBatch> dataIter =
@@ -277,29 +243,27 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                                 readSchema, Optional.empty());
 
                 return combine(dataIter,
-                        nextFileWrapper.getSidecarManifest().filePath.get(), fileVersion);
-            } else if (isCheckpointFile(fileName)) {
+                        nextFileWrapper.getCheckpointInstanceFilepath(), fileVersion);
+            } else if (nextFileWrapper.isMultipartCheckpoint()) {
                 CheckpointInstance checkpointInstance = new CheckpointInstance(fileName);
                 final long fileVersion = checkpointInstance.version;
 
+                // Try to retrieve the remaining checkpoint files (if there are any) and issue
+                // read request for all in one go, so that the {@link ParquetHandler} can do
+                // optimizations like reading multiple files in parallel.
+                List<FileStatus> checkpointFiles =
+                        retrieveRemainingCheckpointFiles(nextFile, fileVersion);
+                CloseableIterator<ColumnarBatch> dataIter = tableClient.getParquetHandler()
+                        .readParquetFiles(
+                            toCloseableIterator(checkpointFiles.iterator()),
+                            readSchema, Optional.empty());
+                return combine(dataIter, nextFilePath, checkpointVersion(nextFilePath));
+            } else if (nextFileWrapper.isSinglePartOrV2Checkpoint()) {
                 // If the checkpoint file is a UUID or classic checkpoint, read the checkpoint
                 // manifest and any potential sidecars. Otherwise, look for any other parts of the
                 // current multipart checkpoint.
-                CloseableIterator<ColumnarBatch> dataIter;
-                if (checkpointInstance.format.usesSidecars()) {
-                    dataIter = getActionsIterFromSidecarCheckpoint(
-                            nextFile, fileName);
-                } else {
-                    // Try to retrieve the remaining checkpoint files (if there are any) and issue
-                    // read request for all in one go, so that the {@link ParquetHandler} can do
-                    // optimizations like reading multiple files in parallel.
-                    List<FileStatus> checkpointFiles =
-                            retrieveRemainingCheckpointFiles(nextFile, fileVersion);
-                    dataIter = tableClient.getParquetHandler().readParquetFiles(
-                            toCloseableIterator(checkpointFiles.iterator()),
-                            readSchema, Optional.empty());
-                }
-
+                CloseableIterator<ColumnarBatch> dataIter =
+                        getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName);
                 return combine(dataIter, nextFilePath, checkpointVersion(nextFilePath));
             } else {
                 throw new IllegalStateException(
