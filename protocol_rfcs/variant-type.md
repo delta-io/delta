@@ -2,7 +2,7 @@
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/2864**
 
 This protocol change adds support for the Variant data type.
-The Variant data type is beneficial for storing and processing semi-structure data.
+The Variant data type is beneficial for storing and processing semi-structured data.
 
 --------
 
@@ -10,12 +10,12 @@ The Variant data type is beneficial for storing and processing semi-structure da
 
 # Variant Data Type
 
-This feature introduces the Variant data type, for processing with semi-structured data.
+This feature enables support for the Variant data type, for storing semi-structured data.
 The schema serialization method is described in [Schema Serialization Format](#schema-serialization-format).
 
 To support this feature:
 - The table must be on Reader Version 3 and Writer Version 7
-- The feature `variantType` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`, either during its creation or at a later stage.
+- The feature `variantType` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`.
 
 ## Example JSON-Encoded Delta Table Schema with Variant types
 
@@ -52,7 +52,7 @@ When writing Variant data to parquet files, the Variant data is written as a sin
 Struct field name | Parquet primitive type | Description
 -|-|-
 value | binary | The binary-encoded Variant value, as described in [Variant binary encoding](https://github.com/apache/spark/blob/master/common/variant/README.md)
-metadata | binary | The binary-encoded Variant  metadata, as described in [Variant binary encoding](https://github.com/apache/spark/blob/master/common/variant/README.md)
+metadata | binary | The binary-encoded Variant metadata, as described in [Variant binary encoding](https://github.com/apache/spark/blob/master/common/variant/README.md)
 
 The parquet struct must include the 2 struct fields `value` and `metadata`.
 Supported writers must write the 2 binary fields, and supported readers must read the 2 binary fields.
@@ -63,7 +63,7 @@ The only non-ignorable fields must be `value` and `metadata`.
 
 When Variant type is supported (`writerFeatures` field of a table's `protocol` action contains `variantType`), writers:
 - must write the 2 parquet struct fields, `value` and `metadata`, according to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md)
-- must not write additional parquet struct fields
+- must not write additional, non-ignorable parquet struct fields. Writing additional struct fields with names starting with `_` (underscore) is allowed.
 
 ## Reader Requirements for Variant Data Type
 
@@ -82,8 +82,6 @@ Generated Columns | **Supported:** A Variant column is allowed to be used as a s
 Delta CHECK Constraints | **Supported:** A Variant column is allowed to be used for a CHECK constraint expression.
 Default Column Values | **Supported:** A Variant column is allowed to have a default column value.
 Change Data Feed | **Supported:** A table using the Variant data type is allowed to enable the Delta Change Data Feed.
-Convert-to-Delta Command | **Supported:** A Variant Parquet table following the Spark Variant specification, can be converted to Delta with the CONVERT TO DELTA command.
-Create Table Clone Command | **Supported:** A Variant table following the Spark Variant specification, can be deep or shallow cloned.
 
 --------
 
