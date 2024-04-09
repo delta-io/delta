@@ -3715,7 +3715,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
     }
   }
-
   // Create a table for testing that has an unsupported feature.
   private def withTestTableWithUnsupportedWriterFeature(
       emptyTable: Boolean)(testCode: String => Unit): Unit = {

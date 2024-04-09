@@ -164,9 +164,10 @@ case class InCommitTimestampsPreDowngradeCommand(table: DeltaTableV2)
       val desiredTableProperties = currentTableProperties
         .filterNot{ case (k, _) => propertiesToRemove.contains(k) } ++ propertiesToDisable
 
+      val deltaOperation = DeltaOperations.UnsetTableProperties(
+        (propertiesToRemove ++ propertiesToDisable.map(_._1)).toSeq, ifExists = true)
       table.startTransaction().commit(
-        Seq(currentMetadata.copy(configuration = desiredTableProperties.toMap)),
-        DeltaOperations.UpdateTableProperties(propertiesToDisable.toMap, propertiesToRemove))
+        Seq(currentMetadata.copy(configuration = desiredTableProperties.toMap)), deltaOperation)
     }
 
     val provenancePropertiesPresenceLogs = provenanceProperties.map { prop =>

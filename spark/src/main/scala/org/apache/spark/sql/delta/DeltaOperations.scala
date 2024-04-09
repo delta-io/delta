@@ -356,14 +356,6 @@ object DeltaOperations {
       "properties" -> JsonUtils.toJson(propKeys),
       "ifExists" -> ifExists)
   }
-  /** Recorded when the table properties are set and/or removed in the same commit. */
-  case class UpdateTableProperties(
-      setProperties: Map[String, String],
-      unsetProperties: Seq[String]) extends Operation("UPDATE TBLPROPERTIES") {
-    override val parameters: Map[String, Any] = Map(
-      "setProperties" -> JsonUtils.toJson(setProperties),
-      "unsetProperties" -> JsonUtils.toJson(unsetProperties))
-  }
   /** Recorded when dropping a table feature. */
   case class DropTableFeature(
       featureName: String,
