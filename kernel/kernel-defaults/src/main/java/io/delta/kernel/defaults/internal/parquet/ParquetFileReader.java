@@ -24,7 +24,6 @@ import static java.util.Objects.requireNonNull;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
-import org.apache.parquet.hadoop.ParquetInputFormat;
 import org.apache.parquet.hadoop.ParquetRecordReaderWrapper;
 import org.apache.parquet.hadoop.api.InitContext;
 import org.apache.parquet.hadoop.api.ReadSupport;
@@ -32,7 +31,7 @@ import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.io.api.RecordMaterializer;
 import org.apache.parquet.schema.MessageType;
-import static org.apache.parquet.hadoop.ParquetInputFormat.setFilterPredicate;
+import static org.apache.parquet.hadoop.ParquetInputFormat.*;
 
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.expressions.Predicate;
@@ -138,9 +137,9 @@ public class ParquetFileReader {
                             // we use the predicate to prune the row groups which is more efficient.
                             // In the future, we can consider using the record level filtering if a
                             // native Parquet reader is implemented in Kernel default module.
-                            confCopy.set(ParquetInputFormat.RECORD_FILTERING_ENABLED, "false");
-                            confCopy.set(ParquetInputFormat.DICTIONARY_FILTERING_ENABLED, "false");
-                            confCopy.set(ParquetInputFormat.COLUMN_INDEX_FILTERING_ENABLED, "false");
+                            confCopy.set(RECORD_FILTERING_ENABLED, "false");
+                            confCopy.set(DICTIONARY_FILTERING_ENABLED, "false");
+                            confCopy.set(COLUMN_INDEX_FILTERING_ENABLED, "false");
                         }
 
                         // Pass the already read footer to the reader to avoid reading it again.
