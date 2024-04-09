@@ -1348,7 +1348,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         UpdatedActions(commitInfo, newMetadata, newProtocolOpt))
       // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
-      acStatsCollector.finalizeStats(deltaLog.tableId)
+      // If the metadata didn't change, `newMetadata` is empty, and we can re-use the old id.
+      acStatsCollector.finalizeStats(newMetadata.map(_.id).getOrElse(this.snapshot.metadata.id))
       spark.sessionState.conf.setConf(
         DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
         Some(attemptVersion))
