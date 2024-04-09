@@ -402,7 +402,6 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         @Override
         ColumnVector visitComparator(Predicate predicate) {
             PredicateChildrenEvalResult argResults = evalBinaryExpressionChildren(predicate);
-            VectorComparator v;
             switch (predicate.getName()) {
                 case "=":
                     return comparatorVector(

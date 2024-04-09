@@ -100,9 +100,17 @@ class DefaultExpressionUtils {
         };
     }
 
+    /**
+     * Utility method to create a column vector that lazily evaluate the
+     * comparator ex. vectorComparator (ie. ==, >=, <=......) for left and right
+     * column vector according to the natural ordering of numbers
+     * <p>
+     * Only primitive data types are supported.
+     */
     static ColumnVector comparatorVector(
             ColumnVector left,
-            ColumnVector right, VectorComparator vectorComparator) {
+            ColumnVector right,
+            VectorComparator vectorComparator) {
         checkArgument(
                 left.getSize() == right.getSize(),
                 "Left and right operand have different vector sizes.");
