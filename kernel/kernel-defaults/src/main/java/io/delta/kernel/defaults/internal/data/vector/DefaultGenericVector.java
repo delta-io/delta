@@ -19,11 +19,9 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.function.Function;
 
-import io.delta.kernel.data.ArrayValue;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.MapValue;
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.*;
 import io.delta.kernel.types.*;
+
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
@@ -104,7 +102,11 @@ public class DefaultGenericVector implements ColumnVector {
     @Override
     public long getLong(int rowId) {
         assertValidRowId(rowId);
-        throwIfUnsafeAccess(LongType.class, TimestampType.class, dataType.toString());
+        throwIfUnsafeAccess(
+                LongType.class,
+                TimestampType.class,
+                TimestampNTZType.class,
+                dataType.toString());
         return (long) rowIdToValueAccessor.apply(rowId);
     }
 
@@ -186,6 +188,22 @@ public class DefaultGenericVector implements ColumnVector {
             String accessType) {
         if (!(expDataType1.isAssignableFrom(dataType.getClass()) ||
                 expDataType2.isAssignableFrom(dataType.getClass()))) {
+            String msg = String.format(
+                    "Trying to access a `%s` value from vector of type `%s`",
+                    accessType,
+                    dataType);
+            throw new UnsupportedOperationException(msg);
+        }
+    }
+
+    private void throwIfUnsafeAccess(
+            Class<? extends DataType> expDataType1,
+            Class<? extends DataType> expDataType2,
+            Class<? extends DataType> expDataType3,
+            String accessType) {
+        if (!(expDataType1.isAssignableFrom(dataType.getClass()) ||
+                expDataType2.isAssignableFrom(dataType.getClass()) ||
+                expDataType3.isAssignableFrom(dataType.getClass()))) {
             String msg = String.format(
                     "Trying to access a `%s` value from vector of type `%s`",
                     accessType,

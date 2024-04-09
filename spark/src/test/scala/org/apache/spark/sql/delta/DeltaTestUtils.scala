@@ -341,13 +341,13 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
    * Creates an AddFile that can be used for tests where the exact parameters do not matter.
    */
   def createTestAddFile(
-      path: String = "foo",
+      encodedPath: String = "foo",
       partitionValues: Map[String, String] = Map.empty,
       size: Long = 1L,
       modificationTime: Long = 1L,
       dataChange: Boolean = true,
       stats: String = "{\"numRecords\": 1}"): AddFile = {
-    AddFile(path, partitionValues, size, modificationTime, dataChange, stats)
+    AddFile(encodedPath, partitionValues, size, modificationTime, dataChange, stats)
   }
 
   /**

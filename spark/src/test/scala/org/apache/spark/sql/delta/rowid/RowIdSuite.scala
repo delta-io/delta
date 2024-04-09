@@ -96,7 +96,7 @@ class RowIdSuite extends QueryTest
         sql(s"ALTER TABLE delta.`${dir.getAbsolutePath}` " +
           s"SET TBLPROPERTIES ('${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = false)")
         checkAnswer(
-          spark.read.load(dir.getAbsolutePath),
+          spark.read.format("delta").load(dir.getAbsolutePath),
           (0 until 1000).map(Row(_)))
       }
     }
@@ -247,7 +247,7 @@ class RowIdSuite extends QueryTest
           .write.format("delta").save(dir.getAbsolutePath)
 
         checkAnswer(
-          spark.read.load(dir.getAbsolutePath),
+          spark.read.format("delta").load(dir.getAbsolutePath),
           (0 until 1000).map(i => Row(i + 10000L))
         )
       }

@@ -257,8 +257,6 @@ class DeltaCatalog extends DelegatingCatalogExtension
   // Perform checks on ClusterBySpec.
   def validateClusterBySpec(
       maybeClusterBySpec: Option[ClusterBySpec], schema: StructType): Unit = {
-    // Validate that the preview is enabled if we are creating a clustered table.
-    ClusteredTableUtils.validatePreviewEnabled(maybeClusterBySpec)
     maybeClusterBySpec.foreach { clusterBy =>
       // Check if the specified cluster by columns exists in the table.
       val resolver = spark.sessionState.conf.resolver

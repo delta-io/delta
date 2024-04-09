@@ -510,4 +510,23 @@ class ManagedCommitSuite
       checkAnswer(sql(s"SELECT * FROM delta.`$tablePath`"), Seq(Row(1), Row(2), Row(3), Row(4)))
     }
   }
+
+  testWithDifferentBackfillInterval("ensure backfills commit files works as expected") { _ =>
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+
+      // Add 10 commits to the table
+      Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath)
+      2 to 10 foreach { i =>
+        Seq(i).toDF().write.format("delta").mode("append").save(tablePath)
+      }
+      val log = DeltaLog.forTable(spark, tablePath)
+      val snapshot = log.update()
+      snapshot.ensureCommitFilesBackfilled()
+
+      val commitFiles = log.listFrom(0).filter(FileNames.isDeltaFile).map(_.getPath)
+      val backfilledCommitFiles = (0 to 9).map(version => FileNames.deltaFile(log.logPath, version))
+      assert(commitFiles.toSeq == backfilledCommitFiles)
+   }
+  }
 }

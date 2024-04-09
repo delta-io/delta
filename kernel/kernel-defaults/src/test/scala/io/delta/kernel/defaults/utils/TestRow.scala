@@ -21,7 +21,10 @@ import org.apache.spark.sql.{Row => SparkRow}
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
 import io.delta.kernel.types._
 
-import java.time.LocalDate
+import java.sql.Timestamp
+import java.time.ZoneOffset.UTC
+import java.time.temporal.ChronoUnit
+import java.time.{Instant, LocalDate, LocalDateTime, ZoneOffset}
 
 /**
  * Corresponding Scala class for each Kernel data type:
@@ -35,6 +38,7 @@ import java.time.LocalDate
  * - StringType --> String
  * - DateType --> int (number of days since the epoch)
  * - TimestampType --> long (number of microseconds since the unix epoch)
+ * - TimestampNTZType --> long (number of microseconds in local time with no timezone)
  * - DecimalType --> java.math.BigDecimal
  * - BinaryType --> Array[Byte]
  * - ArrayType --> Seq[Any]
@@ -95,6 +99,7 @@ object TestRow {
         case _: ShortType => row.getShort(i)
         case _: DateType => row.getInt(i)
         case _: TimestampType => row.getLong(i)
+        case _: TimestampNTZType => row.getLong(i)
         case _: FloatType => row.getFloat(i)
         case _: DoubleType => row.getDouble(i)
         case _: StringType => row.getString(i)
@@ -119,7 +124,9 @@ object TestRow {
         case _: sparktypes.ShortType => obj.asInstanceOf[Short]
         case _: sparktypes.DateType => LocalDate.ofEpochDay(obj.asInstanceOf[Int])
         case _: sparktypes.TimestampType =>
-          obj.asInstanceOf[java.sql.Timestamp].toInstant.toEpochMilli * 1000
+          ChronoUnit.MICROS.between(Instant.EPOCH, obj.asInstanceOf[Timestamp].toInstant)
+        case _: sparktypes.TimestampNTZType =>
+          ChronoUnit.MICROS.between(Instant.EPOCH, obj.asInstanceOf[LocalDateTime].toInstant(UTC))
         case _: sparktypes.FloatType => obj.asInstanceOf[Float]
         case _: sparktypes.DoubleType => obj.asInstanceOf[Double]
         case _: sparktypes.StringType => obj.asInstanceOf[String]
@@ -146,7 +153,10 @@ object TestRow {
         case _: sparktypes.LongType => row.getLong(i)
         case _: sparktypes.ShortType => row.getShort(i)
         case _: sparktypes.DateType => row.getDate(i).toLocalDate.toEpochDay.toInt
-        case _: sparktypes.TimestampType => row.getTimestamp(i).toInstant.toEpochMilli * 1000
+        case _: sparktypes.TimestampType =>
+          ChronoUnit.MICROS.between(Instant.EPOCH, row.getTimestamp(i).toInstant)
+        case _: sparktypes.TimestampNTZType =>
+          ChronoUnit.MICROS.between(Instant.EPOCH, row.getAs[LocalDateTime](i).toInstant(UTC))
         case _: sparktypes.FloatType => row.getFloat(i)
         case _: sparktypes.DoubleType => row.getDouble(i)
         case _: sparktypes.StringType => row.getString(i)
@@ -182,6 +192,7 @@ object TestRow {
       case _: ShortType => vector.getShort(rowId)
       case _: DateType => vector.getInt(rowId)
       case _: TimestampType => vector.getLong(rowId)
+      case _: TimestampNTZType => vector.getLong(rowId)
       case _: FloatType => vector.getFloat(rowId)
       case _: DoubleType => vector.getDouble(rowId)
       case _: StringType => vector.getString(rowId)

@@ -203,7 +203,8 @@ public class PartitionUtils {
             if (child instanceof Column) {
                 String[] names = ((Column) child).getNames();
                 // Partition columns are never of nested types.
-                if (names.length != 1 || !partitionColNames.contains(names[0])) {
+                if (names.length != 1 ||
+                        !partitionColNames.contains(names[0].toLowerCase(Locale.ROOT))) {
                     return true;
                 }
             } else {
@@ -273,6 +274,12 @@ public class PartitionUtils {
         if (dataType instanceof TimestampType) {
             return Literal.ofTimestamp(
                 InternalUtils.microsSinceEpoch(Timestamp.valueOf(partitionValue)));
+        }
+        if (dataType instanceof TimestampNTZType) {
+            // Both the timestamp and timestamp_ntz have no timezone info, so they are interpreted
+            // in local time zone.
+            return Literal.ofTimestampNtz(
+                    InternalUtils.microsSinceEpoch(Timestamp.valueOf(partitionValue)));
         }
 
         throw new UnsupportedOperationException("Unsupported partition column: " + dataType);

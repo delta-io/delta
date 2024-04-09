@@ -55,6 +55,9 @@
   - [Row Commit Versions](#row-commit-versions)
   - [Reader Requirements for Row Tracking](#reader-requirements-for-row-tracking)
   - [Writer Requirements for Row Tracking](#writer-requirements-for-row-tracking)
+- [VACUUM Protocol Check](#vacuum-protocol-check)
+  - [Writer Requirements for Vacuum Protocol Check](#writer-requirements-for-vacuum-protocol-check)
+  - [Reader Requirements for Vacuum Protocol Check](#reader-requirements-for-vacuum-protocol-check)
 - [Clustered Table](#clustered-table)
   - [Writer Requirements for Clustered Table](#writer-requirements-for-clustered-table)
 - [Requirements for Writers](#requirements-for-writers)
@@ -1179,6 +1182,29 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
   In particular, writers should set `delta.rowTracking.preserved` in the `tags` of the `commitInfo` action to `true` if no rows are updated or copied.
   Writers should set that flag to false otherwise.
 
+# VACUUM Protocol Check
+
+The `vacuumProtocolCheck` ReaderWriter feature ensures consistent application of reader and writer protocol checks during `VACUUM` operations, addressing potential protocol discrepancies and mitigating the risk of data corruption due to skipped writer checks.
+
+Enablement:
+- The table must be on Writer Version 7 and Reader Version 3.
+- The feature `vacuumProtocolCheck` must exist in the table `protocol`'s `writerFeatures` and `readerFeatures`.
+
+## Writer Requirements for Vacuum Protocol Check
+
+This feature affects only the VACUUM operations; standard commits remain unaffected.
+
+Before performing a VACUUM operation, writers must ensure that they check the table's write protocol. This is most easily implemented by adding an unconditional write protocol check for all tables, which removes the need to examine individual table properties.
+
+Writers that do not implement VACUUM do not need to change anything and can safely write to tables that enable the feature.
+
+## Reader Requirements for Vacuum Protocol Check
+
+For tables with Vacuum Protocol Check enabled, readers don’t need to understand or change anything new; they just need to acknowledge the feature exists.
+
+Making this feature a ReaderWriter feature (rather than solely a Writer feature) ensures that:
+- Older vacuum implementations, which only performed the Reader protocol check and lacked the Writer protocol check, will begin to fail if the table has `vacuumProtocolCheck` enabled.This change allows future writer features to have greater flexibility and safety in managing files within the table directory, eliminating the risk of older Vacuum implementations (that lack the Writer protocol check) accidentally deleting relevant files.
+
 # Clustered Table
 
 The Clustered Table feature facilitates the physical clustering of rows that share similar values on a predefined set of clustering columns.
@@ -1611,7 +1637,9 @@ Feature | Name | Readers or Writers?
 [Domain Metadata](#domain-metadata) | `domainMetadata` | Writers only
 [V2 Checkpoint](#v2-checkpoint-table-feature) | `v2Checkpoint` | Readers and writers
 [Iceberg Compatibility V1](#iceberg-compatibility-v1) | `icebergCompatV1` | Writers only
+[Iceberg Compatibility V2](#iceberg-compatibility-v2) | `icebergCompatV2` | Writers only
 [Clustered Table](#clustered-table) | `clustering` | Writers only
+[VACUUM Protocol Check](#vacuum-protocol-check) | `vacuumProtocolCheck` | Readers and Writers
 
 ## Deletion Vector Format
 

@@ -107,13 +107,16 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
 
   protected def generateUUID(): String = UUID.randomUUID().toString
 
-  /** Backfills all un-backfilled commits */
-  protected def backfillToVersion(
+  override def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
-      logPath: Path): Unit = {
-    getCommits(logPath, startVersion = 0).commits.foreach { commit =>
-      backfill(logStore, hadoopConf, logPath, commit.version, commit.fileStatus)
+      logPath: Path,
+      startVersion: Long = 0,
+      endVersionOpt: Option[Long] = None): Unit = {
+    getCommits(logPath, startVersion, endVersionOpt)
+      .commits
+      .foreach { commit =>
+        backfill(logStore, hadoopConf, logPath, commit.version, commit.fileStatus)
     }
   }
 

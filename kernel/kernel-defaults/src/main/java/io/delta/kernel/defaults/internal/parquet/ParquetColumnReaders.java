@@ -30,6 +30,8 @@ import io.delta.kernel.types.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.*;
+import static io.delta.kernel.defaults.internal.parquet.TimestampConverters.createTimestampConverter;
+import static io.delta.kernel.defaults.internal.parquet.TimestampConverters.createTimestampNtzConverter;
 
 /**
  * Parquet column readers for materializing the column values from Parquet files into Kernels
@@ -77,7 +79,9 @@ class ParquetColumnReaders {
             return DecimalColumnReader.createDecimalConverter(
                 initialBatchSize, (DecimalType) typeFromClient, typeFromFile);
         } else if (typeFromClient instanceof TimestampType) {
-            return TimestampConverters.createTimestampConverter(initialBatchSize, typeFromFile);
+            return createTimestampConverter(initialBatchSize, typeFromFile);
+        } else if (typeFromClient instanceof TimestampNTZType) {
+            return createTimestampNtzConverter(initialBatchSize, typeFromFile);
         }
 
         throw new UnsupportedOperationException(typeFromClient + " is not supported");
@@ -322,7 +326,9 @@ class ParquetColumnReaders {
 
         LongColumnReader(DataType dataType, int initialBatchSize) {
             super(initialBatchSize);
-            checkArgument(dataType instanceof LongType || dataType instanceof TimestampType);
+            checkArgument(dataType instanceof LongType ||
+                    dataType instanceof TimestampType ||
+                    dataType instanceof TimestampNTZType);
             this.dataType = dataType;
             this.values = new long[initialBatchSize];
         }

@@ -747,9 +747,9 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       val log = DeltaLog.forTable(spark, tempPath)
       val txn = log.startTransaction()
       txn.commitManually(
-        DeltaTestUtils.createTestAddFile(path = "1.parquet", stats = "{\"numRecords\": 0}"),
-        DeltaTestUtils.createTestAddFile(path = "2.parquet", stats = "{\"numRecords\": 0}"),
-        DeltaTestUtils.createTestAddFile(path = "3.parquet", stats = "{\"numRecords\": 0}"))
+        DeltaTestUtils.createTestAddFile(encodedPath = "1.parquet", stats = "{\"numRecords\": 0}"),
+        DeltaTestUtils.createTestAddFile(encodedPath = "2.parquet", stats = "{\"numRecords\": 0}"),
+        DeltaTestUtils.createTestAddFile(encodedPath = "3.parquet", stats = "{\"numRecords\": 0}"))
 
       withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "true") {
         val queryDf = spark.sql(s"SELECT COUNT(*) FROM delta.`$tempPath`")

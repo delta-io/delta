@@ -205,7 +205,9 @@ class DefaultExpressionUtils {
             compareShort(left, right, result);
         } else if (dataType instanceof IntegerType || dataType instanceof DateType) {
             compareInt(left, right, result);
-        } else if (dataType instanceof LongType || dataType instanceof TimestampType) {
+        } else if (dataType instanceof LongType ||
+                dataType instanceof TimestampType ||
+                dataType instanceof TimestampNTZType) {
             compareLong(left, right, result);
         } else if (dataType instanceof FloatType) {
             compareFloat(left, right, result);

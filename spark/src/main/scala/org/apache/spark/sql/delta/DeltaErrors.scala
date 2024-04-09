@@ -3272,16 +3272,6 @@ trait DeltaErrorsBase
       messageParameters = Array.empty)
   }
 
-  def clusteringTablePreviewDisabledException(): Throwable = {
-    val msg = s"""
-      |A clustered table is currently in preview and is disabled by default. Please set
-      |${DeltaSQLConf.DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED.key} to true to enable it.
-      |Note that a clustered table is not recommended for production use (e.g., unsupported
-      |incremental clustering).
-      |""".stripMargin.replace("\n", " ")
-    new UnsupportedOperationException(msg)
-  }
-
   def alterTableSetClusteringTableFeatureException(tableFeature: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_ALTER_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED",

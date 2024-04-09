@@ -132,8 +132,6 @@ case class WriteIntoDelta(
       }
     }
     val isReplaceWhere = mode == SaveMode.Overwrite && options.replaceWhere.nonEmpty
-    // Validate that the preview is enabled if we are writing to a clustered table.
-    ClusteredTableUtils.validatePreviewEnabled(txn.snapshot.protocol)
     val finalClusterBySpecOpt =
       if (mode == SaveMode.Append || isReplaceWhere) {
         clusterBySpecOpt.foreach { clusterBySpec =>
