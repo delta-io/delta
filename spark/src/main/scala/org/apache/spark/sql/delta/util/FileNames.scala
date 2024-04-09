@@ -51,8 +51,7 @@ object FileNames {
    */
   @deprecated(
     "This method is deprecated and will be removed in future versions. " +
-      "Use DeltaCommitFileProvider(snapshot).deltaFile or unsafeDeltaFile instead",
-    "15.1")
+      "Use DeltaCommitFileProvider(snapshot).deltaFile or unsafeDeltaFile instead")
   def deltaFile(path: Path, version: Long): Path = unsafeDeltaFile(path, version)
 
   /**
