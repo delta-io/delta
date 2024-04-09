@@ -15,10 +15,10 @@
  */
 package io.delta.kernel.internal.replay;
 
+import io.delta.kernel.utils.FileStatus;
+import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.internal.checkpoints.CheckpointInstance;
-import io.delta.kernel.utils.FileStatus;
 
 /** Internal wrapper class holding information needed to perform log replay. */
 public class FileWrapper {
