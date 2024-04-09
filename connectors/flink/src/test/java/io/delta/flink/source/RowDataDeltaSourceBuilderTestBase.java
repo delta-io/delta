@@ -11,7 +11,7 @@ import io.delta.flink.internal.options.DeltaOptionValidationException;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.builder.DeltaSourceBuilderBase;
 import org.apache.hadoop.conf.Configuration;
-import org.codehaus.janino.util.Producer;
+import org.codehaus.commons.compiler.util.Producer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
