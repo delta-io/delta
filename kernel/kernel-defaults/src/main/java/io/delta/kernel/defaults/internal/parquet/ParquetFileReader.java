@@ -82,8 +82,10 @@ public class ParquetFileReader {
                     if (hasNotConsumedNextElement) {
                         return true;
                     }
-                    return hasNotConsumedNextElement = reader.nextKeyValue() &&
+
+                    hasNotConsumedNextElement = reader.nextKeyValue() &&
                             reader.getCurrentValue() != null;
+                    return hasNotConsumedNextElement;
                 } catch (IOException | InterruptedException ie) {
                     throw new RuntimeException(ie);
                 }
@@ -102,13 +104,12 @@ public class ParquetFileReader {
                     long rowIndex = hasRowIndexCol ? reader.getCurrentRowIndex() : -1;
                     readSupport.finalizeCurrentRow(rowIndex);
                     batchSize++;
-                }
-                while (batchSize < maxBatchSize && hasNext());
+                } while (batchSize < maxBatchSize && hasNext());
 
                 return readSupport.getDataAsColumnarBatch(batchSize);
             }
 
-            void initParquetReaderIfRequired() {
+            private void initParquetReaderIfRequired() {
                 if (reader == null) {
                     org.apache.parquet.hadoop.ParquetFileReader fileReader = null;
                     try {
@@ -138,6 +139,8 @@ public class ParquetFileReader {
                             // In the future, we can consider using the record level filtering if a
                             // native Parquet reader is implemented in Kernel default module.
                             confCopy.set(ParquetInputFormat.RECORD_FILTERING_ENABLED, "false");
+                            confCopy.set(ParquetInputFormat.DICTIONARY_FILTERING_ENABLED, "false");
+                            confCopy.set(ParquetInputFormat.COLUMN_INDEX_FILTERING_ENABLED, "false");
                         }
 
                         // Pass the already read footer to the reader to avoid reading it again.
@@ -189,7 +192,7 @@ public class ParquetFileReader {
         }
 
         /**
-         * @param fileRowIndex the file row index of the row just processed
+         * @param fileRowIndex the file row index of the row just processed.
          */
         public void finalizeCurrentRow(long fileRowIndex) {
             rowRecordCollector.finalizeCurrentRow(fileRowIndex);
