@@ -20,5 +20,8 @@ import com.typesafe.tools.mima.core._
  * The list of Mima errors to exclude in the Flink project.
  */
 object FlinkMimaExcludes {
-  val ignoredABIProblems = Seq()
+  val ignoredABIProblems = Seq(
+    ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.flink.internal.table.DeltaCatalogTableHelper.prepareMetastoreTable"),
+    ProblemFilters.exclude[MissingClassProblem]("io.delta.flink.internal.table.DeltaCatalogTableHelper$DeltaMetastoreTable")
+  )
 }
