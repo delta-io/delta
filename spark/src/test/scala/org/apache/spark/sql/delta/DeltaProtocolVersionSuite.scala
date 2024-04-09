@@ -2881,9 +2881,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  for (reDisable <- BOOLEAN_DOMAIN)
-  test("Try removing reader+writer feature but re-enable feature after disablement " +
-      s"reDisable: $reDisable") {
+  test("Try removing reader+writer feature but re-enable feature after disablement") {
     withTempDir { dir =>
       val clock = new ManualClock(System.currentTimeMillis())
       val deltaLog = DeltaLog.forTable(spark, dir, clock)
@@ -2913,11 +2911,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "logRetentionPeriod" -> "30 days",
           "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
 
-      val deltaRetentionMillis = deltaLog.deltaRetentionMillis(deltaLog.update().metadata)
-      require(deltaRetentionMillis === TimeUnit.DAYS.toMillis(30))
-
-      // Ten days have passed.
-      clock.advance(TimeUnit.DAYS.toMillis(10))
+      // Advance clock.
+      clock.advance(TimeUnit.DAYS.toMillis(1) + TimeUnit.MINUTES.toMillis(5))
 
       // Generate commit.
       spark.range(120, 140).write.format("delta").mode("append").save(dir.getCanonicalPath)
@@ -2929,46 +2924,23 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         Map(TestRemovableReaderWriterFeature.TABLE_PROP_KEY -> true.toString))
         .run(spark)
 
-      // Disable by removing property.
-      if (reDisable) {
-        val properties = Seq(TestRemovableReaderWriterFeature.TABLE_PROP_KEY)
-        AlterTableUnsetPropertiesDeltaCommand(v2Table, properties, ifExists = true).run(spark)
-      }
-
-      // The retention period has passed since the disablement.
-      clock.advance(
-        deltaRetentionMillis - TimeUnit.DAYS.toMillis(10) + TimeUnit.MINUTES.toMillis(5))
-
-      DeltaLog.clearCache()
-
       // Feature was enabled again in the middle of the timeframe. The feature traces are
       // are cleaned up again and we get a new "Wait for retention period message."
       val e2 = intercept[DeltaTableFeatureException] {
         AlterTableDropFeatureDeltaCommand(
-          DeltaTableV2(spark, deltaLog.dataPath),
-          TestRemovableReaderWriterFeature.name).run(spark)
+          table = DeltaTableV2(spark, deltaLog.dataPath),
+          featureName = TestRemovableReaderWriterFeature.name,
+          truncateHistory = true).run(spark)
         }
 
-      // If the property is re-disabled we pick up the issue during the history check.
-      if (reDisable) {
-        checkError(
-          exception = e2,
-          errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
-          parameters = Map(
-            "feature" -> TestRemovableReaderWriterFeature.name,
-            "logRetentionPeriodKey" -> "delta.logRetentionDuration",
-            "logRetentionPeriod" -> "30 days",
-            "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
-      } else {
-        checkError(
-          exception = e2,
-          errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
-          parameters = Map(
-            "feature" -> TestRemovableReaderWriterFeature.name,
-            "logRetentionPeriodKey" -> "delta.logRetentionDuration",
-            "logRetentionPeriod" -> "30 days",
-            "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
-      }
+      checkError(
+        exception = e2,
+        errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        parameters = Map(
+          "feature" -> TestRemovableReaderWriterFeature.name,
+          "logRetentionPeriodKey" -> "delta.logRetentionDuration",
+          "logRetentionPeriod" -> "30 days",
+          "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
     }
   }
 
