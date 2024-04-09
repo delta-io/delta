@@ -154,7 +154,9 @@ class DefaultExpressionUtils {
                 } else if (dataType instanceof IntegerType || dataType instanceof DateType) {
                     return vectorComparator.compare(
                             Integer.compare(left.getInt(rowId), right.getInt(rowId)));
-                } else if (dataType instanceof LongType || dataType instanceof TimestampType) {
+                } else if (dataType instanceof LongType ||
+                        dataType instanceof TimestampType ||
+                        dataType instanceof TimestampNTZType) {
                     return vectorComparator.compare(
                             Long.compare(left.getLong(rowId), right.getLong(rowId)));
                 } else if (dataType instanceof FloatType) {
