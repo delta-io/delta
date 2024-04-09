@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.data;
+package io.delta.kernel.defaults.internal.expressions;
 
 import io.delta.kernel.annotation.Evolving;
 

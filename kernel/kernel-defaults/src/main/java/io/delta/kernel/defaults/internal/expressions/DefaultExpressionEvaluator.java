@@ -24,7 +24,6 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.client.ExpressionHandler;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.VectorComparator;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 
