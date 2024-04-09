@@ -23,6 +23,7 @@ import java.util.regex.Pattern
 import scala.annotation.tailrec
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils}
+import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
@@ -2013,6 +2014,28 @@ class SchemaUtilsSuite extends QueryTest
     )
     verifyColumnsWithCasts(normalized, Seq("s"))
     assert(normalized.schema === tableSchema)
+  }
+
+  test("normalize column names - can normalize row id column") {
+    withTable("src") {
+      spark.range(3).toDF("id").write
+        .format("delta")
+        .mode("overwrite")
+        .option("delta.enableRowTracking", "true")
+        .saveAsTable("src")
+
+      val df = spark.read.format("delta").table("src")
+        .select(
+          col("*"),
+          col("_metadata.row_id").as("row_id")
+        )
+        .withMetadata("row_id", RowId.RowIdMetadataStructField.metadata("name"))
+
+      val tableSchema = new StructType().add("id", LongType)
+      val normalized =
+        normalizeColumnNames(deltaLog = null, tableSchema, df)
+        assert(normalized.schema.fieldNames === Seq("id", "row_id"))
+    }
   }
 
   test("normalize column names - can normalize CDC type column") {
