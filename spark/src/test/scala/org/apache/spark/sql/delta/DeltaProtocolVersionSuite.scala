@@ -3578,11 +3578,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   private def validateICTRemovalMetrics(
       usageLogs: Seq[UsageRecord],
       expectProvenanceInfoRemoval: Boolean): Unit = {
-    val dropFeatureBlob =
-      getUsageLogStats(usageLogs, "delta.inCommitTimestampFeatureRemovalMetrics")
-        .headOption
-        .getOrElse(fail("Expected a log for inCommitTimestampFeatureRemovalMetrics"))
-    val blob = JsonUtils.fromJson[Map[String, String]](dropFeatureBlob)
+    val dropFeatureBlob = usageLogs
+      .find(_.tags.get("opType").contains("delta.inCommitTimestampFeatureRemovalMetrics"))
+      .getOrElse(fail("Expected a log for inCommitTimestampFeatureRemovalMetrics"))
+    val blob = JsonUtils.fromJson[Map[String, String]](dropFeatureBlob.blob)
     assert(blob.contains("downgradeTimeMs"))
     assert(blob.get("traceRemovalNeeded").contains("true"))
     assert(blob.get(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key).contains("true"))
