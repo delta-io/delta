@@ -750,6 +750,7 @@ private[sql] object TestRemovableWriterFeature
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
   }
 
+  /** Make sure the property is not enabled on the table. */
   override def validateRemoval(snapshot: Snapshot): Boolean =
     !snapshot.metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
 
@@ -771,6 +772,7 @@ private[sql] object TestRemovableReaderWriterFeature
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
   }
 
+  /** Make sure the property is not enabled on the table. */
   override def validateRemoval(snapshot: Snapshot): Boolean =
     !snapshot.metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
 
