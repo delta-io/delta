@@ -961,7 +961,7 @@ case class Format(
  * any data already present in the table is still valid after any change.
  */
 case class Metadata(
-    id: String = if (Utils.isTesting) "testId" else java.util.UUID.randomUUID().toString,
+    id: String = java.util.UUID.randomUUID().toString,
     name: String = null,
     description: String = null,
     format: Format = Format(),

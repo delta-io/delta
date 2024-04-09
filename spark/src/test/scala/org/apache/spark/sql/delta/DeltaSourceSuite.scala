@@ -1164,6 +1164,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       // Create a checkpoint so that logs before checkpoint can be expired and deleted
       writersLog.checkpoint()
+      val tahoeId = deltaLog.tableId // This isn't stable, but it shouldn't change during the test.
 
       testStream(df)(
         StartStream(Trigger.ProcessingTime("10 seconds"), new StreamManualClock),
