@@ -406,45 +406,30 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             VectorComparator v;
             switch (predicate.getName()) {
                 case "=":
-                    v = new VectorComparator() {
-                        @Override
-                        public boolean compare(int compareResult) {
-                            return compareResult == 0;
-                        }
-                    };
-                    return comparatorVector(argResults.leftResult, argResults.rightResult, v);
+                    return comparatorVector(
+                            argResults.leftResult,
+                            argResults.rightResult,
+                            (compareResult) -> (compareResult == 0));
                 case ">":
-                    v = new VectorComparator() {
-                        @Override
-                        public boolean compare(int compareResult) {
-                            return compareResult > 0;
-                        }
-                    };
-                    return comparatorVector(argResults.leftResult, argResults.rightResult, v);
+                    return comparatorVector(
+                            argResults.leftResult,
+                            argResults.rightResult,
+                            (compareResult) -> (compareResult > 0));
                 case ">=":
-                    v = new VectorComparator() {
-                        @Override
-                        public boolean compare(int compareResult) {
-                            return compareResult >= 0;
-                        }
-                    };
-                    return comparatorVector(argResults.leftResult, argResults.rightResult, v);
+                    return comparatorVector(
+                            argResults.leftResult,
+                            argResults.rightResult,
+                            (compareResult) -> (compareResult >= 0));
                 case "<":
-                    v = new VectorComparator() {
-                        @Override
-                        public boolean compare(int compareResult) {
-                            return compareResult < 0;
-                        }
-                    };
-                    return comparatorVector(argResults.leftResult, argResults.rightResult, v);
+                    return comparatorVector(
+                            argResults.leftResult,
+                            argResults.rightResult,
+                            (compareResult) -> (compareResult < 0));
                 case "<=":
-                    v = new VectorComparator() {
-                        @Override
-                        public boolean compare(int compareResult) {
-                            return compareResult <= 0;
-                        }
-                    };
-                    return comparatorVector(argResults.leftResult, argResults.rightResult, v);
+                    return comparatorVector(
+                            argResults.leftResult,
+                            argResults.rightResult,
+                            (compareResult) -> (compareResult <= 0));
                 default:
                     throw DeltaErrors.unsupportedExpression(
                             predicate,
