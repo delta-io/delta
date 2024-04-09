@@ -125,6 +125,9 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     extensions.injectPostHocResolutionRule { session =>
       PostHocResolveUpCast(session)
     }
+
+    extensions.injectPlanNormalizationRule { _ => GenerateRowIDs }
+
     // We don't use `injectOptimizerRule` here as we won't want to apply further optimizations after
     // `PrepareDeltaScan`.
     // For example, `ConstantFolding` will break unit tests in `OptimizeGeneratedColumnSuite`.
