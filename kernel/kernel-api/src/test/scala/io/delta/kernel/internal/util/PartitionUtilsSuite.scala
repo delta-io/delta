@@ -178,7 +178,7 @@ class PartitionUtilsSuite extends AnyFunSuite {
         // exp predicate for checkpoint reader pushdown
         """((column(`add`.`partitionValues_parsed`.`part1`) = 12) AND
           |(column(`add`.`partitionValues_parsed`.`part3`) >= sss))"""
-          .stripMargin.replaceAll("\n", " "),
+          .stripMargin.replaceAll("\n", " ")
       ),
     // multiple predicates on partition columns joined with OR
     predicate("OR",
