@@ -271,22 +271,17 @@ class ManagedCommitSuite
           val newMetadata2 = oldMetadata.copy(
             configuration = oldMetadataConf + (MANAGED_COMMIT_OWNER_NAME.key -> builder2.name))
           log.store.write(
-            FileNames.unsafeDeltaFile(log.logPath, 2),
-            Seq(newMetadata1.json).toIterator,
-            overwrite = false,
-            conf)
+            FileNames.deltaFile(log.logPath, 2), Seq(newMetadata1.json).toIterator, false, conf)
+
           log.store.write(
-            FileNames.unsafeDeltaFile(log.logPath, 3),
-            Seq(newMetadata2.json).toIterator,
-            overwrite = false,
-            conf)
+            FileNames.deltaFile(log.logPath, 3), Seq(newMetadata2.json).toIterator, false, conf)
           cs2.registerTable(log.logPath, maxCommitVersion = 3)
 
           // Also backfill commit 0, 1 -- which the spec mandates when the commit owner changes.
           // commit 0 should already be backfilled
           assert(segment.deltas(0).getPath.getName === "00000000000000000000.json")
           log.store.write(
-            path = FileNames.unsafeDeltaFile(log.logPath, 1),
+            path = FileNames.deltaFile(log.logPath, 1),
             actions = log.store.read(segment.deltas(1).getPath, conf).toIterator,
             overwrite = true,
             conf)
@@ -421,7 +416,7 @@ class ManagedCommitSuite
           // backfill commit 1 and 2 also as 3/4 are written directly to FS.
           val segment = log.unsafeVolatileSnapshot.logSegment
           log.store.write(
-            path = FileNames.unsafeDeltaFile(log.logPath, v),
+            path = FileNames.deltaFile(log.logPath, v),
             actions = log.store.read(segment.deltas(v).getPath).toIterator,
             overwrite = true)
         }
@@ -531,8 +526,7 @@ class ManagedCommitSuite
       snapshot.ensureCommitFilesBackfilled()
 
       val commitFiles = log.listFrom(0).filter(FileNames.isDeltaFile).map(_.getPath)
-      val backfilledCommitFiles = (0 to 9).map(
-        version => FileNames.unsafeDeltaFile(log.logPath, version))
+      val backfilledCommitFiles = (0 to 9).map(version => FileNames.deltaFile(log.logPath, version))
       assert(commitFiles.toSeq == backfilledCommitFiles)
    }
   }
