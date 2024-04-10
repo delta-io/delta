@@ -40,7 +40,7 @@ class DeltaConcurrentModificationException(CapturedException):
     """
 
 
-class ConcurrentWriteException(CapturedException):
+class ConcurrentWriteException(DeltaConcurrentModificationException):
     """
     Thrown when a concurrent transaction has written data after the current transaction read the
     table.
@@ -51,7 +51,7 @@ class ConcurrentWriteException(CapturedException):
     """
 
 
-class MetadataChangedException(CapturedException):
+class MetadataChangedException(DeltaConcurrentModificationException):
     """
     Thrown when the metadata of the Delta table has changed between the time of read
     and the time of commit.
@@ -62,7 +62,7 @@ class MetadataChangedException(CapturedException):
     """
 
 
-class ProtocolChangedException(CapturedException):
+class ProtocolChangedException(DeltaConcurrentModificationException):
     """
     Thrown when the protocol version has changed between the time of read
     and the time of commit.
@@ -73,7 +73,7 @@ class ProtocolChangedException(CapturedException):
     """
 
 
-class ConcurrentAppendException(CapturedException):
+class ConcurrentAppendException(DeltaConcurrentModificationException):
     """
     Thrown when files are added that would have been read by the current transaction.
 
@@ -83,7 +83,7 @@ class ConcurrentAppendException(CapturedException):
     """
 
 
-class ConcurrentDeleteReadException(CapturedException):
+class ConcurrentDeleteReadException(DeltaConcurrentModificationException):
     """
     Thrown when the current transaction reads data that was deleted by a concurrent transaction.
 
@@ -93,7 +93,7 @@ class ConcurrentDeleteReadException(CapturedException):
     """
 
 
-class ConcurrentDeleteDeleteException(CapturedException):
+class ConcurrentDeleteDeleteException(DeltaConcurrentModificationException):
     """
     Thrown when the current transaction deletes data that was deleted by a concurrent transaction.
 
@@ -103,7 +103,7 @@ class ConcurrentDeleteDeleteException(CapturedException):
     """
 
 
-class ConcurrentTransactionException(CapturedException):
+class ConcurrentTransactionException(DeltaConcurrentModificationException):
     """
     Thrown when concurrent transaction both attempt to update the same idempotent transaction.
 
@@ -116,7 +116,7 @@ class ConcurrentTransactionException(CapturedException):
 _delta_exception_patched = False
 
 
-def _convert_delta_exception(e: "JavaObject") -> Optional[CapturedException]:
+def _convert_delta_exception(e: "JavaObject") -> Optional[DeltaConcurrentModificationException]:
     """
     Convert Delta's Scala concurrent exceptions to the corresponding Python exceptions.
     """
@@ -127,8 +127,6 @@ def _convert_delta_exception(e: "JavaObject") -> Optional[CapturedException]:
     gw = SparkContext._gateway  # type: ignore[attr-defined]
     stacktrace = jvm.org.apache.spark.util.Utils.exceptionString(e)
 
-    if s.startswith('io.delta.exceptions.DeltaConcurrentModificationException: '):
-        return DeltaConcurrentModificationException(s.split(': ', 1)[1], stacktrace, c)
     if s.startswith('io.delta.exceptions.ConcurrentWriteException: '):
         return ConcurrentWriteException(s.split(': ', 1)[1], stacktrace, c)
     if s.startswith('io.delta.exceptions.MetadataChangedException: '):
