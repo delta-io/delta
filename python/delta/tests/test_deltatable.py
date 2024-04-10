@@ -697,6 +697,20 @@ class DeltaTableTestsMixin:
                                        [StringType(), LongType(), IntegerType()],
                                        nullables={"key", "value", "value2"},
                                        partitioningColumns=["value", "value2"])
+            
+        with self.table("test3"):
+            # verify creating table with list of structFields
+            deltaTable2 = DeltaTable.create(self.spark).tableName("test3").addColumns(
+                df.schema.fields) \
+                .addColumn("value2", dataType="int") \
+                .clusteredBy("value2", "value")\
+                .execute()
+            self.__verify_table_schema("test2",
+                                       deltaTable2.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=[])
 
     def test_create_replace_table_with_no_spark_session_passed(self) -> None:
         with self.table("test"):
@@ -965,6 +979,16 @@ class DeltaTableTestsMixin:
 
         with self.assertRaises(TypeError):
             builder.partitionedBy([1])  # type: ignore[list-item]
+
+        # bad clusteredBy col name
+        with self.assertRaises(TypeError):
+            builder.clusteredBy(1)  # type: ignore[call-overload]
+
+        with self.assertRaises(TypeError):
+            builder.clusteredBy(1, "1")   # type: ignore[call-overload]
+
+        with self.assertRaises(TypeError):
+            builder.clusteredBy([1])  # type: ignore[list-item]
 
         # bad property key
         with self.assertRaises(TypeError):

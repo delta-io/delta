@@ -1284,6 +1284,43 @@ class DeltaTableBuilder(object):
             cast(Iterable[Union[Column, str]], cols)
         ))
         return self
+    
+    @overload
+    def clusteredBy(
+        self, *cols: str
+    ) -> "DeltaTableBuilder":
+        ...
+
+    @overload
+    def clusteredBy(
+        self, __cols: Union[List[str], Tuple[str, ...]]
+    ) -> "DeltaTableBuilder":
+        ...
+
+    @since(3.2)  # type: ignore[arg-type]
+    def clusteredBy(
+        self, *cols: Union[str, List[str], Tuple[str, ...]]
+    ) -> "DeltaTableBuilder":
+        """
+        Specify columns for clustering
+
+        :param cols: the clustering cols
+        :type cols: str or list name of columns
+
+        :return: this builder
+
+        .. note:: Evolving
+        """
+        if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
+            cols = cols[0]  # type: ignore[assignment]
+        for c in cols:
+            if type(c) is not str:
+                self._raise_type_error("Clustering column must be str.", [c])
+        self._jbuilder = self._jbuilder.clusteredBy(_to_seq(
+            self._spark._sc,  # type: ignore[attr-defined]
+            cast(Iterable[Union[Column, str]], cols)
+        ))
+        return self
 
     @since(1.0)  # type: ignore[arg-type]
     def property(self, key: str, value: str) -> "DeltaTableBuilder":
