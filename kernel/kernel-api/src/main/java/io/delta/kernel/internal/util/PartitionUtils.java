@@ -150,7 +150,8 @@ public class PartitionUtils {
                 predicate.getName(),
                 predicate.getChildren().stream()
                         .map(child ->
-                                rewriteColRefOnPartitionValuesParsed(child, partitionColNameToField))
+                                rewriteColRefOnPartitionValuesParsed(
+                                        child, partitionColNameToField))
                         .collect(Collectors.toList()));
     }
 
