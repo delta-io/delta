@@ -3571,23 +3571,26 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     testV2CheckpointTableFeatureDrop(V2Checkpoint.Format.PARQUET, true, true)
   }
 
-  private val ictProvenanceProperties = Seq(
-    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key,
-    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key)
-
   private def validateICTRemovalMetrics(
       usageLogs: Seq[UsageRecord],
-      expectProvenanceInfoRemoval: Boolean): Unit = {
+      expectEnablementProperty: Boolean,
+      expectProvenanceTimestampProperty: Boolean,
+      expectProvenanceVersionProperty: Boolean): Unit = {
     val dropFeatureBlob = usageLogs
       .find(_.tags.get("opType").contains("delta.inCommitTimestampFeatureRemovalMetrics"))
       .getOrElse(fail("Expected a log for inCommitTimestampFeatureRemovalMetrics"))
     val blob = JsonUtils.fromJson[Map[String, String]](dropFeatureBlob.blob)
     assert(blob.contains("downgradeTimeMs"))
     assert(blob.get("traceRemovalNeeded").contains("true"))
-    assert(blob.get(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key).contains("true"))
-    ictProvenanceProperties.foreach { prop =>
-        assert(blob.get(prop).contains(expectProvenanceInfoRemoval.toString))
-      }
+    assert(blob
+      .get(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key)
+      .contains(expectEnablementProperty.toString))
+    assert(blob
+      .get(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key)
+      .contains(expectProvenanceTimestampProperty.toString))
+    assert(blob
+      .get(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key)
+      .contains(expectProvenanceVersionProperty.toString))
   }
 
   test("drop InCommitTimestamp -- ICT enabled from commit 0") {
@@ -3609,7 +3612,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // Writer feature is removed from the writer features set.
       assert(!snapshot.protocol.writerFeatureNames.contains(featurePropertyKey))
       assert(!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
-      validateICTRemovalMetrics(usageLogs, expectProvenanceInfoRemoval = false)
+      validateICTRemovalMetrics(
+        usageLogs,
+        expectEnablementProperty = true,
+        expectProvenanceTimestampProperty = false,
+        expectProvenanceVersionProperty = false)
 
       // Running the command again should throw an exception.
       val e = intercept[DeltaTableFeatureException] {
@@ -3636,6 +3643,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val snapshotV1 = deltaLog.update()
       assert(snapshotV1.protocol.writerFeatureNames.contains(featurePropertyKey))
       assert(snapshotV1.metadata.configuration.contains(featureEnablementKey))
+      val ictProvenanceProperties = Seq(
+        DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key,
+        DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key)
       ictProvenanceProperties.foreach(prop =>
         assert(snapshotV1.metadata.configuration.contains(prop)))
 
@@ -3653,7 +3663,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // The provenance properties should also have been removed.
       ictProvenanceProperties.foreach(prop =>
         assert(!snapshot.metadata.configuration.contains(prop)))
-      validateICTRemovalMetrics(usageLogs, expectProvenanceInfoRemoval = true)
+      validateICTRemovalMetrics(
+        usageLogs,
+        expectEnablementProperty = true,
+        expectProvenanceTimestampProperty = true,
+        expectProvenanceVersionProperty = true)
     }
   }
 
@@ -3681,15 +3695,22 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(snapshot1.metadata.configuration.contains(
         DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key))
 
-      AlterTableDropFeatureDeltaCommand(
-        DeltaTableV2(spark, deltaLog.dataPath),
-        InCommitTimestampTableFeature.name)
-        .run(spark)
+      val usageLogs = Log4jUsageLogger.track {
+        AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          InCommitTimestampTableFeature.name)
+          .run(spark)
+      }
       val snapshot2 = deltaLog.update()
       assert(!snapshot2.protocol.writerFeatureNames.contains(InCommitTimestampTableFeature.name))
       assert(!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot2.metadata))
       assert(!snapshot2.metadata.configuration.contains(
         DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key))
+      validateICTRemovalMetrics(
+        usageLogs,
+        expectEnablementProperty = false,
+        expectProvenanceTimestampProperty = false,
+        expectProvenanceVersionProperty = true)
     }
   }
 
@@ -3705,13 +3726,20 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         Seq(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key),
         ifExists = true).run(spark)
 
-      AlterTableDropFeatureDeltaCommand(
-        DeltaTableV2(spark, deltaLog.dataPath),
-        InCommitTimestampTableFeature.name)
-        .run(spark)
+      val usageLogs = Log4jUsageLogger.track {
+        AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          InCommitTimestampTableFeature.name)
+          .run(spark)
+      }
       val snapshot = deltaLog.update()
       assert(!snapshot.protocol.writerFeatureNames.contains(InCommitTimestampTableFeature.name))
       assert(!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
+      validateICTRemovalMetrics(
+        usageLogs,
+        expectEnablementProperty = false,
+        expectProvenanceTimestampProperty = false,
+        expectProvenanceVersionProperty = false)
     }
   }
 
