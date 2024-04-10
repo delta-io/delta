@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.managedcommit
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaTestUtilsBase}
+import org.apache.spark.sql.delta.DeltaConfigs.MANAGED_COMMIT_OWNER_NAME
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
@@ -27,6 +28,18 @@ import org.apache.spark.sql.test.SharedSparkSession
 
 trait ManagedCommitTestUtils
   extends DeltaTestUtilsBase { self: SparkFunSuite with SharedSparkSession =>
+
+  def testWithoutManagedCommits(testName: String)(f: => Unit): Unit = {
+    test(testName) {
+      val oldCommitOwnerValue = spark.conf.get(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey)
+      try {
+        spark.conf.unset(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey)
+        f
+      } finally {
+        spark.conf.set(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey, oldCommitOwnerValue)
+      }
+    }
+  }
 
   /** Run the test with different backfill batch sizes: 1, 2, 10 */
   def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
