@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames.deltaFile
+import org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
@@ -49,7 +49,7 @@ class DeltaTableFeatureSuite
     val log = DeltaLog.forTable(spark, path)
     log.ensureLogDirectoryExist()
     log.store.write(
-      deltaFile(log.logPath, 0),
+      unsafeDeltaFile(log.logPath, 0),
       Iterator(Metadata(schemaString = schema.json).json, protocol.json),
       overwrite = false,
       log.newDeltaHadoopConf())

@@ -351,7 +351,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
       if (headDeltaVersion != checkpointVersion + 1) {
         throw DeltaErrors.logFileNotFoundException(
-          deltaFile(logPath, checkpointVersion + 1),
+          unsafeDeltaFile(logPath, checkpointVersion + 1),
           lastDeltaVersion,
           unsafeVolatileMetadata) // metadata is best-effort only
       }

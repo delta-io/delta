@@ -20,6 +20,7 @@ import java.util.{Locale, UUID}
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.RowId.RowIdMetadataStructField
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -78,8 +79,9 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   val supportedModes: Set[DeltaColumnMappingMode] =
     Set(IdMapping, NoMapping, NameMapping)
 
-  def isInternalField(field: StructField): Boolean = DELTA_INTERNAL_COLUMNS
-    .contains(field.name.toLowerCase(Locale.ROOT))
+  def isInternalField(field: StructField): Boolean =
+    DELTA_INTERNAL_COLUMNS.contains(field.name.toLowerCase(Locale.ROOT)) ||
+      RowIdMetadataStructField.isRowIdColumn(field)
 
   def satisfiesColumnMappingProtocol(protocol: Protocol): Boolean =
     protocol.isFeatureSupported(ColumnMappingTableFeature)

@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
-import org.apache.spark.sql.delta.util.FileNames.deltaFile
+import org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile
 import org.apache.hadoop.fs.{FileSystem, FSDataInputStream, Path, PathHandle}
 
 import org.apache.spark.SparkException
@@ -2037,13 +2037,13 @@ class DeltaSuite extends QueryTest
     // changes the schema
     val actions = Seq(Action.supportedProtocolVersion(), newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
-      FileNames.deltaFile(deltaLog.logPath, snapshot.version + 1),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,
       overwrite = false,
       hadoopConf)
 
     deltaLog.store.write(
-      FileNames.deltaFile(deltaLog.logPath, snapshot.version + 2),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 2),
       files.take(1).map(_.json).iterator,
       overwrite = false,
       hadoopConf)
