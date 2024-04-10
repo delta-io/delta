@@ -44,8 +44,8 @@ To support this feature:
 
 ## Variant data in Parquet
 
-The Variant data type is represented as 2 binary encoded values, according to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md).
-The 2 binary values are named `value` and `metadata`.
+The Variant data type is represented as two binary encoded values, according to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md).
+The two binary values are named `value` and `metadata`.
 
 When writing Variant data to parquet files, the Variant data is written as a single Parquet struct, with the following fields:
 
@@ -54,21 +54,22 @@ Struct field name | Parquet primitive type | Description
 value | binary | The binary-encoded Variant value, as described in [Variant binary encoding](https://github.com/apache/spark/blob/master/common/variant/README.md)
 metadata | binary | The binary-encoded Variant metadata, as described in [Variant binary encoding](https://github.com/apache/spark/blob/master/common/variant/README.md)
 
-The parquet struct must include the 2 struct fields `value` and `metadata`.
-Supported writers must write the 2 binary fields, and supported readers must read the 2 binary fields.
+The parquet struct must include the two struct fields `value` and `metadata`.
+Supported writers must write the two binary fields, and supported readers must read the two binary fields.
 Struct fields which start with `_` (underscore) can be safely ignored.
 The only non-ignorable fields must be `value` and `metadata`.
 
 ## Writer Requirements for Variant Data Type
 
 When Variant type is supported (`writerFeatures` field of a table's `protocol` action contains `variantType`), writers:
-- must write the 2 parquet struct fields, `value` and `metadata`, according to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md)
+- must write a column of type `variant` to parquet as a struct containing the fields `value` and `metadata` and storing values that conform to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md)
 - must not write additional, non-ignorable parquet struct fields. Writing additional struct fields with names starting with `_` (underscore) is allowed.
 
 ## Reader Requirements for Variant Data Type
 
 When Variant type is supported (`readerFeatures` field of a table's `protocol` action contains `variantType`), readers:
-- must be able to read the 2 parquet struct fields, `value` and `metadata`
+- must be able to read the two parquet struct fields, `value` and `metadata` and interpret them as a Variant in concordance with the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md).
+- It is recommended but not required for a Delta reader to treat the struct as a single indivisible Variant field, if the reader is used in an engine or other context that supports Variant.
 - can ignore any parquet struct field names starting with `_` (underscore)
 
 ## Compatibility with other Delta Features
