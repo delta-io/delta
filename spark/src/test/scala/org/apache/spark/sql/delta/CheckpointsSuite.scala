@@ -581,7 +581,7 @@ class CheckpointsSuite
       // Delete the commit files 0-9, so that we are forced to read the checkpoint file
       val logPath = new Path(new File(target, "_delta_log").getAbsolutePath)
       for (i <- 0 to 10) {
-        val file = new File(FileNames.deltaFile(logPath, version = i).toString)
+        val file = new File(FileNames.unsafeDeltaFile(logPath, version = i).toString)
         file.delete()
       }
 

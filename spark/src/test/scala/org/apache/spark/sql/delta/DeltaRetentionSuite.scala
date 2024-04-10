@@ -107,7 +107,7 @@ class DeltaRetentionSuite extends QueryTest
           Nil
         }
         val version = txn.commit(delete ++ file, testOp)
-        val deltaFile = new File(FileNames.deltaFile(log.logPath, version).toUri)
+        val deltaFile = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
         deltaFile.setLastModified(clock.getTimeMillis() + i * 10000)
         val crcFile = new File(FileNames.checksumFile(log.logPath, version).toUri)
         crcFile.setLastModified(clock.getTimeMillis() + i * 10000)

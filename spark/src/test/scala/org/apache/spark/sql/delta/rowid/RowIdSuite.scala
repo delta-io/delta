@@ -127,7 +127,7 @@ class RowIdSuite extends QueryTest
         // Delete the first commit and all checksum files to force the next read to read the high
         // watermark from the checkpoint.
         val fs = log1.logPath.getFileSystem(log1.newDeltaHadoopConf())
-        fs.delete(FileNames.deltaFile(log1.logPath, version = 0), true)
+        fs.delete(FileNames.unsafeDeltaFile(log1.logPath, version = 0), true)
         fs.delete(FileNames.checksumFile(log1.logPath, version = 0), true)
         fs.delete(FileNames.checksumFile(log1.logPath, version = 1), true)
 

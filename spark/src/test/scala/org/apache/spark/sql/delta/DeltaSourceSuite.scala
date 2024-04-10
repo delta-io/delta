@@ -1361,7 +1361,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
         val deltaLog = DeltaLog.forTable(spark, tempDir)
         deltaLog.store.write(
-          FileNames.deltaFile(deltaLog.logPath, deltaLog.snapshot.version + 1),
+          FileNames.unsafeDeltaFile(deltaLog.logPath, deltaLog.snapshot.version + 1),
           // Write a large reader version to fail the streaming query
           Iterator(Protocol(minReaderVersion = Int.MaxValue).json),
           overwrite = false,
@@ -1386,7 +1386,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val rangeStart = startVersion * 10
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
-      val file = new File(FileNames.deltaFile(deltaLog.logPath, startVersion).toUri)
+      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, startVersion).toUri)
       file.setLastModified(ts)
       startVersion += 1
     }
@@ -1448,7 +1448,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val deltaLog = DeltaLog.forTable(spark, tablePath)
       assert(deltaLog.update().version == 2)
       deltaLog.checkpoint()
-      new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+      new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri).delete()
 
       // Cannot start from version 0
       assert(intercept[StreamingQueryException] {
@@ -1523,7 +1523,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         // Add one commit and delete version 0 and version 1
         generateCommits(inputDir.getCanonicalPath, start + 60.minutes)
         (0 to 1).foreach { v =>
-          new File(FileNames.deltaFile(deltaLog.logPath, v).toUri).delete()
+          new File(FileNames.unsafeDeltaFile(deltaLog.logPath, v).toUri).delete()
         }
 
         // Although version 1 has been deleted, restarting the query should still work as we have
@@ -1619,7 +1619,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val deltaLog = DeltaLog.forTable(spark, tablePath)
       assert(deltaLog.update().version == 2)
       deltaLog.checkpoint()
-      new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+      new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri).delete()
 
       // Can start from version 1 even if it's not recreatable
       // TODO: currently we would error out if we couldn't construct the snapshot to check column
@@ -1980,7 +1980,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Create a checkpoint so that we can create a snapshot without json files before version 3
       srcLog.checkpoint()
       // Delete the first file
-      assert(new File(FileNames.deltaFile(srcLog.logPath, 1).toUri).delete())
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 1).toUri).delete())
 
       val e = intercept[StreamingQueryException] {
         val q = df.writeStream.format("delta")
@@ -2015,7 +2015,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Create a checkpoint so that we can create a snapshot without json files before version 3
       srcLog.checkpoint()
       // Delete the second file
-      assert(new File(FileNames.deltaFile(srcLog.logPath, 2).toUri).delete())
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 2).toUri).delete())
 
       val e = intercept[StreamingQueryException] {
         val q = df.writeStream.format("delta")
@@ -2051,7 +2051,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Create a checkpoint so that we can create a snapshot without json files before version 3
       srcLog.checkpoint()
       // Delete the first file
-      assert(new File(FileNames.deltaFile(srcLog.logPath, 1).toUri).delete())
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 1).toUri).delete())
 
       val q2 = df.writeStream.format("delta")
         .option("checkpointLocation", chkLocation.getCanonicalPath)
@@ -2087,7 +2087,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Create a checkpoint so that we can create a snapshot without json files before version 3
       srcLog.checkpoint()
       // Delete the second file
-      assert(new File(FileNames.deltaFile(srcLog.logPath, 2).toUri).delete())
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 2).toUri).delete())
 
       val q2 = df.writeStream.format("delta")
         .option("checkpointLocation", chkLocation.getCanonicalPath)

@@ -33,7 +33,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
-import org.apache.spark.sql.delta.util.FileNames.{deltaFile, DeltaFile}
+import org.apache.spark.sql.delta.util.FileNames.{unsafeDeltaFile, DeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.SparkConf
@@ -63,7 +63,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     val log = DeltaLog.forTable(spark, path)
     log.ensureLogDirectoryExist()
     log.store.write(
-      deltaFile(log.logPath, 0),
+      unsafeDeltaFile(log.logPath, 0),
       Iterator(Metadata(schemaString = schema.json).json, protocol.json),
       overwrite = false,
       log.newDeltaHadoopConf())
@@ -412,7 +412,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val log = DeltaLog.forTable(spark, path)
       log.ensureLogDirectoryExist()
       log.store.write(
-        deltaFile(log.logPath, 0),
+        unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata().json, Protocol(Integer.MAX_VALUE, Integer.MAX_VALUE).json),
         overwrite = false,
         log.newDeltaHadoopConf())
@@ -440,7 +440,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         TABLE_FEATURES_MIN_READER_VERSION,
         TABLE_FEATURES_MIN_WRITER_VERSION).withWriterFeatures(Seq("newUnsupportedWriterFeature"))
       log.store.write(
-        deltaFile(log.logPath, snapshot.version + 1),
+        unsafeDeltaFile(log.logPath, snapshot.version + 1),
         Iterator(Metadata().json, newProtocol.json),
         overwrite = false,
         log.newDeltaHadoopConf())
@@ -608,7 +608,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       version: Long,
       protocol: Protocol): Unit = {
     log.store.write(
-      deltaFile(log.logPath, version),
+      unsafeDeltaFile(log.logPath, version),
       Iterator(
         Metadata().json,
         protocol.json),
@@ -973,7 +973,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         val txn = deltaLog.startTransaction()
         val currentVersion = txn.snapshot.version
         deltaLog.store.write(
-          deltaFile(deltaLog.logPath, currentVersion + 1),
+          unsafeDeltaFile(deltaLog.logPath, currentVersion + 1),
           Iterator(incompatibleProtocol.json),
           overwrite = false,
           hadoopConf)
@@ -983,7 +983,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           txn.commit(AddFile("test", Map.empty, 1, 1, dataChange = true) :: Nil, ManualUpdate)
         }
         // Make sure we didn't commit anything
-        val p = deltaFile(deltaLog.logPath, currentVersion + 2)
+        val p = unsafeDeltaFile(deltaLog.logPath, currentVersion + 2)
         assert(
           !p.getFileSystem(hadoopConf).exists(p),
           s"$p should not be committed")
@@ -1230,7 +1230,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val log = DeltaLog.forTable(spark, path)
       log.ensureLogDirectoryExist()
       log.store.write(
-        deltaFile(log.logPath, 0),
+        unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata().json),
         overwrite = false,
         log.newDeltaHadoopConf())
@@ -2207,7 +2207,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         DeltaConfigs.IS_APPEND_ONLY.key -> "false",
         DeltaConfigs.CHANGE_DATA_FEED.key -> "true"))
       log.store.write(
-        deltaFile(log.logPath, snapshot.version + 1),
+        unsafeDeltaFile(log.logPath, snapshot.version + 1),
         Iterator(m.json, p.json),
         overwrite = false,
         log.newDeltaHadoopConf())

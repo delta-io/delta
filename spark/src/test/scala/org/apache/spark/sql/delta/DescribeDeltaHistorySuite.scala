@@ -386,7 +386,7 @@ trait DescribeDeltaHistorySuiteBase
       val log = DeltaLog.forTable(spark, path)
       log.ensureLogDirectoryExist()
       log.store.write(
-        FileNames.deltaFile(log.logPath, 0),
+        FileNames.unsafeDeltaFile(log.logPath, 0),
         Iterator(
           Metadata(schemaString = spark.range(1).schema.asNullable.json).json,
           Protocol(1, 1).json),
