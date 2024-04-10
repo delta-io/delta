@@ -181,6 +181,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_INCLUDE_TABLE_ID_IN_FILE_INDEX_COMPARISON =
+    buildConf("includeTableIdInFileIndexComparison")
+      .internal()
+      .doc(
+        """
+          |Include the deltaLog.tableId field in equals and hashCode for TahoeLogFileIndex.
+          |The field is unstable, so including it can lead semantic violations for equals and
+          |hashCode.""".stripMargin)
+      .booleanConf
+      // TODO: Phase this out towards `false` eventually remove the flag altogether again.
+      .createWithDefault(true)
+
   val DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE =
     buildConf("createEmptySchemaTable.enabled")
       .internal()
@@ -1666,13 +1678,6 @@ trait DeltaSQLConfBase {
   //////////////////
   // Clustered Table
   //////////////////
-
-  val DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED =
-    buildConf("clusteredTable.enableClusteringTablePreview")
-      .internal()
-      .doc("Whether to enable the clustering table preview.")
-      .booleanConf
-      .createWithDefault(false)
 
   val DELTA_NUM_CLUSTERING_COLUMNS_LIMIT =
     buildStaticConf("clusteredTable.numClusteringColumnsLimit")

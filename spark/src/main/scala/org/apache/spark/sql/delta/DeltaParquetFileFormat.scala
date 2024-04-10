@@ -55,6 +55,7 @@ import org.apache.spark.util.SerializableConfiguration
 case class DeltaParquetFileFormat(
     protocol: Protocol,
     metadata: Metadata,
+    nullableRowTrackingFields: Boolean = false,
     isSplittable: Boolean = true,
     disablePushDowns: Boolean = false,
     tablePath: Option[String] = None,
@@ -197,12 +198,21 @@ case class DeltaParquetFileFormat(
   }
 
   override def metadataSchemaFields: Seq[StructField] = {
-    // Parquet reader in Spark has a bug where a file containing 2b+ rows in a single rowgroup
-    // causes it to run out of the `Integer` range (TODO: Create a SPARK issue)
+    val rowTrackingFields =
+      RowTracking.createMetadataStructFields(protocol, metadata, nullableRowTrackingFields)
+    // TODO(SPARK-47731): Parquet reader in Spark has a bug where a file containing 2b+ rows
+    // in a single rowgroup causes it to run out of the `Integer` range.
     // For Delta Parquet readers don't expose the row_index field as a metadata field.
-    super.metadataSchemaFields.filter(field => field != ParquetFileFormat.ROW_INDEX_FIELD) ++
-      RowId.createBaseRowIdField(protocol, metadata) ++
-      DefaultRowCommitVersion.createDefaultRowCommitVersionField(protocol, metadata)
+    if (!RowId.isEnabled(protocol, metadata)) {
+      super.metadataSchemaFields.filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
+    } else {
+      // It is fine to expose the row_index field as a metadata field when Row Tracking
+      // is enabled because it is needed to generate the Row ID field, and it is not a
+      // big problem if we use 2b+ rows in a single rowgroup, it will throw an exception and
+      // we can then use less rows per rowgroup. Also, 2b+ rows in a single rowgroup is
+      // not a common use case.
+      super.metadataSchemaFields ++ rowTrackingFields
+    }
   }
 
   override def prepareWrite(

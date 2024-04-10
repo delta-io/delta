@@ -46,7 +46,7 @@ trait S3SingleDriverLogStoreSuiteBase extends LogStoreSuiteBase {
   test("file system has priority over cache") {
     withTempDir { dir =>
       val store = createLogStore(spark)
-      val deltas = Seq(0, 1, 2).map(i => FileNames.deltaFile(new Path(dir.toURI), i))
+      val deltas = Seq(0, 1, 2).map(i => FileNames.unsafeDeltaFile(new Path(dir.toURI), i))
       store.write(deltas(0), Iterator("zero"), overwrite = false, sessionHadoopConf)
       store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
       store.write(deltas(2), Iterator("two"), overwrite = false, sessionHadoopConf)
@@ -70,7 +70,7 @@ trait S3SingleDriverLogStoreSuiteBase extends LogStoreSuiteBase {
     withTempDir { dir =>
       val store = createLogStore(spark)
       val deltas =
-        Seq(0, 1, 2, 3, 4).map(i => FileNames.deltaFile(new Path(dir.toURI), i))
+        Seq(0, 1, 2, 3, 4).map(i => FileNames.unsafeDeltaFile(new Path(dir.toURI), i))
       store.write(deltas(0), Iterator("zero"), overwrite = false, sessionHadoopConf)
       store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
       store.write(deltas(2), Iterator("two"), overwrite = false, sessionHadoopConf)
@@ -119,7 +119,7 @@ trait S3SingleDriverLogStoreSuiteBase extends LogStoreSuiteBase {
       dir.mkdir()
       val store = createLogStore(spark)
       val deltas =
-        Seq(0, 1, 2).map(i => FileNames.deltaFile(new Path(dir.toURI), i))
+        Seq(0, 1, 2).map(i => FileNames.unsafeDeltaFile(new Path(dir.toURI), i))
       store.write(deltas(0), Iterator("log version 0"), overwrite = false, sessionHadoopConf)
       store.write(deltas(1), Iterator("log version 1"), overwrite = false, sessionHadoopConf)
       store.write(deltas(2), Iterator("log version 2"), overwrite = false, sessionHadoopConf)

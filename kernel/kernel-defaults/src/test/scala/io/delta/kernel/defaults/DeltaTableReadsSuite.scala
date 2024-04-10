@@ -129,6 +129,41 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   }
 
   //////////////////////////////////////////////////////////////////////////////////
+  // Timestamp_NTZ tests
+  //////////////////////////////////////////////////////////////////////////////////
+
+  // Below is the golden table used in test
+  // (INTEGER id, TIMESTAMP_NTZ tsNtz, TIMESTAMP_NTZ tsNtzPartition)
+  // (0, '2021-11-18 02:30:00.123456','2021-11-18 02:30:00.123456'),
+  // (1, '2013-07-05 17:01:00.123456','2021-11-18 02:30:00.123456'),
+  // (2, NULL,                         '2021-11-18 02:30:00.123456'),
+  // (3, '2021-11-18 02:30:00.123456','2013-07-05 17:01:00.123456'),
+  // (4, '2013-07-05 17:01:00.123456','2013-07-05 17:01:00.123456'),
+  // (5, NULL,                        '2013-07-05 17:01:00.123456'),
+  // (6, '2021-11-18 02:30:00.123456', NULL),
+  // (7, '2013-07-05 17:01:00.123456', NULL),
+  // (8, NULL,                         NULL)
+  val expectedTimestampNtzTestRows = Seq(
+    TestRow(0, 1637202600123456L, 1637202600123456L),
+    TestRow(1, 1373043660123456L, 1637202600123456L),
+    TestRow(2, null, 1637202600123456L),
+    TestRow(3, 1637202600123456L, 1373043660123456L),
+    TestRow(4, 1373043660123456L, 1373043660123456L),
+    TestRow(5, null, 1373043660123456L),
+    TestRow(6, 1637202600123456L, null),
+    TestRow(7, 1373043660123456L, null),
+    TestRow(8, null, null)
+  )
+
+  Seq("", "-name-mode", "-id-mode").foreach { cmMode =>
+    test(s"end-to-end: read table with timestamp_ntz columns (including partition): $cmMode") {
+      checkTable(
+        path = goldenTablePath(s"data-reader-timestamp_ntz$cmMode"),
+        expectedAnswer = expectedTimestampNtzTestRows)
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////
   // Decimal type tests
   //////////////////////////////////////////////////////////////////////////////////
 

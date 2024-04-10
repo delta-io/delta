@@ -56,7 +56,7 @@ class DeltaLogMinorCompactionSuite extends QueryTest
     val hadoopConf = deltaLog.newDeltaHadoopConf()
 
     (startVersion to endVersion).foreach { versionToRead =>
-      val file = FileNames.deltaFile(deltaLog.logPath, versionToRead)
+      val file = FileNames.unsafeDeltaFile(deltaLog.logPath, versionToRead)
       val actionsIterator = deltaLog.store.readAsIterator(file, hadoopConf).map(Action.fromJson)
       logReplay.append(versionToRead, actionsIterator)
     }
@@ -429,7 +429,7 @@ class DeltaLogMinorCompactionSuite extends QueryTest
       postSetupFunc = Some(
         (deltaLog: DeltaLog) => {
           val logPath = deltaLog.logPath
-          val deltaFileToDelete = FileNames.deltaFile(logPath, version = 4)
+          val deltaFileToDelete = FileNames.unsafeDeltaFile(logPath, version = 4)
           logPath.getFileSystem(deltaLog.newDeltaHadoopConf()).delete(deltaFileToDelete, true)
         }
       ),

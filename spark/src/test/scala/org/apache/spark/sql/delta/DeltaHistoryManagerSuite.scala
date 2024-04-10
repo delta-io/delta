@@ -63,7 +63,7 @@ trait DeltaTimeTravelTests extends QueryTest
   protected val timeFormatter = new SimpleDateFormat("yyyyMMddHHmmssSSS")
 
   protected def modifyCommitTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
-    val file = new File(FileNames.deltaFile(deltaLog.logPath, version).toUri)
+    val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
     file.setLastModified(ts)
     val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
     if (crc.exists()) {
@@ -96,7 +96,8 @@ trait DeltaTimeTravelTests extends QueryTest
       deltaLog: DeltaLog, commits: Long*): Unit = {
     var startVersion = deltaLog.snapshot.version + 1
     commits.foreach { ts =>
-      val action = createTestAddFile(path = startVersion.toString, modificationTime = startVersion)
+      val action =
+        createTestAddFile(encodedPath = startVersion.toString, modificationTime = startVersion)
       deltaLog.startTransaction().commitManually(action)
       modifyCommitTimestamp(deltaLog, startVersion, ts)
       startVersion += 1
@@ -127,7 +128,7 @@ trait DeltaTimeTravelTests extends QueryTest
           .saveAsTable(table)
       }
       val deltaLog = DeltaLog.forTable(spark, new TableIdentifier(table))
-      val file = new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri)
+      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri)
       file.setLastModified(commitList.head)
       commitList = commits.slice(1, commits.length) // we already wrote the first commit here
       var startVersion = deltaLog.snapshot.version + 1
@@ -351,7 +352,7 @@ trait DeltaTimeTravelTests extends QueryTest
         assert(e1.getMessage.contains("[0, 2]"))
 
         val deltaLog = DeltaLog.forTable(spark, getTableLocation(tblName))
-        new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+        new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri).delete()
         // Delta Lake will create a DeltaTableV2 explicitly with time travel options in the catalog.
         // These options will be verified by DeltaHistoryManager, which will throw an
         // AnalysisException.

@@ -41,11 +41,11 @@ public class TableFeatures {
                 List<String> readerFeatures = protocol.getReaderFeatures();
                 for (String readerFeature : readerFeatures) {
                     switch (readerFeature) {
-                        case "deletionVectors":
-                            break;
                         case "columnMapping":
                             ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
                             break;
+                        case "deletionVectors": // fall through
+                        case "timestampNtz": // fall through
                         case "vacuumProtocolCheck":
                             break;
                         case "v2Checkpoint":

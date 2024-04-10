@@ -153,6 +153,12 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       }
     }
     selectExprs = selectExprs ++ cdcSelectExprs
+
+    val rowIdExprs = data.queryExecution.analyzed.output
+      .filter(RowId.RowIdMetadataAttribute.isRowIdColumn)
+      .map(new Column(_))
+    selectExprs = selectExprs ++ rowIdExprs
+
     val newData = queryExecution match {
       case incrementalExecution: IncrementalExecution =>
         selectFromStreamingDataFrame(incrementalExecution, data, selectExprs: _*)

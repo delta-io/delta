@@ -16,14 +16,21 @@
 
 package org.apache.spark.sql.delta.rowid
 
+import java.io.File
+
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.{DeltaLog, MaterializedRowId, RowId}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.hadoop.fs.Path
+import org.apache.parquet.hadoop.metadata.BlockMetaData
 
 import org.apache.spark.sql.execution.datasources.FileFormat
+import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 
-trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
+trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest with ParquetTest {
   val QUALIFIED_BASE_ROW_ID_COLUMN_NAME = s"${FileFormat.METADATA_NAME}.${RowId.BASE_ROW_ID}"
 
   protected def getRowIdRangeInclusive(f: AddFile): (Long, Long) = {
@@ -92,5 +99,29 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
 
   def extractMaterializedRowIdColumnName(log: DeltaLog): Option[String] = {
     log.update().metadata.configuration.get(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
+  }
+
+  protected def readRowGroupsPerFile(dir: File): Seq[Seq[BlockMetaData]] = {
+    assert(dir.isDirectory)
+    readAllFootersWithoutSummaryFiles(
+      // scalastyle:off deltahadoopconfiguration
+      new Path(dir.getAbsolutePath), spark.sessionState.newHadoopConf())
+      // scalastyle:on deltahadoopconfiguration
+      .map(_.getParquetMetadata.getBlocks.asScala.toSeq)
+  }
+
+  protected def checkFileLayout(
+      dir: File,
+      numFiles: Int,
+      numRowGroupsPerFile: Int,
+      rowCountPerRowGroup: Int): Unit = {
+    val rowGroupsPerFile = readRowGroupsPerFile(dir)
+    assert(numFiles === rowGroupsPerFile.size)
+    for (rowGroups <- rowGroupsPerFile) {
+      assert(numRowGroupsPerFile === rowGroups.size)
+      for (rowGroup <- rowGroups) {
+        assert(rowCountPerRowGroup === rowGroup.getRowCount)
+      }
+    }
   }
 }

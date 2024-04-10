@@ -409,7 +409,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       val version = deltaTable.startTransactionWithInitialSnapshot()
         .commit(domainMetadatas, ManualUpdate)
       val committedActions = deltaLog.store.read(
-        FileNames.deltaFile(deltaLog.logPath, version),
+        FileNames.unsafeDeltaFile(deltaLog.logPath, version),
         deltaLog.newDeltaHadoopConf())
       assert(committedActions.size == 2)
       val serializedJson = committedActions.last
@@ -487,9 +487,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       """"size":10,"dataChange":false}}""".stripMargin)
 
   {
-    // We want this metadata to be lazy so it is instantiated after `SparkFunSuite::beforeAll`.
-    // This will ensure that `Utils.isTesting` returns true and that its id is set to 'testId'.
-    lazy val metadata = Metadata(createdTime = Some(2222))
+    val metadata = Metadata(id = "testId", createdTime = Some(2222))
     testActionSerDe(
       "Metadata (with all defaults) - json serialization/deserialization",
       metadata,
@@ -499,9 +497,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
 
   {
     val schemaStr = new StructType().add("a", "long").json
-    // We want this metadata to be lazy so it is instantiated after `SparkFunSuite::beforeAll`.
-    // This will ensure that `Utils.isTesting` returns true and that its id is set to 'testId'.
-    lazy val metadata = Metadata(
+    val metadata = Metadata(
+      id = "testId",
       name = "t1",
       description = "desc",
       format = Format(provider = "parquet", options = Map("o1" -> "v1")),
@@ -635,7 +632,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
           val version = deltaLog.startTransaction().commit(Seq(action), ManualUpdate)
           // Read the commit file and get the serialized committed actions
           val committedActions = deltaLog.store.read(
-            FileNames.deltaFile(deltaLog.logPath, version),
+            FileNames.unsafeDeltaFile(deltaLog.logPath, version),
             deltaLog.newDeltaHadoopConf())
 
           assert(committedActions.size == 2)

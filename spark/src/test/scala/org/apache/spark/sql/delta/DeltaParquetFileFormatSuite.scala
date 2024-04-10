@@ -90,6 +90,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
         val deltaParquetFormat = new DeltaParquetFileFormat(
           deltaLog.snapshot.protocol,
           metadata,
+          nullableRowTrackingFields = false,
           isSplittable = false,
           disablePushDowns = true,
           Some(tablePath),

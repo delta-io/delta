@@ -72,7 +72,7 @@ class InMemoryCommitStoreSuite extends QueryTest
       version: Long,
       logPath: Path,
       timestampOpt: Option[Long] = None): Unit = {
-    val delta = FileNames.deltaFile(logPath, version)
+    val delta = FileNames.unsafeDeltaFile(logPath, version)
     if (timestampOpt.isDefined) {
       assert(store.read(delta, sessionHadoopConf) == Seq(s"$version", s"${timestampOpt.get}"))
     } else {
