@@ -21,13 +21,13 @@ import scala.util.{Failure, Success, Try}
 
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedAttribute, UnresolvedLeafNode, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedLeafNode, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
@@ -455,6 +455,10 @@ object DeltaTableUtils extends PredicateHelper
 
   def parseColToTransform(col: String): IdentityTransform = {
     IdentityTransform(FieldReference(Seq(col)))
+  }
+
+  def parseColsToClusterByTransform(cols: Seq[String]): TempClusterByTransform = {
+    TempClusterByTransform(cols.map(FieldReference(_)))
   }
 
   // Workaround for withActive not being visible in io/delta.

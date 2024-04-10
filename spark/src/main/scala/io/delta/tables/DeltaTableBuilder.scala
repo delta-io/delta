@@ -26,7 +26,7 @@ import io.delta.tables.execution._
 import org.apache.spark.annotation._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, LogicalPlan, ReplaceTable}
+import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, ReplaceTable}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.SQLExecution
@@ -108,6 +108,7 @@ class DeltaTableBuilder private[tables](
     builderOption: DeltaTableBuilderOptions) {
   private var identifier: String = null
   private var partitioningColumns: Option[Seq[String]] = None
+  private var clusterColumns: Option[Seq[String]] = None
   private var columns: mutable.Seq[StructField] = mutable.Seq.empty
   private var location: Option[String] = None
   private var tblComment: Option[String] = None
@@ -283,6 +284,23 @@ class DeltaTableBuilder private[tables](
   /**
    * :: Evolving ::
    *
+   * Specify the columns to cluster the output on the file system.
+   *
+   * Note: This should only include table columns already defined in schema.
+   *
+   * @param colNames string* column names for clustering
+   * @since 3.2.0
+   */
+  @Evolving
+  @scala.annotation.varargs
+  def clusteredBy(colNames: String*): DeltaTableBuilder = {
+    clusterColumns = Option(colNames)
+    this
+  }
+
+  /**
+   * :: Evolving ::
+   *
    * Specify a key-value pair to tag the table definition.
    *
    * @param key string the table property key
@@ -322,9 +340,15 @@ class DeltaTableBuilder private[tables](
 
     val table = spark.sessionState.sqlParser.parseMultipartIdentifier(identifier)
 
-    val partitioning = partitioningColumns.map { colNames =>
-      colNames.map(name => DeltaTableUtils.parseColToTransform(name))
-    }.getOrElse(Seq.empty[Transform])
+    val partitioning: Seq[Transform] = (partitioningColumns, clusterColumns) match {
+      case (Some(partitionCols), None) =>
+        partitionCols.map(name => DeltaTableUtils.parseColToTransform(name))
+      case (None, Some(clusterCols)) =>
+        Seq(DeltaTableUtils.parseColsToClusterByTransform(clusterCols))
+      case (Some(partitionCols), Some(clusterCols)) =>
+         throw DeltaErrors.clusteringAndPartitioningColumnsNotAllowedException()
+      case (None, None) => Seq.empty
+    }
 
     val tableSpec = org.apache.spark.sql.catalyst.plans.logical.TableSpec(
       properties = properties,

@@ -368,6 +368,12 @@
     ],
     "sqlState" : "42P10"
   },
+  "DELTA_CLUSTERING_AND_PARTITIONING_COLUMNS" : {
+    "message" : [
+      "Cannot specify partitioning and clustering columns."
+    ],
+    "sqlState" : "42P10"
+  },
   "DELTA_CLUSTERING_COLUMN_MISSING_STATS" : {
     "message" : [
       "Clustering requires clustering columns to have stats. Couldn't find clustering column(s) '<columns>' in stats schema:\n<schema>"

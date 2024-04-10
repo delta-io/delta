@@ -3236,6 +3236,12 @@ trait DeltaErrorsBase
     )
   }
 
+  def clusteringAndPartitioningColumnsNotAllowedException(): Throwable = {
+    new DeltaAnalysisException(
+      "DELTA_CLUSTERING_AND_PARTITIONING_COLUMNS",
+      Array.empty)
+  }
+
   def dropClusteringColumnNotSupported(droppingClusteringCols: Seq[String]): Throwable = {
     new DeltaAnalysisException(
       "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",

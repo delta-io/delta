@@ -18,18 +18,22 @@ package io.delta.tables
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, NoSuchDatabaseException, TableAlreadyExistsException}
+import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, MetadataBuilder, StringType, StructType}
 
-class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest
+class DeltaTableBuilderSuite
+    extends QueryTest
+    with SharedSparkSession
+    with DeltaSQLCommandTest
+    with ClusteredTableTestUtils
     {
 
   // Define the information for a default test table used by many tests.
@@ -462,4 +466,39 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
     }
   }
 
+  test("create table with clustering") {
+    withTable("test") {
+      io.delta.tables.DeltaTable.create().tableName("test")
+        .addColumn("c1", "int")
+        .clusteredBy("c1")
+        .execute()
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("test"))
+      val metadata = deltaLog.snapshot.metadata
+      verifyClusteringColumns(TableIdentifier("test"), "c1")
+    }
+  }
+
+  test("errors if partition and cluster columns are provided") {
+    withTable("test") {
+      val e = intercept[AnalysisException] {
+        io.delta.tables.DeltaTable.create().tableName("test")
+          .addColumn("c1", "int")
+          .clusteredBy("c1")
+          .partitionedBy("c1")
+          .execute()
+      }
+
+      checkError(
+        exception = e,
+        errorClass = "DELTA_CLUSTERING_AND_PARTITIONING_COLUMNS"
+      )
+
+      // assert(e.getMessage == "Database 'main.parquet' not found" ||
+      //   e.getMessage == "Database 'parquet' not found" ||
+      //   e.getMessage.contains("is not a valid name") ||
+      //   e.getMessage.contains("schema `parquet` cannot be found")
+      // )
+    }
+  }
 }
