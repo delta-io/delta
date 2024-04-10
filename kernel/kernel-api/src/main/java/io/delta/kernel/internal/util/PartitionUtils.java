@@ -138,18 +138,19 @@ public class PartitionUtils {
      * schema. The rewritten predicate can be pushed to the Parquet reader when reading the
      * checkpoint files.
      *
-     * @param predicate Predicate on partition columns.
-     * @param partitionColMetadata Map of partition column name (in lower case) to its type.
+     * @param predicate               Predicate on partition columns.
+     * @param partitionColNameToField Map of partition column name (in lower case) to its
+     *                                {@link StructField}.
      * @return Rewritten {@link Predicate} on `partitionValues_parsed` in `add`.
      */
     public static Predicate rewritePartitionPredicateOnCheckpointFileSchema(
             Predicate predicate,
-            Map<String, StructField> partitionColMetadata) {
+            Map<String, StructField> partitionColNameToField) {
         return new Predicate(
                 predicate.getName(),
                 predicate.getChildren().stream()
                         .map(child ->
-                                rewriteColRefOnPartitionValuesParsed(child, partitionColMetadata))
+                                rewriteColRefOnPartitionValuesParsed(child, partitionColNameToField))
                         .collect(Collectors.toList()));
     }
 
