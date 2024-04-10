@@ -45,6 +45,7 @@ public class TableFeatures {
                             ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
                             break;
                         case "deletionVectors": // fall through
+                        case "typeWidening-dev": // fall through
                         case "timestampNtz": // fall through
                         case "vacuumProtocolCheck":
                             break;

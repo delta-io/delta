@@ -37,7 +37,8 @@ public class AddFile {
         .add("size", LongType.LONG, false /* nullable*/)
         .add("modificationTime", LongType.LONG, false /* nullable*/)
         .add("dataChange", BooleanType.BOOLEAN, false /* nullable*/)
-        .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */);
+        .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */)
+        .add("defaultRowCommitVersion", LongType.LONG, true /* nullable */);
 
     public static final StructType SCHEMA_WITH_STATS = SCHEMA_WITHOUT_STATS
         .add(JSON_STATS_FIELD);

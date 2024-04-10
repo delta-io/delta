@@ -87,6 +87,11 @@ public final class FieldMetadata {
             return "null";
         } else if (value instanceof String) {
             return String.format("\"%s\"", value);
+        } else if (value instanceof FieldMetadata[]) {
+            FieldMetadata[] metadataArray = (FieldMetadata[]) value;
+            return Arrays.stream(metadataArray)
+                .map(FieldMetadata::toJson)
+                    .collect(Collectors.joining(",\n", "[", "]"));
         } else {
             return value.toString();
         }

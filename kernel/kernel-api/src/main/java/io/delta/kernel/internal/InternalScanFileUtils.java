@@ -84,6 +84,8 @@ public class InternalScanFileUtils {
 
     private static final int ADD_FILE_DV_ORDINAL = ADD_FILE_SCHEMA.indexOf("deletionVector");
 
+    private static final int ADD_FILE_DEFAULT_ROW_COMMIT_VERSION_ORDINAL =
+            ADD_FILE_SCHEMA.indexOf("defaultRowCommitVersion");
     private static final int TABLE_ROOT_ORDINAL = SCAN_FILE_SCHEMA.indexOf(TABLE_ROOT_COL_NAME);
 
     public static final int ADD_FILE_STATS_ORDINAL = AddFile.SCHEMA_WITH_STATS.indexOf("stats");
@@ -175,5 +177,13 @@ public class InternalScanFileUtils {
     public static DeletionVectorDescriptor getDeletionVectorDescriptorFromRow(Row scanFile) {
         Row addFile = getAddFileEntry(scanFile);
         return DeletionVectorDescriptor.fromRow(addFile.getStruct(ADD_FILE_DV_ORDINAL));
+    }
+
+    public static long getDefaultRowCommitVersion(Row scanFile) {
+        Row addFile = getAddFileEntry(scanFile);
+        if (addFile.isNullAt(ADD_FILE_DEFAULT_ROW_COMMIT_VERSION_ORDINAL)) {
+            return -1;
+        }
+        return addFile.getLong(ADD_FILE_DEFAULT_ROW_COMMIT_VERSION_ORDINAL);
     }
 }

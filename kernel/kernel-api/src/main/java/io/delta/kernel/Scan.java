@@ -22,7 +22,11 @@ import java.util.Optional;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
+import io.delta.kernel.expressions.Cast;
+import io.delta.kernel.expressions.Column;
+import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -105,6 +109,16 @@ public interface Scan {
      * @return Scan state in {@link Row} format.
      */
     Row getScanState(TableClient tableClient);
+
+    /**
+     * Get the physical data read schema to pass to the parquet handler to read the given data file.
+     *
+     * @param tableClient instance of {@link TableClient} to use.
+     * @param scanState   Scan state {@link Row}
+     * @param scanFile   Scan file {@link Row}
+     * @return Physical schema to read from the data files.
+     */
+    StructType getPhysicalDataReadSchema(TableClient tableClient, Row scanState, Row scanFile);
 
     /**
      * Transform the physical data read from the table data file into the logical data that expected
@@ -217,6 +231,30 @@ public interface Scan {
                             "Column mapping mode is not yet supported: " + columnMappingMode);
                 }
 
+                // Type widening: add casts whenever the type of column read in the parquet file
+                // doesn't match the expected type from the table schema.
+                for (int colIdx = 0; colIdx < logicalReadSchema.length(); colIdx++) {
+                    StructField field = logicalReadSchema.at(colIdx);
+                    DataType parquetType =
+                            nextDataBatch.getSchema().get(field.getName()).getDataType();
+
+                    if (!parquetType.equals(field.getDataType())) {
+                        Cast cast =  new Cast(new Column(field.getName()), field.getDataType());
+
+                        // If creating the evaluators is expensive, we could consider caching and
+                        // reuse the same evaluator when the same cast in needed.
+                        ExpressionEvaluator evaluator =
+                            tableClient.getExpressionHandler().getEvaluator(
+                                nextDataBatch.getSchema(),
+                                cast,
+                                field.getDataType()
+                        );
+
+                        ColumnVector converted = evaluator.eval(nextDataBatch);
+                        nextDataBatch = nextDataBatch.withDeletedColumnAt(colIdx);
+                        nextDataBatch = nextDataBatch.withNewColumn(colIdx, field, converted);
+                    }
+                }
                 return new FilteredColumnarBatch(nextDataBatch, selectionVector);
             }
         };

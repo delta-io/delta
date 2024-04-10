@@ -337,7 +337,8 @@ object TableFeature {
       DeletionVectorsTableFeature,
       VacuumProtocolCheckTableFeature,
       V2CheckpointTableFeature,
-      RowTrackingFeature)
+      RowTrackingFeature,
+      TypeWideningTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
@@ -356,8 +357,7 @@ object TableFeature {
         TestWriterFeatureWithTransitiveDependency,
         // managed-commits are under development and only available in testing.
         ManagedCommitTableFeature,
-        InCommitTimestampTableFeature,
-        TypeWideningTableFeature)
+        InCommitTimestampTableFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")

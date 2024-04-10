@@ -50,5 +50,21 @@ public abstract class DataType {
 
     @Override
     public abstract String toString();
+
+    // TODO: Implement proper parsing.
+    public static DataType fromSQL(String json) {
+        switch (json.toLowerCase()) {
+            case "byte":
+                return ByteType.BYTE;
+            case "short":
+                return ShortType.SHORT;
+            case "integer":
+                return IntegerType.INTEGER;
+            case "long":
+                return LongType.LONG;
+            default:
+                throw new IllegalArgumentException("Unsupported data type: " + json.toLowerCase());
+        }
+    }
 }
 

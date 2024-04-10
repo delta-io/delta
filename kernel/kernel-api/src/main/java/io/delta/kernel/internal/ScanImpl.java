@@ -17,6 +17,7 @@ package io.delta.kernel.internal;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.stream.Collectors;
 import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.toMap;
 
@@ -24,8 +25,7 @@ import io.delta.kernel.Scan;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.*;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 
 import io.delta.kernel.internal.actions.Metadata;
@@ -116,6 +116,20 @@ public class ScanImpl implements Scan {
             snapshotSchema,
             ColumnMapping.getColumnMappingMode(metadata.getConfiguration()));
 
+        return ScanStateRow.of(
+            metadata,
+            protocol,
+            readSchema.toJson(),
+            physicalReadSchema.toJson(),
+            dataPath.toUri().toString());
+    }
+
+    @Override
+    public StructType getPhysicalDataReadSchema(
+            TableClient tableClient, Row scanState, Row scanFile) {
+        // Physical equivalent of the logical read schema.
+        StructType physicalReadSchema = ScanStateRow.getPhysicalSchema(tableClient, scanState);
+
         // Compute the physical data read schema, basically the list of columns to read
         // from a Parquet data file. It should exclude partition columns and include
         // row_index metadata columns (in case DVs are present)
@@ -132,13 +146,57 @@ public class ScanImpl implements Scan {
                 .add(StructField.METADATA_ROW_INDEX_COLUMN);
         }
 
-        return ScanStateRow.of(
-            metadata,
-            protocol,
-            readSchema.toJson(),
-            physicalReadSchema.toJson(),
-            physicalDataReadSchema.toJson(),
-            dataPath.toUri().toString());
+        if (protocol.getReaderFeatures().contains("typeWidening-dev")) {
+            // Use the history of type changes recorded in the table schema to adjust the types in
+            // read schema to match the types used to write the parquet file at table version
+            // `defaultRowCommitVersion`.
+            // This somewhat error-prone: the type change metadata must be accurate and we must
+            // correctly infer the schema used to write the files from that information.
+            //
+            // Instead, we can also just read the schema from the parquet footer. Easier but slower.
+            physicalDataReadSchema = getSchemaAtVersion(
+                physicalDataReadSchema,
+                InternalScanFileUtils.getDefaultRowCommitVersion(scanFile));
+        }
+
+        return physicalDataReadSchema;
+    }
+
+    /**
+     * Adjust the given read schema to take into account type changes that were applied to the
+     * table in the past. The resulting schema can be used to read files written at the given table
+     * version.
+     */
+    private StructType getSchemaAtVersion(StructType readSchema, long version) {
+        // TODO: Handle nested fields
+        return new StructType(readSchema.fields().stream().map(field -> {
+            FieldMetadata fieldMetadata = metadata.getSchema().get(field.getName()).getMetadata();
+            if (!fieldMetadata.contains("delta.typeChanges")) {
+                // No recorded type change for this field, use it as is.
+                return field;
+            }
+
+            List<FieldMetadata> typeChanges =
+                Arrays.asList((FieldMetadata[]) field.getMetadata().get("delta.typeChanges"));
+            if (typeChanges.isEmpty()) {
+                throw new IllegalStateException(
+                    "Field " + field.getName() + " has type widening metadata with no type " +
+                    "changes. This should never happen.");
+            }
+
+            // Sort type changes for this by version and find the type this field had at the given
+            // table version.
+            typeChanges.sort(Comparator.comparingLong(f -> (long) f.get("tableVersion")));
+            DataType actualType = DataType.fromSQL((String) typeChanges.get(0).get("fromType"));
+
+            for (FieldMetadata typeChange : typeChanges) {
+                if ((long) typeChange.get("tableVersion") <= version) {
+                    actualType = DataType.fromSQL((String) typeChange.get("toType"));
+                }
+            }
+            return new StructField(
+                    field.getName(), actualType, field.isNullable(), field.getMetadata());
+        }).collect(Collectors.toList()));
     }
 
     @Override

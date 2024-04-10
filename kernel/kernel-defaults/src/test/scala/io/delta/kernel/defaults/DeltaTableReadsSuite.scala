@@ -25,14 +25,13 @@ import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.scalatest.funsuite.AnyFunSuite
 import org.apache.spark.sql.functions.col
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-
 import io.delta.kernel.{Table, TableNotFoundException}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
-import io.delta.kernel.types.{LongType, StructType}
+import io.delta.kernel.types._
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
@@ -481,6 +480,47 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     checkTable(
       path = goldenTablePath("data-reader-primitives"),
       expectedAnswer = expectedAnswer
+    )
+  }
+
+  test("type widening") {
+    def typeWideningMetadata(version: Long, fromType: DataType, toType: DataType): FieldMetadata = {
+      val typeChangeMetadata = new FieldMetadata.Builder()
+        .putLong("tableVersion", version)
+        .putString("fromType", fromType.toString)
+        .putString("toType", toType.toString)
+        .build()
+      new FieldMetadata.Builder()
+        .putFieldMetadataArray("delta.typeChanges", Array(typeChangeMetadata))
+        .build()
+    }
+
+
+    checkTable(
+      path = goldenTablePath("type-widening"),
+      expectedSchema = new StructType()
+        .add("col1", ShortType.SHORT, true, typeWideningMetadata(2, ByteType.BYTE, ShortType.SHORT))
+        .add("col2", IntegerType.INTEGER, true,
+          typeWideningMetadata(4, ShortType.SHORT, IntegerType.INTEGER)),
+      expectedAnswer = (0 to 2).map { i => TestRow(i.toShort, i) }
+    )
+
+    checkTable(
+      path = goldenTablePath("type-widening"),
+      version = Some(3),
+      expectedSchema = new StructType()
+        .add("col1", ShortType.SHORT, true, typeWideningMetadata(2, ByteType.BYTE, ShortType.SHORT))
+        .add("col2", ShortType.SHORT),
+      expectedAnswer = (0 to 1).map { i => TestRow(i.toShort, i.toShort) }
+    )
+
+    checkTable(
+      path = goldenTablePath("type-widening"),
+      version = Some(1),
+      expectedSchema = new StructType()
+        .add("col1", ByteType.BYTE)
+        .add("col2", ShortType.SHORT),
+      expectedAnswer = TestRow(0.toByte, 0.toShort) :: Nil
     )
   }
 

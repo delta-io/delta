@@ -45,7 +45,7 @@ abstract class ExpressionVisitor<R> {
 
     abstract R visitColumn(Column column);
 
-    abstract R visitCast(ImplicitCastExpression cast);
+    abstract R visitCast(Cast cast);
 
     abstract R visitPartitionValue(PartitionValueExpression partitionValue);
 
@@ -62,14 +62,14 @@ abstract class ExpressionVisitor<R> {
     final R visit(Expression expression) {
         if (expression instanceof PartitionValueExpression) {
             return visitPartitionValue((PartitionValueExpression) expression);
+        } else if (expression instanceof Cast) {
+            return visitCast((Cast) expression);
         } else if (expression instanceof ScalarExpression) {
             return visitScalarExpression((ScalarExpression) expression);
         } else if (expression instanceof Literal) {
             return visitLiteral((Literal) expression);
         } else if (expression instanceof Column) {
             return visitColumn((Column) expression);
-        } else if (expression instanceof ImplicitCastExpression) {
-            return visitCast((ImplicitCastExpression) expression);
         }
 
         throw new UnsupportedOperationException(

@@ -191,10 +191,12 @@ trait TestUtils extends Assertions with SQLHelper {
     val scanState = scan.getScanState(tableClient);
     val fileIter = scan.getScanFiles(tableClient)
 
-    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState)
     fileIter.forEach { fileColumnarBatch =>
       fileColumnarBatch.getRows().forEach { scanFileRow =>
         val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
+        val physicalDataReadSchema =
+          scan.getPhysicalDataReadSchema(tableClient, scanState, scanFileRow)
+
         val physicalDataIter = tableClient.getParquetHandler().readParquetFiles(
           singletonCloseableIterator(fileStatus),
           physicalDataReadSchema,

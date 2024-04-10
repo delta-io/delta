@@ -21,6 +21,7 @@ import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.expressions.Cast;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.ScalarExpression;
 import io.delta.kernel.types.DataType;
@@ -55,7 +56,7 @@ class ElementAtEvaluator {
 
         if (!keyTypeFromMapInput.equivalent(lookupKeyType)) {
             if (canCastTo(lookupKeyType, keyTypeFromMapInput)) {
-                lookupKey = new ImplicitCastExpression(lookupKey, keyTypeFromMapInput);
+                lookupKey = new Cast(lookupKey, keyTypeFromMapInput);
             } else {
                 String reason = format(
                         "lookup key type (%s) is different from the map key type (%s)",

@@ -183,6 +183,14 @@ public class IntegrationTestSuite {
                     asList(new Column("as_int"), Literal.ofInt(1))
                 )),
             0 /* expected row count */);
+
+        // Type widening: table with multiple type changes.
+        runAndVerifyRowCount(
+            "type_widening",
+            "type-widening",
+            Optional.empty(), /* read schema - read all columns */
+            Optional.empty(), /* predicate */
+            3 /* expected row count */);
     }
 
     private void runAndVerifyRowCount(

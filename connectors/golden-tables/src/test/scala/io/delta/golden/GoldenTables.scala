@@ -1542,6 +1542,45 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       Row(0, 0) :: Nil,
       schema)
   }
+
+  generateGoldenTable("type-widening") { tablePath =>
+    writeDataWithSchema(
+      tablePath,
+      Row(0.toByte, 0.toShort) :: Nil,
+      new StructType()
+      .add("col1", ByteType)
+      .add("col2", ShortType)
+    )
+    sql(
+      s"""
+        |ALTER TABLE delta.`$tablePath`
+        |SET TBLPROPERTIES('delta.enableTypeWidening' = 'true')
+        |""".stripMargin)
+    sql(
+      s"""
+        |ALTER TABLE delta.`$tablePath`
+        |CHANGE COLUMN col1 TYPE SMALLINT
+        |""".stripMargin)
+    writeDataWithSchema(
+      tablePath,
+      Row(1.toShort, 1.toShort) :: Nil,
+      new StructType()
+      .add("col1", ShortType)
+      .add("col2", ShortType))
+
+    sql(
+      s"""
+        |ALTER TABLE delta.`$tablePath`
+        |CHANGE COLUMN col2 TYPE INT
+        |""".stripMargin)
+
+    writeDataWithSchema(
+      tablePath,
+      Row(2.toShort, 2) :: Nil,
+      new StructType()
+      .add("col1", ShortType)
+      .add("col2", IntegerType))
+  }
 }
 
 case class TestStruct(f1: String, f2: Long)

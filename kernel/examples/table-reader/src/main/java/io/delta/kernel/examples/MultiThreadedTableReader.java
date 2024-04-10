@@ -236,7 +236,7 @@ public class MultiThreadedTableReader
                     FileStatus fileStatus =
                         InternalScanFileUtils.getAddFileStatus(scanFile);
                     StructType physicalReadSchema =
-                        ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState);
+                        scan.getPhysicalDataReadSchema(tableClient, scanState, scanFile);
 
                     CloseableIterator<ColumnarBatch> physicalDataIter =
                         tableClient.getParquetHandler().readParquetFiles(

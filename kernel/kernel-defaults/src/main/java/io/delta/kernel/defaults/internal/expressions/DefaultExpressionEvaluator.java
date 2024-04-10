@@ -178,8 +178,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         }
 
         @Override
-        ExpressionTransformResult visitCast(ImplicitCastExpression cast) {
-            throw new UnsupportedOperationException("CAST expression is not expected.");
+        ExpressionTransformResult visitCast(Cast cast) {
+            Cast processed = new Cast(visit(cast.getInput()).expression, cast.getOutputType());
+            return new ExpressionTransformResult(processed, cast.getOutputType());
         }
 
         @Override
@@ -298,9 +299,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             Expression right = rightResult.expression;
             if (!leftResult.outputType.equivalent(rightResult.outputType)) {
                 if (canCastTo(leftResult.outputType, rightResult.outputType)) {
-                    left = new ImplicitCastExpression(left, rightResult.outputType);
+                    left = new Cast(left, rightResult.outputType);
                 } else if (canCastTo(rightResult.outputType, leftResult.outputType)) {
-                    right = new ImplicitCastExpression(right, leftResult.outputType);
+                    right = new Cast(right, leftResult.outputType);
                 } else {
                     String msg = format("operands are of different types which are not " +
                             "comparable: left type=%s, right type=%s",
@@ -491,9 +492,10 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         }
 
         @Override
-        ColumnVector visitCast(ImplicitCastExpression cast) {
+        ColumnVector visitCast(Cast cast) {
             ColumnVector inputResult = visit(cast.getInput());
-            return cast.eval(inputResult);
+            return new ImplicitCastExpression(cast.getInput(), cast.getOutputType())
+                .eval(inputResult);
         }
 
         @Override

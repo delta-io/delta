@@ -45,7 +45,7 @@ import io.delta.kernel.defaults.client.DefaultExpressionHandler;
  * the same type, but the evaluator expects same type inputs. There could be more use cases, but
  * for now this is the only use case.
  */
-final class ImplicitCastExpression implements Expression {
+final class ImplicitCastExpression {
     private final Expression input;
     private final DataType outputType;
 
@@ -61,15 +61,6 @@ final class ImplicitCastExpression implements Expression {
 
     public Expression getInput() {
         return input;
-    }
-
-    public DataType getOutputType() {
-        return outputType;
-    }
-
-    @Override
-    public List<Expression> getChildren() {
-        return Collections.singletonList(input);
     }
 
     /**
