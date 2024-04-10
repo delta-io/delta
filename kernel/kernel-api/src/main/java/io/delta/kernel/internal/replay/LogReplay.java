@@ -24,6 +24,7 @@ import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -151,12 +152,14 @@ public class LogReplay {
      * </ol>
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
-            boolean shouldReadStats) {
+            boolean shouldReadStats,
+            Optional<Predicate> checkpointPredicate) {
         final CloseableIterator<ActionWrapper> addRemoveIter =
-            new ActionsIterator(
-                tableClient,
-                logSegment.allLogFilesReversed(),
-                getAddRemoveReadSchema(shouldReadStats));
+                new ActionsIterator(
+                        tableClient,
+                        logSegment.allLogFilesReversed(),
+                        getAddRemoveReadSchema(shouldReadStats),
+                        checkpointPredicate);
         return new ActiveAddFilesIterator(tableClient, addRemoveIter, dataPath);
     }
 
@@ -188,10 +191,11 @@ public class LogReplay {
         Metadata metadata = null;
 
         try (CloseableIterator<ActionWrapper> reverseIter =
-                 new ActionsIterator(
-                     tableClient,
-                     logSegment.allLogFilesReversed(),
-                     PROTOCOL_METADATA_READ_SCHEMA)) {
+                     new ActionsIterator(
+                             tableClient,
+                             logSegment.allLogFilesReversed(),
+                             PROTOCOL_METADATA_READ_SCHEMA,
+                             Optional.empty())) {
             while (reverseIter.hasNext()) {
                 final ActionWrapper nextElem = reverseIter.next();
                 final long version = nextElem.getVersion();
@@ -271,10 +275,11 @@ public class LogReplay {
 
     private Optional<Long> loadLatestTransactionVersion(String applicationId) {
         try (CloseableIterator<ActionWrapper> reverseIter =
-                 new ActionsIterator(
-                     tableClient,
-                     logSegment.allLogFilesReversed(),
-                     SET_TRANSACTION_READ_SCHEMA)) {
+                     new ActionsIterator(
+                             tableClient,
+                             logSegment.allLogFilesReversed(),
+                             SET_TRANSACTION_READ_SCHEMA,
+                             Optional.empty())) {
             while (reverseIter.hasNext()) {
                 final ColumnarBatch columnarBatch =
                     reverseIter.next().getColumnarBatch();
