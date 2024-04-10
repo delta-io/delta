@@ -1069,6 +1069,15 @@ trait DeltaErrorsSuiteBase
       ))
     }
     {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.unsupportedTypeChangeInSchema(Seq("s", "a"), IntegerType, StringType)
+      }
+      checkErrorMessage(e, Some("DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA"), Some("0AKDC"),
+        Some("Unable to operate on this table because an unsupported type change was applied. " +
+          "Field s.a was changed from INT to STRING."
+      ))
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         val classConf = Seq(("classKey", "classVal"))
         val schemeConf = Seq(("schemeKey", "schemeVal"))

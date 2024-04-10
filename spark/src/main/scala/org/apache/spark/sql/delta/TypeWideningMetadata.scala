@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
@@ -224,6 +225,27 @@ private[delta] object TypeWideningMetadata {
       case s: StructType => s.exists(_.metadata.contains(TYPE_CHANGES_METADATA_KEY))
       case _ => false
     }
+
+  /**
+   * Return all type changes recorded in the table schema.
+   * @return A list of tuples (field path, type change).
+   */
+  def getAllTypeChanges(schema: StructType): Seq[(Seq[String], TypeChange)] = {
+    if (!containsTypeWideningMetadata(schema)) return Seq.empty
+
+    val allStructFields = SchemaUtils.filterRecursively(schema, checkComplexTypes = true) {
+      _ => true
+    }
+
+    def getTypeChanges(field: StructField): Seq[TypeChange] =
+      fromField(field)
+        .map(_.typeChanges)
+        .getOrElse(Seq.empty)
+
+    allStructFields.flatMap { case (fieldPath, field) =>
+      getTypeChanges(field).map((fieldPath :+ field.name, _))
+    }
+  }
 
   /** Return the version of the latest type change recorded in the schema metadata */
   def getLatestTypeChangeVersion(schema: StructType): Option[Long] = {
