@@ -22,6 +22,7 @@ import java.util.*;
 
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -44,6 +45,8 @@ import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
  */
 class ActionsIterator implements CloseableIterator<ActionWrapper> {
     private final TableClient tableClient;
+
+    private final Optional<Predicate> checkpointPredicate;
 
     /**
      * Linked list of iterator files (commit files and/or checkpoint files)
@@ -69,8 +72,10 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
     ActionsIterator(
             TableClient tableClient,
             List<FileStatus> files,
-            StructType readSchema) {
+            StructType readSchema,
+            Optional<Predicate> checkpointPredicate) {
         this.tableClient = tableClient;
+        this.checkpointPredicate = checkpointPredicate;
         this.filesList = new LinkedList<>();
         this.filesList.addAll(files);
         this.readSchema = readSchema;
@@ -191,7 +196,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     tableClient.getParquetHandler().readParquetFiles(
                         checkpointFilesIter,
                         readSchema,
-                        Optional.empty());
+                        checkpointPredicate);
 
                 return combine(dataIter, true /* isFromCheckpoint */, fileVersion);
             } else {

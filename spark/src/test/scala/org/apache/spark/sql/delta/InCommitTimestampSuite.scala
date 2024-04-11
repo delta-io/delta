@@ -152,10 +152,10 @@ class InCommitTimestampSuite
       deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
       // Remove CommitInfo from the commit.
       val actions = deltaLog.store.readAsIterator(
-        FileNames.deltaFile(deltaLog.logPath, 1), deltaLog.newDeltaHadoopConf())
+        FileNames.unsafeDeltaFile(deltaLog.logPath, 1), deltaLog.newDeltaHadoopConf())
       val actionsWithoutCommitInfo = actions.filterNot(Action.fromJson(_).isInstanceOf[CommitInfo])
       deltaLog.store.write(
-        FileNames.deltaFile(deltaLog.logPath, 1),
+        FileNames.unsafeDeltaFile(deltaLog.logPath, 1),
         actionsWithoutCommitInfo,
         overwrite = true,
         deltaLog.newDeltaHadoopConf())
@@ -183,7 +183,7 @@ class InCommitTimestampSuite
       deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
       // Remove CommitInfo.commitTimestamp from the commit.
       val actions = deltaLog.store.readAsIterator(
-        FileNames.deltaFile(deltaLog.logPath, 1),
+        FileNames.unsafeDeltaFile(deltaLog.logPath, 1),
         deltaLog.newDeltaHadoopConf()).toList
       val actionsWithoutCommitInfoCommitTimestamp =
         actions.map(Action.fromJson).map {
@@ -193,7 +193,7 @@ class InCommitTimestampSuite
             other.json
         }.toIterator
       deltaLog.store.write(
-        FileNames.deltaFile(deltaLog.logPath, 1),
+        FileNames.unsafeDeltaFile(deltaLog.logPath, 1),
         actionsWithoutCommitInfoCommitTimestamp,
         overwrite = true,
         deltaLog.newDeltaHadoopConf())
@@ -420,10 +420,10 @@ class InCommitTimestampSuite
       deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
       // Remove CommitInfo from the commit.
       val actions = deltaLog.store.readAsIterator(
-        FileNames.deltaFile(deltaLog.logPath, 1), deltaLog.newDeltaHadoopConf())
+        FileNames.unsafeDeltaFile(deltaLog.logPath, 1), deltaLog.newDeltaHadoopConf())
       val actionsWithoutCommitInfo = actions.filterNot(Action.fromJson(_).isInstanceOf[CommitInfo])
       deltaLog.store.write(
-        FileNames.deltaFile(deltaLog.logPath, 1),
+        FileNames.unsafeDeltaFile(deltaLog.logPath, 1),
         actionsWithoutCommitInfo,
         overwrite = true,
         deltaLog.newDeltaHadoopConf())
@@ -603,7 +603,7 @@ class InCommitTimestampSuite
         val searchTimestamp = getInCommitTimestamp(deltaLog, enablementCommit.version + 1)
         // Delete the first two ICT commits before performing the search.
         (enablementCommit.version to enablementCommit.version + 1).foreach { version =>
-          fs.delete(FileNames.deltaFile(deltaLog.logPath, version), false)
+          fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, version), false)
         }
         val e = intercept[DeltaErrors.TimestampEarlierThanCommitRetentionException] {
           deltaLog.history.getActiveCommitAtTime(
@@ -615,7 +615,7 @@ class InCommitTimestampSuite
         // Search for a non-ICT commit when all the non-ICT commits are missing.
         // Delete all the non-ICT commits.
         (0L until numNonICTCommits).foreach { version =>
-          fs.delete(FileNames.deltaFile(deltaLog.logPath, version), false)
+          fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, version), false)
         }
         intercept[DeltaErrors.TimestampEarlierThanCommitRetentionException] {
           deltaLog.history.getActiveCommitAtTime(
@@ -667,7 +667,7 @@ class InCommitTimestampSuite
         history.reverse.zipWithIndex.foreach { case (hist, version) =>
           assert(hist.getVersion == version)
           val expectedTimestamp = if (version < ictEnablementVersion) {
-            fs.getFileStatus(FileNames.deltaFile(deltaLog.logPath, version))
+            fs.getFileStatus(FileNames.unsafeDeltaFile(deltaLog.logPath, version))
               .getModificationTime
           } else {
             getInCommitTimestamp(deltaLog, version)
@@ -680,8 +680,9 @@ class InCommitTimestampSuite
         assert(nonICTHistory.length == ictEnablementVersion)
         nonICTHistory.reverse.zipWithIndex.foreach { case (hist, version) =>
           assert(hist.getVersion == version)
-          val expectedTimestamp = fs.getFileStatus(FileNames.deltaFile(deltaLog.logPath, version))
-            .getModificationTime
+          val expectedTimestamp =
+            fs.getFileStatus(FileNames.unsafeDeltaFile(deltaLog.logPath, version))
+              .getModificationTime
           assert(hist.timestamp.getTime == expectedTimestamp)
         }
         // Try fetching only the ICT commits.
@@ -703,7 +704,8 @@ class InCommitTimestampSuite
           .foreach { case (hist, version) =>
             assert(hist.getVersion == version)
             val expectedTimestamp = if (version < ictEnablementVersion) {
-                fs.getFileStatus(FileNames.deltaFile(deltaLog.logPath, version)).getModificationTime
+                fs.getFileStatus(FileNames.unsafeDeltaFile(deltaLog.logPath, version))
+                  .getModificationTime
               } else {
                 getInCommitTimestamp(deltaLog, version)
               }
@@ -802,8 +804,8 @@ class InCommitTimestampSuite
 
       // Delete the last few commits in the window.
       val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
-      fs.delete(FileNames.deltaFile(deltaLog.logPath, 5), false)
-      fs.delete(FileNames.deltaFile(deltaLog.logPath, 6), false)
+      fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, 5), false)
+      fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, 6), false)
       // Search for the commit just before the deleted commits.
       commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
           getICTCommit(4).timestamp,
@@ -836,7 +838,7 @@ class InCommitTimestampSuite
       // Window -> [0, 11)
       // numChunks = 5, chunkSize = (11-0)/5 = 2
       // chunks -> [0, 2), [2, 4), [4, 6), [6, 8), [8, 10), [10, 11)
-      fs.delete(FileNames.deltaFile(deltaLog.logPath, 4), false)
+      fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, 4), false)
       // 4, 5, 6 have been deleted, so window [4, 6) is completely empty.
 
       // Search for the commit 6.
@@ -867,8 +869,8 @@ class InCommitTimestampSuite
       assert(commit == getICTCommit(7))
 
       // Scenario with many empty chunks.
-      fs.delete(FileNames.deltaFile(deltaLog.logPath, 8), false)
-      fs.delete(FileNames.deltaFile(deltaLog.logPath, 9), false)
+      fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, 8), false)
+      fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, 9), false)
 
       // Window -> [0, 11)
       // numChunks = 11, chunkSize = (11-0)/11 = 1
@@ -902,7 +904,7 @@ class InCommitTimestampSuite
           deltaCommitFileProvider).get
       assert(commit == getICTCommit(10))
 
-      fs.delete(FileNames.deltaFile(deltaLog.logPath, 10), false)
+      fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, 10), false)
       // Everything after and including `end` does not exist.
       commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
         getICTCommit(7).timestamp,

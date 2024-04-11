@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.shims.IncrementalExecutionShim
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder}
@@ -153,6 +154,12 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       }
     }
     selectExprs = selectExprs ++ cdcSelectExprs
+
+    val rowIdExprs = data.queryExecution.analyzed.output
+      .filter(RowId.RowIdMetadataAttribute.isRowIdColumn)
+      .map(new Column(_))
+    selectExprs = selectExprs ++ rowIdExprs
+
     val newData = queryExecution match {
       case incrementalExecution: IncrementalExecution =>
         selectFromStreamingDataFrame(incrementalExecution, data, selectExprs: _*)
@@ -210,18 +217,10 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       df: DataFrame,
       cols: Column*): DataFrame = {
     val newMicroBatch = df.select(cols: _*)
-    val newIncrementalExecution = new IncrementalExecution(
+    val newIncrementalExecution = IncrementalExecutionShim.newInstance(
       newMicroBatch.sparkSession,
       newMicroBatch.queryExecution.logical,
-      incrementalExecution.outputMode,
-      incrementalExecution.checkpointLocation,
-      incrementalExecution.queryId,
-      incrementalExecution.runId,
-      incrementalExecution.currentBatchId,
-      incrementalExecution.prevOffsetSeqMetadata,
-      incrementalExecution.offsetSeqMetadata,
-      incrementalExecution.watermarkPropagator
-    )
+      incrementalExecution)
     newIncrementalExecution.executedPlan // Force the lazy generation of execution plan
 
 

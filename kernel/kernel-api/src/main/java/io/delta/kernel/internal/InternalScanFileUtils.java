@@ -176,4 +176,14 @@ public class InternalScanFileUtils {
         Row addFile = getAddFileEntry(scanFile);
         return DeletionVectorDescriptor.fromRow(addFile.getStruct(ADD_FILE_DV_ORDINAL));
     }
+
+    /**
+     * Get a references column for given partition column name in partitionValues_parsed column in
+     * scan file row.
+     * @param partitionColName Partition column name
+     * @return {@link Column} reference
+     */
+    public static Column getPartitionValuesParsedRefInAddFile(String partitionColName) {
+        return new Column(new String[]{"add", "partitionValues_parsed", partitionColName});
+    }
 }

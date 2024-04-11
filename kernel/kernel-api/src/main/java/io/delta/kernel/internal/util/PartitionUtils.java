@@ -134,6 +134,52 @@ public class PartitionUtils {
     }
 
     /**
+     * Rewrite the given predicate on partition columns on `partitionValues_parsed` in checkpoint
+     * schema. The rewritten predicate can be pushed to the Parquet reader when reading the
+     * checkpoint files.
+     *
+     * @param predicate               Predicate on partition columns.
+     * @param partitionColNameToField Map of partition column name (in lower case) to its
+     *                                {@link StructField}.
+     * @return Rewritten {@link Predicate} on `partitionValues_parsed` in `add`.
+     */
+    public static Predicate rewritePartitionPredicateOnCheckpointFileSchema(
+            Predicate predicate,
+            Map<String, StructField> partitionColNameToField) {
+        return new Predicate(
+                predicate.getName(),
+                predicate.getChildren().stream()
+                        .map(child ->
+                                rewriteColRefOnPartitionValuesParsed(
+                                        child, partitionColNameToField))
+                        .collect(Collectors.toList()));
+    }
+
+    private static Expression rewriteColRefOnPartitionValuesParsed(
+            Expression expression,
+            Map<String, StructField> partitionColMetadata) {
+        if (expression instanceof Column) {
+            Column column = (Column) expression;
+            String partColName = column.getNames()[0];
+            StructField partColField =
+                    partitionColMetadata.get(partColName.toLowerCase(Locale.ROOT));
+            if (partColField == null) {
+                throw new IllegalArgumentException(partColName + " is not present in metadata");
+            }
+
+            String partColPhysicalName = ColumnMapping.getPhysicalName(partColField);
+
+            return InternalScanFileUtils.getPartitionValuesParsedRefInAddFile(partColPhysicalName);
+        } else if (expression instanceof Predicate) {
+            return rewritePartitionPredicateOnCheckpointFileSchema(
+                    (Predicate) expression,
+                    partitionColMetadata);
+        }
+
+        return expression;
+    }
+
+    /**
      * Utility method to rewrite the partition predicate referring to the table schema as predicate
      * referring to the {@code partitionValues} in scan files read from Delta log. The scan file
      * batch is returned by the {@link io.delta.kernel.Scan#getScanFiles(TableClient)}.

@@ -1348,7 +1348,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         UpdatedActions(commitInfo, newMetadata, newProtocolOpt))
       // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
-      acStatsCollector.finalizeStats(deltaLog.tableId)
+      // If the metadata didn't change, `newMetadata` is empty, and we can re-use the old id.
+      acStatsCollector.finalizeStats(newMetadata.map(_.id).getOrElse(this.snapshot.metadata.id))
       spark.sessionState.conf.setConf(
         DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
         Some(attemptVersion))
@@ -1917,7 +1918,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         commitVersion: Long,
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
-      val commitFile = util.FileNames.deltaFile(logPath, commitVersion)
+      val commitFile = util.FileNames.unsafeDeltaFile(logPath, commitVersion)
       val commitFileStatus =
         doCommit(logStore, hadoopConf, logPath, commitFile, commitVersion, actions)
       // TODO(managed-commits): Integrate with ICT and pass the correct commitTimestamp
@@ -1985,7 +1986,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val commitTimestamp = commitResponse.commit.fileStatus.getModificationTime
     val commitFile = commitResponse.commit.copy(commitTimestamp = commitTimestamp)
     if (attemptVersion == 0L) {
-      val expectedPathForCommitZero = deltaFile(deltaLog.logPath, version = 0L).toUri
+      val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri
       val actualCommitPath = commitResponse.commit.fileStatus.getPath.toUri
       if (actualCommitPath != expectedPathForCommitZero) {
         throw new IllegalStateException("Expected 0th commit to be written to " +
