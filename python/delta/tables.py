@@ -1284,7 +1284,7 @@ class DeltaTableBuilder(object):
             cast(Iterable[Union[Column, str]], cols)
         ))
         return self
-    
+
     @overload
     def clusteredBy(
         self, *cols: str

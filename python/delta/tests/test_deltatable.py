@@ -697,7 +697,7 @@ class DeltaTableTestsMixin:
                                        [StringType(), LongType(), IntegerType()],
                                        nullables={"key", "value", "value2"},
                                        partitioningColumns=["value", "value2"])
-            
+
         with self.table("test3"):
             # verify creating table with list of structFields
             deltaTable2 = DeltaTable.create(self.spark).tableName("test3").addColumns(
