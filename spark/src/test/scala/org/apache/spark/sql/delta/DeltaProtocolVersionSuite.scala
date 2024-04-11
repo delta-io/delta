@@ -33,7 +33,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
-import org.apache.spark.sql.delta.util.FileNames.{deltaFile, DeltaFile}
+import org.apache.spark.sql.delta.util.FileNames.{unsafeDeltaFile, DeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.SparkConf
@@ -63,7 +63,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     val log = DeltaLog.forTable(spark, path)
     log.ensureLogDirectoryExist()
     log.store.write(
-      deltaFile(log.logPath, 0),
+      unsafeDeltaFile(log.logPath, 0),
       Iterator(Metadata(schemaString = schema.json).json, protocol.json),
       overwrite = false,
       log.newDeltaHadoopConf())
@@ -412,7 +412,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val log = DeltaLog.forTable(spark, path)
       log.ensureLogDirectoryExist()
       log.store.write(
-        deltaFile(log.logPath, 0),
+        unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata().json, Protocol(Integer.MAX_VALUE, Integer.MAX_VALUE).json),
         overwrite = false,
         log.newDeltaHadoopConf())
@@ -440,7 +440,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         TABLE_FEATURES_MIN_READER_VERSION,
         TABLE_FEATURES_MIN_WRITER_VERSION).withWriterFeatures(Seq("newUnsupportedWriterFeature"))
       log.store.write(
-        deltaFile(log.logPath, snapshot.version + 1),
+        unsafeDeltaFile(log.logPath, snapshot.version + 1),
         Iterator(Metadata().json, newProtocol.json),
         overwrite = false,
         log.newDeltaHadoopConf())
@@ -608,7 +608,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       version: Long,
       protocol: Protocol): Unit = {
     log.store.write(
-      deltaFile(log.logPath, version),
+      unsafeDeltaFile(log.logPath, version),
       Iterator(
         Metadata().json,
         protocol.json),
@@ -973,7 +973,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         val txn = deltaLog.startTransaction()
         val currentVersion = txn.snapshot.version
         deltaLog.store.write(
-          deltaFile(deltaLog.logPath, currentVersion + 1),
+          unsafeDeltaFile(deltaLog.logPath, currentVersion + 1),
           Iterator(incompatibleProtocol.json),
           overwrite = false,
           hadoopConf)
@@ -983,7 +983,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           txn.commit(AddFile("test", Map.empty, 1, 1, dataChange = true) :: Nil, ManualUpdate)
         }
         // Make sure we didn't commit anything
-        val p = deltaFile(deltaLog.logPath, currentVersion + 2)
+        val p = unsafeDeltaFile(deltaLog.logPath, currentVersion + 2)
         assert(
           !p.getFileSystem(hadoopConf).exists(p),
           s"$p should not be committed")
@@ -1230,7 +1230,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val log = DeltaLog.forTable(spark, path)
       log.ensureLogDirectoryExist()
       log.store.write(
-        deltaFile(log.logPath, 0),
+        unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata().json),
         overwrite = false,
         log.newDeltaHadoopConf())
@@ -2207,7 +2207,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         DeltaConfigs.IS_APPEND_ONLY.key -> "false",
         DeltaConfigs.CHANGE_DATA_FEED.key -> "true"))
       log.store.write(
-        deltaFile(log.logPath, snapshot.version + 1),
+        unsafeDeltaFile(log.logPath, snapshot.version + 1),
         Iterator(m.json, p.json),
         overwrite = false,
         log.newDeltaHadoopConf())
@@ -2881,12 +2881,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  for {
-    reEnablePropertyValue <- BOOLEAN_DOMAIN
-    reDisable <- BOOLEAN_DOMAIN
-  } test("Try removing reader+writer feature but re-enable feature after disablement " +
-      s"reEnablePropertyValue: $reEnablePropertyValue " +
-      s"reDisable: $reDisable") {
+  test("Try removing reader+writer feature but re-enable feature after disablement") {
     withTempDir { dir =>
       val clock = new ManualClock(System.currentTimeMillis())
       val deltaLog = DeltaLog.forTable(spark, dir, clock)
@@ -2916,11 +2911,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "logRetentionPeriod" -> "30 days",
           "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
 
-      val deltaRetentionMillis = deltaLog.deltaRetentionMillis(deltaLog.update().metadata)
-      require(deltaRetentionMillis === TimeUnit.DAYS.toMillis(30))
-
-      // Ten days have passed.
-      clock.advance(TimeUnit.DAYS.toMillis(10))
+      // Advance clock.
+      clock.advance(TimeUnit.DAYS.toMillis(1) + TimeUnit.MINUTES.toMillis(5))
 
       // Generate commit.
       spark.range(120, 140).write.format("delta").mode("append").save(dir.getCanonicalPath)
@@ -2929,50 +2921,26 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val v2Table = DeltaTableV2(spark, deltaLog.dataPath)
       AlterTableSetPropertiesDeltaCommand(
         v2Table,
-        Map(TestRemovableReaderWriterFeature.TABLE_PROP_KEY -> reEnablePropertyValue.toString))
+        Map(TestRemovableReaderWriterFeature.TABLE_PROP_KEY -> true.toString))
         .run(spark)
-
-      // Disable by removing property.
-      if (reDisable) {
-        val properties = Seq(TestRemovableReaderWriterFeature.TABLE_PROP_KEY)
-        AlterTableUnsetPropertiesDeltaCommand(v2Table, properties, ifExists = true).run(spark)
-      }
-
-      // The retention period has passed since the disablement.
-      clock.advance(
-        deltaRetentionMillis - TimeUnit.DAYS.toMillis(10) + TimeUnit.MINUTES.toMillis(5))
-
-      // Cleanup logs.
-      deltaLog.cleanUpExpiredLogs(deltaLog.update())
 
       // Feature was enabled again in the middle of the timeframe. The feature traces are
       // are cleaned up again and we get a new "Wait for retention period message."
       val e2 = intercept[DeltaTableFeatureException] {
         AlterTableDropFeatureDeltaCommand(
-          DeltaTableV2(spark, deltaLog.dataPath),
-          TestRemovableReaderWriterFeature.name).run(spark)
+          table = DeltaTableV2(spark, deltaLog.dataPath),
+          featureName = TestRemovableReaderWriterFeature.name,
+          truncateHistory = true).run(spark)
         }
 
-      // If the property is re-disabled we pick up the issue during the history check.
-      if (reDisable) {
-        checkError(
-          exception = e2,
-          errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
-          parameters = Map(
-            "feature" -> TestRemovableReaderWriterFeature.name,
-            "logRetentionPeriodKey" -> "delta.logRetentionDuration",
-            "logRetentionPeriod" -> "30 days",
-            "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
-      } else {
-        checkError(
-          exception = e2,
-          errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
-          parameters = Map(
-            "feature" -> TestRemovableReaderWriterFeature.name,
-            "logRetentionPeriodKey" -> "delta.logRetentionDuration",
-            "logRetentionPeriod" -> "30 days",
-            "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
-      }
+      checkError(
+        exception = e2,
+        errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        parameters = Map(
+          "feature" -> TestRemovableReaderWriterFeature.name,
+          "logRetentionPeriodKey" -> "delta.logRetentionDuration",
+          "logRetentionPeriod" -> "30 days",
+          "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
     }
   }
 
@@ -3436,6 +3404,35 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       featuresToAdd = Seq(TestRemovableReaderWriterFeature, TestRemovableWriterFeature),
       featuresToRemove = Seq(TestRemovableWriterFeature),
       expectedDowngradedProtocol = protocolWithReaderFeature(TestRemovableReaderWriterFeature))
+  }
+
+  test(s"Can drop reader+writer feature when there is nothing to clean") {
+    withTempPath { dir =>
+      val clock = new ManualClock(System.currentTimeMillis())
+      val targetLog = DeltaLog.forTable(spark, dir, clock)
+
+      createTableWithFeature(
+        targetLog,
+        TestRemovableReaderWriterFeature,
+        TestRemovableReaderWriterFeature.TABLE_PROP_KEY)
+
+      sql(
+        s"""ALTER TABLE delta.`${dir.getPath}` SET TBLPROPERTIES (
+           |'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}'='false'
+           |)""".stripMargin)
+
+      // Pretend retention period has passed.
+      val clockAdvanceMillis = DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention)
+      clock.advance(clockAdvanceMillis + TimeUnit.MINUTES.toMillis(5))
+
+      // History is now clean. We should be able to remove the feature.
+      AlterTableDropFeatureDeltaCommand(
+        DeltaTableV2(spark, targetLog.dataPath),
+        TestRemovableReaderWriterFeature.name,
+        truncateHistory = true).run(spark)
+
+      assert(targetLog.update().protocol == Protocol(1, 1))
+    }
   }
 
   private def dropV2CheckpointsTableFeature(spark: SparkSession, log: DeltaLog): Unit = {

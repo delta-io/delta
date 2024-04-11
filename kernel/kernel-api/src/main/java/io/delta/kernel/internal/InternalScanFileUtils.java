@@ -185,5 +185,14 @@ public class InternalScanFileUtils {
             return -1;
         }
         return addFile.getLong(ADD_FILE_DEFAULT_ROW_COMMIT_VERSION_ORDINAL);
+
+    /**
+     * Get a references column for given partition column name in partitionValues_parsed column in
+     * scan file row.
+     * @param partitionColName Partition column name
+     * @return {@link Column} reference
+     */
+    public static Column getPartitionValuesParsedRefInAddFile(String partitionColName) {
+        return new Column(new String[]{"add", "partitionValues_parsed", partitionColName});
     }
 }

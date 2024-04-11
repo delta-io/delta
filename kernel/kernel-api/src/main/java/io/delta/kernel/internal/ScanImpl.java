@@ -17,6 +17,7 @@ package io.delta.kernel.internal;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.toMap;
@@ -37,6 +38,7 @@ import io.delta.kernel.internal.skipping.DataSkippingPredicate;
 import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
 import static io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema;
+import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnCheckpointFileSchema;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
 
 /**
@@ -56,6 +58,7 @@ public class ScanImpl implements Scan {
     private final LogReplay logReplay;
     private final Path dataPath;
     private final Optional<Tuple2<Predicate, Predicate>> partitionAndDataFilters;
+    private final Supplier<Map<String, StructField>> partitionColToStructFieldMap;
     private boolean accessedScanFiles;
 
     public ScanImpl(
@@ -73,6 +76,15 @@ public class ScanImpl implements Scan {
         this.logReplay = logReplay;
         this.partitionAndDataFilters = splitFilters(filter);
         this.dataPath = dataPath;
+        this.partitionColToStructFieldMap = () -> {
+            Set<String> partitionColNames = metadata.getPartitionColNames();
+            return metadata.getSchema().fields().stream()
+                    .filter(field -> partitionColNames.contains(
+                            field.getName().toLowerCase(Locale.ROOT)))
+                    .collect(toMap(
+                            field -> field.getName().toLowerCase(Locale.ROOT),
+                            identity()));
+        };
     }
 
     /**
@@ -92,8 +104,15 @@ public class ScanImpl implements Scan {
         boolean shouldReadStats = dataSkippingFilter.isPresent();
 
         // Get active AddFiles via log replay
-        CloseableIterator<FilteredColumnarBatch> scanFileIter = logReplay
-            .getAddFilesAsColumnarBatches(shouldReadStats);
+        // If there is a partition predicate, construct a predicate to prune checkpoint files
+        // while constructing the table state.
+        CloseableIterator<FilteredColumnarBatch> scanFileIter =
+                logReplay.getAddFilesAsColumnarBatches(
+                        shouldReadStats,
+                        getPartitionsFilters().map(predicate ->
+                                rewritePartitionPredicateOnCheckpointFileSchema(
+                                        predicate,
+                                        partitionColToStructFieldMap.get())));
 
         // Apply partition pruning
         scanFileIter = applyPartitionPruning(tableClient, scanFileIter);
@@ -235,18 +254,9 @@ public class ScanImpl implements Scan {
             return scanFileIter;
         }
 
-        Set<String> partitionColNames = metadata.getPartitionColNames();
-        Map<String, StructField> partitionColNameToStructFieldMap =
-            metadata.getSchema().fields().stream()
-                .filter(field ->
-                        partitionColNames.contains(field.getName().toLowerCase(Locale.ROOT)))
-                .collect(toMap(
-                    field -> field.getName().toLowerCase(Locale.ROOT),
-                    identity()));
-
         Predicate predicateOnScanFileBatch = rewritePartitionPredicateOnScanFileSchema(
-            partitionPredicate.get(),
-            partitionColNameToStructFieldMap);
+                partitionPredicate.get(),
+                partitionColToStructFieldMap.get());
 
         return new CloseableIterator<FilteredColumnarBatch>() {
             PredicateEvaluator predicateEvaluator = null;

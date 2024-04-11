@@ -80,7 +80,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
     if (commitVersion == 0 || batchSize <= 1) {
       // Always backfill zeroth commit or when batch size is configured as 1
       backfill(logStore, hadoopConf, logPath, commitVersion, fileStatus)
-      val targetFile = FileNames.deltaFile(logPath, commitVersion)
+      val targetFile = FileNames.unsafeDeltaFile(logPath, commitVersion)
       val targetFileStatus = fs.getFileStatus(targetFile)
       val newCommit = commitResponse.commit.copy(fileStatus = targetFileStatus)
       commitResponse = commitResponse.copy(commit = newCommit)
@@ -127,7 +127,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
       logPath: Path,
       version: Long,
       fileStatus: FileStatus): Unit = {
-    val targetFile = FileNames.deltaFile(logPath, version)
+    val targetFile = FileNames.unsafeDeltaFile(logPath, version)
     logInfo(s"Backfilling commit ${fileStatus.getPath} to ${targetFile.toString}")
     val commitContentIterator = logStore.readAsIterator(fileStatus, hadoopConf)
     try {

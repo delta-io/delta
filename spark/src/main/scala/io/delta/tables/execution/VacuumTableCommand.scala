@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, 
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.commands.VacuumCommand.getDeltaTable
+import org.apache.spark.sql.delta.shims.UnresolvedTableImplicits._
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.types.StringType
 
@@ -76,8 +77,7 @@ object VacuumTableCommand {
       horizonHours: Option[Double],
       dryRun: Boolean): VacuumTableCommand = {
     val child = UnresolvedDeltaPathOrIdentifier(path, table, "VACUUM")
-    val unresolvedInventoryTable = inventoryTable.map(rt =>
-      UnresolvedTable(rt.nameParts, "VACUUM", relationTypeMismatchHint = None))
+    val unresolvedInventoryTable = inventoryTable.map(rt => UnresolvedTable(rt.nameParts, "VACUUM"))
     VacuumTableCommand(child, horizonHours, unresolvedInventoryTable, inventoryQuery, dryRun)
   }
 }

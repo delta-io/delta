@@ -243,13 +243,13 @@ class DeltaLogSuite extends QueryTest
           s"$scheme$path", Some(200L), dataChange = false)
 
         log.store.write(
-          FileNames.deltaFile(log.logPath, 0L),
+          FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(), Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
         log.store.write(
-          FileNames.deltaFile(log.logPath, 1L),
+          FileNames.unsafeDeltaFile(log.logPath, 1L),
           Iterator(JsonUtils.toJson(rm.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -272,13 +272,13 @@ class DeltaLogSuite extends QueryTest
           s"$scheme$path", Some(200L), dataChange = false)
 
         log.store.write(
-          FileNames.deltaFile(log.logPath, 0L),
+          FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(), Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
         log.store.write(
-          FileNames.deltaFile(log.logPath, 1L),
+          FileNames.unsafeDeltaFile(log.logPath, 1L),
           Iterator(JsonUtils.toJson(rm.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -373,7 +373,7 @@ class DeltaLogSuite extends QueryTest
         }
         val file = AddFile("abc", Map.empty, 1, 1, true)
         log.store.write(
-          FileNames.deltaFile(log.logPath, 0L),
+          FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(selectedAction, file).map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -526,14 +526,14 @@ class DeltaLogSuite extends QueryTest
       assert(deltaLog.snapshot.version === 0)
 
       deltaLog.store.write(
-        FileNames.deltaFile(deltaLog.logPath, 0),
+        FileNames.unsafeDeltaFile(deltaLog.logPath, 0),
         actions.map(_.unwrap.json).iterator,
         overwrite = false,
         deltaLog.newDeltaHadoopConf())
 
       // To avoid flakiness, we manually set the modification timestamp of the file to a later
       // second
-      new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri)
+      new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri)
         .setLastModified(commitTimestamp + 5000)
 
       checkAnswer(
@@ -558,7 +558,7 @@ class DeltaLogSuite extends QueryTest
         // that we don't trigger another update, and thus don't find the commit.
         val add = AddFile(path, Map.empty, 100L, 10L, dataChange = true)
         deltaLog.store.write(
-          FileNames.deltaFile(deltaLog.logPath, 1L),
+          FileNames.unsafeDeltaFile(deltaLog.logPath, 1L),
           Iterator(JsonUtils.toJson(add.wrap)),
           overwrite = false,
           deltaLog.newDeltaHadoopConf())
@@ -582,7 +582,7 @@ class DeltaLogSuite extends QueryTest
       spark.range(1).write.format("delta").mode("append").save(path)
 
       val log = DeltaLog.forTable(spark, path)
-      val commitFilePath = FileNames.deltaFile(log.logPath, 1L)
+      val commitFilePath = FileNames.unsafeDeltaFile(log.logPath, 1L)
       val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
       val stream = fs.open(commitFilePath)
       val reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))

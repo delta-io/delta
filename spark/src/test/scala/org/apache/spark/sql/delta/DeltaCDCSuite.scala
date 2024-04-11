@@ -107,7 +107,7 @@ abstract class DeltaCDCSuiteBase
 
   /** Modify timestamp for a delta commit, used to test timestamp querying */
   def modifyDeltaTimestamp(deltaLog: DeltaLog, version: Long, time: Long): Unit = {
-    val file = new File(FileNames.deltaFile(deltaLog.logPath, version).toUri)
+    val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
     file.setLastModified(time)
     val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
     if (crc.exists()) {
@@ -951,7 +951,7 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
       val deltaLog = DeltaLog.forTable(spark, path)
       (0 to 3).foreach { i =>
         spark.range(i * 10, (i + 1) * 10).write.format("delta").mode("append").save(path)
-        val file = new File(FileNames.deltaFile(deltaLog.logPath, i).toUri)
+        val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, i).toUri)
         file.setLastModified(300 - i)
       }
 

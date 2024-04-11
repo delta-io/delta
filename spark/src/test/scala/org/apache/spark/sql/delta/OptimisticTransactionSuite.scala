@@ -349,7 +349,7 @@ class OptimisticTransactionSuite
 
       // Validate that actions in both transactions are not exactly same.
       def readActions(version: Long): Seq[Action] = {
-        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+        log.store.read(FileNames.unsafeDeltaFile(log.logPath, version), log.newDeltaHadoopConf())
           .map(Action.fromJson)
       }
       def removeTxnIdAndMetricsFromActions(actions: Seq[Action]): Seq[Action] = actions.map {
@@ -379,7 +379,7 @@ class OptimisticTransactionSuite
       val version = txn.commit(Seq(), ManualUpdate)
 
       def readActions(version: Long): Seq[Action] = {
-        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+        log.store.read(FileNames.unsafeDeltaFile(log.logPath, version), log.newDeltaHadoopConf())
           .map(Action.fromJson)
       }
       val actions = readActions(version)
@@ -415,7 +415,7 @@ class OptimisticTransactionSuite
       txn.updateSetTransaction("TestAppId", 1L, None)
       val version = txn.commit(Seq(SetTransaction("TestAppId", 1L, None)), ManualUpdate)
       def readActions(version: Long): Seq[Action] = {
-        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+        log.store.read(FileNames.unsafeDeltaFile(log.logPath, version), log.newDeltaHadoopConf())
           .map(Action.fromJson)
       }
       assert(readActions(version).collectFirst {

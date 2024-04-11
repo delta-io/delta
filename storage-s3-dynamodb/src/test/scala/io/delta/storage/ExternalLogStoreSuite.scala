@@ -41,11 +41,11 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
   )
 
   def getDeltaVersionPath(logDir: File, version: Int): Path = {
-    FileNames.deltaFile(new Path(logDir.toURI), version)
+    FileNames.unsafeDeltaFile(new Path(logDir.toURI), version)
   }
 
   def getFailingDeltaVersionPath(logDir: File, version: Int): Path = {
-    FileNames.deltaFile(new Path(s"failing:${logDir.getCanonicalPath}"), version)
+    FileNames.unsafeDeltaFile(new Path(s"failing:${logDir.getCanonicalPath}"), version)
   }
 
   test("single write") {

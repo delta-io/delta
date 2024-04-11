@@ -1918,7 +1918,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         commitVersion: Long,
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
-      val commitFile = util.FileNames.deltaFile(logPath, commitVersion)
+      val commitFile = util.FileNames.unsafeDeltaFile(logPath, commitVersion)
       val commitFileStatus =
         doCommit(logStore, hadoopConf, logPath, commitFile, commitVersion, actions)
       // TODO(managed-commits): Integrate with ICT and pass the correct commitTimestamp
@@ -1986,7 +1986,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val commitTimestamp = commitResponse.commit.fileStatus.getModificationTime
     val commitFile = commitResponse.commit.copy(commitTimestamp = commitTimestamp)
     if (attemptVersion == 0L) {
-      val expectedPathForCommitZero = deltaFile(deltaLog.logPath, version = 0L).toUri
+      val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri
       val actualCommitPath = commitResponse.commit.fileStatus.getPath.toUri
       if (actualCommitPath != expectedPathForCommitZero) {
         throw new IllegalStateException("Expected 0th commit to be written to " +

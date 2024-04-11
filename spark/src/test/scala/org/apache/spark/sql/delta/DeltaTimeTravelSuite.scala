@@ -86,7 +86,7 @@ class DeltaTimeTravelSuite extends QueryTest
       val rangeStart = startVersion * 10
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
-      val file = new File(FileNames.deltaFile(deltaLog.logPath, startVersion).toUri)
+      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, startVersion).toUri)
       file.setLastModified(ts)
       startVersion += 1
     }
@@ -163,7 +163,7 @@ class DeltaTimeTravelSuite extends QueryTest
     val commits2 = history.getHistory(Some(10))
     assert(commits2.last.version === Some(0))
 
-    assert(new File(FileNames.deltaFile(deltaLog.logPath, 0L).toUri).delete())
+    assert(new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0L).toUri).delete())
     val e = intercept[AnalysisException] {
       history.getActiveCommitAtTime(start + 15.seconds, false).version
     }
@@ -543,7 +543,7 @@ class DeltaTimeTravelSuite extends QueryTest
       assert(e1.getMessage.contains("[0, 2]"))
 
       val deltaLog = DeltaLog.forTable(spark, tblLoc)
-      new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+      new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri).delete()
       val e2 = intercept[AnalysisException] {
         spark.read.format("delta").option("versionAsOf", 0).load(tblLoc).collect()
       }

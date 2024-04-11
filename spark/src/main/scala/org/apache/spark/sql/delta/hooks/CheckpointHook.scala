@@ -36,7 +36,10 @@ object CheckpointHook extends PostCommitHook {
     // Since the postCommitSnapshot isn't guaranteed to match committedVersion, we have to
     // explicitly checkpoint the snapshot at the committedVersion.
     val cp = postCommitSnapshot.checkpointProvider
-    txn.deltaLog.checkpoint(txn.deltaLog.getSnapshotAt(committedVersion, cp)
-    )
+    val snapshotToCheckpoint = txn.deltaLog.getSnapshotAt(
+      committedVersion,
+      lastCheckpointHint = None,
+      lastCheckpointProvider = Some(cp))
+    txn.deltaLog.checkpoint(snapshotToCheckpoint)
   }
 }

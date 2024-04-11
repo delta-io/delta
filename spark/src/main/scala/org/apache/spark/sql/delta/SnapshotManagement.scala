@@ -351,7 +351,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
       if (headDeltaVersion != checkpointVersion + 1) {
         throw DeltaErrors.logFileNotFoundException(
-          deltaFile(logPath, checkpointVersion + 1),
+          unsafeDeltaFile(logPath, checkpointVersion + 1),
           lastDeltaVersion,
           unsafeVolatileMetadata) // metadata is best-effort only
       }
@@ -463,8 +463,7 @@ trait SnapshotManagement { self: DeltaLog =>
         throw new IllegalStateException(s"Could not find any delta files for version $newVersion")
       }
       if (versionToLoad.exists(_ != newVersion)) {
-        throw new IllegalStateException(
-          s"Trying to load a non-existent version ${versionToLoad.get}")
+        throwNonExistentVersionError(versionToLoad.get)
       }
       val lastCommitTimestamp = deltas.last.getModificationTime
 
@@ -556,6 +555,11 @@ trait SnapshotManagement { self: DeltaLog =>
         s"[${JsonUtils.toJson(eventData)}]")
     }
     deltasAfterCheckpoint
+  }
+
+  def throwNonExistentVersionError(versionToLoad: Long): Unit = {
+    throw new IllegalStateException(
+      s"Trying to load a non-existent version $versionToLoad")
   }
 
   /**
@@ -1143,66 +1147,64 @@ trait SnapshotManagement { self: DeltaLog =>
     }
   }
 
-  /**
-   * Get the snapshot at `version` using the given `lastCheckpointProvider` hint
-   * as the listing hint.
-   */
-  private[delta] def getSnapshotAt(
-      version: Long,
-      lastCheckpointProvider: CheckpointProvider): Snapshot = {
-    // See if the version currently cached on the cluster satisfies the requirement
-    val current = unsafeVolatileSnapshot
-    if (current.version == version) {
-      return current
-    }
-    if (lastCheckpointProvider.version > version) {
-      // if the provided lastCheckpointProvider's version is greater than the snapshot that we are
-      // trying to create => we can't use the provider.
-      // fallback to the other overload.
-      return getSnapshotAt(version)
-    }
-    val segment = createLogSegment(
-      versionToLoad = Some(version),
-      oldCheckpointProviderOpt = Some(lastCheckpointProvider)
-    ).getOrElse {
-      // We can't return InitialSnapshot because our caller asked for a specific snapshot version.
-      throw DeltaErrors.emptyDirectoryException(logPath.toString)
-    }
-    createSnapshot(
-      initSegment = segment,
-      commitStoreOpt = None,
-      checksumOpt = None)
-  }
-
   /** Get the snapshot at `version`. */
   def getSnapshotAt(
       version: Long,
       lastCheckpointHint: Option[CheckpointInstance] = None): Snapshot = {
+    getSnapshotAt(version, lastCheckpointHint, lastCheckpointProvider = None)
+  }
+
+  /**
+   * Get the snapshot at `version` using the given `lastCheckpointProvider` or `lastCheckpointHint`
+   * as the listing hint.
+   */
+  private[delta] def getSnapshotAt(
+      version: Long,
+      lastCheckpointHint: Option[CheckpointInstance],
+      lastCheckpointProvider: Option[CheckpointProvider]): Snapshot = {
+
     // See if the version currently cached on the cluster satisfies the requirement
-    val current = unsafeVolatileSnapshot
-    if (current.version == version) {
-      return current
+    val currentSnapshot = unsafeVolatileSnapshot
+    val upperBoundSnapshot = if (currentSnapshot.version >= version) {
+      // current snapshot is already newer than what we are looking for. so it could be used as
+      // upper bound.
+      currentSnapshot
+    } else {
+      val latestSnapshot = update()
+      if (latestSnapshot.version < version) {
+        throwNonExistentVersionError(version)
+      }
+      latestSnapshot
+    }
+    if (upperBoundSnapshot.version == version) {
+      return upperBoundSnapshot
     }
 
-    // Do not use the hint if the version we're asking for is smaller than the last checkpoint hint
-    val lastCheckpointInfoHint =
-      lastCheckpointHint
-        .collect { case ci if ci.version <= version => ci }
-        .orElse(findLastCompleteCheckpointBefore(version))
-        .map(manuallyLoadCheckpoint)
-    createLogSegment(
+    val (lastCheckpointInfoOpt, lastCheckpointProviderOpt) = lastCheckpointProvider match {
+      // NOTE: We must ignore any hint whose version is higher than the requested version.
+      case Some(checkpointProvider) if checkpointProvider.version <= version =>
+        // Prefer the last checkpoint provider hint, because it doesn't require any I/O to use.
+        None -> Some(checkpointProvider)
+      case _ =>
+        val lastCheckpointInfoForListing = lastCheckpointHint
+            .filter(_.version <= version)
+            .orElse(findLastCompleteCheckpointBefore(version))
+            .map(manuallyLoadCheckpoint)
+        lastCheckpointInfoForListing -> None
+    }
+    val logSegmentOpt = createLogSegment(
       versionToLoad = Some(version),
-      lastCheckpointInfo = lastCheckpointInfoHint,
-      commitStoreOpt = current.commitStoreOpt
-    ).map { segment =>
-      createSnapshot(
-        initSegment = segment,
-        commitStoreOpt = None,
-        checksumOpt = None)
-    }.getOrElse {
+      oldCheckpointProviderOpt = lastCheckpointProviderOpt,
+      commitStoreOpt = upperBoundSnapshot.commitStoreOpt,
+      lastCheckpointInfo = lastCheckpointInfoOpt)
+    val logSegment = logSegmentOpt.getOrElse {
       // We can't return InitialSnapshot because our caller asked for a specific snapshot version.
       throw DeltaErrors.emptyDirectoryException(logPath.toString)
     }
+    createSnapshot(
+      initSegment = logSegment,
+      commitStoreOpt = upperBoundSnapshot.commitStoreOpt,
+      checksumOpt = None)
   }
 
   // Visible for testing
