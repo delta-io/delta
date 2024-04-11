@@ -360,17 +360,17 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CLUSTERING_AND_PARTITIONING_COLUMNS" : {
+    "message" : [
+      "Cannot specify partitioning and clustering columns."
+    ],
+    "sqlState" : "42P10"
+  },
   "DELTA_CLUSTERING_COLUMNS_MISMATCH" : {
     "message" : [
       "The provided clustering columns do not match the existing table's.",
       "- provided: <providedClusteringColumns>",
       "- existing: <existingClusteringColumns>"
-    ],
-    "sqlState" : "42P10"
-  },
-  "DELTA_CLUSTERING_AND_PARTITIONING_COLUMNS" : {
-    "message" : [
-      "Cannot specify partitioning and clustering columns."
     ],
     "sqlState" : "42P10"
   },
