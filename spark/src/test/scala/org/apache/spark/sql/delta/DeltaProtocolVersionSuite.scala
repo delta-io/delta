@@ -3581,7 +3581,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       .getOrElse(fail("Expected a log for inCommitTimestampFeatureRemovalMetrics"))
     val blob = JsonUtils.fromJson[Map[String, String]](dropFeatureBlob.blob)
     assert(blob.contains("downgradeTimeMs"))
-    assert(blob.get("traceRemovalNeeded").contains("true"))
+    val traceRemovalNeeded = expectEnablementProperty || expectProvenanceTimestampProperty ||
+      expectProvenanceVersionProperty
+    assert(blob.get("traceRemovalNeeded").contains(traceRemovalNeeded.toString))
     assert(blob
       .get(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key)
       .contains(expectEnablementProperty.toString))
