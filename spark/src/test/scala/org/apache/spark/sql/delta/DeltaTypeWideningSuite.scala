@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -51,6 +52,8 @@ class DeltaTypeWideningSuite
     with DeltaTypeWideningNestedFieldsTests
     with DeltaTypeWideningMetadataTests
     with DeltaTypeWideningTableFeatureTests
+    with DeltaTypeWideningCheckConstraintsTests
+    with DeltaTypeWideningGeneratedColumnTests
 
 /**
  * Test mixin that enables type widening by default for all tests in the suite.
@@ -976,6 +979,244 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
         checkAnswer(
           readDeltaTable(tempPath),
           Seq(Row(11), Row(12), Row(13), Row(4), Row(5), Row(6)))
+      }
+    }
+  }
+}
+
+trait DeltaTypeWideningCheckConstraintsTests {
+  self: QueryTest with SharedSparkSession =>
+
+  test("check constraint with type change") {
+    withTable("t") {
+      sql("CREATE TABLE t (a byte) USING DELTA")
+      sql("ALTER TABLE t ADD CONSTRAINT ck CHECK (hash(a) > 0)")
+      sql("INSERT INTO t VALUES (2)")
+      checkAnswer(sql("SELECT hash(a) FROM t"), Row(1765031574))
+
+      // Changing the type of a column that a CHECK constraint depends on is not allowed.
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("ALTER TABLE t CHANGE COLUMN a TYPE SMALLINT")
+        },
+        errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
+        parameters = Map(
+          "operation" -> "change",
+          "columnName" -> "a",
+          "constraints" -> "delta.constraints.ck -> hash ( a ) > 0"
+      ))
+    }
+  }
+
+  test("check constraint on nested field with type change") {
+    withTable("t") {
+      sql("CREATE TABLE t (a struct<x: byte, y: byte>) USING DELTA")
+      sql("ALTER TABLE t ADD CONSTRAINT ck CHECK (hash(a.x) > 0)")
+      sql("INSERT INTO t (a) VALUES (named_struct('x', 2, 'y', 3))")
+      checkAnswer(sql("SELECT hash(a.x) FROM t"), Row(1765031574))
+
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("ALTER TABLE t CHANGE COLUMN a.x TYPE SMALLINT")
+        },
+        errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
+        parameters = Map(
+          "operation" -> "change",
+          "columnName" -> "a.x",
+          "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
+      ))
+
+      // Changing the type of a.y is allowed since it's not referenced by the CHECK constraint.
+      sql("ALTER TABLE t CHANGE COLUMN a.y TYPE SMALLINT")
+      checkAnswer(sql("SELECT * FROM t"), Row(Row(2, 3)))
+    }
+  }
+
+  test(s"check constraint with type evolution") {
+    withTable("t") {
+      sql(s"CREATE TABLE t (a byte) USING DELTA")
+      sql("ALTER TABLE t ADD CONSTRAINT ck CHECK (hash(a) > 0)")
+      sql("INSERT INTO t VALUES (2)")
+      checkAnswer(sql("SELECT hash(a) FROM t"), Row(1765031574))
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("INSERT INTO t VALUES (4)")
+          },
+          errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          parameters = Map(
+            "columnName" -> "a",
+            "columnType" -> "TINYINT",
+            "dataType" -> "INT",
+            "constraints" -> "delta.constraints.ck -> hash ( a ) > 0"
+        ))
+      }
+    }
+  }
+
+  test("check constraint on nested field with type evolution") {
+    withTable("t") {
+      sql("CREATE TABLE t (a struct<x: byte, y: byte>) USING DELTA")
+      sql("ALTER TABLE t ADD CONSTRAINT ck CHECK (hash(a.x) > 0)")
+      sql("INSERT INTO t (a) VALUES (named_struct('x', 2, 'y', 3))")
+      checkAnswer(sql("SELECT hash(a.x) FROM t"), Row(1765031574))
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("INSERT INTO t (a) VALUES (named_struct('x', 2, 'y', CAST(5 AS byte)))")
+          },
+          errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          parameters = Map(
+            "columnName" -> "a",
+            "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
+            "dataType" -> "STRUCT<x: INT, y: TINYINT>",
+            "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
+        ))
+
+        // Changing the type of a.y isn't allowed even though it's not the field referenced by the
+        // generated column.
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 5))")
+          },
+          errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          parameters = Map(
+            "columnName" -> "a",
+            "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
+            "dataType" -> "STRUCT<x: TINYINT, y: INT>",
+            "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
+        ))
+      }
+    }
+  }
+}
+
+trait DeltaTypeWideningGeneratedColumnTests extends GeneratedColumnTest {
+  self: QueryTest with SharedSparkSession =>
+
+  test("generated column with type change") {
+    withTable("t") {
+      createTable(
+        tableName = "t",
+        path = None,
+        schemaString = "a byte, gen int",
+        generatedColumns = Map("gen" -> "hash(a)"),
+        partitionColumns = Seq.empty
+      )
+      sql("INSERT INTO t (a) VALUES (2)")
+      checkAnswer(sql("SELECT hash(a) FROM t"), Row(1765031574))
+
+      // Changing the type of a column that a generated column depends on is not allowed.
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("ALTER TABLE t CHANGE COLUMN a TYPE SMALLINT")
+        },
+        errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
+        parameters = Map(
+          "operation" -> "change",
+          "columnName" -> "a",
+          "generatedColumns" -> "gen"
+        ))
+    }
+  }
+
+  test("generated column on nested field with type change") {
+    withTable("t") {
+      createTable(
+        tableName = "t",
+        path = None,
+        schemaString = "a struct<x: byte, y: byte>, gen int",
+        generatedColumns = Map("gen" -> "hash(a.x)"),
+        partitionColumns = Seq.empty
+      )
+      sql("INSERT INTO t (a) VALUES (named_struct('x', 2, 'y', 3))")
+      checkAnswer(sql("SELECT hash(a.x) FROM t"), Row(1765031574))
+
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("ALTER TABLE t CHANGE COLUMN a.x TYPE SMALLINT")
+        },
+        errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
+        parameters = Map(
+          "operation" -> "change",
+          "columnName" -> "a.x",
+          "generatedColumns" -> "gen"
+        ))
+
+        // Changing the type of a.y is allowed since it's not referenced by the CHECK constraint.
+        sql("ALTER TABLE t CHANGE COLUMN a.y TYPE SMALLINT")
+        checkAnswer(sql("SELECT * FROM t"), Row(Row(2, 3), 1765031574) :: Nil)
+    }
+  }
+
+  test("generated column with type evolution") {
+    withTable("t") {
+      createTable(
+        tableName = "t",
+        path = None,
+        schemaString = "a byte, gen int",
+        generatedColumns = Map("gen" -> "hash(a)"),
+        partitionColumns = Seq.empty
+      )
+      sql("INSERT INTO t (a) VALUES (2)")
+      checkAnswer(sql("SELECT hash(a) FROM t"), Row(1765031574))
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("INSERT INTO t (a) VALUES (1)")
+        },
+        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        parameters = Map(
+          "columnName" -> "a",
+          "columnType" -> "TINYINT",
+          "dataType" -> "INT",
+          "generatedColumns" -> "gen"
+        ))
+      }
+    }
+  }
+
+  test("generated column on nested field with type evolution") {
+    withTable("t") {
+      createTable(
+        tableName = "t",
+        path = None,
+        schemaString = "a struct<x: byte, y: byte>, gen int",
+        generatedColumns = Map("gen" -> "hash(a.x)"),
+        partitionColumns = Seq.empty
+      )
+      sql("INSERT INTO t (a) VALUES (named_struct('x', 2, 'y', 3))")
+      checkAnswer(sql("SELECT hash(a.x) FROM t"), Row(1765031574))
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("INSERT INTO t (a) VALUES (named_struct('x', 2, 'y', CAST(5 AS byte)))")
+          },
+          errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+          parameters = Map(
+            "columnName" -> "a",
+            "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
+            "dataType" -> "STRUCT<x: INT, y: TINYINT>",
+            "generatedColumns" -> "gen"
+        ))
+
+        // Changing the type of a.y isn't allowed even though it's not the field referenced by the
+        // generated column.
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 5))")
+          },
+          errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+          parameters = Map(
+            "columnName" -> "a",
+            "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
+            "dataType" -> "STRUCT<x: TINYINT, y: INT>",
+            "generatedColumns" -> "gen"
+        ))
       }
     }
   }

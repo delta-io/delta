@@ -1717,17 +1717,6 @@ trait DeltaErrorsBase
       errorClass = "DELTA_INVALID_GENERATED_COLUMN_REFERENCES", Array.empty, cause = Some(e))
   }
 
-  def generatedColumnsUpdateColumnType(current: StructField, update: StructField): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_GENERATED_COLUMN_UPDATE_TYPE_MISMATCH",
-      messageParameters = Array(
-        s"${current.name}",
-        s"${current.dataType.sql}",
-        s"${update.dataType.sql}"
-      )
-    )
-  }
-
   def generatedColumnsUDF(expr: Expression): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UDF_IN_GENERATED_COLUMN",
@@ -1754,13 +1743,43 @@ trait DeltaErrorsBase
     )
   }
 
-  def generatedColumnsTypeMismatch(
+  def generatedColumnsExprTypeMismatch(
       column: String,
       columnType: DataType,
       exprType: DataType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH",
       messageParameters = Array(column, exprType.sql, columnType.sql)
+    )
+  }
+
+  def generatedColumnsDataTypeMismatch(
+      columnPath: Seq[String],
+      columnType: DataType,
+      dataType: DataType,
+      fields: Seq[StructField]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+      messageParameters = Array(
+        SchemaUtils.prettyFieldName(columnPath),
+        columnType.sql,
+        dataType.sql,
+        fields.map(_.name).mkString("\n"))
+    )
+  }
+
+  def constraintDataTypeMismatch(
+      columnPath: Seq[String],
+      columnType: DataType,
+      dataType: DataType,
+      constraints: Map[String, String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+      messageParameters = Array(
+        SchemaUtils.prettyFieldName(columnPath),
+        columnType.sql,
+        dataType.sql,
+        constraints.mkString("\n"))
     )
   }
 
@@ -2072,7 +2091,7 @@ trait DeltaErrorsBase
       columnName: String,
       constraints: Map[String, String]): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0004",
+      errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
       messageParameters = Array(operation, columnName, constraints.mkString("\n"))
     )
   }
@@ -2082,7 +2101,7 @@ trait DeltaErrorsBase
       columnName: String,
       fields: Seq[StructField]): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0005",
+      errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
       messageParameters = Array(operation, columnName, fields.map(_.name).mkString("\n"))
     )
   }

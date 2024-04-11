@@ -775,6 +775,11 @@ case class AlterTableChangeColumnDeltaCommand(
       }
     }
 
+    if (originalField.dataType != newType) {
+      checkDependentExpressions(
+        spark, columnPath :+ columnName, txn.metadata, txn.protocol, "change")
+    }
+
     if (originalField.nullable && !newColumn.nullable) {
       throw DeltaErrors.alterTableChangeColumnException(
         fieldPath = UnresolvedAttribute(columnPath :+ originalField.name).name,
