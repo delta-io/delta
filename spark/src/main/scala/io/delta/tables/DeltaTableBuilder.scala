@@ -109,7 +109,7 @@ class DeltaTableBuilder private[tables](
     builderOption: DeltaTableBuilderOptions) {
   private var identifier: String = null
   private var partitioningColumns: Option[Seq[String]] = None
-  private var clusterColumns: Option[Seq[String]] = None
+  private var clusteringColumns: Option[Seq[String]] = None
   private var columns: mutable.Seq[StructField] = mutable.Seq.empty
   private var location: Option[String] = None
   private var tblComment: Option[String] = None
@@ -295,7 +295,7 @@ class DeltaTableBuilder private[tables](
   @Evolving
   @scala.annotation.varargs
   def clusteredBy(colNames: String*): DeltaTableBuilder = {
-    clusterColumns = Option(colNames)
+    clusteringColumns = Option(colNames)
     this
   }
 
@@ -341,7 +341,7 @@ class DeltaTableBuilder private[tables](
 
     val table = spark.sessionState.sqlParser.parseMultipartIdentifier(identifier)
 
-    val partitioning: Seq[Transform] = (partitioningColumns, clusterColumns) match {
+    val partitioning: Seq[Transform] = (partitioningColumns, clusteringColumns) match {
       case (Some(partitionCols), None) =>
         partitionCols.map(name => DeltaTableUtils.parseColToTransform(name))
       case (None, Some(clusterCols)) =>
