@@ -22,7 +22,7 @@ import java.nio.file.{Files, Paths, StandardOpenOption}
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions._
@@ -3532,6 +3532,180 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     s"Remove v2 Checkpoints Feature [v2CheckpointFormat: ${V2Checkpoint.Format.PARQUET.name}; " +
       s"withInitialV2Checkpoint: true; forceMultiPartCheckpoint: true]") {
     testV2CheckpointTableFeatureDrop(V2Checkpoint.Format.PARQUET, true, true)
+  }
+
+  private def validateICTRemovalMetrics(
+      usageLogs: Seq[UsageRecord],
+      expectEnablementProperty: Boolean,
+      expectProvenanceTimestampProperty: Boolean,
+      expectProvenanceVersionProperty: Boolean): Unit = {
+    val dropFeatureBlob = usageLogs
+      .find(_.tags.get("opType").contains("delta.inCommitTimestampFeatureRemovalMetrics"))
+      .getOrElse(fail("Expected a log for inCommitTimestampFeatureRemovalMetrics"))
+    val blob = JsonUtils.fromJson[Map[String, String]](dropFeatureBlob.blob)
+    assert(blob.contains("downgradeTimeMs"))
+    val traceRemovalNeeded = expectEnablementProperty || expectProvenanceTimestampProperty ||
+      expectProvenanceVersionProperty
+    assert(blob.get("traceRemovalNeeded").contains(traceRemovalNeeded.toString))
+    assert(blob
+      .get(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key)
+      .contains(expectEnablementProperty.toString))
+    assert(blob
+      .get(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key)
+      .contains(expectProvenanceTimestampProperty.toString))
+    assert(blob
+      .get(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key)
+      .contains(expectProvenanceVersionProperty.toString))
+  }
+
+  test("drop InCommitTimestamp -- ICT enabled from commit 0") {
+    withTempDir { dir =>
+      val featureEnablementKey = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key
+      spark.sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta" +
+        s" TBLPROPERTIES ('${featureEnablementKey}' = 'true')")
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      val featurePropertyKey = InCommitTimestampTableFeature.name
+
+      val usageLogs = Log4jUsageLogger.track {
+        AlterTableDropFeatureDeltaCommand(
+            DeltaTableV2(spark, deltaLog.dataPath),
+            featurePropertyKey)
+          .run(spark)
+      }
+
+      val snapshot = deltaLog.update()
+      // Writer feature is removed from the writer features set.
+      assert(!snapshot.protocol.writerFeatureNames.contains(featurePropertyKey))
+      assert(!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
+      validateICTRemovalMetrics(
+        usageLogs,
+        expectEnablementProperty = true,
+        expectProvenanceTimestampProperty = false,
+        expectProvenanceVersionProperty = false)
+
+      // Running the command again should throw an exception.
+      val e = intercept[DeltaTableFeatureException] {
+        AlterTableDropFeatureDeltaCommand(
+            DeltaTableV2(spark, deltaLog.dataPath),
+            featurePropertyKey)
+          .run(spark)
+      }
+      assert(e.getErrorClass == "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT")
+    }
+  }
+
+  test("drop InCommitTimestamp -- ICT enabled after commit 0") {
+    withTempDir { dir =>
+      val featureEnablementKey = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key
+      val featurePropertyKey = InCommitTimestampTableFeature.name
+      sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
+        s"TBLPROPERTIES ('${featureEnablementKey}' = 'false')")
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      assert(!deltaLog.snapshot.metadata.configuration.contains(featurePropertyKey))
+
+      sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` " +
+        s"SET TBLPROPERTIES ('${featureEnablementKey}' = 'true')")
+      val snapshotV1 = deltaLog.update()
+      assert(snapshotV1.protocol.writerFeatureNames.contains(featurePropertyKey))
+      assert(snapshotV1.metadata.configuration.contains(featureEnablementKey))
+      val ictProvenanceProperties = Seq(
+        DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key,
+        DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key)
+      ictProvenanceProperties.foreach(prop =>
+        assert(snapshotV1.metadata.configuration.contains(prop)))
+
+      val usageLogs = Log4jUsageLogger.track {
+        AlterTableDropFeatureDeltaCommand(
+            DeltaTableV2(spark, deltaLog.dataPath),
+            featurePropertyKey)
+          .run(spark)
+      }
+
+      val snapshot = deltaLog.update()
+      // Writer feature is removed from the writer features set.
+      assert(!snapshot.protocol.writerFeatureNames.contains(featurePropertyKey))
+      assert(!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
+      // The provenance properties should also have been removed.
+      ictProvenanceProperties.foreach(prop =>
+        assert(!snapshot.metadata.configuration.contains(prop)))
+      validateICTRemovalMetrics(
+        usageLogs,
+        expectEnablementProperty = true,
+        expectProvenanceTimestampProperty = true,
+        expectProvenanceVersionProperty = true)
+    }
+  }
+
+  test("drop InCommitTimestamp --- only one table property") {
+    withTempDir { dir =>
+      // Dropping the ICT table feature should also remove any ICT provenance
+      // table properties even when the ICT enablement table property is not present.
+      spark.sql(
+        s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta" +
+          s" TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      // Remove the enablement property.
+      AlterTableUnsetPropertiesDeltaCommand(
+        DeltaTableV2(spark, deltaLog.dataPath),
+        Seq(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key),
+        ifExists = true).run(spark)
+      // Set the IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION property.
+      AlterTableSetPropertiesDeltaCommand(
+        DeltaTableV2(spark, deltaLog.dataPath),
+        Map(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key -> "1")).run(spark)
+      val snapshot1 = deltaLog.update()
+      assert(snapshot1.protocol.writerFeatureNames.contains(InCommitTimestampTableFeature.name))
+      // Ensure that the enablement property is not set.
+      assert(!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot1.metadata))
+      assert(snapshot1.metadata.configuration.contains(
+        DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key))
+
+      val usageLogs = Log4jUsageLogger.track {
+        AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          InCommitTimestampTableFeature.name)
+          .run(spark)
+      }
+      val snapshot2 = deltaLog.update()
+      assert(!snapshot2.protocol.writerFeatureNames.contains(InCommitTimestampTableFeature.name))
+      assert(!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot2.metadata))
+      assert(!snapshot2.metadata.configuration.contains(
+        DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key))
+      validateICTRemovalMetrics(
+        usageLogs,
+        expectEnablementProperty = false,
+        expectProvenanceTimestampProperty = false,
+        expectProvenanceVersionProperty = true)
+    }
+  }
+
+  test("drop InCommitTimestamp --- no table property") {
+    withTempDir { dir =>
+      spark.sql(
+        s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta" +
+          s" TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      // Remove the enablement property.
+      AlterTableUnsetPropertiesDeltaCommand(
+        DeltaTableV2(spark, deltaLog.dataPath),
+        Seq(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key),
+        ifExists = true).run(spark)
+
+      val usageLogs = Log4jUsageLogger.track {
+        AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          InCommitTimestampTableFeature.name)
+          .run(spark)
+      }
+      val snapshot = deltaLog.update()
+      assert(!snapshot.protocol.writerFeatureNames.contains(InCommitTimestampTableFeature.name))
+      assert(!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
+      validateICTRemovalMetrics(
+        usageLogs,
+        expectEnablementProperty = false,
+        expectProvenanceTimestampProperty = false,
+        expectProvenanceVersionProperty = false)
+    }
   }
 
   // Create a table for testing that has an unsupported feature.

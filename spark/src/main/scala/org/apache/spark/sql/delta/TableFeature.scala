@@ -671,7 +671,8 @@ object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening
  */
 object InCommitTimestampTableFeature
   extends WriterFeature(name = "inCommitTimestamp-dev")
-  with FeatureAutomaticallyEnabledByMetadata {
+  with FeatureAutomaticallyEnabledByMetadata
+  with RemovableFeature {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
@@ -680,6 +681,31 @@ object InCommitTimestampTableFeature
       spark: SparkSession): Boolean = {
     DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata)
   }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    InCommitTimestampsPreDowngradeCommand(table)
+
+
+  /**
+   * As per the spec, we can disable ICT by just setting
+   * [[DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED]] to `false`. There is no need to remove the
+   * provenance properties. However, [[InCommitTimestampsPreDowngradeCommand]] will try to remove
+   * these properties because they can be removed as part of the same metadata update that sets
+   * [[DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED]] to `false`. We check all three properties here
+   * as well for consistency.
+   */
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    val provenancePropertiesAbsent = Seq(
+        DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key,
+        DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key)
+      .forall(!snapshot.metadata.configuration.contains(_))
+    val ictEnabledInMetadata =
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata)
+    provenancePropertiesAbsent && !ictEnabledInMetadata
+  }
+
+  // Writer features should directly return false, as it is only used for reader+writer features.
+  override def actionUsesFeature(action: Action): Boolean = false
 }
 
 /**
