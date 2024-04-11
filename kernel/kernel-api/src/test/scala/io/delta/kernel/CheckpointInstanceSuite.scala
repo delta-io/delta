@@ -36,6 +36,7 @@ class CheckpointInstanceSuite extends AnyFunSuite with MockFileSystemClientUtils
     val ci2_single_1 = new CheckpointInstance(2, Optional.empty())
     val ci2_withparts_4 = new CheckpointInstance(2, Optional.of(4))
     val ci2_v2_1 = new CheckpointInstance("02.checkpoint.abc.parquet" )
+    val ci2_v2_2 = new CheckpointInstance("02.checkpoint.def.parquet")
 
     val ci3_single_1 = new CheckpointInstance(3, Optional.empty())
     val ci3_withparts_2 = new CheckpointInstance(3, Optional.of(2))
@@ -51,6 +52,8 @@ class CheckpointInstanceSuite extends AnyFunSuite with MockFileSystemClientUtils
     // version takes priority over parts or v2
     assert(ci2_withparts_4.compareTo(ci3_withparts_2) < 0)
     assert(ci2_single_1.compareTo(ci3_withparts_2) < 0)
+    // For v2, filepath is tiebreaker.
+    assert(ci2_v2_2.compareTo(ci2_v2_1) > 0)
 
     // Everything is less than CheckpointInstance.MAX_VALUE
     Seq(

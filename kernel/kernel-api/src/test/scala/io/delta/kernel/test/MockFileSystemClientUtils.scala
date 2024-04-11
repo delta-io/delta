@@ -70,7 +70,6 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
   def v2CheckpointFileStatuses(
       checkpointVersions: Seq[(Long, Boolean, Int)],
       fileType: String): Seq[(FileStatus, Seq[FileStatus])] = {
-    assert(checkpointVersions.size == checkpointVersions.toSet.size)
     checkpointVersions.map { case (v, useUUID, numSidecars) =>
       val checkpointManifest = if (useUUID) {
         FileStatus.of(FileNames.v2CheckpointManifestFile(

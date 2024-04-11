@@ -23,6 +23,7 @@ import scala.reflect.ClassTag
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.SidecarFile
+import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
 import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.test.{BaseMockJsonHandler, BaseMockParquetHandler, MockFileSystemClientUtils}
@@ -193,7 +194,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
           FileNames.checkpointVersion(manifest.getPath) == v
         }
         if (matchingCheckpoints.nonEmpty) {
-          matchingCheckpoints.head match {
+          matchingCheckpoints.maxBy(f => new Path(f._1.getPath).getName) match {
             case (c, sidecars) => (Seq(c), sidecars)
           }
         } else {
@@ -530,6 +531,15 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       Seq.empty,
       versionToLoad = Optional.of(5L),
       v2CheckpointSpec = Seq((0L, true, 2), (5L, true, 2)))
+  }
+
+  test("multiple v2 checkpoint exist at version") {
+    testWithCheckpoints(
+      (0L to 5L),
+      Seq.empty,
+      Seq.empty,
+      versionToLoad = Optional.of(5L),
+      v2CheckpointSpec = Seq((5L, true, 2), (5L, true, 2)))
   }
 
   test("v2 checkpoint exists before version") {

@@ -136,11 +136,16 @@ public class CheckpointInstance
      *    Single part checkpoint.
      * 4. For Multi-part CheckpointInstance corresponding to same version, the one with more
      *    parts is greater than the one with less parts.
+     * 5. For V2 checkpoints, use the file path to break ties.
      */
     @Override
     public int compareTo(CheckpointInstance that) {
         if (version == that.version) {
             if (format == that.format) {
+                if (numParts.orElse(1).equals(that.numParts.orElse(1)) && format ==
+                        CheckpointFormat.V2 && filePath.isPresent() && that.filePath.isPresent()) {
+                    return filePath.get().getName().compareTo(that.filePath.get().getName());
+                }
                 return Long.compare(numParts.orElse(1), that.numParts.orElse(1));
             }
             return Integer.compare(format.ordinal(), that.format.ordinal());
@@ -163,7 +168,12 @@ public class CheckpointInstance
         if (o == null || getClass() != o.getClass()) {
             return false;
         }
+        // For V2 checkpoints, compare the filepath.
         CheckpointInstance checkpointInstance = (CheckpointInstance) o;
+        if (checkpointInstance.format == CheckpointFormat.V2 && format == CheckpointFormat.V2 &&
+                !filePath.equals(checkpointInstance.filePath)) {
+            return false;
+        }
         return version == checkpointInstance.version &&
                 Objects.equals(numParts, checkpointInstance.numParts) &&
                 format == checkpointInstance.format;
