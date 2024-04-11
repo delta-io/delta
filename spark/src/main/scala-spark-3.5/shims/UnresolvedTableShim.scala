@@ -14,9 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.shims
-
-import org.apache.spark.sql.catalyst.analysis.UnresolvedTable
+package org.apache.spark.sql.catalyst.analysis
 
 object UnresolvedTableImplicits {
 
