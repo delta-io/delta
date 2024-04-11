@@ -14,11 +14,10 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.shims
+package org.apache.spark.sql.execution.streaming
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.streaming.IncrementalExecution
 
 object IncrementalExecutionShim {
 
