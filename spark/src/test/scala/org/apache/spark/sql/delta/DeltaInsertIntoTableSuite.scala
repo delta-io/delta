@@ -21,6 +21,7 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.DeltaInsertIntoTableSuiteShims._
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -435,7 +436,8 @@ abstract class DeltaInsertIntoTestsWithTempViews(
           checkAnswer(spark.table("v"), expectedResult)
         } catch {
           case e: AnalysisException =>
-            assert(e.getMessage.contains("Inserting into a view is not allowed") ||
+            assert(
+              e.getMessage.contains(INSERT_INTO_TMP_VIEW_ERROR_MSG) ||
               e.getMessage.contains("Inserting into an RDD-based table is not allowed") ||
               e.getMessage.contains("Table default.v not found") ||
               e.getMessage.contains("Table or view 'v' not found in database 'default'") ||
