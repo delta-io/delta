@@ -354,6 +354,8 @@ object TableFeature {
         TestFeatureWithDependency,
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency,
+        // Identity columns are under development and only available in testing.
+        IdentityColumnsTableFeature,
         // managed-commits are under development and only available in testing.
         ManagedCommitTableFeature,
         InCommitTimestampTableFeature,
@@ -479,6 +481,16 @@ object ColumnMappingTableFeature
       case NoMapping => false
       case _ => true
     }
+  }
+}
+
+object IdentityColumnsTableFeature
+  extends LegacyWriterFeature(name = "identityColumns", minWriterVersion = 6)
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)
   }
 }
 
