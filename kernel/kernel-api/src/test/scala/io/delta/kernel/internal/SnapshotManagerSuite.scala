@@ -22,7 +22,7 @@ import scala.reflect.ClassTag
 
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.expressions.Predicate
-import io.delta.kernel.internal.checkpoints.SidecarFile
+import io.delta.kernel.internal.checkpoints.{CheckpointInstance, SidecarFile}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
 import io.delta.kernel.internal.util.{FileNames, Utils}
@@ -194,7 +194,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
           FileNames.checkpointVersion(manifest.getPath) == v
         }
         if (matchingCheckpoints.nonEmpty) {
-          matchingCheckpoints.maxBy(f => new Path(f._1.getPath).getName) match {
+          matchingCheckpoints.maxBy(f => new CheckpointInstance(f._1.getPath)) match {
             case (c, sidecars) => (Seq(c), sidecars)
           }
         } else {
