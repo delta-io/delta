@@ -36,7 +36,6 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
 
   import testImplicits._
   protected val tblName = "identity_test"
-
   test("Don't allow IDENTITY column in the schema if the feature is disabled") {
     withSQLConf(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED.key -> "false") {
       withTable(tblName) {
@@ -69,7 +68,6 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
     builder.putLong(DeltaSourceUtils.IDENTITY_INFO_START, start)
     builder.putLong(DeltaSourceUtils.IDENTITY_INFO_STEP, step)
     colFields += StructField("id", LongType, true, builder.build())
-
     colFields += StructField("value", IntegerType)
 
     StructType(colFields.toSeq)
@@ -187,7 +185,6 @@ class IdentityColumnScalaSuite
     }
   }
 }
-
 
 class IdentityColumnScalaIdColumnMappingSuite
   extends IdentityColumnSuiteBase

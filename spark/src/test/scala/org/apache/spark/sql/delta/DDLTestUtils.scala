@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{DataType, LongType, StructField}
@@ -96,21 +97,13 @@ case class IdentityColumnSpec(
   override def structField(spark: SparkSession): StructField = {
     var col = io.delta.tables.DeltaTable.columnBuilder(spark, colName)
       .dataType(dataType)
-    col = (generatedAsIdentityType, startsWith, incrementBy) match {
-      case (GeneratedAsIdentityType.GeneratedAlways, Some(start), Some(step)) =>
+    val start = startsWith.getOrElse(IdentityColumn.defaultStart.toLong)
+    val step = incrementBy.getOrElse(IdentityColumn.defaultStep.toLong)
+    col = generatedAsIdentityType match {
+      case GeneratedAsIdentityType.GeneratedAlways =>
         col.generatedAlwaysAsIdentity(start, step)
-      case (GeneratedAsIdentityType.GeneratedAlways, Some(start), None) =>
-        col.generatedAlwaysAsIdentity(start = start, step = 1L)
-      case (GeneratedAsIdentityType.GeneratedAlways, None, Some(step)) =>
-        col.generatedAlwaysAsIdentity(start = 1L, step = step)
-      case (GeneratedAsIdentityType.GeneratedAlways, None, None) => col.generatedAlwaysAsIdentity()
-      case (GeneratedAsIdentityType.GeneratedByDefault, Some(start), Some(step)) =>
+      case GeneratedAsIdentityType.GeneratedByDefault =>
         col.generatedByDefaultAsIdentity(start, step)
-      case (GeneratedAsIdentityType.GeneratedByDefault, Some(start), None) =>
-        col.generatedByDefaultAsIdentity(start = start, step = 1L)
-      case (GeneratedAsIdentityType.GeneratedByDefault, None, Some(step)) =>
-        col.generatedByDefaultAsIdentity(start = 1L, step = step)
-      case _ => col.generatedByDefaultAsIdentity()
     }
 
     comment.foreach { c =>
