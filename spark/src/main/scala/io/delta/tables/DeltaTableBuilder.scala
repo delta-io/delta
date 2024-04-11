@@ -20,6 +20,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableUtils}
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
+import org.apache.spark.sql.delta.shims.ColumnDefinitionShim
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.tables.execution._
 
@@ -365,7 +366,8 @@ class DeltaTableBuilder private[tables](
         val unresolvedTable = org.apache.spark.sql.catalyst.analysis.UnresolvedIdentifier(table)
         CreateTable(
           unresolvedTable,
-          StructType(columns.toSeq),
+          // Callout: Spark 3.5 returns StructType, Spark 4.0 returns Seq[ColumnDefinition]
+          ColumnDefinitionShim.parseColumns(columns.toSeq, spark.sessionState.sqlParser),
           partitioning,
           tableSpec,
           ifNotExists)
@@ -373,7 +375,8 @@ class DeltaTableBuilder private[tables](
         val unresolvedTable = org.apache.spark.sql.catalyst.analysis.UnresolvedIdentifier(table)
         ReplaceTable(
           unresolvedTable,
-          StructType(columns.toSeq),
+          // Callout: Spark 3.5 returns StructType, Spark 4.0 returns Seq[ColumnDefinition]
+          ColumnDefinitionShim.parseColumns(columns.toSeq, spark.sessionState.sqlParser),
           partitioning,
           tableSpec,
           orCreate)

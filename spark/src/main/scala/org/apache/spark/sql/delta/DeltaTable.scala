@@ -21,6 +21,7 @@ import scala.util.{Failure, Success, Try}
 
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.shims.UnresolvedTableImplicits._
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -590,8 +591,7 @@ object UnresolvedDeltaPathOrIdentifier {
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
       case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, Map.empty, cmd)
-      case (None, Some(t)) =>
-        UnresolvedTable(t.nameParts, cmd, None)
+      case (None, Some(t)) => UnresolvedTable(t.nameParts, cmd)
       case _ => throw new IllegalArgumentException(
         s"Exactly one of path or tableIdentifier must be provided to $cmd")
     }
@@ -612,8 +612,7 @@ object UnresolvedPathOrIdentifier {
       tableIdentifier: Option[TableIdentifier],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
-      case (_, Some(t)) =>
-        UnresolvedTable(t.nameParts, cmd, None)
+      case (_, Some(t)) => UnresolvedTable(t.nameParts, cmd)
       case (Some(p), None) => UnresolvedPathBasedTable(p, Map.empty, cmd)
       case _ => throw new IllegalArgumentException(
         s"At least one of path or tableIdentifier must be provided to $cmd")
