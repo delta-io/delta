@@ -18,6 +18,6 @@ package org.apache.spark.sql.types
 
 object VariantShim {
 
-  /** Spark's variant type is only implemented in Spark 4.0 and above.*/
+  /** Spark's variant type is only implemented in Spark 4.0 and above. */
   def isTypeVariant(dt: DataType): Boolean = dt.isInstanceOf[VariantType]
 }
