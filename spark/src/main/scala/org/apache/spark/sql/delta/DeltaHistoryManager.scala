@@ -75,6 +75,22 @@ class DeltaHistoryManager(
   }
 
   /**
+   * Returns the information of the commits made to this table in the range `[start, end]` in
+   * reverse chronological order. Applies limit when provided by subtracting the `limit` from `end`.
+   */
+  def getHistory(
+      start: Option[Long],
+      end: Option[Long],
+      limit: Option[Int]): Seq[DeltaHistory] = {
+    val endVersion = end.getOrElse(deltaLog.update().version + 1)
+    val startVersion = limit.foldLeft(start.getOrElse(getEarliestDeltaFile(deltaLog))) {
+      (currentStartVersion, limitValue) => math.max(currentStartVersion,
+        (endVersion - (limitValue - 1))) // versions are inclusive so we need to do limitValue - 1
+    }
+    getHistory(startVersion, Some(endVersion))
+  }
+
+  /**
    * Get the commit information of the Delta table from commit `[start, end]` in
    * reverse chronological order. An empty Seq is returned when `start > end`.
    *
@@ -93,6 +109,12 @@ class DeltaHistoryManager(
     import org.apache.spark.sql.delta.implicits._
     val conf = getSerializableHadoopConf
     val logPath = deltaLog.logPath.toString
+    recordDeltaEvent(
+      this.deltaLog,
+      "delta.historyManager.getHistory",
+      data = Map(
+        "startVersion" -> start.toString,
+        "endVersion" -> end.toString))
     // We assume that commits are contiguous, therefore we try to load all of them in order
     val info = spark.range(start, end + 1)
       .mapPartitions { versions =>

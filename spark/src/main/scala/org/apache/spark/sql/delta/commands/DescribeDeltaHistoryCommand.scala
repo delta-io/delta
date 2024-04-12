@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistory, DeltaTableIdentifier, UnresolvedDeltaPathOrIdentifier, UnresolvedPathBasedDeltaTable}
+import org.apache.spark.sql.delta.DeltaHistoryManager.getEarliestDeltaFile
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
@@ -44,9 +45,11 @@ object DescribeDeltaHistory {
   def apply(
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
-      limit: Option[Int]): DescribeDeltaHistory = {
+      limit: Option[Int],
+      startVersion: Option[Long],
+      endVersion: Option[Long]): DescribeDeltaHistory = {
     val plan = UnresolvedDeltaPathOrIdentifier(path, tableIdentifier, COMMAND_NAME)
-    DescribeDeltaHistory(plan, limit)
+    DescribeDeltaHistory(plan, limit, startVersion, endVersion)
   }
 
   val COMMAND_NAME = "DESCRIBE HISTORY"
@@ -61,6 +64,8 @@ object DescribeDeltaHistory {
 case class DescribeDeltaHistory(
     override val child: LogicalPlan,
     limit: Option[Int],
+    startVersion: Option[Long],
+    endVersion: Option[Long],
     override val output: Seq[Attribute] = toAttributes(ExpressionEncoder[DeltaHistory]().schema))
   extends UnaryNode
     with MultiInstanceRelation
@@ -86,7 +91,12 @@ case class DescribeDeltaHistory(
       throw DeltaErrors.maxArraySizeExceeded()
     }
     val deltaTableV2: DeltaTableV2 = getDeltaTable(child, DescribeDeltaHistory.COMMAND_NAME)
-    DescribeDeltaHistoryCommand(table = deltaTableV2, limit = limit, output = output)
+    DescribeDeltaHistoryCommand(
+      table = deltaTableV2,
+      limit = limit,
+      startVersion = startVersion,
+      endVersion = endVersion,
+      output = output)
   }
 }
 
@@ -96,6 +106,8 @@ case class DescribeDeltaHistory(
 case class DescribeDeltaHistoryCommand(
     @transient table: DeltaTableV2,
     limit: Option[Int],
+    startVersion: Option[Long],
+    endVersion: Option[Long],
     override val output: Seq[Attribute] = toAttributes(ExpressionEncoder[DeltaHistory]().schema))
   extends LeafRunnableCommand
     with MultiInstanceRelation
@@ -113,7 +125,11 @@ case class DescribeDeltaHistoryCommand(
         )
       }
       import org.apache.spark.sql.delta.implicits._
-      val commits = deltaLog.history.getHistory(limit)
+      val commits = startVersion match {
+        case Some(_) => deltaLog.history.getHistory(startVersion, endVersion, limit)
+        case None if endVersion.isEmpty => deltaLog.history.getHistory(limit)
+        case None => deltaLog.history.getHistory(None, endVersion, limit)
+      }
       sparkSession.implicits.localSeqToDatasetHolder(commits).toDF().collect().toSeq
     }
   }
