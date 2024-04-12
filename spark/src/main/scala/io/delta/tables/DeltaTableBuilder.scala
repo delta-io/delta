@@ -293,7 +293,7 @@ class DeltaTableBuilder private[tables](
    */
   @Evolving
   @scala.annotation.varargs
-  def clusteredBy(colNames: String*): DeltaTableBuilder = {
+  def clusterBy(colNames: String*): DeltaTableBuilder = {
     clusteringColumns = Option(colNames)
     this
   }

@@ -703,7 +703,7 @@ class DeltaTableTestsMixin:
             deltaTable2 = DeltaTable.create(self.spark).tableName("test3").addColumns(
                 df.schema.fields) \
                 .addColumn("value2", dataType="int") \
-                .clusteredBy("value2", "value")\
+                .clusterBy("value2", "value")\
                 .execute()
             self.__verify_table_schema("test2",
                                        deltaTable2.toDF().schema,
@@ -980,15 +980,15 @@ class DeltaTableTestsMixin:
         with self.assertRaises(TypeError):
             builder.partitionedBy([1])  # type: ignore[list-item]
 
-        # bad clusteredBy col name
+        # bad clusterBy col name
         with self.assertRaises(TypeError):
-            builder.clusteredBy(1)  # type: ignore[call-overload]
+            builder.clusterBy(1)  # type: ignore[call-overload]
 
         with self.assertRaises(TypeError):
-            builder.clusteredBy(1, "1")   # type: ignore[call-overload]
+            builder.clusterBy(1, "1")   # type: ignore[call-overload]
 
         with self.assertRaises(TypeError):
-            builder.clusteredBy([1])  # type: ignore[list-item]
+            builder.clusterBy([1])  # type: ignore[list-item]
 
         # bad property key
         with self.assertRaises(TypeError):

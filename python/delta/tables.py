@@ -1286,19 +1286,19 @@ class DeltaTableBuilder(object):
         return self
 
     @overload
-    def clusteredBy(
+    def clusterBy(
         self, *cols: str
     ) -> "DeltaTableBuilder":
         ...
 
     @overload
-    def clusteredBy(
+    def clusterBy(
         self, __cols: Union[List[str], Tuple[str, ...]]
     ) -> "DeltaTableBuilder":
         ...
 
     @since(3.2)  # type: ignore[arg-type]
-    def clusteredBy(
+    def clusterBy(
         self, *cols: Union[str, List[str], Tuple[str, ...]]
     ) -> "DeltaTableBuilder":
         """
@@ -1316,7 +1316,7 @@ class DeltaTableBuilder(object):
         for c in cols:
             if type(c) is not str:
                 self._raise_type_error("Clustering column must be str.", [c])
-        self._jbuilder = self._jbuilder.clusteredBy(_to_seq(
+        self._jbuilder = self._jbuilder.clusterBy(_to_seq(
             self._spark._sc,  # type: ignore[attr-defined]
             cast(Iterable[Union[Column, str]], cols)
         ))

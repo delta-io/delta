@@ -470,7 +470,7 @@ class DeltaTableBuilderSuite
     withTable("test") {
       io.delta.tables.DeltaTable.create().tableName("test")
         .addColumn("c1", "int")
-        .clusteredBy("c1")
+        .clusterBy("c1")
         .execute()
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier("test"))
@@ -484,7 +484,7 @@ class DeltaTableBuilderSuite
       val e = intercept[AnalysisException] {
         io.delta.tables.DeltaTable.create().tableName("test")
           .addColumn("c1", "int")
-          .clusteredBy("c1")
+          .clusterBy("c1")
           .partitionedBy("c1")
           .execute()
       }
