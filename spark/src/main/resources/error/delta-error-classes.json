@@ -364,7 +364,7 @@
     "message" : [
       "Cannot specify partitioning and clustering columns."
     ],
-    "sqlState" : "42P10"
+    "sqlState" : "42613"
   },
   "DELTA_CLUSTERING_COLUMNS_MISMATCH" : {
     "message" : [
