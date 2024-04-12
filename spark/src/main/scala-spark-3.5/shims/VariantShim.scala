@@ -14,6 +14,13 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.types
 
-class DeltaVariantSuite extends DeltaVariantSparkOnlyTests
+object VariantShim {
+
+  /**
+   * Spark's variant type is implemented for Spark 4.0 and is not implemented in Spark 3.5. Thus,
+   * any Spark 3.5 DataType cannot be a variant type.
+   */
+  def isTypeVariant(dt: DataType): Boolean = false
+}
