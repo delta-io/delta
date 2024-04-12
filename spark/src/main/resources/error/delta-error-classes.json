@@ -2226,6 +2226,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED" : {
+    "message" : [
+      "Failed to convert the table version <version> to the universal format <format>. <message>"
+    ],
+    "sqlState" : "KD00E"
+  },
   "DELTA_UNIVERSAL_FORMAT_VIOLATION" : {
     "message" : [
       "The validation of Universal Format (<format>) has failed: <violation>"
