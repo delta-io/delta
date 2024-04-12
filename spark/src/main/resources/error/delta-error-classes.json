@@ -2655,6 +2655,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA" : {
+    "message" : [
+      "Unable to operate on this table because an unsupported type change was applied. Field <fieldName> was changed from <fromType> to <toType>."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_VACUUM_SPECIFIC_PARTITION" : {
     "message" : [
       "Please provide the base path (<baseDeltaPath>) when Vacuuming Delta tables. Vacuuming specific partitions is currently not supported."

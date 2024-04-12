@@ -659,6 +659,17 @@ trait DeltaErrorsBase
     )
   }
 
+  def unsupportedTypeChangeInSchema(
+      fieldPath: Seq[String],
+      fromType: DataType,
+      toType: DataType)
+    : Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
+      messageParameters = Array(SchemaUtils.prettyFieldName(fieldPath), fromType.sql, toType.sql)
+    )
+  }
+
   def cannotWriteIntoView(table: TableIdentifier): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_WRITE_INTO_VIEW",
