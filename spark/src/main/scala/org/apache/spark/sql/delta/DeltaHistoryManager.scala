@@ -220,9 +220,6 @@ class DeltaHistoryManager(
       getEarliestDeltaFile(deltaLog)
     }
     val snapshot = deltaLog.update()
-    // TODO(managed-commits): Once the unbackfilled commit to timestamp mapping
-    // retrieved during deltaLog.update() becomes visible here, this function should
-    // be updated to take advantage of it.
     val commitFileProvider = DeltaCommitFileProvider(snapshot)
     val latestVersion = snapshot.version
 

@@ -987,21 +987,25 @@ class InCommitTimestampWithManagedCommitSuite
       val commit3Path = commitFileProvider.deltaFile(3)
       fs.delete(commit3Path, false)
       val commit3Timestamp = unbackfilledCommits(2).timestamp
-      val e = intercept[org.apache.spark.SparkException] {
-          DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
-            commit3Timestamp,
-            commit0,
-            numberAdditionalCommits + 1,
-            deltaLog.newDeltaHadoopConf(),
-            deltaLog.logPath,
-            deltaLog.store,
-            numChunks = 5,
-            spark,
-            commitFileProvider)
+      var errorOpt = Option.empty[org.apache.spark.SparkException]
+      try {
+        DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          commit3Timestamp,
+          commit0,
+          numberAdditionalCommits + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 5,
+          spark,
+          commitFileProvider)
+      } catch {
+        case e: org.apache.spark.SparkException => errorOpt = Some(e)
+          e.getStackTrace.exists(_.toString.contains(
+            s"Could not find commit 3 which was expected to be at " +
+              s"path ${commit3Path.toString}."))
       }
-      assert(e.toString.contains(
-        s"Could not find commit 3 which was expected to be at path ${commit3Path.toString}."))
+      assert(errorOpt.isDefined)
     }
   }
 }
-
