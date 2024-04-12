@@ -1,0 +1,48 @@
+name: "Delta Spark Master Tests"
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        # These Scala versions must match those in the build.sbt
+        scala: [2.13.8]
+    env:
+      SCALA_VERSION: ${{ matrix.scala }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: technote-space/get-diff-action@v4
+        id: git-diff
+        with:
+          PATTERNS: |
+            **
+            .github/workflows/**
+            !kernel/**
+            !connectors/**
+      - name: install java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Cache Scala, SBT
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.cache/coursier
+          # Change the key if dependencies are changed. For each key, GitHub Actions will cache the
+          # the above directories when we use the key for the first time. After that, each run will
+          # just use the cache. The cache is immutable so we need to use a new key when trying to
+          # cache new stuff.
+          key: delta-sbt-cache-spark-master-scala${{ matrix.scala }}
+      - name: Install Job dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
+          sudo apt install libedit-dev
+        if: steps.git-diff.outputs.diff
+      - name: Run Scala Master tests
+        run: |
+          build/sbt -DsparkVersion=master spark/test
+        if: steps.git-diff.outputs.diff
