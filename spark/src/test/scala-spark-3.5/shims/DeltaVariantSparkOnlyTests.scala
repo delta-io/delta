@@ -16,4 +16,4 @@
 
 package org.apache.spark.sql.delta
 
-class DeltaVariantSuite extends DeltaVariantSparkOnlyTests
+trait DeltaVariantSparkOnlyTests { self: DeltaVariantSuite => }

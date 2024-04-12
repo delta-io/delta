@@ -1267,7 +1267,7 @@ def normalizeColumnNamesInDataType(
    * Find VariantType columns in the table schema.
    */
   def checkForVariantTypeColumnsRecursively(schema: StructType): Boolean = {
-    SchemaUtils.typeExistsRecursively(schema)(_.isInstanceOf[VariantType])
+    SchemaUtils.typeExistsRecursively(schema)(VariantShim.isTypeVariant(_))
   }
 
   /**
@@ -1309,7 +1309,7 @@ def normalizeColumnNamesInDataType(
     case DateType =>
     case TimestampType =>
     case TimestampNTZType =>
-    case VariantType =>
+    case dt if VariantShim.isTypeVariant(dt) =>
     case BinaryType =>
     case _: DecimalType =>
     case a: ArrayType =>
