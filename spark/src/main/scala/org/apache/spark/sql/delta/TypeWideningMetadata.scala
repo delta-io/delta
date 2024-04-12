@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
@@ -99,7 +100,7 @@ private[delta] case class TypeWideningMetadata(typeChanges: Seq[TypeChange]) {
   }
 }
 
-private[delta] object TypeWideningMetadata {
+private[delta] object TypeWideningMetadata extends DeltaLogging {
   val TYPE_CHANGES_METADATA_KEY: String = "delta.typeChanges"
 
   /** Read the type widening metadata from the given field. */
@@ -126,18 +127,35 @@ private[delta] object TypeWideningMetadata {
 
     if (DataType.equalsIgnoreNullability(schema, oldSchema)) return schema
 
-    SchemaMergingUtils.transformColumns(schema, oldSchema) {
+    val changesToRecord = mutable.Buffer.empty[TypeChange]
+    val schemaWithMetadata = SchemaMergingUtils.transformColumns(schema, oldSchema) {
       case (_, newField, Some(oldField), _) =>
         // Record the version the transaction will attempt to use in the type change metadata. If
         // there's a conflict with another transaction, the version in the metadata will be updated
         // during conflict resolution. See [[ConflictChecker.updateTypeWideningMetadata()]].
         val typeChanges =
           collectTypeChanges(oldField.dataType, newField.dataType, txn.getFirstAttemptVersion)
+        changesToRecord ++= typeChanges
         TypeWideningMetadata(typeChanges).appendToField(newField)
       case (_, newField, None, _) =>
         // The field was just added, no need to process.
         newField
     }
+
+    if (changesToRecord.nonEmpty) {
+      recordDeltaEvent(
+        deltaLog = txn.snapshot.deltaLog,
+        opType = "delta.typeWidening.typeChanges",
+        data = Map(
+          "changes" -> changesToRecord.map { change =>
+          Map(
+            "fromType" -> change.fromType.sql,
+            "toType" -> change.toType.sql
+          )
+        }
+      ))
+    }
+    schemaWithMetadata
   }
 
   /**
