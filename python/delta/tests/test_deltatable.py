@@ -705,7 +705,7 @@ class DeltaTableTestsMixin:
                 .addColumn("value2", dataType="int") \
                 .clusterBy("value2", "value")\
                 .execute()
-            self.__verify_table_schema("test2",
+            self.__verify_table_schema("test3",
                                        deltaTable2.toDF().schema,
                                        ["key", "value", "value2"],
                                        [StringType(), LongType(), IntegerType()],
