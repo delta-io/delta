@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.types.StructType
 
-trait DeltaVariantSparkOnlyTests
+class DeltaVariantSuite
     extends QueryTest
     with DeltaSQLCommandTest { self: DeltaVariantSuite =>
   private def getProtocolForTable(table: String): Protocol = {
