@@ -1910,7 +1910,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     postCommitSnapshot
   }
 
-  class FileSystemBasedCommitStore(deltaLog: DeltaLog) extends CommitStore {
+  class FileSystemBasedCommitStore(val deltaLog: DeltaLog) extends CommitStore {
     override def commit(
         logStore: LogStore,
         hadoopConf: Configuration,
