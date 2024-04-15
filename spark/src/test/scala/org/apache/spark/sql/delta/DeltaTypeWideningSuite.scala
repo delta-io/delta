@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -30,6 +31,7 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Encoder, QueryTest, Row}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal}
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.functions.{col, lit}
@@ -44,7 +46,6 @@ import org.apache.spark.util.ManualClock
 class DeltaTypeWideningSuite
   extends QueryTest
     with ParquetTest
-    with DeltaDMLTestUtils
     with RowTrackingTestUtils
     with DeltaSQLCommandTest
     with DeltaTypeWideningTestMixin
@@ -52,11 +53,14 @@ class DeltaTypeWideningSuite
     with DeltaTypeWideningNestedFieldsTests
     with DeltaTypeWideningMetadataTests
     with DeltaTypeWideningTableFeatureTests
+    with DeltaTypeWideningStatsTests
 
 /**
  * Test mixin that enables type widening by default for all tests in the suite.
  */
-trait DeltaTypeWideningTestMixin extends SharedSparkSession {
+trait DeltaTypeWideningTestMixin extends SharedSparkSession with DeltaDMLTestUtils {
+  import testImplicits._
+
   protected override def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey, "true")
@@ -79,6 +83,9 @@ trait DeltaTypeWideningTestMixin extends SharedSparkSession {
       .putMetadataArray(
         "delta.typeChanges", Array(TypeChange(version, from, to, path).toMetadata))
       .build()
+
+  def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
+      append(values.toDF("a").select(col("a").cast(dataType)).repartition(1))
 }
 
 /**
@@ -210,7 +217,7 @@ trait DeltaTypeWideningTestCases { self: SharedSparkSession =>
  * CHANGE COLUMN TYPE.
  */
 trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWideningTestCases {
-  self: QueryTest with ParquetTest with DeltaTypeWideningTestMixin with DeltaDMLTestUtils =>
+  self: QueryTest with ParquetTest with DeltaTypeWideningTestMixin =>
 
   import testImplicits._
 
@@ -305,7 +312,7 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
  * Tests covering type changes on nested fields in structs, maps and arrays.
  */
 trait DeltaTypeWideningNestedFieldsTests {
-  self: QueryTest with ParquetTest with DeltaDMLTestUtils with DeltaTypeWideningTestMixin
+  self: QueryTest with ParquetTest with DeltaTypeWideningTestMixin
     with SharedSparkSession =>
 
   import testImplicits._
@@ -482,7 +489,7 @@ trait DeltaTypeWideningNestedFieldsTests {
  * lower-level tests, see [[DeltaTypeWideningMetadataSuite]].
  */
 trait DeltaTypeWideningMetadataTests {
-  self: QueryTest with ParquetTest with DeltaTypeWideningTestMixin with DeltaDMLTestUtils =>
+  self: QueryTest with ParquetTest with DeltaTypeWideningTestMixin =>
 
   def testTypeWideningMetadata(name: String)(
       initialSchema: String,
@@ -636,13 +643,135 @@ trait DeltaTypeWideningMetadataTests {
 }
 
 /**
+ * Trait collecting tests for stats and data skipping with type changes.
+ */
+trait DeltaTypeWideningStatsTests {
+  self: QueryTest with DeltaTypeWideningTestMixin =>
+  import testImplicits._
+
+  /**
+   * Helper to run tests while enabling/disabling storing stats as JSON string or strongly-typed
+   * structs in checkpoint files.
+   */
+  def testStats(name: String, jsonStatsEnabled: Boolean, structStatsEnabled: Boolean)(
+      body: => Unit): Unit =
+    test(s"$name, jsonStatsEnabled=$jsonStatsEnabled, structStatsEnabled=$structStatsEnabled") {
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.defaultTablePropertyKey ->
+          jsonStatsEnabled.toString,
+        DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.defaultTablePropertyKey ->
+          structStatsEnabled.toString
+      )(body)
+    }
+
+  /** Returns the latest checkpoint for the test table. */
+  def getLatestCheckpoint: LastCheckpointInfo =
+    deltaLog.readLastCheckpointFile().getOrElse {
+      fail("Expected the table to have a checkpoint but it didn't")
+    }
+
+  /** Returns the type used to store JSON stats in the checkpoint if JSON stats are present. */
+  def getJsonStatsType(checkpoint: LastCheckpointInfo): Option[DataType] =
+    checkpoint.checkpointSchema.flatMap {
+      _.findNestedField(Seq("add", "stats"))
+    }.map(_._2.dataType)
+
+  /**
+   * Returns the type used to store parsed partition values for the given column in the checkpoint
+   * if these are present.
+   */
+  def getPartitionValuesType(checkpoint: LastCheckpointInfo, colName: String)
+    : Option[DataType] = {
+    checkpoint.checkpointSchema.flatMap {
+      _.findNestedField(Seq("add", "partitionValues_parsed", colName))
+    }.map(_._2.dataType)
+  }
+
+
+  /**
+   * Checks that stats and parsed partition values are stored in the checkpoint when enabled and
+   * that their type matches the expected type.
+   */
+  def checkCheckpointStats(
+      checkpoint: LastCheckpointInfo,
+      colName: String,
+      colType: DataType,
+      partitioned: Boolean,
+      jsonStatsEnabled: Boolean,
+      structStatsEnabled: Boolean): Unit = {
+    val expectedJsonStatsType = if (jsonStatsEnabled) Some(StringType) else None
+    assert(getJsonStatsType(checkpoint) === expectedJsonStatsType)
+
+    val expectedPartitionStats = if (partitioned && structStatsEnabled) Some(colType) else None
+    assert(getPartitionValuesType(checkpoint, colName) === expectedPartitionStats)
+  }
+
+  /**
+   * Reads the test table filtered by the given value and checks that files are skipped as expected.
+   */
+  def checkFileSkipping(value: Any, expectedFilesRead: Long): Unit = {
+    val dataFilter: Expression = EqualTo(AttributeReference("a", IntegerType)(), Literal(value))
+    val files = deltaLog.update().filesForScan(Seq(dataFilter), keepNumRecords = false).files
+    assert(files.size === expectedFilesRead, s"Expected $expectedFilesRead files to be " +
+      s"read but read ${files.size} files.")
+  }
+
+  for {
+    partitioned <- BOOLEAN_DOMAIN
+    jsonStatsEnabled <- BOOLEAN_DOMAIN
+    structStatsEnabled <- BOOLEAN_DOMAIN
+  }
+  testStats(s"data skipping after type change, partitioned=$partitioned", jsonStatsEnabled,
+      structStatsEnabled) {
+    val partitionStr = if (partitioned) " PARTITIONED BY (a)" else ""
+    sql(s"CREATE TABLE delta.`$tempPath` (a smallint, dummy smallint DEFAULT 1)" +
+      s"USING DELTA$partitionStr TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')")
+
+    addSingleFile(Seq(1, 2), ShortType)
+    addSingleFile(Seq(3, 4), ShortType)
+    deltaLog.checkpoint()
+    assert(readDeltaTable(tempPath).schema("a").dataType === ShortType)
+    val initialCheckpoint = getLatestCheckpoint
+    checkCheckpointStats(
+      initialCheckpoint, "a", ShortType, partitioned, jsonStatsEnabled, structStatsEnabled)
+
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
+    addSingleFile(Seq(Int.MinValue, Int.MinValue + 2), IntegerType)
+
+    var checkpoint = getLatestCheckpoint
+    // Ensure there's no new checkpoint after the type change.
+    assert(getLatestCheckpoint.semanticEquals(initialCheckpoint))
+
+    val canSkipFiles = jsonStatsEnabled || partitioned
+
+    // The last file added isn't part of the checkpoint, it always has stats that can be used for
+    // skipping even when checkpoint stats can't be used for skippping.
+    checkFileSkipping(value = 1, if (canSkipFiles) 1 else 2)
+    checkAnswer(readDeltaTable(tempPath).filter("a = 1"), Row(1, 1))
+
+    checkFileSkipping(value = Int.MinValue, if (canSkipFiles) 1 else 3)
+    checkAnswer(readDeltaTable(tempPath).filter(s"a = ${Int.MinValue}"), Row(Int.MinValue, 1))
+
+    // Trigger a new checkpoint after the type change and re-check data skipping.
+    deltaLog.checkpoint()
+    checkpoint = getLatestCheckpoint
+    assert(!checkpoint.semanticEquals(initialCheckpoint))
+    checkCheckpointStats(
+      checkpoint, "a", IntegerType, partitioned, jsonStatsEnabled, structStatsEnabled)
+    // When checkpoint stats are completely disabled, the last file added can't be skipped anymore.
+    checkFileSkipping(value = 1, if (canSkipFiles) 1 else 3)
+    checkFileSkipping(value = Int.MinValue, if (canSkipFiles) 1 else 3)
+  }
+
+}
+
+/**
  * Tests covering adding and removing the type widening table feature. Dropping the table feature
  * also includes rewriting data files with the old type and removing type widening metadata.
  */
 trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
   self: QueryTest
     with ParquetTest
-    with DeltaDMLTestUtils
     with RowTrackingTestUtils
     with DeltaTypeWideningTestMixin =>
 
@@ -721,9 +850,6 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
       deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
         TimeUnit.MINUTES.toMillis(5))
   }
-
-  def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
-      append(values.toDF("a").select(col("a").cast(dataType)).repartition(1))
 
   /** Get the number of AddFile actions committed since the given table version (included). */
   def getNumAddFilesSinceVersion(version: Long): Long =
