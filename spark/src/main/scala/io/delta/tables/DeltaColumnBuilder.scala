@@ -197,7 +197,7 @@ class DeltaColumnBuilder private[tables](
       }
 
       if (dataType != null && dataType != LongType) {
-        throw DeltaErrors.identityColumnDataTypeNotSupported()
+        throw DeltaErrors.identityColumnDataTypeNotSupported(dataType)
       }
 
       metadataBuilder.putBoolean(

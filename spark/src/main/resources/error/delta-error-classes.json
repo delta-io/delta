@@ -1086,6 +1086,24 @@
     },
     "sqlState" : "KD00E"
   },
+  "DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE" : {
+    "message" : [
+      "DataType <dataType> is not supported for IDENTITY columns."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP" : {
+    "message" : [
+      "IDENTITY column step cannot be 0."
+    ],
+    "sqlState" : "42611"
+  },
+  "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION" : {
+    "message" : [
+      "IDENTITY column cannot be specified with a generated column expression."
+    ],
+    "sqlState" : "42613"
+  },
   "DELTA_ILLEGAL_FILE_FOUND" : {
     "message" : [
       "Illegal files found in a dataChange = false transaction. Files: <file>"

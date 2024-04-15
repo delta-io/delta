@@ -3183,6 +3183,43 @@ trait DeltaErrorsSuiteBase
         Some(s"Could not resolve expression: ${exprs.mkString(",")}")
       )
     }
+    {
+      val unsupportedDataType = IntegerType
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.identityColumnDataTypeNotSupported(unsupportedDataType)
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE"),
+        Some("KD009"),
+        Some(s"DataType ${unsupportedDataType.typeName} is not supported for IDENTITY columns."),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.identityColumnIllegalStep()
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP"),
+        Some("42611"),
+        Some("IDENTITY column step cannot be 0."),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.identityColumnWithGenerationExpression()
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION"),
+        Some("42613"),
+        Some("IDENTITY column cannot be specified with a generated column expression."),
+        startWith = true
+      )
+    }
   }
 }
 

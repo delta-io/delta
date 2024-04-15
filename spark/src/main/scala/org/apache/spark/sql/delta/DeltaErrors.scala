@@ -2410,15 +2410,19 @@ trait DeltaErrorsBase
   }
 
   def identityColumnWithGenerationExpression(): Throwable = {
-    new AnalysisException("Identity column cannot be specified with a generated column expression.")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION", Array.empty)
   }
 
   def identityColumnIllegalStep(): Throwable = {
-    new AnalysisException("Identity column step cannot be 0.")
+    new DeltaAnalysisException(errorClass = "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP", Array.empty)
   }
 
-  def identityColumnDataTypeNotSupported(): Throwable = {
-    new AnalysisException("Identity column does not support this data type.")
+  def identityColumnDataTypeNotSupported(unsupportedType: DataType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(unsupportedType.typeName)
+    )
   }
 
   def identityColumnInconsistentMetadata(
