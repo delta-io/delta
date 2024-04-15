@@ -1950,6 +1950,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         logPath: Path,
         startVersion: Long,
         endVersion: Option[Long]): Unit = {}
+
+    /**
+     * FileSystemBasedCommitStore is supposed to be treated as a singleton object for a Delta Log
+     * and is equal to all other instances of FileSystemBasedCommitStore for the same Delta Log.
+     */
+    override def semanticEquals(other: CommitStore): Boolean = {
+      other match {
+        case fsCommitStore: FileSystemBasedCommitStore => fsCommitStore.deltaLog == deltaLog
+        case _ => false
+      }
+    }
   }
 
   /**
