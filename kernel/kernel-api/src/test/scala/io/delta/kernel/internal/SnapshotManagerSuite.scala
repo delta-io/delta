@@ -23,10 +23,9 @@ import scala.reflect.ClassTag
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.{CheckpointInstance, SidecarFile}
-import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
 import io.delta.kernel.internal.util.{FileNames, Utils}
-import io.delta.kernel.test.{BaseMockJsonHandler, BaseMockParquetHandler, MockFileSystemClientUtils}
+import io.delta.kernel.test.{BaseMockJsonHandler, BaseMockParquetHandler, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.scalatest.funsuite.AnyFunSuite
@@ -863,7 +862,9 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 }
 
-class MockSidecarParquetHandler(sidecars: Seq[FileStatus]) extends BaseMockParquetHandler {
+class MockSidecarParquetHandler(sidecars: Seq[FileStatus])
+  extends BaseMockParquetHandler
+    with VectorTestUtils {
   override def readParquetFiles(
     fileIter: CloseableIterator[FileStatus],
     physicalSchema: StructType,
@@ -875,7 +876,7 @@ class MockSidecarParquetHandler(sidecars: Seq[FileStatus]) extends BaseMockParqu
 
         override def getColumnVector(ordinal: Int): ColumnVector = {
           ordinal match {
-            case 0 => stringVector(sidecars.map(_.getPath): _*) // path
+            case 0 => stringVector(sidecars.map(_.getPath)) // path
             case 1 => longVector(sidecars.map(_.getSize): _*) // size
             case 2 =>
               longVector(sidecars.map(_.getModificationTime): _*); // modification time
@@ -887,7 +888,9 @@ class MockSidecarParquetHandler(sidecars: Seq[FileStatus]) extends BaseMockParqu
   }
 }
 
-class MockSidecarJsonHandler(sidecars: Seq[FileStatus]) extends BaseMockJsonHandler {
+class MockSidecarJsonHandler(sidecars: Seq[FileStatus])
+  extends BaseMockJsonHandler
+    with VectorTestUtils {
   override def readJsonFiles(
     fileIter: CloseableIterator[FileStatus],
     physicalSchema: StructType,
@@ -899,7 +902,7 @@ class MockSidecarJsonHandler(sidecars: Seq[FileStatus]) extends BaseMockJsonHand
 
         override def getColumnVector(ordinal: Int): ColumnVector = {
           ordinal match {
-            case 0 => stringVector(sidecars.map(_.getPath): _*) // path
+            case 0 => stringVector(sidecars.map(_.getPath)) // path
             case 1 => longVector(sidecars.map(_.getSize): _*) // size
             case 2 =>
               longVector(sidecars.map(_.getModificationTime): _*); // modification time

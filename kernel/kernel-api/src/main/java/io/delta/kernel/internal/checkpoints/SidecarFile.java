@@ -17,25 +17,27 @@ package io.delta.kernel.internal.checkpoints;
 
 import java.util.Objects;
 
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
+/**
+ * Action representing a SidecarFile in a V2 checkpoint manifest.
+ */
 public class SidecarFile {
     public String path;
     public long sizeInBytes;
     public long modificationTime;
 
-    public static SidecarFile fromRow(Row row, int index) {
-        Row sidecar = row.getStruct(index);
-        if (sidecar == null) {
+    public static SidecarFile fromColumnVector(ColumnVector vector, int rowIndex) {
+        if (vector.isNullAt(rowIndex)) {
             return null;
         }
         return new SidecarFile(
-                sidecar.getString(0),
-                sidecar.getLong(1),
-                sidecar.getLong(2)
+                vector.getChild(0).getString(rowIndex),
+                vector.getChild(1).getLong(rowIndex),
+                vector.getChild(2).getLong(rowIndex)
         );
     }
 

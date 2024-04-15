@@ -119,8 +119,10 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
         // If the ActionWrapper schema does not match the read schema, then we have injected sidecar
         // files into the schema. Append any sidecar files found to the end of the file list and
         // return a new ActionWrapper with the sidecar files removed from the read schema.
-        if (!next.getColumnarBatch().getSchema().equals(readSchema) && next.isFromCheckpoint()) {
-            return next.appendSidecarsFromBatch(filesList);
+        if (next.getContainsSidecarsInSchema() && next.isFromCheckpoint()) {
+            List<FileWrapper> filesToAppend = next.extractSidecarsFromBatch();
+            filesList.addAll(filesToAppend);
+            return next;
         }
 
         return next;
@@ -232,7 +234,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                         readSchema,
                         Optional.empty());
 
-                return combine(dataIter, null /* isFromCheckpoint */, fileVersion);
+                return combine(dataIter, null /* isFromCheckpoint */, fileVersion, false);
             } else if (nextFileWrapper.isSidecar()) {
                 // The current file is a sidecar file. Because all sidecar files are appended at the
                 // end of the file list, read all sidecar files together here.
@@ -247,8 +249,11 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                                 toCloseableIterator(sidecars.iterator()),
                                 readSchema, checkpointPredicate);
 
-                return combine(dataIter,
-                        nextFileWrapper.getCheckpointInstanceFilepath(), fileVersion);
+                return combine(
+                        dataIter,
+                        nextFileWrapper.getCheckpointInstanceFilepath(),
+                        fileVersion,
+                        false);
             } else if (nextFileWrapper.isMultipartCheckpoint()) {
                 CheckpointInstance checkpointInstance = new CheckpointInstance(fileName);
                 final long fileVersion = checkpointInstance.version;
@@ -262,14 +267,18 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                         .readParquetFiles(
                             toCloseableIterator(checkpointFiles.iterator()),
                             readSchema, checkpointPredicate);
-                return combine(dataIter, nextFilePath, checkpointVersion(nextFilePath));
+                return combine(dataIter, nextFilePath, checkpointVersion(nextFilePath), false);
             } else if (nextFileWrapper.isSinglePartOrV2Checkpoint()) {
                 // If the checkpoint file is a UUID or classic checkpoint, read the checkpoint
                 // manifest and any potential sidecars. Otherwise, look for any other parts of the
                 // current multipart checkpoint.
                 CloseableIterator<ColumnarBatch> dataIter =
                         getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName);
-                return combine(dataIter, nextFilePath, checkpointVersion(nextFilePath));
+                return combine(
+                        dataIter,
+                        nextFilePath,
+                        checkpointVersion(nextFilePath),
+                        LogReplay.isAddRemoveReadSchema(readSchema));
             } else {
                 throw new IllegalStateException(
                     String.format("Unexpected log file path: %s", nextFile.getPath())
@@ -286,7 +295,8 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
     private CloseableIterator<ActionWrapper> combine(
             CloseableIterator<ColumnarBatch> fileReadDataIter,
             Path checkpointPath,
-            long version) {
+            long version,
+            boolean containsSidecarsInSchema) {
         return new CloseableIterator<ActionWrapper>() {
             @Override
             public boolean hasNext() {
@@ -295,7 +305,8 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
             @Override
             public ActionWrapper next() {
-                return new ActionWrapper(fileReadDataIter.next(), checkpointPath, version);
+                return new ActionWrapper(
+                        fileReadDataIter.next(), checkpointPath, version, containsSidecarsInSchema);
             }
 
             @Override

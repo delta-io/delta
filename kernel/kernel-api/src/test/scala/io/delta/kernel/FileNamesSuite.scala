@@ -58,7 +58,5 @@ class FileNamesSuite extends AnyFunSuite {
       new Path("/a/00000000000000000001.checkpoint.0000000003.0000000005.parquet"),
       new Path("/a/00000000000000000001.checkpoint.0000000004.0000000005.parquet"),
       new Path("/a/00000000000000000001.checkpoint.0000000005.0000000005.parquet")))
-
-    Seq("a").iterator.duplicate
   }
 }

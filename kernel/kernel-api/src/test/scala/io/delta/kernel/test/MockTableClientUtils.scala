@@ -21,7 +21,7 @@ import java.util.Optional
 import io.delta.kernel.client._
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
-import io.delta.kernel.types.{DataType, LongType, StringType, StructType}
+import io.delta.kernel.types.{DataType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 
 /**
@@ -69,30 +69,6 @@ trait MockTableClientUtils {
         Option(parquetHandler).getOrElse(
           throw new UnsupportedOperationException("not supported in this test suite"))
     }
-  }
-
-  def longVector(values: Long*): ColumnVector = new ColumnVector {
-    override def getDataType: DataType = LongType.LONG
-
-    override def getSize: Int = values.size
-
-    override def close(): Unit = {}
-
-    override def isNullAt(rowId: Int): Boolean = false
-
-    override def getLong(rowId: Int): Long = values(rowId)
-  }
-
-  def stringVector(values: String*): ColumnVector = new ColumnVector {
-    override def getDataType: DataType = StringType.STRING
-
-    override def getSize: Int = values.size
-
-    override def close(): Unit = {}
-
-    override def isNullAt(rowId: Int): Boolean = false
-
-    override def getString(rowId: Int): String = values(rowId)
   }
 }
 

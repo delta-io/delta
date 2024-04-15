@@ -21,11 +21,10 @@ import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpo
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, MockTableClientUtils}
+import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, MockTableClientUtils, VectorTestUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.scalatest.funsuite.AnyFunSuite
-
 import java.io.{FileNotFoundException, IOException}
 import java.util.Optional
 
@@ -222,7 +221,7 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 }
 
-object CheckpointerSuite extends MockTableClientUtils {
+object CheckpointerSuite extends MockTableClientUtils with VectorTestUtils {
   val SAMPLE_LAST_CHECKPOINT_FILE_CONTENT: ColumnarBatch = new ColumnarBatch {
     override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
 
@@ -242,7 +241,7 @@ object CheckpointerSuite extends MockTableClientUtils {
 
     override def getColumnVector(ordinal: Int): ColumnVector = {
       ordinal match {
-        case 0 => stringVector("abc", "def") // path
+        case 0 => stringVector(Seq("abc", "def")) // path
         case 1 => longVector(44, 45) // size
         case 2 => longVector(20, 30); // modification time
       }

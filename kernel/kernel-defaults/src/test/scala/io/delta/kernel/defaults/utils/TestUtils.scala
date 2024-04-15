@@ -438,6 +438,17 @@ trait TestUtils extends Assertions with SQLHelper {
   }
 
   /**
+   * Drops table `tableName` after calling `f`.
+   */
+  protected def withTable(tableNames: String*)(f: => Unit): Unit = {
+    try f finally {
+      tableNames.foreach { name =>
+        spark.sql(s"DROP TABLE IF EXISTS $name")
+      }
+    }
+  }
+
+  /**
    * Builds a MapType ColumnVector from a sequence of maps.
    */
   def buildMapVector(mapValues: Seq[Map[AnyRef, AnyRef]], dataType: MapType): ColumnVector = {

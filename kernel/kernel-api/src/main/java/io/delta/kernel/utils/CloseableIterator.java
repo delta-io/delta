@@ -24,7 +24,6 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.internal.util.Utils;
 
 /**
  * Closeable extension of {@link Iterator}
@@ -100,33 +99,6 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
             public void close()
                 throws IOException {
                 delegate.close();
-            }
-        };
-    }
-
-    default CloseableIterator<T> append(CloseableIterator<T> other) {
-        CloseableIterator<T> delegate = this;
-        return new CloseableIterator<T>() {
-            @Override
-            public boolean hasNext() {
-                return delegate.hasNext() || other.hasNext();
-            }
-
-            @Override
-            public T next() {
-                if (!hasNext()) {
-                    throw new NoSuchElementException();
-                }
-                if (delegate.hasNext()) {
-                    return delegate.next();
-                }
-                return other.next();
-            }
-
-            @Override
-            public void close()
-                    throws IOException {
-                Utils.closeCloseables(delegate, other);
             }
         };
     }

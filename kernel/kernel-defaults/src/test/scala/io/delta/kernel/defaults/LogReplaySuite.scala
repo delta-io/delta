@@ -30,8 +30,6 @@ import io.delta.kernel.Table
 
 import java.util.Optional
 
-import org.apache.spark.sql.delta.DeltaLog
-
 class LogReplaySuite extends AnyFunSuite with TestUtils {
 
   override lazy val defaultTableClient = DefaultTableClient.create(new Configuration() {{
@@ -299,78 +297,5 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
 
     assert(snapshotImpl.getLatestTransactionVersion("fakeAppId") === Optional.of(3L))
     assert(snapshotImpl.getLatestTransactionVersion("nonExistentAppId") === Optional.empty())
-  }
-
-  test("v2 checkpoint support") {
-    Seq("parquet", "json").foreach { format =>
-      // Get table path and create snapshot.
-      val path = goldenTablePath(s"clustered-checkpoint-v2-$format")
-      val snapshot = latestSnapshot(path)
-      val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
-
-      // Validate metadata/protocol loaded correctly from checkpoint manifest.
-      assert(snapshotImpl.getMetadata.getId == "testId")
-      assert(snapshotImpl.getProtocol.getMinReaderVersion == 3)
-      assert(snapshotImpl.getProtocol.getMinWriterVersion == 7)
-      assert(snapshotImpl.getProtocol.getReaderFeatures.asScala.toList == List("v2Checkpoint"))
-      assert(snapshotImpl.getProtocol.getWriterFeatures.asScala.toList == List("domainMetadata",
-        "clustering", "v2Checkpoint"))
-      assert(snapshot.getVersion(defaultTableClient) == 3)
-
-      // Validate AddFiles from sidecars found against Spark connector.
-      val scan = snapshot.getScanBuilder(defaultTableClient).build()
-      val foundFiles =
-        collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus).map(
-          _.getPath.split('/').last).toSet
-       val expectedFiles = DeltaLog.forTable(
-        spark, path).update().allFiles.collect().map(_.path).toSet
-      assert(foundFiles == expectedFiles)
-    }
-  }
-
-  test("UUID named checkpoint with actions") {
-    // Get table path and create snapshot.
-    val path = goldenTablePath(s"checkpoint-uuid-with-actions")
-    val snapshot = latestSnapshot(path)
-    val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
-
-    // Validate metadata/protocol loaded correctly from checkpoint manifest.
-    assert(snapshotImpl.getMetadata.getId == "testId")
-    assert(snapshotImpl.getProtocol.getMinReaderVersion == 3)
-    assert(snapshotImpl.getProtocol.getMinWriterVersion == 7)
-    assert(snapshotImpl.getProtocol.getReaderFeatures.asScala.toList == List("v2Checkpoint"))
-    assert(snapshotImpl.getProtocol.getWriterFeatures.asScala.toList == List("v2Checkpoint"))
-    assert(snapshot.getVersion(defaultTableClient) == 0)
-
-    // Validate AddFiles from sidecars found against Spark connector.
-    val scan = snapshot.getScanBuilder(defaultTableClient).build()
-    val foundFiles =
-      collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus).map(
-        _.getPath.split('/').last).toSet
-    assert(foundFiles == Set("addfile"))
-  }
-
-  test("compatibility checkpoint with sidecar files") {
-    // Get table path and create snapshot.
-    val path = goldenTablePath(s"checkpoint-v2-compatibility")
-    val snapshot = latestSnapshot(path)
-    val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
-
-    // Validate metadata/protocol loaded correctly from checkpoint manifest.
-    assert(snapshotImpl.getMetadata.getId == "testId")
-    assert(snapshotImpl.getProtocol.getMinReaderVersion == 3)
-    assert(snapshotImpl.getProtocol.getMinWriterVersion == 7)
-    assert(snapshotImpl.getProtocol.getReaderFeatures.asScala.toList == List("v2Checkpoint"))
-    assert(snapshotImpl.getProtocol.getWriterFeatures.asScala.toList == List("v2Checkpoint"))
-    assert(snapshot.getVersion(defaultTableClient) == 3)
-
-    // Validate AddFiles from sidecars found against Spark connector.
-    val scan = snapshot.getScanBuilder(defaultTableClient).build()
-    val foundFiles =
-      collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus).map(
-        _.getPath.split('/').last).toSet
-    val expectedFiles = DeltaLog.forTable(
-      spark, path).update().allFiles.collect().map(_.path).toSet
-    assert(foundFiles == expectedFiles)
   }
 }
