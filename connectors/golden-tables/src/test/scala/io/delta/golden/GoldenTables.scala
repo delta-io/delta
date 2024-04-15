@@ -1374,56 +1374,6 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
-  Seq("json", "parquet").foreach { fileFormat =>
-    generateGoldenTable(s"clustered-checkpoint-v2-$fileFormat") { tablePath =>
-      withSQLConf("spark.databricks.delta.checkpointV2.topLevelFileFormat" -> fileFormat,
-        "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
-        sql(s"CREATE TABLE tbl (a INT, b STRING) USING delta CLUSTER BY (a) LOCATION '$tablePath'" +
-          " TBLPROPERTIES ('delta.checkpointInterval' = '2', 'delta.checkpointPolicy'='v2')")
-        sql("INSERT INTO tbl VALUES (1, 'a'), (2, 'b')")
-        sql("INSERT INTO tbl VALUES (3, 'c'), (4, 'd')")
-        sql("INSERT INTO tbl VALUES (5, 'e'), (6, 'f')")
-      }
-    }
-  }
-
-  generateGoldenTable("checkpoint-uuid-with-actions") { tablePath =>
-    // Create Delta log and a checkpoint file with actions in it.
-    val log = DeltaLog.forTable(spark, new Path(tablePath))
-    new File(log.logPath.toUri).mkdirs()
-
-    val protocol = Protocol(3, 7, Some(Set("v2Checkpoint")), Some(Set("v2Checkpoint")))
-    val add = AddFile(new Path("addfile").toUri.toString, Map.empty, 100L,
-      10L, dataChange = true)
-
-    log.startTransaction().commitManually(Seq(protocol, add): _*)
-    log.checkpoint(log.update())
-
-    // Rename to UUID.
-    val ckptPath = new Path(new File(log.logPath.toUri).listFiles().filter( f =>
-      FileNames.isCheckpointFile(new Path(f.getPath))).head.toURI)
-    new File(ckptPath.toUri).renameTo(new File(new Path(ckptPath.getParent, ckptPath.getName
-      .replace("checkpoint.parquet", "checkpoint.abc-def.parquet")).toUri))
-  }
-
-  generateGoldenTable("checkpoint-v2-compatibility") { tablePath =>
-    // Create checkpoint with sidecars.
-    withSQLConf("spark.databricks.delta.checkpointV2.topLevelFileFormat" -> "parquet",
-      "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
-      sql(s"CREATE TABLE tbl (a INT, b STRING) USING delta LOCATION '$tablePath'" +
-        " TBLPROPERTIES ('delta.checkpointInterval' = '2', 'delta.checkpointPolicy'='v2')")
-      sql("INSERT INTO tbl VALUES (1, 'a'), (2, 'b')")
-      sql("INSERT INTO tbl VALUES (3, 'c'), (4, 'd')")
-      sql("INSERT INTO tbl VALUES (5, 'e'), (6, 'f')")
-    }
-
-    // Rename from UUID.
-    val ckptPath = new Path(new File(DeltaLog.forTable(spark, tablePath).logPath.toUri).listFiles()
-      .filter(f => FileNames.isCheckpointFile(new Path(f.getPath))).head.toURI)
-    new File(ckptPath.toUri).renameTo(new File(
-      FileNames.checkpointFileSingular(ckptPath.getParent, 2).toUri))
-  }
-
   generateGoldenTable("log-replay-special-characters-a") { tablePath =>
     val log = DeltaLog.forTable(spark, new Path(tablePath))
     new File(log.logPath.toUri).mkdirs()
