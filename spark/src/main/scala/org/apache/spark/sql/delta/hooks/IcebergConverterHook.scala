@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import scala.util.control.NonFatal
-
 import org.apache.spark.sql.delta.{OptimisticTransactionImpl, Snapshot, UniversalFormat}
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
@@ -51,21 +49,7 @@ object IcebergConverterHook extends PostCommitHook with DeltaLogging {
     val converter = postCommitSnapshot.deltaLog.icebergConverter
     if (spark.sessionState.conf.getConf(DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED) ||
          !UniversalFormat.icebergEnabled(txn.snapshot.metadata)) { // UniForm was not enabled
-      try {
-        converter.convertSnapshot(postCommitSnapshot, txn)
-      } catch {
-        case NonFatal(e) =>
-          logError(s"Error when writing Iceberg metadata synchronously", e)
-          recordDeltaEvent(
-            txn.deltaLog,
-            "delta.iceberg.conversion.sync.error",
-            data = Map(
-              "exception" -> ExceptionUtils.getMessage(e),
-              "stackTrace" -> ExceptionUtils.getStackTrace(e)
-            )
-          )
-          throw e
-      }
+      converter.convertSnapshot(postCommitSnapshot, txn)
     } else {
       converter.enqueueSnapshotForConversion(postCommitSnapshot, txn)
     }

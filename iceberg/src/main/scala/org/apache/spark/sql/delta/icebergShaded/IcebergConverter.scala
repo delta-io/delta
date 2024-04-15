@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.Breaks._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaFileNotFoundException, DeltaFileProviderUtils, OptimisticTransactionImpl, Snapshot, UniversalFormat, UniversalFormatConverter}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaFileNotFoundException, DeltaFileProviderUtils, OptimisticTransactionImpl, Snapshot, UniversalFormat, UniversalFormatConverter}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
 import org.apache.spark.sql.delta.hooks.IcebergConverterHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -169,10 +169,21 @@ class IcebergConverter(spark: SparkSession)
    */
   override def convertSnapshot(
       snapshotToConvert: Snapshot, catalogTable: CatalogTable): Option[(Long, Long)] = {
-    if (!UniversalFormat.icebergEnabled(snapshotToConvert.metadata)) {
-      return None
+    try {
+      convertSnapshot(snapshotToConvert, None, catalogTable)
+    } catch {
+      case NonFatal(e) =>
+        logError(s"Error when converting to Iceberg metadata", e)
+        recordDeltaEvent(
+          snapshotToConvert.deltaLog,
+          "delta.iceberg.conversion.error",
+          data = Map(
+            "exception" -> ExceptionUtils.getMessage(e),
+            "stackTrace" -> ExceptionUtils.getStackTrace(e)
+          )
+        )
+        throw e
     }
-    convertSnapshot(snapshotToConvert, None, catalogTable)
   }
 
   /**
@@ -185,22 +196,27 @@ class IcebergConverter(spark: SparkSession)
    */
   override def convertSnapshot(
       snapshotToConvert: Snapshot, txn: OptimisticTransactionImpl): Option[(Long, Long)] = {
-    if (!UniversalFormat.icebergEnabled(snapshotToConvert.metadata)) {
-      return None
-    }
-    txn.catalogTable match {
-      case Some(table) => convertSnapshot(snapshotToConvert, Some(txn), table)
-      case _ =>
-        logWarning(s"CatalogTable for table ${snapshotToConvert.deltaLog.tableId} " +
-          s"is empty in txn. Skip iceberg conversion.")
+    try {
+      txn.catalogTable match {
+        case Some(table) => convertSnapshot(snapshotToConvert, Some(txn), table)
+        case _ =>
+          val msg = s"CatalogTable for table ${snapshotToConvert.deltaLog.tableId} " +
+            s"is empty in txn. Skip iceberg conversion."
+          throw DeltaErrors.universalFormatConversionFailedException(
+            snapshotToConvert.version, "iceberg", msg)
+      }
+    } catch {
+      case NonFatal(e) =>
+        logError(s"Error when converting to Iceberg metadata", e)
         recordDeltaEvent(
-          snapshotToConvert.deltaLog,
-          "delta.iceberg.conversion.skipped.emptyCatalogTable",
+          txn.deltaLog,
+          "delta.iceberg.conversion.error",
           data = Map(
-            "version" -> snapshotToConvert.version
+            "exception" -> ExceptionUtils.getMessage(e),
+            "stackTrace" -> ExceptionUtils.getStackTrace(e)
           )
         )
-      None
+        throw e
     }
   }
 
