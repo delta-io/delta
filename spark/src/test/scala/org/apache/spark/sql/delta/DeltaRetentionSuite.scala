@@ -615,6 +615,10 @@ class DeltaRetentionSuite extends QueryTest
            |'delta.enableExpiredLogCleanup' = 'false',
            |'delta.checkpointInterval' = '10')
         """.stripMargin)
+      // Set time for commit 0 to ensure that the commits don't need timestamp adjustment.
+      val commit0Time = clock.getTimeMillis()
+      new File(FileNames.deltaFile(log.logPath, 0).toUri).setLastModified(commit0Time)
+      new File(FileNames.checksumFile(log.logPath, 0).toUri).setLastModified(commit0Time)
 
       // Day 0: Add commits 1 to 15 --> creates 1 checkpoint at Day 0 for version 10
       (1 to 15).foreach { i =>
@@ -684,9 +688,9 @@ class DeltaRetentionSuite extends QueryTest
       deltaFiles.zipWithIndex.foreach { case (f, i) =>
         val version = i + 1 // From 0-based indexing to 1-based versioning
         if (version < 10) {
-          assert(!f.exists())
+          assert(!f.exists(), version)
         } else {
-          assert(f.exists())
+          assert(f.exists(), version)
         }
       }
     }

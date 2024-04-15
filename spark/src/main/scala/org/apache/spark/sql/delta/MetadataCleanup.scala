@@ -20,9 +20,7 @@ import java.util.{Calendar, TimeZone}
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.DeltaHistoryManager.DeltaLogGroupingIterator
-
-import org.apache.spark.sql.delta.DeltaHistoryManager.{LastCheckpointPreservingLogDeletionIterator, TimestampAdjustingLogDeletionIterator}
+import org.apache.spark.sql.delta.DeltaHistoryManager._
 import org.apache.spark.sql.delta.TruncationGranularity.{DAY, HOUR, MINUTE, TruncationGranularity}
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -111,9 +109,30 @@ trait MetadataCleanup extends DeltaLogging {
 
   /**
    * Returns an iterator of expired delta logs that can be cleaned up. For a delta log to be
-   * considered as expired, it must:
+   * considered as expired, it must meet all of these conditions:
+   *  - not have a timestamp-adjusted delta file that depends on it
    *  - have a checkpoint file after that's before the `fileCutOffTime`
    *  - be older than `fileCutOffTime`
+   *
+   * The algorithm works as follows:
+   * 1. Group files by their version number to create same-commit-version-file-group.
+   * 2. Group same-commit-version-file-group by their timestamp skew (adjusted timestamp) to
+   *    create timestamp-adjusted-commit-groups.
+   * 3. Keep only the timestamp-adjusted-commit-groups whose start timestamp is less than or equal
+   *    to the cutoff timestamp.
+   * 4. Remove any timestamp-adjusted-commit-groups that are fully protected.
+   * 5. For the last timestamp group, remove any version groups whose adjusted timestamp is after
+   *    the cutoff.
+   * 6. Check each remaining timestamp-adjusted-commit-group to see if it contains a complete
+   *    checkpoint.
+   * 7. Group timestamp-adjusted-commit-group based on their checkpoint dependency (i.e., which
+   *    checkpoint they depend on) to create dependent-checkpoint-groups.
+   * 8. Remove the last dependent-checkpoint-groups group (to ensure we always retain at least one
+   *    checkpoint).
+   * 9. Triple Flatten the remaining groups and delete all those files.
+   *
+   * Note: We always consume the iterator lazily in all of the above steps to avoid loading all
+   * files in memory at once.
    */
   private def listExpiredDeltaLogs(fileCutOffTime: Long): Iterator[FileStatus] = {
     import org.apache.spark.sql.delta.util.FileNames._
@@ -123,11 +142,21 @@ trait MetadataCleanup extends DeltaLogging {
     val files = store.listFrom(listingPrefix(logPath, 0), newDeltaHadoopConf())
       .filter(f => isCheckpointFile(f) || isDeltaFile(f))
 
-    new LastCheckpointPreservingLogDeletionIterator(
+    val groupedByVersion: Iterator[SameCommitVersionFileGroup] =
+      new DeltaLogGroupingIterator(files).map(_._2)
+
+    val filteredByMaxTimestampAndTimestampSkew: Iterator[TimestampAdjustedCommitGroup] =
       new TimestampAdjustingLogDeletionIterator(
-        underlying = new DeltaLogGroupingIterator(files).map(_._2),
-        maxTimestamp = fileCutOffTime
-      )).flatten.flatten.flatten
+        underlying = groupedByVersion,
+        maxTimestamp = fileCutOffTime)
+
+    val filteredByCheckpointDependency: Iterator[DependentCheckpointGroup] =
+      new LastCheckpointPreservingLogDeletionIterator(filteredByMaxTimestampAndTimestampSkew)
+
+    val eligibleFilesToDelete: Iterator[FileStatus] =
+      filteredByCheckpointDependency.flatten.flatten.flatten
+
+    eligibleFilesToDelete
   }
 
   /**
