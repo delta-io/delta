@@ -106,6 +106,28 @@ trait CommitStore {
       logPath: Path,
       startVersion: Long,
       endVersion: Option[Long]): Unit
+
+  /**
+   * Determines whether this CommitStore is semantically equal to another CommitStore.
+   *
+   * Semantic equality is determined by each CommitStore implementation based on whether the two
+   * instances can be used interchangeably when invoking any of the CommitStore APIs, such as
+   * `commit`, `getCommits`, etc. For e.g., both the instances might be pointing to the same
+   * underlying endpoint.
+   */
+  def semanticEquals(other: CommitStore): Boolean
+}
+
+object CommitStore {
+  def semanticEquals(
+      commitStore1Opt: Option[CommitStore],
+      commitStore2Opt: Option[CommitStore]): Boolean = {
+    (commitStore1Opt, commitStore2Opt) match {
+      case (Some(commitStore1), Some(commitStore2)) => commitStore1.semanticEquals(commitStore2)
+      case (None, None) => true
+      case _ => false
+    }
+  }
 }
 
 /** A builder interface for CommitStore */

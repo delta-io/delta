@@ -1910,7 +1910,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     postCommitSnapshot
   }
 
-  class FileSystemBasedCommitStore(deltaLog: DeltaLog) extends CommitStore {
+  class FileSystemBasedCommitStore(val deltaLog: DeltaLog) extends CommitStore {
     override def commit(
         logStore: LogStore,
         hadoopConf: Configuration,
@@ -1950,6 +1950,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         logPath: Path,
         startVersion: Long,
         endVersion: Option[Long]): Unit = {}
+
+    /**
+     * FileSystemBasedCommitStore is supposed to be treated as a singleton object for a Delta Log
+     * and is equal to all other instances of FileSystemBasedCommitStore for the same Delta Log.
+     */
+    override def semanticEquals(other: CommitStore): Boolean = {
+      other match {
+        case fsCommitStore: FileSystemBasedCommitStore => fsCommitStore.deltaLog == deltaLog
+        case _ => false
+      }
+    }
   }
 
   /**

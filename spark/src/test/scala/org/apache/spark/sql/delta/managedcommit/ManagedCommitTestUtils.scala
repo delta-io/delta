@@ -143,6 +143,8 @@ class TrackingCommitStore(delegatingCommitStore: InMemoryCommitStore) extends Co
     delegatingCommitStore.backfillToVersion(logStore, hadoopConf, logPath, startVersion, endVersion)
   }
 
+  override def semanticEquals(other: CommitStore): Boolean = this == other
+
   def registerTable(
       logPath: Path,
       maxCommitVersion: Long): Unit = {

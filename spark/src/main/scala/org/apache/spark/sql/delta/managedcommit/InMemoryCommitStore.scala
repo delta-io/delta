@@ -132,6 +132,8 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
       throw new IllegalStateException(s"Table $logPath already exists in the commit store.")
     }
   }
+
+  override def semanticEquals(other: CommitStore): Boolean = this == other
 }
 
 /**

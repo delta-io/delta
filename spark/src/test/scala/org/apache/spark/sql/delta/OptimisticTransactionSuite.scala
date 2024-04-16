@@ -491,6 +491,7 @@ class OptimisticTransactionSuite
               logPath: Path,
               startVersion: Long,
               endVersion: Option[Long]): Unit = {}
+          override def semanticEquals(other: CommitStore): Boolean = this == other
         }
       }
     }
@@ -543,6 +544,7 @@ class OptimisticTransactionSuite
               logPath: Path,
               startVersion: Long,
               endVersion: Option[Long]): Unit = {}
+          override def semanticEquals(other: CommitStore): Boolean = this == other
         }
       }
     }
