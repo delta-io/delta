@@ -64,9 +64,7 @@ public class Checkpointer {
                 if (key.numParts.isPresent()) {
                     return inst.size() == entry.getKey().numParts.get();
                 } else {
-                    // It's possible to have multiple checkpoints at the same version - client can
-                    // choose which to use.
-                    return true;
+                    return inst.size() == 1;
                 }
             })
             .map(Map.Entry::getKey)

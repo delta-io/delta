@@ -35,7 +35,7 @@ public class CheckpointInstance
 
         // Indicates that the checkpoint (may) contain SidecarFile actions. For compatibility,
         // V2 checkpoints can be named with classic-style names, so any checkpoint other than a
-        // multipart checkpoint may contain SidecarFile actions.s
+        // multipart checkpoint may contain SidecarFile actions.
         public boolean usesSidecars() {
             return this == CLASSIC || this == V2;
         }
@@ -131,7 +131,7 @@ public class CheckpointInstance
      * Comparison rules:
      * 1. A CheckpointInstance with higher version is greater than the one with lower version.
      * 2. A CheckpointInstance for a V2 checkpoint is greater than a classic checkpoint (to filter
-     *    avoid selecting the compatibility file).
+     *    avoid selecting the compatibility file) or a multipart checkpoint.
      * 3. For CheckpointInstances with same version, a Multi-part checkpoint is greater than a
      *    Single part checkpoint.
      * 4. For Multi-part CheckpointInstance corresponding to same version, the one with more
@@ -181,7 +181,13 @@ public class CheckpointInstance
 
     @Override
     public int hashCode() {
-        return Objects.hash(version, numParts, format);
+        // For V2 checkpoints, include the filepath in the hash of the instance (as we consider
+        // different UUID checkpoints to be different checkpoint instances. Otherwise, ignore
+        // the filepath when hashing.
+        if (format == CheckpointFormat.V2) {
+            return Objects.hash(version, numParts, format, filePath);
+        }
+        return Objects.hash(version, numParts, format, "");
     }
 
     private String getPathName(String path) {
