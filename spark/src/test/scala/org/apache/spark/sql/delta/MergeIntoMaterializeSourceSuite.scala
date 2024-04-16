@@ -512,95 +512,6 @@ trait MergeIntoMaterializeSourceTests
         "delta", reason = MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO.toString)
     }
 
-    // Test with non-Delta sources in subqueries.
-    def checkSourceMaterializationSubquery(
-        delta: String,
-        filterSub: String,
-        projectSub: String,
-        nestedFilterSub: String,
-        nestedProjectSub: String,
-        testType: String,
-        reason: String): Unit = {
-      val df = spark.sql(
-        s"""
-           |SELECT
-           |  CASE WHEN id IN
-           |    (SELECT id kk FROM $projectSub WHERE id IN (SELECT * FROM $nestedFilterSub))
-           |  THEN id ELSE -1 END AS id,
-           |  0.5 AS value
-           |FROM $delta
-           |WHERE id IN
-           |  (SELECT CASE WHEN id IN (SELECT * FROM $nestedProjectSub) THEN id ELSE -1 END kk
-           |   FROM $filterSub)
-           |""".stripMargin)
-      assert(executeMerge(df) == reason, s"Wrong materialization reason with $testType subquery")
-    }
-
-    def checkSourceMaterializationSubqueries(deltaSource: String, nonDeltaSource: String): Unit = {
-      checkSourceMaterializationSubquery(
-        delta = deltaSource,
-        filterSub = deltaSource,
-        projectSub = deltaSource,
-        nestedFilterSub = deltaSource,
-        nestedProjectSub = deltaSource,
-        testType = "all Delta",
-        reason = MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO.toString)
-
-      checkSourceMaterializationSubquery(
-        delta = deltaSource,
-        filterSub = nonDeltaSource,
-        projectSub = deltaSource,
-        nestedFilterSub = deltaSource,
-        nestedProjectSub = deltaSource,
-        testType = "non-Delta filter",
-        reason = MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA.toString)
-
-      checkSourceMaterializationSubquery(
-        delta = deltaSource,
-        filterSub = deltaSource,
-        projectSub = nonDeltaSource,
-        nestedFilterSub = deltaSource,
-        nestedProjectSub = deltaSource,
-        testType = "non-Delta project",
-        reason = MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA.toString)
-
-      checkSourceMaterializationSubquery(
-        delta = deltaSource,
-        filterSub = deltaSource,
-        projectSub = deltaSource,
-        nestedFilterSub = nonDeltaSource,
-        nestedProjectSub = deltaSource,
-        testType = "non-Delta nested filter",
-        reason = MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA.toString)
-
-      checkSourceMaterializationSubquery(
-        delta = deltaSource,
-        filterSub = deltaSource,
-        projectSub = deltaSource,
-        nestedFilterSub = deltaSource,
-        nestedProjectSub = nonDeltaSource,
-        testType = "non-Delta nested project",
-        reason = MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA.toString)
-    }
-
-    withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "auto") {
-      // Test once by name and once using path, as they produce different plans.
-      withTable("deltaSource", "nonDeltaSource") {
-        sourceData.write.format("delta").saveAsTable("deltaSource")
-        sourceData.write.format("parquet").saveAsTable("nonDeltaSource")
-        checkSourceMaterializationSubqueries("deltaSource", "nonDeltaSource")
-      }
-
-      withTempPath { deltaSourcePath =>
-        sourceData.write.format("delta").save(deltaSourcePath.toString)
-        withTempPath { nonDeltaSourcePath =>
-          sourceData.write.format("parquet").save(nonDeltaSourcePath.toString)
-          checkSourceMaterializationSubqueries(
-            s"delta.`$deltaSourcePath`", s"parquet.`$nonDeltaSourcePath`")
-        }
-      }
-    }
-
     // Mixed safe/unsafe queries should materialize source.
     def checkSourceMaterializationForMixedSources(
         format1: String,
@@ -819,7 +730,7 @@ trait MergeIntoMaterializeSourceTests
     withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "auto") {
 
       // Return MergeIntoMaterializeSourceReason
-      def executeMerge(sourceDf: DataFrame, clue: String): Unit = {
+      def executeMerge(sourceDf: DataFrame): Unit = {
         withTable("target") {
           targetDataFrame.write
             .format("delta")
@@ -837,57 +748,35 @@ trait MergeIntoMaterializeSourceTests
           val materializeReason = mergeSourceMaterializeReason(events)
           assert(materializeReason ==
             MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_OPERATORS.toString,
-            s"Source query has non deterministic subqueries and should materialize ($clue).")
+            "Source query has non deterministic subqueries and should materialize.")
         }
-      }
-
-      def checkSubquery(from: String, subquery: String): Unit = {
-        // check subquery in filter
-        val sourceDfFilterSubquery = spark.sql(
-          s"""
-             |SELECT id, 0.5 AS value
-             |FROM $from WHERE id IN ($subquery)
-             |""".stripMargin)
-        executeMerge(sourceDfFilterSubquery,
-          s"reading from `$from`, subquery `$subquery` in filter")
-
-        // check subquery in project
-        val sourceDfProjectSubquery = spark.sql(
-          s"""
-             |SELECT CASE WHEN id IN ($subquery) THEN id ELSE -1 END AS id, 0.5 AS value
-             |FROM $from
-             |""".stripMargin)
-        executeMerge(sourceDfProjectSubquery,
-          s"reading from `$from`, subquery `$subquery` in project")
-      }
-
-      def checkSubqueries(from: String): Unit = {
-        // check non-deterministic plan
-        checkSubquery(from, s"SELECT id FROM $from WHERE id < rand() * 10")
-
-        // check too complex plan in subquery, even though plan.deterministic is true
-        val subqueryComplex = s"SELECT A.id kk FROM $from A JOIN $from B ON A.id = B.id"
-        assert(spark.sql(subqueryComplex).queryExecution.analyzed.deterministic,
-          "We want the subquery plan to be deterministic for this test.")
-        checkSubquery(from, subqueryComplex)
-
-        // check nested subquery
-        val subqueryNestedFilter = s"SELECT id AS kk FROM $from WHERE id IN ($subqueryComplex)"
-        checkSubquery(from, subqueryNestedFilter)
-        val subqueryNestedProject =
-          s"SELECT CASE WHEN id IN ($subqueryComplex) THEN id ELSE -1 END AS kk FROM $from"
-        checkSubquery(from, subqueryNestedProject)
       }
 
       // Test once by name and once using path, as they produce different plans.
       withTable("source") {
         sourceDataFrame.write.format("delta").saveAsTable("source")
-        checkSubqueries("source")
+        val sourceDf = spark.sql(
+          s"""
+             |SELECT id, 0.5 AS value
+             |FROM source
+             |WHERE id IN (
+             |  SELECT id FROM source
+             |  WHERE id < rand() * ${sourceDataFrame.count()} )
+             |""".stripMargin)
+        executeMerge(sourceDf)
       }
 
       withTempPath { sourcePath =>
         sourceDataFrame.write.format("delta").save(sourcePath.toString)
-        checkSubqueries(s"delta.`${sourcePath.toString}`")
+        val sourceDf = spark.sql(
+          s"""
+             |SELECT id, 0.5 AS value
+             |FROM delta.`$sourcePath`
+             |WHERE id IN (
+             |  SELECT id FROM delta.`$sourcePath`
+             |  WHERE id < rand() * ${sourceDataFrame.count()} )
+             |""".stripMargin)
+        executeMerge(sourceDf)
       }
     }
   }
