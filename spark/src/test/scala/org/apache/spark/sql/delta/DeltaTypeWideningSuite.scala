@@ -745,7 +745,7 @@ trait DeltaTypeWideningStatsTests {
     val canSkipFiles = jsonStatsEnabled || partitioned
 
     // The last file added isn't part of the checkpoint, it always has stats that can be used for
-    // skipping even when checkpoint stats can't be used for skippping.
+    // skipping even when checkpoint stats can't be used for skipping.
     checkFileSkipping(value = 1, if (canSkipFiles) 1 else 2)
     checkAnswer(readDeltaTable(tempPath).filter("a = 1"), Row(1, 1))
 
@@ -769,7 +769,7 @@ trait DeltaTypeWideningStatsTests {
  * Tests covering adding and removing the type widening table feature. Dropping the table feature
  * also includes rewriting data files with the old type and removing type widening metadata.
  */
-trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
+trait DeltaTypeWideningTableFeatureTests {
   self: QueryTest
     with ParquetTest
     with RowTrackingTestUtils
@@ -780,8 +780,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
   /** Clock used to advance past the retention period when dropping the table feature. */
   var clock: ManualClock = _
 
-  override protected def beforeEach(): Unit = {
-    super.beforeEach()
+  protected def setupManualClock(): Unit = {
     clock = new ManualClock(System.currentTimeMillis())
     // Override the (cached) delta log with one using our manual clock.
     DeltaLog.clearCache()
@@ -846,6 +845,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
    * the table retention period.
    */
   def advancePastRetentionPeriod(): Unit = {
+    assert(clock != null, "Must call setupManualClock in tests that are using this method.")
     clock.advance(
       deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
         TimeUnit.MINUTES.toMillis(5))
@@ -978,6 +978,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
 
     test(s"drop unused table feature on table with data inserted before adding the table feature," +
       s"rowTrackingEnabled=$rowTrackingEnabled") {
+      setupManualClock()
       sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA " +
         s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
       addSingleFile(Seq(1, 2, 3), ByteType)
@@ -1003,6 +1004,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
 
     test(s"drop table feature on table with data added only after type change, " +
       s"rowTrackingEnabled=$rowTrackingEnabled") {
+      setupManualClock()
       sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
       sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
       addSingleFile(Seq(1, 2, 3), IntegerType)
@@ -1029,6 +1031,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
 
     test(s"drop table feature on table with data added before type change, " +
       s"rowTrackingEnabled=$rowTrackingEnabled") {
+      setupManualClock()
       sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
       addSingleFile(Seq(1, 2, 3), ByteType)
       sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
@@ -1052,6 +1055,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
 
     test(s"drop table feature on table with data added before type change and fully rewritten " +
       s"after, rowTrackingEnabled=$rowTrackingEnabled") {
+      setupManualClock()
       sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
       addSingleFile(Seq(1, 2, 3), ByteType)
       sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
@@ -1077,6 +1081,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
 
     test(s"drop table feature on table with data added before type change and partially " +
       s"rewritten after, rowTrackingEnabled=$rowTrackingEnabled") {
+      setupManualClock()
       withRowTrackingEnabled(rowTrackingEnabled) {
         sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
         addSingleFile(Seq(1, 2, 3), ByteType)
