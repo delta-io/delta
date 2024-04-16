@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 
+import org.apache.spark.sql.delta.DescribeDeltaHistorySuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -224,8 +225,8 @@ trait DescribeDeltaHistorySuiteBase
       val e = intercept[AnalysisException] {
         sql(s"DESCRIBE HISTORY $viewName").collect()
       }
-      assert(e.getMessage.contains("spark_catalog.default.delta_view is a view. " +
-        "'DESCRIBE HISTORY' expects a table"))
+
+      assert(e.getMessage.contains(FAILS_ON_VIEWS_ERROR_MSG))
     }
   }
 
@@ -238,7 +239,8 @@ trait DescribeDeltaHistorySuiteBase
         val e = intercept[AnalysisException] {
           sql(s"DESCRIBE HISTORY $viewName").collect()
         }
-        assert(e.getMessage.contains("v is a temp view. 'DESCRIBE HISTORY' expects a table"))
+
+        assert(e.getMessage.contains(FAILS_ON_TEMP_VIEWS_ERROR_MSG))
       }
   }
 

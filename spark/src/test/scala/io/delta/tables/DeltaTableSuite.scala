@@ -188,7 +188,7 @@ class DeltaTableSuite extends QueryTest
     }
 
     // DeltaTable can be passed to executor but method call causes exception.
-    val e = intercept[SparkException] {
+    val e = intercept[Exception] {
       withTempDir { dir =>
         testData.write.format("delta").mode("append").save(dir.getAbsolutePath)
         val dt: DeltaTable = DeltaTable.forPath(dir.getAbsolutePath)

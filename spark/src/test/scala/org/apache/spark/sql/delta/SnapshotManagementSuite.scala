@@ -24,6 +24,7 @@ import scala.collection.mutable
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaConfigs.MANAGED_COMMIT_OWNER_NAME
 import org.apache.spark.sql.delta.DeltaTestUtils.{verifyBackfilled, verifyUnbackfilled, BOOLEAN_DOMAIN}
+import org.apache.spark.sql.delta.SnapshotManagementSuiteShims._
 import org.apache.spark.sql.delta.managedcommit.{Commit, CommitStore, CommitStoreBuilder, CommitStoreProvider, GetCommitsResponse, InMemoryCommitStore}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
@@ -195,7 +196,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
           // Guava cache wraps the root cause
           assert(e.isInstanceOf[SparkException] &&
             e.getMessage.contains("0001.checkpoint") &&
-            e.getMessage.contains(".parquet is not a Parquet file"))
+            e.getMessage.contains(SHOULD_NOT_RECOVER_CHECKPOINT_ERROR_MSG))
         }
       }
     }
@@ -252,7 +253,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         val e = intercept[SparkException] { staleLog.update() }
         val version = if (testEmptyCheckpoint) 0 else 1
         assert(e.getMessage.contains(f"$version%020d.checkpoint") &&
-          e.getMessage.contains(".parquet is not a Parquet file"))
+          e.getMessage.contains(SHOULD_NOT_RECOVER_CHECKPOINT_ERROR_MSG))
       }
     }
   }
