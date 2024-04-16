@@ -451,8 +451,7 @@ object DeltaHistoryManager extends DeltaLogging {
     private def queueItemsIfNeeded(): Unit = {
       if (bufferedOutput.isEmpty && bufferedUnderlying.hasNext) {
         val group = new mutable.ArrayBuffer[T]()
-        while (bufferedUnderlying.hasNext &&
-          (!isNewGroupStart(bufferedUnderlying.head) || group.isEmpty)) {
+        while (!bufferedUnderlying.headOption.forall(isNewGroupStart) || group.isEmpty) {
           group += transformItem(bufferedUnderlying.next())
         }
         bufferedOutput = Some(group)
