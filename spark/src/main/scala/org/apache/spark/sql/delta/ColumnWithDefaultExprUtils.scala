@@ -32,7 +32,7 @@ import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns._
 import org.apache.spark.sql.execution.QueryExecution
-import org.apache.spark.sql.execution.streaming.{IncrementalExecution, IncrementalExecutionShim, StreamExecution}
+import org.apache.spark.sql.execution.streaming.{IncrementalExecution, IncrementalExecutionShims, StreamExecution}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 
@@ -216,7 +216,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       df: DataFrame,
       cols: Column*): DataFrame = {
     val newMicroBatch = df.select(cols: _*)
-    val newIncrementalExecution = IncrementalExecutionShim.newInstance(
+    val newIncrementalExecution = IncrementalExecutionShims.newInstance(
       newMicroBatch.sparkSession,
       newMicroBatch.queryExecution.logical,
       incrementalExecution)

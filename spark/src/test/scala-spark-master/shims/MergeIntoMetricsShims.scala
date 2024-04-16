@@ -1,5 +1,5 @@
 /*
- * Copyright (2024) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-object DeltaInsertIntoTableSuiteShims {
-  val INSERT_INTO_TMP_VIEW_ERROR_MSG = "Inserting into a view is not allowed"
-
-  val INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG = "INVALID_DEFAULT_VALUE.UNRESOLVED_EXPRESSION"
+object MergeIntoMetricsShims {
+  val DELETE_WITH_DUPLICATE_NUM_TARGET_FILES_ADDED_NON_PARTITIONED_NO_CDF = 1
 }
