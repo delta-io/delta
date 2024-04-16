@@ -256,7 +256,7 @@ public class DefaultJsonRow implements Row {
             return InternalUtils.daysSinceEpoch(Date.valueOf(jsonValue.textValue()));
         }
 
-        if (dataType instanceof TimestampType) {
+        if (dataType instanceof TimestampType || dataType instanceof TimestampNTZType) {
             throwIfTypeMismatch(
                 "timestamp",
                 jsonValue.isTextual(),
