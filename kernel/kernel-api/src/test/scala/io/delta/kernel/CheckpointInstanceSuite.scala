@@ -63,6 +63,34 @@ class CheckpointInstanceSuite extends AnyFunSuite {
     ).foreach(ci => assert(ci.compareTo(CheckpointInstance.MAX_VALUE) < 0))
   }
 
+  test("checkpoint instance equality") {
+    val single = new CheckpointInstance("01.checkpoint.parquet")
+    val multipartPart1 = new CheckpointInstance("01.checkpoint.01.02.parquet")
+    val multipartPart2 = new CheckpointInstance("01.checkpoint.02.02.parquet")
+    val v2Checkpoint1 = new CheckpointInstance("01.checkpoint.abc-def.parquet")
+    val v2Checkpoint2 = new CheckpointInstance("01.checkpoint.ghi-klm.parquet")
+
+    // Single checkpoint is not equal to any other checkpoints at the same version.
+    Seq(multipartPart1, multipartPart2, v2Checkpoint1, v2Checkpoint2).foreach { ci =>
+      assert(!single.equals(ci))
+      assert(single.hashCode() != ci.hashCode())
+    }
+
+    // Multipart checkpoints at the same version are equal if they have the same number of parts.
+    Seq(single, v2Checkpoint1, v2Checkpoint2).foreach { ci =>
+      assert(!multipartPart1.equals(ci))
+      assert(multipartPart1.hashCode() != ci.hashCode())
+    }
+    assert(multipartPart1.equals(multipartPart2))
+    assert(multipartPart1.hashCode() == multipartPart2.hashCode())
+
+    // V2 checkpoints at the same version are equal only if they have the same UUID.
+    Seq(single, multipartPart1, multipartPart2, v2Checkpoint2).foreach { ci =>
+      assert(!v2Checkpoint1.equals(ci))
+      assert(v2Checkpoint1.hashCode() != ci.hashCode())
+    }
+  }
+
   test("checkpoint instance instantiation") {
     // classic checkpoint
     val classicCheckpoint = new CheckpointInstance(
