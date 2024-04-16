@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, DomainMetadata, Meta
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.propertyKey
 import org.apache.spark.sql.util.ScalaExtensions._
 
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, FileSourceConstantMetadataStructField, FileSourceGeneratedMetadataStructField}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
@@ -30,6 +30,12 @@ import org.apache.spark.sql.types.{DataType, LongType, MetadataBuilder, StructFi
 
 /**
  * Collection of helpers to handle Row IDs.
+ *
+ * This file includes the following Row ID features:
+ * - Enabling Row IDs using table feature and table property.
+ * - Assigning fresh Row IDs.
+ * - Reading back Row IDs.
+ * - Preserving stable Row IDs.
  */
 object RowId {
   /**
@@ -267,5 +273,39 @@ object RowId {
         }
       case _ =>
     }
+  }
+
+  /**
+   * Add a new column to 'dataFrame' that has the name of the materialized Row ID column and holds
+   * Row IDs. The column also is tagged with the appropriate metadata such that it can be used to
+   * write materialized Row IDs.
+   */
+  private[delta] def preserveRowIds(
+      dataFrame: DataFrame,
+      snapshot: SnapshotDescriptor): DataFrame = {
+    if (!isEnabled(snapshot.protocol, snapshot.metadata)) {
+      return dataFrame
+    }
+
+    val materializedColumnName = MaterializedRowId.getMaterializedColumnNameOrThrow(
+      snapshot.protocol, snapshot.metadata, snapshot.deltaLog.tableId)
+
+    val rowIdColumn = DeltaTableUtils.getFileMetadataColumn(dataFrame).getField(ROW_ID)
+    preserveRowIdsUnsafe(dataFrame, materializedColumnName, rowIdColumn)
+  }
+
+  /**
+   * Add a new column to 'dataFrame' that has 'materializedColumnName' and holds Row IDs. The column
+   * is also tagged with the appropriate metadata so it can be used to write materialized Row IDs.
+   *
+   * Internal method, exposed only for testing.
+   */
+  private[delta] def preserveRowIdsUnsafe(
+      dataFrame: DataFrame,
+      materializedColumnName: String,
+      rowIdColumn: Column): DataFrame = {
+    dataFrame
+      .withColumn(materializedColumnName, rowIdColumn)
+      .withMetadata(materializedColumnName, columnMetadata(materializedColumnName))
   }
 }

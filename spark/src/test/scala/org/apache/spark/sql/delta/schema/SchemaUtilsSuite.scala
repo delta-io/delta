@@ -23,6 +23,7 @@ import java.util.regex.Pattern
 import scala.annotation.tailrec
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils}
+import org.apache.spark.sql.delta.RowCommitVersion
 import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
@@ -2035,6 +2036,30 @@ class SchemaUtilsSuite extends QueryTest
       val normalized =
         normalizeColumnNames(deltaLog = null, tableSchema, df)
         assert(normalized.schema.fieldNames === Seq("id", "row_id"))
+    }
+  }
+
+  test("normalize column names - can normalize both row id and commit version columns") {
+    withTable("src") {
+      spark.range(3).toDF("id").write
+        .format("delta")
+        .mode("overwrite")
+        .option("delta.enableRowTracking", "true")
+        .saveAsTable("src")
+
+      val df = spark.read.format("delta").table("src")
+        .select(
+          col("*"),
+          col("_metadata.row_id").as("row_id"),
+          col("_metadata.row_commit_version").as("row_commit_version")
+        )
+        .withMetadata("row_id", RowId.RowIdMetadataStructField.metadata("name"))
+        .withMetadata("row_commit_version", RowCommitVersion.MetadataStructField.metadata("name"))
+
+      val tableSchema = new StructType().add("id", LongType)
+        val normalized =
+        normalizeColumnNames(deltaLog = null, tableSchema, df)
+        assert(normalized.schema.fieldNames === Seq("id", "row_id", "row_commit_version"))
     }
   }
 
