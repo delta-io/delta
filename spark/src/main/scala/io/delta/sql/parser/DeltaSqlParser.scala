@@ -58,6 +58,7 @@ import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
+import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{checkDuplicateClauses, string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, AlterTableDropFeature, CloneTableStatement, LogicalPlan, RestoreTableStatement}
@@ -390,7 +391,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
     val targetIdentifier = visitTableIdentifier(ctx.table)
     val tableNameParts = targetIdentifier.database.toSeq :+ targetIdentifier.table
-    val targetTable = createUnresolvedTable(tableNameParts, "REORG")
+    val targetTable = UnresolvedTable(tableNameParts, "REORG")
 
     val reorgTableSpec = if (ctx.PURGE != null) {
       DeltaReorgTableSpec(DeltaReorgTableMode.PURGE, None)
@@ -519,12 +520,6 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       builder.build())
   }
 
-  private def createUnresolvedTable(
-      tableName: Seq[String],
-      commandName: String): UnresolvedTable = {
-    UnresolvedTable(tableName, commandName, relationTypeMismatchHint = None)
-  }
-
   // Build the text of the CHECK constraint expression. The user-specified whitespace is in the
   // HIDDEN channel where we can't get to it, so we just paste together all the tokens with a single
   // space. This produces some strange spacing (e.g. `structCol . arr [ 0 ]`), but right now we
@@ -546,7 +541,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     val checkConstraint = ctx.constraint().asInstanceOf[CheckConstraintContext]
 
     AlterTableAddConstraint(
-      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
+      UnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
         "ALTER TABLE ... ADD CONSTRAINT"),
       ctx.name.getText,
       buildCheckConstraintText(checkConstraint.exprToken().asScala.toSeq))
@@ -555,7 +550,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   override def visitDropTableConstraint(
       ctx: DropTableConstraintContext): LogicalPlan = withOrigin(ctx) {
     AlterTableDropConstraint(
-      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
+      UnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
         "ALTER TABLE ... DROP CONSTRAINT"),
       ctx.name.getText,
       ifExists = ctx.EXISTS != null)
@@ -579,7 +574,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   override def visitAlterTableDropFeature(ctx: AlterTableDropFeatureContext): LogicalPlan = {
     val truncateHistory = ctx.TRUNCATE != null && ctx.HISTORY != null
     AlterTableDropFeature(
-      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
+      UnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
         "ALTER TABLE ... DROP FEATURE"),
       visitFeatureNameValue(ctx.featureName),
       truncateHistory)
@@ -590,7 +585,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    */
   override def visitAlterTableClusterBy(ctx: AlterTableClusterByContext): LogicalPlan = {
     val table =
-      createUnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
+      UnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
       "ALTER TABLE ... CLUSTER BY")
     if (ctx.NONE() != null) {
       AlterTableClusterBy(table, None)

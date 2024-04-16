@@ -45,8 +45,10 @@ object Unidoc {
   implicit class UnidocHelper(val projectToUpdate: Project) {
     def configureUnidoc(
       docTitle: String = null,
+      generatedJavaDoc: Boolean = true,
       generateScalaDoc: Boolean = false
     ): Project = {
+      if (!generatedJavaDoc && !generateScalaDoc) return projectToUpdate
 
       var updatedProject: Project = projectToUpdate
       if (generateScalaDoc) {

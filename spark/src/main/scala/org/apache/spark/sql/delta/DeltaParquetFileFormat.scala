@@ -68,6 +68,8 @@ case class DeltaParquetFileFormat(
       "Wrong arguments for Delta table scan with deletion vectors")
   }
 
+  TypeWidening.assertTableReadable(protocol, metadata)
+
   val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
   val referenceSchema: StructType = metadata.schema
 

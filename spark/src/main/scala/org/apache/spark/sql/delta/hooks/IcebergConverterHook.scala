@@ -17,9 +17,11 @@
 package org.apache.spark.sql.delta.hooks
 
 import org.apache.spark.sql.delta.{OptimisticTransactionImpl, Snapshot, UniversalFormat}
+import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED
+import org.apache.commons.lang3.exception.ExceptionUtils
 
 import org.apache.spark.sql.SparkSession
 
@@ -51,5 +53,12 @@ object IcebergConverterHook extends PostCommitHook with DeltaLogging {
     } else {
       converter.enqueueSnapshotForConversion(postCommitSnapshot, txn)
     }
+  }
+
+  // Always throw when sync Iceberg conversion fails. Async conversion exception
+  // is handled in the async thread.
+  override def handleError(spark: SparkSession, error: Throwable, version: Long): Unit = {
+    throw DeltaErrors.universalFormatConversionFailedException(
+      version, "iceberg", ExceptionUtils.getMessage(error))
   }
 }
