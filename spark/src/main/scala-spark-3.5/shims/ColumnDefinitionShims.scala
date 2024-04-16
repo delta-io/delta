@@ -14,10 +14,20 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.catalyst.plans.logical
 
-object DeltaInsertIntoTableSuiteShims {
-  val INSERT_INTO_TMP_VIEW_ERROR_MSG = "Inserting into a view is not allowed"
+import org.apache.spark.sql.catalyst.parser.ParserInterface
+import org.apache.spark.sql.types.{StructField, StructType}
 
-  val INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG = "INVALID_DEFAULT_VALUE.UNRESOLVED_EXPRESSION"
+object ColumnDefinitionShims {
+
+  /**
+   * Helps handle a breaking change in [[org.apache.spark.sql.catalyst.plans.logical.CreateTable]]
+   * between Spark 3.5 and Spark 4.0:
+   * - In 3.5, `CreateTable` accepts a `tableSchema: StructType`.
+   * - In 4.0, `CreateTable` accepts a `columns: Seq[ColumnDefinition]`.
+   */
+  def parseColumns(columns: Seq[StructField], sqlParser: ParserInterface): StructType = {
+    StructType(columns.toSeq)
+  }
 }

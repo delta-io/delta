@@ -1,5 +1,5 @@
 /*
- * Copyright (2024) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 
 package org.apache.spark.sql.delta
 
-object DeltaInsertIntoTableSuiteShims {
-  val INSERT_INTO_TMP_VIEW_ERROR_MSG = "Inserting into a view is not allowed"
+object DeltaHistoryManagerSuiteShims {
+  type MULTIPLE_TIME_TRAVEL_FORMATS_ERROR_TYPE = org.apache.spark.sql.AnalysisException
 
-  val INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG = "INVALID_DEFAULT_VALUE.UNRESOLVED_EXPRESSION"
+  val MULTIPLE_TIME_TRAVEL_FORMATS_ERROR_MSG = "Cannot specify both version and timestamp"
 }

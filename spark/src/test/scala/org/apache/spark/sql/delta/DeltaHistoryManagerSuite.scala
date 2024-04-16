@@ -26,6 +26,7 @@ import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import com.databricks.spark.util.Log4jUsageLogger
+import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
 import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
@@ -599,13 +600,14 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
       }
       assert(e1.getMessage.contains("[0, 2]"))
 
-      val e2 = intercept[IllegalArgumentException] {
+      val e2 = intercept[MULTIPLE_TIME_TRAVEL_FORMATS_ERROR_TYPE] {
         spark.read.format("delta")
           .option("versionAsOf", 3)
           .option("timestampAsOf", "2020-10-22 23:20:11")
           .table(tblName).collect()
       }
-      assert(e2.getMessage.contains("either provide 'timestampAsOf' or 'versionAsOf'"))
+
+      assert(e2.getMessage.contains(MULTIPLE_TIME_TRAVEL_FORMATS_ERROR_MSG))
 
     }
   }

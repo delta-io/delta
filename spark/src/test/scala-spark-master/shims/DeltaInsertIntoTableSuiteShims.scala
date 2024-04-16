@@ -18,4 +18,6 @@ package org.apache.spark.sql.delta
 
 object DeltaInsertIntoTableSuiteShims {
   val INSERT_INTO_TMP_VIEW_ERROR_MSG = "[EXPECT_TABLE_NOT_VIEW.NO_ALTERNATIVE]"
+
+  val INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG = "INVALID_DEFAULT_VALUE.NOT_CONSTANT"
 }
