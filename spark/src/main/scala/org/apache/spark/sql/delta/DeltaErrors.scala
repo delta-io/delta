@@ -3213,6 +3213,16 @@ trait DeltaErrorsBase
     )
   }
 
+  def universalFormatConversionFailedException(
+      failedOnCommitVersion: Long,
+      format: String,
+      errorMessage: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED",
+      messageParameters = Array(s"$failedOnCommitVersion", format, errorMessage)
+    )
+  }
+
   def invalidAutoCompactType(value: String): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_INVALID_AUTO_COMPACT_TYPE",
