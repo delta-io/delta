@@ -25,7 +25,7 @@ import org.apache.spark.sql.types.StructType
 
 class DeltaVariantSuite
     extends QueryTest
-    with DeltaSQLCommandTest { self: DeltaVariantSuite =>
+    with DeltaSQLCommandTest {
   private def getProtocolForTable(table: String): Protocol = {
     val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
     deltaLog.unsafeVolatileSnapshot.protocol
