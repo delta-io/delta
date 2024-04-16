@@ -21,7 +21,7 @@ object DeltaTimeTravelSpecShims {
   /**
    * Ensures only a single time travel syntax is used (i.e. not version AND timestamp).
    *
-   * Handles another breaking change between Spark 3.5 and 4.0 which added support for
+   * Handles a breaking change between Spark 3.5 and 4.0 which added support for
    * DataFrame-based time travel in Spark (https://github.com/apache/spark/pull/43403).
    *
    * TLDR: Starting in Spark 4.0, we end up with two time travel specifications in DeltaTableV2 if
@@ -38,10 +38,9 @@ object DeltaTimeTravelSpecShims {
   def validateTimeTravelSpec(
       currSpecOpt: Option[DeltaTimeTravelSpec],
       newSpecOpt: Option[DeltaTimeTravelSpec]): Unit = (currSpecOpt, newSpecOpt) match {
-    case (Some(currSpec), Some(newSpec)) =>
-      if (currSpec.version != newSpec.version || currSpec.timestamp != newSpec.timestamp) {
+    case (Some(currSpec), Some(newSpec))
+      if currSpec.version != newSpec.version || currSpec.timestamp != newSpec.timestamp =>
         throw DeltaErrors.multipleTimeTravelSyntaxUsed
-      }
     case _ =>
   }
 }

@@ -21,7 +21,7 @@ object DeltaTimeTravelSpecShims {
   /**
    * Ensures only a single time travel syntax is used (i.e. not version AND timestamp).
    *
-   * Handles another breaking change between Spark 3.5 and 4.0 which added support for
+   * Handles a breaking change between Spark 3.5 and 4.0 which added support for
    * DataFrame-based time travel in Spark (https://github.com/apache/spark/pull/43403).
    *
    * TLDR: Starting in Spark 4.0, we end up with two time travel specifications in DeltaTableV2 if
