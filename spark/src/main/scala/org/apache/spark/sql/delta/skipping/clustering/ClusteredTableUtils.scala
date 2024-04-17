@@ -49,32 +49,6 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   def clusteringProvider: String = "liquid"
 
   /**
-   * Validate the clustering table preview is enabled. If not, throw an exception.
-   * This version is used when checking existing tables with updated metadata / protocol.
-   */
-  def validatePreviewEnabled(protocol: Protocol): Unit = {
-    if (isSupported(protocol) &&
-      !SQLConf.get.getConf(DeltaSQLConf.DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED) &&
-      !DeltaUtils.isTesting) {
-      throw DeltaErrors.clusteringTablePreviewDisabledException()
-    }
-  }
-
-  /**
-   * Validate the clustering table preview is enabled. If not, throw an exception.
-   * This version is used for `CREATE TABLE...` where the initial snapshot doesn't have
-   * updated metadata / protocol yet.
-   */
-  def validatePreviewEnabled(maybeClusterBySpec: Option[ClusterBySpec]): Unit = {
-    maybeClusterBySpec.foreach { _ =>
-      if (!SQLConf.get.getConf(DeltaSQLConf.DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED) &&
-        !DeltaUtils.isTesting) {
-        throw DeltaErrors.clusteringTablePreviewDisabledException()
-      }
-    }
-  }
-
-  /**
    * Returns an optional [[ClusterBySpec]] from the given CatalogTable.
    */
   def getClusterBySpecOptional(table: CatalogTable): Option[ClusterBySpec] = {

@@ -19,9 +19,11 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaUtils
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.types.{ArrayType, MapType, NullType}
 
 /**
  * Utils to validate the Universal Format (UniForm) Delta feature (NOT a table feature).
@@ -47,10 +49,20 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 object UniversalFormat extends DeltaLogging {
 
   val ICEBERG_FORMAT = "iceberg"
-  val SUPPORTED_FORMATS = Set(ICEBERG_FORMAT)
+  val HUDI_FORMAT = "hudi"
+  val SUPPORTED_FORMATS = Set(HUDI_FORMAT, ICEBERG_FORMAT)
 
   def icebergEnabled(metadata: Metadata): Boolean = {
     DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetaData(metadata).contains(ICEBERG_FORMAT)
+  }
+
+  def hudiEnabled(metadata: Metadata): Boolean = {
+    DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetaData(metadata).contains(HUDI_FORMAT)
+  }
+
+  def hudiEnabled(properties: Map[String, String]): Boolean = {
+    properties.get(DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.key)
+      .exists(value => value.contains(HUDI_FORMAT))
   }
 
   def icebergEnabled(properties: Map[String, String]): Boolean = {
@@ -70,8 +82,32 @@ object UniversalFormat extends DeltaLogging {
       newestMetadata: Metadata,
       isCreatingOrReorgTable: Boolean,
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
+    enforceHudiDependencies(newestMetadata, snapshot)
     enforceIcebergInvariantsAndDependencies(
       snapshot, newestProtocol, newestMetadata, isCreatingOrReorgTable, actions)
+  }
+
+  /**
+   * If you are enabling Hudi, this method ensures that Deletion Vectors are not enabled. New
+   * conditions may be added here in the future to make sure the source is compatible with Hudi.
+   * @param newestMetadata the newest metadata
+   * @param snapshot current snapshot
+   * @return N/A, throws exception if condition is not met
+   */
+  def enforceHudiDependencies(newestMetadata: Metadata, snapshot: Snapshot): Any = {
+    if (hudiEnabled(newestMetadata)) {
+      if (DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(newestMetadata)) {
+        throw DeltaErrors.uniFormHudiDeleteVectorCompat()
+      }
+      // TODO: remove once map/list support is added https://github.com/delta-io/delta/issues/2738
+      SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
+        f.isInstanceOf[MapType] || f.isInstanceOf[ArrayType] || f.isInstanceOf[NullType]
+      } match {
+        case Some(unsupportedType) =>
+          throw DeltaErrors.uniFormHudiSchemaCompat(unsupportedType)
+        case _ =>
+      }
+    }
   }
 
   /**
@@ -172,7 +208,7 @@ object UniversalFormat extends DeltaLogging {
   def enforceDependenciesInConfiguration(
       configuration: Map[String, String],
       snapshot: Snapshot): Map[String, String] = {
-    var metadata = Metadata(configuration = configuration)
+    var metadata = snapshot.metadata.copy(configuration = configuration)
 
     // Check UniversalFormat related property dependencies
     val (_, universalMetadata) = UniversalFormat.enforceInvariantsAndDependencies(

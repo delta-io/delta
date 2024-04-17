@@ -110,7 +110,21 @@ trait DeltaErrorsSuiteBase
         spark,
         StructType.fromDDL("id int"),
         StructType.fromDDL("id2 int"),
-        detectedDuringStreaming = true)
+        detectedDuringStreaming = true),
+    "concurrentAppendException" ->
+      DeltaErrors.concurrentAppendException(None, "p1"),
+    "concurrentDeleteDeleteException" ->
+      DeltaErrors.concurrentDeleteDeleteException(None, "p1"),
+    "concurrentDeleteReadException" ->
+      DeltaErrors.concurrentDeleteReadException(None, "p1"),
+    "concurrentWriteException" ->
+      DeltaErrors.concurrentWriteException(None),
+    "concurrentTransactionException" ->
+      DeltaErrors.concurrentTransactionException(None),
+    "metadataChangedException" ->
+      DeltaErrors.metadataChangedException(None),
+    "protocolChangedException" ->
+      DeltaErrors.protocolChangedException(None)
   )
 
   def otherMessagesToTest: Map[String, String] = Map(
@@ -513,9 +527,15 @@ trait DeltaErrorsSuiteBase
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.generatedColumnsReferToWrongColumns(
-          new AnalysisException("analysis exception"))
+          new AnalysisException(
+            errorClass = "INTERNAL_ERROR",
+            messageParameters = Map("message" -> "internal test error msg"))
+        )
       }
-      checkErrorMessage(e, None, None,
+      checkErrorMessage(
+        e,
+        Some("DELTA_INVALID_GENERATED_COLUMN_REFERENCES"),
+        Some("42621"),
         Some("A generated column cannot use a non-existent column or " +
         "another generated column"))
     }
@@ -1046,6 +1066,15 @@ trait DeltaErrorsSuiteBase
           |root
           | |-- c0: string (nullable = true)
           |""".stripMargin
+      ))
+    }
+    {
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.unsupportedTypeChangeInSchema(Seq("s", "a"), IntegerType, StringType)
+      }
+      checkErrorMessage(e, Some("DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA"), Some("0AKDC"),
+        Some("Unable to operate on this table because an unsupported type change was applied. " +
+          "Field s.a was changed from INT to STRING."
       ))
     }
     {
@@ -1788,17 +1817,19 @@ trait DeltaErrorsSuiteBase
         Some("Subqueries are not supported in the dummyOp (condition = 'col1')."))
     }
     {
+      val schema = StructType(Array(StructField("foo", IntegerType)))
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.foundMapTypeColumnException("dummyKey", "dummyVal")
+        throw DeltaErrors.foundMapTypeColumnException("dummyKey", "dummyVal", schema)
       }
       checkErrorMessage(e, Some("DELTA_FOUND_MAP_TYPE_COLUMN"), Some("KD003"),
-        Some("""A MapType was found. In order to access the key or value of a MapType, specify one
+        Some(s"""A MapType was found. In order to access the key or value of a MapType, specify one
           |of:
           |dummyKey or
           |dummyVal
           |followed by the name of the column (only if that column is a struct type).
           |e.g. mymap.key.mykey
-          |If the column is a basic type, mymap.key or mymap.value is sufficient.""".stripMargin))
+          |If the column is a basic type, mymap.key or mymap.value is sufficient.
+          |Schema:\n""".stripMargin + schema.treeString))
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2042,29 +2073,25 @@ trait DeltaErrorsSuiteBase
         Some("You can't use replaceWhere in conjunction with an overwrite by filter"))
     }
     {
+      val schema = StructType(Array(StructField("foo", IntegerType)))
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.incorrectArrayAccessByName("rightName", "wrongName")
+        throw DeltaErrors.incorrectArrayAccessByName("rightName", "wrongName", schema)
       }
-
-      val msg =
-        s"""An ArrayType was found. In order to access elements of an ArrayType, specify
-           |rightName
-           |Instead of wrongName
-           |""".stripMargin
-      checkErrorMessage(e, Some("DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME"), Some("KD003"),
-        Some(msg))
+      val msg = "An ArrayType was found. In order to access elements of an ArrayType, specify\n" +
+        s"rightName instead of wrongName.\nSchema:\n${schema.treeString}"
+      checkErrorMessage(e, Some("DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME"), Some("KD003"), Some(msg))
     }
     {
       val columnPath = "colPath"
       val other = IntegerType
       val column = Seq("col1", "col2")
+      val schema = StructType(Array(StructField("foo", IntegerType)))
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.columnPathNotNested(columnPath, other, column)
+        throw DeltaErrors.columnPathNotNested(columnPath, other, column, schema)
       }
-      val msg =
-        s"""Expected $columnPath to be a nested data type, but found $other. Was looking for the
-           |index of ${SchemaUtils.prettyFieldName(column)} in a nested field
-           |""".stripMargin
+      val msg = s"Expected $columnPath to be a nested data type, but found $other. Was looking " +
+          s"for the\nindex of ${SchemaUtils.prettyFieldName(column)} in a nested field.\nSchema:\n" +
+          s"${schema.treeString}"
       checkErrorMessage(e, Some("DELTA_COLUMN_PATH_NOT_NESTED"), Some("42704"),
         Some(msg))
     }
@@ -2900,6 +2927,17 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.columnBuilderMissingDataType("col1")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_COLUMN_MISSING_DATA_TYPE"),
+        Some("42601"),
+        Some("The data type of the column `col1` was not provided.")
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.foundViolatingConstraintsForColumnChange(
           "UPDATE", "col1", Map("foo" -> "bar"))
       }
@@ -2911,6 +2949,53 @@ trait DeltaErrorsSuiteBase
           s"""Cannot UPDATE column col1 because this column is referenced by the following
              |check constraint(s):
              |foo -> bar""".stripMargin)
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.createTableMissingTableNameOrLocation()
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_CREATE_TABLE_MISSING_TABLE_NAME_OR_LOCATION"),
+        Some("42601"),
+        Some("Table name or location has to be specified.")
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.createTableIdentifierLocationMismatch("delta.`somePath1`", "somePath2")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_CREATE_TABLE_IDENTIFIER_LOCATION_MISMATCH"),
+        Some("0AKDC"),
+        Some("Creating path-based Delta table with a different location isn't supported. Identifier: delta.`somePath1`, Location: somePath2")
+      )
+    }
+    {
+      val schema = StructType(Seq(StructField("col1", IntegerType)))
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.dropColumnOnSingleFieldSchema(schema)
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_DROP_COLUMN_ON_SINGLE_FIELD_SCHEMA"),
+        Some("0AKDC"),
+        Some(s"Cannot drop column from a schema with a single column. Schema:\n${schema.treeString}")
+      )
+    }
+    {
+      val schema = StructType(Seq(StructField("col1", IntegerType)))
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.errorFindingColumnPosition(Seq("col2"), schema, "foo")
+      }
+      checkErrorMessage(
+        e,
+        Some("_LEGACY_ERROR_TEMP_DELTA_0008"),
+        None,
+        Some(s"Error while searching for position of column col2.\nSchema:" +
+          s"\n${schema.treeString}\nError:\nfoo")
       )
     }
     {
@@ -2958,6 +3043,144 @@ trait DeltaErrorsSuiteBase
         Some("DELTA_MERGE_ADD_VOID_COLUMN"),
         Some("42K09"),
         Some(s"Cannot add column `fooCol` with type VOID. Please explicitly specify a non-void type.")
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.ConcurrentAppendException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.concurrentAppendException(None, "p1")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_CONCURRENT_APPEND"),
+        Some("2D521"),
+        Some("ConcurrentAppendException: Files were added to p1 by a concurrent update. Please try the operation again."),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.ConcurrentDeleteReadException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.concurrentDeleteReadException(None, "p1")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_CONCURRENT_DELETE_READ"),
+        Some("2D521"),
+        Some("ConcurrentDeleteReadException: This transaction attempted to read one or more files that were deleted (for example p1) by a concurrent update. "),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.ConcurrentDeleteDeleteException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.concurrentDeleteDeleteException(None, "p1")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_CONCURRENT_DELETE_DELETE"),
+        Some("2D521"),
+        Some("ConcurrentDeleteDeleteException: This transaction attempted to delete one or more files that were deleted (for example p1) by a concurrent update. "),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.ConcurrentTransactionException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.concurrentTransactionException(None)
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_CONCURRENT_TRANSACTION"),
+        Some("2D521"),
+        Some("ConcurrentTransactionException: This error occurs when multiple streaming queries are using the same checkpoint to write into this table. Did you run multiple instances of the same streaming query at the same time?"),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.ConcurrentWriteException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.concurrentWriteException(None)
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_CONCURRENT_WRITE"),
+        Some("2D521"),
+        Some("ConcurrentWriteException: A concurrent transaction has written new data since the current transaction read the table."),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.ProtocolChangedException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.protocolChangedException(None)
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_PROTOCOL_CHANGED"),
+        Some("2D521"),
+        Some("ProtocolChangedException: The protocol version of the Delta table has been changed by a concurrent update."),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.MetadataChangedException] {
+        throw org.apache.spark.sql.delta.DeltaErrors.metadataChangedException(None)
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_METADATA_CHANGED"),
+        Some("2D521"),
+        Some("MetadataChangedException: The metadata of the Delta table has been changed by a concurrent update."),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw new DeltaAnalysisException(
+          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0009",
+          messageParameters = Array("prefixMsg - "))
+      }
+      checkErrorMessage(
+        e,
+        Some("_LEGACY_ERROR_TEMP_DELTA_0009"),
+        None,
+        Some("prefixMsg - Updating nested fields is only supported for StructType."))
+    }
+    {
+      val expr = "someExp".expr
+      val e = intercept[DeltaAnalysisException] {
+        throw new DeltaAnalysisException(
+          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0010",
+          messageParameters = Array("prefixMsg - ", expr.sql))
+      }
+      checkErrorMessage(
+        e,
+        Some("_LEGACY_ERROR_TEMP_DELTA_0010"),
+        None,
+        Some(s"prefixMsg - Found unsupported expression ${expr.sql} while parsing target column " +
+            s"name parts.")
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw new DeltaAnalysisException(
+          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0011",
+          messageParameters = Array.empty)
+      }
+      checkErrorMessage(
+        e,
+        Some("_LEGACY_ERROR_TEMP_DELTA_0011"),
+        None,
+        Some("Failed to resolve plan.")
+      )
+    }
+    {
+      val exprs = Seq("1".expr, "2".expr)
+      val e = intercept[DeltaAnalysisException] {
+        throw new DeltaAnalysisException(
+          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0012",
+          messageParameters = Array(exprs.mkString(",")))
+      }
+      checkErrorMessage(
+        e,
+        Some("_LEGACY_ERROR_TEMP_DELTA_0012"),
+        None,
+        Some(s"Could not resolve expression: ${exprs.mkString(",")}")
       )
     }
   }

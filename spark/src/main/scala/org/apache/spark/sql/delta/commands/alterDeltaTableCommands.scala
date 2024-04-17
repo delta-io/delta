@@ -319,18 +319,21 @@ case class AlterTableDropFeatureDeltaCommand(
       val startTimeNs = System.nanoTime()
       val preDowngradeMadeChanges =
         removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded()
-      if (preDowngradeMadeChanges && isReaderWriterFeature) {
+      if (isReaderWriterFeature) {
         // Generate a checkpoint after the cleanup that is based on commits that do not use
         // the feature. This intends to help slow-moving tables to qualify for history truncation
         // asap. The checkpoint is based on a new commit to avoid creating a checkpoint
         // on a commit that still contains traces of the removed feature.
+        // Note, the checkpoint is created in both executions of DROP FEATURE command.
         createEmptyCommitAndCheckpoint(startTimeNs)
 
         // If the pre-downgrade command made changes, then the table's historical versions
         // certainly still contain traces of the feature. We don't have to run an expensive
         // explicit check, but instead we fail straight away.
-        throw DeltaErrors.dropTableFeatureWaitForRetentionPeriod(
-          featureName, table.initialSnapshot.metadata)
+        if (preDowngradeMadeChanges) {
+          throw DeltaErrors.dropTableFeatureWaitForRetentionPeriod(
+            featureName, table.initialSnapshot.metadata)
+        }
       }
 
       val txn = table.startTransaction()

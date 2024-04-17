@@ -19,21 +19,27 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.FileNotFoundException
 import java.sql.Timestamp
+import java.util.concurrent.CompletableFuture
 
 import scala.collection.mutable
+import scala.concurrent.{ExecutionContext, ExecutionContextExecutorService, Future}
+import scala.concurrent.duration.Duration
 
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, CommitMarker, JobInfo, NotebookInfo}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{DateTimeUtils, DeltaCommitFileProvider, FileNames, TimestampFormatter}
 import org.apache.spark.sql.delta.util.FileNames._
+import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.util.SerializableConfiguration
+import org.apache.spark.util.{SerializableConfiguration, ThreadUtils}
 
 /**
  * This class keeps tracks of the version of commits and their timestamps for a Delta table to
@@ -61,26 +67,34 @@ class DeltaHistoryManager(
    * chronological order.
    */
   def getHistory(limitOpt: Option[Int]): Seq[DeltaHistory] = {
+    val snapshot = deltaLog.update()
     val listStart = limitOpt.map { limit =>
-      math.max(deltaLog.update().version - limit + 1, 0)
+      math.max(snapshot.version - limit + 1, 0)
     }.getOrElse(getEarliestDeltaFile(deltaLog))
-    getHistory(listStart)
+    getHistory(listStart, end = Some(snapshot.version))
   }
 
   /**
-   * Get the commit information of the Delta table from commit `[start, end)`. If `end` is `None`,
-   * we return all commits from start to now.
+   * Get the commit information of the Delta table from commit `[start, end]` in
+   * reverse chronological order. An empty Seq is returned when `start > end`.
+   *
+   * @param useInCommitTimestamps Whether ICT should be used as the commit-timestamp for
+   *                              the commits.
+   *                              If `true`, all commits in the range must have ICTs and
+   *                              the timestamp returned for each commit will be the ICT.
+   *                              If `false`, the file modification time will be used as the
+   *                              timestamp.
    */
-  def getHistory(
+  private[delta] def getHistoryImpl(
       start: Long,
-      endOpt: Option[Long] = None): Seq[DeltaHistory] = {
+      end: Long,
+      useInCommitTimestamps: Boolean,
+      commitFileProvider: DeltaCommitFileProvider): Seq[DeltaHistory] = {
     import org.apache.spark.sql.delta.implicits._
     val conf = getSerializableHadoopConf
     val logPath = deltaLog.logPath.toString
-    val snapshot = endOpt.map(end => deltaLog.getSnapshotAt(end - 1)).getOrElse(deltaLog.update())
-    val commitFileProvider = DeltaCommitFileProvider(snapshot)
     // We assume that commits are contiguous, therefore we try to load all of them in order
-    val info = spark.range(start, snapshot.version + 1)
+    val info = spark.range(start, end + 1)
       .mapPartitions { versions =>
         val logStore = LogStore(SparkEnv.get.conf, conf.value)
         val basePath = new Path(logPath)
@@ -88,9 +102,15 @@ class DeltaHistoryManager(
         versions.flatMap { commit =>
           try {
             val deltaFile = commitFileProvider.deltaFile(commit)
-            val ci = DeltaHistoryManager.getCommitInfo(logStore, deltaFile, conf.value)
-            val metadata = fs.getFileStatus(deltaFile)
-            Some(ci.withTimestamp(metadata.getModificationTime))
+            val commitInfoOpt = DeltaHistoryManager
+              .getCommitInfoOpt(logStore, deltaFile, conf.value)
+            val timestamp = if (useInCommitTimestamps) {
+              CommitInfo.getRequiredInCommitTimestamp(commitInfoOpt, commit.toString)
+            } else {
+              fs.getFileStatus(deltaFile).getModificationTime
+            }
+            val ci = commitInfoOpt.getOrElse(CommitInfo.empty(Some(commit)))
+            Some(ci.withTimestamp(timestamp))
           } catch {
             case _: FileNotFoundException =>
               // We have a race-condition where files can be deleted while reading. It's fine to
@@ -99,8 +119,84 @@ class DeltaHistoryManager(
           }
         }.map(DeltaHistory.fromCommitInfo)
       }
+    val monotonizedCommits = if (useInCommitTimestamps) {
+      // ICT timestamps are guaranteed to be monotonically increasing.
+      info.collect()
+    } else {
+      monotonizeCommitTimestamps(info.collect())
+    }
     // Spark should return the commits in increasing order as well
-    monotonizeCommitTimestamps(info.collect()).reverse
+    monotonizedCommits.reverse
+  }
+
+  /**
+   * Get the commit information of the Delta table from commit `[start, end]` in reverse
+   * chronological order. If `end` is `None`, we return all commits from start to now.
+   * @param start The start of the commit range, inclusive.
+   * @param end The end of the commit range, inclusive.
+   */
+  def getHistory(
+      start: Long,
+      end: Option[Long] = None): Seq[DeltaHistory] = {
+    val currentSnapshot = deltaLog.unsafeVolatileSnapshot
+    val (snapshotNewerThanResolvedEnd, resolvedEnd) = end match {
+        case Some(endInclusive) if currentSnapshot.version >= endInclusive =>
+          // Use the cache snapshot if it's fresh enough for the [start, endInclusive] query.
+          (currentSnapshot, math.min(currentSnapshot.version, endInclusive))
+        case _ =>
+          // Either end doesn't exist or the currently cached snapshot isn't new enough to
+          // satisfy it.
+          val snapshot = deltaLog.update()
+          val endInclusive = end.getOrElse(snapshot.version).min(snapshot.version)
+          (snapshot, endInclusive)
+      }
+
+    val commitFileProvider = DeltaCommitFileProvider(snapshotNewerThanResolvedEnd)
+    if (!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(
+        snapshotNewerThanResolvedEnd.metadata)) {
+      getHistoryImpl(start, resolvedEnd, useInCommitTimestamps = false, commitFileProvider)
+    } else {
+      val ictEnablementCommit =
+        InCommitTimestampUtils.getValidatedICTEnablementInfo(snapshotNewerThanResolvedEnd.metadata)
+      ictEnablementCommit match {
+        case Some(Commit(ictEarliest, _)) =>
+          // getHistoryImpl will return an empty Seq if start > end.
+          val nonICTCommits = getHistoryImpl(
+              start,
+              math.min(resolvedEnd, ictEarliest - 1),
+              useInCommitTimestamps = false,
+              commitFileProvider)
+          val ictCommits = getHistoryImpl(
+              math.max(ictEarliest, start),
+              resolvedEnd,
+              useInCommitTimestamps = true,
+              commitFileProvider)
+          // Merge the two sequences, ensuring ICT commits are listed first as they are more recent,
+          // followed by non-ICT commits, maintaining the reverse chronological order.
+          ictCommits ++ nonICTCommits
+        case _ => // Enablement info not found, ICT is enabled for all available commits.
+          getHistoryImpl(start, resolvedEnd, useInCommitTimestamps = true, commitFileProvider)
+      }
+    }
+  }
+
+  /**
+   * Returns the latest commit that happened at or before `time` in the range `[start, end)`.
+   * All the commits in the range `[start, end)` are assumed to not have inCommitTimestamps.
+   * If no such commit exists, the earliest commit is returned.
+   */
+  def getCommitFromNonICTRange(start: Long, end: Long, time: Long): Commit = {
+    if (end - start > 2 * maxKeysPerList) {
+      parallelSearch(time, start, end)
+    } else {
+      val commits = getCommits(
+        deltaLog.store,
+        deltaLog.logPath,
+        start,
+        Some(end),
+        deltaLog.newDeltaHadoopConf())
+      lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
+    }
   }
 
   /**
@@ -118,28 +214,91 @@ class DeltaHistoryManager(
       mustBeRecreatable: Boolean = true,
       canReturnEarliestCommit: Boolean = false): Commit = {
     val time = timestamp.getTime
-    val earliest = if (mustBeRecreatable) {
+    val earliestVersion = if (mustBeRecreatable) {
       getEarliestRecreatableCommit
     } else {
       getEarliestDeltaFile(deltaLog)
     }
-    val latestVersion = deltaLog.update().version
+    val snapshot = deltaLog.update()
+    // TODO(managed-commits): Add support for managed commits.
+    val commitFileProvider = DeltaCommitFileProvider(snapshot)
+    val latestVersion = snapshot.version
 
-    // Search for the commit
-    val commit = if (latestVersion - earliest > 2 * maxKeysPerList) {
-      parallelSearch(time, earliest, latestVersion + 1)
+    // In most cases, the earliest commit should not be the result of this search.
+    // When ICT is enabled, use -1L as the placeholder timestamp for the earliest commit
+    // for the search and only fetch the real timestamp if the earliest commit is
+    // the result of the search. We can potentially avoid one unnecessary IO this way.
+    val placeholderEarliestCommit = Commit(earliestVersion, -1L)
+    val ictEnablementCommit =
+      if (DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata)) {
+        InCommitTimestampUtils.getValidatedICTEnablementInfo(snapshot.metadata)
+          // If missing, ICT is enabled for all available versions
+          .getOrElse(placeholderEarliestCommit)
+      } else {
+        // Pretend ICT will be enabled after the latest version and requested timestamp.
+        // This will force us to use the non-ICT search path below.
+        Commit(latestVersion + 1, time + 1)
+      }
+
+    var commitOpt = if (ictEnablementCommit.timestamp <= time) {
+      // ICT was enabled as-of the requested time
+      if (snapshot.timestamp <= time) {
+        // We just proved we should use the latest snapshot
+        Some(Commit(snapshot.version, snapshot.timestamp))
+      } else {
+        // start ICT search over [earliest available ICT version, latestVersion)
+        val ictEnabledForEntireWindow = (ictEnablementCommit.version <= earliestVersion)
+        val searchWindowLowerBoundCommit =
+          if (ictEnabledForEntireWindow) placeholderEarliestCommit else ictEnablementCommit
+
+        // Note that this search can return `placeholderEarliestCommit`.
+        // The real timestamp of the earliest commit will be fetched later.
+        getActiveCommitAtTimeFromICTRange(
+          time,
+          searchWindowLowerBoundCommit,
+          latestVersion + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 10,
+          spark,
+          commitFileProvider)
+      }
     } else {
-      val commits = getCommits(
-        deltaLog.store,
+      // ICT was NOT enabled as-of the requested time
+      if (ictEnablementCommit.version <= earliestVersion) {
+        // We're searching for a non-ICT time but the non-ICT commits are all missing.
+        // If `canReturnEarliestCommit` is `false`, we need the details of the
+        // earliest commit to populate the TimestampEarlierThanCommitRetentionException
+        // error correctly.
+        // Else, when `canReturnEarliestCommit` is `true`, the earliest commit
+        // is the desired result.
+        // The real timestamp of the earliest commit will be fetched later.
+        Some(placeholderEarliestCommit)
+      } else {
+        // start non-ICT search over [earliestVersion, ictEnablementVersion)
+        Some(getCommitFromNonICTRange(earliestVersion, end = ictEnablementCommit.version, time))
+      }
+    }
+
+    // We need to fetch the correct timestamp for the earliest commit if it was the result of the
+    // search.
+    // If commitOpt == ictEnablementCommit, we also need to validate the existence of the ICT
+    // enablement commit.
+    if (commitOpt.contains(placeholderEarliestCommit) || commitOpt.contains(ictEnablementCommit)) {
+      commitOpt = getFirstCommitAndICTAfter(
+        commitOpt.get.version,
+        latestVersion,
         deltaLog.logPath,
-        earliest,
-        Some(latestVersion + 1),
-        deltaLog.newDeltaHadoopConf())
-      // If it returns empty, we will fail below with `timestampEarlierThanCommitRetention`.
-      lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
+        deltaLog.store,
+        deltaLog.newDeltaHadoopConf(),
+        commitFileProvider)
     }
 
     // Error handling
+    val commit = commitOpt.getOrElse {
+      throw DeltaErrors.noHistoryFound(deltaLog.logPath)
+    }
     val commitTs = new Timestamp(commit.timestamp)
     val timestampFormatter = TimestampFormatter(
       DateTimeUtils.getTimeZone(SQLConf.get.sessionLocalTimeZone))
@@ -258,6 +417,16 @@ class DeltaHistoryManager(
 
 /** Contains many utility methods that can also be executed on Spark executors. */
 object DeltaHistoryManager extends DeltaLogging {
+
+  /**
+   * This thread pool is used by `getActiveCommitAtTime` to parallelize the search for
+   * relevant commits when the feature inCommitTimestamps is enabled.
+   */
+  private[delta] lazy val threadPool: DeltaThreadPool = DeltaThreadPool(
+      "delta-history-manager",
+      SparkEnv.get.conf.get(DeltaSQLConf.DELTA_HISTORY_MANAGER_THREAD_POOL_SIZE)
+    )
+
   /** Get the persisted commit info (if available) for the given delta file. */
   def getCommitInfoOpt(
       logStore: LogStore,
@@ -270,20 +439,6 @@ object DeltaHistoryManager extends DeltaLogging {
         .collectFirst { case c: CommitInfo => c.copy(version = Some(deltaVersion(deltaFile))) }
     } finally {
       logs.close()
-    }
-  }
-
-  /**
-   * Get the persisted commit info for the given delta file. If commit info
-   * is not found in the commit, a mostly empty [[CommitInfo]] object with only
-   * the version populated will be returned.
-   */
-  private def getCommitInfo(
-      logStore: LogStore,
-      deltaFile: Path,
-      hadoopConf: Configuration): CommitInfo = {
-    getCommitInfoOpt(logStore, deltaFile, hadoopConf).getOrElse {
-      CommitInfo.empty(Some(deltaVersion(deltaFile)))
     }
   }
 
@@ -301,6 +456,128 @@ object DeltaHistoryManager extends DeltaLogging {
       .getOrElse {
         throw DeltaErrors.noHistoryFound(deltaLog.logPath)
       }
+  }
+
+  private def getCommitWithInCommitTimestamp(
+      version: Long,
+      commitFileStatus: FileStatus,
+      logStore: LogStore,
+      conf: Configuration): Option[Commit] = {
+    val logs = logStore.readAsIterator(commitFileStatus, conf)
+    try {
+      val ci = logs
+        .map(Action.fromJson)
+        .collectFirst { case c: CommitInfo => c }
+      Some(Commit(version, CommitInfo.getRequiredInCommitTimestamp(ci, version.toString)))
+    } catch {
+      case _: FileNotFoundException =>
+        None
+    } finally {
+      logs.close()
+    }
+  }
+
+  /**
+   * Returns the first available commit in the range [version, upperBoundExclusive).
+   * The timestamp of the returned commit will be the ICT. If no ICT is found for the commit,
+   * an exception will be thrown.
+   * The function optimistically tries to read the commit info for `version` first. If the
+   * no commit is found at that version, it falls back to a listing.
+   */
+  private[delta] def getFirstCommitAndICTAfter(
+      version: Long,
+      upperBoundExclusive: Long,
+      basePath: Path,
+      logStore: LogStore,
+      conf: Configuration,
+      commitFileProvider: DeltaCommitFileProvider): Option[Commit] = {
+    val commitInfoOpt = try {
+      val deltaFile = commitFileProvider.deltaFile(version)
+      getCommitInfoOpt(logStore, deltaFile, conf)
+    } catch {
+      case _: FileNotFoundException => None
+    }
+    if (commitInfoOpt.isDefined) {
+      val timestamp = CommitInfo.getRequiredInCommitTimestamp(commitInfoOpt, version.toString)
+      Some(Commit(version, timestamp))
+    } else {
+      logStore
+        .listFrom(FileNames.listingPrefix(basePath, version), conf)
+        .takeWhile {
+          fs => FileNames.getFileVersionOpt(fs.getPath).forall(_ < upperBoundExclusive)
+        }
+        .collectFirst { case DeltaFile(f, v) =>
+          getCommitWithInCommitTimestamp(v, f, logStore, conf)
+        }
+        .flatten
+    }
+  }
+
+  /**
+   * Returns the latest commit (with its inCommitTimestamp) that happened at or before
+   * `searchTimestamp` in the range `[startCommit.version, end)`.
+   * If no such commit exists, None is returned.
+   *
+   * The algorithm divides the range into `numChunks` chunks. It then finds the last
+   * chunk where the ICT of its first available commit is less than or equal to `searchTimestamp`.
+   * This chunk is then further divided into `numChunks` chunks and the process is repeated.
+   */
+  private[delta] def getActiveCommitAtTimeFromICTRange(
+      searchTimestamp: Long,
+      startCommit: Commit,
+      end: Long,
+      conf: Configuration,
+      basePath: Path,
+      logStore: LogStore,
+      numChunks: Long,
+      spark: SparkSession,
+      commitFileProvider: DeltaCommitFileProvider): Option[Commit] = {
+    require(startCommit.version < end, "start must be less than end")
+    var curStartCommit = startCommit
+    var curEnd = end
+    while (curStartCommit.version < curEnd) {
+      val numVersionsInRange = curEnd - curStartCommit.version
+      val chunkSize = math.max(numVersionsInRange / numChunks, 1)
+
+      // min(chunkSize) = 1 and curStartCommit.version < end
+      // therefore, getChunkEnd(chunkStart) will always be > chunkStart
+      def getChunkEnd(chunkStart: Long): Long = math.min(chunkStart + chunkSize, curEnd)
+
+      val chunkStartICTFutures =
+        (curStartCommit.version until curEnd by chunkSize).map { chunkStart =>
+          if (chunkStart == curStartCommit.version) {
+            CompletableFuture.completedFuture(Option(curStartCommit))
+          } else {
+            threadPool.submit(spark) {
+              getFirstCommitAndICTAfter(
+                chunkStart,
+                upperBoundExclusive = getChunkEnd(chunkStart),
+                basePath,
+                logStore,
+                conf,
+                commitFileProvider
+              )
+            }
+          }
+        }
+      val knownTightestLowerBoundCommit = chunkStartICTFutures
+        .map(ThreadUtils.awaitResult(_, Duration.Inf))
+        .takeWhile(_.forall(_.timestamp <= searchTimestamp))
+        .flatten
+        .lastOption
+        .getOrElse {
+          return None
+        }
+      val nextStartCommit = knownTightestLowerBoundCommit
+      val nextEnd = getChunkEnd(nextStartCommit.version)
+      if (nextStartCommit.version + 2 > nextEnd ||
+          knownTightestLowerBoundCommit.timestamp == searchTimestamp) {
+        return Some(knownTightestLowerBoundCommit)
+      }
+      curStartCommit = nextStartCommit
+      curEnd = nextEnd
+    }
+    None
   }
 
   /**

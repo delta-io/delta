@@ -44,9 +44,27 @@ trait ProvidesUniFormConverters { self: DeltaLog =>
       throw ExceptionUtils.getRootCause(e)
   }
 
+  protected lazy val _hudiConverter: UniversalFormatConverter = try {
+    val clazz =
+      Utils.classForName("org.apache.spark.sql.delta.hudi.HudiConverter")
+    val constructor = clazz.getConstructor(classOf[SparkSession])
+    constructor.newInstance(spark)
+  } catch {
+    case e: ClassNotFoundException =>
+      logError(s"Failed to find Hudi converter class", e)
+      throw DeltaErrors.hudiClassMissing(spark.sparkContext.getConf, e)
+    case e: InvocationTargetException =>
+      logError(s"Got error when creating an Hudi converter", e)
+      // The better error is within the cause
+      throw ExceptionUtils.getRootCause(e)
+  }
+
+
   /** Visible for tests (to be able to mock). */
   private[delta] var testIcebergConverter: Option[UniversalFormatConverter] = None
+  private[delta] var testHudiConverter: Option[UniversalFormatConverter] = None
 
   def icebergConverter: UniversalFormatConverter = testIcebergConverter.getOrElse(_icebergConverter)
+  def hudiConverter: UniversalFormatConverter = testHudiConverter.getOrElse(_hudiConverter)
 }
 

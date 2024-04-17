@@ -58,7 +58,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       Literal.ofDate(4234),
       Literal.ofNull(DateType.DATE),
       Literal.ofTimestamp(2342342342232L),
-      Literal.ofNull(TimestampType.TIMESTAMP))
+      Literal.ofNull(TimestampType.TIMESTAMP),
+      Literal.ofTimestampNtz(2342342342L),
+      Literal.ofNull(TimestampNTZType.TIMESTAMP_NTZ))
 
     val inputBatches: Seq[ColumnarBatch] = Seq[ColumnarBatch](
       zeroColumnBatch(rowCount = 0),
@@ -321,6 +323,12 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         ofTimestamp(123212312L),
         ofTimestamp(343L),
         ofNull(TimestampType.TIMESTAMP)
+      ),
+      (
+        ofTimestampNtz(323423L),
+        ofTimestampNtz(1232123423312L),
+        ofTimestampNtz(323423L),
+        ofNull(TimestampNTZType.TIMESTAMP_NTZ)
       ),
       (ofDate(-12123), ofDate(123123), ofDate(-12123), ofNull(DateType.DATE)),
       (ofString("apples"), ofString("oranges"), ofString("apples"), ofNull(StringType.STRING)),

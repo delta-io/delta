@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.DeltaFileOperations
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
@@ -344,8 +345,22 @@ trait Checkpoints extends DeltaLogging {
     }
   }
 
-  protected def writeCheckpointFiles(
-      snapshotToCheckpoint: Snapshot): LastCheckpointInfo = {
+  protected def writeCheckpointFiles(snapshotToCheckpoint: Snapshot): LastCheckpointInfo = {
+    // With Managed-Commits, commit files are not guaranteed to be backfilled immediately in the
+    // _delta_log dir. While it is possible to compute a checkpoint file without backfilling,
+    // writing the checkpoint file in the log directory before backfilling the relevant commits
+    // will leave gaps in the dir structure. This can cause issues for readers that are not
+    // communicating with the CommitStore.
+    //
+    // Sample directory structure with a gap if we don't backfill commit files:
+    // _delta_log/
+    //   _commits/
+    //     00017.$uuid.json
+    //     00018.$uuid.json
+    //   00015.json
+    //   00016.json
+    //   00018.checkpoint.parquet
+    snapshotToCheckpoint.ensureCommitFilesBackfilled()
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint)
   }
 
@@ -791,10 +806,14 @@ object Checkpoints
     val (v2CheckpointPath, checkpointSchemaToWriteInLastCheckpoint) =
       if (v2CheckpointFormat == V2Checkpoint.Format.JSON) {
         val v2CheckpointPath = newV2CheckpointJsonFile(deltaLog.logPath, snapshot.version)
+        // We don't need a putIfAbsent for this write, so we set overwrite to true.
+        // However, this can be dangerous if the cloud makes partial writes visible.
+        val isPartialWriteVisible =
+          deltaLog.store.isPartialWriteVisible(v2CheckpointPath, hadoopConf)
         deltaLog.store.write(
           v2CheckpointPath,
           nonFileActionsToWrite.map(_.json).toIterator,
-          overwrite = true,
+          overwrite = !isPartialWriteVisible,
           hadoopConf = hadoopConf
         )
         (v2CheckpointPath, None)

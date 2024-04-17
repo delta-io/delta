@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import scala.concurrent.duration._
 
-object BusyWait {
+object ConcurrencyHelpers {
   /**
    * Keep checking if `check` returns `true` until it's the case or `waitTime` expires.
    *
@@ -28,7 +28,7 @@ object BusyWait {
    * and should not be used in production code. Production code should not use polling
    * and should instead use signalling to coordinate.
    */
-  def until(
+  def busyWaitFor(
       check: => Boolean,
       waitTime: FiniteDuration): Boolean = {
     val DEFAULT_SLEEP_TIME: Duration = 10.millis
@@ -42,5 +42,16 @@ object BusyWait {
       Thread.sleep(sleepTimeMs)
     } while (deadline.hasTimeLeft())
     false
+  }
+
+  def withOptimisticTransaction[T](
+    activeTransaction: Option[OptimisticTransaction])(block: => T): T = {
+    if (activeTransaction.isDefined) {
+      OptimisticTransaction.withActive(activeTransaction.get) {
+        block
+      }
+    } else {
+      block
+    }
   }
 }

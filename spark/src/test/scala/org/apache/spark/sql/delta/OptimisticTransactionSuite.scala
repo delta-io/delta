@@ -19,14 +19,15 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
 
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
-import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitResponse, CommitStore, CommitStoreBuilder, CommitStoreProvider, GetCommitsResponse, UpdatedActions}
+import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitResponse, CommitStore, CommitStoreBuilder, CommitStoreProvider, GetCommitsResponse, InMemoryCommitStore, UpdatedActions}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -34,6 +35,7 @@ import org.apache.spark.sql.Row
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
+import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.apache.spark.util.ManualClock
 
@@ -45,8 +47,8 @@ class OptimisticTransactionSuite
   import testImplicits._
 
   // scalastyle:off: removeFile
-  private val addA = createTestAddFile(path = "a")
-  private val addB = createTestAddFile(path = "b")
+  private val addA = createTestAddFile(encodedPath = "a")
+  private val addB = createTestAddFile(encodedPath = "b")
 
   /* ************************** *
    * Allowed concurrent actions *
@@ -266,6 +268,11 @@ class OptimisticTransactionSuite
     actions = Seq(
       AddFile("b", Map.empty, 1, 1, dataChange = true)))
 
+  override def beforeEach(): Unit = {
+    super.beforeEach()
+    CommitStoreProvider.clearNonDefaultBuilders()
+  }
+
   test("initial commit without metadata should fail") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
@@ -342,7 +349,7 @@ class OptimisticTransactionSuite
 
       // Validate that actions in both transactions are not exactly same.
       def readActions(version: Long): Seq[Action] = {
-        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+        log.store.read(FileNames.unsafeDeltaFile(log.logPath, version), log.newDeltaHadoopConf())
           .map(Action.fromJson)
       }
       def removeTxnIdAndMetricsFromActions(actions: Seq[Action]): Seq[Action] = actions.map {
@@ -372,7 +379,7 @@ class OptimisticTransactionSuite
       val version = txn.commit(Seq(), ManualUpdate)
 
       def readActions(version: Long): Seq[Action] = {
-        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+        log.store.read(FileNames.unsafeDeltaFile(log.logPath, version), log.newDeltaHadoopConf())
           .map(Action.fromJson)
       }
       val actions = readActions(version)
@@ -408,7 +415,7 @@ class OptimisticTransactionSuite
       txn.updateSetTransaction("TestAppId", 1L, None)
       val version = txn.commit(Seq(SetTransaction("TestAppId", 1L, None)), ManualUpdate)
       def readActions(version: Long): Seq[Action] = {
-        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+        log.store.read(FileNames.unsafeDeltaFile(log.logPath, version), log.newDeltaHadoopConf())
           .map(Action.fromJson)
       }
       assert(readActions(version).collectFirst {
@@ -468,7 +475,7 @@ class OptimisticTransactionSuite
               actions: Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
             commitAttempts += 1
-            throw new CommitFailedException(
+            throw CommitFailedException(
               retryable = true,
               conflict = commitAttempts > initialNonConflictErrors &&
                 commitAttempts <= (initialNonConflictErrors + initialConflictErrors),
@@ -478,6 +485,13 @@ class OptimisticTransactionSuite
               tablePath: Path,
               startVersion: Long,
               endVersion: Option[Long]): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
+          override def backfillToVersion(
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              logPath: Path,
+              startVersion: Long,
+              endVersion: Option[Long]): Unit = {}
+          override def semanticEquals(other: CommitStore): Boolean = this == other
         }
       }
     }
@@ -524,6 +538,13 @@ class OptimisticTransactionSuite
               tablePath: Path,
               startVersion: Long,
               endVersion: Option[Long]): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
+          override def backfillToVersion(
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              logPath: Path,
+              startVersion: Long,
+              endVersion: Option[Long]): Unit = {}
+          override def semanticEquals(other: CommitStore): Boolean = this == other
         }
       }
     }
@@ -806,4 +827,85 @@ class OptimisticTransactionSuite
       }
     }
   }
+
+  BOOLEAN_DOMAIN.foreach { conflict =>
+    test(s"commitLarge should handle Commit Failed Exception with conflict: $conflict") {
+      withTempDir { tempDir =>
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+        val commitStoreName = "retryable-conflict-commit-store"
+        class RetryableConflictCommitStore extends InMemoryCommitStore(batchSize = 5) {
+          override def commit(
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              tablePath: Path,
+              commitVersion: Long,
+              actions: Iterator[String],
+              updatedActions: UpdatedActions): CommitResponse = {
+            if (updatedActions.commitInfo.operation == DeltaOperations.OP_RESTORE) {
+              deltaLog.startTransaction().commit(addB :: Nil, ManualUpdate)
+              throw CommitFailedException(retryable = true, conflict, message = "")
+            }
+            super.commit(logStore, hadoopConf, tablePath, commitVersion, actions, updatedActions)
+          }
+        }
+        object RetryableConflictCommitStoreBuilder extends CommitStoreBuilder {
+          lazy val commitStore = new RetryableConflictCommitStore()
+          override def name: String = commitStoreName
+          override def build(conf: Map[String, String]): CommitStore = commitStore
+        }
+        CommitStoreProvider.registerBuilder(RetryableConflictCommitStoreBuilder)
+        val conf = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> commitStoreName)
+        deltaLog.startTransaction().commit(Seq(Metadata(configuration = conf)), ManualUpdate)
+        RetryableConflictCommitStoreBuilder.commitStore.registerTable(
+          logPath = deltaLog.logPath, maxCommitVersion = 0)
+        deltaLog.startTransaction().commit(addA :: Nil, ManualUpdate)
+        val records = Log4jUsageLogger.track {
+          // commitLarge must fail because of a conflicting commit at version-2.
+          val e = intercept[Exception] {
+            deltaLog.startTransaction().commitLarge(
+              spark,
+              nonProtocolMetadataActions = (addB :: Nil).iterator,
+              newProtocolOpt = None,
+              op = DeltaOperations.Restore(Some(0), None),
+              context = Map.empty,
+              metrics = Map.empty)
+          }
+          if (conflict) {
+            assert(e.isInstanceOf[ConcurrentWriteException])
+            assert(
+              e.getMessage.contains(
+                "A concurrent transaction has written new data since the current transaction " +
+                  s"read the table. Please try the operation again"))
+          } else {
+              assert(e.isInstanceOf[CommitFailedException])
+          }
+          assert(deltaLog.update().version == 2)
+        }
+        val failureRecord = filterUsageRecords(records, "delta.commitLarge.failure")
+        assert(failureRecord.size == 1)
+        val data = JsonUtils.fromJson[Map[String, Any]](failureRecord.head.blob)
+        assert(data("fromManagedCommit") == true)
+        assert(data("fromManagedCommitConflict") == conflict)
+        assert(data("fromManagedCommitRetryable") == true)
+      }
+    }
+  }
+
+  test("Append does not trigger snapshot state computation") {
+    withTempDir { tableDir =>
+      val df = Seq((1, 0), (2, 1)).toDF("key", "value")
+      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+      val preCommitSnapshot = deltaLog.update()
+      assert(!preCommitSnapshot.stateReconstructionTriggered)
+
+      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+      val postCommitSnapshot = deltaLog.update()
+      assert(!preCommitSnapshot.stateReconstructionTriggered)
+      assert(!postCommitSnapshot.stateReconstructionTriggered)
+    }
+  }
+
 }

@@ -132,8 +132,6 @@ case class WriteIntoDelta(
       }
     }
     val isReplaceWhere = mode == SaveMode.Overwrite && options.replaceWhere.nonEmpty
-    // Validate that the preview is enabled if we are writing to a clustered table.
-    ClusteredTableUtils.validatePreviewEnabled(txn.snapshot.protocol)
     val finalClusterBySpecOpt =
       if (mode == SaveMode.Append || isReplaceWhere) {
         clusterBySpecOpt.foreach { clusterBySpec =>
@@ -145,7 +143,7 @@ case class WriteIntoDelta(
         clusterBySpecOpt
       }
     val rearrangeOnly = options.rearrangeOnly
-    val charPadding = sparkSession.conf.get(SQLConf.READ_SIDE_CHAR_PADDING.key, "false") == "true"
+    val charPadding = sparkSession.conf.get(SQLConf.READ_SIDE_CHAR_PADDING)
     val charAsVarchar = sparkSession.conf.get(SQLConf.CHAR_AS_VARCHAR)
     val dataSchema = if (!charAsVarchar && charPadding) {
       data.schema

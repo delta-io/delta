@@ -81,7 +81,9 @@ public class DefaultKernelTestUtils {
             return vector.getShort(rowId);
         } else if (dataType instanceof IntegerType || dataType instanceof DateType) {
             return vector.getInt(rowId);
-        } else if (dataType instanceof LongType || dataType instanceof TimestampType) {
+        } else if (dataType instanceof LongType ||
+                dataType instanceof TimestampType ||
+                dataType instanceof TimestampNTZType) {
             return vector.getLong(rowId);
         } else if (dataType instanceof FloatType) {
             return vector.getFloat(rowId);

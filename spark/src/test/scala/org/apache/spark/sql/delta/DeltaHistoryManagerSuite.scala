@@ -25,7 +25,10 @@ import java.util.{Date, Locale}
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
+import com.databricks.spark.util.Log4jUsageLogger
+import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
+import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
 import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
@@ -61,7 +64,7 @@ trait DeltaTimeTravelTests extends QueryTest
   protected val timeFormatter = new SimpleDateFormat("yyyyMMddHHmmssSSS")
 
   protected def modifyCommitTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
-    val file = new File(FileNames.deltaFile(deltaLog.logPath, version).toUri)
+    val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
     file.setLastModified(ts)
     val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
     if (crc.exists()) {
@@ -94,7 +97,8 @@ trait DeltaTimeTravelTests extends QueryTest
       deltaLog: DeltaLog, commits: Long*): Unit = {
     var startVersion = deltaLog.snapshot.version + 1
     commits.foreach { ts =>
-      val action = createTestAddFile(path = startVersion.toString, modificationTime = startVersion)
+      val action =
+        createTestAddFile(encodedPath = startVersion.toString, modificationTime = startVersion)
       deltaLog.startTransaction().commitManually(action)
       modifyCommitTimestamp(deltaLog, startVersion, ts)
       startVersion += 1
@@ -125,7 +129,7 @@ trait DeltaTimeTravelTests extends QueryTest
           .saveAsTable(table)
       }
       val deltaLog = DeltaLog.forTable(spark, new TableIdentifier(table))
-      val file = new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri)
+      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri)
       file.setLastModified(commitList.head)
       commitList = commits.slice(1, commits.length) // we already wrote the first commit here
       var startVersion = deltaLog.snapshot.version + 1
@@ -349,7 +353,7 @@ trait DeltaTimeTravelTests extends QueryTest
         assert(e1.getMessage.contains("[0, 2]"))
 
         val deltaLog = DeltaLog.forTable(spark, getTableLocation(tblName))
-        new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+        new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri).delete()
         // Delta Lake will create a DeltaTableV2 explicitly with time travel options in the catalog.
         // These options will be verified by DeltaHistoryManager, which will throw an
         // AnalysisException.
@@ -596,17 +600,45 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
       }
       assert(e1.getMessage.contains("[0, 2]"))
 
-      val e2 = intercept[IllegalArgumentException] {
+      val e2 = intercept[MULTIPLE_TIME_TRAVEL_FORMATS_ERROR_TYPE] {
         spark.read.format("delta")
           .option("versionAsOf", 3)
           .option("timestampAsOf", "2020-10-22 23:20:11")
           .table(tblName).collect()
       }
-      assert(e2.getMessage.contains("either provide 'timestampAsOf' or 'versionAsOf'"))
+
+      assert(e2.getMessage.contains(MULTIPLE_TIME_TRAVEL_FORMATS_ERROR_MSG))
 
     }
   }
 
+  test("getHistory returns the correct set of commits") {
+    val tblName = "delta_table"
+    withTable(tblName) {
+      val start = 1540415658000L
+      generateCommits(tblName, start, start + 20.minutes, start + 40.minutes, start + 60.minutes)
+      val deltaLog = DeltaLog.forTable(spark, getTableLocation(tblName))
+
+      def testGetHistory(
+          start: Long,
+          endOpt: Option[Long],
+          versions: Seq[Long],
+          expectedLogUpdates: Int): Unit = {
+        val usageRecords = Log4jUsageLogger.track {
+          val history = deltaLog.history.getHistory(start, endOpt)
+          assert(history.map(_.getVersion) == versions)
+        }
+        assert(filterUsageRecords(usageRecords, "deltaLog.update").size === expectedLogUpdates)
+      }
+
+      testGetHistory(start = 0, endOpt = Some(2), versions = Seq(2, 1, 0), expectedLogUpdates = 0)
+      testGetHistory(start = 1, endOpt = Some(1), versions = Seq(1), expectedLogUpdates = 0)
+      testGetHistory(start = 2, endOpt = None, versions = Seq(3, 2), expectedLogUpdates = 1)
+      testGetHistory(start = 1, endOpt = Some(5), versions = Seq(3, 2, 1), expectedLogUpdates = 1)
+      testGetHistory(start = 4, endOpt = None, versions = Seq.empty, expectedLogUpdates = 1)
+      testGetHistory(start = 2, endOpt = Some(1), versions = Seq.empty, expectedLogUpdates = 0)
+    }
+  }
 }
 
 /** Uses V2 resolution code paths */
@@ -617,5 +649,5 @@ class DeltaHistoryManagerSuite extends DeltaHistoryManagerBase {
 }
 
 class ManagedCommitFill1DeltaHistoryManagerSuite extends DeltaHistoryManagerSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
 }

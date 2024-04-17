@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.concurrent.TimeUnit
 
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
@@ -978,5 +979,41 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
           Seq(Row(11), Row(12), Row(13), Row(4), Row(5), Row(6)))
       }
     }
+  }
+
+  test("unsupported type changes applied to the table") {
+    sql(s"CREATE TABLE delta.`$tempDir` (a array<int>) USING DELTA")
+    val metadata = new MetadataBuilder()
+      .putMetadataArray("delta.typeChanges", Array(
+        new MetadataBuilder()
+          .putString("toType", "string")
+          .putString("fromType", "int")
+          .putLong("tableVersion", 2)
+          .putString("fieldPath", "element")
+          .build()
+      )).build()
+
+    // Add an unsupported type change to the table schema. Only an implementation that isn't
+    // compliant with the feature specification would allow this.
+    deltaLog.withNewTransaction { txn =>
+      txn.commit(
+        Seq(txn.snapshot.metadata.copy(
+          schemaString = new StructType()
+            .add("a", StringType, nullable = true, metadata).json
+        )),
+        ManualUpdate)
+    }
+
+    checkError(
+      exception = intercept[DeltaIllegalStateException] {
+        readDeltaTable(tempPath).collect()
+      },
+      errorClass = "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
+      parameters = Map(
+        "fieldName" -> "a.element",
+        "fromType" -> "INT",
+        "toType" -> "STRING"
+      )
+    )
   }
 }

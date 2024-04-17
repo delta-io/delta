@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.types.StructField
 
 /**
  * Utility functions for Row Tracking that are shared between Row IDs and Row Commit Versions.
@@ -59,5 +61,22 @@ object RowTracking {
     if (!convertToDeltaShouldCollectStats || !statsCollectionEnabled) {
       throw DeltaErrors.convertToDeltaRowTrackingEnabledWithoutStatsCollection
     }
+  }
+
+  /**
+   * Returns the Row Tracking metadata fields for the file's _metadata when Row Tracking
+   * is enabled.
+   */
+  def createMetadataStructFields(protocol: Protocol, metadata: Metadata, nullable: Boolean)
+      : Iterable[StructField] = {
+    RowId.createRowIdField(protocol, metadata, nullable) ++
+      RowId.createBaseRowIdField(protocol, metadata) ++
+      DefaultRowCommitVersion.createDefaultRowCommitVersionField(protocol, metadata) ++
+      RowCommitVersion.createMetadataStructField(protocol, metadata, nullable)
+  }
+
+  def preserveRowTrackingColumns(dataFrame: DataFrame, snapshot: SnapshotDescriptor): DataFrame = {
+    val dfWithRowIds = RowId.preserveRowIds(dataFrame, snapshot)
+    RowCommitVersion.preserveRowCommitVersions(dfWithRowIds, snapshot)
   }
 }

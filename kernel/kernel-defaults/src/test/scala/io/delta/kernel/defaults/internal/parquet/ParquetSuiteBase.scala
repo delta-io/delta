@@ -17,13 +17,11 @@ package io.delta.kernel.defaults.internal.parquet
 
 import java.nio.file.{Files, Paths}
 import java.util.Optional
-
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
-
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.expressions.Column
+import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.{ArrayType, DataType, MapType, StructType}
@@ -197,13 +195,18 @@ trait ParquetSuiteBase extends TestUtils {
   }
 
   def readParquetFilesUsingKernel(
-    actualFileDir: String, readSchema: StructType): Seq[TestRow] = {
-    val columnarBatches = readParquetUsingKernelAsColumnarBatches(actualFileDir, readSchema)
+      actualFileDir: String,
+      readSchema: StructType,
+      predicate: Optional[Predicate] = Optional.empty()): Seq[TestRow] = {
+    val columnarBatches =
+      readParquetUsingKernelAsColumnarBatches(actualFileDir, readSchema, predicate)
     columnarBatches.map(_.getRows).flatMap(_.toSeq).map(TestRow(_))
   }
 
   def readParquetUsingKernelAsColumnarBatches(
-    actualFileDir: String, readSchema: StructType): Seq[ColumnarBatch] = {
+      actualFileDir: String,
+      readSchema: StructType,
+      predicate: Optional[Predicate] = Optional.empty()): Seq[ColumnarBatch] = {
     val parquetFiles = Files.list(Paths.get(actualFileDir))
       .iterator().asScala
       .map(_.toString)
@@ -213,7 +216,7 @@ trait ParquetSuiteBase extends TestUtils {
     val data = defaultTableClient.getParquetHandler.readParquetFiles(
       toCloseableIterator(parquetFiles.asJava),
       readSchema,
-      Optional.empty())
+      predicate)
 
     data.asScala.toSeq
   }

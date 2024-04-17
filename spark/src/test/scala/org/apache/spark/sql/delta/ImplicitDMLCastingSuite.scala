@@ -20,7 +20,7 @@ import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest}
 
 import org.apache.spark.{SparkConf, SparkException, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, QueryTest}
@@ -32,6 +32,7 @@ import org.apache.spark.sql.internal.SQLConf
  * INSERT operations are excluded as they are covered by InsertSuite and InsertSuiteEdge.
  */
 class ImplicitDMLCastingSuite extends QueryTest
+  with DeltaExceptionTestUtils
   with DeltaSQLCommandTest {
 
   private case class TestConfiguration(
@@ -330,7 +331,7 @@ class ImplicitDMLCastingSuite extends QueryTest
         "USING DELTA")
       sql(s"INSERT INTO $sourceTableName VALUES(0, 9223372036854775807)")
 
-      val userFacingError = intercept[SparkException] {
+      val userFacingError = interceptWithUnwrapping[DeltaArithmeticException] {
         sql(s"""MERGE INTO $targetTableName t
                |USING $sourceTableName s
                |ON s.id = t.id

@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.DeltaConfigs.{MANAGED_COMMIT_OWNER_CONF, MANAG
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.InitialSnapshot
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
@@ -30,6 +31,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.FileNames.{CompactedDeltaFile, DeltaFile}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -145,50 +147,41 @@ class ManagedCommitSuite
   }
 
   // Test commit owner changed on concurrent cluster
-  test("snapshot is updated recursively when FS table is converted to commit owner" +
-      " table on a concurrent cluster") {
+  testWithoutManagedCommits("snapshot is updated recursively when FS table is converted to commit" +
+      " owner table on a concurrent cluster") {
     val commitStore = new TrackingCommitStore(new InMemoryCommitStore(batchSize = 10))
     val builder = TrackingInMemoryCommitStoreBuilder(batchSize = 10, Some(commitStore))
     CommitStoreProvider.registerBuilder(builder)
-    val oldCommitOwnerValue = spark.conf.get(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey)
-    spark.conf.unset(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey)
 
-    try {
-      withTempDir { tempDir =>
-        val tablePath = tempDir.getAbsolutePath
-        val deltaLog1 = DeltaLog.forTable(spark, tablePath)
-        deltaLog1.startTransaction().commitManually(Metadata())
-        deltaLog1.startTransaction().commitManually(createTestAddFile("f1"))
-        deltaLog1.startTransaction().commitManually()
-        val snapshotV2 = deltaLog1.update()
-        assert(snapshotV2.version === 2)
-        assert(snapshotV2.commitStoreOpt.isEmpty)
-        DeltaLog.clearCache()
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      val deltaLog1 = DeltaLog.forTable(spark, tablePath)
+      deltaLog1.startTransaction().commitManually(Metadata())
+      deltaLog1.startTransaction().commitManually(createTestAddFile("f1"))
+      deltaLog1.startTransaction().commitManually()
+      val snapshotV2 = deltaLog1.update()
+      assert(snapshotV2.version === 2)
+      assert(snapshotV2.commitStoreOpt.isEmpty)
+      DeltaLog.clearCache()
 
-        // Add new commit to convert FS table to managed-commit table
-        val deltaLog2 = DeltaLog.forTable(spark, tablePath)
-        val oldMetadata = snapshotV2.metadata
-        val commitOwner = (MANAGED_COMMIT_OWNER_NAME.key -> "tracking-in-memory")
-        val newMetadata = oldMetadata.copy(configuration = oldMetadata.configuration + commitOwner)
-        deltaLog2.startTransaction().commitManually(newMetadata)
-        commitStore.registerTable(deltaLog2.logPath, 3)
-        deltaLog2.startTransaction().commitManually(createTestAddFile("f2"))
-        deltaLog2.startTransaction().commitManually()
-        val snapshotV5 = deltaLog2.unsafeVolatileSnapshot
-        assert(snapshotV5.version === 5)
-        assert(snapshotV5.commitStoreOpt.nonEmpty)
-        // only delta 4/5 will be un-backfilled and should have two dots in filename (x.uuid.json)
-        assert(snapshotV5.logSegment.deltas.count(_.getPath.getName.count(_ == '.') == 2) === 2)
+      // Add new commit to convert FS table to managed-commit table
+      val deltaLog2 = DeltaLog.forTable(spark, tablePath)
+      enableManagedCommit(deltaLog2, commitOwner = "tracking-in-memory")
+      commitStore.registerTable(deltaLog2.logPath, 3)
+      deltaLog2.startTransaction().commitManually(createTestAddFile("f2"))
+      deltaLog2.startTransaction().commitManually()
+      val snapshotV5 = deltaLog2.unsafeVolatileSnapshot
+      assert(snapshotV5.version === 5)
+      assert(snapshotV5.commitStoreOpt.nonEmpty)
+      // only delta 4/5 will be un-backfilled and should have two dots in filename (x.uuid.json)
+      assert(snapshotV5.logSegment.deltas.count(_.getPath.getName.count(_ == '.') == 2) === 2)
 
-        val usageRecords = Log4jUsageLogger.track {
-          val newSnapshotV5 = deltaLog1.update()
-          assert(newSnapshotV5.version === 5)
-          assert(newSnapshotV5.logSegment.deltas === snapshotV5.logSegment.deltas)
-        }
-        assert(filterUsageRecords(usageRecords, "delta.readChecksum").size === 2)
+      val usageRecords = Log4jUsageLogger.track {
+        val newSnapshotV5 = deltaLog1.update()
+        assert(newSnapshotV5.version === 5)
+        assert(newSnapshotV5.logSegment.deltas === snapshotV5.logSegment.deltas)
       }
-    } finally {
-      spark.conf.set(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey, oldCommitOwnerValue)
+      assert(filterUsageRecords(usageRecords, "delta.readChecksum").size === 2)
     }
   }
 
@@ -271,16 +264,22 @@ class ManagedCommitSuite
           val newMetadata2 = oldMetadata.copy(
             configuration = oldMetadataConf + (MANAGED_COMMIT_OWNER_NAME.key -> builder2.name))
           log.store.write(
-            FileNames.deltaFile(log.logPath, 2), Seq(newMetadata1.json).toIterator, false, conf)
+            FileNames.unsafeDeltaFile(log.logPath, 2),
+            Seq(newMetadata1.json).toIterator,
+            overwrite = false,
+            conf)
           log.store.write(
-            FileNames.deltaFile(log.logPath, 3), Seq(newMetadata2.json).toIterator, false, conf)
+            FileNames.unsafeDeltaFile(log.logPath, 3),
+            Seq(newMetadata2.json).toIterator,
+            overwrite = false,
+            conf)
           cs2.registerTable(log.logPath, maxCommitVersion = 3)
 
           // Also backfill commit 0, 1 -- which the spec mandates when the commit owner changes.
           // commit 0 should already be backfilled
           assert(segment.deltas(0).getPath.getName === "00000000000000000000.json")
           log.store.write(
-            path = FileNames.deltaFile(log.logPath, 1),
+            path = FileNames.unsafeDeltaFile(log.logPath, 1),
             actions = log.store.read(segment.deltas(1).getPath, conf).toIterator,
             overwrite = true,
             conf)
@@ -415,7 +414,7 @@ class ManagedCommitSuite
           // backfill commit 1 and 2 also as 3/4 are written directly to FS.
           val segment = log.unsafeVolatileSnapshot.logSegment
           log.store.write(
-            path = FileNames.deltaFile(log.logPath, v),
+            path = FileNames.unsafeDeltaFile(log.logPath, v),
             actions = log.store.read(segment.deltas(v).getPath).toIterator,
             overwrite = true)
         }
@@ -509,5 +508,132 @@ class ManagedCommitSuite
 
       checkAnswer(sql(s"SELECT * FROM delta.`$tablePath`"), Seq(Row(1), Row(2), Row(3), Row(4)))
     }
+  }
+
+  testWithDifferentBackfillInterval("Snapshot.ensureCommitFilesBackfilled") { _ =>
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+
+      // Add 10 commits to the table
+      Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath)
+      2 to 10 foreach { i =>
+        Seq(i).toDF().write.format("delta").mode("append").save(tablePath)
+      }
+      val log = DeltaLog.forTable(spark, tablePath)
+      val snapshot = log.update()
+      snapshot.ensureCommitFilesBackfilled()
+
+      val commitFiles = log.listFrom(0).filter(FileNames.isDeltaFile).map(_.getPath)
+      val backfilledCommitFiles = (0 to 9).map(
+        version => FileNames.unsafeDeltaFile(log.logPath, version))
+      assert(commitFiles.toSeq == backfilledCommitFiles)
+    }
+  }
+
+  testWithoutManagedCommits("DeltaLog.getSnapshotAt") {
+    val commitStore = new TrackingCommitStore(new InMemoryCommitStore(batchSize = 10))
+    val builder = TrackingInMemoryCommitStoreBuilder(batchSize = 10, Some(commitStore))
+    CommitStoreProvider.registerBuilder(builder)
+    def checkGetSnapshotAt(
+        deltaLog: DeltaLog,
+        version: Long,
+        expectedUpdateCount: Int,
+        expectedListingCount: Int): Snapshot = {
+      var snapshot: Snapshot = null
+
+      val usageRecords = Log4jUsageLogger.track {
+        snapshot = deltaLog.getSnapshotAt(version)
+        assert(snapshot.version === version)
+      }
+      assert(filterUsageRecords(usageRecords, "deltaLog.update").size === expectedUpdateCount)
+      // deltaLog.update() will internally do listing
+      assert(filterUsageRecords(usageRecords, "delta.deltaLog.listDeltaAndCheckpointFiles").size
+        === expectedListingCount)
+      val versionsInLogSegment = if (version < 6) {
+        snapshot.logSegment.deltas.map(FileNames.deltaVersion(_))
+      } else {
+        snapshot.logSegment.deltas.flatMap {
+          case DeltaFile(_, deltaVersion) => Seq(deltaVersion)
+          case CompactedDeltaFile(_, startVersion, endVersion) => (startVersion to endVersion)
+        }
+      }
+      assert(versionsInLogSegment === (0L to version))
+      snapshot
+    }
+
+    withTempDir { dir =>
+      val tablePath = dir.getAbsolutePath
+      // Part-1: Validate getSnapshotAt API works as expected for non-managed commit tables
+      // commit 0, 1, 2 on FS table
+      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v0
+      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v1
+      val deltaLog1 = DeltaLog.forTable(spark, tablePath)
+      DeltaLog.clearCache()
+      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v2
+      assert(deltaLog1.unsafeVolatileSnapshot.version === 1)
+
+      checkGetSnapshotAt(deltaLog1, version = 1, expectedUpdateCount = 0, expectedListingCount = 0)
+      // deltaLog1 still points to version 1. So, we will do listing to get v0.
+      checkGetSnapshotAt(deltaLog1, version = 0, expectedUpdateCount = 0, expectedListingCount = 1)
+      // deltaLog1 still points to version 1 although we are asking for v2 So we do a
+      // deltaLog.update - the update will internally do listing.Since the updated snapshot is same
+      // as what we want, so we won't create another snapshot and do another listing.
+      checkGetSnapshotAt(deltaLog1, version = 2, expectedUpdateCount = 1, expectedListingCount = 1)
+      var deltaLog2 = DeltaLog.forTable(spark, tablePath)
+      Seq(deltaLog1, deltaLog2).foreach { log => assert(log.unsafeVolatileSnapshot.version === 2) }
+      DeltaLog.clearCache()
+
+      // Part-2: Validate getSnapshotAt API works as expected for managed commit tables when the
+      // switch is made
+      // commit 3
+      enableManagedCommit(DeltaLog.forTable(spark, tablePath), "tracking-in-memory")
+      commitStore.registerTable(deltaLog1.logPath, maxCommitVersion = 3)
+      // commit 4
+      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath)
+      // the old deltaLog objects still points to version 2
+      Seq(deltaLog1, deltaLog2).foreach { log => assert(log.unsafeVolatileSnapshot.version === 2) }
+      // deltaLog1 points to version 2. So, we will do listing to get v1. Snapshot update not
+      // needed as what we are looking for is less than what deltaLog1 points to.
+      checkGetSnapshotAt(deltaLog1, version = 1, expectedUpdateCount = 0, expectedListingCount = 1)
+      // deltaLog1.unsafeVolatileSnapshot.version points to v2 - return it directly.
+      checkGetSnapshotAt(deltaLog1, version = 2, expectedUpdateCount = 0, expectedListingCount = 0)
+      // We are asking for v3 although the deltaLog1.unsafeVolatileSnapshot is for v2. So this will
+      // need deltaLog.update() to get the latest snapshot first - this update itself internally
+      // will do 2 round of listing as we are discovering a commit store after first round of
+      // listing. Once the update finishes, deltaLog1 will point to v4. So we need another round of
+      // listing to get just v3.
+      checkGetSnapshotAt(deltaLog1, version = 3, expectedUpdateCount = 1, expectedListingCount = 3)
+      // Ask for v3 again - this time deltaLog1.unsafeVolatileSnapshot points to v4.
+      // So we don't need deltaLog.update as version which we are asking is less than pinned
+      // version. Just do listing and get the snapshot.
+      checkGetSnapshotAt(deltaLog1, version = 3, expectedUpdateCount = 0, expectedListingCount = 1)
+      // deltaLog1.unsafeVolatileSnapshot.version points to v4 - return it directly.
+      checkGetSnapshotAt(deltaLog1, version = 4, expectedUpdateCount = 0, expectedListingCount = 0)
+      // We are asking for v3 although the deltaLog2.unsafeVolatileSnapshot is for v2. So this will
+      // need deltaLog.update() to get the latest snapshot first - this update itself internally
+      // will do 2 round of listing as we are discovering a commit store after first round of
+      // listing. Once the update finishes, deltaLog2 will point to v4. It can be returned directly.
+      checkGetSnapshotAt(deltaLog2, version = 4, expectedUpdateCount = 1, expectedListingCount = 2)
+
+      // Part-2: Validate getSnapshotAt API works as expected for managed commit tables
+      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v5
+      deltaLog2 = DeltaLog.forTable(spark, tablePath)
+      DeltaLog.clearCache()
+      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v6
+      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v7
+      assert(deltaLog2.unsafeVolatileSnapshot.version === 5)
+      checkGetSnapshotAt(deltaLog2, version = 1, expectedUpdateCount = 0, expectedListingCount = 1)
+      checkGetSnapshotAt(deltaLog2, version = 2, expectedUpdateCount = 0, expectedListingCount = 1)
+      checkGetSnapshotAt(deltaLog2, version = 4, expectedUpdateCount = 0, expectedListingCount = 1)
+      checkGetSnapshotAt(deltaLog2, version = 5, expectedUpdateCount = 0, expectedListingCount = 0)
+      checkGetSnapshotAt(deltaLog2, version = 6, expectedUpdateCount = 1, expectedListingCount = 2)
+    }
+  }
+
+  private def enableManagedCommit(deltaLog: DeltaLog, commitOwner: String): Unit = {
+    val oldMetadata = deltaLog.update().metadata
+    val commitOwnerConf = (MANAGED_COMMIT_OWNER_NAME.key -> commitOwner)
+    val newMetadata = oldMetadata.copy(configuration = oldMetadata.configuration + commitOwnerConf)
+    deltaLog.startTransaction().commitManually(newMetadata)
   }
 }

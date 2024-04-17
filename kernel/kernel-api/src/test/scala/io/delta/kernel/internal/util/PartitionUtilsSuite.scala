@@ -15,15 +15,14 @@
  */
 package io.delta.kernel.internal.util
 
-import java.util
-
-import scala.collection.JavaConverters._
-
-import io.delta.kernel.expressions._
 import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.internal.util.PartitionUtils.{rewritePartitionPredicateOnScanFileSchema, splitMetadataAndDataPredicates}
+import io.delta.kernel.expressions._
+import io.delta.kernel.internal.util.PartitionUtils.{rewritePartitionPredicateOnCheckpointFileSchema, rewritePartitionPredicateOnScanFileSchema, splitMetadataAndDataPredicates}
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
+
+import java.util
+import scala.collection.JavaConverters._
 
 class PartitionUtilsSuite extends AnyFunSuite {
   // Table schema
@@ -154,33 +153,60 @@ class PartitionUtilsSuite extends AnyFunSuite {
       }
   }
 
-  // Map entry format: (given predicate -> expected rewritten predicate)
+  // Map entry format: (given predicate -> \
+  // (exp predicate for partition pruning, exp predicate for checkpoint reader pushdown))
   val rewriteTestCases = Map(
     // single predicate on a partition column
     predicate("=", col("part2"), ofTimestamp(12)) ->
-      "(partition_value(ELEMENT_AT(column(`add`.`partitionValues`), part2), date) = 12)",
+      (
+        // exp predicate for partition pruning
+        "(partition_value(ELEMENT_AT(column(`add`.`partitionValues`), part2), date) = 12)",
+
+        // exp predicate for checkpoint reader pushdown
+        "(column(`add`.`partitionValues_parsed`.`part2`) = 12)"
+      ),
     // multiple predicates on partition columns joined with AND
     predicate("AND",
       predicate("=", col("part1"), ofInt(12)),
       predicate(">=", col("part3"), ofString("sss"))) ->
-      """((partition_value(ELEMENT_AT(column(`add`.`partitionValues`), part1), integer) = 12) AND
-        |(ELEMENT_AT(column(`add`.`partitionValues`), part3) >= sss))"""
-        .stripMargin.replaceAll("\n", " "),
+      (
+        // exp predicate for partition pruning
+        """((partition_value(ELEMENT_AT(column(`add`.`partitionValues`), part1), integer) = 12) AND
+          |(ELEMENT_AT(column(`add`.`partitionValues`), part3) >= sss))"""
+          .stripMargin.replaceAll("\n", " "),
+
+        // exp predicate for checkpoint reader pushdown
+        """((column(`add`.`partitionValues_parsed`.`part1`) = 12) AND
+          |(column(`add`.`partitionValues_parsed`.`part3`) >= sss))"""
+          .stripMargin.replaceAll("\n", " ")
+      ),
     // multiple predicates on partition columns joined with OR
     predicate("OR",
       predicate("<=", col("part3"), ofString("sss")),
       predicate("=", col("part1"), ofInt(2781))) ->
-      """((ELEMENT_AT(column(`add`.`partitionValues`), part3) <= sss) OR
-        |(partition_value(ELEMENT_AT(column(`add`.`partitionValues`), part1), integer) = 2781))"""
-        .stripMargin.replaceAll("\n", " ")
-  )
+      (
+        // exp predicate for partition pruning
+        """((ELEMENT_AT(column(`add`.`partitionValues`), part3) <= sss) OR
+          |(partition_value(ELEMENT_AT(column(`add`.`partitionValues`), part1), integer) = 2781))"""
+          .stripMargin.replaceAll("\n", " "),
 
+        // exp predicate for checkpoint reader pushdown
+        """((column(`add`.`partitionValues_parsed`.`part3`) <= sss) OR
+          |(column(`add`.`partitionValues_parsed`.`part1`) = 2781))"""
+          .stripMargin.replaceAll("\n", " ")
+      )
+  )
   rewriteTestCases.foreach {
-    case (predicate, expRewrittenPredicate) =>
+    case (predicate, (expPartitionPruningPredicate, expCheckpointReaderPushdownPredicate)) =>
       test(s"rewrite partition predicate on scan file schema: $predicate") {
-        val actRewrittenPredicate =
+        val actPartitionPruningPredicate =
           rewritePartitionPredicateOnScanFileSchema(predicate, partitionColsMetadata)
-        assert(actRewrittenPredicate.toString === expRewrittenPredicate)
+        assert(actPartitionPruningPredicate.toString === expPartitionPruningPredicate)
+
+        val actCheckpointReaderPushdownPredicate =
+          rewritePartitionPredicateOnCheckpointFileSchema(predicate, partitionColsMetadata)
+        assert(actCheckpointReaderPushdownPredicate.toString ===
+          expCheckpointReaderPushdownPredicate)
       }
   }
 

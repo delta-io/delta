@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.tables.{DeltaTable => IODeltaTable}
+import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
@@ -248,6 +249,16 @@ trait DeltaTestUtilsBase {
         .map(findIfResponsible[E](_))
         .collectFirst { case Some(culprit) => culprit }
   }
+
+  def verifyBackfilled(file: FileStatus): Unit = {
+    val unbackfilled = file.getPath.getName.matches(FileNames.uuidDeltaFileRegex.toString)
+    assert(!unbackfilled, s"File $file was not backfilled")
+  }
+
+  def verifyUnbackfilled(file: FileStatus): Unit = {
+    val unbackfilled = file.getPath.getName.matches(FileNames.uuidDeltaFileRegex.toString)
+    assert(unbackfilled, s"File $file was backfilled")
+  }
 }
 
 trait DeltaCheckpointTestUtils
@@ -330,13 +341,13 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
    * Creates an AddFile that can be used for tests where the exact parameters do not matter.
    */
   def createTestAddFile(
-      path: String = "foo",
+      encodedPath: String = "foo",
       partitionValues: Map[String, String] = Map.empty,
       size: Long = 1L,
       modificationTime: Long = 1L,
       dataChange: Boolean = true,
       stats: String = "{\"numRecords\": 1}"): AddFile = {
-    AddFile(path, partitionValues, size, modificationTime, dataChange, stats)
+    AddFile(encodedPath, partitionValues, size, modificationTime, dataChange, stats)
   }
 
   /**

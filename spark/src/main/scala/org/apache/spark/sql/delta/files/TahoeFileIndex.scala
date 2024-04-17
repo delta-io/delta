@@ -236,6 +236,9 @@ case class TahoeLogFileIndex(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED)
   }
 
+  private def includeTableIdInComparisons: Boolean =
+    spark.conf.get(DeltaSQLConf.DELTA_INCLUDE_TABLE_ID_IN_FILE_INDEX_COMPARISON)
+
   protected def getSnapshotToScan: Snapshot = {
     if (isTimeTravelQuery) {
       snapshotAtAnalysis
@@ -292,13 +295,22 @@ case class TahoeLogFileIndex(
 
   override def equals(that: Any): Boolean = that match {
     case t: TahoeLogFileIndex =>
-      t.path == path && t.deltaLog.isSameLogAs(deltaLog) &&
+      t.path == path &&
+        (if (includeTableIdInComparisons) {
+          t.deltaLog.isSameLogAs(deltaLog)
+        } else {
+          t.deltaLog.dataPath == deltaLog.dataPath
+        }) &&
         t.versionToUse == versionToUse && t.partitionFilters == partitionFilters
     case _ => false
   }
 
   override def hashCode: scala.Int = {
-    Objects.hashCode(path, deltaLog.compositeId, versionToUse, partitionFilters)
+    if (includeTableIdInComparisons) {
+      Objects.hashCode(path, deltaLog.compositeId, versionToUse, partitionFilters)
+    } else {
+      Objects.hashCode(path, deltaLog.dataPath, versionToUse, partitionFilters)
+    }
   }
 
   protected[delta] def numOfFilesIfKnown: Option[Long] =

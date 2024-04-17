@@ -83,6 +83,17 @@ trait DeltaSQLConfBase {
       .stringConf
       .createOptional
 
+  val DELTA_FORCE_ALL_COMMIT_STATS =
+    buildConf("commitStats.force")
+      .internal()
+      .doc(
+        """When true, forces commit statistics to be collected for logging purposes.
+        | Enabling this feature requires the Snapshot State to be computed, which is
+        | potentially expensive.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CONVERT_USE_METADATA_LOG =
     buildConf("convert.useMetadataLog")
       .doc(
@@ -179,6 +190,18 @@ trait DeltaSQLConfBase {
         "enables a check that ensures that users won't read corrupt data if the source schema " +
         "changes in an incompatible way.")
       .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_INCLUDE_TABLE_ID_IN_FILE_INDEX_COMPARISON =
+    buildConf("includeTableIdInFileIndexComparison")
+      .internal()
+      .doc(
+        """
+          |Include the deltaLog.tableId field in equals and hashCode for TahoeLogFileIndex.
+          |The field is unstable, so including it can lead semantic violations for equals and
+          |hashCode.""".stripMargin)
+      .booleanConf
+      // TODO: Phase this out towards `false` eventually remove the flag altogether again.
       .createWithDefault(true)
 
   val DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE =
@@ -433,6 +456,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_HISTORY_MANAGER_THREAD_POOL_SIZE =
+    buildConf("history.threadPoolSize")
+      .internal()
+      .doc("The size of the thread pool used for search during DeltaHistory operations. " +
+        "This configuration is only used when the feature inCommitTimestamps is enabled.")
+      .intConf
+      .checkValue(_ > 0, "history.threadPoolSize must be positive")
+      .createWithDefault(10)
+
   val DELTA_VACUUM_LOGGING_ENABLED =
     buildConf("vacuum.logging.enabled")
       .doc("Whether to log vacuum information into the Delta transaction log." +
@@ -505,6 +537,14 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(20)
+
+  val DELTA_LIST_FROM_COMMIT_STORE_THREAD_POOL_SIZE =
+    buildStaticConf("commitStore.getCommits.threadPoolSize")
+      .internal()
+      .doc("The size of the thread pool for listing files from the CommitStore.")
+      .intConf
+      .checkValue(_ > 0, "threadPoolSize must be positive")
+      .createWithDefault(5)
 
   val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
     buildConf("constraints.assumesDropIfExists.enabled")
@@ -1542,6 +1582,15 @@ trait DeltaSQLConfBase {
     .intConf
     .createWithDefault(100)
 
+  val HUDI_MAX_COMMITS_TO_CONVERT = buildConf("hudi.maxPendingCommits")
+    .doc("""
+           |The maximum number of pending Delta commits to convert to Hudi incrementally.
+           |If the table hasn't been converted to Iceberg in longer than this number of commits,
+           |we start from scratch, replacing the previously converted Iceberg table contents.
+           |""".stripMargin)
+    .intConf
+    .createWithDefault(100)
+
   val ICEBERG_MAX_ACTIONS_TO_CONVERT = buildConf("iceberg.maxPendingActions")
     .doc("""
         |The maximum number of pending Delta actions to convert to Iceberg incrementally.
@@ -1640,13 +1689,6 @@ trait DeltaSQLConfBase {
   //////////////////
   // Clustered Table
   //////////////////
-
-  val DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED =
-    buildConf("clusteredTable.enableClusteringTablePreview")
-      .internal()
-      .doc("Whether to enable the clustering table preview.")
-      .booleanConf
-      .createWithDefault(false)
 
   val DELTA_NUM_CLUSTERING_COLUMNS_LIMIT =
     buildStaticConf("clusteredTable.numClusteringColumnsLimit")

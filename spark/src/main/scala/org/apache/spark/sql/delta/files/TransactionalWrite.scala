@@ -106,6 +106,11 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val normalizedData = SchemaUtils.normalizeColumnNames(
       deltaLog, metadata.schema, data
     )
+
+    // Validate that write columns for Row IDs have the correct name.
+    RowId.throwIfMaterializedRowIdColumnNameIsInvalid(
+      normalizedData, metadata, protocol, deltaLog.tableId)
+
     val nullAsDefault = options.isDefined &&
       options.get.options.contains(ColumnWithDefaultExprUtils.USE_NULL_AS_DEFAULT_DELTA_OPTION)
     val enforcesDefaultExprs = ColumnWithDefaultExprUtils.tableHasDefaultExpr(

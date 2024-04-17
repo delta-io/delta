@@ -81,7 +81,7 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
       val tableData = perTableMap.get(logPath)
       val expectedVersion = tableData.maxCommitVersion + 1
       if (commitVersion != expectedVersion) {
-        throw new CommitFailedException(
+        throw CommitFailedException(
           retryable = commitVersion < expectedVersion,
           conflict = commitVersion < expectedVersion,
           s"Commit version $commitVersion is not valid. Expected version: $expectedVersion.")
@@ -132,6 +132,8 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
       throw new IllegalStateException(s"Table $logPath already exists in the commit store.")
     }
   }
+
+  override def semanticEquals(other: CommitStore): Boolean = this == other
 }
 
 /**

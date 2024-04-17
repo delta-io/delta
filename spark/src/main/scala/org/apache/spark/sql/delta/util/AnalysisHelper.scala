@@ -17,10 +17,10 @@
 package org.apache.spark.sql.delta.util
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors}
 
 import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
-import org.apache.spark.sql.catalyst.analysis.AnalysisErrorAt
+import org.apache.spark.sql.catalyst.ExtendedAnalysisException
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
@@ -52,8 +52,13 @@ trait AnalysisHelper {
       tryResolveReferencesForExpressions(sparkSession)(exprs, Seq(planProvidingAttrs))
     resolvedExprs.foreach { expr =>
       if (!expr.resolved) {
-        throw new AnalysisException(
-          s"cannot resolve ${expr.sql} given $planProvidingAttrs")
+        throw new ExtendedAnalysisException(
+          new DeltaAnalysisException(
+            errorClass = "_LEGACY_ERROR_TEMP_DELTA_0012",
+            messageParameters = Array(expr.toString)
+          ),
+          planProvidingAttrs
+        )
       }
     }
     resolvedExprs
@@ -73,8 +78,13 @@ trait AnalysisHelper {
         resolvedExprs
       case _ =>
         // This is unexpected
-        throw DeltaErrors.analysisException(
-          s"Could not resolve expression $exprs", plan = Some(newPlan))
+        throw new ExtendedAnalysisException(
+          new DeltaAnalysisException(
+            errorClass = "_LEGACY_ERROR_TEMP_DELTA_0012",
+            messageParameters = Array(exprs.mkString(","))
+          ),
+          newPlan
+        )
     }
   }
 
