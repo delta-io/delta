@@ -382,6 +382,8 @@ trait DataSkippingReaderBase
      */
     private def constructDataFilters(dataFilter: Expression):
         Option[DataSkippingPredicate] = dataFilter match {
+      // If dataFilter is foldable, cannot be skipped.
+      case e if e.foldable => None
       // Push skipping predicate generation through the AND:
       //
       // constructDataFilters(AND(a, b))
