@@ -81,7 +81,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
 
   def isInternalField(field: StructField): Boolean =
     DELTA_INTERNAL_COLUMNS.contains(field.name.toLowerCase(Locale.ROOT)) ||
-      RowIdMetadataStructField.isRowIdColumn(field)
+      RowIdMetadataStructField.isRowIdColumn(field) ||
+      RowCommitVersion.MetadataStructField.isRowCommitVersionColumn(field)
 
   def satisfiesColumnMappingProtocol(protocol: Protocol): Boolean =
     protocol.isFeatureSupported(ColumnMappingTableFeature)

@@ -159,6 +159,11 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       .map(new Column(_))
     selectExprs = selectExprs ++ rowIdExprs
 
+    val rowCommitVersionExprs = data.queryExecution.analyzed.output
+      .filter(RowCommitVersion.MetadataAttribute.isRowCommitVersionColumn)
+      .map(new Column(_))
+    selectExprs = selectExprs ++ rowCommitVersionExprs
+
     val newData = queryExecution match {
       case incrementalExecution: IncrementalExecution =>
         selectFromStreamingDataFrame(incrementalExecution, data, selectExprs: _*)
