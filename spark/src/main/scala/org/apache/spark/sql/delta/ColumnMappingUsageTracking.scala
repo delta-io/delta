@@ -38,9 +38,12 @@ object ColumnMappingUsageTracking {
     // We cannot be certain if a column has been dropped or renamed already if the feature is
     // enabled after the table is created. Therefore, we have to assume that a column was already
     // dropped or renamed.
+    val mayHaveDroppedOrRenamedColumnBefore =
+      metadata.columnMappingMode != NoMapping && !isCreatingNewTable
     metadata.copy(
       configuration = metadata.configuration +
-        (DeltaConfigs.COLUMN_MAPPING_HAS_DROPPED_OR_RENAMED.key -> (!isCreatingNewTable).toString)
+        (DeltaConfigs.COLUMN_MAPPING_HAS_DROPPED_OR_RENAMED.key ->
+          mayHaveDroppedOrRenamedColumnBefore.toString)
     )
   }
 
