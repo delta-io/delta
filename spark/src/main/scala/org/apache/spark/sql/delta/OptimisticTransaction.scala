@@ -1085,7 +1085,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val finalActions = checkForSetTransactionConflictAndDedup(actions ++ this.actions.toSeq)
 
       // Try to commit at the next version.
-      val preparedActions =
+      var preparedActions =
         executionObserver.preparingCommit {
           prepareCommit(finalActions, op)
         }
@@ -1125,20 +1125,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         txnId = Some(txnId))
 
       val firstAttemptVersion = getFirstAttemptVersion
-      val updatedActions = if (newMetadata.nonEmpty) {
-        val metadataUpdatedWithManagedCommitInfo = updateMetadataWithManagedCommitConfs()
-        val metadataUpdatedWithIctInfo = updateMetadataWithInCommitTimestamp(commitInfo)
-
-        val updatedActions =
-          if (metadataUpdatedWithIctInfo || metadataUpdatedWithManagedCommitInfo) {
-            preparedActions.map {
-              case _: Metadata => metadata
-              case other => other
-            }
-          } else preparedActions
-        updatedActions
-      } else {
-        preparedActions
+      val metadataUpdatedWithManagedCommitInfo = updateMetadataWithManagedCommitConfs()
+      val metadataUpdatedWithIctInfo = updateMetadataWithInCommitTimestamp(commitInfo)
+      if (metadataUpdatedWithIctInfo || metadataUpdatedWithManagedCommitInfo) {
+        preparedActions = preparedActions.map {
+          case _: Metadata => metadata
+          case other => other
+        }
       }
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
@@ -1148,7 +1141,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         readAppIds = readTxn.toSet,
         metadata = metadata,
         protocol = protocol,
-        actions = updatedActions,
+        actions = preparedActions,
         readSnapshot = snapshot,
         commitInfo = Some(commitInfo),
         readRowIdHighWatermark = readRowIdHighWatermark,
@@ -1202,17 +1195,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    */
   protected def updateMetadataWithInCommitTimestamp(commitInfo: CommitInfo): Boolean = {
     val firstAttemptVersion = getFirstAttemptVersion
-    commitInfo.inCommitTimestamp.foreach { inCommitTimestamp =>
-      InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
-        inCommitTimestamp,
-        snapshot,
-        metadata,
-        firstAttemptVersion).map { metadataWithIctInfo =>
-          newMetadata = Some(metadataWithIctInfo)
-          return true
-        }
-    }
-    return false
+    val metadataWithIctInfo = commitInfo.inCommitTimestamp
+      .flatMap { inCommitTimestamp =>
+        InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+          inCommitTimestamp, snapshot, metadata, firstAttemptVersion)
+      }.getOrElse { return false }
+    newMetadata = Some(metadataWithIctInfo)
+    true
   }
 
   /**
@@ -1226,11 +1215,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    */
   protected def updateMetadataWithManagedCommitConfs(): Boolean = {
     validateManagedCommitConfInMetadata(newMetadata)
-    val newManagedCommitTableConfOpt = {
-      val finalMetadata = metadata
-      val finalProtocol = protocol
-      registerTableForManagedCommitsIfNeeded(finalMetadata, finalProtocol)
-    }
+    val newManagedCommitTableConfOpt = registerTableForManagedCommitsIfNeeded(metadata, protocol)
     val newManagedCommitTableConf = newManagedCommitTableConfOpt.getOrElse {
       return false
     }
@@ -2116,7 +2101,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     currentTransactionInfo: CurrentTransactionInfo
   ): Commit = {
     val updatedActions =
-      currentTransactionInfo.getUpdateActions(snapshot.metadata, snapshot.protocol)
+      currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
     val commitResponse = tableCommitStore.commit(attemptVersion, jsonActions, updatedActions)
     // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
     //  merged.

@@ -74,7 +74,7 @@ private[delta] case class CurrentTransactionInfo(
     case m: Metadata => newMetadata = Some(m)
     case _ => // do nothing
   }
-  def getUpdateActions(
+  def getUpdatedActions(
       oldMetadata: Metadata,
       oldProtocol: Protocol): UpdatedActions = {
     UpdatedActions(commitInfo.get, metadata, protocol, oldMetadata, oldProtocol)

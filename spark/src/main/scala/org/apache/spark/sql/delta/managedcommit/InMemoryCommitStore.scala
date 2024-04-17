@@ -170,10 +170,9 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
           throw new IllegalStateException(s"Table $logPath already exists in the commit store.")
         }
         // If lastRatifiedCommitVersion is -1 i.e. the commit store has never attempted any commit
-        // for this table => this table was just pre-registered. If there is another newer
-        // pre-registration request, we can take it else we should reject pre-registration request
-        // for older versions.
-        if (existingData.maxCommitVersion >= currentVersion) {
+        // for this table => this table was just pre-registered. If there is another
+        // pre-registration request for an older version, we reject it and table can't go backward.
+        if (currentVersion < existingData.maxCommitVersion) {
           throw new IllegalStateException(s"Table $logPath already registered with commit store")
         }
       }
