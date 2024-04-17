@@ -35,6 +35,7 @@ class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSpark
         logStore: LogStore,
         hadoopConf: Configuration,
         logPath: Path,
+        managedCommitTableConf: Map[String, String],
         commitVersion: Long,
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
@@ -43,6 +44,7 @@ class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSpark
 
     override def getCommits(
       logPath: Path,
+      managedCommitTableConf: Map[String, String],
       startVersion: Long,
       endVersion: Option[Long] = None): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
 
@@ -50,6 +52,7 @@ class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSpark
         logStore: LogStore,
         hadoopConf: Configuration,
         logPath: Path,
+        managedCommitTableConf: Map[String, String],
         startVersion: Long,
         endVersion: Option[Long]): Unit = {}
 

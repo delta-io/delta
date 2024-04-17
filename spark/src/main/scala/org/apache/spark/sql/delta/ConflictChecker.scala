@@ -68,15 +68,17 @@ private[delta] case class CurrentTransactionInfo(
    */
   lazy val finalActionsToCommit: Seq[Action] = commitInfo ++: actions
 
-  var newMetadata: Option[Metadata] = None
-  var newProtocol: Option[Protocol] = None
+  private var newMetadata: Option[Metadata] = None
 
   actions.foreach {
     case m: Metadata => newMetadata = Some(m)
-    case p: Protocol => newProtocol = Some(p)
     case _ => // do nothing
   }
-  def getUpdateActions(): UpdatedActions = UpdatedActions(commitInfo.get, newMetadata, newProtocol)
+  def getUpdateActions(
+      oldMetadata: Metadata,
+      oldProtocol: Protocol): UpdatedActions = {
+    UpdatedActions(commitInfo.get, metadata, protocol, oldMetadata, oldProtocol)
+  }
 
   /** Whether this transaction wants to make any [[Metadata]] update */
   lazy val metadataChanged: Boolean = newMetadata.nonEmpty
