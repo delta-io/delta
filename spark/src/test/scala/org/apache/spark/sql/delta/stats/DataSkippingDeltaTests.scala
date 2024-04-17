@@ -1873,23 +1873,25 @@ trait DataSkippingDeltaTestsBase extends QueryTest
 
   test("fix infinite loops when has foldable dataFilter in data skipping") {
     withTempDir { dir =>
-      Seq((1, 2)).toDF("a", "b").write.format("delta").save(dir.getAbsolutePath + "/t1")
-      Seq(1).toDF("a").write.format("delta").save(dir.getAbsolutePath + "/t2")
-      Seq((1, 2)).toDF("a", "c").write.format("delta").save(dir.getAbsolutePath + "/t3")
-      spark.read.format("delta").load(dir.getAbsolutePath + "/t1").createTempView("t1")
-      spark.read.format("delta").load(dir.getAbsolutePath + "/t2").createTempView("t2")
-      spark.read.format("delta").load(dir.getAbsolutePath + "/t3").createTempView("t3")
-      spark.sql(
-        """
-          |select t.*,t3.a as c from
-          |(
-          |select * from t1
-          |union all
-          |select *,1 as b from t2
-          |) t, t3
-          |where t.a=t3.a
-          |and (t.a > 1 or (t.b = 1 and t3.c=1))
-          |""".stripMargin).collect()
+      withTempView("t1", "t2", "t3") {
+        Seq((1, 2)).toDF("a", "b").write.format("delta").save(dir.getAbsolutePath + "/t1")
+        Seq(1).toDF("a").write.format("delta").save(dir.getAbsolutePath + "/t2")
+        Seq((1, 2)).toDF("a", "c").write.format("delta").save(dir.getAbsolutePath + "/t3")
+        spark.read.format("delta").load(dir.getAbsolutePath + "/t1").createTempView("t1")
+        spark.read.format("delta").load(dir.getAbsolutePath + "/t2").createTempView("t2")
+        spark.read.format("delta").load(dir.getAbsolutePath + "/t3").createTempView("t3")
+        spark.sql(
+          """
+            |select t.*,t3.a as c from
+            |(
+            |select * from t1
+            |union all
+            |select *,1 as b from t2
+            |) t, t3
+            |where t.a=t3.a
+            |and (t.a > 1 or (t.b = 1 and t3.c=1))
+            |""".stripMargin).collect()
+      }
     }
   }
 
