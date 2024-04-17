@@ -17,14 +17,15 @@
 package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.{File, FileNotFoundException}
+import java.net.URISyntaxException
 
 import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
-import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, BOOLEAN_DOMAIN}
+import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
-import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.{inlineInLog, EMPTY}
+import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.databind.node.ObjectNode
@@ -42,7 +43,8 @@ class DeletionVectorsSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeletionVectorsTestUtils
-  with DeltaTestUtilsForTempViews {
+  with DeltaTestUtilsForTempViews
+  with DeltaExceptionTestUtils {
   import testImplicits._
 
   test(s"read Delta table with deletion vectors") {
@@ -699,10 +701,10 @@ class DeletionVectorsSuite extends QueryTest
     // Do not test with a prefix that needs URL standard escaping.
     withTempDir(prefix = "spark") { dir =>
       writeTableHavingSpecialCharInDVPath(dir, pathIsEncoded = false)
-      val e = intercept[SparkException] {
+      val e = interceptWithUnwrapping[URISyntaxException] {
         spark.read.format("delta").load(dir.getCanonicalPath).collect()
       }
-      assert(e.getMessage.contains("URISyntaxException: Malformed escape pair"))
+      assert(e.getMessage.contains("Malformed escape pair"))
     }
   }
 
@@ -828,6 +830,7 @@ object DeletionVectorsSuite {
     val logJsonContent = FileUtils.readFileToString(logJson, "UTF-8")
     val newLogJsonContent = logJsonContent.replace(
       "{{FOLDER_WITH_SPECIAL_CHAR}}", fullPath)
+    FileUtils.delete(logJson)
     FileUtils.write(logJson, newLogJsonContent, "UTF-8")
   }
 }

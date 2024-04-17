@@ -236,6 +236,12 @@
     ],
     "sqlState" : "22003"
   },
+  "DELTA_CANNOT_RESTORE_TIMESTAMP_EARLIER" : {
+    "message" : [
+      "Cannot restore table to timestamp (<requestedTimestamp>) as it is before the earliest version available. Please use a timestamp after (<earliestTimestamp>)."
+    ],
+    "sqlState" : "22003"
+  },
   "DELTA_CANNOT_RESTORE_TIMESTAMP_GREATER" : {
     "message" : [
       "Cannot restore table to timestamp (<requestedTimestamp>) as it is after the latest version available. Please use a timestamp before (<latestTimestamp>)"
@@ -416,6 +422,12 @@
     ],
     "sqlState" : "42703"
   },
+  "DELTA_COLUMN_MISSING_DATA_TYPE" : {
+    "message" : [
+      "The data type of the column <colName> was not provided."
+    ],
+    "sqlState" : "42601"
+  },
   "DELTA_COLUMN_NOT_FOUND" : {
     "message" : [
       "Unable to find the column `<columnName>` given [<columnList>]"
@@ -437,8 +449,9 @@
   "DELTA_COLUMN_PATH_NOT_NESTED" : {
     "message" : [
       "Expected <columnPath> to be a nested data type, but found <other>. Was looking for the",
-      "index of <column> in a nested field",
-      ""
+      "index of <column> in a nested field.",
+      "Schema:",
+      "<schema>"
     ],
     "sqlState" : "42704"
   },
@@ -453,6 +466,36 @@
       " Found nested NullType in column <columName> which is of <dataType>. Delta doesn't support writing NullType in complex types."
     ],
     "sqlState" : "22005"
+  },
+  "DELTA_CONCURRENT_APPEND" : {
+    "message" : [
+      "ConcurrentAppendException: Files were added to <partition> by a concurrent update. <retryMsg><conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
+  "DELTA_CONCURRENT_DELETE_DELETE" : {
+    "message" : [
+      "ConcurrentDeleteDeleteException: This transaction attempted to delete one or more files that were deleted (for example <file>) by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
+  "DELTA_CONCURRENT_DELETE_READ" : {
+    "message" : [
+      "ConcurrentDeleteReadException: This transaction attempted to read one or more files that were deleted (for example <file>) by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
+  "DELTA_CONCURRENT_TRANSACTION" : {
+    "message" : [
+      "ConcurrentTransactionException: This error occurs when multiple streaming queries are using the same checkpoint to write into this table. Did you run multiple instances of the same streaming query at the same time?<conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
+  "DELTA_CONCURRENT_WRITE" : {
+    "message" : [
+      "ConcurrentWriteException: A concurrent transaction has written new data since the current transaction read the table. Please try the operation again.\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
   },
   "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG" : {
     "message" : [
@@ -548,6 +591,18 @@
       "To learn more about Delta, see <docLink>"
     ],
     "sqlState" : "42K03"
+  },
+  "DELTA_CREATE_TABLE_IDENTIFIER_LOCATION_MISMATCH" : {
+    "message" : [
+      "Creating path-based Delta table with a different location isn't supported. Identifier: <identifier>, Location: <location>"
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "DELTA_CREATE_TABLE_MISSING_TABLE_NAME_OR_LOCATION" : {
+    "message" : [
+      "Table name or location has to be specified."
+    ],
+    "sqlState" : "42601"
   },
   "DELTA_CREATE_TABLE_SCHEME_MISMATCH" : {
     "message" : [
@@ -653,6 +708,13 @@
       "Index <columnIndex> to drop column is lower than 0"
     ],
     "sqlState" : "42KD8"
+  },
+  "DELTA_DROP_COLUMN_ON_SINGLE_FIELD_SCHEMA" : {
+    "message" : [
+      "Cannot drop column from a schema with a single column. Schema:",
+      "<schema>"
+    ],
+    "sqlState" : "0AKDC"
   },
   "DELTA_DUPLICATE_COLUMNS_FOUND" : {
     "message" : [
@@ -920,7 +982,9 @@
       "<value>",
       "followed by the name of the column (only if that column is a struct type).",
       "e.g. mymap.key.mykey",
-      "If the column is a basic type, mymap.key or mymap.value is sufficient."
+      "If the column is a basic type, mymap.key or mymap.value is sufficient.",
+      "Schema:",
+      "<schema>"
     ],
     "sqlState" : "KD003"
   },
@@ -1056,9 +1120,9 @@
   "DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME" : {
     "message" : [
       "An ArrayType was found. In order to access elements of an ArrayType, specify",
-      "<rightName>",
-      "Instead of <wrongName>",
-      ""
+      "<rightName> instead of <wrongName>.",
+      "Schema:",
+      "<schema>"
     ],
     "sqlState" : "KD003"
   },
@@ -1323,6 +1387,12 @@
     ],
     "sqlState" : "40000"
   },
+  "DELTA_MERGE_ADD_VOID_COLUMN" : {
+    "message" : [
+      "Cannot add column <newColumn> with type VOID. Please explicitly specify a non-void type."
+    ],
+    "sqlState" : "42K09"
+  },
   "DELTA_MERGE_INCOMPATIBLE_DATATYPE" : {
     "message" : [
       "Failed to merge incompatible data types <currentDataType> and <updateDataType>"
@@ -1377,6 +1447,12 @@
       "Did you manually delete files from the _delta_log directory? If so, then you should be able to recreate it as follows. First, drop the table by running `DROP TABLE <tableNameForDropCmd>`. Then, recreate it by running the current command again."
     ],
     "sqlState" : "XXKDS"
+  },
+  "DELTA_METADATA_CHANGED" : {
+    "message" : [
+      "MetadataChangedException: The metadata of the Delta table has been changed by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
   },
   "DELTA_MISSING_CHANGE_DATA" : {
     "message" : [
@@ -1516,6 +1592,12 @@
   "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT" : {
     "message" : [
       "CHECK constraint '<name>' (<expr>) should be a boolean expression."
+    ],
+    "sqlState" : "42621"
+  },
+  "DELTA_NON_DETERMINISTIC_EXPRESSION_IN_GENERATED_COLUMN" : {
+    "message" : [
+      "Found <expr>. A generated column cannot use a non deterministic expression."
     ],
     "sqlState" : "42621"
   },
@@ -1677,6 +1759,12 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_OPERATION_ON_VIEW_NOT_ALLOWED" : {
+    "message" : [
+      "Operation not allowed: <operation> cannot be performed on a view."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
     "message" : [
       "'overwriteSchema' cannot be used in dynamic partition overwrite mode."
@@ -1754,6 +1842,12 @@
       "Committing to the Delta table version <version> succeeded but error while executing post-commit hook <name><message>"
     ],
     "sqlState" : "2DKD0"
+  },
+  "DELTA_PROTOCOL_CHANGED" : {
+    "message" : [
+      "ProtocolChangedException: The protocol version of the Delta table has been changed by a concurrent update. <additionalInfo><conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
   },
   "DELTA_PROTOCOL_PROPERTY_NOT_INT" : {
     "message" : [
@@ -2226,6 +2320,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED" : {
+    "message" : [
+      "Failed to convert the table version <version> to the universal format <format>. <message>"
+    ],
+    "sqlState" : "KD00E"
+  },
   "DELTA_UNIVERSAL_FORMAT_VIOLATION" : {
     "message" : [
       "The validation of Universal Format (<format>) has failed: <violation>"
@@ -2561,6 +2661,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA" : {
+    "message" : [
+      "Unable to operate on this table because an unsupported type change was applied. Field <fieldName> was changed from <fromType> to <toType>."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_VACUUM_SPECIFIC_PARTITION" : {
     "message" : [
       "Please provide the base path (<baseDeltaPath>) when Vacuuming Delta tables. Vacuuming specific partitions is currently not supported."
@@ -2681,5 +2787,78 @@
       "TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')."
     ],
     "sqlState" : "0AKDE"
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0001" : {
+    "message" : [
+      "Cannot use '<name>' as the name of a CHECK constraint."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0002" : {
+    "message" : [
+      "Cannot create bloom filter index, invalid parameter value: '<message>'."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0003" : {
+    "message" : [
+      "You are trying to convert a table which already has a delta log where the table properties in the catalog don't match the configuration in the delta log.",
+      "Table properties in catalog:",
+      "<tableProperties>",
+      "Delta configuration:",
+      "<configuration>",
+      "If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `<metadataCheckSqlConf>` to false."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0004" : {
+    "message" : [
+      "Cannot <operation> column <columnName> because this column is referenced by the following",
+      "check constraint(s):",
+      "<constraints>"
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0005" : {
+    "message" : [
+      "Cannot <operation> column <columnName> because this column is referenced by the following",
+      "generated column(s):",
+      "<generatedColumns>"
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0006" : {
+    "message" : [
+      "Inconsistent IDENTITY metadata for column <colName> detected: <hasStart>, <hasStep>, <hasInsert>"
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0007" : {
+    "message" : [
+      "<message>"
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0008" : {
+    "message" : [
+      "Error while searching for position of column <column>.",
+      "Schema:",
+      "<schema>",
+      "Error:",
+      "<message>"
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0009" : {
+    "message" : [
+      "<optionalPrefixMessage>Updating nested fields is only supported for StructType."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0010" : {
+    "message" : [
+      "<optionalPrefixMessage>Found unsupported expression <expression> while parsing target column name parts."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0011" : {
+    "message" : [
+      "Failed to resolve plan."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0012" : {
+    "message" : [
+      "Could not resolve expression: <expression>"
+    ]
   }
 }

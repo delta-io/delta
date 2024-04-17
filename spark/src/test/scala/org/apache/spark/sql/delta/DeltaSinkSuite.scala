@@ -400,8 +400,10 @@ class DeltaSinkSuite
             .mode("append")
             .save(outputDir.getCanonicalPath)
         }
-        assert(e.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
-        assert(Utils.exceptionString(e).contains("incompatible"))
+        checkError(
+          exception = e,
+          errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+          parameters = Map("currentField" -> "id", "updateField" -> "id"))
       } finally {
         query.stop()
       }
@@ -430,9 +432,10 @@ class DeltaSinkSuite
         q.processAllAvailable()
       }
       assert(wrapperException.cause.isInstanceOf[AnalysisException])
-      assert(wrapperException.cause.asInstanceOf[AnalysisException]
-        .getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
-      assert(Utils.exceptionString(wrapperException.cause).contains("incompatible"))
+      checkError(
+        exception = wrapperException.cause.asInstanceOf[AnalysisException],
+        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+        parameters = Map("currentField" -> "id", "updateField" -> "id"))
     }
   }
 

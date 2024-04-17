@@ -651,7 +651,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     }
 
     for (version <- minVersion to maxVersion) {
-      val jsonFilePath = FileNames.deltaFile(new Path(deltaLogPath), version).toString
+      val jsonFilePath = FileNames.unsafeDeltaFile(new Path(deltaLogPath), version).toString
       DeltaSharingUtils.overrideIteratorBlock[String](
         getDeltaSharingLogBlockId(jsonFilePath),
         versionToJsonLogBuilderMap.getOrElse(version, Seq.empty).toIterator
@@ -778,7 +778,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
     // Always use 0.json for snapshot queries.
     val deltaLogPath = s"${encodedTablePath.toString}/_delta_log"
-    val jsonFilePath = FileNames.deltaFile(new Path(deltaLogPath), 0).toString
+    val jsonFilePath = FileNames.unsafeDeltaFile(new Path(deltaLogPath), 0).toString
     DeltaSharingUtils.overrideIteratorBlock[String](
       getDeltaSharingLogBlockId(jsonFilePath),
       jsonLogSeq.result().toIterator
@@ -819,7 +819,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     val jsonLogStr = deltaSharingTableMetadata.protocol.deltaProtocol.json + "\n" +
       deltaSharingTableMetadata.metadata.deltaMetadata.json + "\n"
 
-    val jsonFilePath = FileNames.deltaFile(new Path(deltaLogPath), 0).toString
+    val jsonFilePath = FileNames.unsafeDeltaFile(new Path(deltaLogPath), 0).toString
     DeltaSharingUtils.overrideIteratorBlock[String](
       getDeltaSharingLogBlockId(jsonFilePath),
       Seq(jsonLogStr).toIterator

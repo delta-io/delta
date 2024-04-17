@@ -18,14 +18,14 @@ package io.delta.kernel.defaults
 import java.math.{BigDecimal => BigDecimalJ}
 import scala.collection.JavaConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.expressions.{Column, Expression, Predicate}
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, TestUtils}
+import io.delta.kernel.expressions.{Column, Expression, Literal, Predicate}
 import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ
 import io.delta.kernel.types._
-import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.funsuite.AnyFunSuite
 
-class PartitionPruningSuite extends AnyFunSuite with TestUtils {
+class PartitionPruningSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
 
   // scalastyle:off sparkimplicits
   import spark.implicits._
@@ -197,17 +197,81 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  private def col(names: String*): Column = new Column(names.toArray)
+  Seq("", "-name-mode", "-id-mode").foreach { cmMode =>
+    // Below is the golden table used in test
+    // (INTEGER id, TIMESTAMP_NTZ tsNtz, TIMESTAMP_NTZ tsNtzPartition)
+    // (0, '2021-11-18 02:30:00.123456','2021-11-18 02:30:00.123456'),
+    // (1, '2013-07-05 17:01:00.123456','2021-11-18 02:30:00.123456'),
+    // (2, NULL,                         '2021-11-18 02:30:00.123456'),
+    // (3, '2021-11-18 02:30:00.123456','2013-07-05 17:01:00.123456'),
+    // (4, '2013-07-05 17:01:00.123456','2013-07-05 17:01:00.123456'),
+    // (5, NULL,                        '2013-07-05 17:01:00.123456'),
+    // (6, '2021-11-18 02:30:00.123456', NULL),
+    // (7, '2013-07-05 17:01:00.123456', NULL),
+    // (8, NULL,                         NULL)
+
+    // test case (kernel predicate object, equivalent spark predicate as string,
+    //              expected row count, expected remaining filter)
+    Seq(
+      (
+        // 1637202600123456L in epoch micros for '2021-11-18 02:30:00.123456'
+        predicate("=", col("tsNtzPartition"), ofTimestampNtz(1637202600123456L)),
+        "tsNtzPartition = '2021-11-18 02:30:00.123456'",
+        3, // expected row count
+        null.asInstanceOf[Predicate] // expected remaining filter
+      ),
+      (
+        predicate("=", col("tsNtzPartition"), Literal ofNull (TIMESTAMP_NTZ)),
+        "tsNtzPartition = null",
+        0, // expected row count
+        null.asInstanceOf[Predicate] // expected remaining filter
+      ),
+      (
+        // 1373043660123456L in epoch micros for '2013-07-05 17:01:00.123456'
+        predicate(">=", col("tsNtzPartition"), ofTimestampNtz(1373043660123456L)),
+        "tsNtzPartition >= '2013-07-05 17:01:00'",
+        6, // expected row count
+        null.asInstanceOf[Predicate] // expected remaining filter
+      ),
+      (
+        predicate("IS_NULL", col("tsNtzPartition")),
+        "tsNtzPartition IS NULL",
+        3, // expected row count
+        null.asInstanceOf[Predicate] // expected remaining filter
+      ),
+      (
+        // Filter on just the data column
+        // 1637202600123456L in epoch micros for '2021-11-18 02:30:00.123456'
+        predicate("=", col("tsNtz"), ofTimestampNtz(1637202600123456L)),
+        "",
+        9, // expected row count
+        // expected remaining filter
+        predicate("=", col("tsNtz"), ofTimestampNtz(1637202600123456L))
+      )
+    ).foreach {
+      case (kernelPredicate, sparkPredicate, expectedRowCount, expRemainingFilter) =>
+        test(s"partition pruning on timestamp_ntz columns: $cmMode ($kernelPredicate)") {
+          val tablePath = goldenTablePath(s"data-reader-timestamp_ntz$cmMode")
+          val expectedResult = readUsingSpark(tablePath, sparkPredicate)
+          assert(expectedResult.size === expectedRowCount)
+          checkTable(
+            expectedAnswer = expectedResult,
+            path = tablePath,
+            expectedRemainingFilter = expRemainingFilter,
+            filter = kernelPredicate)
+        }
+    }
+  }
+
+  private def readUsingSpark(tablePath: String, predicate: String): Seq[TestRow] = {
+    val where = if (predicate.isEmpty) "" else s"WHERE $predicate"
+    spark.sql(s"SELECT * FROM delta.`$tablePath` $where")
+      .collect()
+      .map(TestRow(_))
+  }
 
   private def partColName(column: Column): String = {
     assert(column.getNames.length == 1)
     column.getNames()(0)
   }
-
-  private def predicate(name: String, children: Expression*): Predicate =
-    new Predicate(name, children.asJava)
-
-  private def and(left: Predicate, right: Predicate) = predicate("AND", left, right)
-
-  private def or(left: Predicate, right: Predicate) = predicate("OR", left, right)
 }

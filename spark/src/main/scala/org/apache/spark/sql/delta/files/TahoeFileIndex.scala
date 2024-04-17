@@ -20,8 +20,11 @@ package org.apache.spark.sql.delta.files
 import java.net.URI
 import java.util.Objects
 
+import scala.collection.mutable
 import org.apache.spark.sql.delta.RowIndexFilterType
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.DefaultRowCommitVersion
+import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -107,23 +110,31 @@ abstract class TahoeFileIndex(
     matchingFiles(partitionFilters, dataFilters).groupBy(_.partitionValues)
   }
 
+  /**
+   * Generates a FileStatusWithMetadata using data extracted from a given AddFile.
+   */
+  def fileStatusWithMetadataFromAddFile(addFile: AddFile): FileStatusWithMetadata = {
+    val fs = new FileStatus(
+      /* length */ addFile.size,
+      /* isDir */ false,
+      /* blockReplication */ 0,
+      /* blockSize */ 1,
+      /* modificationTime */ addFile.modificationTime,
+      /* path */ absolutePath(addFile.path))
+    val metadata = mutable.Map.empty[String, Any]
+    addFile.baseRowId.foreach(baseRowId => metadata.put(RowId.BASE_ROW_ID, baseRowId))
+    addFile.defaultRowCommitVersion.foreach(defaultRowCommitVersion =>
+      metadata.put(DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME, defaultRowCommitVersion))
+
+    FileStatusWithMetadata(fs, metadata.toMap)
+  }
 
   def makePartitionDirectories(
       partitionValuesToFiles: Seq[(InternalRow, Seq[AddFile])]): Seq[PartitionDirectory] = {
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
     partitionValuesToFiles.map {
       case (partitionValues, files) =>
-
-        val fileStatuses = files.map { f =>
-          new FileStatus(
-            /* length */ f.size,
-            /* isDir */ false,
-            /* blockReplication */ 0,
-            /* blockSize */ 1,
-            /* modificationTime */ f.modificationTime,
-            absolutePath(f.path))
-        }.toArray
-
+        val fileStatuses = files.map(f => fileStatusWithMetadataFromAddFile(f)).toArray
         PartitionDirectory(partitionValues, fileStatuses)
     }
   }
@@ -225,6 +236,9 @@ case class TahoeLogFileIndex(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED)
   }
 
+  private def includeTableIdInComparisons: Boolean =
+    spark.conf.get(DeltaSQLConf.DELTA_INCLUDE_TABLE_ID_IN_FILE_INDEX_COMPARISON)
+
   protected def getSnapshotToScan: Snapshot = {
     if (isTimeTravelQuery) {
       snapshotAtAnalysis
@@ -281,13 +295,22 @@ case class TahoeLogFileIndex(
 
   override def equals(that: Any): Boolean = that match {
     case t: TahoeLogFileIndex =>
-      t.path == path && t.deltaLog.isSameLogAs(deltaLog) &&
+      t.path == path &&
+        (if (includeTableIdInComparisons) {
+          t.deltaLog.isSameLogAs(deltaLog)
+        } else {
+          t.deltaLog.dataPath == deltaLog.dataPath
+        }) &&
         t.versionToUse == versionToUse && t.partitionFilters == partitionFilters
     case _ => false
   }
 
   override def hashCode: scala.Int = {
-    Objects.hashCode(path, deltaLog.compositeId, versionToUse, partitionFilters)
+    if (includeTableIdInComparisons) {
+      Objects.hashCode(path, deltaLog.compositeId, versionToUse, partitionFilters)
+    } else {
+      Objects.hashCode(path, deltaLog.dataPath, versionToUse, partitionFilters)
+    }
   }
 
   protected[delta] def numOfFilesIfKnown: Option[Long] =

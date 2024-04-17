@@ -27,12 +27,11 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingCommitStore {
 
-  private[managedcommit] class PerTableData {
+  private[managedcommit] class PerTableData(var maxCommitVersion: Long = -1) {
     // Map from version to Commit data
     val commitsMap: mutable.SortedMap[Long, Commit] = mutable.SortedMap.empty
     // We maintain maxCommitVersion explicitly since commitsMap might be empty
     // if all commits for a table have been backfilled.
-    var maxCommitVersion: Long = -1
     val lock: ReentrantReadWriteLock = new ReentrantReadWriteLock()
   }
 
@@ -71,7 +70,7 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
    * @throws CommitFailedException if the commit version is not the expected next version,
    *                               indicating a version conflict.
    */
-  protected def commitImpl(
+  private[delta] def commitImpl(
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
@@ -82,7 +81,7 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
       val tableData = perTableMap.get(logPath)
       val expectedVersion = tableData.maxCommitVersion + 1
       if (commitVersion != expectedVersion) {
-        throw new CommitFailedException(
+        throw CommitFailedException(
           retryable = commitVersion < expectedVersion,
           conflict = commitVersion < expectedVersion,
           s"Commit version $commitVersion is not valid. Expected version: $expectedVersion.")
@@ -126,6 +125,15 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
       versionsToRemove.foreach(tableData.commitsMap.remove)
     }
   }
+
+  def registerTable(logPath: Path, maxCommitVersion: Long): Unit = {
+    val newPerTableData = new PerTableData(maxCommitVersion)
+    if (perTableMap.putIfAbsent(logPath, newPerTableData) != null) {
+      throw new IllegalStateException(s"Table $logPath already exists in the commit store.")
+    }
+  }
+
+  override def semanticEquals(other: CommitStore): Boolean = this == other
 }
 
 /**

@@ -18,13 +18,11 @@ package org.apache.spark.sql.delta.managedcommit
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaConfigs, InitialSnapshot, ManagedCommitTableFeature, SerializableFileStatus, SnapshotDescriptor}
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.{DeltaConfigs, ManagedCommitTableFeature, SnapshotDescriptor}
+import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
-
-import org.apache.spark.internal.Logging
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 /** Representation of a commit file */
 case class Commit(
@@ -40,8 +38,8 @@ case class Commit(
  *  |   yes     |   no      | transient error (e.g. network hiccup)                           |
  *  |   yes     |   yes     | physical conflict (allowed to rebase and retry)                 |
  */
-class CommitFailedException(
-    val retryable: Boolean, val conflict: Boolean, message: String) extends Exception(message)
+case class CommitFailedException(
+    retryable: Boolean, conflict: Boolean, message: String) extends Exception(message)
 
 /** Response container for [[CommitStore.commit]] API */
 case class CommitResponse(commit: Commit)
@@ -92,9 +90,44 @@ trait CommitStore {
    *         tracked by [[CommitStore]].
    */
   def getCommits(
-    logPath: Path,
-    startVersion: Long,
-    endVersion: Option[Long] = None): GetCommitsResponse
+      logPath: Path,
+      startVersion: Long,
+      endVersion: Option[Long] = None): GetCommitsResponse
+
+  /**
+   * API to ask the Commit-Owner to backfill all commits >= 'startVersion' and <= `endVersion`.
+   *
+   * If this API returns successfully, that means the backfill must have been completed, although
+   * the Commit-Owner may not be aware of it yet.
+   */
+  def backfillToVersion(
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      logPath: Path,
+      startVersion: Long,
+      endVersion: Option[Long]): Unit
+
+  /**
+   * Determines whether this CommitStore is semantically equal to another CommitStore.
+   *
+   * Semantic equality is determined by each CommitStore implementation based on whether the two
+   * instances can be used interchangeably when invoking any of the CommitStore APIs, such as
+   * `commit`, `getCommits`, etc. For e.g., both the instances might be pointing to the same
+   * underlying endpoint.
+   */
+  def semanticEquals(other: CommitStore): Boolean
+}
+
+object CommitStore {
+  def semanticEquals(
+      commitStore1Opt: Option[CommitStore],
+      commitStore2Opt: Option[CommitStore]): Boolean = {
+    (commitStore1Opt, commitStore2Opt) match {
+      case (Some(commitStore1), Some(commitStore2)) => commitStore1.semanticEquals(commitStore2)
+      case (None, None) => true
+      case _ => false
+    }
+  }
 }
 
 /** A builder interface for CommitStore */
@@ -146,7 +179,7 @@ object CommitStoreProvider {
     nameToBuilderMapping.retain((k, _) => initialCommitStoreBuilderNames.contains(k))
   }
 
-  val initialCommitStoreBuilders = Seq[CommitStoreBuilder](
+  private val initialCommitStoreBuilders = Seq[CommitStoreBuilder](
     // Any new commit-store builder will be registered here.
   )
   initialCommitStoreBuilders.foreach(registerBuilder)

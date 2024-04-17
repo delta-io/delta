@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.skipping.clustering
 
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.{ClusteringTableFeature, DeltaColumnMappingMode, DeltaErrors, DeltaLog, OptimisticTransaction, Snapshot}
-import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{Action, DomainMetadata, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -47,32 +47,6 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
 
   /** The clustering implementation name for [[AddFile.clusteringProvider]] */
   def clusteringProvider: String = "liquid"
-
-  /**
-   * Validate the clustering table preview is enabled. If not, throw an exception.
-   * This version is used when checking existing tables with updated metadata / protocol.
-   */
-  def validatePreviewEnabled(protocol: Protocol): Unit = {
-    if (isSupported(protocol) &&
-      !SQLConf.get.getConf(DeltaSQLConf.DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED) &&
-      !DeltaUtils.isTesting) {
-      throw DeltaErrors.clusteringTablePreviewDisabledException()
-    }
-  }
-
-  /**
-   * Validate the clustering table preview is enabled. If not, throw an exception.
-   * This version is used for `CREATE TABLE...` where the initial snapshot doesn't have
-   * updated metadata / protocol yet.
-   */
-  def validatePreviewEnabled(maybeClusterBySpec: Option[ClusterBySpec]): Unit = {
-    maybeClusterBySpec.foreach { _ =>
-      if (!SQLConf.get.getConf(DeltaSQLConf.DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED) &&
-        !DeltaUtils.isTesting) {
-        throw DeltaErrors.clusteringTablePreviewDisabledException()
-      }
-    }
-  }
 
   /**
    * Returns an optional [[ClusterBySpec]] from the given CatalogTable.
@@ -217,6 +191,28 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
     val clusteringMetadataDomainOpt =
       Some(ClusteringMetadataDomain.fromClusteringColumns(newClusteringColumns).toDomainMetadata)
     clusteringMetadataDomainOpt.toSeq
+  }
+
+  /**
+   * Extract the logical clustering column names from the to-be committed domain metadata action.
+   *
+   * @param txn the transaction being used to commit the actions.
+   * @param actionsToCommit the actions to be committed.
+   * @return optional logical clustering column names.
+   */
+  def getLogicalClusteringColumnNames(
+      txn: OptimisticTransaction,
+      actionsToCommit: Seq[Action]): Option[Seq[String]] = {
+    def getLogicalColumnNames(clusteringColumns: Seq[ClusteringColumn]): Seq[String] = {
+      clusteringColumns.map(ClusteringColumnInfo(txn.metadata.schema, _).logicalName)
+    }
+
+    actionsToCommit.collectFirst {
+      // Only consider clustering domain metadata actions that are getting added
+      // (removed = false).
+      case ClusteringMetadataDomain(domain, removed) if !removed =>
+        getLogicalColumnNames(domain.clusteringColumns.map(ClusteringColumn.apply))
+    }
   }
 
   /**

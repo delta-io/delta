@@ -24,16 +24,17 @@ import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
+import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
-import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 
 /**
@@ -151,12 +152,14 @@ public class LogReplay {
      * </ol>
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
-            boolean shouldReadStats) {
+            boolean shouldReadStats,
+            Optional<Predicate> checkpointPredicate) {
         final CloseableIterator<ActionWrapper> addRemoveIter =
-            new ActionsIterator(
-                tableClient,
-                logSegment.allLogFilesReversed(),
-                getAddRemoveReadSchema(shouldReadStats));
+                new ActionsIterator(
+                        tableClient,
+                        logSegment.allLogFilesReversed(),
+                        getAddRemoveReadSchema(shouldReadStats),
+                        checkpointPredicate);
         return new ActiveAddFilesIterator(tableClient, addRemoveIter, dataPath);
     }
 
@@ -188,10 +191,11 @@ public class LogReplay {
         Metadata metadata = null;
 
         try (CloseableIterator<ActionWrapper> reverseIter =
-                 new ActionsIterator(
-                     tableClient,
-                     logSegment.allLogFilesReversed(),
-                     PROTOCOL_METADATA_READ_SCHEMA)) {
+                     new ActionsIterator(
+                             tableClient,
+                             logSegment.allLogFilesReversed(),
+                             PROTOCOL_METADATA_READ_SCHEMA,
+                             Optional.empty())) {
             while (reverseIter.hasNext()) {
                 final ActionWrapper nextElem = reverseIter.next();
                 final long version = nextElem.getVersion();
@@ -232,7 +236,7 @@ public class LogReplay {
 
                             if (protocol != null) {
                                 // Stop since we have found the latest Protocol and Metadata.
-                                validateSupportedTable(protocol, metadata);
+                                TableFeatures.validateReadSupportedTable(protocol, metadata);
                                 return new Tuple2<>(protocol, metadata);
                             }
 
@@ -271,10 +275,11 @@ public class LogReplay {
 
     private Optional<Long> loadLatestTransactionVersion(String applicationId) {
         try (CloseableIterator<ActionWrapper> reverseIter =
-                 new ActionsIterator(
-                     tableClient,
-                     logSegment.allLogFilesReversed(),
-                     SET_TRANSACTION_READ_SCHEMA)) {
+                     new ActionsIterator(
+                             tableClient,
+                             logSegment.allLogFilesReversed(),
+                             SET_TRANSACTION_READ_SCHEMA,
+                             Optional.empty())) {
             while (reverseIter.hasNext()) {
                 final ColumnarBatch columnarBatch =
                     reverseIter.next().getColumnarBatch();
@@ -295,34 +300,6 @@ public class LogReplay {
         }
 
         return Optional.empty();
-    }
-
-    private void validateSupportedTable(Protocol protocol, Metadata metadata) {
-        switch (protocol.getMinReaderVersion()) {
-            case 1:
-                break;
-            case 2:
-                ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
-                break;
-            case 3:
-                List<String> readerFeatures = protocol.getReaderFeatures();
-                for (String readerFeature : readerFeatures) {
-                    switch (readerFeature) {
-                        case "deletionVectors":
-                            break;
-                        case "columnMapping":
-                            ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
-                            break;
-                        default:
-                            throw new UnsupportedOperationException(
-                                "Unsupported table feature: " + readerFeature);
-                    }
-                }
-                break;
-            default:
-                throw new UnsupportedOperationException(
-                    "Unsupported reader protocol version: " + protocol.getMinReaderVersion());
-        }
     }
 
     /**

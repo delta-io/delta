@@ -25,6 +25,7 @@ import scala.collection.concurrent
 import scala.reflect.ClassTag
 import scala.util.matching.Regex
 
+import com.databricks.spark.util.UsageRecord
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -32,6 +33,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.tables.{DeltaTable => IODeltaTable}
+import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
@@ -41,10 +43,11 @@ import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.util.quietly
+import org.apache.spark.sql.catalyst.util.{quietly, FailFastMode}
 import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.util.Utils
 
@@ -155,6 +158,13 @@ trait DeltaTestUtilsBase {
     jobs.values.count(_ > 0)
   }
 
+  /** Filter `usageRecords` by the `opType` tag or field. */
+  def filterUsageRecords(usageRecords: Seq[UsageRecord], opType: String): Seq[UsageRecord] = {
+    usageRecords.filter { r =>
+      r.tags.get("opType").contains(opType) || r.opType.map(_.typeName).contains(opType)
+    }
+  }
+
   protected def getfindTouchedFilesJobPlans(plans: Seq[Plans]): SparkPlan = {
     // The expected plan for touched file computation is of the format below.
     // The data column should be pruned from both leaves.
@@ -239,6 +249,16 @@ trait DeltaTestUtilsBase {
         .map(findIfResponsible[E](_))
         .collectFirst { case Some(culprit) => culprit }
   }
+
+  def verifyBackfilled(file: FileStatus): Unit = {
+    val unbackfilled = file.getPath.getName.matches(FileNames.uuidDeltaFileRegex.toString)
+    assert(!unbackfilled, s"File $file was not backfilled")
+  }
+
+  def verifyUnbackfilled(file: FileStatus): Unit = {
+    val unbackfilled = file.getPath.getName.matches(FileNames.uuidDeltaFileRegex.toString)
+    assert(unbackfilled, s"File $file was backfilled")
+  }
 }
 
 trait DeltaCheckpointTestUtils
@@ -321,13 +341,13 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
    * Creates an AddFile that can be used for tests where the exact parameters do not matter.
    */
   def createTestAddFile(
-      path: String = "foo",
+      encodedPath: String = "foo",
       partitionValues: Map[String, String] = Map.empty,
       size: Long = 1L,
       modificationTime: Long = 1L,
       dataChange: Boolean = true,
       stats: String = "{\"numRecords\": 1}"): AddFile = {
-    AddFile(path, partitionValues, size, modificationTime, dataChange, stats)
+    AddFile(encodedPath, partitionValues, size, modificationTime, dataChange, stats)
   }
 
   /**
@@ -467,6 +487,8 @@ trait DeltaDMLTestUtils
   with BeforeAndAfterEach {
   self: SharedSparkSession =>
 
+  import testImplicits._
+
   protected var tempDir: File = _
 
   protected var deltaLog: DeltaLog = _
@@ -512,6 +534,23 @@ trait DeltaDMLTestUtils
     withTempView("source") {
       source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
       thunk("source", s"delta.`$tempPath`")
+    }
+  }
+
+  /**
+   * Parse the input JSON data into a dataframe, one row per input element.
+   * Throws an exception on malformed inputs or records that don't comply with the provided schema.
+   */
+  protected def readFromJSON(data: Seq[String], schema: StructType = null): DataFrame = {
+    if (schema != null) {
+      spark.read
+        .schema(schema)
+        .option("mode", FailFastMode.name)
+        .json(data.toDS)
+    } else {
+      spark.read
+        .option("mode", FailFastMode.name)
+        .json(data.toDS)
     }
   }
 

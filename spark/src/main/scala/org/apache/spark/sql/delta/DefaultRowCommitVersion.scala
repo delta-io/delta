@@ -17,7 +17,11 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.util.ScalaExtensions._
 
+import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField
+import org.apache.spark.sql.types
+import org.apache.spark.sql.types.{LongType, MetadataBuilder, StructField}
 
 object DefaultRowCommitVersion {
   def assignIfMissing(
@@ -33,6 +37,41 @@ object DefaultRowCommitVersion {
         a.copy(defaultRowCommitVersion = Some(version))
       case a =>
         a
+    }
+  }
+
+  def createDefaultRowCommitVersionField(
+      protocol: Protocol, metadata: Metadata): Option[StructField] = {
+    Option.when(RowTracking.isEnabled(protocol, metadata)) {
+      MetadataStructField()
+    }
+  }
+
+  val METADATA_STRUCT_FIELD_NAME = "default_row_commit_version"
+
+  private object MetadataStructField {
+    private val METADATA_COL_ATTR_KEY = "__default_row_version_metadata_col"
+
+    def apply(): StructField =
+      StructField(
+        METADATA_STRUCT_FIELD_NAME,
+        LongType,
+        nullable = false,
+        metadata = metadata)
+
+    def unapply(field: StructField): Option[StructField] =
+      Some(field).filter(isValid)
+
+    private def metadata: types.Metadata = new MetadataBuilder()
+      .withMetadata(FileSourceConstantMetadataStructField.metadata(METADATA_STRUCT_FIELD_NAME))
+      .putBoolean(METADATA_COL_ATTR_KEY, value = true)
+      .build()
+
+
+    private def isValid(s: StructField): Boolean = {
+      FileSourceConstantMetadataStructField.isValid(s.dataType, s.metadata) &&
+        metadata.contains(METADATA_COL_ATTR_KEY) &&
+        metadata.getBoolean(METADATA_COL_ATTR_KEY)
     }
   }
 }

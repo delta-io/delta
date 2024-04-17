@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, Del
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, StructField, StructType}
 
@@ -504,6 +505,8 @@ trait ClusteredTableDDLSuiteBase
   extends ClusteredTableCreateOrReplaceDDLSuite
     with DeltaSQLCommandTest {
 
+  import testImplicits._
+
   test("cluster by with more than 4 columns - alter table") {
     val testTable = "test_table"
     withClusteredTable(testTable, "a INT, b INT, c INT, d INT, e INT", "a") {
@@ -564,6 +567,49 @@ trait ClusteredTableDDLSuiteBase
     }
   }
 
+  test("optimize clustered table and trigger regular compaction") {
+    withClusteredTable(testTable, "a INT, b STRING", "a, b") {
+      val tableIdentifier = TableIdentifier(testTable)
+      verifyClusteringColumns(tableIdentifier, "a, b")
+
+      (1 to 1000).map(i => (i, i.toString)).toDF("a", "b")
+        .write.mode("append").format("delta").saveAsTable(testTable)
+
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTable))
+      val targetFileSize = (snapshot.sizeInBytes / 10).toString
+      withSQLConf(
+        DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> targetFileSize,
+        DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE.key -> targetFileSize) {
+        runOptimize(testTable) { metrics =>
+          assert(metrics.numFilesAdded > 0)
+          assert(metrics.numFilesRemoved > 0)
+          assert(metrics.clusteringStats.nonEmpty)
+          assert(metrics.clusteringStats.get.numOutputZCubes == 1)
+        }
+      }
+
+      // ALTER TABLE CLUSTER BY NONE and then OPTIMIZE to trigger regular compaction.
+      sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
+      verifyClusteringColumns(tableIdentifier, "")
+
+      (1001 to 2000).map(i => (i, i.toString)).toDF("a", "b")
+        .repartition(10).write.mode("append").format("delta").saveAsTable(testTable)
+      val newSnapshot = deltaLog.update()
+      val newTargetFileSize = (newSnapshot.sizeInBytes / 10).toString
+      withSQLConf(
+        DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> newTargetFileSize,
+        DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE.key -> newTargetFileSize) {
+        runOptimize(testTable) { metrics =>
+          assert(metrics.numFilesAdded > 0)
+          assert(metrics.numFilesRemoved > 0)
+          // No clustering or zorder stats indicates regular compaction.
+          assert(metrics.clusteringStats.isEmpty)
+          assert(metrics.zOrderStats.isEmpty)
+        }
+      }
+    }
+  }
+
   test("optimize clustered table - error scenarios") {
     withClusteredTable(testTable, "a INT, b STRING", "a") {
       // Specify partition predicate.
@@ -619,6 +665,58 @@ trait ClusteredTableDDLSuiteBase
             "schema" -> snapshot.statCollectionLogicalSchema.treeString)
         )
       }
+    }
+  }
+
+  test("validate CLONE on clustered table") {
+    import testImplicits._
+    val srcTable = "SrcTbl"
+    val dstTable1 = "DestTbl1"
+    val dstTable2 = "DestTbl2"
+    val dstTable3 = "DestTbl3"
+
+    withTable(srcTable, dstTable1, dstTable2, dstTable3) {
+      // Create the source table.
+      sql(s"CREATE TABLE $srcTable (col1 INT, col2 INT, col3 INT) " +
+        s"USING delta CLUSTER BY (col1, col2)")
+      val tableIdent = new TableIdentifier(srcTable)
+      (1 to 100).map(i => (i, i + 1000, i + 100)).toDF("col1", "col2", "col3")
+        .repartitionByRange(100, col("col1"))
+        .write.format("delta").mode("append").saveAsTable(srcTable)
+
+      // Force clustering on the source table.
+      val (_, srcSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdent)
+      val ingestionSize = srcSnapshot.allFiles.collect().map(_.size).sum
+      withSQLConf(
+        DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> (ingestionSize / 4).toString) {
+        runOptimize(srcTable) { res =>
+          assert(res.numFilesAdded === 4)
+          assert(res.numFilesRemoved === 100)
+        }
+      }
+
+      // Create destination table as a clone of the source table.
+      sql(s"CREATE TABLE $dstTable1 SHALLOW CLONE $srcTable")
+
+      // Validate clustering columns and that clustering columns in stats schema.
+      val (_, dstSnapshot1) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable1))
+      verifyClusteringColumns(TableIdentifier(dstTable1), "col1,col2")
+      ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot1, Seq("col1", "col2"))
+
+      // Change to CLUSTER BY NONE, then CLONE from earlier version to validate that the
+      // clustering column information is maintainted.
+      sql(s"ALTER TABLE $srcTable CLUSTER BY NONE")
+      sql(s"CREATE TABLE $dstTable2 SHALLOW CLONE $srcTable VERSION AS OF 2")
+      val (_, dstSnapshot2) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable2))
+      verifyClusteringColumns(TableIdentifier(dstTable2), "col1,col2")
+      ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot2, Seq("col1", "col2"))
+
+      // Validate CLONE after CLUSTER BY NONE
+      sql(s"CREATE TABLE $dstTable3 SHALLOW CLONE $srcTable")
+      val (_, dstSnapshot3) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable3))
+      verifyClusteringColumns(TableIdentifier(dstTable3), "")
+      ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot3, Seq.empty)
+
     }
   }
 }

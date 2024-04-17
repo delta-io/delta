@@ -55,6 +55,7 @@ import org.apache.spark.util.SerializableConfiguration
 case class DeltaParquetFileFormat(
     protocol: Protocol,
     metadata: Metadata,
+    nullableRowTrackingFields: Boolean = false,
     isSplittable: Boolean = true,
     disablePushDowns: Boolean = false,
     tablePath: Option[String] = None,
@@ -66,6 +67,8 @@ case class DeltaParquetFileFormat(
     require(tablePath.isDefined && !isSplittable && disablePushDowns,
       "Wrong arguments for Delta table scan with deletion vectors")
   }
+
+  TypeWidening.assertTableReadable(protocol, metadata)
 
   val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
   val referenceSchema: StructType = metadata.schema
@@ -197,10 +200,21 @@ case class DeltaParquetFileFormat(
   }
 
   override def metadataSchemaFields: Seq[StructField] = {
-    // Parquet reader in Spark has a bug where a file containing 2b+ rows in a single rowgroup
-    // causes it to run out of the `Integer` range (TODO: Create a SPARK issue)
+    val rowTrackingFields =
+      RowTracking.createMetadataStructFields(protocol, metadata, nullableRowTrackingFields)
+    // TODO(SPARK-47731): Parquet reader in Spark has a bug where a file containing 2b+ rows
+    // in a single rowgroup causes it to run out of the `Integer` range.
     // For Delta Parquet readers don't expose the row_index field as a metadata field.
-    super.metadataSchemaFields.filter(field => field != ParquetFileFormat.ROW_INDEX_FIELD)
+    if (!RowId.isEnabled(protocol, metadata)) {
+      super.metadataSchemaFields.filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
+    } else {
+      // It is fine to expose the row_index field as a metadata field when Row Tracking
+      // is enabled because it is needed to generate the Row ID field, and it is not a
+      // big problem if we use 2b+ rows in a single rowgroup, it will throw an exception and
+      // we can then use less rows per rowgroup. Also, 2b+ rows in a single rowgroup is
+      // not a common use case.
+      super.metadataSchemaFields ++ rowTrackingFields
+    }
   }
 
   override def prepareWrite(
@@ -222,6 +236,26 @@ case class DeltaParquetFileFormat(
       ParquetOutputFormat.setWriteSupportClass(job, classOf[DeltaParquetWriteSupport])
     }
     factory
+  }
+
+  override def fileConstantMetadataExtractors: Map[String, PartitionedFile => Any] = {
+    val extractBaseRowId: PartitionedFile => Any = { file =>
+      file.otherConstantMetadataColumnValues.getOrElse(RowId.BASE_ROW_ID, {
+        throw new IllegalStateException(
+          s"Missing ${RowId.BASE_ROW_ID} value for file '${file.filePath}'")
+      })
+    }
+    val extractDefaultRowCommitVersion: PartitionedFile => Any = { file =>
+      file.otherConstantMetadataColumnValues
+        .getOrElse(DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME, {
+          throw new IllegalStateException(
+            s"Missing ${DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME} value " +
+              s"for file '${file.filePath}'")
+        })
+    }
+    super.fileConstantMetadataExtractors
+      .updated(RowId.BASE_ROW_ID, extractBaseRowId)
+      .updated(DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME, extractDefaultRowCommitVersion)
   }
 
   def copyWithDVInfo(

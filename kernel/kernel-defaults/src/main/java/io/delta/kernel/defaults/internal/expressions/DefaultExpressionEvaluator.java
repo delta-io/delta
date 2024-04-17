@@ -459,7 +459,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 dataType instanceof BinaryType ||
                 dataType instanceof DecimalType ||
                 dataType instanceof DateType ||
-                dataType instanceof TimestampType) {
+                dataType instanceof TimestampType ||
+                dataType instanceof TimestampNTZType) {
                 return new DefaultConstantVector(dataType, input.getSize(), literal.getValue());
             }
 

@@ -91,6 +91,15 @@ case class MergeIntoCommand(
             atAnalysis = target.schema, latestSchema = deltaTxn.metadata.schema)
         }
 
+        // Check that type widening wasn't enabled/disabled between analysis and the start of the
+        // transaction.
+        TypeWidening.ensureFeatureConsistentlyEnabled(
+          protocol = targetFileIndex.protocol,
+          metadata = targetFileIndex.metadata,
+          otherProtocol = deltaTxn.protocol,
+          otherMetadata = deltaTxn.metadata
+        )
+
         if (canMergeSchema) {
           updateMetadata(
             spark, deltaTxn, migratedSchema.getOrElse(target.schema),

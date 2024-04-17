@@ -43,7 +43,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
    * Commit a given `commitFile` to the table represented by given `logPath` at the
    * given `commitVersion`
    */
-  protected def commitImpl(
+  private[delta] def commitImpl(
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
@@ -80,7 +80,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
     if (commitVersion == 0 || batchSize <= 1) {
       // Always backfill zeroth commit or when batch size is configured as 1
       backfill(logStore, hadoopConf, logPath, commitVersion, fileStatus)
-      val targetFile = FileNames.deltaFile(logPath, commitVersion)
+      val targetFile = FileNames.unsafeDeltaFile(logPath, commitVersion)
       val targetFileStatus = fs.getFileStatus(targetFile)
       val newCommit = commitResponse.commit.copy(fileStatus = targetFileStatus)
       commitResponse = commitResponse.copy(commit = newCommit)
@@ -100,20 +100,23 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
       commitVersion: Long,
       actions: Iterator[String]): FileStatus = {
     val uuidStr = generateUUID()
-    val commitPath = FileNames.uuidDeltaFile(logPath, commitVersion, Some(uuidStr))
+    val commitPath = FileNames.unbackfilledDeltaFile(logPath, commitVersion, Some(uuidStr))
     logStore.write(commitPath, actions, overwrite = false, hadoopConf)
     commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
   }
 
   protected def generateUUID(): String = UUID.randomUUID().toString
 
-  /** Backfills all un-backfilled commits */
-  protected def backfillToVersion(
+  override def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
-      logPath: Path): Unit = {
-    getCommits(logPath, startVersion = 0).commits.foreach { commit =>
-      backfill(logStore, hadoopConf, logPath, commit.version, commit.fileStatus)
+      logPath: Path,
+      startVersion: Long = 0,
+      endVersionOpt: Option[Long] = None): Unit = {
+    getCommits(logPath, startVersion, endVersionOpt)
+      .commits
+      .foreach { commit =>
+        backfill(logStore, hadoopConf, logPath, commit.version, commit.fileStatus)
     }
   }
 
@@ -124,7 +127,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
       logPath: Path,
       version: Long,
       fileStatus: FileStatus): Unit = {
-    val targetFile = FileNames.deltaFile(logPath, version)
+    val targetFile = FileNames.unsafeDeltaFile(logPath, version)
     logInfo(s"Backfilling commit ${fileStatus.getPath} to ${targetFile.toString}")
     val commitContentIterator = logStore.readAsIterator(fileStatus, hadoopConf)
     try {

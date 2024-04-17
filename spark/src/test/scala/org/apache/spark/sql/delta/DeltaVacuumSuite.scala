@@ -25,6 +25,7 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
+import org.apache.spark.sql.delta.DeltaVacuumSuiteShims._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -169,7 +170,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
     FileUtils.write(file, "gibberish")
     file.setLastModified(clock.getTimeMillis())
     createTestAddFile(
-      path = filePath,
+      encodedPath = filePath,
       partitionValues = partitionValues,
       modificationTime = clock.getTimeMillis())
   }
@@ -211,7 +212,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
           "numCopiedRows" -> createMetric(sparkContext, "total number of rows.")
         )
         txn.registerSQLMetrics(spark, metrics)
-        txn.commit(Seq(RemoveFile(path, Option(clock.getTimeMillis()))),
+        val encodedPath = new Path(path).toUri.toString
+        txn.commit(Seq(RemoveFile(encodedPath, Option(clock.getTimeMillis()))),
           Delete(Seq(Literal.TrueLiteral)))
       // scalastyle:on
       case e: ExecuteVacuumInSQL =>
@@ -511,8 +513,7 @@ class DeltaVacuumSuite
         val e = intercept[AnalysisException] {
           vacuumSQLTest(tablePath, viewName)
         }
-        assert(
-          e.getMessage.contains("v is a temp view. 'VACUUM' expects a table."))
+        assert(e.getMessage.contains(SQL_COMMAND_ON_TEMP_VIEW_NOT_SUPPORTED_ERROR_MSG))
       }
     }
   }
@@ -802,10 +803,8 @@ class DeltaVacuumSuite
     }
   }
 
-  // TODO: There is somewhere in the code calling CanonicalPathFunction with an unescaped path
-  //  string, which needs investigation. Do not test special characters until that is fixed.
   testQuietly("correctness test") {
-    withEnvironment(prefix = "spark") { (tempDir, clock) =>
+    withEnvironment { (tempDir, clock) =>
 
       val reservoirDir = new File(tempDir.getAbsolutePath, "reservoir")
       assert(reservoirDir.mkdirs())
@@ -1038,6 +1037,21 @@ class DeltaVacuumSuite
         AdvanceClock(defaultTombstoneInterval + 1000),
         GC(dryRun = false, Seq(tempDir)),
         CheckFiles(Seq("metadata", "metadata/file1.json"))
+      )
+    }
+  }
+
+  test("hudi metadata dir") {
+    withEnvironment { (tempDir, clock) =>
+      spark.emptyDataset[Int].write.format("delta").save(tempDir)
+      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
+      gcTest(deltaLog, clock)(
+        CreateDirectory(".hoodie"),
+        CreateFile(".hoodie/00001.commit", false),
+
+        AdvanceClock(defaultTombstoneInterval + 1000),
+        GC(dryRun = false, Seq(tempDir)),
+        CheckFiles(Seq(".hoodie", ".hoodie/00001.commit"))
       )
     }
   }

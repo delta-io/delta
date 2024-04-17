@@ -475,7 +475,7 @@ USE custom_DB;
 ```
 
 #### CREATE TABLE
-To create non-partitioned table use `CREARTE TABLE` statement:
+To create non-partitioned table use `CREATE TABLE` statement:
 ```sql
 CREATE TABLE testTable (
     id BIGINT,

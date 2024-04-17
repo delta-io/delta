@@ -83,7 +83,7 @@ trait MergeIntoSchemaEvolutionMixin {
     }
 
     test(s"schema evolution - $name - with evolution disabled") {
-      withSQLConf(confs: _*) {
+      withSQLConf(confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "false"): _*) {
         executeMergeAndAssert(expectedWithoutEvolution, expectErrorWithoutEvolutionContains)
       }
     }
@@ -990,7 +990,7 @@ trait MergeIntoSchemaEvolutionBaseTests {
     targetData = Seq((1, 1)).toDF("key", "value"),
     sourceData = Seq((1, 100, null), (2, 200, null)).toDF("key", "value", "extra"),
     clauses = update("*") :: insert("*") :: Nil,
-    expectErrorContains = "Cannot add column 'extra' with type 'void'",
+    expectErrorContains = "Cannot add column `extra` with type VOID",
     expectedWithoutEvolution = Seq((1, 100), (2, 200)).toDF("key", "value")
   )
 
@@ -1500,7 +1500,7 @@ trait MergeIntoNestedStructEvolutionTests {
         new StructType()
           .add("a", new StructType().add("x", IntegerType).add("z", NullType))),
     clauses = update("*") :: Nil,
-    expectErrorContains = "Cannot add column 'value.a.z' with type 'void'",
+    expectErrorContains = "Cannot add column `value`.`a`.`z` with type VOID",
     expectErrorWithoutEvolutionContains = "All nested columns must match")
 
   // scalastyle:off line.size.limit

@@ -48,6 +48,20 @@ object TypeWidening {
   }
 
   /**
+   * Checks that the type widening table property wasn't disabled or enabled between the two given
+   * states, throws an errors if it was.
+   */
+  def ensureFeatureConsistentlyEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      otherProtocol: Protocol,
+      otherMetadata: Metadata): Unit = {
+    if (isEnabled(protocol, metadata) != isEnabled(otherProtocol, otherMetadata)) {
+      throw DeltaErrors.metadataChangedException(None)
+    }
+  }
+
+  /**
    * Returns whether the given type change is eligible for widening. This only checks atomic types.
    * It is the responsibility of the caller to recurse into structs, maps and arrays.
    */
@@ -61,6 +75,42 @@ object TypeWidening {
       case (ByteType | ShortType, IntegerType) => true
       case _ => false
     }
+
+  /**
+   * Returns whether the given type change can be applied during schema evolution. Only a
+   * subset of supported type changes are considered for schema evolution.
+   */
+  def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
+    (fromType, toType) match {
+      case (from, to) if from == to => true
+      case (from, to) if !isTypeChangeSupported(from, to) => false
+      case (ByteType, ShortType) => true
+      case (ByteType | ShortType, IntegerType) => true
+      case _ => false
+    }
+
+  /**
+   * Asserts that the given table doesn't contain any unsupported type changes. This should never
+   * happen unless a non-compliant writer applied a type change that is not part of the feature
+   * specification.
+   */
+  def assertTableReadable(protocol: Protocol, metadata: Metadata): Unit = {
+    if (!isSupported(protocol) ||
+      !TypeWideningMetadata.containsTypeWideningMetadata(metadata.schema)) {
+      return
+    }
+
+    TypeWideningMetadata.getAllTypeChanges(metadata.schema).foreach {
+      case (_, TypeChange(_, from: AtomicType, to: AtomicType, _))
+        if isTypeChangeSupported(from, to) =>
+      case (fieldPath, invalidChange) =>
+        throw DeltaErrors.unsupportedTypeChangeInSchema(
+          fieldPath ++ invalidChange.fieldPath,
+          invalidChange.fromType,
+          invalidChange.toType
+        )
+    }
+  }
 
   /**
    * Filter the given list of files to only keep files that were written before the latest type

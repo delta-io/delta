@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.types.StructType
 
@@ -53,6 +54,15 @@ trait ImplicitMetadataOperation extends DeltaLogging {
     }
   }
 
+  /** Remove all file source generated metadata columns from the schema. */
+  private def dropGeneratedMetadataColumns(structType: StructType): StructType = {
+    val fields = structType.filter {
+      case FileSourceGeneratedMetadataStructField(_, _) => false
+      case _ => true
+    }
+    StructType(fields)
+  }
+
   protected final def updateMetadata(
       spark: SparkSession,
       txn: OptimisticTransaction,
@@ -65,8 +75,12 @@ trait ImplicitMetadataOperation extends DeltaLogging {
     // To support the new column mapping mode, we drop existing metadata on data schema
     // so that all the column mapping related properties can be reinitialized in
     // OptimisticTransaction.updateMetadata
-    val dataSchema =
+    var dataSchema =
       DeltaColumnMapping.dropColumnMappingMetadata(schema.asNullable)
+
+    // File Source generated columns are not added to the stored schema.
+    dataSchema = dropGeneratedMetadataColumns(dataSchema)
+
     val mergedSchema = mergeSchema(txn, dataSchema, isOverwriteMode, canOverwriteSchema)
     val normalizedPartitionCols =
       normalizePartitionColumns(spark, partitionColumns, dataSchema)
@@ -122,7 +136,14 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       if (rearrangeOnly) {
         throw DeltaErrors.unexpectedDataChangeException("Change the Delta table schema")
       }
-      txn.updateMetadata(txn.metadata.copy(schemaString = mergedSchema.json
+
+      val schemaWithTypeWideningMetadata = TypeWideningMetadata.addTypeWideningMetadata(
+        txn,
+        schema = mergedSchema,
+        oldSchema = txn.metadata.schema
+      )
+
+      txn.updateMetadata(txn.metadata.copy(schemaString = schemaWithTypeWideningMetadata.json
       ))
     } else if (isNewSchema || isNewPartitioning
         ) {
@@ -201,7 +222,8 @@ object ImplicitMetadataOperation {
       SchemaMergingUtils.mergeSchemas(
         txn.metadata.schema,
         dataSchema,
-        fixedTypeColumns = fixedTypeColumns)
+        fixedTypeColumns = fixedTypeColumns,
+        allowTypeWidening = TypeWidening.isEnabled(txn.protocol, txn.metadata))
     }
   }
 

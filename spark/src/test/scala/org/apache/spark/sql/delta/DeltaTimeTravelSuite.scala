@@ -19,18 +19,18 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
-import java.util.{Calendar, Date, TimeZone}
+import java.util.Date
 
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
@@ -39,7 +39,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 class DeltaTimeTravelSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with ManagedCommitBaseSuite {
 
   import testImplicits._
 
@@ -52,7 +53,7 @@ class DeltaTimeTravelSuite extends QueryTest
   private implicit def longToTimestamp(ts: Long): Timestamp = new Timestamp(ts)
 
   private def modifyCommitTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
-    val file = new File(FileNames.deltaFile(deltaLog.logPath, version).toUri)
+    val file = new File(DeltaCommitFileProvider(deltaLog.update()).deltaFile(version).toUri)
     file.setLastModified(ts)
     val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
     if (crc.exists()) {
@@ -69,7 +70,8 @@ class DeltaTimeTravelSuite extends QueryTest
   private def generateCommitsCheap(deltaLog: DeltaLog, commits: Long*): Unit = {
     var startVersion = deltaLog.snapshot.version + 1
     commits.foreach { ts =>
-      val action = createTestAddFile(path = startVersion.toString, modificationTime = startVersion)
+      val action =
+        createTestAddFile(encodedPath = startVersion.toString, modificationTime = startVersion)
       deltaLog.startTransaction().commitManually(action)
       modifyCommitTimestamp(deltaLog, startVersion, ts)
       startVersion += 1
@@ -84,7 +86,7 @@ class DeltaTimeTravelSuite extends QueryTest
       val rangeStart = startVersion * 10
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
-      val file = new File(FileNames.deltaFile(deltaLog.logPath, startVersion).toUri)
+      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, startVersion).toUri)
       file.setLastModified(ts)
       startVersion += 1
     }
@@ -161,7 +163,7 @@ class DeltaTimeTravelSuite extends QueryTest
     val commits2 = history.getHistory(Some(10))
     assert(commits2.last.version === Some(0))
 
-    assert(new File(FileNames.deltaFile(deltaLog.logPath, 0L).toUri).delete())
+    assert(new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0L).toUri).delete())
     val e = intercept[AnalysisException] {
       history.getActiveCommitAtTime(start + 15.seconds, false).version
     }
@@ -541,7 +543,7 @@ class DeltaTimeTravelSuite extends QueryTest
       assert(e1.getMessage.contains("[0, 2]"))
 
       val deltaLog = DeltaLog.forTable(spark, tblLoc)
-      new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+      new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri).delete()
       val e2 = intercept[AnalysisException] {
         spark.read.format("delta").option("versionAsOf", 0).load(tblLoc).collect()
       }
@@ -761,4 +763,8 @@ class DeltaTimeTravelSuite extends QueryTest
         Row(1) :: Row(1) :: Row(2) :: Nil)
     }
   }
+}
+
+class ManagedCommitFill1DeltaTimeTravelSuite extends DeltaTimeTravelSuite {
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
 }

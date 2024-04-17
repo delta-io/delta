@@ -188,7 +188,7 @@ class DeltaTableSuite extends QueryTest
     }
 
     // DeltaTable can be passed to executor but method call causes exception.
-    val e = intercept[SparkException] {
+    val e = intercept[Exception] {
       withTempDir { dir =>
         testData.write.format("delta").mode("append").save(dir.getAbsolutePath)
         val dt: DeltaTable = DeltaTable.forPath(dir.getAbsolutePath)
@@ -515,7 +515,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
         val time = format.parse(desiredTime).getTime
 
         val logPath = new Path(dir.getCanonicalPath, "_delta_log")
-        val file = new File(FileNames.deltaFile(logPath, 0).toString)
+        val file = new File(FileNames.unsafeDeltaFile(logPath, 0).toString)
         assert(file.setLastModified(time))
 
         val deltaTable2 = io.delta.tables.DeltaTable.forPath(spark, path, fsOptions)
@@ -539,7 +539,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       val log = DeltaLog.forTable(spark, new Path(path), fsOptions)
       log.ensureLogDirectoryExist()
       log.store.write(
-        FileNames.deltaFile(log.logPath, 0),
+        FileNames.unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata(schemaString = testSchema.json).json, Protocol(0, 0).json),
         overwrite = false,
         log.newDeltaHadoopConf())
@@ -565,7 +565,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       val log = DeltaLog.forTable(spark, new Path(path), fsOptions)
       log.ensureLogDirectoryExist()
       log.store.write(
-        FileNames.deltaFile(log.logPath, 0),
+        FileNames.unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata(schemaString = testSchema.json).json, Protocol(1, 2).json),
         overwrite = false,
         log.newDeltaHadoopConf())

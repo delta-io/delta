@@ -33,6 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{DataFrame, Dataset, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
@@ -277,9 +278,11 @@ case class DeltaTableV2(
    */
   def withOptions(newOptions: Map[String, String]): DeltaTableV2 = {
     val ttSpec = DeltaDataSource.getTimeTravelVersion(newOptions)
-    if (timeTravelOpt.nonEmpty && ttSpec.nonEmpty) {
-      throw DeltaErrors.multipleTimeTravelSyntaxUsed
-    }
+
+    // Spark 4.0 and 3.5 handle time travel options differently.
+    DeltaTimeTravelSpecShims.validateTimeTravelSpec(
+      currSpecOpt = timeTravelOpt,
+      newSpecOpt = ttSpec)
 
     val caseInsensitiveNewOptions = new CaseInsensitiveStringMap(newOptions.asJava)
 
@@ -329,7 +332,7 @@ object DeltaTableV2 {
 
   /** Resolves a table identifier into a DeltaTableV2, leveraging standard v2 table resolution. */
   def apply(spark: SparkSession, tableId: TableIdentifier, cmd: String): DeltaTableV2 = {
-    resolve(spark, UnresolvedTable(tableId.nameParts, cmd, None), cmd)
+    resolve(spark, UnresolvedTable(tableId.nameParts, cmd), cmd)
   }
 
   /** Applies standard v2 table resolution to an unresolved Delta table plan node */

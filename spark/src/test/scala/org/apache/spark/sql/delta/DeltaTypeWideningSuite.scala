@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.concurrent.TimeUnit
 
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
@@ -67,15 +68,23 @@ trait DeltaTypeWideningTestMixin extends SharedSparkSession {
   protected def enableTypeWidening(tablePath: String, enabled: Boolean = true): Unit =
     sql(s"ALTER TABLE delta.`$tablePath` " +
           s"SET TBLPROPERTIES('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = '${enabled.toString}')")
+
+  /** Short-hand to create type widening metadata for struct fields. */
+  protected def typeWideningMetadata(
+      version: Long,
+      from: AtomicType,
+      to: AtomicType,
+      path: Seq[String] = Seq.empty): Metadata =
+    new MetadataBuilder()
+      .putMetadataArray(
+        "delta.typeChanges", Array(TypeChange(version, from, to, path).toMetadata))
+      .build()
 }
 
 /**
- * Trait collecting a subset of tests providing core coverage for type widening using ALTER TABLE
- * CHANGE COLUMN TYPE.
+ * Trait collecting supported and unsupported type change test cases.
  */
-trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase {
-  self: QueryTest with ParquetTest with DeltaTypeWideningTestMixin with DeltaDMLTestUtils =>
-
+trait DeltaTypeWideningTestCases { self: SharedSparkSession =>
   import testImplicits._
 
   /**
@@ -119,7 +128,7 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase {
 
   // Type changes that are supported by all Parquet readers. Byte, Short, Int are all stored as
   // INT32 in parquet so these changes are guaranteed to be supported.
-  private val supportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
+  protected val supportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
     SupportedTypeEvolutionTestCase(ByteType, ShortType,
       Seq(1, -1, Byte.MinValue, Byte.MaxValue, null.asInstanceOf[Byte]),
       Seq(4, -4, Short.MinValue, Short.MaxValue, null.asInstanceOf[Short])),
@@ -130,6 +139,80 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase {
       Seq(1, -1, Short.MinValue, Short.MaxValue, null.asInstanceOf[Short]),
       Seq(4, -4, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int]))
   )
+
+  /**
+   * Represents the input of an unsupported type change test. Handles converting the test values
+   * from scala types to a dataframe. Additional values to insert are always empty since the type
+   * change is expected to fail.
+   */
+  case class UnsupportedTypeEvolutionTestCase[
+    FromType  <: DataType, ToType <: DataType, FromVal : Encoder](
+      override val fromType: FromType,
+      override val toType: ToType,
+      initialValues: Seq[FromVal]) extends TypeEvolutionTestCase(fromType, toType) {
+    override def initialValuesDF: DataFrame =
+      initialValues.toDF("value").select($"value".cast(fromType))
+
+    override def additionalValuesDF: DataFrame =
+      spark.createDataFrame(
+        sparkContext.emptyRDD[Row],
+        new StructType().add(StructField("value", toType)))
+
+    override def expectedResult: DataFrame =
+      initialValuesDF.select($"value".cast(toType))
+  }
+
+  // Test type changes that aren't supported.
+  protected val unsupportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
+    UnsupportedTypeEvolutionTestCase(IntegerType, ByteType,
+      Seq(1, 2, Int.MinValue)),
+    UnsupportedTypeEvolutionTestCase(LongType, IntegerType,
+      Seq(4, 5, Long.MaxValue)),
+    UnsupportedTypeEvolutionTestCase(DoubleType, FloatType,
+      Seq(987654321.987654321d, Double.NaN, Double.NegativeInfinity,
+        Double.PositiveInfinity, Double.MinPositiveValue,
+        Double.MinValue, Double.MaxValue)),
+    UnsupportedTypeEvolutionTestCase(ByteType, DecimalType(2, 0),
+      Seq(1, -1, Byte.MinValue)),
+    UnsupportedTypeEvolutionTestCase(ShortType, DecimalType(4, 0),
+      Seq(1, -1, Short.MinValue)),
+    UnsupportedTypeEvolutionTestCase(IntegerType, DecimalType(9, 0),
+      Seq(1, -1, Int.MinValue)),
+    UnsupportedTypeEvolutionTestCase(LongType, DecimalType(19, 0),
+      Seq(1, -1, Long.MinValue)),
+    UnsupportedTypeEvolutionTestCase(TimestampNTZType, DateType,
+      Seq("2020-03-17 15:23:15", "2023-12-31 23:59:59", "0001-01-01 00:00:00")),
+    // Reduce scale
+    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
+      DecimalType(Decimal.MAX_INT_DIGITS, 3),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
+    // Reduce precision
+    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
+      DecimalType(Decimal.MAX_INT_DIGITS - 1, 2),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
+    // Reduce precision & scale
+    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_LONG_DIGITS, 2),
+      DecimalType(Decimal.MAX_INT_DIGITS - 1, 1),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99"))),
+    // Increase scale more than precision
+    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
+      DecimalType(Decimal.MAX_INT_DIGITS + 1, 4),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
+    // Smaller scale and larger precision.
+    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_LONG_DIGITS, 2),
+      DecimalType(Decimal.MAX_INT_DIGITS + 3, 1),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99")))
+  )
+}
+
+/**
+ * Trait collecting a subset of tests providing core coverage for type widening using ALTER TABLE
+ * CHANGE COLUMN TYPE.
+ */
+trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWideningTestCases {
+  self: QueryTest with ParquetTest with DeltaTypeWideningTestMixin with DeltaDMLTestUtils =>
+
+  import testImplicits._
 
   for {
     testCase <- supportedTestCases
@@ -159,66 +242,6 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase {
       }
     }
   }
-
-  /**
-   * Represents the input of an unsupported type change test. Handles converting the test values
-   * from scala types to a dataframe. Additional values to insert are always empty since the type
-   * change is expected to fail.
-   */
-  case class UnsupportedTypeEvolutionTestCase[
-    FromType  <: DataType, ToType <: DataType, FromVal : Encoder](
-      override val fromType: FromType,
-      override val toType: ToType,
-      initialValues: Seq[FromVal]) extends TypeEvolutionTestCase(fromType, toType) {
-    override def initialValuesDF: DataFrame =
-      initialValues.toDF("value").select($"value".cast(fromType))
-
-    override def additionalValuesDF: DataFrame =
-      spark.createDataFrame(
-        sparkContext.emptyRDD[Row],
-        new StructType().add(StructField("value", toType)))
-
-    override def expectedResult: DataFrame =
-      initialValuesDF.select($"value".cast(toType))
-  }
-
-  // Test type changes that aren't supported.
-  private val unsupportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
-    UnsupportedTypeEvolutionTestCase(IntegerType, ByteType,
-      Seq(1, 2, Int.MinValue)),
-    UnsupportedTypeEvolutionTestCase(LongType, IntegerType,
-      Seq(4, 5, Long.MaxValue)),
-    UnsupportedTypeEvolutionTestCase(DoubleType, FloatType,
-      Seq(987654321.987654321d, Double.NaN, Double.NegativeInfinity,
-        Double.PositiveInfinity, Double.MinPositiveValue,
-        Double.MinValue, Double.MaxValue)),
-    UnsupportedTypeEvolutionTestCase(IntegerType, DecimalType(9, 0),
-      Seq(1, -1, Int.MinValue)),
-    UnsupportedTypeEvolutionTestCase(LongType, DecimalType(19, 0),
-      Seq(1, -1, Long.MinValue)),
-    UnsupportedTypeEvolutionTestCase(TimestampNTZType, DateType,
-      Seq("2020-03-17 15:23:15", "2023-12-31 23:59:59", "0001-01-01 00:00:00")),
-    // Reduce scale
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS, 3),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
-    // Reduce precision
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS - 1, 2),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
-    // Reduce precision & scale
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_LONG_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS - 1, 1),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99"))),
-    // Increase scale more than precision
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS + 1, 4),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
-    // Smaller scale and larger precision.
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_LONG_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS + 3, 1),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99")))
-  )
 
   for {
     testCase <- unsupportedTestCases
@@ -956,5 +979,41 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
           Seq(Row(11), Row(12), Row(13), Row(4), Row(5), Row(6)))
       }
     }
+  }
+
+  test("unsupported type changes applied to the table") {
+    sql(s"CREATE TABLE delta.`$tempDir` (a array<int>) USING DELTA")
+    val metadata = new MetadataBuilder()
+      .putMetadataArray("delta.typeChanges", Array(
+        new MetadataBuilder()
+          .putString("toType", "string")
+          .putString("fromType", "int")
+          .putLong("tableVersion", 2)
+          .putString("fieldPath", "element")
+          .build()
+      )).build()
+
+    // Add an unsupported type change to the table schema. Only an implementation that isn't
+    // compliant with the feature specification would allow this.
+    deltaLog.withNewTransaction { txn =>
+      txn.commit(
+        Seq(txn.snapshot.metadata.copy(
+          schemaString = new StructType()
+            .add("a", StringType, nullable = true, metadata).json
+        )),
+        ManualUpdate)
+    }
+
+    checkError(
+      exception = intercept[DeltaIllegalStateException] {
+        readDeltaTable(tempPath).collect()
+      },
+      errorClass = "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
+      parameters = Map(
+        "fieldName" -> "a.element",
+        "fromType" -> "INT",
+        "toType" -> "STRING"
+      )
+    )
   }
 }

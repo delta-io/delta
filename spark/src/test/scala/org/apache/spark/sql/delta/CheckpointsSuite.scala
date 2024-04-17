@@ -25,10 +25,12 @@ import scala.concurrent.duration._
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
+import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
@@ -36,6 +38,7 @@ import org.apache.hadoop.fs.{FileStatus, FSDataOutputStream, Path, RawLocalFileS
 import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
@@ -45,7 +48,8 @@ class CheckpointsSuite
   extends QueryTest
   with SharedSparkSession
   with DeltaCheckpointTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with ManagedCommitBaseSuite {
 
   def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
     for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
@@ -404,7 +408,10 @@ class CheckpointsSuite
           // CDC should exist in the log as seen through getChanges, but it shouldn't be in the
           // snapshots and the checkpoint file shouldn't have a CDC column.
           val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
-          assert(deltaLog.getChanges(1).next()._2.exists(_.isInstanceOf[AddCDCFile]))
+          val deltaPath = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot)
+            .deltaFile(version = 1)
+          val deltaFileContent = deltaLog.store.read(deltaPath, deltaLog.newDeltaHadoopConf())
+          assert(deltaFileContent.map(Action.fromJson).exists(_.isInstanceOf[AddCDCFile]))
           assert(deltaLog.snapshot.stateDS.collect().forall { sa => sa.cdc == null })
           deltaLog.checkpoint()
           val checkpointFile = FileNames.checkpointFileSingular(deltaLog.logPath, 1)
@@ -458,7 +465,10 @@ class CheckpointsSuite
           // CDC should exist in the log as seen through getChanges, but it shouldn't be in the
           // snapshots and the checkpoint file shouldn't have a CDC column.
           val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
-          assert(deltaLog.getChanges(1).next()._2.exists(_.isInstanceOf[AddCDCFile]))
+          val deltaPath = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot)
+            .deltaFile(version = 1)
+          val deltaFileContent = deltaLog.store.read(deltaPath, deltaLog.newDeltaHadoopConf())
+          assert(deltaFileContent.map(Action.fromJson).exists(_.isInstanceOf[AddCDCFile]))
           assert(deltaLog.snapshot.stateDS.collect().forall { sa => sa.cdc == null })
           deltaLog.checkpoint()
           var sidecarCheckpointFiles = getV2CheckpointProvider(deltaLog).sidecarFileStatuses
@@ -572,7 +582,7 @@ class CheckpointsSuite
       // Delete the commit files 0-9, so that we are forced to read the checkpoint file
       val logPath = new Path(new File(target, "_delta_log").getAbsolutePath)
       for (i <- 0 to 10) {
-        val file = new File(FileNames.deltaFile(logPath, version = i).toString)
+        val file = new File(FileNames.unsafeDeltaFile(logPath, version = i).toString)
         file.delete()
       }
 
@@ -936,11 +946,74 @@ class CheckpointsSuite
       assert(filterUsageRecords(usageRecords2, "delta.log.cleanup").size > 0)
     }
   }
+}
 
-  protected def filterUsageRecords(
-      usageRecords: Seq[UsageRecord], opType: String): Seq[UsageRecord] = {
-    usageRecords.filter { r =>
-      r.tags.get("opType").contains(opType) || r.opType.map(_.typeName).contains(opType)
+class OverwriteTrackingLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
+  extends LocalLogStore(sparkConf, hadoopConf) {
+
+  var fileToOverwriteCount: Map[Path, Long] = Map[Path, Long]()
+
+  private var isPartialWriteVisibleBool: Boolean = false
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean =
+    isPartialWriteVisibleBool
+
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
+    val toAdd = if (overwrite) 1 else 0
+    fileToOverwriteCount += path -> (fileToOverwriteCount.getOrElse(path, 0L) + toAdd)
+    super.write(path, actions, overwrite, hadoopConf)
+  }
+
+  def clearCounts(): Unit = {
+    fileToOverwriteCount = Map[Path, Long]()
+  }
+
+  def setPartialWriteVisible(isPartialWriteVisibleBool: Boolean): Unit = {
+    this.isPartialWriteVisibleBool = isPartialWriteVisibleBool
+  }
+}
+
+class V2CheckpointManifestOverwriteSuite
+  extends QueryTest
+  with SharedSparkSession
+  with DeltaCheckpointTestUtils
+  with DeltaSQLCommandTest {
+  protected override def sparkConf = {
+    // Set the logStore to OverwriteTrackingLogStore.
+    super.sparkConf
+      .set("spark.delta.logStore.class", classOf[OverwriteTrackingLogStore].getName)
+      .set(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key, V2Checkpoint.Format.JSON.name)
+  }
+  for (isPartialWriteVisible <- BOOLEAN_DOMAIN)
+  test("v2 checkpoint manifest write should use the logstore.write(overwrite) API correctly " +
+      s"isPartialWriteVisible = $isPartialWriteVisible") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      // Create a simple table with V2 checkpoints enabled and json manifest.
+      spark.range(10).write.format("delta").save(tablePath)
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.CHECKPOINT_POLICY.key}' = 'v2')")
+      val store = deltaLog.store.asInstanceOf[OverwriteTrackingLogStore]
+
+      store.clearCounts()
+      store.setPartialWriteVisible(isPartialWriteVisible)
+      deltaLog.checkpoint()
+
+      val snapshot = deltaLog.update()
+      assert(snapshot.checkpointProvider.version == 1)
+      // Two writes will use logStore.write:
+      // 1. Checkpoint Manifest
+      // 2. LAST_CHECKPOINT.
+      assert(store.fileToOverwriteCount.size == 2)
+      val manifestWriteRecord = store.fileToOverwriteCount.find {
+        case (path, _) => FileNames.isCheckpointFile(path)
+      }.getOrElse(fail("expected checkpoint manifest write using logStore.write"))
+      val numOverwritesExpected = if (isPartialWriteVisible) 0 else 1
+      assert(manifestWriteRecord._2 == numOverwritesExpected)
     }
   }
 }
@@ -982,5 +1055,17 @@ class FakeGCSFileSystem extends RawLocalFileSystem {
     assertGCSThread(f)
     super.create(f, overwrite, bufferSize, replication, blockSize, progress)
   }
+}
+
+class ManagedCommitBatch1BackFillCheckpointsSuite extends CheckpointsSuite {
+  override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class ManagedCommitBatch2BackFillCheckpointsSuite extends CheckpointsSuite {
+  override val managedCommitBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class ManagedCommitBatch20BackFillCheckpointsSuite extends CheckpointsSuite {
+  override val managedCommitBackfillBatchSize: Option[Int] = Some(20)
 }
 

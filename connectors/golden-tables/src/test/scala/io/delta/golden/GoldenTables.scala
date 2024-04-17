@@ -1283,6 +1283,46 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       .save(tablePath)
   }
 
+  /* START: TIMESTAMP_NTZ golden tables */
+  def generateTimestampNtzTable(tablePath: String): Unit = {
+    spark.sql(
+      s"""
+         | CREATE TABLE delta.`$tablePath`(id INTEGER, tsNtz TIMESTAMP_NTZ, tsNtzPartition TIMESTAMP_NTZ)
+         | USING DELTA
+         | PARTITIONED BY(tsNtzPartition)
+    """.stripMargin)
+
+  spark.sql(
+      s"""
+         | INSERT INTO delta.`$tablePath` VALUES
+         |   (0, '2021-11-18 02:30:00.123456','2021-11-18 02:30:00.123456'),
+         |   (1, '2013-07-05 17:01:00.123456','2021-11-18 02:30:00.123456'),
+         |   (2, NULL,'2021-11-18 02:30:00.123456'),
+         |   (3, '2021-11-18 02:30:00.123456','2013-07-05 17:01:00.123456'),
+         |   (4, '2013-07-05 17:01:00.123456','2013-07-05 17:01:00.123456'),
+         |   (5, NULL,'2013-07-05 17:01:00.123456'),
+         |   (6, '2021-11-18 02:30:00.123456', NULL),
+         |   (7, '2013-07-05 17:01:00.123456', NULL),
+         |   (8, NULL, NULL)
+         |""".stripMargin)
+  }
+
+  generateGoldenTable("data-reader-timestamp_ntz") { tablePath =>
+    generateTimestampNtzTable(tablePath)
+  }
+
+  Seq("id", "name").foreach {
+    columnMappingMode => {
+      generateGoldenTable(s"data-reader-timestamp_ntz-$columnMappingMode-mode") { tablePath =>
+        withSQLConf(
+          ("spark.databricks.delta.properties.defaults.columnMapping.mode", columnMappingMode)) {
+          generateTimestampNtzTable(tablePath)
+        }
+      }
+    }
+  }
+  /* END: TIMESTAMP_NTZ golden tables */
+
   generateGoldenTable("basic-with-inserts-deletes-checkpoint") { tablePath =>
     // scalastyle:off line.size.limit
     spark.range(0, 10).repartition(1).write.format("delta").mode("append").save(tablePath)
@@ -1363,6 +1403,15 @@ class GoldenTables extends QueryTest with SharedSparkSession {
         spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id = ${n*7}")
       }
     }
+  }
+
+  generateGoldenTable("basic-with-vacuum-protocol-check-feature") { tablePath =>
+    val data = (0 until 100).map(x => (x, s"val=$x"))
+    data.toDF("id", "str").write.format("delta").save(tablePath)
+    sql(s"""
+         |ALTER TABLE delta.`$tablePath`
+         |SET TBLPROPERTIES('delta.feature.vacuumProtocolCheck' = 'supported')
+         |""".stripMargin)
   }
 
   generateGoldenTable("basic-with-inserts-updates") { tablePath =>

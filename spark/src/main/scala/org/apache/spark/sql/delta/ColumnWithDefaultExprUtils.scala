@@ -32,7 +32,7 @@ import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns._
 import org.apache.spark.sql.execution.QueryExecution
-import org.apache.spark.sql.execution.streaming.{IncrementalExecution, StreamExecution}
+import org.apache.spark.sql.execution.streaming.{IncrementalExecution, IncrementalExecutionShims, StreamExecution}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 
@@ -153,6 +153,17 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       }
     }
     selectExprs = selectExprs ++ cdcSelectExprs
+
+    val rowIdExprs = data.queryExecution.analyzed.output
+      .filter(RowId.RowIdMetadataAttribute.isRowIdColumn)
+      .map(new Column(_))
+    selectExprs = selectExprs ++ rowIdExprs
+
+    val rowCommitVersionExprs = data.queryExecution.analyzed.output
+      .filter(RowCommitVersion.MetadataAttribute.isRowCommitVersionColumn)
+      .map(new Column(_))
+    selectExprs = selectExprs ++ rowCommitVersionExprs
+
     val newData = queryExecution match {
       case incrementalExecution: IncrementalExecution =>
         selectFromStreamingDataFrame(incrementalExecution, data, selectExprs: _*)
@@ -210,18 +221,10 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       df: DataFrame,
       cols: Column*): DataFrame = {
     val newMicroBatch = df.select(cols: _*)
-    val newIncrementalExecution = new IncrementalExecution(
+    val newIncrementalExecution = IncrementalExecutionShims.newInstance(
       newMicroBatch.sparkSession,
       newMicroBatch.queryExecution.logical,
-      incrementalExecution.outputMode,
-      incrementalExecution.checkpointLocation,
-      incrementalExecution.queryId,
-      incrementalExecution.runId,
-      incrementalExecution.currentBatchId,
-      incrementalExecution.prevOffsetSeqMetadata,
-      incrementalExecution.offsetSeqMetadata,
-      incrementalExecution.watermarkPropagator
-    )
+      incrementalExecution)
     newIncrementalExecution.executedPlan // Force the lazy generation of execution plan
 
 

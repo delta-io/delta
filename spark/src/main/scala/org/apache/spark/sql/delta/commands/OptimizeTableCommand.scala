@@ -147,8 +147,6 @@ case class OptimizeTableCommand(
     }
 
     if (ClusteredTableUtils.isSupported(txn.protocol)) {
-      // Validate that the preview is enabled if we are optimizing a clustered table.
-      ClusteredTableUtils.validatePreviewEnabled(txn.snapshot.protocol)
       if (userPartitionPredicates.nonEmpty) {
         throw DeltaErrors.clusteringWithPartitionPredicatesException(userPartitionPredicates)
       }
@@ -239,7 +237,9 @@ class OptimizeExecutor(
 
   private val isClusteredTable = ClusteredTableUtils.isSupported(txn.snapshot.protocol)
 
-  private val isMultiDimClustering = isClusteredTable || zOrderByColumns.nonEmpty
+  private val isMultiDimClustering =
+    optimizeStrategy.isInstanceOf[ClusteringStrategy] ||
+    optimizeStrategy.isInstanceOf[ZOrderStrategy]
 
   private val clusteringColumns: Seq[String] = {
     if (zOrderByColumns.nonEmpty) {
@@ -490,7 +490,11 @@ class OptimizeExecutor(
     if (optimizeContext.reorg.nonEmpty) {
       DeltaOperations.Reorg(partitionPredicate)
     } else {
-      DeltaOperations.Optimize(partitionPredicate, clusteringColumns, auto = isAutoCompact)
+      DeltaOperations.Optimize(
+        predicate = partitionPredicate,
+        zOrderBy = zOrderByColumns,
+        auto = isAutoCompact,
+        clusterBy = if (isClusteredTable) Option(clusteringColumns).filter(_.nonEmpty) else None)
     }
   }
 

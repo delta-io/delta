@@ -26,7 +26,7 @@ import io.delta.tables.execution._
 import org.apache.spark.annotation._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, LogicalPlan, ReplaceTable}
+import org.apache.spark.sql.catalyst.plans.logical.{ColumnDefinitionShims, CreateTable, ReplaceTable}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.SQLExecution
@@ -305,7 +305,7 @@ class DeltaTableBuilder private[tables](
   @Evolving
   def execute(): DeltaTable = withActiveSession(spark) {
     if (identifier == null && location.isEmpty) {
-      throw DeltaErrors.analysisException("Table name or location has to be specified")
+      throw DeltaErrors.createTableMissingTableNameOrLocation()
     }
 
     if (this.identifier == null) {
@@ -317,9 +317,7 @@ class DeltaTableBuilder private[tables](
 
     if (DeltaTableUtils.isValidPath(tableId) && location.nonEmpty
         && tableId.table != location.get) {
-      throw DeltaErrors.analysisException(
-        s"Creating path-based Delta table with a different location isn't supported. "
-          + s"Identifier: $identifier, Location: ${location.get}")
+      throw DeltaErrors.createTableIdentifierLocationMismatch(identifier, location.get)
     }
 
     val table = spark.sessionState.sqlParser.parseMultipartIdentifier(identifier)
@@ -343,7 +341,8 @@ class DeltaTableBuilder private[tables](
         val unresolvedTable = org.apache.spark.sql.catalyst.analysis.UnresolvedIdentifier(table)
         CreateTable(
           unresolvedTable,
-          StructType(columns.toSeq),
+          // Callout: Spark 3.5 returns StructType, Spark 4.0 returns Seq[ColumnDefinition]
+          ColumnDefinitionShims.parseColumns(columns.toSeq, spark.sessionState.sqlParser),
           partitioning,
           tableSpec,
           ifNotExists)
@@ -351,7 +350,8 @@ class DeltaTableBuilder private[tables](
         val unresolvedTable = org.apache.spark.sql.catalyst.analysis.UnresolvedIdentifier(table)
         ReplaceTable(
           unresolvedTable,
-          StructType(columns.toSeq),
+          // Callout: Spark 3.5 returns StructType, Spark 4.0 returns Seq[ColumnDefinition]
+          ColumnDefinitionShims.parseColumns(columns.toSeq, spark.sessionState.sqlParser),
           partitioning,
           tableSpec,
           orCreate)
