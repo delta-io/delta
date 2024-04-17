@@ -890,10 +890,12 @@ class ManagedCommitSuite
       assert(!oldProtocol.readerAndWriterFeatures.contains(V2CheckpointTableFeature))
       val newProtocol =
         oldProtocol.copy(
-            minReaderVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
-            minWriterVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
-          .withReaderFeatures(Seq(V2CheckpointTableFeature.name))
-          .withWriterFeatures(Seq(ManagedCommitTableFeature.name))
+          minReaderVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
+          minWriterVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION,
+          readerFeatures =
+            Some(oldProtocol.readerFeatures.getOrElse(Set.empty) + V2CheckpointTableFeature.name),
+          writerFeatures =
+            Some(oldProtocol.writerFeatures.getOrElse(Set.empty) + ManagedCommitTableFeature.name))
       assert(cs.numRegisterTableCalled === 0)
       assert(cs.numCommitsCalled === 0)
 
