@@ -495,7 +495,7 @@ object IdentityColumnsTableFeature
   }
 }
 
-object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType")
+object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-dev")
     with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata, spark: SparkSession): Boolean = {
