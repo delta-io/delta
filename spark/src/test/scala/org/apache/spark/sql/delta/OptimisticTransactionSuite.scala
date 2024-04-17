@@ -890,4 +890,22 @@ class OptimisticTransactionSuite
       }
     }
   }
+
+  test("Append does not trigger snapshot state computation") {
+    withTempDir { tableDir =>
+      val df = Seq((1, 0), (2, 1)).toDF("key", "value")
+      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+      val preCommitSnapshot = deltaLog.update()
+      assert(!preCommitSnapshot.stateReconstructionTriggered)
+
+      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+      val postCommitSnapshot = deltaLog.update()
+      assert(!preCommitSnapshot.stateReconstructionTriggered)
+      assert(!postCommitSnapshot.stateReconstructionTriggered)
+    }
+  }
+
 }
