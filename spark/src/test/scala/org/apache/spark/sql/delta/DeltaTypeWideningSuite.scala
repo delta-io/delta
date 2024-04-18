@@ -701,7 +701,6 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
     expectedOutcome match {
       case ExpectedOutcome.SUCCESS =>
         dropFeature.run(spark)
-        dropFeature.run(spark)
       case ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE =>
         checkError(
           exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
