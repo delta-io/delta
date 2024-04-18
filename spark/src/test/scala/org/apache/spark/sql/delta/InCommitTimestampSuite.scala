@@ -967,7 +967,7 @@ class InCommitTimestampWithManagedCommitSuite
       val commitFileProvider = DeltaCommitFileProvider(deltaLog.update())
       val unbackfilledCommits =
         commitStore
-          .getCommits(deltaLog.logPath, 1)
+          .getCommits(1)
           .commits
           .map { commit => DeltaHistoryManager.Commit(commit.version, commit.commitTimestamp)}
       val commits = (Seq(commit0) ++ unbackfilledCommits).toList
