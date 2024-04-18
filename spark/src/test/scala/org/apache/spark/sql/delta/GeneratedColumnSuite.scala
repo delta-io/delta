@@ -729,7 +729,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
           "columnName" -> "c1",
           "columnType" -> "SMALLINT",
           "dataType" -> "INT",
-          "generatedColumns" -> "c2"
+          "generatedColumns" -> "c2 -> CAST(HASH(c1 + 32767s) AS SMALLINT)"
       ))
       checkAnswer(spark.table(table), Row(32767, 31349) :: Nil)
     }
@@ -766,13 +766,13 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
           "columnName" -> "a",
           "columnType" -> "SMALLINT",
           "dataType" -> "INT",
-          "generatedColumns" -> "c2"
+          "generatedColumns" -> "c2 -> CAST(HASH(a - 10s) AS SMALLINT)"
         )
       )
     }
   }
 
-  test("changing the type of nested field named the same as the generated column") {
+  test("changing the type of a nested field named the same as the generated column") {
     withTableName("disallow_column_type_evolution") { table =>
       createTable(table, None, "a INT, t STRUCT<gen: SMALLINT>, gen SMALLINT",
         Map("gen" -> "CAST(HASH(a - 10s) AS SMALLINT)"), Nil)
@@ -804,7 +804,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
           "columnName" -> "t",
           "columnType" -> "STRUCT<a: SMALLINT, b: SMALLINT>",
           "dataType" -> "STRUCT<a: SMALLINT, b: INT>",
-          "generatedColumns" -> "gen"
+          "generatedColumns" -> "gen -> CAST(HASH(t.a - 10s) AS SMALLINT)"
         )
       )
     }

@@ -92,7 +92,7 @@ trait AlterDeltaTableCommand extends DeltaCommand {
       sparkSession, columnParts, protocol, newMetadata.schema)
     if (dependentGenCols.nonEmpty) {
       throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
-        operationName, UnresolvedAttribute(columnParts).name, dependentGenCols.toList)
+        operationName, UnresolvedAttribute(columnParts).name, dependentGenCols)
     }
   }
 }

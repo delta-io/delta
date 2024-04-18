@@ -243,7 +243,7 @@ object ImplicitMetadataOperation {
         updateField.dataType
       ) =>
         val columnPath = fieldPath :+ currentField.name
-        // check if the column to change is referenced by check constraints
+        // check if the field to change is referenced by check constraints
         val dependentConstraints =
           Constraints.findDependentConstraints(sparkSession, columnPath, newMetadata)
         if (dependentConstraints.nonEmpty) {
@@ -254,7 +254,7 @@ object ImplicitMetadataOperation {
             dependentConstraints
           )
         }
-        // check if the column to change is referenced by any generated columns
+        // check if the field to change is referenced by any generated columns
         val dependentGenCols = SchemaUtils.findDependentGeneratedColumns(
           sparkSession, columnPath, protocol, newMetadata.schema)
         if (dependentGenCols.nonEmpty) {
@@ -265,7 +265,9 @@ object ImplicitMetadataOperation {
             dependentGenCols
           )
         }
-      currentField
+      // We don't transform the schema but just perform checks, the returned field won't be used
+      // anyway.
+      updateField
     case (_, field, _, _) => field
   }
 }

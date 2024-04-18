@@ -1717,6 +1717,17 @@ trait DeltaErrorsBase
       errorClass = "DELTA_INVALID_GENERATED_COLUMN_REFERENCES", Array.empty, cause = Some(e))
   }
 
+  def generatedColumnsUpdateColumnType(current: StructField, update: StructField): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_GENERATED_COLUMN_UPDATE_TYPE_MISMATCH",
+      messageParameters = Array(
+        s"${current.name}",
+        s"${current.dataType.sql}",
+        s"${update.dataType.sql}"
+      )
+    )
+  }
+
   def generatedColumnsUDF(expr: Expression): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UDF_IN_GENERATED_COLUMN",
@@ -1757,14 +1768,14 @@ trait DeltaErrorsBase
       columnPath: Seq[String],
       columnType: DataType,
       dataType: DataType,
-      fields: Seq[StructField]): Throwable = {
+      generatedColumns: Map[String, String]): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
       messageParameters = Array(
         SchemaUtils.prettyFieldName(columnPath),
         columnType.sql,
         dataType.sql,
-        fields.map(_.name).mkString("\n"))
+        generatedColumns.mkString("\n"))
     )
   }
 
@@ -2099,10 +2110,10 @@ trait DeltaErrorsBase
   def foundViolatingGeneratedColumnsForColumnChange(
       operation: String,
       columnName: String,
-      fields: Seq[StructField]): Throwable = {
+      generatedColumns: Map[String, String]): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
-      messageParameters = Array(operation, columnName, fields.map(_.name).mkString("\n"))
+      messageParameters = Array(operation, columnName, generatedColumns.mkString("\n"))
     )
   }
 

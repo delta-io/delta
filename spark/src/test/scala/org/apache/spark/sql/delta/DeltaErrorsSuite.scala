@@ -540,6 +540,18 @@ trait DeltaErrorsSuiteBase
         "another generated column"))
     }
     {
+      val current = StructField("c0", IntegerType)
+      val update = StructField("c0", StringType)
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.generatedColumnsUpdateColumnType(current, update)
+      }
+      checkErrorMessage(e, Some("DELTA_GENERATED_COLUMN_UPDATE_TYPE_MISMATCH"), Some("42K09"),
+        Some(
+        s"Column ${current.name} is a generated column or a column used by a generated column. " +
+        s"The data type is ${current.dataType.sql} and cannot be converted to data type " +
+        s"${update.dataType.sql}"))
+    }
+    {
       val e = intercept[DeltaColumnMappingUnsupportedException] {
         throw DeltaErrors.changeColumnMappingModeNotSupported(oldMode = "old", newMode = "new")
       }
@@ -1460,14 +1472,17 @@ trait DeltaErrorsSuiteBase
             columnPath = Seq("a", "x"),
             columnType = ByteType,
             dataType = IntegerType,
-            fields = Seq(StructField("gen1", ByteType), StructField("gen2", DoubleType)))
+            generatedColumns = Map(
+              "gen1" -> "a . x + 1",
+              "gen2" -> "3 + a . x"
+            ))
         },
         errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a.x",
           "columnType" -> "TINYINT",
           "dataType" -> "INT",
-          "generatedColumns" -> "gen1\ngen2"
+          "generatedColumns" -> "gen1 -> a . x + 1\ngen2 -> 3 + a . x"
       ))
     }
     {
@@ -2999,7 +3014,9 @@ trait DeltaErrorsSuiteBase
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
-          "UPDATE", "col1", Seq(StructField("col2", IntegerType)))
+          operation = "UPDATE",
+          columnName = "col1",
+          generatedColumns = Map("col2" -> "col1 + 1", "col3" -> "col1 + 2"))
       }
       checkErrorMessage(
         e,
@@ -3008,7 +3025,8 @@ trait DeltaErrorsSuiteBase
         Some(
           s"""Cannot UPDATE column col1 because this column is referenced by the following
              |generated column(s):
-             |col2""".stripMargin)
+             |col2 -> col1 + 1
+             |col3 -> col1 + 2""".stripMargin)
       )
     }
     {

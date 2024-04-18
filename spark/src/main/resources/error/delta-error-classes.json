@@ -1024,6 +1024,12 @@
     ],
     "sqlState" : "42K09"
   },
+  "DELTA_GENERATED_COLUMN_UPDATE_TYPE_MISMATCH" : {
+    "message" : [
+      "Column <currentName> is a generated column or a column used by a generated column. The data type is <currentDataType> and cannot be converted to data type <updateDataType>"
+    ],
+    "sqlState" : "42K09"
+  },
   "DELTA_ICEBERG_COMPAT_VIOLATION" : {
     "message" : [
       "The validation of IcebergCompatV<version> has failed."

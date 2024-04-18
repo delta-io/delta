@@ -52,7 +52,7 @@ class DeltaTypeWideningSuite
     with DeltaTypeWideningNestedFieldsTests
     with DeltaTypeWideningMetadataTests
     with DeltaTypeWideningTableFeatureTests
-    with DeltaTypeWideningCheckConstraintsTests
+    with DeltaTypeWideningConstraintsTests
     with DeltaTypeWideningGeneratedColumnTests
 
 /**
@@ -984,7 +984,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
   }
 }
 
-trait DeltaTypeWideningCheckConstraintsTests {
+trait DeltaTypeWideningConstraintsTests {
   self: QueryTest with SharedSparkSession =>
 
   test("check constraint with type change") {
@@ -1042,7 +1042,7 @@ trait DeltaTypeWideningCheckConstraintsTests {
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         checkError(
           exception = intercept[DeltaAnalysisException] {
-            sql("INSERT INTO t VALUES (4)")
+            sql("INSERT INTO t VALUES (200)")
           },
           errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
           parameters = Map(
@@ -1065,7 +1065,7 @@ trait DeltaTypeWideningCheckConstraintsTests {
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         checkError(
           exception = intercept[DeltaAnalysisException] {
-            sql("INSERT INTO t (a) VALUES (named_struct('x', 2, 'y', CAST(5 AS byte)))")
+            sql("INSERT INTO t (a) VALUES (named_struct('x', 200, 'y', CAST(5 AS byte)))")
           },
           errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
           parameters = Map(
@@ -1079,7 +1079,7 @@ trait DeltaTypeWideningCheckConstraintsTests {
         // generated column.
         checkError(
           exception = intercept[DeltaAnalysisException] {
-            sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 5))")
+            sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 500))")
           },
           errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
           parameters = Map(
@@ -1117,7 +1117,7 @@ trait DeltaTypeWideningGeneratedColumnTests extends GeneratedColumnTest {
         parameters = Map(
           "operation" -> "change",
           "columnName" -> "a",
-          "generatedColumns" -> "gen"
+          "generatedColumns" -> "gen -> hash(a)"
         ))
     }
   }
@@ -1142,7 +1142,7 @@ trait DeltaTypeWideningGeneratedColumnTests extends GeneratedColumnTest {
         parameters = Map(
           "operation" -> "change",
           "columnName" -> "a.x",
-          "generatedColumns" -> "gen"
+          "generatedColumns" -> "gen -> hash(a.x)"
         ))
 
         // Changing the type of a.y is allowed since it's not referenced by the CHECK constraint.
@@ -1166,14 +1166,14 @@ trait DeltaTypeWideningGeneratedColumnTests extends GeneratedColumnTest {
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         checkError(
         exception = intercept[DeltaAnalysisException] {
-          sql("INSERT INTO t (a) VALUES (1)")
+          sql("INSERT INTO t (a) VALUES (200)")
         },
         errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a",
           "columnType" -> "TINYINT",
           "dataType" -> "INT",
-          "generatedColumns" -> "gen"
+          "generatedColumns" -> "gen -> hash(a)"
         ))
       }
     }
@@ -1194,28 +1194,28 @@ trait DeltaTypeWideningGeneratedColumnTests extends GeneratedColumnTest {
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         checkError(
           exception = intercept[DeltaAnalysisException] {
-            sql("INSERT INTO t (a) VALUES (named_struct('x', 2, 'y', CAST(5 AS byte)))")
+            sql("INSERT INTO t (a) VALUES (named_struct('x', 200, 'y', CAST(5 AS byte)))")
           },
           errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
           parameters = Map(
             "columnName" -> "a",
             "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
             "dataType" -> "STRUCT<x: INT, y: TINYINT>",
-            "generatedColumns" -> "gen"
+            "generatedColumns" -> "gen -> hash(a.x)"
         ))
 
         // Changing the type of a.y isn't allowed even though it's not the field referenced by the
         // generated column.
         checkError(
           exception = intercept[DeltaAnalysisException] {
-            sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 5))")
+            sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 200))")
           },
           errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
           parameters = Map(
             "columnName" -> "a",
             "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
             "dataType" -> "STRUCT<x: TINYINT, y: INT>",
-            "generatedColumns" -> "gen"
+            "generatedColumns" -> "gen -> hash(a.x)"
         ))
       }
     }
