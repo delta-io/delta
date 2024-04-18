@@ -649,18 +649,32 @@ trait DeltaTypeWideningStatsTests {
   import testImplicits._
 
   /**
-   * Helper to run tests while enabling/disabling storing stats as JSON string or strongly-typed
-   * structs in checkpoint files.
+   * Helper to create a table and run tests while enabling/disabling storing stats as JSON string or
+   * strongly-typed structs in checkpoint files. Creates a
    */
-  def testStats(name: String, jsonStatsEnabled: Boolean, structStatsEnabled: Boolean)(
+  def testStats(
+      name: String,
+      partitioned: Boolean,
+      jsonStatsEnabled: Boolean,
+      structStatsEnabled: Boolean)(
       body: => Unit): Unit =
-    test(s"$name, jsonStatsEnabled=$jsonStatsEnabled, structStatsEnabled=$structStatsEnabled") {
+    test(s"$name, partitioned=$partitioned, jsonStatsEnabled=$jsonStatsEnabled, " +
+        s"structStatsEnabled=$structStatsEnabled") {
       withSQLConf(
         DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.defaultTablePropertyKey ->
           jsonStatsEnabled.toString,
         DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.defaultTablePropertyKey ->
           structStatsEnabled.toString
-      )(body)
+      ) {
+        val partitionStr = if (partitioned) "PARTITIONED BY (a)" else ""
+        sql(s"""
+            |CREATE TABLE delta.`$tempPath` (a smallint, dummy int DEFAULT 1)
+            |USING DELTA
+            |$partitionStr
+            |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')
+          """.stripMargin)
+        body
+      }
     }
 
   /** Returns the latest checkpoint for the test table. */
@@ -707,8 +721,9 @@ trait DeltaTypeWideningStatsTests {
   /**
    * Reads the test table filtered by the given value and checks that files are skipped as expected.
    */
-  def checkFileSkipping(value: Any, expectedFilesRead: Long): Unit = {
-    val dataFilter: Expression = EqualTo(AttributeReference("a", IntegerType)(), Literal(value))
+  def checkFileSkipping(filterValue: Any, expectedFilesRead: Long): Unit = {
+    val dataFilter: Expression =
+      EqualTo(AttributeReference("a", IntegerType)(), Literal(filterValue))
     val files = deltaLog.update().filesForScan(Seq(dataFilter), keepNumRecords = false).files
     assert(files.size === expectedFilesRead, s"Expected $expectedFilesRead files to be " +
       s"read but read ${files.size} files.")
@@ -719,16 +734,7 @@ trait DeltaTypeWideningStatsTests {
     jsonStatsEnabled <- BOOLEAN_DOMAIN
     structStatsEnabled <- BOOLEAN_DOMAIN
   }
-  testStats(s"data skipping after type change, partitioned=$partitioned", jsonStatsEnabled,
-      structStatsEnabled) {
-    val partitionStr = if (partitioned) "PARTITIONED BY (a)" else ""
-    sql(s"""
-        |CREATE TABLE delta.`$tempPath` (a smallint, dummy int DEFAULT 1)
-        |USING DELTA
-        |$partitionStr
-        |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')
-      """.stripMargin)
-
+  testStats(s"data skipping after type change", partitioned, jsonStatsEnabled, structStatsEnabled) {
     addSingleFile(Seq(1), ShortType)
     addSingleFile(Seq(2), ShortType)
     deltaLog.checkpoint()
@@ -748,10 +754,10 @@ trait DeltaTypeWideningStatsTests {
 
     // The last file added isn't part of the checkpoint, it always has stats that can be used for
     // skipping even when checkpoint stats can't be used for skipping.
-    checkFileSkipping(value = 1, if (canSkipFiles) 1 else 2)
+    checkFileSkipping(filterValue = 1, expectedFilesRead = if (canSkipFiles) 1 else 2)
     checkAnswer(readDeltaTable(tempPath).filter("a = 1"), Row(1, 1))
 
-    checkFileSkipping(value = Int.MinValue, if (canSkipFiles) 1 else 3)
+    checkFileSkipping(filterValue = Int.MinValue, expectedFilesRead = if (canSkipFiles) 1 else 3)
     checkAnswer(readDeltaTable(tempPath).filter(s"a = ${Int.MinValue}"), Row(Int.MinValue, 1))
 
     // Trigger a new checkpoint after the type change and re-check data skipping.
@@ -761,8 +767,8 @@ trait DeltaTypeWideningStatsTests {
     checkCheckpointStats(
       checkpoint, "a", IntegerType, partitioned, jsonStatsEnabled, structStatsEnabled)
     // When checkpoint stats are completely disabled, the last file added can't be skipped anymore.
-    checkFileSkipping(value = 1, if (canSkipFiles) 1 else 3)
-    checkFileSkipping(value = Int.MinValue, if (canSkipFiles) 1 else 3)
+    checkFileSkipping(filterValue = 1, expectedFilesRead = if (canSkipFiles) 1 else 3)
+    checkFileSkipping(filterValue = Int.MinValue, expectedFilesRead = if (canSkipFiles) 1 else 3)
   }
 
   for {
@@ -770,16 +776,7 @@ trait DeltaTypeWideningStatsTests {
     jsonStatsEnabled <- BOOLEAN_DOMAIN
     structStatsEnabled <- BOOLEAN_DOMAIN
   }
-  testStats(s"metadata-only query, partitioned=$partitioned", jsonStatsEnabled,
-      structStatsEnabled) {
-    val partitionStr = if (partitioned) "PARTITIONED BY (a)" else ""
-    sql(s"""
-        |CREATE TABLE delta.`$tempPath` (a smallint, dummy int DEFAULT 1)
-        |USING DELTA
-        |$partitionStr
-        |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')
-      """.stripMargin)
-
+  testStats(s"metadata-only query", partitioned, jsonStatsEnabled, structStatsEnabled) {
     addSingleFile(Seq(1), ShortType)
     addSingleFile(Seq(2), ShortType)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
