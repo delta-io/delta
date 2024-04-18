@@ -211,7 +211,7 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
 
     recordDeltaEvent(
       table.deltaLog,
-      opType = "delta.typeWidening.featureRemovalMetrics",
+      opType = "delta.typeWidening.featureRemoval",
       data = Map(
         "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
         "numFilesRewritten" -> numFilesRewritten,

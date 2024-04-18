@@ -148,12 +148,11 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
         opType = "delta.typeWidening.typeChanges",
         data = Map(
           "changes" -> changesToRecord.map { change =>
-          Map(
-            "fromType" -> change.fromType.sql,
-            "toType" -> change.toType.sql
-          )
-        }
-      ))
+            Map(
+              "fromType" -> change.fromType.sql,
+              "toType" -> change.toType.sql)
+          }
+        ))
     }
     schemaWithMetadata
   }
