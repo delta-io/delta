@@ -610,6 +610,7 @@ trait TestUtils extends Assertions with SQLHelper {
       case BinaryType.BINARY => sparktypes.DataTypes.BinaryType
       case DateType.DATE => sparktypes.DataTypes.DateType
       case TimestampType.TIMESTAMP => sparktypes.DataTypes.TimestampType
+      case TimestampNTZType.TIMESTAMP_NTZ => sparktypes.DataTypes.TimestampNTZType
       case dt: DecimalType =>
         sparktypes.DecimalType(dt.getPrecision, dt.getScale)
       case at: ArrayType =>

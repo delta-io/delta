@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.concurrent.TimeUnit
 
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -299,6 +300,23 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
     checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3), Row(4)))
   }
 
+  test("type widening type change metrics") {
+    sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
+    val usageLogs = Log4jUsageLogger.track {
+      sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
+    }
+
+    val metrics = filterUsageRecords(usageLogs, "delta.typeWidening.typeChanges")
+      .map(r => JsonUtils.fromJson[Map[String, Seq[Map[String, String]]]](r.blob))
+      .head
+
+    assert(metrics("changes") === Seq(
+      Map(
+        "fromType" -> "TINYINT",
+        "toType" -> "INT"
+      ))
+    )
+  }
 }
 
 /**
@@ -1015,5 +1033,28 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
         "toType" -> "STRING"
       )
     )
+  }
+
+  test("type widening rewrite metrics") {
+    sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
+    addSingleFile(Seq(1, 2, 3), ByteType)
+    addSingleFile(Seq(4, 5, 6), ByteType)
+    sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
+    // Update a row from the second file to rewrite it. Only the first file still contains the old
+    // data type after this.
+    sql(s"UPDATE delta.`$tempDir` SET a = a + 10 WHERE a < 4")
+    val usageLogs = Log4jUsageLogger.track {
+      dropTableFeature(ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE)
+    }
+
+    val metrics = filterUsageRecords(usageLogs, "delta.typeWidening.featureRemoval")
+      .map(r => JsonUtils.fromJson[Map[String, String]](r.blob))
+      .head
+
+    assert(metrics("downgradeTimeMs").toLong > 0L)
+    // Only the first file should get rewritten here since the second file was already rewritten
+    // during the UPDATE.
+    assert(metrics("numFilesRewritten").toLong === 1L)
+    assert(metrics("metadataRemoved").toBoolean)
   }
 }

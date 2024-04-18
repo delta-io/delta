@@ -25,6 +25,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
+import org.apache.spark.sql.delta.managedcommit.{CommitStoreProvider, ManagedCommitBaseSuite, TrackingInMemoryCommitStoreBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
@@ -37,7 +38,8 @@ import org.apache.spark.util.{ManualClock, SerializableConfiguration, ThreadUtil
 class InCommitTimestampSuite
   extends QueryTest
     with SharedSparkSession
-    with DeltaSQLCommandTest {
+    with DeltaSQLCommandTest
+    with DeltaTestUtilsBase {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -51,12 +53,6 @@ class InCommitTimestampSuite
       deltaFile,
       deltaLog.newDeltaHadoopConf())
     commitInfo.get.inCommitTimestamp.get
-  }
-
-  def filterUsageRecords(usageRecords: Seq[UsageRecord], opType: String): Seq[UsageRecord] = {
-    usageRecords.filter { r =>
-      r.tags.get("opType").contains(opType) || r.opType.map(_.typeName).contains(opType)
-    }
   }
 
   test("Enable ICT on commit 0") {
@@ -151,11 +147,11 @@ class InCommitTimestampSuite
         DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
       // Remove CommitInfo from the commit.
-      val actions = deltaLog.store.readAsIterator(
-        FileNames.unsafeDeltaFile(deltaLog.logPath, 1), deltaLog.newDeltaHadoopConf())
+      val commit1Path = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(1)
+      val actions = deltaLog.store.readAsIterator(commit1Path, deltaLog.newDeltaHadoopConf())
       val actionsWithoutCommitInfo = actions.filterNot(Action.fromJson(_).isInstanceOf[CommitInfo])
       deltaLog.store.write(
-        FileNames.unsafeDeltaFile(deltaLog.logPath, 1),
+        commit1Path,
         actionsWithoutCommitInfo,
         overwrite = true,
         deltaLog.newDeltaHadoopConf())
@@ -182,8 +178,9 @@ class InCommitTimestampSuite
         DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
       // Remove CommitInfo.commitTimestamp from the commit.
+      val commit1Path = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(1)
       val actions = deltaLog.store.readAsIterator(
-        FileNames.unsafeDeltaFile(deltaLog.logPath, 1),
+        commit1Path,
         deltaLog.newDeltaHadoopConf()).toList
       val actionsWithoutCommitInfoCommitTimestamp =
         actions.map(Action.fromJson).map {
@@ -193,7 +190,7 @@ class InCommitTimestampSuite
             other.json
         }.toIterator
       deltaLog.store.write(
-        FileNames.unsafeDeltaFile(deltaLog.logPath, 1),
+        commit1Path,
         actionsWithoutCommitInfoCommitTimestamp,
         overwrite = true,
         deltaLog.newDeltaHadoopConf())
@@ -419,11 +416,11 @@ class InCommitTimestampSuite
         DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
       // Remove CommitInfo from the commit.
-      val actions = deltaLog.store.readAsIterator(
-        FileNames.unsafeDeltaFile(deltaLog.logPath, 1), deltaLog.newDeltaHadoopConf())
+      val commit1Path = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(1)
+      val actions = deltaLog.store.readAsIterator(commit1Path, deltaLog.newDeltaHadoopConf())
       val actionsWithoutCommitInfo = actions.filterNot(Action.fromJson(_).isInstanceOf[CommitInfo])
       deltaLog.store.write(
-        FileNames.unsafeDeltaFile(deltaLog.logPath, 1),
+        commit1Path,
         actionsWithoutCommitInfo,
         overwrite = true,
         deltaLog.newDeltaHadoopConf())
@@ -943,3 +940,72 @@ class InCommitTimestampSuite
   }
 }
 
+class InCommitTimestampWithManagedCommitSuite
+  extends InCommitTimestampSuite
+    with ManagedCommitBaseSuite {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey, "true")
+  }
+
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(5)
+
+  test("getActiveCommitAtTime works correctly within managed commit range") {
+    CommitStoreProvider.clearNonDefaultBuilders()
+    val builder = TrackingInMemoryCommitStoreBuilder(batchSize = 10)
+    CommitStoreProvider.registerBuilder(builder)
+    withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+      val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val commit0 = DeltaHistoryManager.Commit(0, deltaLog.snapshot.timestamp)
+      val commitStore = deltaLog.snapshot.commitStoreOpt.get
+      val numberAdditionalCommits = 4
+      // Create 4 unbackfilled commits.
+      for (i <- 1 to numberAdditionalCommits) {
+        deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
+      }
+      val commitFileProvider = DeltaCommitFileProvider(deltaLog.update())
+      val unbackfilledCommits =
+        commitStore
+          .getCommits(deltaLog.logPath, 1)
+          .commits
+          .map { commit => DeltaHistoryManager.Commit(commit.version, commit.commitTimestamp)}
+      val commits = (Seq(commit0) ++ unbackfilledCommits).toList
+      // Search for the exact timestamp.
+      for (commit <- commits) {
+        val resCommit = deltaLog.history.getActiveCommitAtTime(
+          new Timestamp(commit.timestamp), canReturnLastCommit = false)
+        assert(resCommit.version == commit.version)
+        assert(resCommit.timestamp == commit.timestamp)
+      }
+
+      // getActiveCommitAtTimeFromICTRange should throw an IllegalStateException
+      // if it does not manage to find an unbackfilled commit.
+
+      // Delete the target unbackfilled commit:
+      val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+      val commit3Path = commitFileProvider.deltaFile(3)
+      fs.delete(commit3Path, false)
+      val commit3Timestamp = unbackfilledCommits(2).timestamp
+      var errorOpt = Option.empty[org.apache.spark.SparkException]
+      try {
+        DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          commit3Timestamp,
+          commit0,
+          numberAdditionalCommits + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 5,
+          spark,
+          commitFileProvider)
+      } catch {
+        case e: org.apache.spark.SparkException => errorOpt = Some(e)
+          e.getStackTrace.exists(_.toString.contains(
+            s"Could not find commit 3 which was expected to be at " +
+              s"path ${commit3Path.toString}."))
+      }
+      assert(errorOpt.isDefined)
+    }
+  }
+}

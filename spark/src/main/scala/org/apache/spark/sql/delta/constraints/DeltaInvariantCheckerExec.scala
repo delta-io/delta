@@ -103,10 +103,10 @@ case class DeltaInvariantCheckerExec(
 object DeltaInvariantCheckerExec {
 
   // Specialized optimizer to run necessary rules so that the check expressions can be evaluated.
-  object DeltaInvariantCheckerOptimizer extends RuleExecutor[LogicalPlan] {
-    final override protected def batches = Seq(
-      Batch("Finish Analysis", Once, ReplaceExpressions)
-    )
+  object DeltaInvariantCheckerOptimizer
+      extends RuleExecutor[LogicalPlan]
+      with DeltaInvariantCheckerOptimizerShims {
+    final override protected def batches = DELTA_INVARIANT_CHECKER_OPTIMIZER_BATCHES
   }
 
   /** Build the extractor for a particular column. */
