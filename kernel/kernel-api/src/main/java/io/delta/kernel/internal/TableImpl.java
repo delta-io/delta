@@ -18,6 +18,8 @@ package io.delta.kernel.internal;
 import java.io.IOException;
 
 import io.delta.kernel.*;
+import io.delta.kernel.TableNotFoundException;
+import io.delta.kernel.TransactionBuilder;
 import io.delta.kernel.client.TableClient;
 
 import io.delta.kernel.internal.fs.Path;
@@ -70,5 +72,21 @@ public class TableImpl implements Table {
     public void checkpoint(TableClient tableClient, long version)
             throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
         snapshotManager.checkpoint(tableClient, version);
+    }
+
+    @Override
+    public TransactionBuilder createTransactionBuilder(
+            TableClient tableClient,
+            String engineInfo,
+            String operation) {
+        return new TransactionBuilderImpl(this, engineInfo, operation);
+    }
+
+    protected Path getDataPath() {
+        return new Path(tablePath);
+    }
+
+    protected Path getLogPath() {
+        return new Path(tablePath, "_delta_log");
     }
 }

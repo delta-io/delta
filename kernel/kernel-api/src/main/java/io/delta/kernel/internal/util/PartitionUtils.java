@@ -112,6 +112,56 @@ public class PartitionUtils {
     }
 
     /**
+     * Convert the given partition values to a {@link MapValue} that can be serialized to a Delta
+     * commit file.
+     *
+     * @param partitionValueMap
+     * @return
+     */
+    public static MapValue serializePartitionMap(Map<String, Literal> partitionValueMap) {
+        if (partitionValueMap == null || partitionValueMap.size() == 0) {
+            return VectorUtils.stringStringMapValue(Collections.emptyMap());
+        }
+
+        Map<String, String> serializedPartValues =
+                partitionValueMap.entrySet().stream().map(entry -> {
+                    String partColName = entry.getKey();
+                    Literal partValue = entry.getValue();
+
+                    if (partValue == null) {
+                        return new Tuple2<>(partColName, (String) null);
+                    } else {
+                        return new Tuple2<>(partColName, serializePartitionValue(partValue));
+                    }
+                }).collect(Collectors.toMap(
+                    tuple2 -> tuple2._1,
+                    tuple2 -> tuple2._2
+                ));
+
+        return VectorUtils.stringStringMapValue(serializedPartValues);
+    }
+
+    /**
+     * Validate {@code partitionValues} contains values for every partition column.
+     *
+     * @param partitionColumns List of partition columns
+     * @param partitionValues  Map of partition column to value map.
+     */
+    public static void validatePartitionValues(
+            List<String> partitionColumns,
+            Map<String, Literal> partitionValues) {
+        Set<String> partitionColNames = new HashSet<>(partitionColumns);
+        Set<String> partitionValueColNames = partitionValues.keySet();
+        if (!partitionColNames.equals(partitionValueColNames)) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Partition values provided are not matching the partition columns. " +
+                                    "Partition columns: %s, Partition values: %s",
+                            partitionColNames, partitionValueColNames));
+        }
+    }
+
+    /**
      * Split the given predicate into predicate on partition columns and predicate on data columns.
      *
      * @param predicate

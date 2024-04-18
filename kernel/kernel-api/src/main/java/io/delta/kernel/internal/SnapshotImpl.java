@@ -28,13 +28,14 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.snapshot.SnapshotHint;
 import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
+
 
 /**
  * Implementation of {@link Snapshot}.
  */
 public class SnapshotImpl implements Snapshot {
+    private final Path logPath;
     private final Path dataPath;
     private final long version;
     private final LogReplay logReplay;
@@ -45,23 +46,17 @@ public class SnapshotImpl implements Snapshot {
     public SnapshotImpl(
             Path logPath,
             Path dataPath,
-            long version,
             LogSegment logSegment,
-            TableClient tableClient,
-            long timestamp,
-            Optional<SnapshotHint> snapshotHint) {
+            LogReplay logReplay,
+            Protocol protocol,
+            Metadata metadata) {
+        this.logPath = logPath;
         this.dataPath = dataPath;
-        this.version = version;
+        this.version = logSegment.version;
         this.logSegment = logSegment;
-        this.logReplay = new LogReplay(
-            logPath,
-            dataPath,
-            version,
-            tableClient,
-            logSegment,
-            snapshotHint);
-        this.protocol = logReplay.getProtocol();
-        this.metadata = logReplay.getMetadata();
+        this.logReplay = logReplay;
+        this.protocol = protocol;
+        this.metadata = metadata;
     }
 
     @Override
@@ -121,5 +116,13 @@ public class SnapshotImpl implements Snapshot {
 
     public LogSegment getLogSegment() {
         return logSegment;
+    }
+
+    public Path getLogPath() {
+        return logPath;
+    }
+
+    public Path getDataPath() {
+        return dataPath;
     }
 }

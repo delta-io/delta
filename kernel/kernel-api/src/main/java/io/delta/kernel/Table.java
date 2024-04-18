@@ -115,6 +115,21 @@ public interface Table {
         throws TableNotFoundException;
 
     /**
+     * Create a {@link TransactionBuilder} which can create a {@link Transaction} object to mutate
+     * the table.
+     *
+     * @param tableClient {@link TableClient} instance to use.
+     * @param engineInfo  information about the engine that is making the updates.
+     * @param operation   metadata of operation that is being performed. E.g. "insert", "delete".
+     * @return {@link TransactionBuilder} instance to build the transaction.
+     * @since 3.2.0
+     */
+    TransactionBuilder createTransactionBuilder(
+            TableClient tableClient,
+            String engineInfo,
+            String operation);
+
+    /**
      * Checkpoint the table at given version. It writes a single checkpoint file.
      *
      * @param tableClient {@link TableClient} instance to use.

@@ -109,6 +109,12 @@ trait TestUtils extends Assertions with SQLHelper {
     }
   }
 
+  implicit class FilteredColumnarBatchOps(batch: FilteredColumnarBatch) {
+    def toTestRows: Seq[TestRow] = {
+      batch.getRows.toSeq.map(TestRow(_))
+    }
+  }
+
   implicit class ColumnOps(column: Column) {
     def toPath: String = column.getNames.mkString(".")
   }

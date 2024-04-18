@@ -17,8 +17,7 @@ package io.delta.kernel.internal.actions;
 
 import java.util.*;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.*;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
@@ -103,9 +102,14 @@ public class Protocol {
         Map<Integer, Object> protocolMap = new HashMap<>();
         protocolMap.put(0, minReaderVersion);
         protocolMap.put(1, minWriterVersion);
-        protocolMap.put(2, readerFeatures == null ? null : stringArrayValue(readerFeatures));
-        protocolMap.put(3, writerFeatures == null ? null : stringArrayValue(writerFeatures));
+        protocolMap.put(2, arrayValue(readerFeatures));
+        protocolMap.put(3, arrayValue(writerFeatures));
 
         return new GenericRow(Protocol.FULL_SCHEMA, protocolMap);
+    }
+
+    private static ArrayValue arrayValue(List<String> values) {
+        // don't write empty array.
+        return values == null || values.isEmpty() ? null : stringArrayValue(values);
     }
 }
