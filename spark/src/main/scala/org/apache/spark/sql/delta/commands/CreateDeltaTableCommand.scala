@@ -103,7 +103,7 @@ case class CreateDeltaTableCommand(
       table
     }
 
-    val tableLocation = new Path(tableWithLocation.location)
+    val tableLocation = getDeltaTablePath(tableWithLocation)
     val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
@@ -120,7 +120,7 @@ case class CreateDeltaTableCommand(
       tableWithLocation: CatalogTable): Seq[Row] = {
     val tableExistsInCatalog = existingTableOpt.isDefined
     val hadoopConf = deltaLog.newDeltaHadoopConf()
-    val tableLocation = new Path(tableWithLocation.location)
+    val tableLocation = getDeltaTablePath(tableWithLocation)
     val fs = tableLocation.getFileSystem(hadoopConf)
 
     def checkPathEmpty(txn: OptimisticTransaction): Unit = {
@@ -290,7 +290,7 @@ case class CreateDeltaTableCommand(
       hadoopConf: Configuration): Unit = {
 
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
-    val tableLocation = new Path(tableWithLocation.location)
+    val tableLocation = getDeltaTablePath(tableWithLocation)
     val tableExistsInCatalog = existingTableOpt.isDefined
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
 
@@ -410,7 +410,7 @@ case class CreateDeltaTableCommand(
   private def assertPathEmpty(
       hadoopConf: Configuration,
       tableWithLocation: CatalogTable): Unit = {
-    val path = new Path(tableWithLocation.location)
+    val path = getDeltaTablePath(tableWithLocation)
     val fs = path.getFileSystem(hadoopConf)
     // Verify that the table location associated with CREATE TABLE doesn't have any data. Note that
     // we intentionally diverge from this behavior w.r.t regular datasource tables (that silently
@@ -418,7 +418,7 @@ case class CreateDeltaTableCommand(
     if (fs.exists(path) && fs.listStatus(path).nonEmpty) {
       throw DeltaErrors.createTableWithNonEmptyLocation(
         tableWithLocation.identifier.toString,
-        tableWithLocation.location.toString)
+        path.toString)
     }
   }
 
@@ -455,7 +455,7 @@ case class CreateDeltaTableCommand(
       txn: OptimisticTransaction,
       tableDesc: CatalogTable): Unit = {
     val existingMetadata = txn.metadata
-    val path = new Path(tableDesc.location)
+    val path = getDeltaTablePath(tableDesc)
 
     // The delta log already exists. If they give any configuration, we'll make sure it all matches.
     // Otherwise we'll just go with the metadata already present in the log.
@@ -549,6 +549,10 @@ case class CreateDeltaTableCommand(
       DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = true, query.isDefined,
         options.flatMap(_.userMetadata), clusterBy = clusterBy
       )
+  }
+
+  private def getDeltaTablePath(table: CatalogTable): Path = {
+    new Path(table.location)
   }
 
   /**
