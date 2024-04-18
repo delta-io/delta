@@ -35,12 +35,12 @@ import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 /**
  * Utilities method to serialize and deserialize {@link Row} objects with a limited set of data type
  * values.
- * <p
+ * <p>
  * Following are the supported data types:
  * {@code boolean}, {@code byte}, {@code short}, {@code int}, {@code long}, {@code float},
  * {@code double}, {@code string}, {@code StructType} (containing any of the supported subtypes),
  * {@code ArrayType}, {@code MapType} (only a map with string keys is supported).
- *
+ * <p>
  * At a high-level, the JSON serialization is similar to that of Jackson's {@link ObjectMapper}.
  */
 public class JsonUtils {
