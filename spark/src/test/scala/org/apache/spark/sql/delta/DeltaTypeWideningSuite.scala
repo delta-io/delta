@@ -23,15 +23,14 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
-import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Encoder, QueryTest, Row}
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal}
+import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.functions.{col, lit}
@@ -687,7 +686,6 @@ trait DeltaTypeWideningStatsTests {
     }.map(_._2.dataType)
   }
 
-
   /**
    * Checks that stats and parsed partition values are stored in the checkpoint when enabled and
    * that their type matches the expected type.
@@ -723,12 +721,16 @@ trait DeltaTypeWideningStatsTests {
   }
   testStats(s"data skipping after type change, partitioned=$partitioned", jsonStatsEnabled,
       structStatsEnabled) {
-    val partitionStr = if (partitioned) " PARTITIONED BY (a)" else ""
-    sql(s"CREATE TABLE delta.`$tempPath` (a smallint, dummy smallint DEFAULT 1)" +
-      s"USING DELTA$partitionStr TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')")
+    val partitionStr = if (partitioned) "PARTITIONED BY (a)" else ""
+    sql(s"""
+        |CREATE TABLE delta.`$tempPath` (a smallint, dummy int DEFAULT 1)
+        |USING DELTA
+        |$partitionStr
+        |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')
+      """.stripMargin)
 
-    addSingleFile(Seq(1, 2), ShortType)
-    addSingleFile(Seq(3, 4), ShortType)
+    addSingleFile(Seq(1), ShortType)
+    addSingleFile(Seq(2), ShortType)
     deltaLog.checkpoint()
     assert(readDeltaTable(tempPath).schema("a").dataType === ShortType)
     val initialCheckpoint = getLatestCheckpoint
@@ -736,7 +738,7 @@ trait DeltaTypeWideningStatsTests {
       initialCheckpoint, "a", ShortType, partitioned, jsonStatsEnabled, structStatsEnabled)
 
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
-    addSingleFile(Seq(Int.MinValue, Int.MinValue + 2), IntegerType)
+    addSingleFile(Seq(Int.MinValue), IntegerType)
 
     var checkpoint = getLatestCheckpoint
     // Ensure there's no new checkpoint after the type change.
@@ -763,6 +765,35 @@ trait DeltaTypeWideningStatsTests {
     checkFileSkipping(value = Int.MinValue, if (canSkipFiles) 1 else 3)
   }
 
+  for {
+    partitioned <- BOOLEAN_DOMAIN
+    jsonStatsEnabled <- BOOLEAN_DOMAIN
+    structStatsEnabled <- BOOLEAN_DOMAIN
+  }
+  testStats(s"metadata-only query, partitioned=$partitioned", jsonStatsEnabled,
+      structStatsEnabled) {
+    val partitionStr = if (partitioned) "PARTITIONED BY (a)" else ""
+    sql(s"""
+        |CREATE TABLE delta.`$tempPath` (a smallint, dummy int DEFAULT 1)
+        |USING DELTA
+        |$partitionStr
+        |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')
+      """.stripMargin)
+
+    addSingleFile(Seq(1), ShortType)
+    addSingleFile(Seq(2), ShortType)
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
+    addSingleFile(Seq(Int.MinValue), IntegerType)
+    addSingleFile(Seq(Int.MaxValue), IntegerType)
+
+    // Check that collecting aggregates using a metadata-only query works after the type change.
+    val resultDf = sql(s"SELECT MIN(a), MAX(a), COUNT(*) FROM delta.`$tempPath`")
+    val isMetadataOnly = resultDf.queryExecution.optimizedPlan.collectFirst {
+      case l: LocalRelation => l
+    }.nonEmpty
+    assert(isMetadataOnly, "Expected the query to be metadata-only")
+    checkAnswer(resultDf, Row(Int.MinValue, Int.MaxValue, 4))
+  }
 }
 
 /**
