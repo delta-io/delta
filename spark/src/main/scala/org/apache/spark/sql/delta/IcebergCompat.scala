@@ -407,7 +407,7 @@ object CheckVersionChangeNeedsRewrite extends IcebergCompatCheck {
   private val versionChangesWithoutRewrite: Map[Int, Set[Int]] =
     Map(0 -> Set(0, 1), 1 -> Set(0, 1), 2 -> Set(0, 1, 2))
   override def apply(context: IcebergCompatContext): Unit = {
-    if (!context.isCreatingOrReorgTable) {
+    if (!context.isCreatingOrReorgTable && context.prevSnapshot.numOfFiles > 0) {
       val oldVersion = IcebergCompat.getEnabledVersion(context.prevMetadata).getOrElse(0)
       val allowedChanges = versionChangesWithoutRewrite.getOrElse(oldVersion, Set.empty[Int])
       if (!allowedChanges.contains(context.version)) {
