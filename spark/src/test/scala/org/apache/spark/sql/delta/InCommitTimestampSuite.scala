@@ -958,7 +958,7 @@ class InCommitTimestampWithManagedCommitSuite
       spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
       val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       val commit0 = DeltaHistoryManager.Commit(0, deltaLog.snapshot.timestamp)
-      val commitStore = deltaLog.snapshot.commitStoreOpt.get
+      val commitStore = deltaLog.snapshot.tableCommitStoreOpt.get
       val numberAdditionalCommits = 4
       // Create 4 unbackfilled commits.
       for (i <- 1 to numberAdditionalCommits) {
