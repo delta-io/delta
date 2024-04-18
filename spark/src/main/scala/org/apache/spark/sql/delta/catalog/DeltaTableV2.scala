@@ -278,9 +278,11 @@ case class DeltaTableV2(
    */
   def withOptions(newOptions: Map[String, String]): DeltaTableV2 = {
     val ttSpec = DeltaDataSource.getTimeTravelVersion(newOptions)
-    if (timeTravelOpt.nonEmpty && ttSpec.nonEmpty) {
-      throw DeltaErrors.multipleTimeTravelSyntaxUsed
-    }
+
+    // Spark 4.0 and 3.5 handle time travel options differently.
+    DeltaTimeTravelSpecShims.validateTimeTravelSpec(
+      currSpecOpt = timeTravelOpt,
+      newSpecOpt = ttSpec)
 
     val caseInsensitiveNewOptions = new CaseInsensitiveStringMap(newOptions.asJava)
 

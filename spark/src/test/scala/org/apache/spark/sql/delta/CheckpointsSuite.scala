@@ -38,6 +38,7 @@ import org.apache.hadoop.fs.{FileStatus, FSDataOutputStream, Path, RawLocalFileS
 import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
@@ -943,6 +944,76 @@ class CheckpointsSuite
 
       }
       assert(filterUsageRecords(usageRecords2, "delta.log.cleanup").size > 0)
+    }
+  }
+}
+
+class OverwriteTrackingLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
+  extends LocalLogStore(sparkConf, hadoopConf) {
+
+  var fileToOverwriteCount: Map[Path, Long] = Map[Path, Long]()
+
+  private var isPartialWriteVisibleBool: Boolean = false
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean =
+    isPartialWriteVisibleBool
+
+  override def write(
+      path: Path,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      hadoopConf: Configuration): Unit = {
+    val toAdd = if (overwrite) 1 else 0
+    fileToOverwriteCount += path -> (fileToOverwriteCount.getOrElse(path, 0L) + toAdd)
+    super.write(path, actions, overwrite, hadoopConf)
+  }
+
+  def clearCounts(): Unit = {
+    fileToOverwriteCount = Map[Path, Long]()
+  }
+
+  def setPartialWriteVisible(isPartialWriteVisibleBool: Boolean): Unit = {
+    this.isPartialWriteVisibleBool = isPartialWriteVisibleBool
+  }
+}
+
+class V2CheckpointManifestOverwriteSuite
+  extends QueryTest
+  with SharedSparkSession
+  with DeltaCheckpointTestUtils
+  with DeltaSQLCommandTest {
+  protected override def sparkConf = {
+    // Set the logStore to OverwriteTrackingLogStore.
+    super.sparkConf
+      .set("spark.delta.logStore.class", classOf[OverwriteTrackingLogStore].getName)
+      .set(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key, V2Checkpoint.Format.JSON.name)
+  }
+  for (isPartialWriteVisible <- BOOLEAN_DOMAIN)
+  test("v2 checkpoint manifest write should use the logstore.write(overwrite) API correctly " +
+      s"isPartialWriteVisible = $isPartialWriteVisible") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      // Create a simple table with V2 checkpoints enabled and json manifest.
+      spark.range(10).write.format("delta").save(tablePath)
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.CHECKPOINT_POLICY.key}' = 'v2')")
+      val store = deltaLog.store.asInstanceOf[OverwriteTrackingLogStore]
+
+      store.clearCounts()
+      store.setPartialWriteVisible(isPartialWriteVisible)
+      deltaLog.checkpoint()
+
+      val snapshot = deltaLog.update()
+      assert(snapshot.checkpointProvider.version == 1)
+      // Two writes will use logStore.write:
+      // 1. Checkpoint Manifest
+      // 2. LAST_CHECKPOINT.
+      assert(store.fileToOverwriteCount.size == 2)
+      val manifestWriteRecord = store.fileToOverwriteCount.find {
+        case (path, _) => FileNames.isCheckpointFile(path)
+      }.getOrElse(fail("expected checkpoint manifest write using logStore.write"))
+      val numOverwritesExpected = if (isPartialWriteVisible) 0 else 1
+      assert(manifestWriteRecord._2 == numOverwritesExpected)
     }
   }
 }

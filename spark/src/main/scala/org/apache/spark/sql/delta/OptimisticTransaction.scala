@@ -1874,6 +1874,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val info = currentTransactionInfo.commitInfo
       .map(_.copy(readVersion = None, isolationLevel = None)).orNull
     setNeedsCheckpoint(attemptVersion, postCommitSnapshot)
+    val doCollectCommitStats =
+      needsCheckpoint || spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_FORCE_ALL_COMMIT_STATS)
+
+    // Stats that force an expensive snapshot state reconstruction:
+    val numFilesTotal = if (doCollectCommitStats) postCommitSnapshot.numOfFiles else -1L
+    val sizeInBytesTotal = if (doCollectCommitStats) postCommitSnapshot.sizeInBytes else -1L
+
     val stats = CommitStats(
       startVersion = snapshot.version,
       commitVersion = attemptVersion,
@@ -1887,8 +1894,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       numRemove = numRemove,
       numSetTransaction = numSetTransaction,
       bytesNew = bytesNew,
-      numFilesTotal = postCommitSnapshot.numOfFiles,
-      sizeInBytesTotal = postCommitSnapshot.sizeInBytes,
+      numFilesTotal = numFilesTotal,
+      sizeInBytesTotal = sizeInBytesTotal,
       numCdcFiles = numCdcFiles,
       cdcBytesNew = cdcBytesNew,
       protocol = postCommitSnapshot.protocol,
@@ -1910,7 +1917,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     postCommitSnapshot
   }
 
-  class FileSystemBasedCommitStore(deltaLog: DeltaLog) extends CommitStore {
+  class FileSystemBasedCommitStore(val deltaLog: DeltaLog) extends CommitStore {
     override def commit(
         logStore: LogStore,
         hadoopConf: Configuration,
@@ -1950,6 +1957,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         logPath: Path,
         startVersion: Long,
         endVersion: Option[Long]): Unit = {}
+
+    /**
+     * FileSystemBasedCommitStore is supposed to be treated as a singleton object for a Delta Log
+     * and is equal to all other instances of FileSystemBasedCommitStore for the same Delta Log.
+     */
+    override def semanticEquals(other: CommitStore): Boolean = {
+      other match {
+        case fsCommitStore: FileSystemBasedCommitStore => fsCommitStore.deltaLog == deltaLog
+        case _ => false
+      }
+    }
   }
 
   /**

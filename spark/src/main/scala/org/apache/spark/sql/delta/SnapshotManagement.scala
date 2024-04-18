@@ -1010,7 +1010,8 @@ trait SnapshotManagement { self: DeltaLog =>
     // If the commit store has changed, we need to again invoke updateSnapshot so that we
     // could get the latest commits from the new commit store. We need to do it only once as
     // the delta spec mandates the commit which changes the commit owner to be backfilled.
-    if (newSnapshot.version >= 0 && newSnapshot.commitStoreOpt != initialCommitStore) {
+    if (newSnapshot.version >= 0 &&
+        !CommitStore.semanticEquals(newSnapshot.commitStoreOpt, initialCommitStore)) {
       val segmentOpt = createLogSegment(newSnapshot)
       newSnapshot =
         getSnapshotForLogSegmentInternal(

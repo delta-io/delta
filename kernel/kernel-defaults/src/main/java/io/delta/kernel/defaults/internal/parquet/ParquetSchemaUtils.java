@@ -21,6 +21,8 @@ import static java.lang.String.format;
 
 import org.apache.parquet.schema.*;
 import org.apache.parquet.schema.Type.Repetition;
+import static org.apache.parquet.schema.LogicalTypeAnnotation.TimeUnit.MICROS;
+import static org.apache.parquet.schema.LogicalTypeAnnotation.timestampType;
 import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.*;
 import static org.apache.parquet.schema.Type.Repetition.OPTIONAL;
 import static org.apache.parquet.schema.Type.Repetition.REQUIRED;
@@ -229,6 +231,11 @@ class ParquetSchemaUtils {
         } else if (dataType instanceof TimestampType) {
             // We are supporting only the INT96 format now.
             type = primitive(INT96, repetition).named(name);
+        } else if (dataType instanceof TimestampNTZType) {
+            // Write as INT64 with isAdjustedToUTC set to false
+            type = primitive(INT64, repetition)
+                    .as(timestampType(false /* isAdjustedToUTC */, MICROS))
+                    .named(name);
         } else if (dataType instanceof ArrayType) {
             type = toParquetArrayType((ArrayType) dataType, name, repetition);
         } else if (dataType instanceof MapType) {

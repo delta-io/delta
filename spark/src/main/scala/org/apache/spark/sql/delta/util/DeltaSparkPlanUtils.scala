@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.util
 
 import org.apache.spark.sql.delta.{DeltaTable, DeltaTableReadPredicate}
 
-import org.apache.spark.sql.catalyst.expressions.{Exists, Expression, InSubquery, LateralSubquery, ScalarSubquery, UserDefinedExpression}
+import org.apache.spark.sql.catalyst.expressions.{Exists, Expression, InSubquery, LateralSubquery, ScalarSubquery, SubqueryExpression => SparkSubqueryExpression, UserDefinedExpression}
 import org.apache.spark.sql.catalyst.plans.logical.{Distinct, Filter, LeafNode, LogicalPlan, OneRowRelation, Project, SubqueryAlias, Union}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 
@@ -30,7 +30,7 @@ trait DeltaSparkPlanUtils {
     findFirstNonDeltaScan(source).isEmpty
 
   protected def findFirstNonDeltaScan(source: LogicalPlan): Option[LogicalPlan] = {
-    source match {
+    (source match {
       case l: LogicalRelation =>
         l match {
           case DeltaTable(_) => None
@@ -39,7 +39,10 @@ trait DeltaSparkPlanUtils {
       case OneRowRelation() => None
       case leaf: LeafNode => Some(leaf) // Any other LeafNode is a non Delta scan.
       case node => collectFirst(node.children, findFirstNonDeltaScan)
-    }
+    }).orElse(
+      // If not found in main plan, look into subqueries.
+      collectFirst(source.subqueries, findFirstNonDeltaScan)
+    )
   }
 
   /**
@@ -102,8 +105,13 @@ trait DeltaSparkPlanUtils {
       checkDeterministicOptions: CheckDeterministicOptions): Option[PlanOrExpression] = {
     child match {
       case SubqueryExpression(plan) =>
-        findFirstNonDeltaScan(plan).map(Left(_))
-          .orElse(findFirstNonDeterministicNode(plan, checkDeterministicOptions))
+        if (SparkSubqueryExpression.hasCorrelatedSubquery(child)) {
+          // We consider joins potentially non-deterministic, and correlated subqueries are
+          // flattened into joins, so they should also be considered potentially non-deterministic.
+          Some(Right(child))
+        } else {
+          findFirstNonDeterministicNode(plan, checkDeterministicOptions)
+        }
       case _: UserDefinedExpression if !checkDeterministicOptions.allowDeterministicUdf =>
         Some(Right(child))
       case p =>

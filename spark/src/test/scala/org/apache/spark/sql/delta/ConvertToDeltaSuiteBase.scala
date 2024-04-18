@@ -20,8 +20,7 @@ import java.io.{File, FileNotFoundException}
 
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
@@ -39,7 +38,8 @@ import org.apache.spark.util.Utils
  * so that we can re-use them in tests using Hive support. Tests that leverage Hive support cannot
  * extend the `SharedSparkSession`, therefore we keep this utility class as bare-bones as possible.
  */
-trait ConvertToDeltaTestUtils extends QueryTest { self: DeltaSQLTestUtils =>
+trait ConvertToDeltaTestUtils extends QueryTest
+    with DeltaExceptionTestUtils { self: DeltaSQLTestUtils =>
 
   protected def collectStatisticsStringOption(collectStats: Boolean): String = Option(collectStats)
     .filterNot(identity).map(_ => "NO STATISTICS").getOrElse("")
@@ -350,18 +350,11 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
         writeFiles(tempDir + s"/part=$i/", Seq("1").toDF("id"))
       }
 
-      val exception = intercept[Exception] {
+      val ex = interceptWithUnwrapping[SparkException] {
         convertToDelta(s"parquet.`$tempDir`", Some("part string"))
       }
-
-      val realCause = exception match {
-        case se: SparkException => se.getCause
-        case ae: AnalysisException => ae
-      }
-      assert(realCause.getMessage.contains("Failed to merge"))
-      assert(exception.isInstanceOf[AnalysisException] ||
-        realCause.getMessage.contains("/part="),
-        "Error message should contain the file name")
+      assert(ex.getMessage.contains("Failed to merge"))
+      assert(ex.getMessage.contains("/part="), "Error message should contain the file name")
     }
   }
 
