@@ -1,0 +1,68 @@
+Add delta table properties to Glue table
+
+--- a/aws/src/main/java/org/apache/iceberg/aws/glue/GlueTableOperations.java
++++ b/aws/src/main/java/org/apache/iceberg/aws/glue/GlueTableOperations.java
+@@ -74,6 +74,8 @@ class GlueTableOperations extends BaseMetastoreTableOperations {
+   private final Object hadoopConf;
+   private final LockManager lockManager;
+   private FileIO fileIO;
++  private final String DELTA_VERSION_PROPERTY = "delta-version";
++  private final String DELTA_TIMESTAMP_PROPERTY = "delta-timestamp";
+
+   // Attempt to set versionId if available on the path
+   private static final DynMethods.UnboundMethod SET_VERSION_ID =
+@@ -152,6 +154,7 @@ class GlueTableOperations extends BaseMetastoreTableOperations {
+       Table glueTable = getGlueTable();
+       checkMetadataLocation(glueTable, base);
+       Map<String, String> properties = prepareProperties(glueTable, newMetadataLocation);
++      properties.putAll(getDeltaProperties(metadata));
+       persistGlueTable(glueTable, properties, metadata);
+       commitStatus = CommitStatus.SUCCESS;
+     } catch (CommitFailedException e) {
+@@ -283,6 +286,15 @@ class GlueTableOperations extends BaseMetastoreTableOperations {
+     }
+   }
+
++  private Map<String, String> getDeltaProperties(TableMetadata base) {
++    if (base == null) {
++      return ImmutableMap.of(DELTA_VERSION_PROPERTY, "-1");
++    }
++    return ImmutableMap.of(
++        DELTA_VERSION_PROPERTY, base.property(DELTA_VERSION_PROPERTY, "-1"),
++        DELTA_TIMESTAMP_PROPERTY, base.property(DELTA_TIMESTAMP_PROPERTY, "-1"));
++  }
++
+   private Map<String, String> prepareProperties(Table glueTable, String newMetadataLocation) {
+     Map<String, String> properties =
+         glueTable != null ? Maps.newHashMap(glueTable.parameters()) : Maps.newHashMap();
+diff --git a/aws/src/main/java/org/apache/iceberg/aws/glue/IcebergToGlueConverter.java b/aws/src/main/java/org/apache/iceberg/aws/glue/IcebergToGlueConverter.java
+index 241c0098d..edf95df5b 100644
+--- a/aws/src/main/java/org/apache/iceberg/aws/glue/IcebergToGlueConverter.java
++++ b/aws/src/main/java/org/apache/iceberg/aws/glue/IcebergToGlueConverter.java
+@@ -47,6 +47,7 @@ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+ import software.amazon.awssdk.services.glue.model.Column;
+ import software.amazon.awssdk.services.glue.model.DatabaseInput;
++import software.amazon.awssdk.services.glue.model.SerDeInfo;
+ import software.amazon.awssdk.services.glue.model.StorageDescriptor;
+ import software.amazon.awssdk.services.glue.model.TableInput;
+
+@@ -239,7 +240,17 @@ class IcebergToGlueConverter {
+       }
+
+       tableInputBuilder.storageDescriptor(
+-          storageDescriptor.location(metadata.location()).columns(toColumns(metadata)).build());
++          storageDescriptor
++              .location(metadata.location())
++              .columns(toColumns(metadata))
++              .outputFormat("org.apache.hadoop.mapred.FileOutputFormat")
++              .inputFormat("org.apache.hadoop.mapred.FileInputFormat")
++              .serdeInfo(
++                  SerDeInfo.builder()
++                      .serializationLibrary("org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe")
++                      .parameters(ImmutableMap.of("path", metadata.location()))
++                      .build())
++              .build());
+     } catch (RuntimeException e) {
+       LOG.warn(
+           "Encountered unexpected exception while converting Iceberg metadata to Glue table information",

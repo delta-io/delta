@@ -24,8 +24,10 @@ import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import shadedForDelta.org.apache.iceberg.{DataFile, DataFiles, FileFormat, PartitionSpec, Schema => IcebergSchema}
-import shadedForDelta.org.apache.iceberg.Metrics
+import shadedForDelta.org.apache.iceberg.catalog.Catalog
+import shadedForDelta.org.apache.iceberg.{CatalogUtil, DataFile, DataFiles, FileFormat, Metrics, PartitionSpec, Schema => IcebergSchema}
+
+import scala.collection.mutable
 // scalastyle:off import.ordering.noEmptyLine
 import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
 // scalastyle:on import.ordering.noEmptyLine
@@ -37,6 +39,9 @@ import org.apache.spark.sql.types.StructType
 object IcebergTransactionUtils
     extends DeltaLogging
   {
+    final val DEFAULT_CATALOG_NAME = "spark_catalog"
+    final val SPARK_PROPERTY_CATALOG_PREFIX = s"spark.sql.catalog.${DEFAULT_CATALOG_NAME}."
+    final val GLUE_CATALOG_CLASS = "org.apache.iceberg.aws.glue.GlueCatalog"
 
   /////////////////
   // Public APIs //
@@ -202,15 +207,21 @@ object IcebergTransactionUtils
   }
 
   /**
-   * Create an Iceberg HiveCatalog
+   * Create an Iceberg Catalog
    * @param conf: Hadoop Configuration
    * @return
    */
-  def createHiveCatalog(conf : Configuration) : HiveCatalog = {
-    val catalog = new HiveCatalog()
-    catalog.setConf(conf)
-    catalog.initialize("spark_catalog", Map.empty[String, String].asJava)
-    catalog
+  def createCatalog(conf: Configuration): Catalog = {
+    val icebergProperties = new mutable.HashMap[String, String]()
+
+    icebergProperties ++= conf.iterator().asScala
+      .filter(entry => entry.getKey.startsWith(SPARK_PROPERTY_CATALOG_PREFIX))
+      .map { entry =>
+        val key = entry.getKey.stripPrefix(SPARK_PROPERTY_CATALOG_PREFIX)
+        val value = entry.getValue
+        (key, if (value == GLUE_CATALOG_CLASS) s"shadedForDelta.${value}" else value)
+      }
+    CatalogUtil.buildIcebergCatalog(DEFAULT_CATALOG_NAME, icebergProperties.asJava, conf)
   }
 
   /**

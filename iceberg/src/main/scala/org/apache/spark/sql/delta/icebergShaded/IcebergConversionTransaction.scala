@@ -350,18 +350,18 @@ class IcebergConversionTransaction(
 
   protected def createIcebergTxn(tableOpOpt: Option[IcebergTableOp] = None):
       IcebergTransaction = {
-    val hiveCatalog = IcebergTransactionUtils.createHiveCatalog(conf)
+    val icebergCatalog = IcebergTransactionUtils.createCatalog(conf)
     val icebergTableId = IcebergTransactionUtils
       .convertSparkTableIdentifierToIcebergHive(catalogTable.identifier)
 
-    val tableExists = hiveCatalog.tableExists(icebergTableId)
+    val tableExists = icebergCatalog.tableExists(icebergTableId)
 
     def tableBuilder = {
       val properties = getIcebergPropertiesFromDeltaProperties(
         postCommitSnapshot.metadata.configuration
       )
 
-      hiveCatalog
+      icebergCatalog
         .buildTable(icebergTableId, icebergSchema)
         .withPartitionSpec(partitionSpec)
         .withProperties(properties.asJava)
@@ -371,7 +371,7 @@ class IcebergConversionTransaction(
       case WRITE_TABLE =>
         if (tableExists) {
           recordFrameProfile("IcebergConversionTransaction", "loadTable") {
-            hiveCatalog.loadTable(icebergTableId).newTransaction()
+            icebergCatalog.loadTable(icebergTableId).newTransaction()
           }
         } else {
           throw new IllegalStateException(s"Cannot write to table $tablePath. Table doesn't exist.")
