@@ -86,7 +86,7 @@ default retention threshold for the files is 7 days. To change this behavior, se
       deltaTable.vacuum(100);     // vacuum files not required by versions more than 100 hours old
       ```
 
-### Inventory Table
+#### Inventory Table
 
 An inventory table contains a list of file paths together with their size, type (directory or not), and the last modification time. When an INVENTORY option is provided, VACUUM will consider the files listed there instead of  doing the full listing of the table directory, which can be time consuming for very large tables. The inventory table can be specified as a delta table or a spark SQL query that gives the expected table schema. The schema should be as follows:
 
