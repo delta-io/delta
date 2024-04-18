@@ -61,17 +61,19 @@ public class DefaultJsonHandler implements JsonHandler {
     public DefaultJsonHandler(Configuration hadoopConf) {
         this.hadoopConf = hadoopConf;
         this.maxBatchSize =
-                hadoopConf.getInt("delta.kernel.default.json.reader.batch-size", 1024);
+            hadoopConf.getInt("delta.kernel.default.json.reader.batch-size", 1024);
         checkArgument(maxBatchSize > 0, "invalid JSON reader batch size: " + maxBatchSize);
     }
 
     @Override
-    public ColumnarBatch parseJson(ColumnVector jsonStringVector, StructType outputSchema,
-                                   Optional<ColumnVector> selectionVector) {
+    public ColumnarBatch parseJson(
+            ColumnVector jsonStringVector,
+            StructType outputSchema,
+            Optional<ColumnVector> selectionVector) {
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < jsonStringVector.getSize(); i++) {
             boolean isSelected = !selectionVector.isPresent() ||
-                    (!selectionVector.get().isNullAt(i) && selectionVector.get().getBoolean(i));
+                (!selectionVector.get().isNullAt(i) && selectionVector.get().getBoolean(i));
             if (isSelected && !jsonStringVector.isNullAt(i)) {
                 rows.add(parseJson(jsonStringVector.getString(i), outputSchema));
             } else {
@@ -89,7 +91,7 @@ public class DefaultJsonHandler implements JsonHandler {
             return DataTypeParser.parseSchema(defaultObjectReader.readTree(structTypeJson));
         } catch (JsonProcessingException ex) {
             throw new RuntimeException(
-                    String.format("Could not parse JSON: %s", structTypeJson), ex);
+                String.format("Could not parse JSON: %s", structTypeJson), ex);
         }
     }
 
@@ -104,8 +106,7 @@ public class DefaultJsonHandler implements JsonHandler {
             private String nextLine;
 
             @Override
-            public void close()
-                    throws IOException {
+            public void close() throws IOException {
                 Utils.closeCloseables(currentFileReader, scanFileIter);
             }
 
@@ -120,7 +121,7 @@ public class DefaultJsonHandler implements JsonHandler {
                 // read.
                 try {
                     if (currentFileReader == null ||
-                            (nextLine = currentFileReader.readLine()) == null) {
+                        (nextLine = currentFileReader.readLine()) == null) {
 
                         tryOpenNextFile();
                         if (currentFileReader != null) {
@@ -153,8 +154,7 @@ public class DefaultJsonHandler implements JsonHandler {
                 return new DefaultRowBasedColumnarBatch(physicalSchema, rows);
             }
 
-            private void tryOpenNextFile()
-                    throws IOException {
+            private void tryOpenNextFile() throws IOException {
                 Utils.closeCloseables(currentFileReader); // close the current opened file
                 currentFileReader = null;
 
@@ -166,7 +166,7 @@ public class DefaultJsonHandler implements JsonHandler {
                     try {
                         stream = fs.open(filePath);
                         currentFileReader = new BufferedReader(
-                                new InputStreamReader(stream, StandardCharsets.UTF_8));
+                            new InputStreamReader(stream, StandardCharsets.UTF_8));
                     } catch (Exception e) {
                         Utils.closeCloseablesSilently(stream); // close it avoid leaking resources
                         throw e;
