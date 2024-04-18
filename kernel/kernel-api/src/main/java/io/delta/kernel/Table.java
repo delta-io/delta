@@ -15,6 +15,8 @@
  */
 package io.delta.kernel;
 
+import java.io.IOException;
+
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
 
@@ -111,4 +113,17 @@ public interface Table {
      */
     Snapshot getSnapshotAsOfTimestamp(TableClient tableClient, long millisSinceEpochUTC)
         throws TableNotFoundException;
+
+    /**
+     * Checkpoint the table at given version. It writes a single checkpoint file.
+     *
+     * @param tableClient {@link TableClient} instance to use.
+     * @param version     Version to checkpoint.
+     * @throws TableNotFoundException if the table is not found
+     * @throws CheckpointAlreadyExistsException if a checkpoint already exists at the given version
+     * @throws IOException for any I/O error.
+     * @since 3.2.0
+     */
+    void checkpoint(TableClient tableClient, long version)
+            throws TableNotFoundException, CheckpointAlreadyExistsException, IOException;
 }

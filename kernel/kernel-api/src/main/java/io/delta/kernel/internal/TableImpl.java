@@ -34,8 +34,8 @@ public class TableImpl implements Table {
         return new TableImpl(resolvedPath);
     }
 
-    private final SnapshotManager snapshotManager;
     private final String tablePath;
+    private SnapshotManager snapshotManager;
 
     public TableImpl(String tablePath) {
         this.tablePath = tablePath;
@@ -64,5 +64,11 @@ public class TableImpl implements Table {
     public Snapshot getSnapshotAsOfTimestamp(TableClient tableClient, long millisSinceEpochUTC)
         throws TableNotFoundException {
         return snapshotManager.getSnapshotForTimestamp(tableClient, millisSinceEpochUTC);
+    }
+
+    @Override
+    public void checkpoint(TableClient tableClient, long version)
+            throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
+        snapshotManager.checkpoint(tableClient, version);
     }
 }

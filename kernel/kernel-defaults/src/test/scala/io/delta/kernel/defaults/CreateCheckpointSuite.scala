@@ -1,0 +1,375 @@
+/*
+ * Copyright (2023) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.delta.kernel.defaults
+
+import io.delta.golden.GoldenTableUtils.goldenTablePath
+import io.delta.kernel.client.TableClient
+import io.delta.kernel.defaults.client.DefaultTableClient
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.{CheckpointAlreadyExistsException, Table, TableNotFoundException}
+import org.apache.commons.io.FileUtils
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.{DeltaLog, VersionNotFoundException}
+import org.scalatest.funsuite.AnyFunSuite
+
+import java.io.File
+
+/**
+ * Test suite for `io.delta.kernel.Table.checkpoint(TableClient, version)`
+ */
+class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
+
+  ///////////
+  // Tests //
+  ///////////
+
+  Seq(true, false).foreach { includeRemoves =>
+    val testMsgUpdate = if (includeRemoves) " and removes" else ""
+    test(s"commits containing adds$testMsgUpdate, and no previous checkpoint") {
+      withTempDirAndTableClient { (tablePath, tc) =>
+        addData(tablePath, alternateBetweenAddsAndRemoves = includeRemoves, numberIter = 10)
+
+        // before creating checkpoint, read and save the expected results using Spark
+        val expResults = readUsingSpark(tablePath)
+        assert(expResults.size === (if (includeRemoves) 45 else 100))
+
+        val checkpointVersion = 9
+        kernelCheckpoint(tc, tablePath, checkpointVersion)
+
+        verifyResults(tablePath, expResults, checkpointVersion)
+        verifyLastCheckpointMetadata(
+          tablePath,
+          checkpointVersion,
+          expSize = if (includeRemoves) 5 else 10)
+
+        // add few more commits and verify the read still works
+        appendCommit(tablePath)
+        val newExpResults = expResults ++ Seq.range(0, 10).map(_.longValue()).map(TestRow(_))
+        verifyResults(tablePath, newExpResults, checkpointVersion)
+      }
+    }
+  }
+
+
+  Seq(true, false).foreach { includeRemoves =>
+    Seq(
+      // Create a checkpoint using Spark (either classic or multi-part checkpoint)
+      1000000, // use large number of actions per file to make Spark create a classic checkpoint
+      3 // use small number of actions per file to make Spark create a multi-part checkpoint
+    ).foreach { sparkCheckpointActionPerFile =>
+      val testMsgUpdate = if (includeRemoves) " and removes" else ""
+
+      test(s"commits containing adds$testMsgUpdate, and a previous checkpoint " +
+        s"created using Spark (actions/perfile): $sparkCheckpointActionPerFile") {
+        withTempDirAndTableClient { (tablePath, tc) =>
+          addData(tablePath, includeRemoves, numberIter = 6)
+
+          // checkpoint using Spark
+          sparkCheckpoint(tablePath, actionsPerFile = sparkCheckpointActionPerFile)
+
+          addData(tablePath, includeRemoves, numberIter = 6) // add some more data
+
+          // before creating checkpoint, read and save the expected results using Spark
+          val expResults = readUsingSpark(tablePath)
+          assert(expResults.size === (if (includeRemoves) 54 else 120))
+
+          val checkpointVersion = 11
+
+          kernelCheckpoint(tc, tablePath, checkpointVersion)
+          verifyResults(tablePath, expResults, checkpointVersion)
+          verifyLastCheckpointMetadata(
+            tablePath,
+            checkpointVersion,
+            expSize = if (includeRemoves) 6 else 12)
+
+          // add few more commits and verify the read still works
+          appendCommit(tablePath)
+          val newExpResults = expResults ++ Seq.range(0, 10).map(_.longValue()).map(TestRow(_))
+          verifyResults(tablePath, newExpResults, checkpointVersion)
+        }
+      }
+    }
+  }
+
+  test("commits with metadata updates") {
+    withTempDirAndTableClient { (tablePath, tc) =>
+      addData(path = tablePath, alternateBetweenAddsAndRemoves = true, numberIter = 16)
+
+      // makes the latest table version 16
+      spark.sql(
+        s"""ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES ('delta.appendOnly' = 'true')""")
+
+      // before creating checkpoint, read and save the expected results using Spark
+      val expResults = readUsingSpark(tablePath)
+      assert(expResults.size === 72)
+
+      val checkpointVersion = 16
+      kernelCheckpoint(tc, tablePath, checkpointVersion)
+      verifyResults(tablePath, expResults, checkpointVersion)
+      verifyLastCheckpointMetadata(tablePath, checkpointVersion, expSize = 8)
+
+      // verify there is only one metadata entry in the checkpoint and it has the
+      // configuration with `delta.appendOnly` = `true`
+      val result = spark.read.format("parquet")
+        .load(checkpointFilePath(tablePath, checkpointVersion))
+        .filter("metaData is not null")
+        .select("metaData.configuration")
+        .collect().toSeq.map(TestRow(_))
+
+      val expected = Seq(TestRow(Map("delta.appendOnly" -> "true")))
+
+      checkAnswer(result, expected)
+    }
+  }
+
+  test("commits with protocol updates") {
+    withTempDirAndTableClient { (tablePath, tc) =>
+      addData(path = tablePath, alternateBetweenAddsAndRemoves = true, numberIter = 16)
+
+      spark.sql(
+        s"""
+           |ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES (
+           |  'delta.minReaderVersion' = '2',
+           |  'delta.minWriterVersion' = '2'
+           |)
+           |""".stripMargin) // makes the latest table version 16
+
+      // before creating checkpoint, read and save the expected results using Spark
+      val expResults = readUsingSpark(tablePath)
+      assert(expResults.size === 72)
+
+      val checkpointVersion = 16
+      kernelCheckpoint(tc, tablePath, checkpointVersion)
+      verifyResults(tablePath, expResults, checkpointVersion)
+
+      // verify there is only one protocol entry in the checkpoint and it has the
+      // expected minReaderVersion and minWriterVersion
+      val result = spark.read.format("parquet")
+        .load(checkpointFilePath(tablePath, checkpointVersion))
+        .filter("protocol is not null")
+        .select("protocol.minReaderVersion", "protocol.minWriterVersion")
+        .collect().toSeq.map(TestRow(_))
+
+      val expected = Seq(TestRow(2, 2))
+
+      checkAnswer(result, expected)
+    }
+  }
+
+  test("commits with set transactions") {
+    withTempDirAndTableClient { (tablePath, tc) =>
+      def idempotentAppend(appId: String, version: Int): Unit = {
+        spark.range(end = 10).repartition(2).write.format("delta")
+          .option("txnAppId", appId)
+          .option("txnVersion", version)
+          .mode("append").save(tablePath)
+      }
+
+      idempotentAppend("appId1", 0) // version 0
+      idempotentAppend("appId1", 2) // version 1
+      idempotentAppend("appId1", 3) // version 2
+      deleteCommit(tablePath) // version 3
+      idempotentAppend("appId2", 7) // version 4
+      idempotentAppend("appId2", 25) // version 5
+      idempotentAppend("appId3", 7908) // version 6
+      appendCommit(tablePath) // version 7, no txn identifiers
+      idempotentAppend("appId4", 12312312) // version 8
+
+      // before creating checkpoint, read and save the expected results using Spark
+      val expResults = readUsingSpark(tablePath)
+      assert(expResults.size === 77)
+
+      val checkpointVersion = 8
+      kernelCheckpoint(tc, tablePath, checkpointVersion);
+      verifyResults(tablePath, expResults, checkpointVersion)
+
+      // Load the checkpoint and verify that only the last txn identifier for each appId is stored
+      def verifyTxnIdInCheckpoint(appId: String, expVersion: Long): Unit = {
+        val result = spark.read.format("parquet")
+          .load(checkpointFilePath(tablePath, checkpointVersion))
+          .filter(s"txn is not null and txn.appId='$appId'")
+          .select("txn.appId", "txn.version")
+          .collect().toSeq.map(TestRow(_))
+        checkAnswer(result, Seq(TestRow(appId, expVersion)))
+      }
+
+      verifyTxnIdInCheckpoint("appId1", 3)
+      verifyTxnIdInCheckpoint("appId2", 25)
+      verifyTxnIdInCheckpoint("appId3", 7908)
+      verifyTxnIdInCheckpoint("appId4", 12312312)
+    }
+  }
+
+  test("checkpoint contains all not expired tombstones") {
+    // TODO
+  }
+
+  test("try creating checkpoint on a non-existent table") {
+    withTempDirAndTableClient { (path, tc) =>
+      Seq(0, 1, 2).foreach { checkpointVersion =>
+        val ex = intercept[TableNotFoundException] {
+          kernelCheckpoint(tc, path, checkpointVersion)
+        }
+        assert(ex.getMessage.contains("not found"))
+      }
+    }
+  }
+
+  test("try creating checkpoint at version that already has a " +
+    "checkpoint or a version that doesn't exist") {
+    withTempDirAndTableClient { (path, tc) =>
+      for (_ <- 0 to 3) {
+        appendCommit(path)
+      }
+
+      val table = Table.forPath(tc, path)
+      table.checkpoint(tc, 3)
+      val ex = intercept[CheckpointAlreadyExistsException] {
+        kernelCheckpoint(tc, path, 3)
+      }
+      assert(ex.getMessage.contains("Checkpoint for given version 3 already exists in the table"))
+
+      val ex2 = intercept[Exception] {
+        kernelCheckpoint(tc, path, checkpointVersion = 5)
+      }
+      assert(ex2.getMessage.contains("Trying to load a non-existent version 5"))
+    }
+  }
+
+  test("create a checkpoint on a existing table") {
+    withTempDirAndTableClient { (tablePath, tc) =>
+      copyTable("time-travel-start-start20-start40", tablePath)
+
+      // before creating checkpoint, read and save the expected results using Spark
+      val expResults = readUsingSpark(tablePath)
+      assert(expResults.size === 30)
+
+      val checkpointVersion = 2
+      kernelCheckpoint(tc, tablePath, checkpointVersion)
+      verifyResults(tablePath, expResults, checkpointVersion)
+    }
+  }
+
+  test("try create a checkpoint on a unsupported table feature table") {
+    withTempDirAndTableClient { (tablePath, tc) =>
+      copyTable("dv-with-columnmapping", tablePath)
+
+      val ex2 = intercept[Exception] {
+        kernelCheckpoint(tc, tablePath, checkpointVersion = 5)
+      }
+      assert(ex2.getMessage.contains(
+        "Unsupported writer protocol version: 7 with feature: deletionVectors"))
+    }
+  }
+
+  ////////////////////
+  // Helper methods //
+  ///////////////////
+  def addData(path: String, alternateBetweenAddsAndRemoves: Boolean, numberIter: Int): Unit = {
+    Seq.range(0, numberIter).foreach { version =>
+      if (version % 2 == 1 && alternateBetweenAddsAndRemoves) {
+        deleteCommit(path) // removes one file and adds a new one
+      } else {
+        appendCommit(path) // add one new file
+      }
+    }
+  }
+
+  def appendCommit(path: String): Unit =
+    spark.range(end = 10).write.format("delta").mode("append").save(path)
+
+  def deleteCommit(path: String): Unit = {
+    spark.sql(s"DELETE FROM delta.`${path}` WHERE id = 5")
+  }
+
+  def sparkCheckpoint(path: String, actionsPerFile: Int = 10000000): Unit = {
+    withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> actionsPerFile.toString) {
+      DeltaLog.forTable(spark, path).checkpoint()
+    }
+  }
+
+  def kernelCheckpoint(tc: TableClient, tablePath: String, checkpointVersion: Long): Unit = {
+    Table.forPath(tc, tablePath).checkpoint(tc, checkpointVersion)
+  }
+
+  def readUsingSpark(tablePath: String): Seq[TestRow] = {
+    spark.read.format("delta").load(tablePath).collect().map(TestRow(_))
+  }
+
+  def verifyResults(
+      tablePath: String,
+      expResults: Seq[TestRow],
+      checkpointVersion: Long): Unit = {
+    // before verifying delete the delta commits before the checkpoint to make sure
+    // the state is constructed using the table path
+    deleteDeltaFilesBefore(tablePath, checkpointVersion)
+
+    // verify using Spark reader
+    checkAnswer(readUsingSpark(tablePath), expResults)
+
+    // verify using Kernel reader
+    checkTable(tablePath, expResults)
+  }
+
+  def verifyLastCheckpointMetadata(tablePath: String, checkpointAt: Long, expSize: Long): Unit = {
+    val filePath = f"$tablePath/_delta_log/_last_checkpoint"
+
+    val source = scala.io.Source.fromFile(filePath)
+    val result = try source.getLines().mkString(",") finally source.close()
+
+    assert(result === s"""{"version":$checkpointAt,"size":$expSize}""")
+  }
+
+  /** Helper method to remove the delta files before the given version, to make sure the read is
+   * using a checkpoint as base for state reconstruction.
+   */
+  def deleteDeltaFilesBefore(tablePath: String, beforeVersion: Long): Unit = {
+    Seq.range(0, beforeVersion).foreach { version =>
+      val filePath = new Path(f"$tablePath/_delta_log/$version%020d.json")
+      new Path(tablePath).getFileSystem(new Configuration()).delete(filePath, false /* recursive */)
+    }
+
+    // try to query a version < beforeVersion
+    val ex = intercept[VersionNotFoundException] {
+      spark.read.format("delta").option("versionAsOf", beforeVersion - 1).load(tablePath)
+    }
+    assert(ex.getMessage().contains(
+      s"Cannot time travel Delta table to version ${beforeVersion - 1}"))
+  }
+
+  def withTempDirAndTableClient(f: (String, TableClient) => Unit): Unit = {
+    val tableClient = DefaultTableClient.create(new Configuration() {
+      {
+        // Set the batch sizes to small so that we get to test the multiple batch scenarios.
+        set("delta.kernel.default.parquet.reader.batch-size", "200");
+        set("delta.kernel.default.json.reader.batch-size", "200");
+      }
+    })
+    withTempDir { dir => f(dir.getAbsolutePath, tableClient) }
+  }
+
+  def checkpointFilePath(tablePath: String, checkpointVersion: Long): String = {
+    f"$tablePath/_delta_log/$checkpointVersion%020d.checkpoint.parquet"
+  }
+
+  def copyTable(goldenTableName: String, targetLocation: String): Unit = {
+    val source = new File(goldenTablePath(goldenTableName))
+    val target = new File(targetLocation)
+    FileUtils.copyDirectory(source, target)
+  }
+}

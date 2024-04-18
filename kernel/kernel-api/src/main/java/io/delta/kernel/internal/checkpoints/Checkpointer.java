@@ -34,7 +34,7 @@ import io.delta.kernel.internal.util.*;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 /**
- * Class to load the {@link CheckpointMetaData} from `_last_checkpoint` file.
+ * Class to load and write the {@link CheckpointMetaData} from `_last_checkpoint` file.
  */
 public class Checkpointer {
     private static final Logger logger = LoggerFactory.getLogger(Checkpointer.class);
@@ -183,6 +183,22 @@ public class Checkpointer {
      */
     public Optional<CheckpointMetaData> readLastCheckpointFile(TableClient tableClient) {
         return loadMetadataFromFile(tableClient, 0 /* tries */);
+    }
+
+    /**
+     * Write the given data to last checkpoint metadata file.
+     * @param tableClient {@link TableClient} instance to use for writing
+     * @param checkpointMetaData Checkpoint metadata to write
+     * @throws IOException For any I/O issues.
+     */
+    public void writeLastCheckpointFile(
+            TableClient tableClient,
+            CheckpointMetaData checkpointMetaData) throws IOException {
+        tableClient.getJsonHandler()
+                .writeJsonFileAtomically(
+                        lastCheckpointFilePath.toString(),
+                        singletonCloseableIterator(checkpointMetaData.toRow()),
+                        true /* overwrite */);
     }
 
     /**
