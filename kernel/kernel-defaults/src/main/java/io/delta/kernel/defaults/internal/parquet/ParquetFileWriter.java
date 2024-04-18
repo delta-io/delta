@@ -54,9 +54,11 @@ import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.readD
  */
 public class ParquetFileWriter {
     private final Configuration configuration;
+    private final boolean writeAsSingleFile;
     private final Path location;
     private final long targetMaxFileSize;
     private final List<Column> statsColumns;
+
     private long currentFileNumber; // used to generate the unique file names.
 
     public ParquetFileWriter(
@@ -70,6 +72,15 @@ public class ParquetFileWriter {
                 targetMaxFileSize > 0, "Invalid target Parquet file size: " + targetMaxFileSize);
         this.targetMaxFileSize = targetMaxFileSize;
         this.statsColumns = requireNonNull(statsColumns, "statsColumns is null");
+        this.writeAsSingleFile = false;
+    }
+
+    public ParquetFileWriter(Configuration configuration, Path destPath) {
+        this.configuration = requireNonNull(configuration, "configuration is null");
+        this.writeAsSingleFile = true;
+        this.location = requireNonNull(destPath, "destPath is null");
+        this.targetMaxFileSize = Long.MAX_VALUE;
+        this.statsColumns = Collections.emptyList();
     }
 
     /**
@@ -131,12 +142,12 @@ public class ParquetFileWriter {
 
                 Path filePath = generateNextFilePath();
                 assert batchWriteSupport != null : "batchWriteSupport is not initialized";
-                try (ParquetWriter<Integer> writer =
-                             createWriter(filePath, batchWriteSupport)) {
+                try (ParquetWriter<Integer> writer = createWriter(filePath, batchWriteSupport)) {
                     boolean maxFileSizeReached;
                     do {
                         consumeNextRow(writer);
-                        maxFileSizeReached = writer.getDataSize() >= targetMaxFileSize;
+                        maxFileSizeReached =
+                                !writeAsSingleFile && writer.getDataSize() >= targetMaxFileSize;
                         // Keep writing until max file is reached or no more data to write
                     } while (!maxFileSizeReached && hasNextRow());
                 } catch (IOException e) {
@@ -289,6 +300,10 @@ public class ParquetFileWriter {
      * Generate the next file path to write the data.
      */
     private Path generateNextFilePath() {
+        if (writeAsSingleFile) {
+            checkArgument(currentFileNumber++ == 0, "expected to write just one file");
+            return location;
+        }
         String fileName = String.format("%s-%03d.parquet", UUID.randomUUID(), currentFileNumber++);
         return new Path(location, fileName);
     }
