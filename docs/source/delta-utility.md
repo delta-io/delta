@@ -40,6 +40,10 @@ default retention threshold for the files is 7 days. To change this behavior, se
     VACUUM delta.`/data/events/` RETAIN 100 HOURS  -- vacuum files not required by versions more than 100 hours old
 
     VACUUM eventsTable DRY RUN    -- do dry run to get the list of files to be deleted
+
+    VACUUM eventsTable USING INVENTORY inventoryTable  —- vacuum files based on a provided reservoir of files as a delta table
+
+    VACUUM eventsTable USING INVENTORY (select * from inventoryTable)  —- vacuum files based on a provided reservoir of files as spark SQL query
     ```
 
     See [_](delta-batch.md#sql-support) for the steps to enable support for SQL commands.
@@ -82,6 +86,16 @@ default retention threshold for the files is 7 days. To change this behavior, se
       deltaTable.vacuum(100);     // vacuum files not required by versions more than 100 hours old
       ```
 
+### Inventory Table
+
+An inventory table contains a list of file paths together with their size, type (directory or not), and the last modification time. When an INVENTORY option is provided, VACUUM will consider the files listed there instead of  doing the full listing of the table directory, which can be time consuming for very large tables. The inventory table can be specified as a delta table or a spark SQL query that gives the expected table schema. The schema should be as follows:
+
+| Column Name      | Type    | Description                             |
+| -----------------| ------- | --------------------------------------- |
+| path             | string  | fully qualified uri                     |
+| length           | integer | size in bytes                           |
+| isDir            | boolean | boolean indicating if it is a directory |
+| modificationTime | integer | file update time in milliseconds        |
 
 .. note::
   When using `VACUUM`, to configure Spark to delete files in parallel (based on the number of shuffle partitions) set the session configuration `"spark.databricks.delta.vacuum.parallelDelete.enabled"` to `"true"` .
