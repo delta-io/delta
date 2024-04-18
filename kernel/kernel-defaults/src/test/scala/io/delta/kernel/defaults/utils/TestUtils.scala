@@ -305,10 +305,10 @@ trait TestUtils extends Assertions with SQLHelper {
 
     val snapshot = if (version.isDefined) {
       Table.forPath(tableClient, path)
-        .getSnapshotAtVersion(tableClient, version.get)
+        .getSnapshotAsOfVersion(tableClient, version.get)
     } else if (timestamp.isDefined) {
       Table.forPath(tableClient, path)
-        .getSnapshotAtTimestamp(tableClient, timestamp.get)
+        .getSnapshotAsOfTimestamp(tableClient, timestamp.get)
     } else {
       latestSnapshot(path, tableClient)
     }

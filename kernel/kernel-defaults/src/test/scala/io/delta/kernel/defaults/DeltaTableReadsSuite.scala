@@ -618,7 +618,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       // Cannot read a version that does not exist
       val e = intercept[RuntimeException] {
         Table.forPath(defaultTableClient, path)
-          .getSnapshotAtVersion(defaultTableClient, 11)
+          .getSnapshotAsOfVersion(defaultTableClient, 11)
       }
       assert(e.getMessage.contains(
         "Trying to load a non-existent version 11. The latest version available is 10"))
@@ -651,7 +651,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       // Cannot read a version that has been truncated
       val e = intercept[RuntimeException] {
         Table.forPath(defaultTableClient, tablePath)
-          .getSnapshotAtVersion(defaultTableClient, 9)
+          .getSnapshotAsOfVersion(defaultTableClient, 9)
       }
       assert(e.getMessage.contains("Unable to reconstruct state at version 9"))
       // Can read version 10
@@ -787,7 +787,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       new File(dir, "_delta_log").mkdirs()
       intercept[TableNotFoundException] {
         Table.forPath(defaultTableClient, dir.getCanonicalPath)
-          .getSnapshotAtTimestamp(defaultTableClient, 0L)
+          .getSnapshotAsOfTimestamp(defaultTableClient, 0L)
       }
     }
   }
@@ -796,7 +796,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     withTempDir { dir =>
       intercept[TableNotFoundException] {
         Table.forPath(defaultTableClient, dir.getCanonicalPath)
-          .getSnapshotAtTimestamp(defaultTableClient, 0L)
+          .getSnapshotAsOfTimestamp(defaultTableClient, 0L)
       }
     }
   }
@@ -806,7 +806,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       spark.range(20).write.format("parquet").mode("overwrite").save(dir.getCanonicalPath)
       intercept[TableNotFoundException] {
         Table.forPath(defaultTableClient, dir.getCanonicalPath)
-          .getSnapshotAtTimestamp(defaultTableClient, 0L)
+          .getSnapshotAsOfTimestamp(defaultTableClient, 0L)
       }
     }
   }

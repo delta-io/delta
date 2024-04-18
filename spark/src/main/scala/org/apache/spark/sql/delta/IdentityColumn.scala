@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
  * Provide utility methods related to IDENTITY column support for Delta.
  */
 object IdentityColumn extends DeltaLogging {
+  case class IdentityInfo(start: Long, step: Long, highWaterMark: Option[Long])
   // Default start and step configuration if not specified by user.
   val defaultStart = 1
   val defaultStep = 1
