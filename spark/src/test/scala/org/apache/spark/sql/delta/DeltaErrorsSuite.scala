@@ -3191,7 +3191,7 @@ trait DeltaErrorsSuiteBase
       checkErrorMessage(
         e,
         Some("DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE"),
-        Some("KD009"),
+        Some("428H2"),
         Some(s"DataType ${unsupportedDataType.typeName} is not supported for IDENTITY columns."),
         startWith = true
       )

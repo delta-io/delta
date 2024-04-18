@@ -1096,7 +1096,7 @@
     "message" : [
       "DataType <dataType> is not supported for IDENTITY columns."
     ],
-    "sqlState" : "KD009"
+    "sqlState" : "428H2"
   },
   "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION" : {
     "message" : [

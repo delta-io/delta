@@ -106,7 +106,7 @@ class DeltaColumnBuilder private[tables](
    * Specify a column as an identity column with default values that is always generated
    * by the system (i.e. does not allow user-specified values).
    *
-   * @since 3.2.0
+   * @since 3.3.0
    */
   @Evolving
   def generatedAlwaysAsIdentity(): DeltaColumnBuilder = {
@@ -121,7 +121,7 @@ class DeltaColumnBuilder private[tables](
    *
    * @param start the start value of the identity column
    * @param step the increment step of the identity column
-   * @since 3.2.0
+   * @since 3.3.0
    */
   @Evolving
   def generatedAlwaysAsIdentity(start: Long, step: Long): DeltaColumnBuilder = {
@@ -138,7 +138,7 @@ class DeltaColumnBuilder private[tables](
    * Specify a column as an identity column that allows user-specified values such that the
    * generated values use default start and step values.
    *
-   * @since 3.2.0
+   * @since 3.3.0
    */
   @Evolving
   def generatedByDefaultAsIdentity(): DeltaColumnBuilder = {
@@ -152,7 +152,7 @@ class DeltaColumnBuilder private[tables](
    *
    * @param start the start value of the identity column
    * @param step the increment step of the identity column
-   * @since 3.2.0
+   * @since 3.3.0
    */
   @Evolving
   def generatedByDefaultAsIdentity(start: Long, step: Long): DeltaColumnBuilder = {
