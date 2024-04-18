@@ -17,6 +17,7 @@
 package io.delta.kernel.client;
 
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.util.Optional;
 
 import io.delta.kernel.annotation.Evolving;
@@ -98,4 +99,28 @@ public interface JsonHandler {
         CloseableIterator<FileStatus> fileIter,
         StructType physicalSchema,
         Optional<Predicate> predicate) throws IOException;
+
+    /**
+     * Write each `Row` in given `data` serialized as JSON and written as separate line in
+     * destination file. This call either succeeds in creating the file with given contents or no
+     * file is created at all.
+     * <p>
+     * There are a few special cases that should be handled for specific data types:
+     * <ul>
+     *    <li><b>Date Type:</b> serialize as string of format <code>"yyyy-MM-dd"</code></li>
+     *    <li><b>Timestamp or Timestamp NTZ:</b> serialize as string of format
+     *    <code>"yyyy-MM-dd'T'HH:mm:ss.SSSXXX"</code></li>
+     *    <li><b>Map Type:</b> only expect a map with key type as {@code string}. Any other
+     *    type is not valid and throw unsupported error.</li>
+     * </ul>
+     * <p>
+     *
+     * @param filePath Fully qualified destination file path
+     * @param data     Iterator of {@link Row} objects where each row should be serialized as JSON
+     *                 and written as separate line in the destination file.
+     *                 <p>
+     * @throws FileAlreadyExistsException if the file already exists.
+     * @throws IOException if any other I/O error occurs.
+     */
+    void writeJsonFileAtomically(String filePath, CloseableIterator<Row> data) throws IOException;
 }

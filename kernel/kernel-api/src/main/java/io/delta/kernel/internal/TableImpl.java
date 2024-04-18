@@ -15,26 +15,23 @@
  */
 package io.delta.kernel.internal;
 
-import java.io.FileNotFoundException;
 import java.io.IOException;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.Table;
 import io.delta.kernel.TableNotFoundException;
+import io.delta.kernel.TransactionBuilder;
 import io.delta.kernel.client.TableClient;
 
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 
 public class TableImpl implements Table {
-    public static Table forPath(TableClient tableClient, String path)
-        throws TableNotFoundException {
+    public static Table forPath(TableClient tableClient, String path) {
         // Resolve the path to fully qualified table path using the `TableClient` APIs
         String resolvedPath;
         try {
             resolvedPath = tableClient.getFileSystemClient().resolvePath(path);
-        } catch (FileNotFoundException fnf) {
-            throw new TableNotFoundException(path, fnf);
         } catch (IOException io) {
             throw new RuntimeException(io);
         }
@@ -42,13 +39,13 @@ public class TableImpl implements Table {
     }
 
     private final SnapshotManager snapshotManager;
-    private final String tablePath;
+    private final Path logPath;
+    private final Path tablePath;
 
     public TableImpl(String tablePath) {
-        this.tablePath = tablePath;
-        final Path dataPath = new Path(tablePath);
-        final Path logPath = new Path(dataPath, "_delta_log");
-        this.snapshotManager = new SnapshotManager(logPath, dataPath);
+        this.tablePath = new Path(tablePath);
+        this.logPath = new Path(tablePath, "_delta_log");
+        this.snapshotManager = new SnapshotManager(logPath, this.tablePath);
     }
 
     @Override
@@ -58,7 +55,7 @@ public class TableImpl implements Table {
 
     @Override
     public String getPath() {
-        return tablePath;
+        return tablePath.toString();
     }
 
     @Override
@@ -71,5 +68,18 @@ public class TableImpl implements Table {
     public Snapshot getSnapshotAsOfTimestamp(TableClient tableClient, long millisSinceEpochUTC)
         throws TableNotFoundException {
         return snapshotManager.getSnapshotForTimestamp(tableClient, millisSinceEpochUTC);
+    }
+
+    @Override
+    public TransactionBuilder createTransactionBuilder(
+            TableClient tableClient,
+            String engineInfo,
+            String operation) {
+        return new TransactionBuilderImpl(this, engineInfo, operation);
+    }
+
+    @Override
+    public void checkpoint(TableClient tableClient, long version) {
+        throw new UnsupportedOperationException("NYI");
     }
 }

@@ -16,9 +16,7 @@
 
 package io.delta.kernel.client;
 
-import java.io.ByteArrayInputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
+import java.io.*;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.utils.CloseableIterator;
@@ -54,6 +52,23 @@ public interface FileSystemClient {
      * @throws IOException for any other IO error.
      */
     String resolvePath(String path) throws IOException;
+
+    /**
+     * Create a directory at the given path.
+     *
+     * @param path Path to create.
+     * @throws IOException for any IO error.
+     */
+    void mkdir(String path) throws IOException;
+
+    /**
+     *
+     * Whether a partial write is visible for the underlying file system of `path`.
+     *
+     * @throws IOException for any IO error.
+     * @since 3.2.0
+     */
+    boolean isPartialWriteVisible(String path) throws IOException;
 
     /**
      * Return an iterator of byte streams one for each read request in {@code readRequests}. The

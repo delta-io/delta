@@ -34,10 +34,8 @@ public interface Table {
      * @param path        location where the Delta table is present. Path is resolved to fully
      *                    qualified path using the given {@code tableClient}.
      * @return an instance of {@link Table} representing the Delta table at given path
-     * @throws TableNotFoundException when there is no Delta table at the given path.
      */
-    static Table forPath(TableClient tableClient, String path)
-        throws TableNotFoundException {
+    static Table forPath(TableClient tableClient, String path) {
         return TableImpl.forPath(tableClient, path);
     }
 
@@ -85,12 +83,38 @@ public interface Table {
      *     latest version of the table, we throw an error</li>
      * </ul>.
      *
-     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @param millisSinceEpochUTC timestamp to fetch the snapshot for in milliseconds since the
-     *                            unix epoch
+     * @param tableClient         {@link TableClient} instance to use in Delta Kernel.
+     * @param millisSinceEpochUTC timestamp to fetch the snapshot for in milliseconds since the unix
+     *                            epoch
      * @return an instance of {@link Snapshot}
      * @since 3.2.0
      */
     Snapshot getSnapshotAsOfTimestamp(TableClient tableClient, long millisSinceEpochUTC)
         throws TableNotFoundException;
+
+    /**
+     * Create a {@link TransactionBuilder} which can create a {@link Transaction} object to mutate
+     * the table.
+     *
+     * @param tableClient {@link TableClient} instance to use.
+     * @param engineInfo  information about the engine that is making the updates.
+     * @param operation   metadata of operation that is being performed. E.g. "insert", "delete".
+     * @return {@link TransactionBuilder} instance to build the transaction.
+     * @since 3.2.0
+     */
+    TransactionBuilder createTransactionBuilder(
+            TableClient tableClient,
+            String engineInfo,
+            String operation);
+
+    /**
+     * Checkpoint the table at given version. It writes a single checkpoint file.
+     *
+     * @param tableClient {@link TableClient} instance to use.
+     * @param version     Version to checkpoint.
+     * @throws CheckpointAlreadyExistsException
+     * @since 3.2.0
+     */
+    void checkpoint(TableClient tableClient, long version)
+            throws CheckpointAlreadyExistsException;
 }

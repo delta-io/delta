@@ -92,6 +92,16 @@ public class DefaultFileSystemClient
     }
 
     @Override
+    public void mkdir(String path) throws IOException {
+        throw new UnsupportedOperationException("Not yet implemented");
+    }
+
+    @Override
+    public boolean isPartialWriteVisible(String path) throws IOException {
+        throw new UnsupportedOperationException("Not yet implemented");
+    }
+
+    @Override
     public CloseableIterator<ByteArrayInputStream> readFiles(
             CloseableIterator<FileReadRequest> readRequests) {
         return readRequests.map(elem ->

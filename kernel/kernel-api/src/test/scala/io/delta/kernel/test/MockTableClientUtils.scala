@@ -16,7 +16,7 @@
 package io.delta.kernel.test
 
 import io.delta.kernel.client._
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, Row}
 import io.delta.kernel.expressions.{Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
 import io.delta.kernel.types.{DataType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
@@ -90,6 +90,9 @@ trait BaseMockJsonHandler extends JsonHandler {
       physicalSchema: StructType,
       predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
     throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def writeJsonFileAtomically(filePath: String, data: CloseableIterator[Row]): Unit =
+    throw new UnsupportedOperationException("not supported in this test suite")
 }
 
 /**
@@ -140,6 +143,12 @@ trait BaseMockFileSystemClient extends FileSystemClient {
 
   override def readFiles(
       readRequests: CloseableIterator[FileReadRequest]): CloseableIterator[ByteArrayInputStream] =
+    throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def mkdir(path: String): Unit =
+    throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def isPartialWriteVisible(path: String): Boolean =
     throw new UnsupportedOperationException("not supported in this test suite")
 }
 

@@ -20,18 +20,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.ObjectReader;
+import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.delta.storage.LogStore;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
 
 import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
@@ -172,6 +170,20 @@ public class DefaultJsonHandler implements JsonHandler {
                 }
             }
         };
+    }
+
+    /**
+     * Makes use of {@link LogStore} implementations in `delta-storage` to atomically write the data
+     * to a file depending upon the destination filesystem.
+     *
+     * @param filePath Destination file path
+     * @param data     Data to write as Json
+     * @throws IOException
+     */
+    @Override
+    public void writeJsonFileAtomically(String filePath, CloseableIterator<Row> data)
+            throws IOException {
+        throw new UnsupportedOperationException("Not yet implemented");
     }
 
     private Row parseJson(String json, StructType readSchema) {
