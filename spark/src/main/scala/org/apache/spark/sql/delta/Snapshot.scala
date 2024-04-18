@@ -21,7 +21,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.managedcommit.{CommitStore, CommitStoreProvider}
+import org.apache.spark.sql.delta.managedcommit.{CommitStore, CommitStoreProvider, TableCommitStore}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -232,7 +232,10 @@ class Snapshot(
    * - This must be present when managed commit is enabled.
    * - This must be None when managed commit is disabled.
    */
-  val commitStoreOpt: Option[CommitStore] = CommitStoreProvider.getCommitStore(this)
+  val tableCommitStoreOpt: Option[TableCommitStore] = initializeTableCommitStore()
+  protected def initializeTableCommitStore(): Option[TableCommitStore] = {
+    CommitStoreProvider.getTableCommitStore(this)
+  }
 
   /** Number of columns to collect stats on for data skipping */
   override lazy val statsColumnSpec: DeltaStatsColumnSpec =
@@ -478,18 +481,14 @@ class Snapshot(
    *   if the delta file for the current version is not found after backfilling.
    */
   def ensureCommitFilesBackfilled(): Unit = {
-    val commitStore = commitStoreOpt.getOrElse {
+    val tableCommitStore = tableCommitStoreOpt.getOrElse {
       return
     }
     val minUnbackfilledVersion = DeltaCommitFileProvider(this).minUnbackfilledVersion
     if (minUnbackfilledVersion <= version) {
       val hadoopConf = deltaLog.newDeltaHadoopConf()
-      commitStore.backfillToVersion(
-        deltaLog.store,
-        hadoopConf,
-        deltaLog.logPath,
-        startVersion = minUnbackfilledVersion,
-        endVersion = Some(version))
+      tableCommitStore.backfillToVersion(
+        startVersion = minUnbackfilledVersion, endVersion = Some(version))
       val fs = deltaLog.logPath.getFileSystem(hadoopConf)
       val expectedBackfilledDeltaFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
       if (!fs.exists(expectedBackfilledDeltaFile)) {
@@ -593,5 +592,8 @@ class InitialSnapshot(
   override protected lazy val computedState: SnapshotState = initialState(metadata)
   override def protocol: Protocol = computedState.protocol
   override protected lazy val getInCommitTimestampOpt: Option[Long] = None
+
+  // The [[InitialSnapshot]] is not backed by any external Commit Store.
+  override def initializeTableCommitStore(): Option[TableCommitStore] = None
   override def timestamp: Long = -1L
 }

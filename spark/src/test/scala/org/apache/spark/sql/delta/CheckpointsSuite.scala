@@ -84,7 +84,8 @@ class CheckpointsSuite
   }
 
   protected override def sparkConf = {
-    // Set the gs LogStore impl to `LocalLogStore` so that it will work with `FakeGCSFileSystem`.
+    // Set the gs LogStore impl to `LocalLogStore` so that it will work with
+    // `FakeGCSFileSystemValidatingCheckpoint`.
     // The default one is `HDFSLogStore` which requires a `FileContext` but we don't have one.
     super.sparkConf.set("spark.delta.logStore.gs.impl", classOf[LocalLogStore].getName)
   }
@@ -228,23 +229,22 @@ class CheckpointsSuite
     assert(!Checkpoints.isGCSPath(conf, new Path("/foo")))
     // Set the default file system and verify we can detect it
     conf.set("fs.defaultFS", "gs://foo/")
-    conf.set("fs.gs.impl", classOf[FakeGCSFileSystem].getName)
+    conf.set("fs.gs.impl", classOf[FakeGCSFileSystemValidatingCheckpoint].getName)
     conf.set("fs.gs.impl.disable.cache", "true")
     assert(Checkpoints.isGCSPath(conf, new Path("/foo")))
   }
 
   test("SC-86940: writing a GCS checkpoint should happen in a new thread") {
     withTempDir { tempDir =>
-      val path = tempDir.getCanonicalPath
-      spark.range(1).write.format("delta").save(path)
-
-      // Use `FakeGCSFileSystem` which will verify we write in a separate gcs thread.
+      // Use `FakeGCSFileSystemValidatingCheckpoint` which will verify we write in a separate gcs
+      // thread.
       withSQLConf(
-          "fs.gs.impl" -> classOf[FakeGCSFileSystem].getName,
+          "fs.gs.impl" -> classOf[FakeGCSFileSystemValidatingCheckpoint].getName,
           "fs.gs.impl.disable.cache" -> "true") {
+        val gsPath = s"gs://${tempDir.getCanonicalPath}"
+        spark.range(1).write.format("delta").save(gsPath)
         DeltaLog.clearCache()
-        val gsPath = new Path(s"gs://${tempDir.getCanonicalPath}")
-        val deltaLog = DeltaLog.forTable(spark, gsPath)
+        val deltaLog = DeltaLog.forTable(spark, new Path(gsPath))
         deltaLog.checkpoint()
       }
     }
@@ -1018,15 +1018,15 @@ class V2CheckpointManifestOverwriteSuite
   }
 }
 
-/**
- * A fake GCS file system to verify delta commits are written in a separate gcs thread.
- */
-class FakeGCSFileSystem extends RawLocalFileSystem {
+/** A fake GCS file system to verify delta checkpoints are written in a separate gcs thread. */
+class FakeGCSFileSystemValidatingCheckpoint extends RawLocalFileSystem {
   override def getScheme: String = "gs"
   override def getUri: URI = URI.create("gs:/")
 
-  private def assertGCSThread(f: Path): Unit = {
-    if (f.getName.contains(".json") || f.getName.contains(".checkpoint")) {
+  protected def shouldValidateFilePattern(f: Path): Boolean = f.getName.contains(".checkpoint")
+
+  protected def assertGCSThread(f: Path): Unit = {
+    if (shouldValidateFilePattern(f)) {
       assert(
         Thread.currentThread().getName.contains("delta-gcs-"),
         s"writing $f was happening in non gcs thread: ${Thread.currentThread()}")
@@ -1055,6 +1055,11 @@ class FakeGCSFileSystem extends RawLocalFileSystem {
     assertGCSThread(f)
     super.create(f, overwrite, bufferSize, replication, blockSize, progress)
   }
+}
+
+/** A fake GCS file system to verify delta commits are written in a separate gcs thread. */
+class FakeGCSFileSystemValidatingCommits extends FakeGCSFileSystemValidatingCheckpoint {
+  override protected def shouldValidateFilePattern(f: Path): Boolean = f.getName.contains(".json")
 }
 
 class ManagedCommitBatch1BackFillCheckpointsSuite extends CheckpointsSuite {

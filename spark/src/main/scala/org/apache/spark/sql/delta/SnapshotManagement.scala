@@ -29,7 +29,7 @@ import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.managedcommit.{Commit, CommitStore, GetCommitsResponse}
+import org.apache.spark.sql.delta.managedcommit.{Commit, GetCommitsResponse, TableCommitStore => CommitStore}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -162,7 +162,7 @@ trait SnapshotManagement { self: DeltaLog =>
       val threadPool = SnapshotManagement.commitStoreGetCommitsThreadPool
       def getCommitsTask(async: Boolean): GetCommitsResponse = {
         recordFrameProfile("DeltaLog", s"CommitStore.getCommits.async=$async") {
-          commitStore.getCommits(logPath, startVersion, endVersion = versionToLoad)
+          commitStore.getCommits(startVersion, endVersion = versionToLoad)
         }
       }
       val unbackfilledCommitsResponseFuture =
@@ -193,7 +193,8 @@ trait SnapshotManagement { self: DeltaLog =>
       val unbackfilledCommitsResponse = try {
         unbackfilledCommitsResponseFuture.get()
       } catch {
-        case e: java.util.concurrent.ExecutionException => throw e.getCause
+        case e: java.util.concurrent.ExecutionException =>
+          throw new CommitStoreGetCommitsFailedException(e.getCause)
       }
 
       def requiresAdditionalListing(): Boolean = {
@@ -311,7 +312,7 @@ trait SnapshotManagement { self: DeltaLog =>
   private def createLogSegment(previousSnapshot: Snapshot): Option[LogSegment] = {
     createLogSegment(
       oldCheckpointProviderOpt = Some(previousSnapshot.checkpointProvider),
-      commitStoreOpt = previousSnapshot.commitStoreOpt)
+      commitStoreOpt = previousSnapshot.tableCommitStoreOpt)
   }
 
   /**
@@ -981,7 +982,7 @@ trait SnapshotManagement { self: DeltaLog =>
       val newSnapshot = getUpdatedSnapshot(
         oldSnapshotOpt = Some(previousSnapshot),
         initialSegmentForNewSnapshot = segmentOpt,
-        initialCommitStore = previousSnapshot.commitStoreOpt,
+        initialCommitStore = previousSnapshot.tableCommitStoreOpt,
         isAsync = isAsync)
       installSnapshot(newSnapshot, updateStartTimeMs)
     }
@@ -1007,15 +1008,18 @@ trait SnapshotManagement { self: DeltaLog =>
       initialCommitStore,
       isAsync
     )
-    // If the commit store has changed, we need to again invoke updateSnapshot so that we
-    // could get the latest commits from the new commit store. We need to do it only once as
-    // the delta spec mandates the commit which changes the commit owner to be backfilled.
-    if (newSnapshot.version >= 0 &&
-        !CommitStore.semanticEquals(newSnapshot.commitStoreOpt, initialCommitStore)) {
+    // Identify whether the snapshot was created using a "stale" commit store. If yes, we need to
+    // again invoke [[updateSnapshot]] so that we could get the latest commits from the updated
+    // commit store. We need to do it only once as the delta spec mandates the commit which changes
+    // the commit owner to be backfilled.
+    val usedStaleCommitStore = newSnapshot.tableCommitStoreOpt.exists { newStore =>
+      initialCommitStore.forall(!_.semanticsEquals(newStore))
+    }
+    if (usedStaleCommitStore) {
       val segmentOpt = createLogSegment(newSnapshot)
       newSnapshot =
         getSnapshotForLogSegmentInternal(
-          Some(newSnapshot), segmentOpt, newSnapshot.commitStoreOpt, isAsync)
+          Some(newSnapshot), segmentOpt, newSnapshot.tableCommitStoreOpt, isAsync)
     }
     newSnapshot
   }
@@ -1125,7 +1129,7 @@ trait SnapshotManagement { self: DeltaLog =>
         newChecksumOpt,
         preCommitLogSegment,
         commit,
-        previousSnapshot.commitStoreOpt,
+        previousSnapshot.tableCommitStoreOpt,
         previousSnapshot.checkpointProvider)
 
       // This likely implies a list-after-write inconsistency
@@ -1140,7 +1144,7 @@ trait SnapshotManagement { self: DeltaLog =>
       val newSnapshot = createSnapshotAfterCommit(
         segment,
         newChecksumOpt,
-        previousSnapshot.commitStoreOpt,
+        previousSnapshot.tableCommitStoreOpt,
         committedVersion)
       logMetadataTableIdChange(previousSnapshot, newSnapshot)
       logInfo(s"Updated snapshot to $newSnapshot")
@@ -1196,7 +1200,7 @@ trait SnapshotManagement { self: DeltaLog =>
     val logSegmentOpt = createLogSegment(
       versionToLoad = Some(version),
       oldCheckpointProviderOpt = lastCheckpointProviderOpt,
-      commitStoreOpt = upperBoundSnapshot.commitStoreOpt,
+      commitStoreOpt = upperBoundSnapshot.tableCommitStoreOpt,
       lastCheckpointInfo = lastCheckpointInfoOpt)
     val logSegment = logSegmentOpt.getOrElse {
       // We can't return InitialSnapshot because our caller asked for a specific snapshot version.
@@ -1204,7 +1208,7 @@ trait SnapshotManagement { self: DeltaLog =>
     }
     createSnapshot(
       initSegment = logSegment,
-      commitStoreOpt = upperBoundSnapshot.commitStoreOpt,
+      commitStoreOpt = upperBoundSnapshot.tableCommitStoreOpt,
       checksumOpt = None)
   }
 
@@ -1346,6 +1350,9 @@ case class LogSegment(
     }
   }
 }
+
+/** Exception thrown When [[CommitStore.getCommits]] fails due to any reason. */
+class CommitStoreGetCommitsFailedException(cause: Throwable) extends Exception(cause)
 
 object LogSegment {
 
