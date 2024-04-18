@@ -2952,14 +2952,14 @@ trait DeltaErrorsSuiteBase
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.foundViolatingConstraintsForColumnChange(
-          "UPDATE", "col1", Map("foo" -> "bar"))
+          "col1", Map("foo" -> "bar"))
       }
       checkErrorMessage(
         e,
         Some("DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE"),
         None,
         Some(
-          s"""Cannot UPDATE column col1 because this column is referenced by the following
+          s"""Cannot alter column col1 because this column is referenced by the following
              |check constraint(s):
              |foo -> bar""".stripMargin)
       )
@@ -3014,7 +3014,6 @@ trait DeltaErrorsSuiteBase
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
-          operation = "UPDATE",
           columnName = "col1",
           generatedColumns = Map("col2" -> "col1 + 1", "col3" -> "col1 + 2"))
       }
@@ -3023,7 +3022,7 @@ trait DeltaErrorsSuiteBase
         Some("DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE"),
         None,
         Some(
-          s"""Cannot UPDATE column col1 because this column is referenced by the following
+          s"""Cannot alter column col1 because this column is referenced by the following
              |generated column(s):
              |col2 -> col1 + 1
              |col3 -> col1 + 2""".stripMargin)

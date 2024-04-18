@@ -989,9 +989,9 @@ trait DeltaTypeWideningConstraintsTests {
 
   test("check constraint with type change") {
     withTable("t") {
-      sql("CREATE TABLE t (a byte) USING DELTA")
+      sql("CREATE TABLE t (a byte, b byte) USING DELTA")
       sql("ALTER TABLE t ADD CONSTRAINT ck CHECK (hash(a) > 0)")
-      sql("INSERT INTO t VALUES (2)")
+      sql("INSERT INTO t VALUES (2, 2)")
       checkAnswer(sql("SELECT hash(a) FROM t"), Row(1765031574))
 
       // Changing the type of a column that a CHECK constraint depends on is not allowed.
@@ -1001,10 +1001,14 @@ trait DeltaTypeWideningConstraintsTests {
         },
         errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
-          "operation" -> "change",
           "columnName" -> "a",
           "constraints" -> "delta.constraints.ck -> hash ( a ) > 0"
       ))
+
+      // Changing the type of `b` is allowed as it's not referenced by the constraint.
+      sql("ALTER TABLE t CHANGE COLUMN b TYPE SMALLINT")
+      assert(sql("SELECT * FROM t").schema("b").dataType === ShortType)
+      checkAnswer(sql("SELECT * FROM t"), Row(2, 2))
     }
   }
 
@@ -1021,7 +1025,6 @@ trait DeltaTypeWideningConstraintsTests {
         },
         errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
-          "operation" -> "change",
           "columnName" -> "a.x",
           "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
       ))
@@ -1075,8 +1078,8 @@ trait DeltaTypeWideningConstraintsTests {
             "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
         ))
 
-        // Changing the type of a.y isn't allowed even though it's not the field referenced by the
-        // generated column.
+        // We're currently too strict and reject changing the type of struct field a.y even though
+        // it's not the field referenced by the CHECK constraint.
         checkError(
           exception = intercept[DeltaAnalysisException] {
             sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 500))")
@@ -1101,11 +1104,11 @@ trait DeltaTypeWideningGeneratedColumnTests extends GeneratedColumnTest {
       createTable(
         tableName = "t",
         path = None,
-        schemaString = "a byte, gen int",
+        schemaString = "a byte, b byte, gen int",
         generatedColumns = Map("gen" -> "hash(a)"),
         partitionColumns = Seq.empty
       )
-      sql("INSERT INTO t (a) VALUES (2)")
+      sql("INSERT INTO t (a, b) VALUES (2, 2)")
       checkAnswer(sql("SELECT hash(a) FROM t"), Row(1765031574))
 
       // Changing the type of a column that a generated column depends on is not allowed.
@@ -1115,10 +1118,14 @@ trait DeltaTypeWideningGeneratedColumnTests extends GeneratedColumnTest {
         },
         errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
-          "operation" -> "change",
           "columnName" -> "a",
           "generatedColumns" -> "gen -> hash(a)"
         ))
+
+      // Changing the type of `b` is allowed as it's not referenced by the generated column.
+      sql("ALTER TABLE t CHANGE COLUMN b TYPE SMALLINT")
+      assert(sql("SELECT * FROM t").schema("b").dataType === ShortType)
+      checkAnswer(sql("SELECT * FROM t"), Row(2, 2, 1765031574))
     }
   }
 
@@ -1140,14 +1147,13 @@ trait DeltaTypeWideningGeneratedColumnTests extends GeneratedColumnTest {
         },
         errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
-          "operation" -> "change",
           "columnName" -> "a.x",
           "generatedColumns" -> "gen -> hash(a.x)"
-        ))
+      ))
 
-        // Changing the type of a.y is allowed since it's not referenced by the CHECK constraint.
-        sql("ALTER TABLE t CHANGE COLUMN a.y TYPE SMALLINT")
-        checkAnswer(sql("SELECT * FROM t"), Row(Row(2, 3), 1765031574) :: Nil)
+      // Changing the type of a.y is allowed since it's not referenced by the CHECK constraint.
+      sql("ALTER TABLE t CHANGE COLUMN a.y TYPE SMALLINT")
+      checkAnswer(sql("SELECT * FROM t"), Row(Row(2, 3), 1765031574) :: Nil)
     }
   }
 
@@ -1204,8 +1210,8 @@ trait DeltaTypeWideningGeneratedColumnTests extends GeneratedColumnTest {
             "generatedColumns" -> "gen -> hash(a.x)"
         ))
 
-        // Changing the type of a.y isn't allowed even though it's not the field referenced by the
-        // generated column.
+        // We're currently too strict and reject changing the type of struct field a.y even though
+        // it's not the field referenced by the generated column.
         checkError(
           exception = intercept[DeltaAnalysisException] {
             sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 200))")

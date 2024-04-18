@@ -538,7 +538,7 @@
   },
   "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE" : {
     "message" : [
-      "Cannot <operation> column <columnName> because this column is referenced by the following",
+      "Cannot alter column <columnName> because this column is referenced by the following",
       "check constraint(s):",
       "<constraints>"
     ],
@@ -1012,7 +1012,7 @@
   },
   "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE" : {
     "message" : [
-      "Cannot <operation> column <columnName> because this column is referenced by the following",
+      "Cannot alter column <columnName> because this column is referenced by the following",
       "generated column(s):",
       "<generatedColumns>"
     ],

@@ -2098,22 +2098,20 @@ trait DeltaErrorsBase
       messageParameters = columnNames.toArray)
 
   def foundViolatingConstraintsForColumnChange(
-      operation: String,
       columnName: String,
       constraints: Map[String, String]): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
-      messageParameters = Array(operation, columnName, constraints.mkString("\n"))
+      messageParameters = Array(columnName, constraints.mkString("\n"))
     )
   }
 
   def foundViolatingGeneratedColumnsForColumnChange(
-      operation: String,
       columnName: String,
       generatedColumns: Map[String, String]): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
-      messageParameters = Array(operation, columnName, generatedColumns.mkString("\n"))
+      messageParameters = Array(columnName, generatedColumns.mkString("\n"))
     )
   }
 

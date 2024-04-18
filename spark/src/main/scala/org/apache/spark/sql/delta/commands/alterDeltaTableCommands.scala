@@ -74,8 +74,7 @@ trait AlterDeltaTableCommand extends DeltaCommand {
       sparkSession: SparkSession,
       columnParts: Seq[String],
       newMetadata: actions.Metadata,
-      protocol: Protocol,
-      operationName: String): Unit = {
+      protocol: Protocol): Unit = {
     if (!sparkSession.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS)) {
       return
@@ -85,14 +84,14 @@ trait AlterDeltaTableCommand extends DeltaCommand {
       Constraints.findDependentConstraints(sparkSession, columnParts, newMetadata)
     if (dependentConstraints.nonEmpty) {
       throw DeltaErrors.foundViolatingConstraintsForColumnChange(
-        operationName, UnresolvedAttribute(columnParts).name, dependentConstraints)
+        UnresolvedAttribute(columnParts).name, dependentConstraints)
     }
     // check if the column to change is referenced by any generated columns
     val dependentGenCols = SchemaUtils.findDependentGeneratedColumns(
       sparkSession, columnParts, protocol, newMetadata.schema)
     if (dependentGenCols.nonEmpty) {
       throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
-        operationName, UnresolvedAttribute(columnParts).name, dependentGenCols)
+        UnresolvedAttribute(columnParts).name, dependentGenCols)
     }
   }
 }
@@ -524,7 +523,7 @@ case class AlterTableDropColumnsDeltaCommand(
         configuration = newConfiguration
       )
       columnsToDrop.foreach { columnParts =>
-        checkDependentExpressions(sparkSession, columnParts, newMetadata, txn.protocol, "drop")
+        checkDependentExpressions(sparkSession, columnParts, newMetadata, txn.protocol)
       }
 
       txn.updateMetadata(newMetadata)
@@ -659,7 +658,7 @@ case class AlterTableChangeColumnDeltaCommand(
       if (newColumn.name != columnName) {
         // need to validate the changes if the column is renamed
         checkDependentExpressions(
-          sparkSession, columnPath :+ columnName, newMetadata, txn.protocol, "rename")
+          sparkSession, columnPath :+ columnName, newMetadata, txn.protocol)
       }
 
 
@@ -777,7 +776,7 @@ case class AlterTableChangeColumnDeltaCommand(
 
     if (originalField.dataType != newType) {
       checkDependentExpressions(
-        spark, columnPath :+ columnName, txn.metadata, txn.protocol, "change")
+        spark, columnPath :+ columnName, txn.metadata, txn.protocol)
     }
 
     if (originalField.nullable && !newColumn.nullable) {

@@ -230,9 +230,9 @@ object ImplicitMetadataOperation {
   private def checkDependentExpressions(
       sparkSession: SparkSession,
       protocol: Protocol,
-      newMetadata: actions.Metadata,
+      metadata: actions.Metadata,
       dataSchema: StructType): Unit =
-  SchemaMergingUtils.transformColumns(newMetadata.schema, dataSchema) {
+  SchemaMergingUtils.transformColumns(metadata.schema, dataSchema) {
     case (fieldPath, currentField, Some(updateField), _)
       // This condition is actually too strict, structs may be identified as changing because one
       // of their field is changing even though that field isn't referenced by any constraint or
@@ -245,7 +245,7 @@ object ImplicitMetadataOperation {
         val columnPath = fieldPath :+ currentField.name
         // check if the field to change is referenced by check constraints
         val dependentConstraints =
-          Constraints.findDependentConstraints(sparkSession, columnPath, newMetadata)
+          Constraints.findDependentConstraints(sparkSession, columnPath, metadata)
         if (dependentConstraints.nonEmpty) {
           throw DeltaErrors.constraintDataTypeMismatch(
             columnPath,
@@ -256,7 +256,7 @@ object ImplicitMetadataOperation {
         }
         // check if the field to change is referenced by any generated columns
         val dependentGenCols = SchemaUtils.findDependentGeneratedColumns(
-          sparkSession, columnPath, protocol, newMetadata.schema)
+          sparkSession, columnPath, protocol, metadata.schema)
         if (dependentGenCols.nonEmpty) {
           throw DeltaErrors.generatedColumnsDataTypeMismatch(
             columnPath,
