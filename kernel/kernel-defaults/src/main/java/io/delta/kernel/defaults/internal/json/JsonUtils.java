@@ -36,17 +36,18 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 
 /**
- * Utilities method to serialize and deserialize {@link Row} objects.
+ * Utilities method to serialize and deserialize {@link Row} objects with a limited set of data type
+ * values.
+ * <p
+ * Following are the supported data types:
+ * {@code boolean}, {@code byte}, {@code short}, {@code int}, {@code long}, {@code float},
+ * {@code double}, {@code string}, {@code StructType} (containing any of the supported subtypes),
+ * {@code ArrayType}, {@code MapType} (only a map with string keys is supported).
+ *
+ * At a high-level, the JSON serialization is similar to that of Jackson's {@link ObjectMapper}.
  */
 public class JsonUtils {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
-    // by default BigDecimals are truncated and read as floats
-    private static final ObjectReader OBJECT_READER_READ_BIG_DECIMALS = OBJECT_MAPPER
-            .reader(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
-
-    private static final DateTimeFormatter DATE_TIME_FORMATTER =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
 
     static {
         OBJECT_MAPPER.registerModule(
@@ -79,7 +80,7 @@ public class JsonUtils {
      */
     public static Row rowFromJson(String json, StructType schema) {
         try {
-            final JsonNode jsonNode = OBJECT_READER_READ_BIG_DECIMALS.readTree(json);
+            final JsonNode jsonNode = OBJECT_MAPPER.readTree(json);
             return new DefaultJsonRow((ObjectNode) jsonNode, schema);
         } catch (JsonProcessingException ex) {
             throw new RuntimeException(String.format("Could not parse JSON: %s", json), ex);
@@ -128,7 +129,10 @@ public class JsonUtils {
             gen.writeStartArray();
             ColumnVector arrayElems = arrayValue.getElements();
             for (int i = 0; i < arrayValue.getSize(); i++) {
-                if (!arrayElems.isNullAt(i)) {
+                if (arrayElems.isNullAt(i)) {
+                    // Jackson serializes the null values in the array, but not in the map
+                    gen.writeNull();
+                } else {
                     writeValue(gen, arrayValue.getElements(), i, arrayType.getElementType());
                 }
             }
@@ -161,20 +165,12 @@ public class JsonUtils {
                 gen.writeNumber(row.getShort(columnOrdinal));
             } else if (type instanceof IntegerType) {
                 gen.writeNumber(row.getInt(columnOrdinal));
-            } else if (type instanceof DateType) {
-                int daysSinceEpochUTC = row.getInt(columnOrdinal);
-                gen.writeString(LocalDate.ofEpochDay(daysSinceEpochUTC).toString());
             } else if (type instanceof LongType) {
                 gen.writeNumber(row.getLong(columnOrdinal));
-            } else if (type instanceof TimestampType || type instanceof TimestampNTZType) {
-                long microsSinceEpochUTC = row.getLong(columnOrdinal);
-                gen.writeString(microsToString(microsSinceEpochUTC));
             } else if (type instanceof FloatType) {
                 gen.writeNumber(row.getFloat(columnOrdinal));
             } else if (type instanceof DoubleType) {
                 gen.writeNumber(row.getDouble(columnOrdinal));
-            } else if (type instanceof DecimalType) {
-                gen.writeNumber(row.getDecimal(columnOrdinal));
             } else if (type instanceof StringType) {
                 gen.writeString(row.getString(columnOrdinal));
             } else if (type instanceof StructType) {
@@ -200,20 +196,12 @@ public class JsonUtils {
                 gen.writeNumber(vector.getShort(rowId));
             } else if (type instanceof IntegerType) {
                 gen.writeNumber(vector.getInt(rowId));
-            } else if (type instanceof DateType) {
-                int daysSinceEpochUTC = vector.getInt(rowId);
-                gen.writeString(LocalDate.ofEpochDay(daysSinceEpochUTC).toString());
             } else if (type instanceof LongType) {
                 gen.writeNumber(vector.getLong(rowId));
-            } else if (type instanceof TimestampType || type instanceof TimestampNTZType) {
-                long microsSinceEpochUTC = vector.getLong(rowId);
-                gen.writeString(microsToString(microsSinceEpochUTC));
             } else if (type instanceof FloatType) {
                 gen.writeNumber(vector.getFloat(rowId));
             } else if (type instanceof DoubleType) {
                 gen.writeNumber(vector.getDouble(rowId));
-            } else if (type instanceof DecimalType) {
-                gen.writeNumber(vector.getDecimal(rowId));
             } else if (type instanceof StringType) {
                 gen.writeString(vector.getString(rowId));
             } else if (type instanceof StructType) {
@@ -223,17 +211,9 @@ public class JsonUtils {
             } else if (type instanceof MapType) {
                 writeMapValue(gen, vector.getMap(rowId), (MapType) type);
             } else {
-                // `binary` type is not supported according the Delta Protocol
                 throw new UnsupportedOperationException("unsupported data type: " + type);
             }
         }
-    }
-
-    private static String microsToString(long microsSinceEpochUTC) {
-        long seconds = microsSinceEpochUTC / 1_000_000;
-        int nanosOfSecond = (int) ((microsSinceEpochUTC % 1_000_000) * 1_000);
-        Instant instant = Instant.ofEpochSecond(seconds, nanosOfSecond);
-        return instant.toString();
     }
 
     private static void assertSupportedMapType(MapType keyType) {

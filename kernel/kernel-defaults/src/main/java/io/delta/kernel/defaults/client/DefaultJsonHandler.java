@@ -20,8 +20,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.delta.storage.LogStore;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
@@ -36,6 +39,7 @@ import io.delta.kernel.utils.FileStatus;
 import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
 import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
@@ -47,6 +51,9 @@ import io.delta.kernel.defaults.internal.types.DataTypeParser;
 public class DefaultJsonHandler implements JsonHandler {
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final ObjectReader defaultObjectReader = mapper.reader();
+    // by default BigDecimals are truncated and read as floats
+    private static final ObjectReader objectReaderReadBigDecimals = mapper
+            .reader(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
 
     private final Configuration hadoopConf;
     private final int maxBatchSize;
@@ -59,16 +66,14 @@ public class DefaultJsonHandler implements JsonHandler {
     }
 
     @Override
-    public ColumnarBatch parseJson(
-            ColumnVector jsonStringVector, StructType outputSchema,
-            Optional<ColumnVector> selectionVector) {
+    public ColumnarBatch parseJson(ColumnVector jsonStringVector, StructType outputSchema,
+                                   Optional<ColumnVector> selectionVector) {
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < jsonStringVector.getSize(); i++) {
             boolean isSelected = !selectionVector.isPresent() ||
                     (!selectionVector.get().isNullAt(i) && selectionVector.get().getBoolean(i));
             if (isSelected && !jsonStringVector.isNullAt(i)) {
-                rows.add(
-                        JsonUtils.rowFromJson(jsonStringVector.getString(i), outputSchema));
+                rows.add(parseJson(jsonStringVector.getString(i), outputSchema));
             } else {
                 rows.add(null);
             }
@@ -139,7 +144,7 @@ public class DefaultJsonHandler implements JsonHandler {
                 int currentBatchSize = 0;
                 do {
                     // hasNext already reads the next one and keeps it in member variable `nextLine`
-                    rows.add(JsonUtils.rowFromJson(nextLine, physicalSchema));
+                    rows.add(parseJson(nextLine, physicalSchema));
                     nextLine = null;
                     currentBatchSize++;
                 }
@@ -202,6 +207,15 @@ public class DefaultJsonHandler implements JsonHandler {
                     hadoopConf);
         } finally {
             Utils.closeCloseables(data);
+        }
+    }
+
+    private Row parseJson(String json, StructType readSchema) {
+        try {
+            final JsonNode jsonNode = objectReaderReadBigDecimals.readTree(json);
+            return new DefaultJsonRow((ObjectNode) jsonNode, readSchema);
+        } catch (JsonProcessingException ex) {
+            throw new RuntimeException(String.format("Could not parse JSON: %s", json), ex);
         }
     }
 }

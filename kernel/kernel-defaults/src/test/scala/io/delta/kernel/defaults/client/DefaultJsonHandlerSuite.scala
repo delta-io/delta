@@ -222,6 +222,23 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with VectorTest
     )
   }
 
+  test("parse timestamp_ntz type") {
+    testJsonParserForSingleType(
+      jsonString =
+        """
+          |{
+          | "col1":"2050-01-01T00:00:00.000",
+          | "col2":"1970-01-01T06:30:23.523",
+          | "col3":"1960-01-01T10:00:00",
+          | "col4":null
+          | }
+          | """.stripMargin,
+      dataType = TimestampNTZType.TIMESTAMP_NTZ,
+      numColumns = 4,
+      TestRow(2524636800000000L, 23423523000L, -315583200000000L, null)
+    )
+  }
+
   test("parse null input") {
     val schema = new StructType()
       .add("nested_struct", new StructType().add("foo", IntegerType.INTEGER))

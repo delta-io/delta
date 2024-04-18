@@ -105,14 +105,10 @@ public interface JsonHandler {
      * destination file. This call either succeeds in creating the file with given contents or no
      * file is created at all.
      * <p>
-     * There are a few special cases that should be handled for specific data types:
-     * <ul>
-     *    <li><b>Date Type:</b> serialize as string of format <code>"yyyy-MM-dd"</code></li>
-     *    <li><b>Timestamp or Timestamp NTZ:</b> serialize as string of format
-     *    <code>"yyyy-MM-dd'T'HH:mm:ss.SSSXXX"</code></li>
-     *    <li><b>Map Type:</b> only expect a map with key type as {@code string}. Any other
-     *    type is not valid and throw unsupported error.</li>
-     * </ul>
+     * Following are the supported data types:
+     * {@code boolean}, {@code byte}, {@code short}, {@code int}, {@code long}, {@code float},
+     * {@code double}, {@code string}, {@code StructType} (containing any of the supported types as
+     * subtypes), {@code ArrayType}, {@code MapType} (only a map with string keys is supported).
      * <p>
      *
      * @param filePath Fully qualified destination file path

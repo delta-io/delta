@@ -16,13 +16,9 @@
 package io.delta.kernel.defaults.internal.json
 
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils, VectorTestUtils}
-import io.delta.kernel.internal.util.InternalUtils._
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
-import java.sql._
-import java.time.temporal.ChronoUnit
-import java.time.{Instant, OffsetDateTime}
 import scala.Double.NegativeInfinity
 import scala.collection.JavaConverters._
 
@@ -74,59 +70,10 @@ class JsonUtilsSuite extends AnyFunSuite with TestUtils with VectorTestUtils {
       s"""{"c0":${Double.MinValue},"c1":${Double.MaxValue},"c3":"-Infinity"}"""
     ),
     (
-      new DecimalType(10, 3),
-      s"""{"c0":-2342342323.23,"c1":23423223424.23,"c2":null,"c3":423423.0}""",
-      TestRow(BigDecimal("-2342342323.23"), BigDecimal("23423223424.23"),
-        null, BigDecimal("423423.0")),
-      s"""{"c0":-2342342323.23,"c1":23423223424.23,"c3":423423}"""
-    ),
-    (
       StringType.STRING,
       s"""{"c0":"","c1":"ssdfsdf","c2":null,"c3":"123sdsd"}""",
       TestRow("", "ssdfsdf", null, "123sdsd"),
       s"""{"c0":"","c1":"ssdfsdf","c3":"123sdsd"}"""
-    ),
-    (
-      DateType.DATE,
-      s"""{"c0":"1902-01-01","c1":"2500-12-31","c2":null,"c3":"2020-06-15"}""",
-      TestRow(epochDays("1902-01-01"), epochDays("2500-12-31"), null, epochDays("2020-06-15")),
-      s"""{"c0":"1902-01-01","c1":"2500-12-31","c3":"2020-06-15"}"""
-    ),
-    (
-      TimestampType.TIMESTAMP,
-      s"""
-         |{"c0":"1902-01-01T00:00:00.000001-08:00",
-         |"c1":"2200-12-31T23:59:59.999999Z",
-         |"c2":null,
-         |"c3":"2020-06-15T12:00:00Z"}""".stripMargin,
-      TestRow(
-        epochMicros("1902-01-01T00:00:00.000001-08:00"),
-        epochMicros("2200-12-31T23:59:59.999999Z"),
-        null,
-        epochMicros("2020-06-15T12:00:00Z")
-      ),
-      s"""
-         |{"c0":"1902-01-01T08:00:00.000001Z",
-         |"c1":"2200-12-31T23:59:59.999999Z",
-         |"c3":"2020-06-15T12:00:00Z"}""".stripMargin
-    ),
-    (
-      TimestampNTZType.TIMESTAMP_NTZ,
-      s"""
-         |{"c0":"1902-01-01T00:00:00.000001-08:00",
-         |"c1":"2200-12-31T23:59:59.999999Z",
-         |"c2":null,
-         |"c3":"2020-06-15T12:00:00Z"}""".stripMargin,
-      TestRow(
-        epochMicros("1902-01-01T00:00:00.000001-08:00"),
-        epochMicros("2200-12-31T23:59:59.999999Z"),
-        null,
-        epochMicros("2020-06-15T12:00:00Z")
-      ),
-      s"""
-         |{"c0":"1902-01-01T08:00:00.000001Z",
-         |"c1":"2200-12-31T23:59:59.999999Z",
-         |"c3":"2020-06-15T12:00:00Z"}""".stripMargin
     ),
     (
       new ArrayType(IntegerType.INTEGER, true /* containsNull */),
@@ -159,22 +106,22 @@ class JsonUtilsSuite extends AnyFunSuite with TestUtils with VectorTestUtils {
         |"c3":[]}""".stripMargin
     ),
     (
-      new MapType(StringType.STRING, DateType.DATE, true /* valueContainsNull */),
+      new MapType(StringType.STRING, IntegerType.INTEGER, true /* valueContainsNull */),
       """{
-        |"c0":{"24":"2020-01-01","25":"2022-01-01"},
-        |"c1":{"27":null,"25":"2022-01-01"},
+        |"c0":{"24":200,"25":201},
+        |"c1":{"27":null,"25":203},
         |"c2":null,
         |"c3":{}
         |}""".stripMargin,
       TestRow(
-        Map("24" -> epochDays("2020-01-01"), "25" -> epochDays("2022-01-01")),
-        Map("27" -> null, "25" -> epochDays("2022-01-01")),
+        Map("24" -> 200, "25" -> 201),
+        Map("27" -> null, "25" -> 203),
         null,
         Map()
       ),
       """{
-        |"c0":{"24":"2020-01-01","25":"2022-01-01"},
-        |"c1":{"25":"2022-01-01"},
+        |"c0":{"24":200,"25":201},
+        |"c1":{"25":203},
         |"c3":{}
         |}""".stripMargin
     ),
@@ -185,19 +132,19 @@ class JsonUtilsSuite extends AnyFunSuite with TestUtils with VectorTestUtils {
           new ArrayType(LongType.LONG, true /* containsNull */)),
       """{
         |"c0":{"cn0":24,"cn1":[23,232]},
-        |"c1":{"cn0":29,"cn1":[200,111237]},
+        |"c1":{"cn0":29,"cn1":[200,null,111237]},
         |"c2":null,
         |"c3":{}
         |}""".stripMargin,
       TestRow(
         TestRow(24, Seq(23L, 232L)),
-        TestRow(29, Seq(200L, 111237L)),
+        TestRow(29, Seq(200L, null, 111237L)),
         null,
         TestRow(null, null)
       ),
       """{
         |"c0":{"cn0":24,"cn1":[23,232]},
-        |"c1":{"cn0":29,"cn1":[200,111237]},
+        |"c1":{"cn0":29,"cn1":[200,null,111237]},
         |"c3":{}
         |}""".stripMargin
     )
@@ -210,14 +157,5 @@ class JsonUtilsSuite extends AnyFunSuite with TestUtils with VectorTestUtils {
       checkAnswer(Seq(actRow), Seq(expRow))
       assert(JsonUtils.rowToJson(actRow) === expJson.linesIterator.mkString)
     }
-  }
-
-  def epochDays(date: String): Int = {
-    daysSinceEpoch(Date.valueOf(date))
-  }
-
-  def epochMicros(ts: String): Long = {
-    val time = OffsetDateTime.parse(ts).toInstant
-    ChronoUnit.MICROS.between(Instant.EPOCH, time)
   }
 }
