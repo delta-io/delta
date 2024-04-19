@@ -108,7 +108,7 @@ public class ScanImpl implements Scan {
      *
      * @param tableClient the {@link TableClient} instance to use
      * @param includeStats whether to read and include the JSON statistics
-     * @return
+     * @return the surviving scan files as {@link FilteredColumnarBatch}s
      */
     public CloseableIterator<FilteredColumnarBatch> getScanFiles(
             TableClient tableClient, boolean includeStats) {
