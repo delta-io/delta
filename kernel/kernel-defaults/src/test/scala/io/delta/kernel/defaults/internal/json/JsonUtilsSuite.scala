@@ -77,9 +77,9 @@ class JsonUtilsSuite extends AnyFunSuite with TestUtils with VectorTestUtils {
     ),
     (
       new ArrayType(IntegerType.INTEGER, true /* containsNull */),
-      """{"c0":[23,23],"c1":[1212,2323,2332],"c2":null,"c3":[]}""",
-      TestRow(Seq(23, 23), Seq(1212, 2323, 2332), null, Seq()),
-      """{"c0":[23,23],"c1":[1212,2323,2332],"c3":[]}"""
+      """{"c0":[23,23],"c1":[1212,null,2332],"c2":null,"c3":[]}""",
+      TestRow(Seq(23, 23), Seq(1212, null, 2332), null, Seq()),
+      """{"c0":[23,23],"c1":[1212,null,2332],"c3":[]}"""
     ),
     (
       // array with complex element types
@@ -91,18 +91,18 @@ class JsonUtilsSuite extends AnyFunSuite with TestUtils with VectorTestUtils {
         true /* containsNull */),
       """{
         |"c0":[{"cn0":24,"cn1":[23,232]},{"cn0":25,"cn1":[24,237]}],
-        |"c1":[{"cn0":32,"cn1":[37,2323]},{"cn0":29,"cn1":[200,111237]}],
+        |"c1":[{"cn0":32,"cn1":[37,null,2323]},{"cn0":29,"cn1":[200,111237]}],
         |"c2":null,
         |"c3":[]}""".stripMargin,
       TestRow(
         Seq(TestRow(24, Seq(23L, 232L)), TestRow(25, Seq(24L, 237L))),
-        Seq(TestRow(32, Seq(37L, 2323L)), TestRow(29, Seq(200L, 111237L))),
+        Seq(TestRow(32, Seq(37L, null, 2323L)), TestRow(29, Seq(200L, 111237L))),
         null,
         Seq()
       ),
       """{
         |"c0":[{"cn0":24,"cn1":[23,232]},{"cn0":25,"cn1":[24,237]}],
-        |"c1":[{"cn0":32,"cn1":[37,2323]},{"cn0":29,"cn1":[200,111237]}],
+        |"c1":[{"cn0":32,"cn1":[37,null,2323]},{"cn0":29,"cn1":[200,111237]}],
         |"c3":[]}""".stripMargin
     ),
     (

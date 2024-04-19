@@ -101,22 +101,24 @@ public interface JsonHandler {
         Optional<Predicate> predicate) throws IOException;
 
     /**
-     * Write each `Row` in given `data` serialized as JSON and written as separate line in
+     * Serialize each {@code Row} in the iterator as JSON and write as a separate line in
      * destination file. This call either succeeds in creating the file with given contents or no
-     * file is created at all.
+     * file is created at all. It won't leave behind a partially written file.
      * <p>
-     * Following are the supported data types:
-     * {@code boolean}, {@code byte}, {@code short}, {@code int}, {@code long}, {@code float},
-     * {@code double}, {@code string}, {@code StructType} (containing any of the supported types as
-     * subtypes), {@code ArrayType}, {@code MapType} (only a map with string keys is supported).
-     * <p>
+     * Following are the supported data types and their serialization rules. At a high-level, the
+     * JSON serialization is similar to that of {@code jackson} JSON serializer.
+     * <ul>
+     *     <li>Primitive types: @code boolean, byte, short, int, long, float, double, string}</li>
+     *     <li>{@code struct}: any element whose value is null is not written to file</li>
+     *     <li>{@code map}: only a {@code map} with {@code string} key type is supported</li>
+     *     <li>{@code array}: {@code null} value elements are written to file</li>
+     * </ul>
      *
      * @param filePath Fully qualified destination file path
      * @param data     Iterator of {@link Row} objects where each row should be serialized as JSON
      *                 and written as separate line in the destination file.
-     *                 <p>
      * @throws FileAlreadyExistsException if the file already exists.
-     * @throws IOException if any other I/O error occurs.
+     * @throws IOException                if any other I/O error occurs.
      */
     void writeJsonFileAtomically(String filePath, CloseableIterator<Row> data) throws IOException;
 }

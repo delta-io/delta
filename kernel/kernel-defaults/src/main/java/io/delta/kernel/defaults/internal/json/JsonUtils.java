@@ -153,7 +153,7 @@ public class JsonUtils {
 
         private void writeValue(JsonGenerator gen, Row row, int columnOrdinal, DataType type)
                 throws IOException {
-            assert !row.isNullAt(columnOrdinal) : "value should not be null";
+            checkArgument(!row.isNullAt(columnOrdinal), "value should not be null");
             if (type instanceof BooleanType) {
                 gen.writeBoolean(row.getBoolean(columnOrdinal));
             } else if (type instanceof ByteType) {
@@ -184,7 +184,7 @@ public class JsonUtils {
 
         private void writeValue(JsonGenerator gen, ColumnVector vector, int rowId, DataType type)
                 throws IOException {
-            assert !vector.isNullAt(rowId) : "value should not be null";
+            checkArgument(!vector.isNullAt(rowId), "value should not be null");
             if (type instanceof BooleanType) {
                 gen.writeBoolean(vector.getBoolean(rowId));
             } else if (type instanceof ByteType) {

@@ -53,7 +53,7 @@ public class DefaultJsonHandler implements JsonHandler {
     private static final ObjectReader defaultObjectReader = mapper.reader();
     // by default BigDecimals are truncated and read as floats
     private static final ObjectReader objectReaderReadBigDecimals = mapper
-            .reader(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+        .reader(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
 
     private final Configuration hadoopConf;
     private final int maxBatchSize;
