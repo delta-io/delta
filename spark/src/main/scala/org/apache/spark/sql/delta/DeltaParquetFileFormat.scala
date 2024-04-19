@@ -35,12 +35,13 @@ import org.apache.parquet.hadoop.util.ContextUtil
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.parseColumnPath
 import org.apache.spark.sql.execution.datasources.OutputWriterFactory
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.vectorized.{OffHeapColumnVector, OnHeapColumnVector, WritableColumnVector}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.sources.Filter
+import org.apache.spark.sql.sources._
 import org.apache.spark.sql.types.{ByteType, LongType, MetadataBuilder, StructField, StructType}
 import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnarBatchRow, ColumnVector}
 import org.apache.spark.util.SerializableConfiguration
@@ -101,6 +102,17 @@ case class DeltaParquetFileFormat(
     } else schema
   }
 
+  private def prepareFiltersForRead(filters: Seq[Filter]): Seq[Filter] = {
+    if (disablePushDowns) {
+      Seq.empty
+    } else if (columnMappingMode != NoMapping) {
+      val physicalNameMap = DeltaColumnMapping.getLogicalNameToPhysicalNameMap(referenceSchema)
+      filters.flatMap(translateFilterForColumnMapping(_, physicalNameMap))
+    } else {
+      filters
+    }
+  }
+
   override def isSplitable(
     sparkSession: SparkSession, options: Map[String, String], path: Path): Boolean = isSplittable
 
@@ -131,15 +143,13 @@ case class DeltaParquetFileFormat(
       filters: Seq[Filter],
       options: Map[String, String],
       hadoopConf: Configuration): PartitionedFile => Iterator[InternalRow] = {
-    val pushdownFilters = if (disablePushDowns) Seq.empty else filters
-
     val parquetDataReader: PartitionedFile => Iterator[InternalRow] =
       super.buildReaderWithPartitionValues(
         sparkSession,
         prepareSchemaForRead(dataSchema),
         prepareSchemaForRead(partitionSchema),
         prepareSchemaForRead(requiredSchema),
-        pushdownFilters,
+        prepareFiltersForRead(filters),
         options,
         hadoopConf)
 
@@ -469,6 +479,66 @@ object DeltaParquetFileFormat {
   /** Helper class that encapsulate an [[RowIndexFilterType]]. */
   case class DeletionVectorDescriptorWithFilterType(
       descriptor: DeletionVectorDescriptor,
-      filterType: RowIndexFilterType) {
+      filterType: RowIndexFilterType)
+
+  /**
+   * Translates the filter to use physical column names instead of logical column names.
+   * This is needed when the column mapping mode is set to `NameMapping` or `IdMapping`
+   * to match the requested schema that's passed to the [[ParquetFileFormat]].
+   */
+  private def translateFilterForColumnMapping(
+       filter: Filter,
+       physicalNameMap: Map[Seq[String], Seq[String]]): Option[Filter] = {
+    def getPhysicalName(attribute: String): String = {
+      import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.MultipartIdentifierHelper
+      physicalNameMap(parseColumnPath(attribute)).quoted
+    }
+
+    filter match {
+      case EqualTo(attribute, value) =>
+        Some(EqualTo(getPhysicalName(attribute), value))
+      case EqualNullSafe(attribute, value) =>
+        Some(EqualNullSafe(getPhysicalName(attribute), value))
+      case GreaterThan(attribute, value) =>
+        Some(GreaterThan(getPhysicalName(attribute), value))
+      case GreaterThanOrEqual(attribute, value) =>
+        Some(GreaterThanOrEqual(getPhysicalName(attribute), value))
+      case LessThan(attribute, value) =>
+        Some(LessThan(getPhysicalName(attribute), value))
+      case LessThanOrEqual(attribute, value) =>
+        Some(LessThanOrEqual(getPhysicalName(attribute), value))
+      case In(attribute, values) =>
+        Some(In(getPhysicalName(attribute), values))
+      case IsNull(attribute) =>
+        Some(IsNull(getPhysicalName(attribute)))
+      case IsNotNull(attribute) =>
+        Some(IsNotNull(getPhysicalName(attribute)))
+      case And(left, right) =>
+        val newLeft = translateFilterForColumnMapping(left, physicalNameMap)
+        val newRight = translateFilterForColumnMapping(right, physicalNameMap)
+        (newLeft, newRight) match {
+          case (Some(l), Some(r)) => Some(And(l, r))
+          case (Some(l), None) => Some(l)
+          case (_, _) => newRight
+        }
+      case Or(left, right) =>
+        val newLeft = translateFilterForColumnMapping(left, physicalNameMap)
+        val newRight = translateFilterForColumnMapping(right, physicalNameMap)
+        (newLeft, newRight) match {
+          case (Some(l), Some(r)) => Some(Or(l, r))
+          case (_, _) => None
+        }
+      case Not(child) =>
+        translateFilterForColumnMapping(child, physicalNameMap).map(Not)
+      case StringStartsWith(attribute, value) =>
+        Some(StringStartsWith(getPhysicalName(attribute), value))
+      case StringEndsWith(attribute, value) =>
+        Some(StringEndsWith(getPhysicalName(attribute), value))
+      case StringContains(attribute, value) =>
+        Some(StringContains(getPhysicalName(attribute), value))
+      case AlwaysTrue() => Some(AlwaysTrue())
+      case AlwaysFalse() => Some(AlwaysFalse())
+      case _ => None
+    }
   }
 }
