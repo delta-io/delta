@@ -21,7 +21,7 @@ import java.io.File
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{AddFile, CommitInfo}
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
@@ -141,5 +141,76 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest with 
   def extractMaterializedRowCommitVersionColumnName(log: DeltaLog): Option[String] = {
     log.update().metadata.configuration
       .get(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
+  }
+
+  /** Returns a Map of file path to base row ID from the AddFiles in a Snapshot. */
+  def getAddFilePathToBaseRowIdMap(snapshot: Snapshot): Map[String, Long] = {
+    val allAddFiles = snapshot.allFiles.collect()
+    allAddFiles.foreach(addFile => assert(addFile.baseRowId.isDefined,
+      "Every AddFile should have a base row ID"))
+    allAddFiles.map(a => a.path -> a.baseRowId.get).toMap
+  }
+
+  /** Returns a Map of file path to base row ID from the RemoveFiles in a Snapshot. */
+  def getRemoveFilePathToBaseRowIdMap(snapshot: Snapshot): Map[String, Long] = {
+    val removeFiles = snapshot.tombstones.collect()
+    removeFiles.foreach(removeFile => assert(removeFile.baseRowId.isDefined,
+      "Every RemoveFile should have a base row ID"))
+    removeFiles.map(r => r.path -> r.baseRowId.get).toMap
+  }
+
+  /**
+   * Check that file actions do not violate Row ID invariants after an operation.
+   * More specifically:
+   *  - We do not reassign the base row ID to the same AddFile.
+   *  - RemoveFiles have the same base row ID as the corresponding AddFile
+   *    with the same file path.
+   */
+  def checkFileActionInvariantBeforeAndAfterOperation(log: DeltaLog)(operation: => Unit): Unit = {
+    val prevAddFilePathToBaseRowId = getAddFilePathToBaseRowIdMap(log.update())
+
+    operation
+
+    val snapshot = log.update()
+    val newAddFileBaseRowIdsMap = getAddFilePathToBaseRowIdMap(snapshot)
+    val newRemoveFileBaseRowIds = getRemoveFilePathToBaseRowIdMap(snapshot)
+
+    prevAddFilePathToBaseRowId.foreach { case (path, prevRowId) =>
+      if (newAddFileBaseRowIdsMap.contains(path)) {
+        val currRowId = newAddFileBaseRowIdsMap(path)
+        assert(currRowId === prevRowId,
+          "We should not reassign base row IDs if it's the same AddFile")
+      } else if (newRemoveFileBaseRowIds.contains(path)) {
+        assert(newRemoveFileBaseRowIds(path) === prevRowId,
+          "No new base row ID should be assigned to RemoveFiles")
+      }
+    }
+  }
+
+  /**
+   * Checks whether Row tracking is marked as preserved on the [[CommitInfo]] action
+   * committed during `operation`.
+   */
+  def rowTrackingMarkedAsPreservedForCommit(log: DeltaLog)(operation: => Unit): Boolean = {
+    val versionPriorToCommit = log.update().version
+
+    operation
+
+    val versionOfCommit = log.update().version
+    assert(versionPriorToCommit < versionOfCommit)
+    val commitInfos = log.getChanges(versionOfCommit).flatMap(_._2).flatMap {
+      case commitInfo: CommitInfo => Some(commitInfo)
+      case _ => None
+    }.toList
+    assert(commitInfos.size === 1)
+    commitInfos.forall { commitInfo =>
+      commitInfo.tags
+        .getOrElse(Map.empty)
+        .getOrElse(DeltaCommitTag.PreservedRowTrackingTag.key, "false").toBoolean
+    }
+  }
+
+  def checkRowTrackingMarkedAsPreservedForCommit(log: DeltaLog)(operation: => Unit): Unit = {
+    assert(rowTrackingMarkedAsPreservedForCommit(log)(operation))
   }
 }

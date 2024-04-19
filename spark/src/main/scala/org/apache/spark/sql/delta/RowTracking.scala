@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.DeltaCommitTag.PreservedRowTrackingTag
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 
 import org.apache.spark.sql.DataFrame
@@ -73,6 +74,32 @@ object RowTracking {
       RowId.createBaseRowIdField(protocol, metadata) ++
       DefaultRowCommitVersion.createDefaultRowCommitVersionField(protocol, metadata) ++
       RowCommitVersion.createMetadataStructField(protocol, metadata, nullable)
+  }
+
+  /**
+   * Return a copy of tagsMap with the [[DeltaCommitTag.PreservedRowTrackingTag.key]] tag added
+   * or replaced with the new value.
+   */
+  private def addPreservedRowTrackingTag(
+      tagsMap: Map[String, String],
+      preserved: Boolean): Map[String, String] = {
+    tagsMap + (DeltaCommitTag.PreservedRowTrackingTag.key -> preserved.toString)
+  }
+
+  /**
+   * Sets the [[DeltaCommitTag.PreservedRowTrackingTag.key]] tag to true if not set. We add the tag
+   * to every operation because we assume all operations preserve row tracking by default. The
+   * absence of the tag means that row tracking is not preserved.
+   * Operations can set the tag to mark row tracking as preserved/not preserved.
+   */
+  private[delta] def addPreservedRowTrackingTagIfNotSet(
+      snapshot: SnapshotDescriptor,
+      tagsMap: Map[String, String] = Map.empty): Map[String, String] = {
+    if (!isEnabled(snapshot.protocol) ||
+      tagsMap.contains(PreservedRowTrackingTag.key)) {
+      return tagsMap
+    }
+    addPreservedRowTrackingTag(tagsMap, preserved = true)
   }
 
   def preserveRowTrackingColumns(dataFrame: DataFrame, snapshot: SnapshotDescriptor): DataFrame = {
