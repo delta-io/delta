@@ -94,6 +94,24 @@ public class ScanImpl implements Scan {
      */
     @Override
     public CloseableIterator<FilteredColumnarBatch> getScanFiles(TableClient tableClient) {
+        return getScanFiles(tableClient, false);
+    }
+
+    /**
+     * Get an iterator of data files in this version of scan that survived the predicate pruning.
+     *
+     * When {@code includeStats=true} the JSON file statistics are always read from the log and
+     * included in the returned columnar batches which have schema
+     * {@link InternalScanFileUtils.SCAN_FILE_SCHEMA_WITH_STATS}.
+     * When {@code includeStats=false} the JSON file statistics may or may not be present in the
+     * returned columnar batches.
+     *
+     * @param tableClient the {@link TableClient} instance to use
+     * @param includeStats whether to read and include the JSON statistics
+     * @return
+     */
+    public CloseableIterator<FilteredColumnarBatch> getScanFiles(
+            TableClient tableClient, boolean includeStats) {
         if (accessedScanFiles) {
             throw new IllegalStateException("Scan files are already fetched from this instance");
         }
@@ -101,7 +119,8 @@ public class ScanImpl implements Scan {
 
         // Generate data skipping filter and decide if we should read the stats column
         Optional<DataSkippingPredicate> dataSkippingFilter = getDataSkippingFilter();
-        boolean shouldReadStats = dataSkippingFilter.isPresent();
+        boolean hasDataSkippingFilter = dataSkippingFilter.isPresent();
+        boolean shouldReadStats = hasDataSkippingFilter || includeStats;
 
         // Get active AddFiles via log replay
         // If there is a partition predicate, construct a predicate to prune checkpoint files
@@ -118,13 +137,13 @@ public class ScanImpl implements Scan {
         scanFileIter = applyPartitionPruning(tableClient, scanFileIter);
 
         // Apply data skipping
-        if (shouldReadStats) {
+        if (hasDataSkippingFilter) {
             // there was a usable data skipping filter --> apply data skipping
-            // TODO drop stats column before returning
-            return applyDataSkipping(tableClient, scanFileIter, dataSkippingFilter.get());
-        } else {
-            return scanFileIter;
+            scanFileIter = applyDataSkipping(tableClient, scanFileIter, dataSkippingFilter.get());
         }
+
+        // TODO when !includeStats drop the stats column if present before returning
+        return scanFileIter;
     }
 
     @Override

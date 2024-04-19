@@ -56,14 +56,23 @@ public class InternalScanFileUtils {
 
     // TODO update this when stats columns are dropped from the returned scan files
     /**
-     * Scan file rows may have an additional column "add.stats" at the end of the "add" columns
-     * that is not represented in the schema here.
+     * Schema of the returned scan files. May have an additional column "add.stats" at the end of
+     * the "add" columns that is not represented in the schema here. This column is conditionally
+     * read when a valid data skipping filter can be generated.
      */
     public static final StructType SCAN_FILE_SCHEMA = new StructType()
         .add("add", AddFile.SCHEMA_WITHOUT_STATS)
         // NOTE: table root is temporary, until the path in `add.path` is converted to
         // an absolute path. https://github.com/delta-io/delta/issues/2089
-        .add(TABLE_ROOT_COL_NAME, TABLE_ROOT_DATA_TYPE);
+        .add(TABLE_ROOT_STRUCT_FIELD);
+
+    /**
+     * Schema of the returned scan files when {@link ScanImpl#getScanFiles(TableClient, boolean)}
+     * is called with {@code includeStats=true}.
+     */
+    public static final StructType SCAN_FILE_SCHEMA_WITH_STATS = new StructType()
+        .add("add", AddFile.SCHEMA_WITH_STATS)
+        .add(TABLE_ROOT_STRUCT_FIELD);
 
     public static final int ADD_FILE_ORDINAL = SCAN_FILE_SCHEMA.indexOf("add");
 

@@ -39,9 +39,9 @@ import io.delta.kernel.types.StructType
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-import io.delta.kernel.{Snapshot, Table}
+import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.internal.util.InternalUtils
-import io.delta.kernel.internal.InternalScanFileUtils
+import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
 import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 
@@ -1539,6 +1539,53 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           .withFilter(tableClient, predicate)
           .build(),
         tableClient = tableClient)
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////////////
+  // Check the includeStats parameter on ScanImpl.getScanFiles(tableClient, includeStats)
+  //////////////////////////////////////////////////////////////////////////////////////////
+
+  test("check ScanImpl.getScanFiles for includeStats=true") {
+    // When includeStats=true the JSON statistic should always be returned in the scan files
+    withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.getCanonicalPath)
+      def checkStatsPresent(scan: Scan): Unit = {
+        val scanFileBatches = scan.asInstanceOf[ScanImpl].getScanFiles(defaultTableClient, true)
+        scanFileBatches.forEach { batch =>
+          assert(batch.getData().getSchema() == InternalScanFileUtils.SCAN_FILE_SCHEMA_WITH_STATS)
+        }
+      }
+      // No query filter
+      checkStatsPresent(
+        latestSnapshot(tempDir.getCanonicalPath)
+          .getScanBuilder(defaultTableClient)
+          .build()
+      )
+      // Query filter but no valid data skipping filter
+      checkStatsPresent(
+        latestSnapshot(tempDir.getCanonicalPath)
+          .getScanBuilder(defaultTableClient)
+          .withFilter(
+            defaultTableClient,
+            greaterThan(
+              new ScalarExpression("+", Seq(col("id"), ofInt(10)).asJava),
+              ofInt(100)
+            )
+          ).build()
+      )
+      // With valid data skipping filter present
+      checkStatsPresent(
+        latestSnapshot(tempDir.getCanonicalPath)
+          .getScanBuilder(defaultTableClient)
+          .withFilter(
+            defaultTableClient,
+            greaterThan(
+              col("id"),
+              ofInt(0)
+            )
+          ).build()
+      )
     }
   }
 }
