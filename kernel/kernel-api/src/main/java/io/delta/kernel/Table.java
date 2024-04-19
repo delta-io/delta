@@ -66,7 +66,7 @@ public interface Table {
      * @return an instance of {@link Snapshot}
      * @since 3.2.0
      */
-    Snapshot getSnapshotAtVersion(TableClient tableClient, long versionId)
+    Snapshot getSnapshotAsOfVersion(TableClient tableClient, long versionId)
         throws TableNotFoundException;
 
     /**
@@ -91,6 +91,6 @@ public interface Table {
      * @return an instance of {@link Snapshot}
      * @since 3.2.0
      */
-    Snapshot getSnapshotAtTimestamp(TableClient tableClient, long millisSinceEpochUTC)
+    Snapshot getSnapshotAsOfTimestamp(TableClient tableClient, long millisSinceEpochUTC)
         throws TableNotFoundException;
 }

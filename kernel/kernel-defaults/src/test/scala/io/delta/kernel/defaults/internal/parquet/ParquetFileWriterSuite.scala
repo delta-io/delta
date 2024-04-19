@@ -58,7 +58,7 @@ class ParquetFileWriterSuite extends AnyFunSuite
 
   Seq(
     // Test cases reading and writing all types of data with or without stats collection
-    Seq((200, 100), (1024, 28), (1048576, 1)).map {
+    Seq((200, 100), (1024, 29), (1048576, 1)).map {
       case (targetFileSize, expParquetFileCount) =>
         (
           "write all types (no stats)", // test name
@@ -118,7 +118,7 @@ class ParquetFileWriterSuite extends AnyFunSuite
         )
     },
     // Test cases reading and writing all types of data WITH stats collection
-    Seq((200, 100), (1024, 28), (1048576, 1)).map {
+    Seq((200, 100), (1024, 29), (1048576, 1)).map {
       case (targetFileSize, expParquetFileCount) =>
         (
           "write all types (with stats for all leaf-level columns)", // test name
@@ -128,11 +128,11 @@ class ParquetFileWriterSuite extends AnyFunSuite
           200, /* expected number of rows written to Parquet files */
           Option.empty[Predicate], // predicate for filtering what rows to write to parquet files
           leafLevelPrimitiveColumns(Seq.empty, tableSchema(goldenTablePath("parquet-all-types"))),
-          13 // how many columns have the stats collected from given list above
+          14 // how many columns have the stats collected from given list above
         )
     },
     // Test cases reading and writing all types of data with a partial column set stats collection
-    Seq((200, 100), (1024, 28), (1048576, 1)).map {
+    Seq((200, 100), (1024, 29), (1048576, 1)).map {
       case (targetFileSize, expParquetFileCount) =>
         (
           "write all types (with stats for a subset of leaf-level columns)", // test name

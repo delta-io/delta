@@ -50,8 +50,10 @@ case class GetCommitsResponse(commits: Seq[Commit], latestTableVersion: Long)
 /** A container class to inform the CommitStore about any changes in Protocol/Metadata */
 case class UpdatedActions(
   commitInfo: CommitInfo,
-  newMetadata: Option[Metadata],
-  newProtocol: Option[Protocol])
+  newMetadata: Metadata,
+  newProtocol: Protocol,
+  oldMetadata: Metadata,
+  oldProtocol: Protocol)
 
 /**
  * CommitStore is responsible for managing commits for a managed-commit delta table.
@@ -60,6 +62,32 @@ case class UpdatedActions(
  * 3. It also tracks and returns unbackfilled commits. See [[CommitStore.getCommits]] API.
  */
 trait CommitStore {
+
+  /**
+   * API to register the table represented by the given `logPath` with the given
+   * `currentTableVersion`.
+   * This API is called when the table is being converted from filesystem table to managed-commit
+   * table.
+   * - The `currentTableVersion` is the version of the table just before conversion.
+   * - The `currentTableVersion` + 1 represents the commit that will do the conversion. This must be
+   *   backfilled atomically.
+   * - The `currentTableVersion` + 2 represents the first commit after conversion. This will go via
+   *   the [[CommitStore]] and it could choose whether it wants to write unbackfilled commits and
+   *   backfill them later.
+   * When a new managed-commit table is being created, the `currentTableVersion` will be -1 and the
+   * upgrade commit needs to be a file-system commit which will write the backfilled file directly.
+   *
+   * @return A map of key-value pairs which is issued by the commit-owner to identify the table.
+   *         This should be stored in the table's metadata. This information needs to be passed in
+   *         other table specific APIs like commit / getCommits / backfillToVersion to identify the
+   *         table.
+   */
+  def registerTable(
+      logPath: Path,
+      currentVersion: Long,
+      currentMetadata: Metadata,
+      currentProtocol: Protocol): Map[String, String] = Map.empty
+
   /**
    * API to commit the given set of `actions` to the table represented by given `logPath` at the
    * given `commitVersion`.
@@ -71,6 +99,7 @@ trait CommitStore {
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
+      managedCommitTableConf: Map[String, String],
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse
@@ -91,6 +120,7 @@ trait CommitStore {
    */
   def getCommits(
       logPath: Path,
+      managedCommitTableConf: Map[String, String],
       startVersion: Long,
       endVersion: Option[Long] = None): GetCommitsResponse
 
@@ -104,6 +134,7 @@ trait CommitStore {
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
+      managedCommitTableConf: Map[String, String],
       startVersion: Long,
       endVersion: Option[Long]): Unit
 
@@ -145,13 +176,6 @@ object CommitStoreProvider {
   // mapping from different commit-owner names to the corresponding [[CommitStoreBuilder]]s.
   private val nameToBuilderMapping = mutable.Map.empty[String, CommitStoreBuilder]
 
-  /** Returns a [[CommitStore]] for the given `name` and `conf` */
-  def getCommitStore(name: String, conf: Map[String, String]): CommitStore = synchronized {
-    nameToBuilderMapping.get(name).map(_.build(conf)).getOrElse {
-      throw new IllegalArgumentException(s"Unknown commit store: $name")
-    }
-  }
-
   /** Registers a new [[CommitStoreBuilder]] with the [[CommitStoreProvider]] */
   def registerBuilder(commitStoreBuilder: CommitStoreBuilder): Unit = synchronized {
     nameToBuilderMapping.get(commitStoreBuilder.name) match {
@@ -163,14 +187,34 @@ object CommitStoreProvider {
     }
   }
 
+  /** Returns a [[CommitStore]] for the given `name` and `conf` */
+  def getCommitStore(name: String, conf: Map[String, String]): CommitStore = synchronized {
+    nameToBuilderMapping.get(name).map(_.build(conf)).getOrElse {
+      throw new IllegalArgumentException(s"Unknown commit store: $name")
+    }
+  }
+
+  def getCommitStore(metadata: Metadata, protocol: Protocol): Option[CommitStore] = {
+    metadata.managedCommitOwnerName.map { commitOwnerStr =>
+      assert(protocol.isFeatureSupported(ManagedCommitTableFeature))
+      CommitStoreProvider.getCommitStore(commitOwnerStr, metadata.managedCommitOwnerConf)
+    }
+  }
+
   def getCommitStore(snapshotDescriptor: SnapshotDescriptor): Option[CommitStore] = {
-    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME
-      .fromMetaData(snapshotDescriptor.metadata)
-      .map { commitOwnerStr =>
-        assert(snapshotDescriptor.protocol.isFeatureSupported(ManagedCommitTableFeature))
-        val conf = DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.fromMetaData(snapshotDescriptor.metadata)
-        CommitStoreProvider.getCommitStore(commitOwnerStr, conf)
-      }
+    getCommitStore(snapshotDescriptor.metadata, snapshotDescriptor.protocol)
+  }
+
+
+  def getTableCommitStore(snapshotDescriptor: SnapshotDescriptor): Option[TableCommitStore] = {
+    getCommitStore(snapshotDescriptor.metadata, snapshotDescriptor.protocol).map { store =>
+      TableCommitStore(
+        store,
+        snapshotDescriptor.deltaLog.logPath,
+        snapshotDescriptor.metadata.managedCommitTableConf,
+        snapshotDescriptor.deltaLog.newDeltaHadoopConf(),
+        snapshotDescriptor.deltaLog.store)
+    }
   }
 
   // Visible only for UTs
@@ -183,4 +227,13 @@ object CommitStoreProvider {
     // Any new commit-store builder will be registered here.
   )
   initialCommitStoreBuilders.foreach(registerBuilder)
+}
+
+object CommitOwner {
+  def getManagedCommitConfs(metadata: Metadata): (Option[String], Map[String, String]) = {
+    metadata.managedCommitOwnerName match {
+      case Some(name) => (Some(name), metadata.managedCommitOwnerConf)
+      case None => (None, Map.empty)
+    }
+  }
 }

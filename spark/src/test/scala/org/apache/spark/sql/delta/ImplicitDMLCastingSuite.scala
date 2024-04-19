@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.ImplicitDMLCastingSuiteShims._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest}
 
@@ -143,7 +144,7 @@ class ImplicitDMLCastingSuite extends QueryTest
         assert(failureCause.toString.contains(testConfig.exceptionAnsiCast))
 
         val sparkThrowable = failureCause.asInstanceOf[SparkThrowable]
-        assert(Seq("CAST_OVERFLOW", "NUMERIC_VALUE_OUT_OF_RANGE", "CAST_INVALID_INPUT")
+        assert(Seq("CAST_OVERFLOW", NUMERIC_VALUE_OUT_OF_RANGE_ERROR_MSG, "CAST_INVALID_INPUT")
           .contains(sparkThrowable.getErrorClass))
       case Some(failureCause) if !sqlConfig.followAnsiEnabled =>
         assert(sqlConfig.storeAssignmentPolicy === SQLConf.StoreAssignmentPolicy.ANSI)
