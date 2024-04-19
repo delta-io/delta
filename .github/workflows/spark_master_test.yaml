@@ -19,6 +19,9 @@ jobs:
             .github/workflows/**
             !kernel/**
             !connectors/**
+            !docs/**
+            !*.md
+            !**/*.md
       - name: install java
         uses: actions/setup-java@v3
         with:
