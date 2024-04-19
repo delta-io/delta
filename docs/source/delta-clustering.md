@@ -7,7 +7,7 @@ orphan: 1
 
 Liquid clustering improves the existing partitioning and `ZORDER` techniques by simplifying data layout decisions in order to optimize query performance. Liquid clustering provides flexibility to redefine clustering columns without rewriting existing data, allowing data layout to evolve alongside analytic needs over time.
 
-.. note:: This feature is available in <Delta> 3.1.0 and above. This feature is in experimental support mode with [_](#limitations).
+.. note:: This feature is available in <Delta> 3.1.0 and above. See [_](#limitations).
 
 ## What is liquid clustering used for?
 
@@ -21,7 +21,7 @@ The following are examples of scenarios that benefit from clustering:
 
 ## Enable liquid clustering
 
-You must enable liquid clustering when creating a table. Clustering is not compatible with partitioning or `ZORDER`. Once enabled, run `OPTIMIZE` jobs as normal to cluster data. See [_](#optimize).
+You must enable liquid clustering when creating a table. Clustering is not compatible with partitioning or `ZORDER`. Once enabled, run `OPTIMIZE` jobs as normal to incrementally cluster data. See [_](#optimize).
 
 To enable liquid clustering, add the `CLUSTER BY` phrase to a table creation statement, as in the examples below:
 
@@ -61,23 +61,53 @@ Use the `OPTIMIZE` command on your table, as in the following example:
 OPTIMIZE table_name;
 ```
 
+Liquid clustering is incremental, meaning that data is only rewritten as necessary to accommodate data that needs to be clustered. Data files with clustering columns that do not match data to be clustered are not rewritten.
+
 ## Read data from a clustered table
 
-You can read data in a clustered table using any <Delta> client that supports reader version 1. For best query results, include clustering columns in your query filters, as in the following example:
+You can read data in a clustered table using any <Delta> client. For best query results, include clustering columns in your query filters, as in the following example:
 
 ```sql
 SELECT * FROM table_name WHERE clustering_column_name = "some_value";
+```
+
+## Change clustering columns
+
+You can change clustering columns for a table at any time by running an `ALTER TABLE` command, as in the following example:
+
+```sql
+ALTER TABLE table_name CLUSTER BY (new_column1, new_column2);
+```
+
+When you change clustering columns, subsequent `OPTIMIZE` and write operations use the new clustering approach, but existing data is not rewritten.
+
+You can also turn off clustering by setting the columns to `NONE`, as in the following example:
+
+```sql
+ALTER TABLE table_name CLUSTER BY NONE;
+```
+
+Setting cluster columns to `NONE` does not rewrite data that has already been clustered, but prevents future `OPTIMIZE` operations from using clustering columns.
+
+## See how table is clustered
+
+You can use `DESCRIBE DETAIL` commands to see the clustering columns for a table, as in the following examples:
+
+```sql
+DESCRIBE DETAIL table_name;
 ```
 
 ## Limitations
 
 The following limitations exist:
 
-- In <Delta> 3.1, users needs to enable the feature flag `spark.databricks.delta.clusteredTable.enableClusteringTablePreview` to use liquid clustering. The following features are not supported in this preview:
+- You can only specify columns with statistics collected for clustering columns. By default, the first 32 columns in a Delta table have statistics collected.
+- You can specify up to 4 clustering columns.
+
+.. important::
+  In <Delta> 3.1, users needs to enable the feature flag `spark.databricks.delta.clusteredTable.enableClusteringTablePreview` to use liquid clustering. The following features are not supported in this preview:
   - ZCube based incremental clustering
   - `ALTER TABLE ... CLUSTER BY` to change clustering columns
   - `DESCRIBE DETAIL` to inspect the current clustering columns
-- You can only specify columns with statistics collected for clustering columns. By default, the first 32 columns in a Delta table have statistics collected.
-- You can specify up to 4 clustering columns.
 
 .. include:: /shared/replacements.md
