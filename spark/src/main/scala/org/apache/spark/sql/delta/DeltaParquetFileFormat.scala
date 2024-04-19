@@ -102,6 +102,14 @@ case class DeltaParquetFileFormat(
     } else schema
   }
 
+  /**
+   * Prepares filters so that they can be pushed down into the Parquet reader.
+   *
+   * If column mapping is enabled, then logical column names in the filters will be replaced with
+   * their corresponding physical column names. This is necessary as the Parquet files will use
+   * physical column names, and the requested schema pushed down in the Parquet reader will also use
+   * physical column names.
+   */
   private def prepareFiltersForRead(filters: Seq[Filter]): Seq[Filter] = {
     if (disablePushDowns) {
       Seq.empty
@@ -489,30 +497,32 @@ object DeltaParquetFileFormat {
   private def translateFilterForColumnMapping(
        filter: Filter,
        physicalNameMap: Map[Seq[String], Seq[String]]): Option[Filter] = {
-    def getPhysicalName(attribute: String): String = {
-      import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.MultipartIdentifierHelper
-      physicalNameMap(parseColumnPath(attribute)).quoted
+    object PhysicalAttribute {
+      def unapply(attribute: String): Option[String] = {
+        import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.MultipartIdentifierHelper
+        physicalNameMap.get(parseColumnPath(attribute)).map(_.quoted)
+      }
     }
 
     filter match {
-      case EqualTo(attribute, value) =>
-        Some(EqualTo(getPhysicalName(attribute), value))
-      case EqualNullSafe(attribute, value) =>
-        Some(EqualNullSafe(getPhysicalName(attribute), value))
-      case GreaterThan(attribute, value) =>
-        Some(GreaterThan(getPhysicalName(attribute), value))
-      case GreaterThanOrEqual(attribute, value) =>
-        Some(GreaterThanOrEqual(getPhysicalName(attribute), value))
-      case LessThan(attribute, value) =>
-        Some(LessThan(getPhysicalName(attribute), value))
-      case LessThanOrEqual(attribute, value) =>
-        Some(LessThanOrEqual(getPhysicalName(attribute), value))
-      case In(attribute, values) =>
-        Some(In(getPhysicalName(attribute), values))
-      case IsNull(attribute) =>
-        Some(IsNull(getPhysicalName(attribute)))
-      case IsNotNull(attribute) =>
-        Some(IsNotNull(getPhysicalName(attribute)))
+      case EqualTo(PhysicalAttribute(physicalAttribute), value) =>
+        Some(EqualTo(physicalAttribute, value))
+      case EqualNullSafe(PhysicalAttribute(physicalAttribute), value) =>
+        Some(EqualNullSafe(physicalAttribute, value))
+      case GreaterThan(PhysicalAttribute(physicalAttribute), value) =>
+        Some(GreaterThan(physicalAttribute, value))
+      case GreaterThanOrEqual(PhysicalAttribute(physicalAttribute), value) =>
+        Some(GreaterThanOrEqual(physicalAttribute, value))
+      case LessThan(PhysicalAttribute(physicalAttribute), value) =>
+        Some(LessThan(physicalAttribute, value))
+      case LessThanOrEqual(PhysicalAttribute(physicalAttribute), value) =>
+        Some(LessThanOrEqual(physicalAttribute, value))
+      case In(PhysicalAttribute(physicalAttribute), values) =>
+        Some(In(physicalAttribute, values))
+      case IsNull(PhysicalAttribute(physicalAttribute)) =>
+        Some(IsNull(physicalAttribute))
+      case IsNotNull(PhysicalAttribute(physicalAttribute)) =>
+        Some(IsNotNull(physicalAttribute))
       case And(left, right) =>
         val newLeft = translateFilterForColumnMapping(left, physicalNameMap)
         val newRight = translateFilterForColumnMapping(right, physicalNameMap)
@@ -530,12 +540,12 @@ object DeltaParquetFileFormat {
         }
       case Not(child) =>
         translateFilterForColumnMapping(child, physicalNameMap).map(Not)
-      case StringStartsWith(attribute, value) =>
-        Some(StringStartsWith(getPhysicalName(attribute), value))
-      case StringEndsWith(attribute, value) =>
-        Some(StringEndsWith(getPhysicalName(attribute), value))
-      case StringContains(attribute, value) =>
-        Some(StringContains(getPhysicalName(attribute), value))
+      case StringStartsWith(PhysicalAttribute(physicalAttribute), value) =>
+        Some(StringStartsWith(physicalAttribute, value))
+      case StringEndsWith(PhysicalAttribute(physicalAttribute), value) =>
+        Some(StringEndsWith(physicalAttribute, value))
+      case StringContains(PhysicalAttribute(physicalAttribute), value) =>
+        Some(StringContains(physicalAttribute, value))
       case AlwaysTrue() => Some(AlwaysTrue())
       case AlwaysFalse() => Some(AlwaysFalse())
       case _ => None
