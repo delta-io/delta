@@ -1108,6 +1108,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val readRowIdHighWatermark =
         RowId.extractHighWatermark(snapshot).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
 
+      val tagsWithPreservingRowTrackingIfEnabled =
+        RowTracking.addPreservedRowTrackingTagIfNotSet(snapshot, tags)
+
       commitAttemptStartTimeMillis = clock.getTimeMillis()
       commitInfo = CommitInfo(
         time = commitAttemptStartTimeMillis,
@@ -1121,7 +1124,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         isBlindAppend = Some(isBlindAppend),
         operationMetrics = getOperationMetrics(op),
         userMetadata = getUserMetadata(op),
-        tags = if (tags.nonEmpty) Some(tags) else None,
+        tags = Option.when(tagsWithPreservingRowTrackingIfEnabled.nonEmpty)
+          (tagsWithPreservingRowTrackingIfEnabled),
         txnId = Some(txnId))
 
       val firstAttemptVersion = getFirstAttemptVersion
