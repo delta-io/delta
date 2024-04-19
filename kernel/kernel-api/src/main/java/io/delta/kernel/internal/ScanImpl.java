@@ -102,7 +102,7 @@ public class ScanImpl implements Scan {
      *
      * When {@code includeStats=true} the JSON file statistics are always read from the log and
      * included in the returned columnar batches which have schema
-     * {@link InternalScanFileUtils.SCAN_FILE_SCHEMA_WITH_STATS}.
+     * {@link InternalScanFileUtils#SCAN_FILE_SCHEMA_WITH_STATS}.
      * When {@code includeStats=false} the JSON file statistics may or may not be present in the
      * returned columnar batches.
      *
