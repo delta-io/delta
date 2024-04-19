@@ -55,7 +55,9 @@ public class JsonUtils {
     }
 
     /**
-     * Converts a {@link Row} to a single line JSON string.
+     * Converts a {@link Row} to a single line JSON string. This is currently used just in tests.
+     * Wll be used as part of the refactoring planned in
+     * <a href="https://github.com/delta-io/delta/issues/2929">#2929</a>
      *
      * @param row the row to convert
      * @return JSON string
