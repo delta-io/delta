@@ -1,5 +1,5 @@
 /*
- * Copyright (2024) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,13 +14,12 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.shims
+package org.apache.spark.sql.execution.streaming
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.streaming.IncrementalExecution
 
-object IncrementalExecutionShim {
+object IncrementalExecutionShims {
 
   /**
    * Handles a breaking change in the [[IncrementalExecution]] constructor between Spark 3.5 and
@@ -41,6 +40,7 @@ object IncrementalExecutionShim {
     incrementalExecution.currentBatchId,
     incrementalExecution.prevOffsetSeqMetadata,
     incrementalExecution.offsetSeqMetadata,
-    incrementalExecution.watermarkPropagator
+    incrementalExecution.watermarkPropagator,
+    incrementalExecution.isFirstBatch // Spark 4.0 API
   )
 }

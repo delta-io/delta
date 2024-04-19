@@ -25,6 +25,7 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
+import org.apache.spark.sql.delta.DeltaVacuumSuiteShims._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -512,8 +513,7 @@ class DeltaVacuumSuite
         val e = intercept[AnalysisException] {
           vacuumSQLTest(tablePath, viewName)
         }
-        assert(
-          e.getMessage.contains("v is a temp view. 'VACUUM' expects a table."))
+        assert(e.getMessage.contains(SQL_COMMAND_ON_TEMP_VIEW_NOT_SUPPORTED_ERROR_MSG))
       }
     }
   }

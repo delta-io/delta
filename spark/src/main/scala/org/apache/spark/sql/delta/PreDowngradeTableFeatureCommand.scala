@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaReorgTableCommand, DeltaReorgTableMode, DeltaReorgTableSpec}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 
@@ -129,6 +130,63 @@ case class V2CheckpointPreDowngradeCommand(table: DeltaTableV2)
   }
 }
 
+case class InCommitTimestampsPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+  with DeltaLogging {
+  /**
+   * We disable the feature by:
+   * - Removing the table properties:
+   *    1. DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP
+   *    2. DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION
+   * - Setting the table property DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED to false.
+   * Technically, only setting IN_COMMIT_TIMESTAMPS_ENABLED to false is enough to disable the
+   * feature. However, we can use this opportunity to clean up the metadata.
+   *
+   * @return true if any change to the metadata (the three properties listed above) was made.
+   *         False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    val startTimeNs = System.nanoTime()
+    val currentMetadata = table.initialSnapshot.metadata
+    val currentTableProperties = currentMetadata.configuration
+
+    val enablementProperty = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED
+    val ictEnabledInMetadata = enablementProperty.fromMetaData(currentMetadata)
+    val provenanceProperties = Seq(
+      DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key,
+      DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key)
+    val propertiesToRemove = provenanceProperties.filter(currentTableProperties.contains)
+
+    val traceRemovalNeeded = propertiesToRemove.nonEmpty || ictEnabledInMetadata
+    if (traceRemovalNeeded) {
+      val propertiesToDisable =
+        Option.when(ictEnabledInMetadata)(enablementProperty.key -> "false")
+      val desiredTableProperties = currentTableProperties
+        .filterNot{ case (k, _) => propertiesToRemove.contains(k) } ++ propertiesToDisable
+
+      val deltaOperation = DeltaOperations.UnsetTableProperties(
+        (propertiesToRemove ++ propertiesToDisable.map(_._1)).toSeq, ifExists = true)
+      table.startTransaction().commit(
+        Seq(currentMetadata.copy(configuration = desiredTableProperties.toMap)), deltaOperation)
+    }
+
+    val provenancePropertiesPresenceLogs = provenanceProperties.map { prop =>
+      prop -> currentTableProperties.contains(prop).toString
+    }
+    recordDeltaEvent(
+      table.deltaLog,
+      opType = "delta.inCommitTimestampFeatureRemovalMetrics",
+      data = Map(
+          "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
+          "traceRemovalNeeded" -> traceRemovalNeeded.toString,
+          enablementProperty.key -> ictEnabledInMetadata
+          ) ++ provenancePropertiesPresenceLogs
+
+    )
+    traceRemovalNeeded
+  }
+}
+
 case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
   with DeltaLogging {
@@ -153,7 +211,7 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
 
     recordDeltaEvent(
       table.deltaLog,
-      opType = "delta.typeWideningFeatureRemovalMetrics",
+      opType = "delta.typeWidening.featureRemoval",
       data = Map(
         "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
         "numFilesRewritten" -> numFilesRewritten,

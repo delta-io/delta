@@ -20,14 +20,13 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableUtils}
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
-import org.apache.spark.sql.delta.shims.ColumnDefinitionShim
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.tables.execution._
 
 import org.apache.spark.annotation._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, ReplaceTable}
+import org.apache.spark.sql.catalyst.plans.logical.{ColumnDefinitionShims, CreateTable, ReplaceTable}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.SQLExecution
@@ -343,7 +342,7 @@ class DeltaTableBuilder private[tables](
         CreateTable(
           unresolvedTable,
           // Callout: Spark 3.5 returns StructType, Spark 4.0 returns Seq[ColumnDefinition]
-          ColumnDefinitionShim.parseColumns(columns.toSeq, spark.sessionState.sqlParser),
+          ColumnDefinitionShims.parseColumns(columns.toSeq, spark.sessionState.sqlParser),
           partitioning,
           tableSpec,
           ifNotExists)
@@ -352,7 +351,7 @@ class DeltaTableBuilder private[tables](
         ReplaceTable(
           unresolvedTable,
           // Callout: Spark 3.5 returns StructType, Spark 4.0 returns Seq[ColumnDefinition]
-          ColumnDefinitionShim.parseColumns(columns.toSeq, spark.sessionState.sqlParser),
+          ColumnDefinitionShims.parseColumns(columns.toSeq, spark.sessionState.sqlParser),
           partitioning,
           tableSpec,
           orCreate)

@@ -659,6 +659,17 @@ trait DeltaErrorsBase
     )
   }
 
+  def unsupportedTypeChangeInSchema(
+      fieldPath: Seq[String],
+      fromType: DataType,
+      toType: DataType)
+    : Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
+      messageParameters = Array(SchemaUtils.prettyFieldName(fieldPath), fromType.sql, toType.sql)
+    )
+  }
+
   def cannotWriteIntoView(table: TableIdentifier): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_WRITE_INTO_VIEW",
@@ -3227,6 +3238,16 @@ trait DeltaErrorsBase
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.WRONG_REQUIRED_TABLE_PROPERTY",
       messageParameters = Array(version.toString, version.toString, key, requiredValue, actualValue)
+    )
+  }
+
+  def universalFormatConversionFailedException(
+      failedOnCommitVersion: Long,
+      format: String,
+      errorMessage: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED",
+      messageParameters = Array(s"$failedOnCommitVersion", format, errorMessage)
     )
   }
 

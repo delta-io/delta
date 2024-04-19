@@ -14,20 +14,8 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.shims
+package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.catalyst.parser.ParserInterface
-import org.apache.spark.sql.types.{StructField, StructType}
-
-object ColumnDefinitionShim {
-
-  /**
-   * Helps handle a breaking change in [[org.apache.spark.sql.catalyst.plans.logical.CreateTable]]
-   * between Spark 3.5 and Spark 4.0:
-   * - In 3.5, `CreateTable` accepts a `tableSchema: StructType`.
-   * - In 4.0, `CreateTable` accepts a `columns: Seq[ColumnDefinition]`.
-   */
-  def parseColumns(columns: Seq[StructField], sqlParser: ParserInterface): StructType = {
-    StructType(columns.toSeq)
-  }
+object MergeIntoMetricsShims {
+  val DELETE_WITH_DUPLICATE_NUM_TARGET_FILES_ADDED_NON_PARTITIONED_NO_CDF = 2
 }

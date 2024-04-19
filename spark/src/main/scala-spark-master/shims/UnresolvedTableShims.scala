@@ -1,5 +1,5 @@
 /*
- * Copyright (2024) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,9 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.shims
-
-import org.apache.spark.sql.catalyst.analysis.UnresolvedTable
+package org.apache.spark.sql.catalyst.analysis
 
 object UnresolvedTableImplicits {
 
@@ -29,7 +27,7 @@ object UnresolvedTableImplicits {
     def apply(
         tableNameParts: Seq[String],
         commandName: String): UnresolvedTable = {
-      UnresolvedTable(tableNameParts, commandName, relationTypeMismatchHint = None)
+      UnresolvedTable(tableNameParts, commandName)
     }
   }
 }

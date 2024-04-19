@@ -20,13 +20,14 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaLog, MaterializedRowId, RowId}
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.metadata.BlockMetaData
 
+import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 
@@ -123,5 +124,22 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest with 
         assert(rowCountPerRowGroup === rowGroup.getRowCount)
       }
     }
+  }
+
+  // easily add a rowid column to a dataframe by calling [[df.withMaterializedRowIdColumn]]
+  implicit class DataFrameRowIdColumn(df: DataFrame) {
+    def withMaterializedRowIdColumn(
+        materializedColumnName: String, rowIdColumn: Column): DataFrame =
+      RowId.preserveRowIdsUnsafe(df, materializedColumnName, rowIdColumn)
+
+    def withMaterializedRowCommitVersionColumn(
+        materializedColumnName: String, rowCommitVersionColumn: Column): DataFrame =
+      RowCommitVersion.preserveRowCommitVersionsUnsafe(
+        df, materializedColumnName, rowCommitVersionColumn)
+  }
+
+  def extractMaterializedRowCommitVersionColumnName(log: DeltaLog): Option[String] = {
+    log.update().metadata.configuration
+      .get(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
   }
 }

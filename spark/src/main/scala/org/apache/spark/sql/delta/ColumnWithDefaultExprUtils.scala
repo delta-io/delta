@@ -24,7 +24,6 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.shims.IncrementalExecutionShim
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder}
@@ -33,7 +32,7 @@ import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns._
 import org.apache.spark.sql.execution.QueryExecution
-import org.apache.spark.sql.execution.streaming.{IncrementalExecution, StreamExecution}
+import org.apache.spark.sql.execution.streaming.{IncrementalExecution, IncrementalExecutionShims, StreamExecution}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 
@@ -160,6 +159,11 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       .map(new Column(_))
     selectExprs = selectExprs ++ rowIdExprs
 
+    val rowCommitVersionExprs = data.queryExecution.analyzed.output
+      .filter(RowCommitVersion.MetadataAttribute.isRowCommitVersionColumn)
+      .map(new Column(_))
+    selectExprs = selectExprs ++ rowCommitVersionExprs
+
     val newData = queryExecution match {
       case incrementalExecution: IncrementalExecution =>
         selectFromStreamingDataFrame(incrementalExecution, data, selectExprs: _*)
@@ -217,7 +221,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       df: DataFrame,
       cols: Column*): DataFrame = {
     val newMicroBatch = df.select(cols: _*)
-    val newIncrementalExecution = IncrementalExecutionShim.newInstance(
+    val newIncrementalExecution = IncrementalExecutionShims.newInstance(
       newMicroBatch.sparkSession,
       newMicroBatch.queryExecution.logical,
       incrementalExecution)

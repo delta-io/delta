@@ -14,13 +14,12 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.shims
+package org.apache.spark.sql.catalyst.plans.logical
 
 import org.apache.spark.sql.catalyst.parser.ParserInterface
-import org.apache.spark.sql.catalyst.plans.logical.ColumnDefinition
 import org.apache.spark.sql.types.StructField
 
-object ColumnDefinitionShim {
+object ColumnDefinitionShims {
 
   /**
    * Helps handle a breaking change in [[org.apache.spark.sql.catalyst.plans.logical.CreateTable]]

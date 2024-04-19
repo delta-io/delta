@@ -16,13 +16,12 @@
 
 package org.apache.spark.sql.delta.schema
 
-// scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening}
-import org.apache.spark.sql.delta.RowId
+import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -323,6 +322,8 @@ def normalizeColumnNamesInDataType(
               field.name == CDCReader.CDC_PARTITION_COL => (field.name, None)
             // Consider Row Id columns internal if Row Ids are enabled.
             case None if RowId.RowIdMetadataStructField.isRowIdColumn(field) =>
+              (field.name, None)
+            case None if RowCommitVersion.MetadataStructField.isRowCommitVersionColumn(field) =>
               (field.name, None)
             case None =>
               throw DeltaErrors.cannotResolveColumn(field.name, baseSchema)

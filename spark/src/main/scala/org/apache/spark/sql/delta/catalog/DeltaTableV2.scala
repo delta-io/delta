@@ -26,7 +26,6 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.shims.UnresolvedTableImplicits._
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
@@ -34,6 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{DataFrame, Dataset, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
@@ -278,9 +278,11 @@ case class DeltaTableV2(
    */
   def withOptions(newOptions: Map[String, String]): DeltaTableV2 = {
     val ttSpec = DeltaDataSource.getTimeTravelVersion(newOptions)
-    if (timeTravelOpt.nonEmpty && ttSpec.nonEmpty) {
-      throw DeltaErrors.multipleTimeTravelSyntaxUsed
-    }
+
+    // Spark 4.0 and 3.5 handle time travel options differently.
+    DeltaTimeTravelSpecShims.validateTimeTravelSpec(
+      currSpecOpt = timeTravelOpt,
+      newSpecOpt = ttSpec)
 
     val caseInsensitiveNewOptions = new CaseInsensitiveStringMap(newOptions.asJava)
 

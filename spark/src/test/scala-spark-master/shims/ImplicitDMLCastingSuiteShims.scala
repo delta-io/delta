@@ -14,22 +14,12 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.shims
+package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.catalyst.analysis.UnresolvedTable
-
-object UnresolvedTableImplicits {
-
+object ImplicitDMLCastingSuiteShims {
   /**
-   * Handles a breaking change in [[UnresolvedTable]] constructor between Spark 3.5 and 4.0:
-   * - Spark 3.5: requires `relationTypeMismatchHint` param
-   * - Spark 4.0: gets rid of `relationTypeMismatchHint`param
+   * Discrepancy in error message between Spark 3.5 and Master (4.0) due to SPARK-47798
+   * (https://github.com/apache/spark/pull/45981)
    */
-  implicit class UnresolvedTableShim(self: UnresolvedTable.type) {
-    def apply(
-        tableNameParts: Seq[String],
-        commandName: String): UnresolvedTable = {
-      UnresolvedTable(tableNameParts, commandName)
-    }
-  }
+  val NUMERIC_VALUE_OUT_OF_RANGE_ERROR_MSG = "NUMERIC_VALUE_OUT_OF_RANGE.WITH_SUGGESTION"
 }

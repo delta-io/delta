@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.util.concurrent.TimeUnit
 
+import com.databricks.spark.util.Log4jUsageLogger
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
@@ -301,6 +303,23 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
     checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3), Row(4)))
   }
 
+  test("type widening type change metrics") {
+    sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
+    val usageLogs = Log4jUsageLogger.track {
+      sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
+    }
+
+    val metrics = filterUsageRecords(usageLogs, "delta.typeWidening.typeChanges")
+      .map(r => JsonUtils.fromJson[Map[String, Seq[Map[String, String]]]](r.blob))
+      .head
+
+    assert(metrics("changes") === Seq(
+      Map(
+        "fromType" -> "TINYINT",
+        "toType" -> "INT"
+      ))
+    )
+  }
 }
 
 /**
@@ -981,6 +1000,65 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
           Seq(Row(11), Row(12), Row(13), Row(4), Row(5), Row(6)))
       }
     }
+  }
+
+  test("unsupported type changes applied to the table") {
+    sql(s"CREATE TABLE delta.`$tempDir` (a array<int>) USING DELTA")
+    val metadata = new MetadataBuilder()
+      .putMetadataArray("delta.typeChanges", Array(
+        new MetadataBuilder()
+          .putString("toType", "string")
+          .putString("fromType", "int")
+          .putLong("tableVersion", 2)
+          .putString("fieldPath", "element")
+          .build()
+      )).build()
+
+    // Add an unsupported type change to the table schema. Only an implementation that isn't
+    // compliant with the feature specification would allow this.
+    deltaLog.withNewTransaction { txn =>
+      txn.commit(
+        Seq(txn.snapshot.metadata.copy(
+          schemaString = new StructType()
+            .add("a", StringType, nullable = true, metadata).json
+        )),
+        ManualUpdate)
+    }
+
+    checkError(
+      exception = intercept[DeltaIllegalStateException] {
+        readDeltaTable(tempPath).collect()
+      },
+      errorClass = "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
+      parameters = Map(
+        "fieldName" -> "a.element",
+        "fromType" -> "INT",
+        "toType" -> "STRING"
+      )
+    )
+  }
+
+  test("type widening rewrite metrics") {
+    sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
+    addSingleFile(Seq(1, 2, 3), ByteType)
+    addSingleFile(Seq(4, 5, 6), ByteType)
+    sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
+    // Update a row from the second file to rewrite it. Only the first file still contains the old
+    // data type after this.
+    sql(s"UPDATE delta.`$tempDir` SET a = a + 10 WHERE a < 4")
+    val usageLogs = Log4jUsageLogger.track {
+      dropTableFeature(ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE)
+    }
+
+    val metrics = filterUsageRecords(usageLogs, "delta.typeWidening.featureRemoval")
+      .map(r => JsonUtils.fromJson[Map[String, String]](r.blob))
+      .head
+
+    assert(metrics("downgradeTimeMs").toLong > 0L)
+    // Only the first file should get rewritten here since the second file was already rewritten
+    // during the UPDATE.
+    assert(metrics("numFilesRewritten").toLong === 1L)
+    assert(metrics("metadataRemoved").toBoolean)
   }
 }
 

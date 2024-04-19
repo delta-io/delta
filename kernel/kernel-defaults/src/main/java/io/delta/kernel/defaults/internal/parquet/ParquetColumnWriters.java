@@ -136,6 +136,8 @@ class ParquetColumnWriters {
             return new DateWriter(colName, fieldIndex, columnVector);
         } else if (dataType instanceof TimestampType) {
             return new TimestampWriter(colName, fieldIndex, columnVector);
+        } else if (dataType instanceof TimestampNTZType) {
+            return new TimestampNTZWriter(colName, fieldIndex, columnVector);
         } else if (dataType instanceof ArrayType) {
             return new ArrayWriter(colName, fieldIndex, columnVector);
         } else if (dataType instanceof MapType) {
@@ -360,6 +362,18 @@ class ParquetColumnWriters {
                     .putLong(julianDayRemainingNanos._2) // timeOfDayNanos
                     .putInt(julianDayRemainingNanos._1); // julianDay
             recordConsumer.addBinary(Binary.fromReusedByteArray(reusedBuffer));
+        }
+    }
+
+    static class TimestampNTZWriter extends ColumnWriter {
+        TimestampNTZWriter(String name, int fieldId, ColumnVector columnVector) {
+            super(name, fieldId, columnVector);
+        }
+
+        @Override
+        void writeNonNullRowValue(RecordConsumer recordConsumer, int rowId) {
+            long microsSinceEpochUTC = columnVector.getLong(rowId);
+            recordConsumer.addLong(microsSinceEpochUTC);
         }
     }
 

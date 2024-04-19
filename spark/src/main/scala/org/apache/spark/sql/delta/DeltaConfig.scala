@@ -754,6 +754,14 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "A string-to-string map of configuration properties for the managed commit owner.")
 
+  val MANAGED_COMMIT_TABLE_CONF = buildConfig[Map[String, String]](
+    "managedCommits.tableConf-dev",
+    null,
+    v => JsonUtils.fromJson[Map[String, String]](Option(v).getOrElse("{}")),
+    _ => true,
+    "A string-to-string map of configuration properties for describing the table to" +
+      " managed commit owner.")
+
   val IN_COMMIT_TIMESTAMPS_ENABLED = buildConfig[Boolean](
     "enableInCommitTimestamps-dev",
     false.toString,

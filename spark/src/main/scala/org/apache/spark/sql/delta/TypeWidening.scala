@@ -90,6 +90,29 @@ object TypeWidening {
     }
 
   /**
+   * Asserts that the given table doesn't contain any unsupported type changes. This should never
+   * happen unless a non-compliant writer applied a type change that is not part of the feature
+   * specification.
+   */
+  def assertTableReadable(protocol: Protocol, metadata: Metadata): Unit = {
+    if (!isSupported(protocol) ||
+      !TypeWideningMetadata.containsTypeWideningMetadata(metadata.schema)) {
+      return
+    }
+
+    TypeWideningMetadata.getAllTypeChanges(metadata.schema).foreach {
+      case (_, TypeChange(_, from: AtomicType, to: AtomicType, _))
+        if isTypeChangeSupported(from, to) =>
+      case (fieldPath, invalidChange) =>
+        throw DeltaErrors.unsupportedTypeChangeInSchema(
+          fieldPath ++ invalidChange.fieldPath,
+          invalidChange.fromType,
+          invalidChange.toType
+        )
+    }
+  }
+
+  /**
    * Filter the given list of files to only keep files that were written before the latest type
    * change, if any. These older files contain a column or field with a type that is different than
    * in the current table schema and must be rewritten when dropping the type widening table feature

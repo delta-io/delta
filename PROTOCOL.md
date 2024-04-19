@@ -104,6 +104,7 @@
   - [Last Checkpoint File Schema](#last-checkpoint-file-schema)
     - [JSON checksum](#json-checksum)
       - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
+  - [Delta Data Type to Parquet Type Mappings](#delta-data-type-to-parquet-type-mappings)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -209,7 +210,7 @@ The checkpoint file name is based on the version of the table that the checkpoin
 Delta supports three kinds of checkpoints:
 
 1. UUID-named Checkpoints: These follow [V2 spec](#v2-spec) which uses the following file name: `n.checkpoint.u.{json/parquet}`, where `u` is a UUID and `n` is the
-snapshot version that this checkpoint represents. The UUID-named V2 Checkpoint may be in json or parquet format, and references zero or more checkpoint sidecars
+snapshot version that this checkpoint represents. Here `n` must be zero padded to have length 20. The UUID-named V2 Checkpoint may be in json or parquet format, and references zero or more checkpoint sidecars
 in the `_delta_log/_sidecars` directory. A checkpoint sidecar is a uniquely-named parquet file: `{unique}.parquet` where `unique` is some unique
 string such as a UUID.
 
@@ -222,7 +223,7 @@ _sidecars/016ae953-37a9-438e-8683-9a9a4a79a395.parquet
 _sidecars/7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.parquet
 ```
 
-2. A [classic checkpoint](#classic-checkpoint) for version `n` of the table consists of a file named `n.checkpoint.parquet`.
+2. A [classic checkpoint](#classic-checkpoint) for version `n` of the table consists of a file named `n.checkpoint.parquet`. Here `n` must be zero padded to have length 20.
 These could follow either [V1 spec](#v1-spec) or [V2 spec](#v2-spec).
 For example:
 
@@ -232,7 +233,7 @@ For example:
 
 
 3. A [multi-part checkpoint](#multi-part-checkpoint) for version `n` consists of `p` "part" files (`p > 1`), where
-part `o` of `p` is named `n.checkpoint.o.p.parquet`. These are always [V1 checkpoints](#v1-spec).
+part `o` of `p` is named `n.checkpoint.o.p.parquet`. Here `n` must be zero padded to have length 20, while `o` and `p` must be zero padded to have length 10. These are always [V1 checkpoints](#v1-spec).
 For example:
 
 ```
@@ -1813,7 +1814,7 @@ An array stores a variable length collection of items of some type.
 Field Name | Description
 -|-
 type| Always the string "array"
-elementType| The type of element stored in this array represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
+elementType| The type of element stored in this array, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 containsNull| Boolean denoting whether this array can contain one or more null values
 
 ### Map Type
@@ -2114,3 +2115,27 @@ uppercase and lowercase as part of percent-encoding. Thus, we require a stricter
 3. Always [percent-encode](https://datatracker.ietf.org/doc/html/rfc3986#section-2) reserved octets
 4. Never percent-encode non-reserved octets
 5. A percent-encoded octet consists of three characters: `%` followed by its 2-digit hexadecimal value in uppercase letters, e.g. `>` encodes to `%3E`
+
+## Delta Data Type to Parquet Type Mappings
+Below table captures how each Delta data type is stored physically in Parquet files. Parquet files are used for storing the table data or metadata ([checkpoints](#checkpoints)). Parquet has a limited number of [physical types](https://parquet.apache.org/docs/file-format/types/). Parquet [logical types](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md) are used to extend the types by specifying how the physical types should be interpreted.
+
+For some of the Delta data types, there are multiple ways store the values physically in Parquet file. For example, `timestamp` can be stored either as `int96` or `int64`. The exact physical type depends on the engine that is writing the Parquet file and/or engine specific configuration options. For a Delta lake table reader, it is recommended that the Parquet file reader support at least the Parquet physical and logical types mentioned in the below table.
+
+Delta Type Name | Parquet Physical Type | Parquet Logical Type
+-|-|-
+boolean| `boolean` |
+byte| `int32` | `INT(bitwidth = 8, signed = true)`
+short| `int32` | `INT(bitwidth = 16, signed = true)`
+int| `int32` | `INT(bitwidth = 32, signed = true)`
+long| `int64` | `INT(bitwidth = 64, signed = true)`
+date| `int32` | `DATE`
+timestamp| `int96` or `int64` | `TIMESTAMP(isAdjustedToUTC = true, units = microseconds)`
+timestamp without time zone| `int96` or `int64` | `TIMESTAMP(isAdjustedToUTC = false, units = microseconds)`
+float| `float` |
+double| `double` |
+decimal| `int32`, `int64` or `fixed_length_binary` | `DECIMAL(scale, precision)`
+string| `binary` | `string (UTF-8)`
+binary| `binary` |
+array| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists) for further details | `LIST`
+map| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps) for further details | `MAP`
+struct| `group` |

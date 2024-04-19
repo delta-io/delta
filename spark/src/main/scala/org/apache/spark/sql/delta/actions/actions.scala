@@ -1021,8 +1021,26 @@ case class Metadata(
    * can be used to create partition filters from data filters of these non-partition columns.
    */
   @JsonIgnore
-  lazy val optimizablePartitionExpressions: Map[String, Seq[OptimizablePartitionExpression]]
-  = GeneratedColumn.getOptimizablePartitionExpressions(schema, partitionSchema)
+  lazy val optimizablePartitionExpressions: Map[String, Seq[OptimizablePartitionExpression]] =
+    GeneratedColumn.getOptimizablePartitionExpressions(schema, partitionSchema)
+
+  /**
+   * The name of commit-owner which arbitrates the commits to the table. This must be available
+   * if this is a managed-commit table.
+   */
+  @JsonIgnore
+  lazy val managedCommitOwnerName: Option[String] =
+    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(this)
+
+  /** The configuration to uniquely identify the commit-owner for managed-commit. */
+  @JsonIgnore
+  lazy val managedCommitOwnerConf: Map[String, String] =
+    DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.fromMetaData(this)
+
+  /** The table specific configuration for managed-commit. */
+  @JsonIgnore
+  lazy val managedCommitTableConf: Map[String, String] =
+    DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.fromMetaData(this)
 
   override def wrap: SingleAction = SingleAction(metaData = this)
 }

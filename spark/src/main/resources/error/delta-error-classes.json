@@ -2344,6 +2344,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED" : {
+    "message" : [
+      "Failed to convert the table version <version> to the universal format <format>. <message>"
+    ],
+    "sqlState" : "KD00E"
+  },
   "DELTA_UNIVERSAL_FORMAT_VIOLATION" : {
     "message" : [
       "The validation of Universal Format (<format>) has failed: <violation>"
@@ -2676,6 +2682,12 @@
   "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS" : {
     "message" : [
       "Cannot time travel views, subqueries, streams or change data feed queries."
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA" : {
+    "message" : [
+      "Unable to operate on this table because an unsupported type change was applied. Field <fieldName> was changed from <fromType> to <toType>."
     ],
     "sqlState" : "0AKDC"
   },

@@ -650,6 +650,29 @@ class DeltaAnalysis(session: SparkSession)
     DeltaTableV2(session, new Path(path), options = options)
   }
 
+  private def resolveCreateTableMode(
+      isCreate: Boolean,
+      isReplace: Boolean,
+      ifNotExist: Boolean): (SaveMode, TableCreationModes.CreationMode) = {
+    val saveMode = if (isReplace) {
+      SaveMode.Overwrite
+    } else if (ifNotExist) {
+      SaveMode.Ignore
+    } else {
+      SaveMode.ErrorIfExists
+    }
+
+    val tableCreationMode = if (isCreate && isReplace) {
+      TableCreationModes.CreateOrReplace
+    } else if (isCreate) {
+      TableCreationModes.Create
+    } else {
+      TableCreationModes.Replace
+    }
+
+    (saveMode, tableCreationMode)
+  }
+
   /**
    * Instantiates a CreateDeltaTableCommand with CloneTableCommand as the child query.
    *
@@ -663,24 +686,11 @@ class DeltaAnalysis(session: SparkSession)
       statement: CloneTableStatement): LogicalPlan = {
     val isReplace = statement.isReplaceCommand
     val isCreate = statement.isCreateCommand
+    val ifNotExists = statement.ifNotExists
 
     import session.sessionState.analyzer.{NonSessionCatalogAndIdentifier, SessionCatalogAndIdentifier}
     val targetLocation = statement.targetLocation
-    val saveMode = if (isReplace) {
-      SaveMode.Overwrite
-    } else if (statement.ifNotExists) {
-      SaveMode.Ignore
-    } else {
-      SaveMode.ErrorIfExists
-    }
-
-    val tableCreationMode = if (isCreate && isReplace) {
-      TableCreationModes.CreateOrReplace
-    } else if (isCreate) {
-      TableCreationModes.Create
-    } else {
-      TableCreationModes.Replace
-    }
+    val (saveMode, tableCreationMode) = resolveCreateTableMode(isCreate, isReplace, ifNotExists)
     // We don't use information in the catalog if the table is time travelled
     val sourceCatalogTable = if (sourceTbl.timeTravelOpt.isDefined) None else sourceTbl.catalogTable
 

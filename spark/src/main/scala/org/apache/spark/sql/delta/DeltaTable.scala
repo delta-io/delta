@@ -21,7 +21,6 @@ import scala.util.{Failure, Success, Try}
 
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.shims.UnresolvedTableImplicits._
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -29,6 +28,7 @@ import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedAttribute, UnresolvedLeafNode, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
@@ -392,6 +392,10 @@ object DeltaTableUtils extends PredicateHelper
         p.copy(projectList = newProjectList)
     }
   }
+
+  /** Finds and returns the file source metadata column from a dataframe */
+  def getFileMetadataColumn(df: DataFrame): Column =
+    df.metadataColumn(FileFormat.METADATA_NAME)
 
   /**
    * Update FileFormat for a plan and return the updated plan

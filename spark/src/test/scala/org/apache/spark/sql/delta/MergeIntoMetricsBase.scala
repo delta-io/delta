@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.MergeIntoMetricsShims._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{DataFrame, QueryTest}
@@ -1016,7 +1017,14 @@ trait MergeIntoMetricsBase
       // MergeIntoCommand at the definition of isDeleteWithDuplicateMatchesAndCdc. Our fix for this
       // scenario includes deduplicating the output data which reshuffles the output data.
       // Thus when the table is not partitioned, the data is rewritten into 1 new file rather than 2
-      overrideExpectedOpMetrics = Seq(((false, true), ("numTargetFilesAdded", 1)))
+      overrideExpectedOpMetrics = Seq(
+        ((false, true), ("numTargetFilesAdded", 1)),
+        ((false, false), (
+          "numTargetFilesAdded",
+          // Depending on the Spark version, for non-partitioned tables we may add 1 or 2 files.
+          DELETE_WITH_DUPLICATE_NUM_TARGET_FILES_ADDED_NON_PARTITIONED_NO_CDF)
+        )
+      )
     )
   }}
 
