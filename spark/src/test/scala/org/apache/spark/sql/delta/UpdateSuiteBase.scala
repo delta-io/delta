@@ -696,6 +696,8 @@ abstract class UpdateSuiteBase
 
   test("schema pruning on finding files to update") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
+    // Start from a cached snapshot state
+    deltaLog.update().stateDF
 
     val executedPlans = DeltaTestUtils.withPhysicalPlansCaptured(spark) {
       checkUpdate(condition = Some("key = 2"), setClauses = "key = 1, value = 3",
@@ -717,6 +719,8 @@ abstract class UpdateSuiteBase
   test("nested schema pruning on finding files to update") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
       .select(struct("key", "value").alias("nested")))
+    // Start from a cached snapshot state
+    deltaLog.update().stateDF
 
     val executedPlans = DeltaTestUtils.withPhysicalPlansCaptured(spark) {
       checkUpdate(condition = Some("nested.key = 2"),

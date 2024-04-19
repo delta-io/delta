@@ -24,8 +24,7 @@ import java.time.LocalDateTime
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.StatsCollectionSuiteShims.interceptAndUnwrap
-import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
+import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -46,7 +45,8 @@ class StatsCollectionSuite
     with TestsStatistics
     with DeltaSQLCommandTest
     with DeltaSQLTestUtils
-    with DeletionVectorsTestUtils {
+    with DeletionVectorsTestUtils
+    with DeltaExceptionTestUtils {
 
   import testImplicits._
 
@@ -447,7 +447,7 @@ class StatsCollectionSuite
           exceptOne.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
         sql(s"create table $tableName2 (c1 long, c2 $invalidType) using delta")
-        val exceptTwo = interceptAndUnwrap[DeltaIllegalArgumentException] {
+        val exceptTwo = interceptWithUnwrapping[DeltaIllegalArgumentException] {
           sql(s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c2')")
         }
         assert(
@@ -481,7 +481,7 @@ class StatsCollectionSuite
           exceptTwo.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
         sql(s"create table $tableName2 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) using delta")
-        val exceptThree = interceptAndUnwrap[DeltaIllegalArgumentException] {
+        val exceptThree = interceptWithUnwrapping[DeltaIllegalArgumentException] {
           sql(
             s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns'='c2.c21')"
           )
@@ -490,7 +490,7 @@ class StatsCollectionSuite
           exceptThree.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptThree.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
-        val exceptFour = interceptAndUnwrap[DeltaIllegalArgumentException] {
+        val exceptFour = interceptWithUnwrapping[DeltaIllegalArgumentException] {
           sql(s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns'='c2')")
         }
         assert(
@@ -590,7 +590,7 @@ class StatsCollectionSuite
           )
         } else {
           sql("create table delta_table(c0 int, c1 int) using delta partitioned by(c1)")
-          val except = interceptAndUnwrap[DeltaIllegalArgumentException] {
+          val except = interceptWithUnwrapping[DeltaIllegalArgumentException] {
             sql(
               "ALTER TABLE delta_table SET TBLPROPERTIES ('delta.dataSkippingStatsColumns' = 'c1')"
             )
@@ -791,7 +791,7 @@ class StatsCollectionSuite
       ("'c1.c11,c1.c11'", "c1.c11"),
       ("'c1,c1'", "c1.c11,c1.c12")
     ).foreach { case (statsColumns, duplicatedColumns) =>
-      val exception = interceptAndUnwrap[DeltaIllegalArgumentException] {
+      val exception = interceptWithUnwrapping[DeltaIllegalArgumentException] {
         sql(
           s"ALTER TABLE delta_table_t1 " +
           s"SET TBLPROPERTIES('delta.dataSkippingStatsColumns'=$statsColumns)"

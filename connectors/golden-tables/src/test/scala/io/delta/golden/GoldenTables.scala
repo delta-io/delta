@@ -19,6 +19,8 @@ package io.delta.golden
 import java.io.File
 import java.math.{BigDecimal => JBigDecimal}
 import java.sql.Timestamp
+import java.time.ZoneOffset.UTC
+import java.time.LocalDateTime
 import java.util.{Locale, TimeZone}
 
 import scala.concurrent.duration._
@@ -1055,7 +1057,8 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       StringType,
       BinaryType,
       DateType,
-      TimestampType
+      TimestampType,
+      TimestampNTZType
     )
 
     var fields = allDataTypes.map(dt => {
@@ -1109,6 +1112,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
         if (i % 59 != 0) (i).toString.getBytes else null,
         if (i % 61 != 0) new java.sql.Date(i * 20000000L) else null,
         if (i % 62 != 0) new Timestamp(i * 23423523L) else null,
+        if (i % 69 != 0) LocalDateTime.ofEpochSecond(i * 234234L, 200012, UTC) else null,
         if (i % 63 != 0) {
           if (i % 19 == 0) {
             // write a struct with all fields null

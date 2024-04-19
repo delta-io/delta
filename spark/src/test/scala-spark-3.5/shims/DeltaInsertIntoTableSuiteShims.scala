@@ -18,4 +18,6 @@ package org.apache.spark.sql.delta
 
 object DeltaInsertIntoTableSuiteShims {
   val INSERT_INTO_TMP_VIEW_ERROR_MSG = "Inserting into a view is not allowed"
+
+  val INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG = "INVALID_DEFAULT_VALUE.UNRESOLVED_EXPRESSION"
 }

@@ -509,6 +509,7 @@ case class ConcurrentBackfillCommitStore(
   private val deferredBackfills: mutable.Map[Long, () => Unit] = mutable.Map.empty
   override def getCommits(
       logPath: Path,
+      managedCommitTableConf: Map[String, String],
       startVersion: Long,
       endVersion: Option[Long]): GetCommitsResponse = {
     if (ConcurrentBackfillCommitStore.beginConcurrentBackfills) {
@@ -517,7 +518,7 @@ case class ConcurrentBackfillCommitStore(
       deferredBackfills.keys.toSeq.sorted.foreach((version: Long) => deferredBackfills(version)())
       deferredBackfills.clear()
     }
-    super.getCommits(logPath, startVersion, endVersion)
+    super.getCommits(logPath, managedCommitTableConf, startVersion, endVersion)
   }
   override def backfill(
       logStore: LogStore,

@@ -326,6 +326,8 @@ abstract class DeleteSuiteBase extends QueryTest
   test("schema pruning on data condition") {
     val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
     append(input, Nil)
+    // Start from a cached snapshot state
+    deltaLog.update().stateDF
 
     val executedPlans = DeltaTestUtils.withPhysicalPlansCaptured(spark) {
       checkDelete(Some("key = 2"),
@@ -347,6 +349,8 @@ abstract class DeleteSuiteBase extends QueryTest
     val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
       .select(struct("key", "value").alias("nested"))
     append(input, Nil)
+    // Start from a cached snapshot state
+    deltaLog.update().stateDF
 
     val executedPlans = DeltaTestUtils.withPhysicalPlansCaptured(spark) {
       checkDelete(Some("nested.key = 2"),

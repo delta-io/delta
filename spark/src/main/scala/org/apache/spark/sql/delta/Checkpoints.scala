@@ -806,10 +806,14 @@ object Checkpoints
     val (v2CheckpointPath, checkpointSchemaToWriteInLastCheckpoint) =
       if (v2CheckpointFormat == V2Checkpoint.Format.JSON) {
         val v2CheckpointPath = newV2CheckpointJsonFile(deltaLog.logPath, snapshot.version)
+        // We don't need a putIfAbsent for this write, so we set overwrite to true.
+        // However, this can be dangerous if the cloud makes partial writes visible.
+        val isPartialWriteVisible =
+          deltaLog.store.isPartialWriteVisible(v2CheckpointPath, hadoopConf)
         deltaLog.store.write(
           v2CheckpointPath,
           nonFileActionsToWrite.map(_.json).toIterator,
-          overwrite = true,
+          overwrite = !isPartialWriteVisible,
           hadoopConf = hadoopConf
         )
         (v2CheckpointPath, None)

@@ -617,7 +617,7 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
           sql(s"create table t4 (s int default badvalue) using $v2Format " +
             s"$tblPropertiesAllowDefaults")
         },
-        errorClass = "INVALID_DEFAULT_VALUE.UNRESOLVED_EXPRESSION",
+        errorClass = INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG,
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",

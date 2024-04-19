@@ -19,7 +19,7 @@ package org.apache.spark.sql.execution.streaming
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
-object IncrementalExecutionShim {
+object IncrementalExecutionShims {
 
   /**
    * Handles a breaking change in the [[IncrementalExecution]] constructor between Spark 3.5 and

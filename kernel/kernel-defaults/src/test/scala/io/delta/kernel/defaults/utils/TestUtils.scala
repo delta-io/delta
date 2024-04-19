@@ -305,10 +305,10 @@ trait TestUtils extends Assertions with SQLHelper {
 
     val snapshot = if (version.isDefined) {
       Table.forPath(tableClient, path)
-        .getSnapshotAtVersion(tableClient, version.get)
+        .getSnapshotAsOfVersion(tableClient, version.get)
     } else if (timestamp.isDefined) {
       Table.forPath(tableClient, path)
-        .getSnapshotAtTimestamp(tableClient, timestamp.get)
+        .getSnapshotAsOfTimestamp(tableClient, timestamp.get)
     } else {
       latestSnapshot(path, tableClient)
     }
@@ -610,6 +610,7 @@ trait TestUtils extends Assertions with SQLHelper {
       case BinaryType.BINARY => sparktypes.DataTypes.BinaryType
       case DateType.DATE => sparktypes.DataTypes.DateType
       case TimestampType.TIMESTAMP => sparktypes.DataTypes.TimestampType
+      case TimestampNTZType.TIMESTAMP_NTZ => sparktypes.DataTypes.TimestampNTZType
       case dt: DecimalType =>
         sparktypes.DecimalType(dt.getPrecision, dt.getScale)
       case at: ArrayType =>
