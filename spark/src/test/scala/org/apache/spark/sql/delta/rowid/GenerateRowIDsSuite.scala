@@ -16,8 +16,8 @@
 
 package org.apache.spark.sql.delta.rowid
 
+import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.RowId
 
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.expressions.{Add, Alias, AttributeReference, Coalesce, EqualTo, Expression, FileSourceMetadataAttribute, GetStructField, MetadataAttributeWithLogicalName}
@@ -86,6 +86,21 @@ class GenerateRowIDsSuite extends QueryTest with RowIdTestUtils {
       case Alias(aliasedExpr, RowId.ROW_ID) => checkRowIdExpr(aliasedExpr)
       case _ => fail(s"Expression didn't match expected Row ID expression: $expr")
     }
+  }
+
+  /**
+   * Checks that the given expression corresponds to the an expression used to generate Row commit
+   * versions:
+   *   coalesce(_metadata.row_commit_version, _metadata.default_row_commit_version).
+   */
+  protected def checkRowCommitVersionExpr(expr: Expression): Unit = expr match {
+    case Coalesce(
+          Seq(
+            GetStructField(FileSourceMetadataAttribute(_), _, _),
+            GetStructField(FileSourceMetadataAttribute(_), _, _))) => ()
+    case Alias(aliasedExpr, RowCommitVersion.METADATA_STRUCT_FIELD_NAME) =>
+      checkRowCommitVersionExpr(aliasedExpr)
+    case _ => fail(s"Expression didn't match expected Row commit version expression: $expr")
   }
 
   /**
@@ -158,6 +173,47 @@ class GenerateRowIDsSuite extends QueryTest with RowIdTestUtils {
       joinCond match {
         case Some(EqualTo(rowIdExpr, _)) =>
           checkRowIdExpr(rowIdExpr)
+        case _ => fail(s"Subquery was transformed into a join with an unexpected condition.")
+      }
+  }
+
+  testRowIdPlan("Row commit version column selected",
+    sql(s"SELECT _metadata.row_commit_version FROM $testTable")) {
+    // Selecting Row commit versions injects an expression to generate default Row commit versions.
+    case Project(Seq(rowIdExpr), lr: LogicalRelation) =>
+      assert(rowIdExpr.name == RowCommitVersion.METADATA_STRUCT_FIELD_NAME)
+      checkRowCommitVersionExpr(rowIdExpr)
+      assert(lr.output.map(_.name) === Seq("id", "_metadata"))
+      checkMetadataFieldsPresent(lr.output, Seq("default_row_commit_version", "row_commit_version"))
+  }
+
+  testRowIdPlan("Filter on Row commit version column",
+      sql(s"SELECT * FROM $testTable WHERE _metadata.row_commit_version = 5")) {
+    // Filtering on Row commit version injects an expression to generate default Row commit version
+    // in the filter.
+    case Project(projectList, Filter(EqualTo(rowIdExpr, _), lr: LogicalRelation)) =>
+      assert(projectList.map(_.name) === Seq("id"), "Project list didn't match")
+      checkRowCommitVersionExpr(rowIdExpr)
+      assert(lr.output.map(_.name) === Seq("id", "_metadata"), "Scan list didn't match")
+      checkMetadataFieldsPresent(lr.output, Seq("default_row_commit_version", "row_commit_version"))
+  }
+
+  testRowIdPlan("Filter on Row commit version in subquery",
+      sql(s"SELECT * FROM $testTable WHERE _metadata.row_commit_version IN (SELECT id FROM " +
+        s"$testTable)")) {
+    // Filtering on Row commit versions using a subquery injects an expression to generate default
+    // Row commit versions in the subquery.
+    case Project(
+        projectList,
+        Join(right: LogicalRelation, left: LogicalPlan, _, joinCond, _)) =>
+      assert(projectList.map(_.name) === Seq("id"), "Project list didn't match")
+      assert(right.output.map(_.name) === Seq("id", "_metadata"), "Outer scan output didn't match")
+      checkMetadataFieldsPresent(right.output,
+        Seq("default_row_commit_version", "row_commit_version"))
+      assert(left.output.map(_.name) === Seq("id"), "Subquery scan output didn't match")
+      joinCond match {
+        case Some(EqualTo(rowIdExpr, _)) =>
+          checkRowCommitVersionExpr(rowIdExpr)
         case _ => fail(s"Subquery was transformed into a join with an unexpected condition.")
       }
   }

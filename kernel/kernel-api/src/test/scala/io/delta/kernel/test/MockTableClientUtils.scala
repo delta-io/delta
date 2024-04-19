@@ -19,7 +19,7 @@ import java.io.ByteArrayInputStream
 import java.util.Optional
 
 import io.delta.kernel.client._
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
 import io.delta.kernel.types.{DataType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
@@ -89,6 +89,9 @@ trait BaseMockJsonHandler extends JsonHandler with MockTableClientUtils {
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
       predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
+    throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def writeJsonFileAtomically(filePath: String, data: CloseableIterator[Row]): Unit =
     throw new UnsupportedOperationException("not supported in this test suite")
 }
 

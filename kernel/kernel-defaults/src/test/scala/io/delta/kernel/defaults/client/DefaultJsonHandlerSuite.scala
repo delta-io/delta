@@ -17,15 +17,15 @@ package io.delta.kernel.defaults.client
 
 import java.math.{BigDecimal => JBigDecimal}
 import java.util.Optional
-
 import scala.collection.JavaConverters._
-
 import io.delta.kernel.data.ColumnVector
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestRow, TestUtils}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.types._
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
+
+import java.nio.file.FileAlreadyExistsException
 
 // NOTE: currently tests are split across scala and java; additional tests are in
 // TestDefaultJsonHandler.java
@@ -456,6 +456,61 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
     ))
 
     checkAnswer(actResult, expResult)
+  }
+
+  test("write rows as json") {
+    withTempDir { tempDir =>
+      val input = Seq(
+        """{
+          | "add":
+          |  {
+          |    "path":"part-00000-d83dafd8-c344-49f0-ab1c-acd944e32493-c000.snappy.parquet",
+          |    "partitionValues":{"p1" : "0", "p2" : "str"},
+          |    "size":348,
+          |    "dataChange":true
+          |  }
+          |}
+          |""".stripMargin.linesIterator.mkString,
+        """{
+          | "remove":
+          |  {
+          |    "path":"part-00000-d83dafd8-c344-49f0-ab1c-acd944e32493-c000.snappy.parquet",
+          |    "partitionValues":{"p1" : "0", "p2" : "str"},
+          |    "size":348,
+          |    "dataChange":true
+          |  }
+          |}
+          |""".stripMargin.linesIterator.mkString
+      )
+
+      val addRemoveSchema = new StructType()
+        .add("path", StringType.STRING)
+        .add("partitionValues", new MapType(StringType.STRING, StringType.STRING, false))
+        .add("size", LongType.LONG)
+        .add("dataChange", BooleanType.BOOLEAN)
+
+      val readSchema = new StructType()
+        .add("add", addRemoveSchema)
+        .add("remove", addRemoveSchema)
+
+      val batch = jsonHandler.parseJson(stringVector(input), readSchema, Optional.empty())
+      assert(batch.getSize == 2)
+
+      val filePath = tempDir + "/1.json"
+      jsonHandler.writeJsonFileAtomically(filePath, batch.getRows)
+
+      // read it back and verify the contents are correct
+      val source = scala.io.Source.fromFile(filePath)
+      val result = try source.getLines().mkString(",") finally source.close()
+
+      // remove the whitespaces from the input to compare
+      assert(input.map(_.replaceAll(" ", "")).mkString(",") === result)
+
+      // Try to write as same file and expect an error
+      intercept[FileAlreadyExistsException] {
+        jsonHandler.writeJsonFileAtomically(filePath, batch.getRows)
+      }
+    }
   }
 
   // TODO we use toJson to serialize our physical and logical schemas in ScanStateRow, we should

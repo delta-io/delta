@@ -35,6 +35,7 @@ class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSpark
         logStore: LogStore,
         hadoopConf: Configuration,
         logPath: Path,
+        managedCommitTableConf: Map[String, String],
         commitVersion: Long,
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
@@ -43,6 +44,7 @@ class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSpark
 
     override def getCommits(
       logPath: Path,
+      managedCommitTableConf: Map[String, String],
       startVersion: Long,
       endVersion: Option[Long] = None): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
 
@@ -50,8 +52,11 @@ class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSpark
         logStore: LogStore,
         hadoopConf: Configuration,
         logPath: Path,
+        managedCommitTableConf: Map[String, String],
         startVersion: Long,
         endVersion: Option[Long]): Unit = {}
+
+    override def semanticEquals(other: CommitStore): Boolean = this == other
   }
 
   class TestCommitStore1 extends TestCommitStoreBase
@@ -186,5 +191,30 @@ class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSpark
       deltaLog.startTransaction().commit(Seq(metadata), DeltaOperations.ManualUpdate)
       assert(getWriterFeatures(deltaLog).contains(ManagedCommitTableFeature.name))
     }
+  }
+
+  test("Semantic Equality works as expected on CommitStores") {
+    class TestCommitStore(val key: String) extends TestCommitStoreBase {
+      override def semanticEquals(other: CommitStore): Boolean =
+        other.isInstanceOf[TestCommitStore] && other.asInstanceOf[TestCommitStore].key == key
+    }
+    object Builder1 extends CommitStoreBuilder {
+      override def build(conf: Map[String, String]): CommitStore = {
+        new TestCommitStore(conf("key"))
+      }
+      override def name: String = "cs-name"
+    }
+    CommitStoreProvider.registerBuilder(Builder1)
+
+    // Different CommitStores with same keys should be semantically equal.
+    val obj1 = CommitStoreProvider.getCommitStore("cs-name", Map("key" -> "url1"))
+    val obj2 = CommitStoreProvider.getCommitStore("cs-name", Map("key" -> "url1"))
+    assert(obj1 != obj2)
+    assert(obj1.semanticEquals(obj2))
+
+    // Different CommitStores with different keys should be semantically unequal.
+    val obj3 = CommitStoreProvider.getCommitStore("cs-name", Map("key" -> "url2"))
+    assert(obj1 != obj3)
+    assert(!obj1.semanticEquals(obj3))
   }
 }

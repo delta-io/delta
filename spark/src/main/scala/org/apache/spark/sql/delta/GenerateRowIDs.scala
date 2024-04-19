@@ -28,7 +28,8 @@ import org.apache.spark.sql.types.StructType
 
 /**
  * This rule adds a Project on top of Delta tables that support the Row tracking table feature to
- * provide a default generated Row ID for rows that don't have them materialized in the data file.
+ * provide a default generated Row ID and row commit version for rows that don't have them
+ * materialized in the data file.
  */
 object GenerateRowIDs extends Rule[LogicalPlan] {
 
@@ -49,9 +50,9 @@ object GenerateRowIDs extends Rule[LogicalPlan] {
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.transformUpWithNewOutput {
     case DeltaScanWithRowTrackingEnabled(scan) =>
-      // While Row IDs are non-nullable, we'll use the Row ID attributes to read
-      // the materialized values from now on, which can be null. We make
-      // the materialized Row ID attributes nullable in the scan here.
+      // While Row IDs and commit versions are non-nullable, we'll use the Row ID & commit
+      // version attributes to read the materialized values from now on, which can be null. We make
+      // the materialized Row ID & commit version attributes nullable in the scan here.
 
       // Update nullability in the scan `metadataOutput` by updating the delta file format.
       val baseRelation = scan.relation.asInstanceOf[HadoopFsRelation]
@@ -108,6 +109,17 @@ object GenerateRowIDs extends Rule[LogicalPlan] {
   }
 
   /**
+   * Expression that reads the Row commit versions from the materialized Row commit version column
+   * if the value is present and returns the default Row commit version from the file if not:
+   *    coalesce(_metadata.row_commit_Version, _metadata.default_row_commit_version).
+   */
+  private def rowCommitVersionExpr(metadata: AttributeReference): Expression = {
+    Coalesce(Seq(
+      getField(metadata, RowCommitVersion.METADATA_STRUCT_FIELD_NAME),
+      getField(metadata, DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME)))
+  }
+
+  /**
    * Extract a field from the metadata column.
    */
   private def getField(metadata: AttributeReference, name: String): GetStructField = {
@@ -119,14 +131,16 @@ object GenerateRowIDs extends Rule[LogicalPlan] {
   }
 
   /**
-   * Create a new metadata struct where the Row ID values are populated using
-   * the materialized values if present, or the default Row ID values if not.
+   * Create a new metadata struct where the Row ID and row commit version values are populated using
+   * the materialized values if present, or the default Row ID / row commit version values if not.
    */
   private def metadataWithRowTrackingColumnsProjection(metadata: AttributeReference)
     : NamedExpression = {
     val metadataFields = metadata.dataType.asInstanceOf[StructType].map {
       case field if field.name == RowId.ROW_ID =>
         field -> rowIdExpr(metadata)
+      case field if field.name == RowCommitVersion.METADATA_STRUCT_FIELD_NAME =>
+        field -> rowCommitVersionExpr(metadata)
       case field =>
         field -> getField(metadata, field.name)
     }.flatMap { case (oldField, newExpr) =>

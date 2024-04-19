@@ -465,15 +465,21 @@ class OptimisticTransactionSuite
 
       override def name: String = commitStoreName
 
-      override def build(conf: Map[String, String]): CommitStore = {
-        new CommitStore {
+      val commitStore: InMemoryCommitStore = {
+        new InMemoryCommitStore(batchSize = 1000L) {
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
               tablePath: Path,
+              tableConf: Map[String, String],
               commitVersion: Long,
               actions: Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
+            // Fail all commits except first one
+            if (commitVersion == 0) {
+              return super.commit(
+                logStore, hadoopConf, tablePath, tableConf, commitVersion, actions, updatedActions)
+            }
             commitAttempts += 1
             throw CommitFailedException(
               retryable = true,
@@ -481,18 +487,9 @@ class OptimisticTransactionSuite
                 commitAttempts <= (initialNonConflictErrors + initialConflictErrors),
               message = "")
           }
-          override def getCommits(
-              tablePath: Path,
-              startVersion: Long,
-              endVersion: Option[Long]): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
-          override def backfillToVersion(
-              logStore: LogStore,
-              hadoopConf: Configuration,
-              logPath: Path,
-              startVersion: Long,
-              endVersion: Option[Long]): Unit = {}
         }
       }
+      override def build(conf: Map[String, String]): CommitStore = commitStore
     }
 
     CommitStoreProvider.registerBuilder(RetryableNonConflictCommitStoreBuilder)
@@ -521,30 +518,27 @@ class OptimisticTransactionSuite
 
       override def name: String = commitStoreName
 
-      override def build(conf: Map[String, String]): CommitStore = {
-        new CommitStore {
+      lazy val commitStore: CommitStore = {
+        new InMemoryCommitStore(batchSize = 1000L) {
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
               tablePath: Path,
+              tableConf: Map[String, String],
               commitVersion: Long,
               actions: Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
+            // Fail all commits except first one
+            if (commitVersion == 0) {
+              return super.commit(
+                logStore, hadoopConf, tablePath, tableConf, commitVersion, actions, updatedActions)
+            }
             commitAttempts += 1
             throw new FileAlreadyExistsException("Commit-File Already Exists")
           }
-          override def getCommits(
-              tablePath: Path,
-              startVersion: Long,
-              endVersion: Option[Long]): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
-          override def backfillToVersion(
-              logStore: LogStore,
-              hadoopConf: Configuration,
-              logPath: Path,
-              startVersion: Long,
-              endVersion: Option[Long]): Unit = {}
         }
       }
+      override def build(conf: Map[String, String]): CommitStore = commitStore
     }
 
     CommitStoreProvider.registerBuilder(FileAlreadyExistsCommitStoreBuilder)
@@ -836,6 +830,7 @@ class OptimisticTransactionSuite
               logStore: LogStore,
               hadoopConf: Configuration,
               tablePath: Path,
+              tableConf: Map[String, String],
               commitVersion: Long,
               actions: Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
@@ -843,7 +838,8 @@ class OptimisticTransactionSuite
               deltaLog.startTransaction().commit(addB :: Nil, ManualUpdate)
               throw CommitFailedException(retryable = true, conflict, message = "")
             }
-            super.commit(logStore, hadoopConf, tablePath, commitVersion, actions, updatedActions)
+            super.commit(
+              logStore, hadoopConf, tablePath, tableConf, commitVersion, actions, updatedActions)
           }
         }
         object RetryableConflictCommitStoreBuilder extends CommitStoreBuilder {
@@ -854,8 +850,6 @@ class OptimisticTransactionSuite
         CommitStoreProvider.registerBuilder(RetryableConflictCommitStoreBuilder)
         val conf = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> commitStoreName)
         deltaLog.startTransaction().commit(Seq(Metadata(configuration = conf)), ManualUpdate)
-        RetryableConflictCommitStoreBuilder.commitStore.registerTable(
-          logPath = deltaLog.logPath, maxCommitVersion = 0)
         deltaLog.startTransaction().commit(addA :: Nil, ManualUpdate)
         val records = Log4jUsageLogger.track {
           // commitLarge must fail because of a conflicting commit at version-2.
@@ -888,4 +882,22 @@ class OptimisticTransactionSuite
       }
     }
   }
+
+  test("Append does not trigger snapshot state computation") {
+    withTempDir { tableDir =>
+      val df = Seq((1, 0), (2, 1)).toDF("key", "value")
+      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+      val deltaLog = DeltaLog.forTable(spark, tableDir)
+      val preCommitSnapshot = deltaLog.update()
+      assert(!preCommitSnapshot.stateReconstructionTriggered)
+
+      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+      val postCommitSnapshot = deltaLog.update()
+      assert(!preCommitSnapshot.stateReconstructionTriggered)
+      assert(!postCommitSnapshot.stateReconstructionTriggered)
+    }
+  }
+
 }

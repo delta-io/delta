@@ -220,7 +220,6 @@ class DeltaHistoryManager(
       getEarliestDeltaFile(deltaLog)
     }
     val snapshot = deltaLog.update()
-    // TODO(managed-commits): Add support for managed commits.
     val commitFileProvider = DeltaCommitFileProvider(snapshot)
     val latestVersion = snapshot.version
 
@@ -481,8 +480,10 @@ object DeltaHistoryManager extends DeltaLogging {
    * Returns the first available commit in the range [version, upperBoundExclusive).
    * The timestamp of the returned commit will be the ICT. If no ICT is found for the commit,
    * an exception will be thrown.
-   * The function optimistically tries to read the commit info for `version` first. If the
+   * The function optimistically tries to read the commit info for `version` first.
+   * For commits that have been backfilled as per `commitFileProvider`: if the
    * no commit is found at that version, it falls back to a listing.
+   * For unbackfilled commits, an IllegalStateException is thrown if the commit is not found.
    */
   private[delta] def getFirstCommitAndICTAfter(
       version: Long,
@@ -491,8 +492,8 @@ object DeltaHistoryManager extends DeltaLogging {
       logStore: LogStore,
       conf: Configuration,
       commitFileProvider: DeltaCommitFileProvider): Option[Commit] = {
+    val deltaFile = commitFileProvider.deltaFile(version)
     val commitInfoOpt = try {
-      val deltaFile = commitFileProvider.deltaFile(version)
       getCommitInfoOpt(logStore, deltaFile, conf)
     } catch {
       case _: FileNotFoundException => None
@@ -500,6 +501,11 @@ object DeltaHistoryManager extends DeltaLogging {
     if (commitInfoOpt.isDefined) {
       val timestamp = CommitInfo.getRequiredInCommitTimestamp(commitInfoOpt, version.toString)
       Some(Commit(version, timestamp))
+    } else if (version >= commitFileProvider.minUnbackfilledVersion) {
+      // Unbackfilled commits should never disappear during the lifetime of time travel
+      // query.
+      throw new IllegalStateException(
+        s"Could not find commit $version which was expected to be at path ${deltaFile.toString}.")
     } else {
       logStore
         .listFrom(FileNames.listingPrefix(basePath, version), conf)

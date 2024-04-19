@@ -17,6 +17,7 @@
 package io.delta.kernel.client;
 
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.util.Optional;
 
 import io.delta.kernel.annotation.Evolving;
@@ -98,4 +99,26 @@ public interface JsonHandler {
         CloseableIterator<FileStatus> fileIter,
         StructType physicalSchema,
         Optional<Predicate> predicate) throws IOException;
+
+    /**
+     * Serialize each {@code Row} in the iterator as JSON and write as a separate line in
+     * destination file. This call either succeeds in creating the file with given contents or no
+     * file is created at all. It won't leave behind a partially written file.
+     * <p>
+     * Following are the supported data types and their serialization rules. At a high-level, the
+     * JSON serialization is similar to that of {@code jackson} JSON serializer.
+     * <ul>
+     *     <li>Primitive types: @code boolean, byte, short, int, long, float, double, string}</li>
+     *     <li>{@code struct}: any element whose value is null is not written to file</li>
+     *     <li>{@code map}: only a {@code map} with {@code string} key type is supported</li>
+     *     <li>{@code array}: {@code null} value elements are written to file</li>
+     * </ul>
+     *
+     * @param filePath Fully qualified destination file path
+     * @param data     Iterator of {@link Row} objects where each row should be serialized as JSON
+     *                 and written as separate line in the destination file.
+     * @throws FileAlreadyExistsException if the file already exists.
+     * @throws IOException                if any other I/O error occurs.
+     */
+    void writeJsonFileAtomically(String filePath, CloseableIterator<Row> data) throws IOException;
 }

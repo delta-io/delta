@@ -81,7 +81,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
 
   def isInternalField(field: StructField): Boolean =
     DELTA_INTERNAL_COLUMNS.contains(field.name.toLowerCase(Locale.ROOT)) ||
-      RowIdMetadataStructField.isRowIdColumn(field)
+      RowIdMetadataStructField.isRowIdColumn(field) ||
+      RowCommitVersion.MetadataStructField.isRowCommitVersionColumn(field)
 
   def satisfiesColumnMappingProtocol(protocol: Protocol): Boolean =
     protocol.isFeatureSupported(ColumnMappingTableFeature)
@@ -565,6 +566,18 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     val originalSchemaFields = SchemaMergingUtils.explode(schema).map(_._2)
 
     physicalSchemaFieldPaths.zip(originalSchemaFields).toMap
+  }
+
+  /**
+   * Returns a map from the logical name paths to the physical name paths for the given schema.
+   * The logical name path is the result of splitting a multi-part identifier, and the physical name
+   * path is result of replacing all names in the logical name path with their physical names.
+   */
+  def getLogicalNameToPhysicalNameMap(schema: StructType): Map[Seq[String], Seq[String]] = {
+    val physicalSchema = renameColumns(schema)
+    val logicalSchemaFieldPaths = SchemaMergingUtils.explode(schema).map(_._1)
+    val physicalSchemaFieldPaths = SchemaMergingUtils.explode(physicalSchema).map(_._1)
+    logicalSchemaFieldPaths.zip(physicalSchemaFieldPaths).toMap
   }
 
   /**

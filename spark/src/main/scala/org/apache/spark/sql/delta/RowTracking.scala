@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.types.StructField
 
 /**
@@ -70,6 +71,12 @@ object RowTracking {
       : Iterable[StructField] = {
     RowId.createRowIdField(protocol, metadata, nullable) ++
       RowId.createBaseRowIdField(protocol, metadata) ++
-      DefaultRowCommitVersion.createDefaultRowCommitVersionField(protocol, metadata)
+      DefaultRowCommitVersion.createDefaultRowCommitVersionField(protocol, metadata) ++
+      RowCommitVersion.createMetadataStructField(protocol, metadata, nullable)
+  }
+
+  def preserveRowTrackingColumns(dataFrame: DataFrame, snapshot: SnapshotDescriptor): DataFrame = {
+    val dfWithRowIds = RowId.preserveRowIds(dataFrame, snapshot)
+    RowCommitVersion.preserveRowCommitVersions(dfWithRowIds, snapshot)
   }
 }
