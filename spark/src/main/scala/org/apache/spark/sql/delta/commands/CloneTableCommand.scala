@@ -55,8 +55,8 @@ case class CloneTableCommand(
     sourceTable: CloneSource,
     targetIdent: TableIdentifier,
     tablePropertyOverrides: Map[String, String],
-    targetPath: Path)
-  extends CloneTableBase(sourceTable, tablePropertyOverrides, targetPath) {
+    targetPath: Path
+) extends CloneTableBase(sourceTable, tablePropertyOverrides, targetPath) {
 
   import CloneTableCommand._
 
