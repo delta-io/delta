@@ -121,7 +121,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
       // This is because this checkpoint file (technically) becomes invalid, as there is no
       // CheckpointManifest action in it. However, because the Spark connector will place all
       // Add and Remove actions in the sidecar files, we must use this hack to test this
-      // scneario.
+      // scenario.
       val snapshotFromSpark = DeltaLog.forTable(spark, path.toString).update()
       snapshotFromSpark.allFiles.collect()
 
@@ -151,6 +151,10 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
           spark.sql("INSERT INTO tbl VALUES (5, 'e'), (6, 'f')")
         }
 
+        // Spark snapshot and files must be evaluated before renaming the checkpoint file.
+        val snapshotFromSpark = DeltaLog.forTable(spark, path.toString).update()
+        snapshotFromSpark.allFiles.collect()
+
         // Rename from UUID.
         val ckptPath = new Path(
           new File(DeltaLog.forTable(spark, path.toString).logPath.toUri).listFiles()
@@ -159,7 +163,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
           FileNames.checkpointFileSingular(ckptPath.getParent, 2).toUri))
 
         // Validate snapshot and data.
-        validateSnapshot(path.toString, DeltaLog.forTable(spark, path.toString).update())
+        validateSnapshot(path.toString, snapshotFromSpark)
         checkTable(
           path = path.toString,
           expectedAnswer = (1 to 6).map(i => TestRow(i, (i - 1 + 'a').toChar.toString))
