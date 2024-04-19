@@ -64,7 +64,9 @@ jobs:
           pipenv run pip install numpy==1.20.3
         if: steps.git-diff.outputs.diff
       - name: Run Scala/Java and Python tests
+        env:
+          SCALA_VERSION: '2.12.17'
         run: |
-          pipenv run python run-tests.py --group spark
+          pipenv run python run-tests.py --group spark --coverage
           cd examples/scala && build/sbt "++ $SCALA_VERSION compile"
         if: steps.git-diff.outputs.diff
