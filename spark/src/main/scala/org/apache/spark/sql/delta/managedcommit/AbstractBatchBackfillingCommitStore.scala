@@ -20,6 +20,7 @@ import java.nio.file.FileAlreadyExistsException
 import java.util.UUID
 
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
@@ -47,6 +48,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
+      managedCommitTableConf: Map[String, String],
       commitVersion: Long,
       commitFile: FileStatus,
       commitTimestamp: Long): CommitResponse
@@ -55,17 +57,22 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
+      managedCommitTableConf: Map[String, String],
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = {
     val tablePath = getTablePath(logPath)
+    if (commitVersion == 0) {
+      throw CommitFailedException(
+        retryable = false, conflict = false, message = "Commit version 0 must go via filesystem.")
+    }
     logInfo(s"Attempting to commit version $commitVersion on table $tablePath")
     val fs = logPath.getFileSystem(hadoopConf)
     if (batchSize <= 1) {
       // Backfill until `commitVersion - 1`
       logInfo(s"Making sure commits are backfilled until $commitVersion version for" +
         s" table ${tablePath.toString}")
-      backfillToVersion(logStore, hadoopConf, logPath)
+      backfillToVersion(logStore, hadoopConf, logPath, managedCommitTableConf)
     }
 
     // Write new commit file in _commits directory
@@ -74,20 +81,28 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
     // Do the actual commit
     val commitTimestamp = updatedActions.commitInfo.getTimestamp
     var commitResponse =
-      commitImpl(logStore, hadoopConf, logPath, commitVersion, fileStatus, commitTimestamp)
+      commitImpl(
+        logStore,
+        hadoopConf,
+        logPath,
+        managedCommitTableConf,
+        commitVersion,
+        fileStatus,
+        commitTimestamp)
 
+    val mcToFsConversion = isManagedCommitToFSConversion(commitVersion, updatedActions)
     // Backfill if needed
-    if (commitVersion == 0 || batchSize <= 1) {
-      // Always backfill zeroth commit or when batch size is configured as 1
+    if (batchSize <= 1) {
+      // Always backfill when batch size is configured as 1
       backfill(logStore, hadoopConf, logPath, commitVersion, fileStatus)
       val targetFile = FileNames.unsafeDeltaFile(logPath, commitVersion)
       val targetFileStatus = fs.getFileStatus(targetFile)
       val newCommit = commitResponse.commit.copy(fileStatus = targetFileStatus)
       commitResponse = commitResponse.copy(commit = newCommit)
-    } else if (commitVersion % batchSize == 0) {
+    } else if (commitVersion % batchSize == 0 || mcToFsConversion) {
       logInfo(s"Making sure commits are backfilled till $commitVersion version for" +
         s"table ${tablePath.toString}")
-      backfillToVersion(logStore, hadoopConf, logPath)
+      backfillToVersion(logStore, hadoopConf, logPath, managedCommitTableConf)
     }
     logInfo(s"Commit $commitVersion done successfully on table $tablePath")
     commitResponse
@@ -105,15 +120,24 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
     commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
   }
 
+  private def isManagedCommitToFSConversion(
+      commitVersion: Long,
+      updatedActions: UpdatedActions): Boolean = {
+    val oldMetadataHasManagedCommits = updatedActions.oldMetadata.managedCommitOwnerName.nonEmpty
+    val newMetadataHasManagedCommits = updatedActions.newMetadata.managedCommitOwnerName.nonEmpty
+    oldMetadataHasManagedCommits && !newMetadataHasManagedCommits && commitVersion > 0
+  }
+
   protected def generateUUID(): String = UUID.randomUUID().toString
 
   override def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
+      managedCommitTableConf: Map[String, String],
       startVersion: Long = 0,
       endVersionOpt: Option[Long] = None): Unit = {
-    getCommits(logPath, startVersion, endVersionOpt)
+    getCommits(logPath, managedCommitTableConf, startVersion, endVersionOpt)
       .commits
       .foreach { commit =>
         backfill(logStore, hadoopConf, logPath, commit.version, commit.fileStatus)
