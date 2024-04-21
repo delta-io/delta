@@ -34,9 +34,10 @@ import org.apache.spark.sql.test.SharedSparkSession
  */
 class TransactionExecutionObserverSuite extends QueryTest with SharedSparkSession
   with DeltaSQLCommandTest
-  with PhaseLockingTestMixin {
+  with PhaseLockingTestMixin
+  with TransactionExecutionTestMixin {
 
-  val timeout: FiniteDuration = 10000.millis
+  override val timeout: FiniteDuration = 10000.millis
 
   test("Phase Locking - sequential") {
     withTempDir { tempFile =>
@@ -219,6 +220,53 @@ class TransactionExecutionObserverSuite extends QueryTest with SharedSparkSessio
 
       val res = spark.read.format("delta").load(tempPath).collect()
       assert(res.isEmpty)
+    }
+  }
+
+  test("Phase Locking - set next observer after commit") {
+    withTempDir { tempFile =>
+      val tempPath = tempFile.toString
+
+      spark.range(end = 1).write.format("delta").save(tempPath)
+
+      val observer = new PhaseLockingTransactionExecutionObserver(
+        OptimisticTransactionPhases.forName("test-txn"))
+      val deltaLog = DeltaLog.forTable(spark, tempPath)
+      val initialTableVersion = deltaLog.update().version
+
+      // get things started
+      val replacementObserver = new PhaseLockingTransactionExecutionObserver(
+        OptimisticTransactionPhases.forName("test-replacement-txn"))
+
+      observer.setNextObserver(replacementObserver, autoAdvance = true)
+      unblockAllPhases(observer)
+
+      TransactionExecutionObserver.withObserver(observer) {
+        deltaLog.withNewTransaction { txn =>
+          observer.phases.commitPhase.exitBarrier.unblock()
+          val removedFiles = txn.snapshot.allFiles.collect().map(_.remove).toSeq
+          txn.commit(removedFiles, DeltaOperations.ManualUpdate)
+        }
+        val tableVersionAfterFirstTxn = deltaLog.update().version
+        assert(tableVersionAfterFirstTxn === initialTableVersion + 1,
+          "expected a successful commit")
+        // Check that we cannot re-use the old observer, with unblocks.
+        assertThrows[IllegalStateTransitionException] {
+          observer.phases.preparePhase.entryBarrier.unblock()
+        }
+
+        // Check that we can use the replaced observer to control a subsequent commit on the same
+        // thread.
+        val oldMetadata = deltaLog.update().metadata
+        val newMetadata = oldMetadata.copy(configuration = Map("foo" -> "bar"))
+        unblockAllPhases(replacementObserver)
+        deltaLog.withNewTransaction { txn =>
+          txn.commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
+        }
+        assert(deltaLog.update().version === tableVersionAfterFirstTxn + 1,
+          "expected a successful commit")
+        assert(replacementObserver.allPhasesHavePassed)
+      }
     }
   }
 }
