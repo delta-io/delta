@@ -144,7 +144,7 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest with 
   }
 
   /** Returns a Map of file path to base row ID from the AddFiles in a Snapshot. */
-  def getAddFilePathToBaseRowIdMap(snapshot: Snapshot): Map[String, Long] = {
+  private def getAddFilePathToBaseRowIdMap(snapshot: Snapshot): Map[String, Long] = {
     val allAddFiles = snapshot.allFiles.collect()
     allAddFiles.foreach(addFile => assert(addFile.baseRowId.isDefined,
       "Every AddFile should have a base row ID"))
@@ -152,11 +152,32 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest with 
   }
 
   /** Returns a Map of file path to base row ID from the RemoveFiles in a Snapshot. */
-  def getRemoveFilePathToBaseRowIdMap(snapshot: Snapshot): Map[String, Long] = {
+  private def getRemoveFilePathToBaseRowIdMap(snapshot: Snapshot): Map[String, Long] = {
     val removeFiles = snapshot.tombstones.collect()
     removeFiles.foreach(removeFile => assert(removeFile.baseRowId.isDefined,
       "Every RemoveFile should have a base row ID"))
     removeFiles.map(r => r.path -> r.baseRowId.get).toMap
+  }
+
+  /** Check that the high watermark does not get updated if there aren't any new files */
+  def checkHighWatermarkBeforeAndAfterOperation(log: DeltaLog)(operation: => Unit): Unit = {
+    val prevSnapshot = log.update()
+    val prevHighWatermark = RowId.extractHighWatermark(prevSnapshot)
+    val prevAddFiles = getAddFilePathToBaseRowIdMap(prevSnapshot).keySet
+
+    operation
+
+    val newAddFiles = getAddFilePathToBaseRowIdMap(log.update()).keySet
+    val newFilesAdded = newAddFiles.diff(prevAddFiles).nonEmpty
+    val newHighWatermark = RowId.extractHighWatermark(log.update())
+
+    if (newFilesAdded) {
+      assert(prevHighWatermark.get < newHighWatermark.get,
+        "The high watermark should have been updated after creating new files")
+    } else {
+      assert(prevHighWatermark === newHighWatermark,
+        "The high watermark should not be updated when there are no new file")
+    }
   }
 
   /**

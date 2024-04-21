@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.DeltaCommitTag.PreservedRowTrackingTag
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 
 import org.apache.spark.sql.DataFrame
@@ -95,15 +94,16 @@ object RowTracking {
   private[delta] def addPreservedRowTrackingTagIfNotSet(
       snapshot: SnapshotDescriptor,
       tagsMap: Map[String, String] = Map.empty): Map[String, String] = {
-    if (!isEnabled(snapshot.protocol) ||
+    if (!isEnabled(snapshot.protocol, snapshot.metadata) ||
       tagsMap.contains(PreservedRowTrackingTag.key)) {
       return tagsMap
     }
     addPreservedRowTrackingTag(tagsMap, preserved = true)
   }
 
-  def preserveRowTrackingColumns(dataFrame: DataFrame, snapshot: SnapshotDescriptor): DataFrame = {
-    val dfWithRowIds = RowId.preserveRowIds(dataFrame, snapshot)
+  def preserveRowTrackingColumns(
+      dfWithoutRowTrackingColumns: DataFrame, snapshot: SnapshotDescriptor): DataFrame = {
+    val dfWithRowIds = RowId.preserveRowIds(dfWithoutRowTrackingColumns, snapshot)
     RowCommitVersion.preserveRowCommitVersions(dfWithRowIds, snapshot)
   }
 }
