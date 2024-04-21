@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.fuzzer
 
-
 /**
  * Trait representing execution observers that rely on phases with entry and exit barriers to
  * control the order of execution of the observed code paths. See [[ExecutionPhaseLock]].

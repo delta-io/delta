@@ -16,8 +16,7 @@
 
 package org.apache.spark.sql.delta.fuzzer
 
-import org.apache.spark.sql.delta.OptimisticTransaction
-import org.apache.spark.sql.delta.TransactionExecutionObserver
+import org.apache.spark.sql.delta.{OptimisticTransaction, TransactionExecutionObserver}
 
 private[delta] class PhaseLockingTransactionExecutionObserver(
     val phases: OptimisticTransactionPhases)
