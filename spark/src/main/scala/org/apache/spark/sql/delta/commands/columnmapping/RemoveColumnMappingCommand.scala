@@ -122,6 +122,8 @@ class RemoveColumnMappingCommand(
       deltaOptions: DeltaOptions): Seq[AddFile] = {
     txn.writeFiles(data, Some(deltaOptions), isOptimize = true, additionalConstraints = Seq.empty)
       .asInstanceOf[Seq[AddFile]]
+      // Mark as no data change to not generate CDC data. We are only removing column mapping.
+      .map(_.copy(dataChange = false))
   }
 }
 
