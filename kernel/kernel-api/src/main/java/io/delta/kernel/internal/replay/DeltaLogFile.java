@@ -20,8 +20,10 @@ import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 
-/** Internal wrapper class holding information needed to perform log replay. */
-public class FileWrapper {
+/** Internal wrapper class holding information needed to perform log replay. Represents either a
+ * Delta commit file, classic checkpoint, a multipart checkpoint, or a sidecar checkpoint.
+ */
+public class DeltaLogFile {
     private final FileStatus file;
 
     private final String fileName;
@@ -33,20 +35,23 @@ public class FileWrapper {
     // sidecarManifest is the checkpoint manifest file containing the SidecarFile action used to
     // create this FileWrapper. If null, but the file is a checkpoint file, the checkpointInstance
     // is generated from the filepath.
-    FileWrapper(FileStatus file, CheckpointInstance sidecarManifest) {
+    DeltaLogFile(FileStatus file, boolean isSidecar, CheckpointInstance sidecarManifest) {
         this.file = file;
         this.fileName = new Path(file.getPath()).getName();
-        if (sidecarManifest != null) {
-            this.checkpointInstance = sidecarManifest;
-            this.isSidecar = true;
-        } else {
-            this.isSidecar = false;
-            if (FileNames.isCheckpointFile(fileName)) {
-                this.checkpointInstance = new CheckpointInstance(fileName);
-            } else {
-                this.checkpointInstance = null;
-            }
+        this.isSidecar = isSidecar;
+        this.checkpointInstance = sidecarManifest;
+    }
+
+    public static DeltaLogFile forSidecar(FileStatus file, CheckpointInstance sidecarManifest) {
+        return new DeltaLogFile(file, true, sidecarManifest);
+    }
+
+    public static DeltaLogFile forCommitOrCheckpoint(FileStatus file) {
+        String fileName = new Path(file.getPath()).getName();
+        if (FileNames.isCheckpointFile(fileName)) {
+            return new DeltaLogFile(file, false, new CheckpointInstance(fileName));
         }
+        return new DeltaLogFile(file, false, null);
     }
 
     public FileStatus getFile() {
@@ -77,6 +82,10 @@ public class FileWrapper {
     }
 
     public Path getCheckpointInstanceFilepath() {
+        if (checkpointInstance == null) {
+            return null;
+        }
+
         return checkpointInstance.filePath.get();
     }
 }

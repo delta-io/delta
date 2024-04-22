@@ -81,14 +81,16 @@ public class LogReplay {
     }
 
     public static String SIDECAR_FIELD_NAME = "sidecar";
+    public static String ADDFILE_FIELD_NAME = "add";
+    public static String REMOVEFILE_FIELD_NAME = "remove";
 
     public static StructType withSidecarFileSchema(StructType schema) {
         return schema.add(SIDECAR_FIELD_NAME, SidecarFile.READ_SCHEMA);
     }
 
-    public static boolean isAddRemoveReadSchema(StructType schema) {
-        return schema.equals(getAddRemoveReadSchema(true)) ||
-                schema.equals(getAddRemoveReadSchema(false));
+    public static boolean containsAddOrRemoveFileActions(StructType schema) {
+        return schema.fieldNames().contains(ADDFILE_FIELD_NAME) ||
+                schema.fieldNames().contains(REMOVEFILE_FIELD_NAME);
     }
 
     /**
@@ -96,8 +98,8 @@ public class LogReplay {
      */
     public static StructType getAddRemoveReadSchema(boolean shouldReadStats) {
         return new StructType()
-            .add("add", getAddSchema(shouldReadStats))
-            .add("remove", REMOVE_FILE_SCHEMA);
+            .add(ADDFILE_FIELD_NAME, getAddSchema(shouldReadStats))
+            .add(REMOVEFILE_FIELD_NAME, REMOVE_FILE_SCHEMA);
     }
 
     public static int ADD_FILE_ORDINAL = 0;

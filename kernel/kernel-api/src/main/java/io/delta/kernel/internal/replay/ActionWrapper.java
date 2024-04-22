@@ -26,6 +26,7 @@ import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.Preconditions;
 
 /** Internal wrapper class holding information needed to perform log replay. */
 class ActionWrapper {
@@ -63,10 +64,12 @@ class ActionWrapper {
     }
 
     /**
-     * Reads SidecarFile actions from ColumnarBatch, appending the SidecarFile actions to the end
-     * of the file list and removing sidecar actions from the ColumnarBatch.
+     * Reads SidecarFile actions from ColumnarBatch, removing sidecar actions from the
+     * ColumnarBatch. Returns a list of SidecarFile actions found.
      */
-    public List<FileWrapper> extractSidecarsFromBatch() {
+    public List<DeltaLogFile> extractSidecarsFromBatch() {
+        Preconditions.checkArgument(columnarBatch.getSchema()
+                .fieldNames().contains(LogReplay.SIDECAR_FIELD_NAME));
         // If the source checkpoint for this action does not use sidecars, sidecars will not exist
         // in schema.
         CheckpointInstance sourceCheckpoint =
@@ -77,7 +80,7 @@ class ActionWrapper {
 
         // Sidecars will exist in schema. Extract sidecar files, then remove sidecar files from
         // batch output.
-        List<FileWrapper> outputFiles = new ArrayList<>();
+        List<DeltaLogFile> outputFiles = new ArrayList<>();
         int sidecarIndex =
                 columnarBatch.getSchema().fieldNames().indexOf(LogReplay.SIDECAR_FIELD_NAME);
         ColumnVector sidecarVector = columnarBatch.getColumnVector(sidecarIndex);
@@ -85,7 +88,7 @@ class ActionWrapper {
             SidecarFile f = SidecarFile.fromColumnVector(sidecarVector, i);
             if (f != null) {
                 outputFiles.add(
-                        new FileWrapper(
+                        DeltaLogFile.forSidecar(
                                 FileStatus.of(
                                         FileNames.sidecarFile(checkpointPath.getParent(), f.path),
                                         f.sizeInBytes,

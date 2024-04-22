@@ -100,6 +100,45 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
     }
   }
 
+  test("v2 checkpoint support with multiple sidecars") {
+    supportedFileFormats.foreach { format =>
+      withTempDir { path =>
+        val tbl = "tbl"
+        withTable(tbl) {
+          // Create table.
+          withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
+            DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1", // Ensure 1 action per checkpoint.
+            "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
+            spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta CLUSTER BY (a) " +
+              s"LOCATION '$path' " +
+              s"TBLPROPERTIES ('delta.checkpointInterval' = '2', 'delta.checkpointPolicy'='v2')")
+            spark.sql(s"INSERT INTO $tbl VALUES (1, 'a'), (2, 'b')")
+            spark.sql(s"INSERT INTO $tbl VALUES (3, 'c'), (4, 'd')")
+            spark.sql(s"INSERT INTO $tbl VALUES (5, 'e'), (6, 'f')")
+          }
+
+          // Validate snapshot and data.
+          validateSnapshot(path.toString, DeltaLog.forTable(spark, path.toString).update())
+          checkTable(
+            path = path.toString,
+            expectedAnswer = (1 to 6).map(i => TestRow(i, (i - 1 + 'a').toChar.toString))
+          )
+
+          // Remove some files from the table, then add a new one.
+          spark.sql(s"DELETE FROM $tbl WHERE a=1 OR a=2")
+          spark.sql(s"INSERT INTO $tbl VALUES (7, 'g'), (8, 'h')")
+
+          // Validate snapshot and data.
+          validateSnapshot(path.toString, DeltaLog.forTable(spark, path.toString).update())
+          checkTable(
+            path = path.toString,
+            expectedAnswer = (3 to 8).map(i => TestRow(i, (i - 1 + 'a').toChar.toString))
+          )
+        }
+      }
+    }
+  }
+
   test("UUID named checkpoint with actions") {
     withTempDir { path =>
       // Create Delta log and a checkpoint file with actions in it.

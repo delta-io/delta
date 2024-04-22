@@ -31,6 +31,8 @@ public class CheckpointInstance
     implements Comparable<CheckpointInstance> {
 
     public enum CheckpointFormat {
+        // Note that the order of these enum values is important for comparison of checkpoint
+        // instances (we prefer V2 > MULTI_PART > CLASSIC).
         CLASSIC, MULTI_PART, V2;
 
         // Indicates that the checkpoint (may) contain SidecarFile actions. For compatibility,
@@ -51,7 +53,7 @@ public class CheckpointInstance
 
     public final CheckpointFormat format;
 
-    public final Optional<Path> filePath;
+    public final Optional<Path> filePath; // Guaranteed to be present for V2 checkpoints.
 
     public CheckpointInstance(String path) {
         Preconditions.checkArgument(FileNames.isCheckpointFile(path),
@@ -135,29 +137,38 @@ public class CheckpointInstance
      * 3. For CheckpointInstances with same version, a Multi-part checkpoint is greater than a
      *    Single part checkpoint.
      * 4. For Multi-part CheckpointInstance corresponding to same version, the one with more
-     *    parts is greater than the one with less parts.
+     *    parts is greater than the one with fewer parts.
      * 5. For V2 checkpoints, use the file path to break ties.
      */
     @Override
     public int compareTo(CheckpointInstance that) {
-        if (version == that.version) {
-            if (format == that.format) {
-                if (numParts.orElse(1).equals(that.numParts.orElse(1)) && format ==
-                        CheckpointFormat.V2 && filePath.isPresent() && that.filePath.isPresent()) {
-                    return filePath.get().getName().compareTo(that.filePath.get().getName());
-                }
-                return Long.compare(numParts.orElse(1), that.numParts.orElse(1));
-            }
-            return Integer.compare(format.ordinal(), that.format.ordinal());
-        } else {
+        // Compare versions.
+        if (version != that.version) {
             return Long.compare(version, that.version);
+        }
+
+        // Compare formats.
+        if (format != that.format) {
+            return Integer.compare(format.ordinal(), that.format.ordinal());
+        }
+
+        // Use format-specific tiebreakers if versions and formats are the same.
+        switch (format) {
+            case CLASSIC:
+                return 0; // No way to break ties if both are classic checkpoints.
+            case MULTI_PART:
+                return Long.compare(numParts.orElse(1), that.numParts.orElse(1));
+            case V2:
+                return filePath.get().getName().compareTo(that.filePath.get().getName());
+            default:
+                throw new IllegalStateException("Unexpected format: " + format);
         }
     }
 
     @Override
     public String toString() {
-        return "CheckpointInstance{version=" + version + ", numParts=" + numParts + ", format" +
-                format + "}";
+        return "CheckpointInstance{version=" + version + ", numParts=" + numParts + ", format=" +
+                format + ", filePath=" + filePath.map(Path::toString).orElse("") + "}";
     }
 
     @Override
@@ -168,26 +179,17 @@ public class CheckpointInstance
         if (o == null || getClass() != o.getClass()) {
             return false;
         }
-        // For V2 checkpoints, compare the filepath.
+
         CheckpointInstance checkpointInstance = (CheckpointInstance) o;
-        if (checkpointInstance.format == CheckpointFormat.V2 && format == CheckpointFormat.V2 &&
-                !filePath.equals(checkpointInstance.filePath)) {
-            return false;
-        }
         return version == checkpointInstance.version &&
                 Objects.equals(numParts, checkpointInstance.numParts) &&
-                format == checkpointInstance.format;
+                format.compareTo(checkpointInstance.format) == 0 &&
+                Objects.equals(filePath, checkpointInstance.filePath);
     }
 
     @Override
     public int hashCode() {
-        // For V2 checkpoints, include the filepath in the hash of the instance (as we consider
-        // different UUID checkpoints to be different checkpoint instances. Otherwise, ignore
-        // the filepath when hashing.
-        if (format == CheckpointFormat.V2) {
-            return Objects.hash(version, numParts, format, filePath);
-        }
-        return Objects.hash(version, numParts, format, "");
+        return Objects.hash(version, numParts, format, filePath);
     }
 
     private String getPathName(String path) {
