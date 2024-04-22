@@ -1224,6 +1224,21 @@ trait DeltaTypeWideningTableFeatureTests {
 trait DeltaTypeWideningConstraintsTests {
   self: QueryTest with SharedSparkSession =>
 
+  test("not null constraint with type change") {
+    withTable("t") {
+      sql("CREATE TABLE t (a byte NOT NULL) USING DELTA")
+      sql("INSERT INTO t VALUES (1)")
+      checkAnswer(sql("SELECT * FROM t"), Row(1))
+
+      // Changing the type of a column with a NOT NULL constraint is allowed.
+      sql("ALTER TABLE t CHANGE COLUMN a TYPE SMALLINT")
+      assert(sql("SELECT * FROM t").schema("a").dataType === ShortType)
+
+      sql("INSERT INTO t VALUES (2)")
+      checkAnswer(sql("SELECT * FROM t"), Seq(Row(1), Row(2)))
+    }
+  }
+
   test("check constraint with type change") {
     withTable("t") {
       sql("CREATE TABLE t (a byte, b byte) USING DELTA")
