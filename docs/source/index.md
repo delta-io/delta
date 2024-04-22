@@ -26,6 +26,7 @@ This is the documentation site for <Delta>.
     delta-clustering
     delta-deletion-vectors
     delta-drop-feature
+    delta-row-tracking
     delta-apidoc
     delta-storage
     delta-uniform
