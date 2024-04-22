@@ -86,17 +86,6 @@ default retention threshold for the files is 7 days. To change this behavior, se
       deltaTable.vacuum(100);     // vacuum files not required by versions more than 100 hours old
       ```
 
-#### Inventory Table
-
-An inventory table contains a list of file paths together with their size, type (directory or not), and the last modification time. When an INVENTORY option is provided, VACUUM will consider the files listed there instead of  doing the full listing of the table directory, which can be time consuming for very large tables. The inventory table can be specified as a delta table or a spark SQL query that gives the expected table schema. The schema should be as follows:
-
-| Column Name      | Type    | Description                             |
-| -----------------| ------- | --------------------------------------- |
-| path             | string  | fully qualified uri                     |
-| length           | integer | size in bytes                           |
-| isDir            | boolean | boolean indicating if it is a directory |
-| modificationTime | integer | file update time in milliseconds        |
-
 .. note::
   When using `VACUUM`, to configure Spark to delete files in parallel (based on the number of shuffle partitions) set the session configuration `"spark.databricks.delta.vacuum.parallelDelete.enabled"` to `"true"` .
 
@@ -109,6 +98,17 @@ command. If you are certain that there are no operations being performed on
 this table that take longer than the retention interval you plan to specify,
 you can turn off this safety check by setting the Spark configuration property
 `spark.databricks.delta.retentionDurationCheck.enabled` to `false`.
+
+#### Inventory Table
+
+An inventory table contains a list of file paths together with their size, type (directory or not), and the last modification time. When an INVENTORY option is provided, VACUUM will consider the files listed there instead of  doing the full listing of the table directory, which can be time consuming for very large tables. The inventory table can be specified as a delta table or a spark SQL query that gives the expected table schema. The schema should be as follows:
+
+| Column Name      | Type    | Description                             |
+| -----------------| ------- | --------------------------------------- |
+| path             | string  | fully qualified uri                     |
+| length           | integer | size in bytes                           |
+| isDir            | boolean | boolean indicating if it is a directory |
+| modificationTime | integer | file update time in milliseconds        |
 
 <a id="delta-history"></a>
 
