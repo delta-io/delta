@@ -670,7 +670,7 @@ object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening
  * every writer write a monotonically increasing timestamp inside the commit file.
  */
 object InCommitTimestampTableFeature
-  extends WriterFeature(name = "inCommitTimestamp-dev")
+  extends WriterFeature(name = "inCommitTimestamp")
   with FeatureAutomaticallyEnabledByMetadata
   with RemovableFeature {
 

@@ -763,7 +763,7 @@ trait DeltaConfigsBase extends DeltaLogging {
       " managed commit owner.")
 
   val IN_COMMIT_TIMESTAMPS_ENABLED = buildConfig[Boolean](
-    "enableInCommitTimestamps-dev",
+    "enableInCommitTimestamps",
     false.toString,
     _.toBoolean,
     validationFunction = _ => true,
@@ -775,7 +775,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    * inCommitTimestamps were enabled.
    */
   val IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION = buildConfig[Option[Long]](
-    "inCommitTimestampEnablementVersion-dev",
+    "inCommitTimestampEnablementVersion",
     null,
     v => Option(v).map(_.toLong),
     validationFunction = _ => true,
@@ -788,7 +788,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    * the version specified in [[IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION]].
    */
   val IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP = buildConfig[Option[Long]](
-    "inCommitTimestampEnablementTimestamp-dev",
+    "inCommitTimestampEnablementTimestamp",
     null,
     v => Option(v).map(_.toLong),
     validationFunction = _ => true,
