@@ -180,16 +180,26 @@ public class CheckpointInstance
             return false;
         }
 
+        // For V2 checkpoints, compare the filepath.
         CheckpointInstance checkpointInstance = (CheckpointInstance) o;
+        if (checkpointInstance.format == CheckpointFormat.V2 && format == CheckpointFormat.V2 &&
+                !filePath.equals(checkpointInstance.filePath)) {
+            return false;
+        }
         return version == checkpointInstance.version &&
                 Objects.equals(numParts, checkpointInstance.numParts) &&
-                format.compareTo(checkpointInstance.format) == 0 &&
-                Objects.equals(filePath, checkpointInstance.filePath);
+                format == checkpointInstance.format;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(version, numParts, format, filePath);
+        // For V2 checkpoints, include the filepath in the hash of the instance (as we consider
+        // different UUID checkpoints to be different checkpoint instances. Otherwise, ignore
+        // the filepath when hashing.
+        if (format == CheckpointFormat.V2) {
+            return Objects.hash(version, numParts, format, filePath);
+        }
+        return Objects.hash(version, numParts, format, "");
     }
 
     private String getPathName(String path) {
