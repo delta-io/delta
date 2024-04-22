@@ -514,7 +514,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       }
     }
 
-    sourceDF
+    sourceDf
       // `explode()` creates a [[Generator]] which can't handle non-deterministic expressions that
       // we use to increment metric counters. We first project the CDC array so that the expressions
       // are evaluated before we explode the array.
