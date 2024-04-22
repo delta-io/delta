@@ -84,7 +84,7 @@ class DeltaParquetFileFormatSuite extends QueryTest
             nullableRowTrackingFields = false,
             isSplittable = false,
             disablePushDowns = true,
-            Some(tablePath))
+            if (enableDVs) Some(tablePath) else None)
 
           val fileIndex = TahoeLogFileIndex(spark, deltaLog)
 
