@@ -61,7 +61,7 @@ Use the `OPTIMIZE` command on your table, as in the following example:
 OPTIMIZE table_name;
 ```
 
-Liquid clustering is incremental, meaning that data is only rewritten as necessary to accommodate data that needs to be clustered. Data files with clustering columns that do not match data to be clustered are not rewritten.
+Liquid clustering is incremental, meaning that data is only rewritten as necessary to accommodate data that needs to be clustered. Already clustered data files with different clustering columns are not rewritten.
 
 ## Read data from a clustered table
 
@@ -109,5 +109,6 @@ The following limitations exist:
   - ZCube based incremental clustering
   - `ALTER TABLE ... CLUSTER BY` to change clustering columns
   - `DESCRIBE DETAIL` to inspect the current clustering columns
+  In <Delta> 3.2, the preview flag is removed and the above features are supported.
 
 .. include:: /shared/replacements.md
