@@ -72,6 +72,7 @@ When Variant type is supported (`readerFeatures` field of a table's `protocol` a
 - must make the column available to the engine:
     - [Recommended] Expose and interpret the struct-of-binary as a single Variant field in accordance with the [Spark Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md).
     - [Alternate] Expose the raw physical struct-of-binary, e.g. if the engine does not support Variant.
+    - [Alternate] Convert the struct-of-binary to a string, and expose the string representation, e.g. if the engine does not support Variant.
 
 ## Compatibility with other Delta Features
 
