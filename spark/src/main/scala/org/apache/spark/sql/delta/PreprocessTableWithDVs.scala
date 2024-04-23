@@ -42,11 +42,6 @@ import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRela
  *   - Here we insert a new column `__skip_row` in Delta scan. This value is populated by the
  *     Parquet reader using the DV corresponding to the Parquet file read
  *     (See [[DeltaParquetFileFormat]]) and it contains 0 if we want to keep the row.
- *     The scan created also disables Parquet file splitting and filter pushdowns, because
- *     in order to generate the __skip_row, we need to read the rows in a file consecutively
- *     to generate the row index. This is a cost we need to pay until we upgrade to latest
- *     Apache Spark which contains Parquet reader changes that automatically generate the
- *     row_index irrespective of the file splitting and filter pushdowns.
  *   - Filter created filters out rows with __skip_row equals to 0
  *   - And at the end we have a Project to keep the plan node output same as before the rule is
  *     applied.
@@ -76,8 +71,8 @@ object ScanWithDeletionVectors {
     // If the table has no DVs enabled, no change needed
     if (!deletionVectorsReadable(index.protocol, index.metadata)) return None
 
-    require(!index.isInstanceOf[TahoeLogFileIndex],
-      "Cannot work with a non-pinned table snapshot of the TahoeFileIndex")
+    // require(!index.isInstanceOf[TahoeLogFileIndex],
+    //  "Cannot work with a non-pinned table snapshot of the TahoeFileIndex")
 
     // If the table has no DVs enabled, no change needed
     if (!deletionVectorsReadable(index.protocol, index.metadata)) return None
