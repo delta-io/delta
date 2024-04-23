@@ -182,7 +182,7 @@ case object KeepAllRowsFilter extends RowIndexFilter {
     }
   }
 
-override def materializeSingleRowWithRowIndex(
+  override def materializeSingleRowWithRowIndex(
       rowIndex: Long,
       batch: WritableColumnVector): Unit =
     // Assumes the batch has only one element.

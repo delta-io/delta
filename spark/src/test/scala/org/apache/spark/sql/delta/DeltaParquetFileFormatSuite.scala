@@ -27,6 +27,7 @@ import org.apache.parquet.format.converter.ParquetMetadataConverter
 import org.apache.parquet.hadoop.ParquetFileReader
 
 import org.apache.spark.sql.{DataFrame, Dataset, QueryTest}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -35,6 +36,12 @@ class DeltaParquetFileFormatSuite extends QueryTest
   with DeletionVectorsTestUtils
   with DeltaSQLCommandTest {
   import testImplicits._
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    // This suite is tied to the DeltaParquetFileFormat implementation without predicate pushdown.
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "false")
+  }
 
   // Read with deletion vectors has separate code paths based on vectorized Parquet
   // reader is enabled or not. Test both the combinations
