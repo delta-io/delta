@@ -531,15 +531,14 @@
   },
   "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH" : {
     "message" : [
-      "Column <columnName> has data type <columnType> and cannot accept data type <dataType> because this column is referenced by the following check constraint(s):",
+      "Column <columnName> has data type <columnType> and cannot be altered to data type <dataType> because this column is referenced by the following check constraint(s):",
       "<constraints>"
     ],
     "sqlState" : "42K09"
   },
   "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE" : {
     "message" : [
-      "Cannot alter column <columnName> because this column is referenced by the following",
-      "check constraint(s):",
+      "Cannot alter column <columnName> because this column is referenced by the following check constraint(s):",
       "<constraints>"
     ],
     "sqlState" : "42K09"
@@ -1005,15 +1004,14 @@
   },
   "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH" : {
     "message" : [
-      "Column <columnName> has data type <columnType> and cannot accept data type <dataType> because this column is referenced by the following generated column(s):",
+      "Column <columnName> has data type <columnType> and cannot be altered to data type <dataType> because this column is referenced by the following generated column(s):",
       "<generatedColumns>"
     ],
     "sqlState" : "42K09"
   },
   "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE" : {
     "message" : [
-      "Cannot alter column <columnName> because this column is referenced by the following",
-      "generated column(s):",
+      "Cannot alter column <columnName> because this column is referenced by the following generated column(s):",
       "<generatedColumns>"
     ],
     "sqlState" : "42K09"

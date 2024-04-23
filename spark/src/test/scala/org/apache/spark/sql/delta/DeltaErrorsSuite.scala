@@ -2968,8 +2968,7 @@ trait DeltaErrorsSuiteBase
         Some("DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE"),
         None,
         Some(
-          s"""Cannot alter column col1 because this column is referenced by the following
-             |check constraint(s):
+          s"""Cannot alter column col1 because this column is referenced by the following check constraint(s):
              |foo -> bar""".stripMargin)
       )
     }
@@ -3031,8 +3030,7 @@ trait DeltaErrorsSuiteBase
         Some("DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE"),
         None,
         Some(
-          s"""Cannot alter column col1 because this column is referenced by the following
-             |generated column(s):
+          s"""Cannot alter column col1 because this column is referenced by the following generated column(s):
              |col2 -> col1 + 1
              |col3 -> col1 + 2""".stripMargin)
       )
