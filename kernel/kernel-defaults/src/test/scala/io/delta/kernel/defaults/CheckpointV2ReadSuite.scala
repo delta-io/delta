@@ -39,7 +39,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
     val snapshot = latestSnapshot(path)
     val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
 
-    // Validate metadata/protocol loaded correctly from checkpoint manifest.
+    // Validate metadata/protocol loaded correctly from top-level v2 checkpoint file.
     val expectedMetadataId =
       DeltaTable.forPath(path).detail().select("id").collect().head.getString(0)
     assert(snapshotImpl.getMetadata.getId == expectedMetadataId)

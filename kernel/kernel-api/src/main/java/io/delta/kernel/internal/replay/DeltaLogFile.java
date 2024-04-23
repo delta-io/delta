@@ -21,7 +21,8 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 
 /** Internal wrapper class holding information needed to perform log replay. Represents either a
- * Delta commit file, classic checkpoint, a multipart checkpoint, or a sidecar checkpoint.
+ * Delta commit file, classic checkpoint, a multipart checkpoint, a V2 checkpoint,
+ * or a sidecar checkpoint.
  */
 public class DeltaLogFile {
     private final FileStatus file;
@@ -32,18 +33,19 @@ public class DeltaLogFile {
 
     private final CheckpointInstance checkpointInstance;
 
-    // sidecarManifest is the checkpoint manifest file containing the SidecarFile action used to
-    // create this FileWrapper. If null, but the file is a checkpoint file, the checkpointInstance
-    // is generated from the filepath.
-    DeltaLogFile(FileStatus file, boolean isSidecar, CheckpointInstance sidecarManifest) {
+    DeltaLogFile(
+            FileStatus file, boolean isSidecar, CheckpointInstance parentV2CheckpointInstance) {
         this.file = file;
         this.fileName = new Path(file.getPath()).getName();
         this.isSidecar = isSidecar;
-        this.checkpointInstance = sidecarManifest;
+        this.checkpointInstance = parentV2CheckpointInstance;
     }
 
-    public static DeltaLogFile forSidecar(FileStatus file, CheckpointInstance sidecarManifest) {
-        return new DeltaLogFile(file, true, sidecarManifest);
+    // parentV2CheckpointInstance is the CheckpointInstance of the top-level checkpoint that
+    // contains this sidecar file.
+    public static DeltaLogFile forSidecar(
+            FileStatus file, CheckpointInstance parentV2CheckpointInstance) {
+        return new DeltaLogFile(file, true, parentV2CheckpointInstance);
     }
 
     public static DeltaLogFile forCommitOrCheckpoint(FileStatus file) {

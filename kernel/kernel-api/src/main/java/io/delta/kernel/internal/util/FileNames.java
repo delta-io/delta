@@ -92,10 +92,10 @@ public final class FileNames {
     }
 
     /**
-     * Returns the path for a V2 checkpoint manifest up to the given version with a given UUID and
-     * filetype (JSON or Parquet).
+     * Returns the path for a top-level V2 checkpoint file up to the given version with a given
+     * UUID and filetype (JSON or Parquet).
      */
-    public static Path v2CheckpointManifestFile(
+    public static Path topLevelV2CheckpointFile(
             Path path,
             long version,
             String uuid,

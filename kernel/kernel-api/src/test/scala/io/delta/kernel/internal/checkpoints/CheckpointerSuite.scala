@@ -259,7 +259,7 @@ object CheckpointerSuite extends MockTableClientUtils with VectorTestUtils {
     override def getSize: Int = 0
   }
 
-  val CHECKPOINT_MANIFEST_FILE_TABLE = new Path("/ckpt-manifest-test")
+  val CHECKPOINT_V2_FILE_TABLE = new Path("/ckpt-v2-test")
   val VALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/valid")
   val ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE = new Path("/zero_sized")
   val INVALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/invalid")
@@ -285,7 +285,7 @@ class MockLastCheckpointMetadataFileReader(maxFailures: Int) extends BaseMockJso
 
     Utils.singletonCloseableIterator(
       path.getParent match {
-        case CHECKPOINT_MANIFEST_FILE_TABLE => SAMPLE_SIDECAR_FILE_CONTENT
+        case CHECKPOINT_V2_FILE_TABLE => SAMPLE_SIDECAR_FILE_CONTENT
         case VALID_LAST_CHECKPOINT_FILE_TABLE => SAMPLE_LAST_CHECKPOINT_FILE_CONTENT
         case ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE => ZERO_ENTRIES_COLUMNAR_BATCH
         case INVALID_LAST_CHECKPOINT_FILE_TABLE =>

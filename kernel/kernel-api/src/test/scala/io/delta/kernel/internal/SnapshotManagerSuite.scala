@@ -168,18 +168,18 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val singularCheckpoints = singularCheckpointFileStatuses(checkpointVersions)
     val multiCheckpoints = multiCheckpointFileStatuses(multiCheckpointVersions, numParts)
 
-    // Only test both filetypes if we have to read the checkpoint manifest.
-    val manifestFileTypes = if (v2CheckpointSpec.nonEmpty) {
+    // Only test both filetypes if we have to read the checkpoint top-level file.
+    val topLevelFileTypes = if (v2CheckpointSpec.nonEmpty) {
       Seq("parquet", "json")
     } else {
       Seq("parquet")
     }
-    manifestFileTypes.foreach { manifestFileType =>
+    topLevelFileTypes.foreach { topLevelFileType =>
       val v2Checkpoints =
-        v2CheckpointFileStatuses(v2CheckpointSpec, manifestFileType)
+        v2CheckpointFileStatuses(v2CheckpointSpec, topLevelFileType)
       val checkpointFiles = v2Checkpoints.flatMap {
-        case (checkpointManifest, sidecars) =>
-          Seq(checkpointManifest) ++ sidecars
+        case (topLevelCheckpointFile, sidecars) =>
+          Seq(topLevelCheckpointFile) ++ sidecars
       } ++ singularCheckpoints ++ multiCheckpoints
 
       val expectedCheckpointVersion = (checkpointVersions ++ multiCheckpointVersions ++
@@ -189,8 +189,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         .lastOption
 
       val (expectedV2Checkpoint, expectedSidecars) = expectedCheckpointVersion.map { v =>
-        val matchingCheckpoints = v2Checkpoints.filter { case (manifest, _) =>
-          FileNames.checkpointVersion(manifest.getPath) == v
+        val matchingCheckpoints = v2Checkpoints.filter { case (topLevelFile, _) =>
+          FileNames.checkpointVersion(topLevelFile.getPath) == v
         }
         if (matchingCheckpoints.nonEmpty) {
           matchingCheckpoints.maxBy(f => new CheckpointInstance(f._1.getPath)) match {

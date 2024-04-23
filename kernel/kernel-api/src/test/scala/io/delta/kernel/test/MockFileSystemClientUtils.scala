@@ -61,18 +61,18 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
   }
 
   /**
-   * Checkpoint file status for V2 checkpoint manifest.
+   * Checkpoint file status for a top-level V2 checkpoint file.
    *
    * @param checkpointVersions List of checkpoint versions, given as Seq(version, whether to use
    *                           UUID naming scheme, number of sidecars).
-   * Returns manifest and sidecar files for each checkpoint version.
+   * Returns top-level checkpoint file and sidecar files for each checkpoint version.
    */
   def v2CheckpointFileStatuses(
       checkpointVersions: Seq[(Long, Boolean, Int)],
       fileType: String): Seq[(FileStatus, Seq[FileStatus])] = {
     checkpointVersions.map { case (v, useUUID, numSidecars) =>
-      val checkpointManifest = if (useUUID) {
-        FileStatus.of(FileNames.v2CheckpointManifestFile(
+      val topLevelFile = if (useUUID) {
+        FileStatus.of(FileNames.topLevelV2CheckpointFile(
           logPath, v, UUID.randomUUID().toString, fileType).toString, v, v * 10)
       } else {
         FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10)
@@ -82,7 +82,7 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
           FileNames.v2CheckpointSidecarFile(logPath, UUID.randomUUID().toString).toString,
           v, v * 10)
       }
-      (checkpointManifest, sidecars)
+      (topLevelFile, sidecars)
     }
   }
 

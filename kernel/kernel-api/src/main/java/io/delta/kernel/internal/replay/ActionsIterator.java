@@ -122,7 +122,9 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
         // If the ActionWrapper schema does not match the read schema, then we have injected sidecar
         // files into the schema. Append any sidecar files found to the end of the file list and
         // return a new ActionWrapper with the sidecar files removed from the read schema.
-        if (next.getContainsSidecarsInSchema() && next.isFromCheckpoint()) {
+        if (next.getContainsSidecarsInSchema()) {
+            // Sidecar files should only be injected into checkpoint file read schemas.
+            assert(next.isFromCheckpoint());
             List<DeltaLogFile> filesToAppend = next.extractSidecarsFromBatch();
             filesList.addAll(filesToAppend);
             return next;
@@ -176,38 +178,38 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
     }
 
     /**
-     * Get an iterator of actions from a checkpoint manifest that may contain sidecar files. If the
+     * Get an iterator of actions from the v2 checkpoint file that may contain sidecar files. If the
      * current read schema includes Add/Remove files, then inject the sidecar column into this
-     * schema to read the sidecar files from the checkpoint manifest. When the returned
+     * schema to read the sidecar files from the top-level v2 checkpoint file. When the returned
      * ColumnarBatches are processed, these sidecars will be appended to the end of the file list
-     * and read as part of a subsequent batch (avoiding reading the checkpoint manifest more than
-     * once).
+     * and read as part of a subsequent batch (avoiding reading the top-level v2 checkpoint files
+     * more than once).
      */
     private CloseableIterator<ColumnarBatch> getActionsIterFromSinglePartOrV2Checkpoint(
             FileStatus file,
             String fileName) throws IOException {
-        // If the sidecars may contain the current action, read sidecars from the checkpoint
-        // manifest (to be read later).
+        // If the sidecars may contain the current action, read sidecars from the top-level v2
+        // checkpoint file(to be read later).
         StructType modifiedReadSchema = readSchema;
         if (schemaContainsAddOrRemoveFiles) {
             modifiedReadSchema = LogReplay.withSidecarFileSchema(readSchema);
         }
 
-        final CloseableIterator<ColumnarBatch> manifestIter;
+        final CloseableIterator<ColumnarBatch> topLevelIter;
         if (fileName.endsWith(".parquet")) {
-            manifestIter = tableClient.getParquetHandler().readParquetFiles(
+            topLevelIter = tableClient.getParquetHandler().readParquetFiles(
                     Utils.singletonCloseableIterator(file),
                     modifiedReadSchema,
                     checkpointPredicate);
         } else if (fileName.endsWith(".json")) {
-            manifestIter = tableClient.getJsonHandler().readJsonFiles(
+            topLevelIter = tableClient.getJsonHandler().readJsonFiles(
                     Utils.singletonCloseableIterator(file),
                     modifiedReadSchema,
                     checkpointPredicate);
         } else {
-            throw new IOException("Unrecognized Checkpoint V2 manifest file format: " + fileName);
+            throw new IOException("Unrecognized top level v2 checkpoint file format: " + fileName);
         }
-        return manifestIter;
+        return topLevelIter;
     }
 
     /**
@@ -272,9 +274,9 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                             readSchema, checkpointPredicate);
                 return combine(dataIter, nextFilePath, checkpointVersion(nextFilePath), false);
             } else if (nextLogFile.isSinglePartOrV2Checkpoint()) {
-                // If the checkpoint file is a UUID or classic checkpoint, read the checkpoint
-                // manifest and any potential sidecars. Otherwise, look for any other parts of the
-                // current multipart checkpoint.
+                // If the checkpoint file is a UUID or classic checkpoint, read the top-level
+                // checkpoint file and any potential sidecars. Otherwise, look for any other parts
+                // of the current multipart checkpoint.
                 CloseableIterator<ColumnarBatch> dataIter =
                         getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName);
                 return combine(

@@ -23,7 +23,7 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
 /**
- * Action representing a SidecarFile in a V2 checkpoint manifest.
+ * Action representing a SidecarFile in a top-level V2 checkpoint file.
  */
 public class SidecarFile {
     public String path;
