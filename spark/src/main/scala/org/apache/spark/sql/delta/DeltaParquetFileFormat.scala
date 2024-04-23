@@ -22,8 +22,10 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.RowIndexFilterType
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsReadable
 import org.apache.spark.sql.delta.deletionvectors.{DropMarkedRowsFilter, KeepAllRowsFilter, KeepMarkedRowsFilter}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.Job
@@ -61,8 +63,14 @@ case class DeltaParquetFileFormat(
   extends ParquetFileFormat {
   // Validate either we have all arguments for DV enabled read or none of them.
   if (hasTablePath) {
-    // require(!isSplittable && disablePushDowns,
-    //  "Wrong arguments for Delta table scan with deletion vectors")
+    SparkSession.getActiveSession.map { session =>
+      val predicatePushdownEnabled =
+        session.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED)
+      if (!predicatePushdownEnabled) {
+        require(tablePath.isDefined && !isSplittable && disablePushDowns,
+          "Wrong arguments for Delta table scan with deletion vectors")
+      }
+    }
   }
 
   TypeWidening.assertTableReadable(protocol, metadata)
@@ -147,6 +155,10 @@ case class DeltaParquetFileFormat(
       filters: Seq[Filter],
       options: Map[String, String],
       hadoopConf: Configuration): PartitionedFile => Iterator[InternalRow] = {
+
+    val predicateConf = DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED
+    val predicatePushdownEnabled = sparkSession.sessionState.conf.getConf(predicateConf)
+
     val parquetDataReader: PartitionedFile => Iterator[InternalRow] =
       super.buildReaderWithPartitionValues(
         sparkSession,
@@ -166,19 +178,25 @@ case class DeltaParquetFileFormat(
       }
       results.headOption.map(e => ColumnMetadata(e._2, e._1))
     }
-    val isRowDeletedColumn = findColumn(IS_ROW_DELETED_COLUMN_NAME)
-    // val rowIndexColumn = findColumn(ROW_INDEX_COLUMN_NAME)
-    val rowIndexColumn = findColumn(ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME)
 
-    // if (isRowDeletedColumn.isEmpty && rowIndexColumn.isEmpty) {
-    if (isRowDeletedColumn.isEmpty) {
-      return parquetDataReader // no additional metadata is needed.
+    val isRowDeletedColumn = findColumn(IS_ROW_DELETED_COLUMN_NAME)
+    val rowIndexColumnName = if (predicatePushdownEnabled) {
+      ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME
     } else {
+      ROW_INDEX_COLUMN_NAME
+    }
+    val rowIndexColumn = findColumn(rowIndexColumnName)
+
+    // No additional metadata is needed.
+    if (predicatePushdownEnabled) {
+      if (isRowDeletedColumn.isEmpty) return parquetDataReader
+    } else {
+      if (isRowDeletedColumn.isEmpty && rowIndexColumn.isEmpty) return parquetDataReader
+
       // verify the file splitting and filter pushdown are disabled. The new additional
       // metadata columns cannot be generated with file splitting and filter pushdowns
-      // require(!isSplittable, "Cannot generate row index related metadata with file splitting")
-      // require(disablePushDowns,
-      // "Cannot generate row index related metadata with filter pushdown")
+      require(!isSplittable, "Cannot generate row index related metadata with file splitting")
+      require(disablePushDowns, "Cannot generate row index related metadata with filter pushdown")
     }
 
     if (hasTablePath && isRowDeletedColumn.isEmpty) {
@@ -199,7 +217,8 @@ case class DeltaParquetFileFormat(
             isRowDeletedColumn,
             rowIndexColumn,
             useOffHeapBuffers,
-            serializableHadoopConf)
+            serializableHadoopConf,
+            predicatePushdownEnabled = predicatePushdownEnabled)
         iterToReturn.asInstanceOf[Iterator[InternalRow]]
       } catch {
         case NonFatal(e) =>
@@ -220,23 +239,21 @@ case class DeltaParquetFileFormat(
   }
 
   override def metadataSchemaFields: Seq[StructField] = {
-    // achatzis
-    val rowTrackingFields =
-      RowTracking.createMetadataStructFields(protocol, metadata, nullableRowTrackingFields)
     // TODO(SPARK-47731): Parquet reader in Spark has a bug where a file containing 2b+ rows
     // in a single rowgroup causes it to run out of the `Integer` range.
-    // For Delta Parquet readers don't expose the row_index field as a metadata field.
-    if (!RowId.isEnabled(protocol, metadata)) {
-      super.metadataSchemaFields // .filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
+    // For Delta Parquet readers don't expose the row_index field as a metadata field when it is
+    // not strictly required. We do expose it when Row Tracking or DVs are enabled.
+    // In general, having 2b+ rows in a single rowgroup is not a common use case. When the issue is
+    // hit an exception is thrown.
+    if (RowId.isEnabled(protocol, metadata)) {
+      super.metadataSchemaFields ++
+        RowTracking.createMetadataStructFields(protocol, metadata, nullableRowTrackingFields)
+    } else if (deletionVectorsReadable(protocol, metadata)) {
+      super.metadataSchemaFields
     } else {
-      // It is fine to expose the row_index field as a metadata field when Row Tracking
-      // is enabled because it is needed to generate the Row ID field, and it is not a
-      // big problem if we use 2b+ rows in a single rowgroup, it will throw an exception and
-      // we can then use less rows per rowgroup. Also, 2b+ rows in a single rowgroup is
-      // not a common use case.
-      super.metadataSchemaFields ++ rowTrackingFields
+      super.metadataSchemaFields.filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
+      }
     }
-  }
 
   override def prepareWrite(
        sparkSession: SparkSession,
@@ -279,10 +296,13 @@ case class DeltaParquetFileFormat(
       .updated(DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME, extractDefaultRowCommitVersion)
   }
 
-  def disableSplittingAndPushdown(tablePath: String): DeltaParquetFileFormat = {
+  def disableSplittingAndPushdown(
+      tablePath: String,
+      predicatePushdownEnabled: Boolean): DeltaParquetFileFormat = {
+    // When predicate pushdown is enabled we allow both splits and predicate pushdown.
     this.copy(
-      // isSplittable = true,
-      // disablePushDowns = false,
+      isSplittable = predicatePushdownEnabled,
+      disablePushDowns = !predicatePushdownEnabled,
       tablePath = Some(tablePath))
   }
 
@@ -291,7 +311,8 @@ case class DeltaParquetFileFormat(
    * following metadata columns.
    *   - [[IS_ROW_DELETED_COLUMN_NAME]] - row deleted status from deletion vector corresponding
    *   to this file
-   *   - [[ROW_INDEX_COLUMN_NAME]] - index of the row within the file.
+   *   - [[ROW_INDEX_COLUMN_NAME]] - index of the row within the file. Note, this column is only
+   *     populated when are not using _metadata.row_index column.
    */
   private def iteratorWithAdditionalMetadataColumns(
       partitionedFile: PartitionedFile,
@@ -299,7 +320,8 @@ case class DeltaParquetFileFormat(
       isRowDeletedColumn: Option[ColumnMetadata],
       rowIndexColumn: Option[ColumnMetadata],
       useOffHeapBuffers: Boolean,
-      serializableHadoopConf: SerializableConfiguration): Iterator[Object] = {
+      serializableHadoopConf: SerializableConfiguration,
+      predicatePushdownEnabled: Boolean): Iterator[Object] = {
     val rowIndexFilter = isRowDeletedColumn.map { col =>
       // Fetch the DV descriptor from the broadcast map and create a row index filter
       val dvDescriptorOpt = partitionedFile.otherConstantMetadataColumnValues
@@ -328,17 +350,12 @@ case class DeltaParquetFileFormat(
 
     val metadataColumns = Seq(isRowDeletedColumn, rowIndexColumn).filter(_.nonEmpty).map(_.get)
 
-    // Achatzis
-    // Unfortunately there is no way to verify the Parquet index is starting from 0.
-    // We disable the splits, so the assumption is ParquetFileFormat respects that
+    // When metadata.row_index is not used there is no way to verify the Parquet index is
+    // starting from 0. We disable the splits, so the assumption is ParquetFileFormat respects that
     var rowIndex: Long = 0
 
     // Used only when non-column row batches are received from the Parquet reader
     val tempVector = new OnHeapColumnVector(1, ByteType)
-
-    if (rowIndexColumn.isDefined == false) {
-      val c = 1
-    }
 
     val rowIndexColumnIndex = (rowIndexFilter, rowIndexColumn) match {
       case (Some(_: KeepAllRowsFilter.type), Some(rowIndexColumn)) => rowIndexColumn.index
@@ -357,8 +374,8 @@ case class DeltaParquetFileFormat(
             isRowDeletedColumn.foreach { columnMetadata =>
               val isRowDeletedVector = writableVectors.head
 
-              rowIndexFilter.get
-                .materializeIntoVector(size, batch.column(rowIndexColumnIndex), isRowDeletedVector)
+              rowIndexFilter.get.materializeIntoVectorWithRowIndex(
+                size, batch.column(rowIndexColumnIndex), isRowDeletedVector)
               // rowIndexFilter.get
               //  .materializeIntoVector(rowIndex, rowIndex + size, isRowDeletedVector)
               indexVectorTuples += (columnMetadata.index -> isRowDeletedVector)
@@ -419,23 +436,25 @@ case class DeltaParquetFileFormat(
           newRow
           */
           val newRow = columnarRow.copy();
-          isRowDeletedColumn.foreach { columnMetadata =>
-            rowIndexFilter.get
-              .materializeIntoVector(
-                0,
-                columnarRow.getLong(rowIndexColumnIndex),
-                tempVector)
+          if (predicatePushdownEnabled) {
+            isRowDeletedColumn.foreach { columnMetadata =>
+              val rowIndex = columnarRow.getLong(rowIndexColumnIndex)
+              rowIndexFilter.get.materializeSingleRowWithRowIndex(rowIndex, tempVector)
+              newRow.setByte(columnMetadata.index, tempVector.getByte(0))
+            }
+          } else {
+            isRowDeletedColumn.foreach { columnMetadata =>
+              rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
+              newRow.setByte(columnMetadata.index, tempVector.getByte(0))
+            }
 
-            newRow.setByte(columnMetadata.index, tempVector.getByte(0))
+            rowIndexColumn.foreach(columnMetadata => newRow.setLong(columnMetadata.index, rowIndex))
+            rowIndex += 1
           }
 
-          // rowIndexColumn
-          // .foreach(columnMetadata => newRow.setLong(columnMetadata.index, rowIndex))
-          // rowIndex += 1
           newRow
 
         case rest: InternalRow => // When vectorized Parquet reader is disabled
-          // achatzis
           // Temporary vector variable used to get DV values from RowIndexFilter
           // Currently the RowIndexFilter only supports writing into a columnar vector
           // and doesn't have methods to get DV value for a specific row index.
@@ -451,12 +470,8 @@ case class DeltaParquetFileFormat(
           rest
           */
           isRowDeletedColumn.foreach { columnMetadata =>
-            rowIndexFilter.get
-              .materializeIntoVector(
-                0,
-                rest.getLong(rowIndexColumnIndex),
-                tempVector)
-
+            val rowIndex = rest.getLong(rowIndexColumnIndex)
+            rowIndexFilter.get.materializeSingleRowWithRowIndex(rowIndex, tempVector)
             rest.setByte(columnMetadata.index, tempVector.getByte(0))
           }
 

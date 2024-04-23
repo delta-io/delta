@@ -86,7 +86,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       target: LogicalPlan,
       fileIndex: TahoeFileIndex): LogicalPlan = {
     val predicatePushdownEnabled =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_ENABLE_PREDICATE_PUSHDOWN)
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED)
     val rowIndexCol = AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FIELD.dataType)()
 
     var fileMetadataCol: AttributeReference = null
@@ -386,8 +386,8 @@ object DeletionVectorBitmapGenerator {
       condition: Expression,
       fileNameColumnOpt: Option[Column] = None,
       rowIndexColumnOpt: Option[Column] = None): Seq[DeletionVectorResult] = {
-    val predicatePushdownEnabled =
-      sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_ENABLE_PREDICATE_PUSHDOWN)
+    val predicatePushdownConf = DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED
+    val predicatePushdownEnabled = sparkSession.sessionState.conf.getConf(predicatePushdownConf)
     val fileNameColumn = fileNameColumnOpt.getOrElse(col(s"${METADATA_NAME}.${FILE_PATH}"))
     val rowIndexColumn = if (predicatePushdownEnabled) {
       rowIndexColumnOpt.getOrElse(col(s"${METADATA_NAME}.${ParquetFileFormat.ROW_INDEX}"))

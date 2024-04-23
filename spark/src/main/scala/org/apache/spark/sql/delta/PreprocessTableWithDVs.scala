@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsRe
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.Column
+import org.apache.spark.sql.{Column, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
@@ -86,7 +86,8 @@ object ScanWithDeletionVectors {
     // a previous invocation of this rule on this table
     if (fileFormat.hasTablePath) return None
 
-    // See if any files actually have a DV
+    // See if any files actually have a DV.
+    val spark = SparkSession.getActiveSession.get
     val filesWithDVs = index
       .matchingFiles(partitionFilters = Seq(TrueLiteral), dataFilters = Seq(TrueLiteral))
       .filter(_.deletionVector != null)
@@ -97,7 +98,7 @@ object ScanWithDeletionVectors {
     // `LogicalRelation` that has the same output as this `LogicalRelation`
     val planOutput = scan.output
 
-    val newScan = createScanWithSkipRowColumn(scan, fileFormat, index, hadoopRelation)
+    val newScan = createScanWithSkipRowColumn(spark, scan, fileFormat, index, hadoopRelation)
 
     // On top of the scan add a filter that filters out the rows which have
     // skip row column value non-zero
@@ -112,12 +113,13 @@ object ScanWithDeletionVectors {
    * an extra column which indicates whether the row needs to be skipped or not.
    */
   private def createScanWithSkipRowColumn(
+      spark: SparkSession,
       inputScan: LogicalRelation,
       fileFormat: DeltaParquetFileFormat,
       tahoeFileIndex: TahoeFileIndex,
       hadoopFsRelation: HadoopFsRelation): LogicalRelation = {
     val predicatePushdownEnabled =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_ENABLE_PREDICATE_PUSHDOWN)
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED)
 
     // Create a new `LogicalRelation` that has modified `DeltaFileFormat` and output with an extra
     // column to indicate whether to skip the row or not
@@ -150,7 +152,10 @@ object ScanWithDeletionVectors {
     // operator after the data is read from the underlying file reader.
     val newDataSchema = hadoopFsRelation.dataSchema.add(skipRowField)
 
-    val newFileFormat = fileFormat.disableSplittingAndPushdown(tahoeFileIndex.path.toString)
+    val newFileFormat = fileFormat.disableSplittingAndPushdown(
+      tablePath = tahoeFileIndex.path.toString,
+      predicatePushdownEnabled = predicatePushdownEnabled)
+
     val newRelation = hadoopFsRelation.copy(
       fileFormat = newFileFormat,
       dataSchema = newDataSchema)(hadoopFsRelation.sparkSession)
