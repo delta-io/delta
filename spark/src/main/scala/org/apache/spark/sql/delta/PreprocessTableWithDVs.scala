@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsRe
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 
 import org.apache.spark.sql.Column
-import org.apache.spark.sql.catalyst.expressions.AttributeReference
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
 
@@ -40,7 +40,7 @@ import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRela
  * After rule:
  *   <Parent Node> ->
  *     Project(key, value) ->
- *       Filter (udf(__skip_row == 0) ->
+ *       Filter (__skip_row == 0) ->
  *         Delta Scan (key, value, __skip_row)
  *   - Here we insert a new column `__skip_row` in Delta scan. This value is populated by the
  *     Parquet reader using the DV corresponding to the Parquet file read
@@ -153,11 +153,7 @@ object ScanWithDeletionVectors {
     require(skipRowColumnRefs.size == 1,
       s"Expected only one column with name=$IS_ROW_DELETED_COLUMN_NAME")
     val skipRowColumnRef = skipRowColumnRefs.head
-
-    val keepRow = DeltaUDF.booleanFromByte( _ == RowIndexFilter.KEEP_ROW_VALUE)
-      // .asNondeterministic() // To avoid constant folding the filter based on stats.
-
-    val filterExp = keepRow(new Column(skipRowColumnRef)).expr
-    Filter(filterExp, newScan)
+    
+    Filter(EqualTo(skipRowColumnRef, Literal(RowIndexFilter.KEEP_ROW_VALUE)), newScan)
   }
 }
