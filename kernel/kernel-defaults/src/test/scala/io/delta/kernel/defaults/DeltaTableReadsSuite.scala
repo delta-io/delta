@@ -18,19 +18,15 @@ package io.delta.kernel.defaults
 import java.io.File
 import java.math.BigDecimal
 import java.sql.Date
-
 import scala.collection.JavaConverters._
-
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.scalatest.funsuite.AnyFunSuite
 import org.apache.spark.sql.functions.col
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-
 import io.delta.kernel.{Table, TableNotFoundException}
-import io.delta.kernel.defaults.internal.DefaultKernelUtils
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import io.delta.kernel.types.{LongType, StructType}
 
@@ -117,7 +113,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       if (values(2) == null) {
         null
       } else {
-        values(2).asInstanceOf[Long] + DefaultKernelUtils.DateTimeConstants.MICROS_PER_HOUR * 8
+        values(2).asInstanceOf[Long] + DateTimeConstants.MICROS_PER_HOUR * 8
       }
     )
   }

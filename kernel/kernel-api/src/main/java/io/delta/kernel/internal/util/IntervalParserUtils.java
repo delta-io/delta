@@ -51,7 +51,6 @@ public class IntervalParserUtils {
         return parseIntervalAsMicros(inputInLowerCase);
     }
 
-
     public static long parseIntervalAsMicros(String input) {
         return new IntervalParser(input).toMicroSeconds();
     }
@@ -69,16 +68,16 @@ public class IntervalParserUtils {
         UNIT_END;
     }
 
-    private static final String intervalStr = "interval";
-    private static final String yearStr = "year";
-    private static final String monthStr = "month";
-    private static final String weekStr = "week";
-    private static final String dayStr = "day";
-    private static final String hourStr = "hour";
-    private static final String minuteStr = "minute";
-    private static final String secondStr = "second";
-    private static final String millisStr = "millisecond";
-    private static final String microsStr = "microsecond";
+    private static final String INTERVAL_STR = "interval";
+    private static final String YEAR_STR = "year";
+    private static final String MONTH_STR = "month";
+    private static final String WEEK_STR = "week";
+    private static final String DAY_STR = "day";
+    private static final String HOUR_STR = "hour";
+    private static final String MINUTE_STR = "minute";
+    private static final String SECOND_STR = "second";
+    private static final String MILLIS_STR = "millisecond";
+    private static final String MICROS_STR = "microsecond";
 
     private static class IntervalParser {
         private final String input;
@@ -116,13 +115,13 @@ public class IntervalParserUtils {
                 int initialFractionScale = (int) (NANOS_PER_SECOND / 10);
                 switch (state) {
                     case PREFIX:
-                        if (s.startsWith(intervalStr)) {
-                            if (s.length() == intervalStr.length()) {
+                        if (s.startsWith(INTERVAL_STR)) {
+                            if (s.length() == INTERVAL_STR.length()) {
                                 throwIAE("interval string cannot be empty");
-                            } else if (!Character.isWhitespace(bytes[i + intervalStr.length()])) {
+                            } else if (!Character.isWhitespace(bytes[i + INTERVAL_STR.length()])) {
                                 throwIAE("invalid interval prefix " + currentWord());
                             } else {
-                                i += intervalStr.length();
+                                i += INTERVAL_STR.length();
                             }
                         }
                         state = ParseState.TRIM_BEFORE_SIGN;
@@ -206,45 +205,45 @@ public class IntervalParserUtils {
                             fraction = -fraction;
                         }
                         try {
-                            if (b == 'y' && matchAt(i, yearStr)) {
+                            if (b == 'y' && matchAt(i, YEAR_STR)) {
                                 throwIAE("year is not supported, use days instead");
-                            } else if (b == 'w' && matchAt(i, weekStr)) {
+                            } else if (b == 'w' && matchAt(i, WEEK_STR)) {
                                 long daysInWeeks = Math.multiplyExact(DAYS_PER_WEEK, currentValue);
                                 days = Math.toIntExact(Math.addExact(days, daysInWeeks));
-                                i += weekStr.length();
-                            } else if (b == 'd' && matchAt(i, dayStr)) {
+                                i += WEEK_STR.length();
+                            } else if (b == 'd' && matchAt(i, DAY_STR)) {
                                 days = Math.addExact(days, Math.toIntExact(currentValue));
-                                i += dayStr.length();
-                            } else if (b == 'h' && matchAt(i, hourStr)) {
+                                i += DAY_STR.length();
+                            } else if (b == 'h' && matchAt(i, HOUR_STR)) {
                                 long hoursUs = Math.multiplyExact(currentValue,
                                         MICROS_PER_HOUR);
                                 microseconds = Math.addExact(microseconds, hoursUs);
-                                i += hourStr.length();
-                            } else if (b == 's' && matchAt(i, secondStr)) {
+                                i += HOUR_STR.length();
+                            } else if (b == 's' && matchAt(i, SECOND_STR)) {
                                 long secondsUs = Math.multiplyExact(
                                         currentValue,
                                         MICROS_PER_SECOND);
                                 microseconds = Math.addExact(
                                         Math.addExact(microseconds, secondsUs), fraction);
-                                i += secondStr.length();
+                                i += SECOND_STR.length();
                             } else if (b == 'm') {
-                                if (matchAt(i, monthStr)) {
+                                if (matchAt(i, MONTH_STR)) {
                                     throwIAE("month is not supported, use days instead");
-                                } else if (matchAt(i, minuteStr)) {
+                                } else if (matchAt(i, MINUTE_STR)) {
                                     long minutesUs = Math.multiplyExact(
                                             currentValue,
                                             MICROS_PER_MINUTE);
                                     microseconds = Math.addExact(microseconds, minutesUs);
-                                    i += minuteStr.length();
-                                } else if (matchAt(i, millisStr)) {
+                                    i += MINUTE_STR.length();
+                                } else if (matchAt(i, MILLIS_STR)) {
                                     long millisUs = Math.multiplyExact(
                                             currentValue,
                                             MICROS_PER_MILLIS);
                                     microseconds = Math.addExact(microseconds, millisUs);
-                                    i += millisStr.length();
-                                } else if (matchAt(i, microsStr)) {
+                                    i += MILLIS_STR.length();
+                                } else if (matchAt(i, MICROS_STR)) {
                                     microseconds = Math.addExact(microseconds, currentValue);
-                                    i += microsStr.length();
+                                    i += MICROS_STR.length();
                                 } else {
                                     throwIAE(format("invalid unit '%s'", currentWord()));
                                 }
