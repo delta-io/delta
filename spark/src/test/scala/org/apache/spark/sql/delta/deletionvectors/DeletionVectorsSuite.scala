@@ -106,9 +106,6 @@ class DeletionVectorsSuite extends QueryTest
   }
 
   test("select metadata columns from a Delta table with deletion vectors") {
-    // val a = spark.read.format("delta").load(table1Path).distinct().count()
-
-    // spark.read.format("delta").load(table1Path).distinct().count()
     assert(spark.read.format("delta").load(table1Path)
       .select("_metadata.file_path").distinct().count() == 22)
   }

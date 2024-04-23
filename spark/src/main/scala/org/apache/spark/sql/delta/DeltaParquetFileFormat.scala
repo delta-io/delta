@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.RowIndexFilterType
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
@@ -168,7 +169,6 @@ case class DeltaParquetFileFormat(
     val isRowDeletedColumn = findColumn(IS_ROW_DELETED_COLUMN_NAME)
     // val rowIndexColumn = findColumn(ROW_INDEX_COLUMN_NAME)
     val rowIndexColumn = findColumn(ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME)
-    // val a = ParquetFileFormat.ROW_INDEX_FIELD
 
     // if (isRowDeletedColumn.isEmpty && rowIndexColumn.isEmpty) {
     if (isRowDeletedColumn.isEmpty) {
@@ -227,8 +227,7 @@ case class DeltaParquetFileFormat(
     // in a single rowgroup causes it to run out of the `Integer` range.
     // For Delta Parquet readers don't expose the row_index field as a metadata field.
     if (!RowId.isEnabled(protocol, metadata)) {
-      val a = super.metadataSchemaFields // .filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
-      a
+      super.metadataSchemaFields // .filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
     } else {
       // It is fine to expose the row_index field as a metadata field when Row Tracking
       // is enabled because it is needed to generate the Row ID field, and it is not a

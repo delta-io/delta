@@ -508,16 +508,6 @@ trait DeltaConfigsBase extends DeltaLogging {
     helpMessage = "needs to be a boolean.")
 
   /**
-   *
-   */
-  val ENABLE_PREDICATE_PUSHDOWN_WITH_DELETION_VECTORS = buildConfig[Boolean](
-    key = "enablePredicatePushdownWithDeletionVectors",
-    defaultValue = "true",
-    fromString = _.toBoolean,
-    validationFunction = _ => true,
-    helpMessage = "needs to be a boolean.")
-
-  /**
    * Whether this table will automatically optimize the layout of files during writes.
    */
   val AUTO_OPTIMIZE = buildConfig[Option[Boolean]](
