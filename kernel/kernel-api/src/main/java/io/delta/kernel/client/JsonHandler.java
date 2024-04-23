@@ -114,11 +114,17 @@ public interface JsonHandler {
      *     <li>{@code array}: {@code null} value elements are written to file</li>
      * </ul>
      *
-     * @param filePath Fully qualified destination file path
-     * @param data     Iterator of {@link Row} objects where each row should be serialized as JSON
-     *                 and written as separate line in the destination file.
-     * @throws FileAlreadyExistsException if the file already exists.
+     * @param filePath  Fully qualified destination file path
+     * @param data      Iterator of {@link Row} objects where each row should be serialized as JSON
+     *                  and written as separate line in the destination file.
+     * @param overwrite If {@code true}, the file is overwritten if it already exists. If
+     *                  {@code false} and a file exists {@link FileAlreadyExistsException} is
+     *                  thrown.
+     * @throws FileAlreadyExistsException if the file already exists and {@code overwrite} is false.
      * @throws IOException                if any other I/O error occurs.
      */
-    void writeJsonFileAtomically(String filePath, CloseableIterator<Row> data) throws IOException;
+    void writeJsonFileAtomically(
+            String filePath,
+            CloseableIterator<Row> data,
+            boolean overwrite) throws IOException;
 }
