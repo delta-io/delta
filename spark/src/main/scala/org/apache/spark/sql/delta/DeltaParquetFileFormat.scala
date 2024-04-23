@@ -322,6 +322,11 @@ case class DeltaParquetFileFormat(
       useOffHeapBuffers: Boolean,
       serializableHadoopConf: SerializableConfiguration,
       predicatePushdownEnabled: Boolean): Iterator[Object] = {
+    if (predicatePushdownEnabled) {
+      require(rowIndexColumn.isDefined,
+        "Predicate pushdown is enabled by rowIndexColumn is not defined.")
+    }
+
     val rowIndexFilter = isRowDeletedColumn.map { col =>
       // Fetch the DV descriptor from the broadcast map and create a row index filter
       val dvDescriptorOpt = partitionedFile.otherConstantMetadataColumnValues
@@ -351,72 +356,60 @@ case class DeltaParquetFileFormat(
     val metadataColumns = Seq(isRowDeletedColumn, rowIndexColumn).filter(_.nonEmpty).map(_.get)
 
     // When metadata.row_index is not used there is no way to verify the Parquet index is
-    // starting from 0. We disable the splits, so the assumption is ParquetFileFormat respects that
+    // starting from 0. We disable the splits, so the assumption is ParquetFileFormat respects
+    // that.
     var rowIndex: Long = 0
 
     // Used only when non-column row batches are received from the Parquet reader
     val tempVector = new OnHeapColumnVector(1, ByteType)
 
-    val rowIndexColumnIndex = (rowIndexFilter, rowIndexColumn) match {
-      case (Some(_: KeepAllRowsFilter.type), Some(rowIndexColumn)) => rowIndexColumn.index
-      case (Some(_), Some(rowIndexColumn)) => rowIndexColumn.index
-      case _ =>
-        throw new IllegalStateException("bla bla")
-    }
-
     iterator.map { row =>
       row match {
-        case batch: ColumnarBatch => // When vectorized Parquet reader is enabled
+        case batch: ColumnarBatch => // When vectorized Parquet reader is enabled.
           val size = batch.numRows()
-          trySafely(useOffHeapBuffers, size, Seq(isRowDeletedColumn.get)) { writableVectors =>
-            val indexVectorTuples = new ArrayBuffer[(Int, ColumnVector)]
-            // val index = 0
-            isRowDeletedColumn.foreach { columnMetadata =>
-              val isRowDeletedVector = writableVectors.head
-
-              rowIndexFilter.get.materializeIntoVectorWithRowIndex(
-                size, batch.column(rowIndexColumnIndex), isRowDeletedVector)
-              // rowIndexFilter.get
-              //  .materializeIntoVector(rowIndex, rowIndex + size, isRowDeletedVector)
-              indexVectorTuples += (columnMetadata.index -> isRowDeletedVector)
-              // index += 1
-            }
-
-            replaceVectors(batch, indexVectorTuples.toSeq: _*)
-          }
-
-          /*
           // Create vectors for all needed metadata columns.
           // We can't use the one from Parquet reader as it set the
           // [[WritableColumnVector.isAllNulls]] to true and it can't be reset with using any
           // public APIs.
           trySafely(useOffHeapBuffers, size, metadataColumns) { writableVectors =>
             val indexVectorTuples = new ArrayBuffer[(Int, ColumnVector)]
-            var index = 0
-            isRowDeletedColumn.foreach { columnMetadata =>
-              val isRowDeletedVector = writableVectors(index)
-              rowIndexFilter.get
-                .materializeIntoVector(rowIndex, rowIndex + size, isRowDeletedVector)
-              indexVectorTuples += (columnMetadata.index -> isRowDeletedVector)
-              index += 1
-            }
 
-            rowIndexColumn.foreach { columnMetadata =>
-              val rowIndexVector = writableVectors(index)
-              // populate the row index column value
-              for (i <- 0 until size) {
-                rowIndexVector.putLong(i, rowIndex + i)
+            // When predicate pushdown is enabled we use _metadata.row_index. Therefore,
+            // we only need to construct the isRowDeleted column.
+            if (predicatePushdownEnabled) {
+              isRowDeletedColumn.foreach { columnMetadata =>
+                val isRowDeletedVector = writableVectors.head
+                rowIndexFilter.get.materializeIntoVectorWithRowIndex(
+                  size, batch.column(rowIndexColumn.get.index), isRowDeletedVector)
+                indexVectorTuples += (columnMetadata.index -> isRowDeletedVector)
+              }
+              replaceVectors(batch, indexVectorTuples.toSeq: _*)
+            } else {
+              var index = 0
+              isRowDeletedColumn.foreach { columnMetadata =>
+                val isRowDeletedVector = writableVectors(index)
+                rowIndexFilter.get
+                  .materializeIntoVector(rowIndex, rowIndex + size, isRowDeletedVector)
+                indexVectorTuples += (columnMetadata.index -> isRowDeletedVector)
+                index += 1
               }
 
-              indexVectorTuples += (columnMetadata.index -> rowIndexVector)
-              index += 1
-            }
+              rowIndexColumn.foreach { columnMetadata =>
+                val rowIndexVector = writableVectors(index)
+                // populate the row index column value.
+                for (i <- 0 until size) {
+                  rowIndexVector.putLong(i, rowIndex + i)
+                }
 
-            val newBatch = replaceVectors(batch, indexVectorTuples.toSeq: _*)
-            rowIndex += size
-            newBatch
+                indexVectorTuples += (columnMetadata.index -> rowIndexVector)
+                index += 1
+              }
+
+              val newBatch = replaceVectors(batch, indexVectorTuples.toSeq: _*)
+              rowIndex += size
+              newBatch
+            }
           }
-        */
 
         case columnarRow: ColumnarBatchRow =>
           // When vectorized reader is enabled but returns immutable rows instead of
@@ -424,55 +417,41 @@ case class DeltaParquetFileFormat(
           // mutable [[InternalRow]] and set the `row_index` and `is_row_deleted`
           // column values. This is not efficient. It should affect only the wide
           // tables. https://github.com/delta-io/delta/issues/2246
-          /*
           val newRow = columnarRow.copy();
           isRowDeletedColumn.foreach { columnMetadata =>
-            rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
+            if (predicatePushdownEnabled) {
+              val rowIndex = columnarRow.getLong(rowIndexColumn.get.index)
+              rowIndexFilter.get.materializeSingleRowWithRowIndex(rowIndex, tempVector)
+            } else {
+              rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
+            }
             newRow.setByte(columnMetadata.index, tempVector.getByte(0))
           }
 
-          rowIndexColumn.foreach(columnMetadata => newRow.setLong(columnMetadata.index, rowIndex))
-          rowIndex += 1
-          newRow
-          */
-          val newRow = columnarRow.copy();
-          if (predicatePushdownEnabled) {
-            isRowDeletedColumn.foreach { columnMetadata =>
-              val rowIndex = columnarRow.getLong(rowIndexColumnIndex)
-              rowIndexFilter.get.materializeSingleRowWithRowIndex(rowIndex, tempVector)
-              newRow.setByte(columnMetadata.index, tempVector.getByte(0))
-            }
-          } else {
-            isRowDeletedColumn.foreach { columnMetadata =>
-              rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
-              newRow.setByte(columnMetadata.index, tempVector.getByte(0))
-            }
-
+          if (!predicatePushdownEnabled) {
             rowIndexColumn.foreach(columnMetadata => newRow.setLong(columnMetadata.index, rowIndex))
             rowIndex += 1
           }
 
           newRow
-
         case rest: InternalRow => // When vectorized Parquet reader is disabled
           // Temporary vector variable used to get DV values from RowIndexFilter
           // Currently the RowIndexFilter only supports writing into a columnar vector
           // and doesn't have methods to get DV value for a specific row index.
           // TODO: This is not efficient, but it is ok given the default reader is vectorized
-          /*
           isRowDeletedColumn.foreach { columnMetadata =>
-            rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
+            if (predicatePushdownEnabled) {
+              val rowIndex = rest.getLong(rowIndexColumn.get.index)
+              rowIndexFilter.get.materializeSingleRowWithRowIndex(rowIndex, tempVector)
+            } else {
+              rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
+            }
             rest.setByte(columnMetadata.index, tempVector.getByte(0))
           }
 
-          rowIndexColumn.foreach(columnMetadata => rest.setLong(columnMetadata.index, rowIndex))
-          rowIndex += 1
-          rest
-          */
-          isRowDeletedColumn.foreach { columnMetadata =>
-            val rowIndex = rest.getLong(rowIndexColumnIndex)
-            rowIndexFilter.get.materializeSingleRowWithRowIndex(rowIndex, tempVector)
-            rest.setByte(columnMetadata.index, tempVector.getByte(0))
+          if (!predicatePushdownEnabled) {
+            rowIndexColumn.foreach(columnMetadata => rest.setLong(columnMetadata.index, rowIndex))
+            rowIndex += 1
           }
 
           rest
