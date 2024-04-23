@@ -15,20 +15,21 @@
  */
 package io.delta.kernel.defaults
 
+import io.delta.golden.GoldenTableUtils.goldenTablePath
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
+import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
+import io.delta.kernel.types.{LongType, StructType}
+import io.delta.kernel.{Table, TableNotFoundException}
+import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
+import org.apache.spark.sql.functions.col
+import org.scalatest.funsuite.AnyFunSuite
+
 import java.io.File
 import java.math.BigDecimal
 import java.sql.Date
 import scala.collection.JavaConverters._
-import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-import org.scalatest.funsuite.AnyFunSuite
-import org.apache.spark.sql.functions.col
-import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.{Table, TableNotFoundException}
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
-import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
-import io.delta.kernel.types.{LongType, StructType}
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
