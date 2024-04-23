@@ -91,18 +91,19 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         fileMetadataCol = format.createFileMetadataCol()
         // Take the existing schema and add additional metadata columns
         val newDataSchema =
-          StructType(hfsr.dataSchema).add(ROW_INDEX_STRUCT_FIELD)
+          StructType(hfsr.dataSchema) // .add(ROW_INDEX_STRUCT_FIELD)
         val finalOutput = l.output :+ fileMetadataCol // Seq(rowIndexCol, fileMetadataCol)
-        /*
-        // Disable splitting and filter pushdown in order to generate the row-indexes
-        val newFormat = format.copy(isSplittable = true, disablePushDowns = false)
-        val newBaseRelation = hfsr.copy(
-          location = fileIndex,
-          dataSchema = newDataSchema,
-          fileFormat = newFormat)(hfsr.sparkSession)
-        */
 
-        l.copy(relation = hfsr, output = finalOutput)
+        // Disable splitting and filter pushdown in order to generate the row-indexes
+        // val newFormat = format.copy(isSplittable = true, disablePushDowns = false)
+        val newBaseRelation = hfsr.copy(
+          location = fileIndex // ,
+          // dataSchema = newDataSchema,
+          // fileFormat = newFormat
+        )(hfsr.sparkSession)
+
+
+        l.copy(relation = newBaseRelation, output = finalOutput)
       case p @ Project(projectList, _) =>
         if (fileMetadataCol == null) {
           throw new IllegalStateException("File metadata column is not yet created.")
@@ -111,7 +112,6 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         p.copy(projectList = newProjectList)
     }
     newTarget
-    // target
   }
 
   /**

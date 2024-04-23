@@ -423,7 +423,7 @@ case class DeltaParquetFileFormat(
           isRowDeletedColumn.foreach { columnMetadata =>
             rowIndexFilter.get
               .materializeIntoVector(
-                columnarRow.rowId, // TODO check this
+                0,
                 columnarRow.getLong(rowIndexColumnIndex),
                 tempVector)
 

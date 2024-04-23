@@ -44,8 +44,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       val delete = DeleteFromTable(
         self.toDF.queryExecution.analyzed,
         condition.getOrElse(Literal.TrueLiteral))
-      val a = toDataset(sparkSession, delete)
-      a
+      toDataset(sparkSession, delete)
     }
   }
 
