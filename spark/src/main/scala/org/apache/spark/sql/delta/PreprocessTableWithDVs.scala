@@ -20,6 +20,7 @@ import org.apache.spark.sql.delta.RowIndexFilter
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsReadable
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
@@ -52,28 +53,9 @@ import org.apache.spark.sql.types.{LongType, StructField, StructType}
  */
 trait PreprocessTableWithDVs extends SubqueryTransformerHelper {
   def preprocessTablesWithDVs(plan: LogicalPlan): LogicalPlan = {
-    val newPlan = transformWithSubqueries(plan) {
+    transformWithSubqueries(plan) {
       case ScanWithDeletionVectors(dvScan) => dvScan
     }
-
-    /*
-    transformWithSubqueries(newPlan) {
-      case a: AttributeReference if a.name == METADATA_NAME => newPlan
-    }
-    */
-    /*
-    transformWithSubqueries(newPlan) {
-      case a: AttributeReference if a.name == METADATA_NAME =>
-        val x = UnresolvedAttribute(a.qualifier :+ a.name)
-        val newPlan = FakeLogicalPlan(Seq(x), newPlan)
-        val spark = SparkSession.getActiveSession.get
-        val y = spark.sessionState.analyzer.execute(newPlan)
-        // val resolvedExprs = resolveExprs(Seq(x), newPlan)
-        newPlan
-    }
-    */
-
-    newPlan
   }
 }
 
@@ -94,8 +76,8 @@ object ScanWithDeletionVectors {
     // If the table has no DVs enabled, no change needed
     if (!deletionVectorsReadable(index.protocol, index.metadata)) return None
 
-   require(!index.isInstanceOf[TahoeLogFileIndex],
-     "Cannot work with a non-pinned table snapshot of the TahoeFileIndex")
+    require(!index.isInstanceOf[TahoeLogFileIndex],
+      "Cannot work with a non-pinned table snapshot of the TahoeFileIndex")
 
     // If the table has no DVs enabled, no change needed
     if (!deletionVectorsReadable(index.protocol, index.metadata)) return None
@@ -134,46 +116,39 @@ object ScanWithDeletionVectors {
       fileFormat: DeltaParquetFileFormat,
       tahoeFileIndex: TahoeFileIndex,
       hadoopFsRelation: HadoopFsRelation): LogicalRelation = {
+    val predicatePushdownEnabled =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_ENABLE_PREDICATE_PUSHDOWN)
+
     // Create a new `LogicalRelation` that has modified `DeltaFileFormat` and output with an extra
     // column to indicate whether to skip the row or not
 
     // Add a column for SKIP_ROW to the base output. Value of 0 means the row needs be kept, any
     // other values mean the row needs be skipped.
     val skipRowField = IS_ROW_DELETED_STRUCT_FIELD
-    // val rowIndexCol = AttributeReference(
-    //  s"${METADATA_NAME}.${ParquetFileFormat.ROW_INDEX}",
-    //  ROW_INDEX_STRUCT_FIELD.dataType)()
-    // val rowIndexField = ParquetFileFormat.ROW_INDEX_FIELD
 
-    val withReplacedMetadata = inputScan.output.collect {
-      case a: AttributeReference if a.name == METADATA_NAME &&
+    val newScanOutput = if (predicatePushdownEnabled) {
+      val withReplacedMetadata = inputScan.output.collect {
+        case a: AttributeReference if a.name == METADATA_NAME &&
           !a.dataType.asInstanceOf[StructType].fieldNames.contains(ParquetFileFormat.ROW_INDEX) =>
-        fileFormat.createFileMetadataCol().withExprId(a.exprId)
-      case o => o
-    }
+          fileFormat.createFileMetadataCol().withExprId(a.exprId)
+        case o => o
+      }
 
-    val newScanOutput = if (withReplacedMetadata.map(_.name).contains(METADATA_NAME)) {
-      withReplacedMetadata ++ Seq(AttributeReference(skipRowField.name, skipRowField.dataType)())
+      if (withReplacedMetadata.map(_.name).contains(METADATA_NAME)) {
+        withReplacedMetadata ++ Seq(AttributeReference(skipRowField.name, skipRowField.dataType)())
+      } else {
+        withReplacedMetadata ++
+          Seq(AttributeReference(skipRowField.name, skipRowField.dataType)(),
+            fileFormat.createFileMetadataCol())
+      }
     } else {
-      withReplacedMetadata ++
-        Seq(AttributeReference(skipRowField.name, skipRowField.dataType)(),
-          fileFormat.createFileMetadataCol())
+      inputScan.output :+ AttributeReference(skipRowField.name, skipRowField.dataType)()
     }
-
-    /*
-    val newScanOutput = inputScan.output.filterNot(_.name == METADATA_NAME) ++
-      Seq(
-        AttributeReference(skipRowField.name, skipRowField.dataType)(),
-        fileMetadataCol.withExprId(aaa.exprId))
-    */
 
     // Data schema and scan schema could be different. The scan schema may contain additional
     // columns such as `_metadata.file_path` (metadata columns) which are populated in Spark scan
     // operator after the data is read from the underlying file reader.
-    val rowIndexField =
-      StructField(s"${ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME}", LongType)
-    // ParquetFileFormat.ROW_INDEX_FIELD
-    val newDataSchema = hadoopFsRelation.dataSchema.add(skipRowField) // .add(rowIndexField)
+    val newDataSchema = hadoopFsRelation.dataSchema.add(skipRowField)
 
     val newFileFormat = fileFormat.disableSplittingAndPushdown(tahoeFileIndex.path.toString)
     val newRelation = hadoopFsRelation.copy(
@@ -189,18 +164,6 @@ object ScanWithDeletionVectors {
     require(skipRowColumnRefs.size == 1,
       s"Expected only one column with name=$IS_ROW_DELETED_COLUMN_NAME")
     val skipRowColumnRef = skipRowColumnRefs.head
-
-    /*
-    val rowIndexCol = AttributeReference(
-      s"${METADATA_NAME}.${ParquetFileFormat.ROW_INDEX}",
-      ROW_INDEX_STRUCT_FIELD.dataType)()
-    */
-    // val rowIndexCol = Column(s"${METADATA_NAME}.${ParquetFileFormat.ROW_INDEX}").expr
-    // val spark = SparkSession.getActiveSession.get
-    // val projection = Project(Seq(Alias(rowIndexCol, ParquetFileFormat.ROW_INDEX)()), newScan)
-    // val analyzed = spark.sessionState.analyzer.execute(projection)
-    // val rowIndexProjection = Project(Seq(rowIndexCol), newScan)
-    // val newPlan = spark.sessionState.analyzer.execute(rowIndexProjection)
 
     Filter(EqualTo(skipRowColumnRef, Literal(RowIndexFilter.KEEP_ROW_VALUE)), newScan)
   }

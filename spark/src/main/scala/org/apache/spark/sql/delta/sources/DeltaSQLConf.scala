@@ -1525,6 +1525,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELETION_VECTORS_ENABLE_PREDICATE_PUSHDOWN =
+    buildConf("deletionVectors.enablePredicatePushdown")
+      .internal()
+      .doc("""Controls whether we generate pushdown predicates in scans with DVs.""")
+      .booleanConf
+      .createWithDefault(true)
+
   val WRITE_DATA_FILES_TO_SUBDIR = buildConf("write.dataFilesToSubdir")
     .internal()
     .doc("Delta will write all data files to subdir 'data/' under table dir if enabled")
