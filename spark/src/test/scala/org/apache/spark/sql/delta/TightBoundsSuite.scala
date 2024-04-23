@@ -284,6 +284,19 @@ class TightBoundsSuite
       assert(statsAfterDelete === expectedStatsAfterDelete)
     }
   }
+
+  test("TEST") {
+    withTempDeltaTable(
+      dataDF = spark.range(0, 10, 1, 1).toDF("id"),
+      enableDVs = true
+    ) { (targetTable, targetLog) =>
+      targetTable().delete("id == 1")
+
+      val a = targetTable().toDF.collect()
+      val b = 1
+    }
+  }
+
 }
 
 class TightBoundsColumnMappingSuite extends TightBoundsSuite with DeltaColumnMappingEnableIdMode

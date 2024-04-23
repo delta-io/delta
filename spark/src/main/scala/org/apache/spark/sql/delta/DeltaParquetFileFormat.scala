@@ -167,15 +167,18 @@ case class DeltaParquetFileFormat(
       results.headOption.map(e => ColumnMetadata(e._2, e._1))
     }
     val isRowDeletedColumn = findColumn(IS_ROW_DELETED_COLUMN_NAME)
-    val rowIndexColumn = findColumn(ROW_INDEX_COLUMN_NAME)
+    // val rowIndexColumn = findColumn(ROW_INDEX_COLUMN_NAME)
+    val rowIndexColumn = findColumn(ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME)
+    val a = ParquetFileFormat.ROW_INDEX_FIELD
 
     if (isRowDeletedColumn.isEmpty && rowIndexColumn.isEmpty) {
       return parquetDataReader // no additional metadata is needed.
     } else {
       // verify the file splitting and filter pushdown are disabled. The new additional
       // metadata columns cannot be generated with file splitting and filter pushdowns
-      require(!isSplittable, "Cannot generate row index related metadata with file splitting")
-      require(disablePushDowns, "Cannot generate row index related metadata with filter pushdown")
+      // require(!isSplittable, "Cannot generate row index related metadata with file splitting")
+      // require(disablePushDowns,
+      // "Cannot generate row index related metadata with filter pushdown")
     }
 
     if (hasTablePath && isRowDeletedColumn.isEmpty) {
@@ -217,13 +220,15 @@ case class DeltaParquetFileFormat(
   }
 
   override def metadataSchemaFields: Seq[StructField] = {
+    // achatzis
     val rowTrackingFields =
       RowTracking.createMetadataStructFields(protocol, metadata, nullableRowTrackingFields)
     // TODO(SPARK-47731): Parquet reader in Spark has a bug where a file containing 2b+ rows
     // in a single rowgroup causes it to run out of the `Integer` range.
     // For Delta Parquet readers don't expose the row_index field as a metadata field.
     if (!RowId.isEnabled(protocol, metadata)) {
-      super.metadataSchemaFields.filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
+      val a = super.metadataSchemaFields // .filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
+      a
     } else {
       // It is fine to expose the row_index field as a metadata field when Row Tracking
       // is enabled because it is needed to generate the Row ID field, and it is not a
@@ -324,6 +329,7 @@ case class DeltaParquetFileFormat(
 
     val metadataColumns = Seq(isRowDeletedColumn, rowIndexColumn).filter(_.nonEmpty).map(_.get)
 
+    // Achatzis
     // Unfortunately there is no way to verify the Parquet index is starting from 0.
     // We disable the splits, so the assumption is ParquetFileFormat respects that
     var rowIndex: Long = 0
