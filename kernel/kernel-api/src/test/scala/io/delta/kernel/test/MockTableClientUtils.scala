@@ -16,6 +16,7 @@
 package io.delta.kernel.test
 
 import java.io.ByteArrayInputStream
+import java.util
 import java.util.Optional
 
 import io.delta.kernel.client._
@@ -91,7 +92,10 @@ trait BaseMockJsonHandler extends JsonHandler with MockTableClientUtils {
       predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
     throw new UnsupportedOperationException("not supported in this test suite")
 
-  override def writeJsonFileAtomically(filePath: String, data: CloseableIterator[Row]): Unit =
+  override def writeJsonFileAtomically(
+      filePath: String,
+      data: CloseableIterator[Row],
+      overwrite: Boolean): Unit =
     throw new UnsupportedOperationException("not supported in this test suite")
 }
 
@@ -106,12 +110,16 @@ trait BaseMockParquetHandler extends ParquetHandler with MockTableClientUtils {
     throw new UnsupportedOperationException("not supported in this test suite")
 
   override def writeParquetFiles(
-    directoryPath: String,
-    dataIter: CloseableIterator[FilteredColumnarBatch],
-    maxFileSize: Long,
-    statsColumns: java.util.List[Column]): CloseableIterator[DataFileStatus] = {
-    throw new UnsupportedOperationException("not supported for in this test suite")
-  }
+      directoryPath: String,
+      dataIter: CloseableIterator[FilteredColumnarBatch],
+      maxFileSize: Long,
+      statsColumns: util.List[Column]): CloseableIterator[DataFileStatus] =
+    throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def writeParquetFileAtomically(
+      filePath: String,
+      data: CloseableIterator[FilteredColumnarBatch]): Unit =
+    throw new UnsupportedOperationException("not supported in this test suite")
 }
 
 /**

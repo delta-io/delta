@@ -17,6 +17,7 @@
 package io.delta.kernel.client;
 
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.util.List;
 import java.util.Optional;
 
@@ -94,4 +95,17 @@ public interface ParquetHandler {
             CloseableIterator<FilteredColumnarBatch> dataIter,
             long maxFileSize,
             List<Column> statsColumns) throws IOException;
+
+    /**
+     * Write the given data as a Parquet file. This call either succeeds in creating the file with
+     * given contents or no file is created at all. It won't leave behind a partially written file.
+     * <p>
+     * @param filePath  Fully qualified destination file path
+     * @param data      Iterator of {@link FilteredColumnarBatch}
+     * @throws FileAlreadyExistsException if the file already exists and {@code overwrite} is false.
+     * @throws IOException                if any other I/O error occurs.
+     */
+    void writeParquetFileAtomically(
+            String filePath,
+            CloseableIterator<FilteredColumnarBatch> data) throws IOException;
 }

@@ -16,21 +16,28 @@
 package io.delta.kernel.defaults.client;
 
 import java.io.IOException;
-import java.util.List;
-import java.util.Optional;
+import java.io.UncheckedIOException;
+import java.util.*;
+import static java.lang.String.format;
 
+import io.delta.storage.LogStore;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.*;
 
 import io.delta.kernel.client.ParquetHandler;
-import io.delta.kernel.data.*;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
+import io.delta.kernel.utils.FileStatus;
 
+import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.Utils;
+import static io.delta.kernel.internal.util.Preconditions.checkState;
 
+import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileWriter;
 
@@ -99,5 +106,60 @@ public class DefaultParquetHandler implements ParquetHandler {
         ParquetFileWriter batchWriter =
             new ParquetFileWriter(hadoopConf, new Path(directoryPath), maxFileSize, statsColumns);
         return batchWriter.write(dataIter);
+    }
+
+    /**
+     * Makes use of {@link LogStore} implementations in `delta-storage` to atomically write the data
+     * to a file depending upon the destination filesystem.
+     *
+     * @param filePath Fully qualified destination file path
+     * @param data     Iterator of {@link FilteredColumnarBatch}
+     * @throws IOException
+     */
+    @Override
+    public void writeParquetFileAtomically(
+            String filePath,
+            CloseableIterator<FilteredColumnarBatch> data) throws IOException {
+        Path targetPath = new Path(filePath);
+        LogStore logStore =
+                LogStoreProvider.getLogStore(hadoopConf, targetPath.toUri().getScheme());
+
+        boolean useRename = logStore.isPartialWriteVisible(targetPath, hadoopConf);
+
+        Path writePath = targetPath;
+        if (useRename) {
+            // In order to atomically write the file, write to a temp file and rename to target path
+            String tempFileName = format(".%s.%s.tmp", targetPath.getName(), UUID.randomUUID());
+            writePath = new Path(targetPath.getParent(), tempFileName);
+        }
+        ParquetFileWriter fileWriter = new ParquetFileWriter(hadoopConf, writePath);
+
+        Optional<DataFileStatus> writtenFile;
+
+        try (CloseableIterator<DataFileStatus> statuses = fileWriter.write(data)) {
+            writtenFile = InternalUtils.getSingularElement(statuses);
+        } catch (UncheckedIOException uio) {
+            throw uio.getCause();
+        }
+
+        checkState(writtenFile.isPresent(), "expected to write one output file");
+        if (useRename) {
+            FileSystem fs = targetPath.getFileSystem(hadoopConf);
+            boolean renameDone = false;
+            try {
+                renameDone = fs.rename(writePath, targetPath);
+                if (!renameDone) {
+                    if (fs.exists(targetPath)) {
+                        throw new java.nio.file.FileAlreadyExistsException(
+                                "target file already exists: " + targetPath);
+                    }
+                    throw new IOException("Failed to rename the file");
+                }
+            } finally {
+                if (!renameDone) {
+                    fs.delete(writePath, false /* recursive */);
+                }
+            }
+        }
     }
 }
