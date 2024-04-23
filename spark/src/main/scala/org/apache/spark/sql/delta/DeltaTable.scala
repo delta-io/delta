@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform =
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedLeafNode, UnresolvedTable}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
