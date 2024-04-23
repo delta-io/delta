@@ -16,9 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.internal.SQLConf.FILES_MAX_PARTITION_BYTES
-
 import scala.collection.mutable.ArrayBuffer
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -287,69 +284,6 @@ class TightBoundsSuite
       assert(statsAfterDelete === expectedStatsAfterDelete)
     }
   }
-
-  test("TEST") {
-    withTempDeltaTable(
-      // .repartition(1)
-      dataDF = spark.range(0, 50000000, 1, 1).toDF("id"),
-      // dataDF = spark.range(0, 25000000, 1, 1).toDF("id"),
-      // dataDF = spark.range(0, 100000000, 1, 1).toDF("id"),
-      enableDVs = true
-    ) { (targetTable, targetLog) =>
-      withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> false.toString,
-          SQLConf.FILES_MAX_PARTITION_BYTES.key -> "128MB") {
-        targetTable().delete("id == 40000000")
-
-        // val d = targetTable().toDF.filter("id != 1").queryExecution.executedPlan
-        // .filter("id != 1")
-        val a = targetTable().toDF.filter("id != 1").collect()
-        val c = targetLog.update().allFiles.collect()
-        val b = 1
-        assert(a.length === 49999998)
-        // assert(a.length === 29999999)
-
-        // a(40000000).getLong(0)
-        assert(a(1).getLong(0) === 2)
-        assert(a(39999998).getLong(0) === 39999999)
-        assert(a(39999999).getLong(0) === 40000001)
-        // assert(!a.map(_.getLong(0)).toSeq.contains(40000000))
-        // assert(a === Seq(0, 100000000).drop(2))
-      }
-    }
-  }
-
-  test("TEST 2") {
-    withTempDeltaTable(
-      // .repartition(1)
-      dataDF = spark.range(0, 100, 1, 1).toDF("id"),
-      enableDVs = true
-    ) { (targetTable, targetLog) =>
-      withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> true.toString,
-        SQLConf.FILES_MAX_PARTITION_BYTES.key -> "128MB") {
-        targetTable().delete("id == 4")
-        targetTable().delete("id == 5")
-
-        val a = 1
-      }
-    }
-  }
-
-  test(s"TEST COMPLEX TMP VIEW") {
-    import testImplicits._
-    withTempView("v") {
-      withTable("tab") {
-        Seq((0, 3), (1, 2)).toDF("key", "value")
-          .write
-          .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, true.toString)
-          .format("delta")
-          .saveAsTable("tab")
-        sql(s"CREATE OR REPLACE TEMP VIEW v AS SELECT value as key, key as value FROM tab")
-        sql(s"DELETE FROM v WHERE key >= 1 and value < 3")
-        spark.read.format("delta").table("v")
-      }
-    }
-  }
-
 }
 
 class TightBoundsColumnMappingSuite extends TightBoundsSuite with DeltaColumnMappingEnableIdMode

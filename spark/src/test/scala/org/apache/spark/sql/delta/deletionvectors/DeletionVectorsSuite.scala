@@ -27,7 +27,9 @@ import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.internal.SQLConf
 import com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.tables.DeltaTable
 import org.apache.commons.io.FileUtils
@@ -46,6 +48,24 @@ class DeletionVectorsSuite extends QueryTest
   with DeltaTestUtilsForTempViews
   with DeltaExceptionTestUtils {
   import testImplicits._
+
+  // ~200MBs. Should contain 2 row groups.
+  val multiRowgroupTable = "multiRowgroupTable"
+  val multiRowgroupTableRowsNum = 50000000
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.range(0, multiRowgroupTableRowsNum, 1, 1).toDF("id")
+      .write
+      .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, true.toString)
+      .format("delta")
+      .saveAsTable(multiRowgroupTable)
+  }
+
+  override def afterAll(): Unit = {
+    super.afterAll()
+    sql(s"DROP TABLE IF EXISTS $multiRowgroupTable")
+  }
 
   test(s"read Delta table with deletion vectors") {
     def verifyVersion(version: Int, expectedData: Seq[Int]): Unit = {
@@ -86,8 +106,9 @@ class DeletionVectorsSuite extends QueryTest
   }
 
   test("select metadata columns from a Delta table with deletion vectors") {
-    val a = spark.read.format("delta").load(table1Path).distinct().count()
+    // val a = spark.read.format("delta").load(table1Path).distinct().count()
 
+    // spark.read.format("delta").load(table1Path).distinct().count()
     assert(spark.read.format("delta").load(table1Path)
       .select("_metadata.file_path").distinct().count() == 22)
   }
@@ -708,6 +729,174 @@ class DeletionVectorsSuite extends QueryTest
       }
       assert(e.getMessage.contains("Malformed escape pair"))
     }
+  }
+
+  private def testPredicatePushDown(
+     deletePredicates: Seq[String],
+     selectPredicate: Option[String],
+     expectedNumRows: Long,
+     validationPredicate: String,
+     vectorizedReaderEnabled: Boolean,
+     readColumnarBatchAsRows: Boolean): Unit = {
+    withTempDir { dir =>
+      // This forces the code generator to not use codegen. As a result, Spark sets options to get
+      // rows instead of columnar batches from the Parquet reader. This allows to test the relevant
+      // code path in DeltaParquetFileFormat.
+      val codeGenMaxFields = if (readColumnarBatchAsRows) "0" else "100"
+      withSQLConf(
+          SQLConf.WHOLESTAGE_MAX_NUM_FIELDS.key -> codeGenMaxFields,
+          SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> vectorizedReaderEnabled.toString) {
+        sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` SHALLOW CLONE $multiRowgroupTable")
+
+        val targetTable = io.delta.tables.DeltaTable.forPath(dir.getCanonicalPath)
+
+        // Execute multiple delete statements. These require to reconsile the metadata column
+        // between DV writing and scanning operations.
+        deletePredicates.foreach(targetTable.delete)
+
+        val targetTableDF = selectPredicate.map(targetTable.toDF.filter).getOrElse(targetTable.toDF)
+        assertPredicatesArePushedDown(targetTableDF)
+        // Make sure there are splits.
+        assert(targetTableDF.rdd.partitions.size > 1)
+
+        withTempDir { resultDir =>
+          // Write results to a table without DVs for validation. We are doing this to avoid
+          // loading the dataset into memory.
+          targetTableDF
+            .write
+            .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, false.toString)
+            .format("delta")
+            .save(resultDir.getCanonicalPath)
+
+          val resultsTable = io.delta.tables.DeltaTable.forPath(resultDir.getCanonicalPath)
+
+          assert(resultsTable.toDF.count() === expectedNumRows)
+          // The delete/filtered rows should not exist.
+          assert(resultsTable.toDF.filter(validationPredicate).count() === 0)
+        }
+      }
+    }
+  }
+
+  for {
+    vectorizedReaderEnabled <- BOOLEAN_DOMAIN
+    readColumnarBatchAsRows <- if (vectorizedReaderEnabled) BOOLEAN_DOMAIN else Seq(false)
+  } test("PredicatePushdown: Single deletion at the first row group. " +
+     s"vectorizedReaderEnabled: $vectorizedReaderEnabled " +
+     s"readColumnarBatchAsRows: $readColumnarBatchAsRows") {
+    testPredicatePushDown(
+      deletePredicates = Seq("id == 100"),
+      selectPredicate = None,
+      expectedNumRows = multiRowgroupTableRowsNum - 1,
+      validationPredicate = "id == 100",
+      vectorizedReaderEnabled = vectorizedReaderEnabled,
+      readColumnarBatchAsRows = readColumnarBatchAsRows)
+  }
+
+  for {
+    vectorizedReaderEnabled <- BOOLEAN_DOMAIN
+    readColumnarBatchAsRows <- if (vectorizedReaderEnabled) BOOLEAN_DOMAIN else Seq(false)
+  } test("PredicatePushdown: Single deletion at the second row group. " +
+      s"vectorizedReaderEnabled: $vectorizedReaderEnabled " +
+      s"readColumnarBatchAsRows: $readColumnarBatchAsRows") {
+    testPredicatePushDown(
+      deletePredicates = Seq("id == 40000000"),
+      selectPredicate = None,
+      expectedNumRows = multiRowgroupTableRowsNum - 1,
+      // (rowId, Expected value).
+      validationPredicate = "id == 40000000",
+      vectorizedReaderEnabled = vectorizedReaderEnabled,
+      readColumnarBatchAsRows = readColumnarBatchAsRows)
+  }
+
+  for {
+    vectorizedReaderEnabled <- BOOLEAN_DOMAIN
+    readColumnarBatchAsRows <- if (vectorizedReaderEnabled) BOOLEAN_DOMAIN else Seq(false)
+  } test("PredicatePushdown: Single delete statement with multiple ids. " +
+      s"vectorizedReaderEnabled: $vectorizedReaderEnabled " +
+      s"readColumnarBatchAsRows: $readColumnarBatchAsRows") {
+    testPredicatePushDown(
+      deletePredicates = Seq("id in (200, 2000, 20000, 20000000, 40000000)"),
+      selectPredicate = None,
+      expectedNumRows = multiRowgroupTableRowsNum - 5,
+      validationPredicate = "id in (200, 2000, 20000, 20000000, 40000000)",
+      vectorizedReaderEnabled = vectorizedReaderEnabled,
+      readColumnarBatchAsRows = readColumnarBatchAsRows)
+  }
+
+  for {
+    vectorizedReaderEnabled <- BOOLEAN_DOMAIN
+    readColumnarBatchAsRows <- if (vectorizedReaderEnabled) BOOLEAN_DOMAIN else Seq(false)
+  } test("PredicatePushdown: Multiple delete statements. " +
+      s"vectorizedReaderEnabled: $vectorizedReaderEnabled " +
+      s"readColumnarBatchAsRows: $readColumnarBatchAsRows") {
+    testPredicatePushDown(
+      deletePredicates =
+        Seq("id = 200", "id = 2000", "id = 20000", "id = 20000000", "id = 40000000"),
+      selectPredicate = None,
+      expectedNumRows = multiRowgroupTableRowsNum - 5,
+      validationPredicate = "id in (200, 2000, 20000, 20000000, 40000000)",
+      vectorizedReaderEnabled = vectorizedReaderEnabled,
+      readColumnarBatchAsRows = readColumnarBatchAsRows)
+  }
+
+  for {
+    vectorizedReaderEnabled <- BOOLEAN_DOMAIN
+    readColumnarBatchAsRows <- if (vectorizedReaderEnabled) BOOLEAN_DOMAIN else Seq(false)
+  } test("PredicatePushdown: Scan with predicates. " +
+      s"vectorizedReaderEnabled: $vectorizedReaderEnabled " +
+      s"readColumnarBatchAsRows: $readColumnarBatchAsRows") {
+    testPredicatePushDown(
+      deletePredicates = Seq("id = 200", "id = 2000", "id = 40000000"),
+      selectPredicate = Some("id not in (20000, 20000000)"),
+      expectedNumRows = multiRowgroupTableRowsNum - 5,
+      validationPredicate = "id in (200, 2000, 20000, 20000000, 40000000)",
+      vectorizedReaderEnabled = vectorizedReaderEnabled,
+      readColumnarBatchAsRows = readColumnarBatchAsRows)
+  }
+
+  for {
+    vectorizedReaderEnabled <- BOOLEAN_DOMAIN
+    readColumnarBatchAsRows <- if (vectorizedReaderEnabled) BOOLEAN_DOMAIN else Seq(false)
+  } test("PredicatePushdown: Scan with predicates - no deletes. " +
+      s"vectorizedReaderEnabled: $vectorizedReaderEnabled " +
+      s"readColumnarBatchAsRows: $readColumnarBatchAsRows") {
+    testPredicatePushDown(
+      deletePredicates = Seq.empty,
+      selectPredicate = Some("id not in (200, 2000, 20000, 20000000, 40000000)"),
+      expectedNumRows = multiRowgroupTableRowsNum - 5,
+      validationPredicate = "id in (200, 2000, 20000, 20000000, 40000000)",
+      vectorizedReaderEnabled = vectorizedReaderEnabled,
+      readColumnarBatchAsRows = readColumnarBatchAsRows)
+  }
+
+  test("Predicate pushdown works on queries that select metadata fields") {
+    withTempDir { dir =>
+      withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> true.toString) {
+        sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` SHALLOW CLONE $multiRowgroupTable")
+
+        val targetTable = io.delta.tables.DeltaTable.forPath(dir.getCanonicalPath)
+        targetTable.delete("id == 40000000")
+
+        val r1 = targetTable.toDF.select("id", "_metadata.row_index").count()
+        assert(r1 === multiRowgroupTableRowsNum - 1)
+
+        val r2 = targetTable.toDF.select("id", "_metadata.row_index", "_metadata.file_path").count()
+        assert(r2 === multiRowgroupTableRowsNum - 1)
+
+        val r3 = targetTable
+          .toDF
+          .select("id", "_metadata.file_block_start", "_metadata.file_path").count()
+        assert(r3 === multiRowgroupTableRowsNum - 1)
+      }
+    }
+  }
+
+  private def assertPredicatesArePushedDown(df: DataFrame): Unit = {
+    val scan = df.queryExecution.executedPlan.collectFirst {
+      case scan: FileSourceScanExec => scan
+    }
+    assert(scan.map(_.dataFilters.nonEmpty).getOrElse(true))
   }
 
   private sealed case class DeleteUsingDVWithResults(
