@@ -360,12 +360,6 @@
     ],
     "sqlState" : "0AKDC"
   },
-  "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY" : {
-    "message" : [
-      "Clustering and partitioning cannot both be specified. Please remove partitionedBy if you want to create a Delta table with clustering."
-    ],
-    "sqlState" : "42613"
-  },
   "DELTA_CLUSTERING_COLUMNS_MISMATCH" : {
     "message" : [
       "The provided clustering columns do not match the existing table's.",
@@ -403,6 +397,12 @@
       "CLUSTER BY supports up to <numColumnsLimit> clustering columns, but the table has <actualNumColumns> clustering columns. Please remove the extra clustering columns."
     ],
     "sqlState" : "54000"
+  },
+  "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY" : {
+    "message" : [
+      "Clustering and partitioning cannot both be specified. Please remove partitionedBy if you want to create a Delta table with clustering."
+    ],
+    "sqlState" : "42613"
   },
   "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" : {
     "message" : [
