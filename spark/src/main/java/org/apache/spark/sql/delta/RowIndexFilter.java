@@ -27,29 +27,36 @@ public interface RowIndexFilter {
 
     /**
      * Materialize filtering information for all rows in the range [start, end)
-     * by filling a boolean column vector batch.
+     * by filling a boolean column vector batch. Assumes the indexes of the rows in the batch are
+     * consecutive and start from 0.
      *
-     * @param start  Beginning index of the filtering range (inclusive)
-     * @param end    End index of the filtering range (exclusive)
-     * @param batch  The column vector for the current batch to materialize the range into
+     * @param start  Beginning index of the filtering range (inclusive).
+     * @param end    End index of the filtering range (exclusive).
+     * @param batch  The column vector for the current batch to materialize the range into.
      */
     void materializeIntoVector(long start, long end, WritableColumnVector batch);
 
     /**
+     * Materialize filtering information for all rows in the batch. This is achieved by probing
+     * the roaring bitmap with the row index of every row in the batch.
      *
-     * @param batchSize
-     * @param rowIndexColumn
-     * @param batch
+     * @param batchSize The size of the batch.
+     * @param rowIndexColumn A column vector that contains the row index of each row in the batch.
+     * @param batch The column vector for the current batch to materialize the range into.
      */
-    void materializeIntoVector(int batchSize, ColumnVector rowIndexColumn, WritableColumnVector batch);
+    void materializeIntoVectorWithRowIndex(
+        int batchSize,
+        ColumnVector rowIndexColumn,
+        WritableColumnVector batch);
 
     /**
+     * Materialize filtering information for batches with a single row.
      *
-     * @param rowNumber
-     * @param rowIndex
-     * @param batch
+     * @param rowIndex The index of the row to materialize the filtering information.
+     * @param batch The column vector for the current batch to materialize the range into.
+     *              We assume it contains a single row.
      */
-    void materializeIntoVector(int rowNumber, long rowIndex, WritableColumnVector batch);
+    void materializeSingleRowWithRowIndex(long rowIndex, WritableColumnVector batch);
 
     /**
      * Value that must be materialised for a row to be kept after filtering.

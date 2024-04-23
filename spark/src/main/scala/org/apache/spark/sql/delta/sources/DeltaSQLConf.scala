@@ -1534,8 +1534,8 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-  val DELETION_VECTORS_ENABLE_PREDICATE_PUSHDOWN =
-    buildConf("deletionVectors.enablePredicatePushdown")
+  val DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED =
+    buildConf("deletionVectors.predicatePushdownEnabled")
       .internal()
       .doc("""Controls whether we generate pushdown predicates in scans with DVs.""")
       .booleanConf
